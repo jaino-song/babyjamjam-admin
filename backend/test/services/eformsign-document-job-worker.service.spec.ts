@@ -825,6 +825,61 @@ describe("EformsignDocumentJobWorkerService", () => {
         });
     });
 
+    it("forwards a valid prefillAmounts payload to the finalize usecase", async () => {
+        const prefillAmounts = {
+            fullPrice: 1015000, grant: 812000, actualPrice: 203000, servicePeriod: "20261005 ~ 20261014",
+        };
+        const claimed = job({
+            jobType: "finalize_document",
+            documentId: "doc-amounts",
+            activeKey: "finalize:doc-amounts",
+            payload: { documentId: "doc-amounts", prefillAmounts },
+        });
+        const { worker, finalize } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+            finalize: { execute: jest.fn().mockResolvedValue({ ok: true, completed: true, durationMs: 1 }) },
+        });
+
+        await worker.processDueJobs();
+
+        expect(finalize.execute).toHaveBeenCalledWith(expect.objectContaining({
+            documentId: "doc-amounts",
+            prefillAmounts,
+        }), workerPrincipal);
+    });
+
+    it.each([
+        ["a non-object", "1000"],
+        ["an array", [1, 2, 3]],
+        ["null", null],
+        ["a negative amount", { fullPrice: -1, grant: 0, actualPrice: 0 }],
+        ["a fractional amount", { fullPrice: 1000.5, grant: 0, actualPrice: 0 }],
+        ["a string amount", { fullPrice: "1000", grant: 0, actualPrice: 0 }],
+        ["a missing amount", { fullPrice: 1000, grant: 0 }],
+        ["an empty servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "" }],
+        ["a non-string servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: 7 }],
+        ["an oversized servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "x".repeat(65) }],
+    ])("routes a finalize payload with %s prefillAmounts to the invalid-payload path", async (_label, prefillAmounts) => {
+        const claimed = job({
+            jobType: "finalize_document",
+            documentId: "doc-bad-amounts",
+            activeKey: "finalize:doc-bad-amounts",
+            payload: { documentId: "doc-bad-amounts", prefillAmounts },
+        });
+        const { worker, repository, finalize } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+        });
+
+        await expect(worker.processDueJobs()).resolves.not.toThrow();
+
+        expect(finalize.execute).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            "INVALID_FINALIZE_JOB_PAYLOAD",
+        );
+    });
+
     it("keeps the durable creating marker when a later provider step reports progress", async () => {
         const claimed = job({ progressStep: "creating" });
         const { worker, repository } = buildWorker();

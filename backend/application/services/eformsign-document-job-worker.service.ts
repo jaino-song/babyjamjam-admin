@@ -27,6 +27,7 @@ import {
     CLIENT_REPOSITORY,
     IClientRepository,
 } from "domain/repositories/client.repository.interface";
+import type { StaffCompletionPrefillAmounts } from "application/services/eformsign.service";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import type {
@@ -73,6 +74,7 @@ interface CreateDocumentJobPayload {
 interface FinalizeDocumentJobPayload {
     documentId?: string;
     prefillEndDate?: string;
+    prefillAmounts?: StaffCompletionPrefillAmounts;
     progressId?: string;
 }
 
@@ -774,6 +776,7 @@ export class EformsignDocumentJobWorkerService {
                     branchId: job.branchId,
                     documentId,
                     prefillEndDate: payload.prefillEndDate,
+                    prefillAmounts: payload.prefillAmounts,
                     progressId: payload.progressId,
                     onProgress: async (progressStep) => {
                         latestProgressStep = progressStep;
@@ -999,10 +1002,36 @@ function parseFinalizePayload(payload: Record<string, unknown>): FinalizeDocumen
     if (payload["documentId"] !== undefined && !documentId) return null;
     if (payload["prefillEndDate"] !== undefined && !prefillEndDate) return null;
     if (payload["progressId"] !== undefined && !progressId) return null;
+    const prefillAmounts = parsePrefillAmounts(payload["prefillAmounts"]);
+    if (prefillAmounts === null) return null;
     return {
         ...(documentId ? { documentId } : {}),
         ...(prefillEndDate ? { prefillEndDate } : {}),
+        ...(prefillAmounts ? { prefillAmounts } : {}),
         ...(progressId ? { progressId } : {}),
+    };
+}
+
+const MAX_SERVICE_PERIOD_LENGTH = 64;
+
+/** `undefined` when absent, `null` when present but malformed. */
+function parsePrefillAmounts(raw: unknown): StaffCompletionPrefillAmounts | undefined | null {
+    if (raw === undefined) return undefined;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const a = raw as Record<string, unknown>;
+    const isAmount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+    if (!isAmount(a["fullPrice"]) || !isAmount(a["grant"]) || !isAmount(a["actualPrice"])) return null;
+    const servicePeriod = a["servicePeriod"];
+    if (servicePeriod !== undefined) {
+        if (typeof servicePeriod !== "string" || servicePeriod.length === 0 || servicePeriod.length > MAX_SERVICE_PERIOD_LENGTH) {
+            return null;
+        }
+    }
+    return {
+        fullPrice: a["fullPrice"],
+        grant: a["grant"],
+        actualPrice: a["actualPrice"],
+        ...(servicePeriod !== undefined ? { servicePeriod: servicePeriod as string } : {}),
     };
 }
 

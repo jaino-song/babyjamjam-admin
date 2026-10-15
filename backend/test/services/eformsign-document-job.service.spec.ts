@@ -120,6 +120,29 @@ describe("EformsignDocumentJobService", () => {
         }));
     });
 
+    it("carries prefillAmounts into the finalize job payload only when given", async () => {
+        const { service, repository, documents } = buildService();
+        documents.findByDocumentId.mockResolvedValue({ documentId: "owned-document", clientId: 7 });
+        repository.enqueue.mockResolvedValue({ job: { id: "job-1" }, existing: false });
+        const prefillAmounts = {
+            fullPrice: 1015000, grant: 812000, actualPrice: 203000, servicePeriod: "20261005 ~ 20261014",
+        };
+
+        await service.enqueueFinalizeDocument({
+            branchId, documentId: "owned-document", requestKey: "request-1", source: "staff", prefillAmounts,
+        });
+        await service.enqueueFinalizeDocument({
+            branchId, documentId: "owned-document", requestKey: "request-2", source: "staff",
+        });
+
+        expect(repository.enqueue).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            payload: { documentId: "owned-document", prefillAmounts },
+        }));
+        expect(repository.enqueue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            payload: { documentId: "owned-document" },
+        }));
+    });
+
     it("refuses finalization of a voided (파기) document with a 409 before queueing anything", async () => {
         const { service, repository, documents } = buildService();
         documents.findByDocumentId.mockResolvedValue({

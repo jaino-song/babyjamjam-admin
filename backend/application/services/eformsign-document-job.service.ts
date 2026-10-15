@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 import { ContractDataDto } from "application/dto/contract.dto";
+import type { StaffCompletionPrefillAmounts } from "application/services/eformsign.service";
 import {
     EformsignDocumentJobPayload,
     EformsignDocumentJobSource,
@@ -37,6 +38,7 @@ export interface EnqueueFinalizeDocumentParams {
     documentId: string;
     requestKey: string;
     prefillEndDate?: string;
+    prefillAmounts?: StaffCompletionPrefillAmounts;
     progressId?: string;
     source: EformsignDocumentJobSource;
     createdByUserId?: string | null;
@@ -151,6 +153,7 @@ export class EformsignDocumentJobService {
         const payload: EformsignDocumentJobPayload = {
             documentId: params.documentId,
             ...(params.prefillEndDate ? { prefillEndDate: params.prefillEndDate } : {}),
+            ...(params.prefillAmounts ? { prefillAmounts: params.prefillAmounts } : {}),
             ...(params.progressId ? { progressId: params.progressId } : {}),
         };
 
