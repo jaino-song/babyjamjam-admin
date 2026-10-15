@@ -3,7 +3,6 @@ package com.babyjamjam.helper.safspike
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.os.CancellationSignal
@@ -40,6 +39,8 @@ class MainActivity : Activity() {
     private lateinit var grantView: TextView
     private lateinit var statusView: TextView
     private lateinit var probePanel: LinearLayout
+    private lateinit var contentScroll: ScrollView
+    private lateinit var contentContainer: LinearLayout
     private lateinit var filesContainer: LinearLayout
     private lateinit var scanButton: Button
     private lateinit var startButton: Button
@@ -114,7 +115,7 @@ class MainActivity : Activity() {
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
 
-        val scroll = ScrollView(this).apply {
+        contentScroll = ScrollView(this).apply {
             isFillViewport = true
             clipToPadding = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -123,8 +124,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        scroll.addView(content)
-        scroll.setOnApplyWindowInsetsListener { view, insets ->
+        contentContainer = content
+        contentScroll.addView(content)
+        contentScroll.setOnApplyWindowInsetsListener { view, insets ->
             val safeInsets = insets.getInsets(
                 WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
             )
@@ -197,8 +199,8 @@ class MainActivity : Activity() {
         stopButton.isEnabled = false
         probeButton.isEnabled = false
         updateActionState()
-        scroll.post { scroll.requestApplyInsets() }
-        return scroll
+        contentScroll.post { contentScroll.requestApplyInsets() }
+        return contentScroll
     }
 
     private fun chooseTree() {
@@ -325,11 +327,11 @@ class MainActivity : Activity() {
                 if (probePanel.viewTreeObserver.isAlive) {
                     probePanel.viewTreeObserver.removeOnPreDrawListener(this)
                 }
-                val width = probePanel.width
-                val height = probePanel.height
-                if (width > 0 && height > 0) {
-                    probePanel.requestRectangleOnScreen(Rect(0, 0, width, height), true)
-                }
+                val viewportHeight = contentScroll.height -
+                    contentScroll.paddingTop - contentScroll.paddingBottom
+                val maxScrollY = (contentContainer.height - viewportHeight).coerceAtLeast(0)
+                val targetScrollY = probePanel.top.coerceIn(0, maxScrollY)
+                contentScroll.scrollTo(0, targetScrollY)
                 return true
             }
         }
