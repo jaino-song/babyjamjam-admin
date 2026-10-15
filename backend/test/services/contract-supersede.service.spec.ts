@@ -94,6 +94,18 @@ describe("ContractSupersedeService", () => {
         expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
     });
 
+    it("looks the document up scoped to the branch and refuses one another branch owns", async () => {
+        // The branch-scoped read finds nothing for a document a different branch owns.
+        const { service, repository, credentialBoundary, eformsignService, documentMirrorService } = build({ document: null });
+
+        await expect(service.supersede(params)).rejects.toBeInstanceOf(ConflictException);
+
+        expect(repository.findSupersedeCandidate).toHaveBeenCalledWith(BRANCH_ID, "old-doc");
+        expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+    });
+
     it("refuses a terminal mirrored document", async () => {
         const { service, eformsignService } = build({ terminal: ["old-doc"] });
 

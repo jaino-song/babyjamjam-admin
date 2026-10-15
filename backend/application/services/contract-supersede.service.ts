@@ -36,10 +36,10 @@ export interface SupersedeContractParams {
  * purge intent, so reconciliation can never purge on its behalf. The local copy
  * is removed only after eformsign confirms the cancellation in this call.
  *
- * Callers own the branch-level checks that precede this service (the HTTP route
- * verifies the document belongs to the branch and that the replacement is the
- * client's linked contract; the job worker verifies the client belongs to the
- * job's branch). This service verifies the document belongs to the given client.
+ * This service verifies the document belongs to the given branch (the lookup is
+ * branch-scoped) and to the given client. Callers verify the rest: the HTTP route
+ * checks the replacement is the client's linked contract; the job worker checks
+ * the client belongs to the job's branch.
  */
 @Injectable()
 export class ContractSupersedeService {
@@ -58,7 +58,7 @@ export class ContractSupersedeService {
         try {
             // Only this client's own contract can be superseded, never another
             // client's document or a service-record snapshot.
-            const document = await this.repository.findSupersedeCandidate(documentId);
+            const document = await this.repository.findSupersedeCandidate(branchId, documentId);
             if (
                 !document
                 || document.documentKind === "service_record_snapshot"

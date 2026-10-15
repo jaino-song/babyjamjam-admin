@@ -10,9 +10,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 export class PrismaContractSupersedeRepository implements IContractSupersedeRepository {
     constructor(private readonly prisma: PrismaService) {}
 
-    async findSupersedeCandidate(documentId: string): Promise<SupersedeCandidateDocument | null> {
+    async findSupersedeCandidate(branchId: string, documentId: string): Promise<SupersedeCandidateDocument | null> {
         return this.prisma.eformsign_doc.findUnique({
-            where: { documentId },
+            where: { documentId, branchId },
             select: {
                 clientId: true, documentKind: true,
                 statusType: true, stepType: true, stepName: true,

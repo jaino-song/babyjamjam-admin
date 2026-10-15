@@ -1,6 +1,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
 import {
     EformsignDocumentJobWorkerService,
     type ServiceRecordRevisionOperationCoordinatorPort,
@@ -115,7 +116,7 @@ function buildWorker(overrides: {
     schedulerLease?: ReturnType<typeof createSchedulerLeaseMock>;
     revisionGenerator?: { executeRevision: jest.Mock };
     revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort;
-    contractSupersede?: Record<string, jest.Mock>;
+    contractSupersede?: Record<string, jest.Mock> | ContractSupersedeService;
     notification?: Record<string, jest.Mock>;
 } = {}) {
     const repository = {
@@ -153,10 +154,12 @@ function buildWorker(overrides: {
         findById: jest.fn().mockResolvedValue({ id: 7 }),
     };
     const schedulerLease = overrides.schedulerLease ?? createSchedulerLeaseMock();
-    const contractSupersedeService = {
-        supersede: jest.fn().mockResolvedValue({ documentId: "old-doc", superseded: true }),
-        ...overrides.contractSupersede,
-    };
+    const contractSupersedeService = (overrides.contractSupersede instanceof ContractSupersedeService
+        ? overrides.contractSupersede
+        : {
+            supersede: jest.fn().mockResolvedValue({ documentId: "old-doc", superseded: true }),
+            ...overrides.contractSupersede,
+        }) as unknown as { supersede: jest.Mock };
     const notificationService = {
         sendToBranchUsers: jest.fn().mockResolvedValue({ sent: 1, failed: 0 }),
         ...overrides.notification,
@@ -949,7 +952,9 @@ describe("EformsignDocumentJobWorkerService", () => {
             await worker.processDueJobs();
 
             expect(repository.markCompleted).toHaveBeenCalledTimes(1);
+            // A supersede failure never re-marks the already completed job.
             expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).not.toHaveBeenCalled();
             expect(repository.markFailed).not.toHaveBeenCalled();
             expect(repository.markRequiresAttention).not.toHaveBeenCalled();
             expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
@@ -958,6 +963,76 @@ describe("EformsignDocumentJobWorkerService", () => {
                 "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
                 expect.objectContaining({ type: "contract-supersede-failed", documentId: "old-doc" }),
                 expect.objectContaining({ dedupe: { type: "contract-supersede-failed", documentId: "old-doc" } }),
+            );
+        });
+
+        it("still finishes the run and polls again when the failure notification itself rejects", async () => {
+            const claimed = reissueJob("old-doc");
+            const claimDue = jest.fn().mockResolvedValueOnce([claimed]).mockResolvedValue([]);
+            const { worker, repository, notificationService } = buildWorker({
+                repository: {
+                    claimDue,
+                    markCompleted: jest.fn().mockResolvedValue(completedJob()),
+                },
+                dispatch: { execute: jest.fn().mockResolvedValue({ ok: true, documentId: "new-doc", durationMs: 1 }) },
+                contractSupersede: {
+                    supersede: jest.fn().mockRejectedValue(new ConflictException({ code: "REQUEST_CONFLICT" })),
+                },
+                notification: {
+                    sendToBranchUsers: jest.fn().mockRejectedValue(new Error("notification store down")),
+                },
+            });
+
+            await expect(worker.processDueJobs()).resolves.toBeUndefined();
+            await expect(worker.processDueJobs()).resolves.toBeUndefined();
+
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(claimDue).toHaveBeenCalledTimes(2);
+            expect(repository.markCompleted).toHaveBeenCalledTimes(1);
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).not.toHaveBeenCalled();
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.markRequiresAttention).not.toHaveBeenCalled();
+        });
+
+        it("does not cancel a document another branch owns and notifies the branch", async () => {
+            // The real service over a branch-scoped lookup: the old document belongs to a
+            // different branch, so the lookup for this job's branch finds nothing.
+            const cancelDocuments = jest.fn();
+            const purgeDocuments = jest.fn();
+            const supersedeService = new ContractSupersedeService(
+                {
+                    findSupersedeCandidate: jest.fn(async (lookupBranchId: string) => (
+                        lookupBranchId === "other-branch-id"
+                            ? { clientId: 7, documentKind: "contract", statusType: "030", stepType: "05", stepName: "고객 서명" }
+                            : null
+                    )),
+                } as never,
+                { withCredentials: jest.fn() } as never,
+                { cancelDocuments, getDocumentById: jest.fn() } as never,
+                { findTerminalDocumentIds: jest.fn().mockResolvedValue([]), purgeDocuments } as never,
+            );
+            const claimed = reissueJob("foreign-doc");
+            const { worker, repository, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markCompleted: jest.fn().mockResolvedValue(completedJob()),
+                },
+                dispatch: { execute: jest.fn().mockResolvedValue({ ok: true, documentId: "new-doc", durationMs: 1 }) },
+                contractSupersede: supersedeService,
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.markCompleted).toHaveBeenCalledTimes(1);
+            expect(cancelDocuments).not.toHaveBeenCalled();
+            expect(purgeDocuments).not.toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                branchId,
+                "기존 계약서 취소 실패",
+                expect.any(String),
+                expect.objectContaining({ type: "contract-supersede-failed", documentId: "foreign-doc" }),
+                expect.anything(),
             );
         });
 
