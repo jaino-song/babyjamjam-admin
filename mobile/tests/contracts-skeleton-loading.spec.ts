@@ -4,8 +4,11 @@ import {
   routeContractsApi,
   type ContractMockDocument,
 } from './helpers/contracts-api-mock';
+import { QUERY_RETRY_SETTLE_MS } from './helpers/query-retry';
 
-const FILTER_SKELETON_COUNT = 7;
+// One skeleton per status filter pill: 전체 + the seven statuses (FILTER_LABELS in
+// the contracts page, which gained 반려됨 with BJJ-440).
+const FILTER_SKELETON_COUNT = 8;
 const LOADING_ROW_COUNT = 9;
 
 const MOCK_DOCUMENTS: { documents: ContractMockDocument[] } = {
@@ -299,7 +302,7 @@ test.describe('Contracts Page Skeleton Loading', () => {
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_loading-row"]')).toHaveCount(0);
   });
 
-  test('renders the existing empty state when documents fail instead of keeping the skeleton', async ({ page }) => {
+  test('renders a retryable load error, not the skeleton or a false empty state, when documents fail', async ({ page }) => {
     await page.route('**/api/access-token', async (route) => {
       await route.fulfill({
         status: 200,
@@ -315,10 +318,17 @@ test.describe('Contracts Page Skeleton Loading', () => {
 
     await page.goto('/contracts');
 
-    await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_empty"]')).toBeVisible({
-      timeout: 15000,
-    });
+    // BJJ-434: a failed list is no longer drawn as the empty state ("등록된 … 가
+    // 없습니다"); after the query client's retries (3 x 1s/2s/4s backoff) it is a
+    // retryable error, so "the load failed" cannot read as "there is nothing here".
+    const loadError = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_load-error"]');
+    await expect(loadError).toBeVisible({ timeout: QUERY_RETRY_SETTLE_MS });
+    await expect(loadError).toContainText('산모 계약서 정보를 불러오지 못했습니다');
+    await expect(
+      page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_load-error_retry"]'),
+    ).toBeVisible();
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_loading-row"]')).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_empty"]')).toHaveCount(0);
   });
 
   test('falls back to the maternal contract filter when service-record template lookup fails', async ({ page }) => {
