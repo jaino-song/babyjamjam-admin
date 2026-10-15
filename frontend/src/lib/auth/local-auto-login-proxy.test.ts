@@ -29,3 +29,15 @@ it("retains the regular login gate in production", async () => {
   expect(response.headers.get("location")).toBe("http://localhost:3000/login");
   expect(global.fetch).not.toHaveBeenCalled();
 });
+it("sets the selected-branch cookies when LOCAL_AUTO_LOGIN_BRANCH_NAME picks a branch", async () => {
+  process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "고양파주점";
+  global.fetch = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true, accessToken: token, refreshToken: "refresh" }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ branches: [{ id: "branch-1", name: "고양파주점" }] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ accessToken: token, refreshToken: "branch-refresh" }) });
+  const response = await proxy(new NextRequest("http://localhost:3000/clients", { headers: { host: "localhost:3000" } }));
+  expect(response.headers.get("location")).toBe("http://localhost:3000/clients");
+  expect(response.cookies.get("refresh_token")).toMatchObject({ value: "branch-refresh" });
+  expect(response.cookies.get("selected_branch_id")).toMatchObject({ value: "branch-1", httpOnly: false });
+  expect(response.cookies.get("selected_organization_id")).toMatchObject({ value: "branch-1" });
+});

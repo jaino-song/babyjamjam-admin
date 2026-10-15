@@ -19,7 +19,7 @@ beforeEach(() => {
 afterAll(() => { process.env = originalEnv; global.fetch = originalFetch; });
 
 it("creates a normal session using the configured credentials only on loopback", async () => {
-  expect(await tryLocalAutoLogin(request())).toEqual({ accessToken: "access", refreshToken: "refresh" });
+  expect(await tryLocalAutoLogin(request())).toEqual({ accessToken: "access", refreshToken: "refresh", branchId: null });
   expect(fetchMock).toHaveBeenCalledWith(new URL("http://localhost:3001/auth/login"), expect.objectContaining({
     method: "POST", redirect: "error", cache: "no-store",
     body: JSON.stringify({ email: "developer@example.test", password: "test-fixture" }),
@@ -75,4 +75,35 @@ it("rejects a mismatched loopback port", async () => {
 it("does not initiate login on POST even with credentials configured", async () => {
   expect(await tryLocalAutoLogin(new NextRequest("http://localhost:3000/dashboard", { method: "POST", headers: { host: "localhost:3000" } }))).toBeNull();
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+describe("LOCAL_AUTO_LOGIN_BRANCH_NAME", () => {
+  const loginResponse = { ok: true, json: async () => ({ success: true, accessToken: "access", refreshToken: "refresh" }) };
+  const branchesResponse = { ok: true, json: async () => ({ branches: [
+    { id: "branch-goyang", name: "고양점" },
+    { id: "branch-goyang-paju", name: "고양파주점" },
+  ] }) };
+  beforeEach(() => { process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "고양파주점"; });
+
+  it("selects the exactly named branch and returns its session and id", async () => {
+    fetchMock.mockResolvedValueOnce(loginResponse).mockResolvedValueOnce(branchesResponse).mockResolvedValueOnce({
+      ok: true, json: async () => ({ accessToken: "branch-access", refreshToken: "branch-refresh" }),
+    });
+    expect(await tryLocalAutoLogin(request())).toEqual({
+      accessToken: "branch-access", refreshToken: "branch-refresh", branchId: "branch-goyang-paju",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, new URL("http://localhost:3001/auth/branches"),
+      expect.objectContaining({ headers: { Authorization: "Bearer access" } }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, new URL("http://localhost:3001/auth/select-branch"),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ branchId: "branch-goyang-paju" }) }));
+  });
+  it("keeps the plain login session when the branch is not found", async () => {
+    process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "없는지점";
+    fetchMock.mockResolvedValueOnce(loginResponse).mockResolvedValueOnce(branchesResponse);
+    expect(await tryLocalAutoLogin(request())).toEqual({ accessToken: "access", refreshToken: "refresh", branchId: null });
+  });
+  it("keeps the plain login session when branch selection fails", async () => {
+    fetchMock.mockResolvedValueOnce(loginResponse).mockRejectedValueOnce(new Error("backend down"));
+    expect(await tryLocalAutoLogin(request())).toEqual({ accessToken: "access", refreshToken: "refresh", branchId: null });
+  });
 });

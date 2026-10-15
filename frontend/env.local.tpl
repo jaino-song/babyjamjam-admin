@@ -15,6 +15,8 @@ OPENAI_API_KEY=
 # Optional local-only automatic login. Never set these on a deployment.
 LOCAL_AUTO_LOGIN_EMAIL=
 LOCAL_AUTO_LOGIN_PASSWORD=
+# Optional: branch picked automatically after the local auto-login (exact name).
+LOCAL_AUTO_LOGIN_BRANCH_NAME=
 
 # Real-login Playwright runs (pnpm e2e:dev / pnpm e2e:preview). Local-only; never set on a deployment.
 # e2e:dev uses the E2E_DEV_* pair when both are set, otherwise LOCAL_AUTO_LOGIN_EMAIL/PASSWORD.
