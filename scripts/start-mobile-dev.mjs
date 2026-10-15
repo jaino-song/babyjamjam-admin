@@ -22,6 +22,17 @@ const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const mobileDirectory = join(repositoryRoot, "mobile");
 const sourceEnvPath = join(repositoryRoot, "frontend", ".env.local");
 
+const RESOLVED_KEYS = [...PASSED_KEYS, "DEVELOPMENT_API_BASE_URL", "NEXT_PUBLIC_API_BASE_URL"];
+
+/** Values exported in the shell win over frontend/.env.local, before anything is validated. */
+export function mergeShellOverrides(fileEnv, shellEnv) {
+  const merged = { ...fileEnv };
+  for (const key of RESOLVED_KEYS) {
+    if (shellEnv[key] !== undefined) merged[key] = shellEnv[key];
+  }
+  return merged;
+}
+
 export function resolveAutoLoginEnv(sourceEnv) {
   const email = sourceEnv.LOCAL_AUTO_LOGIN_EMAIL?.trim();
   const password = sourceEnv.LOCAL_AUTO_LOGIN_PASSWORD;
@@ -45,8 +56,8 @@ export function resolveAutoLoginEnv(sourceEnv) {
 }
 
 function run() {
-  const sourceEnv = existsSync(sourceEnvPath) ? parseLocalEnv(readFileSync(sourceEnvPath, "utf8")) : {};
-  const autoLoginEnv = resolveAutoLoginEnv(sourceEnv);
+  const fileEnv = existsSync(sourceEnvPath) ? parseLocalEnv(readFileSync(sourceEnvPath, "utf8")) : {};
+  const autoLoginEnv = resolveAutoLoginEnv(mergeShellOverrides(fileEnv, process.env));
   console.log(autoLoginEnv
     ? "[mobile dev] local auto-login on (from frontend/.env.local)"
     : "[mobile dev] local auto-login off (no LOCAL_AUTO_LOGIN_* or non-loopback backend in frontend/.env.local)");
@@ -54,8 +65,8 @@ function run() {
   const nextBin = join(mobileDirectory, "node_modules", "next", "dist", "bin", "next");
   const child = spawn(process.execPath, [nextBin, "dev", ...process.argv.slice(2).filter((arg) => arg !== "--")], {
     cwd: mobileDirectory,
-    // Values already exported in the shell win over frontend/.env.local.
-    env: { ...autoLoginEnv, ...process.env },
+    // Shell-exported values already won in mergeShellOverrides.
+    env: { ...process.env, ...autoLoginEnv },
     stdio: "inherit",
   });
 

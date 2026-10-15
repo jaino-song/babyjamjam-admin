@@ -57,56 +57,71 @@ export async function tryLocalAutoLogin(request: NextRequest): Promise<{
     if (session.success !== true || typeof session.accessToken !== "string" ||
         !session.accessToken || typeof session.refreshToken !== "string" ||
         !session.refreshToken) return null;
-    const branchSession = await selectLocalAutoLoginBranch(backend, session.accessToken)
-      .catch(() => null);
-    return branchSession ?? {
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
-      branchId: null,
-    };
+    const selection = await selectLocalAutoLoginBranch(backend, session.accessToken);
+    if (selection.kind === "selected") return selection.session;
+    // select-branch may have committed and revoked this login's refresh token; drop the
+    // session so the next navigation signs in again instead of storing a dead token.
+    if (selection.kind === "unknown") return null;
+    return { accessToken: session.accessToken, refreshToken: session.refreshToken, branchId: null };
   } catch {
     // Do not log fetch errors: they can contain the credential-bearing request.
     return null;
   }
 }
 
+type BranchSelection =
+  | { kind: "selected"; session: { accessToken: string; refreshToken: string; branchId: string } }
+  /** Nothing was sent that could change the login session. */
+  | { kind: "unchanged" }
+  /** select-branch may have committed (and revoked the login refresh token) without a usable reply. */
+  | { kind: "unknown" };
+
 /**
  * Optional LOCAL_AUTO_LOGIN_BRANCH_NAME: select that branch (exact name) right after the
- * automatic login, so the session skips /select-branch. Any failure keeps the plain session.
+ * automatic login, so the session skips /select-branch. Never throws.
  */
-async function selectLocalAutoLoginBranch(backend: URL, accessToken: string): Promise<{
-  accessToken: string;
-  refreshToken: string;
-  branchId: string;
-} | null> {
+async function selectLocalAutoLoginBranch(backend: URL, accessToken: string): Promise<BranchSelection> {
   const branchName = process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME?.trim();
-  if (!branchName) return null;
+  if (!branchName) return { kind: "unchanged" };
 
   const headers = { Authorization: `Bearer ${accessToken}` };
-  const branchesResponse = await fetch(new URL("/auth/branches", backend), {
-    headers,
-    cache: "no-store",
-    redirect: "error",
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!branchesResponse.ok) return null;
-  const { branches } = await branchesResponse.json() as {
-    branches?: Array<{ id?: string; name?: string }>;
-  };
-  const branchId = branches?.find((branch) => branch.name === branchName)?.id;
-  if (!branchId) return null;
+  let branchId: string | undefined;
+  try {
+    const branchesResponse = await fetch(new URL("/auth/branches", backend), {
+      headers,
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!branchesResponse.ok) return { kind: "unchanged" };
+    const { branches } = await branchesResponse.json() as {
+      branches?: Array<{ id?: string; name?: string }>;
+    };
+    branchId = branches?.find((branch) => branch.name === branchName)?.id;
+  } catch {
+    return { kind: "unchanged" };
+  }
+  if (!branchId) return { kind: "unchanged" };
 
-  const selectResponse = await fetch(new URL("/auth/select-branch", backend), {
-    method: "POST",
-    headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ branchId }),
-    cache: "no-store",
-    redirect: "error",
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!selectResponse.ok) return null;
-  const selected = await selectResponse.json() as { accessToken?: string; refreshToken?: string };
-  if (typeof selected.accessToken !== "string" || !selected.accessToken ||
-      typeof selected.refreshToken !== "string" || !selected.refreshToken) return null;
-  return { accessToken: selected.accessToken, refreshToken: selected.refreshToken, branchId };
+  try {
+    const selectResponse = await fetch(new URL("/auth/select-branch", backend), {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ branchId }),
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    // A 4xx refusal changes nothing; a 5xx may follow a committed change.
+    if (!selectResponse.ok) return selectResponse.status < 500 ? { kind: "unchanged" } : { kind: "unknown" };
+    const selected = await selectResponse.json() as { accessToken?: string; refreshToken?: string };
+    if (typeof selected.accessToken !== "string" || !selected.accessToken ||
+        typeof selected.refreshToken !== "string" || !selected.refreshToken) return { kind: "unknown" };
+    return {
+      kind: "selected",
+      session: { accessToken: selected.accessToken, refreshToken: selected.refreshToken, branchId },
+    };
+  } catch {
+    return { kind: "unknown" };
+  }
 }

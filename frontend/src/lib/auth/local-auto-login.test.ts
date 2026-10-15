@@ -107,3 +107,23 @@ describe("LOCAL_AUTO_LOGIN_BRANCH_NAME", () => {
     expect(await tryLocalAutoLogin(request())).toEqual({ accessToken: "access", refreshToken: "refresh", branchId: null });
   });
 });
+
+describe("LOCAL_AUTO_LOGIN_BRANCH_NAME after select-branch was sent", () => {
+  const loginResponse = { ok: true, json: async () => ({ success: true, accessToken: "access", refreshToken: "refresh" }) };
+  const branchesResponse = { ok: true, json: async () => ({ branches: [{ id: "branch-1", name: "고양파주점" }] }) };
+  beforeEach(() => { process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "고양파주점"; });
+
+  it.each([
+    ["the connection drops", () => Promise.reject(new Error("socket hang up"))],
+    ["the server fails", () => Promise.resolve({ ok: false, status: 500, json: async () => ({}) })],
+    ["the reply has no tokens", () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) })],
+  ])("drops the session when %s, because the login refresh token may be revoked", async (_label, reply) => {
+    fetchMock.mockResolvedValueOnce(loginResponse).mockResolvedValueOnce(branchesResponse).mockImplementationOnce(reply);
+    expect(await tryLocalAutoLogin(request())).toBeNull();
+  });
+  it("keeps the plain login session when select-branch refuses with a 4xx", async () => {
+    fetchMock.mockResolvedValueOnce(loginResponse).mockResolvedValueOnce(branchesResponse)
+      .mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({}) });
+    expect(await tryLocalAutoLogin(request())).toEqual({ accessToken: "access", refreshToken: "refresh", branchId: null });
+  });
+});
