@@ -194,6 +194,18 @@ export async function proxy(request: NextRequest) {
       const target = pathname === "/login" ? new URL("/", request.url) : request.nextUrl;
       const response = NextResponse.redirect(target);
       setAuthSessionCookies(response.cookies, { ...session, autoLogin: true });
+      if (session.branchId) {
+        // Same cookies the /select-branch action sets after choosing a branch.
+        for (const name of ["selected_branch_id", "selected_organization_id"]) {
+          response.cookies.set(name, session.branchId, {
+            httpOnly: false,
+            secure: false,
+            sameSite: "lax",
+            path: "/",
+            maxAge: 30 * 24 * 60 * 60,
+          });
+        }
+      }
       response.headers.set("Cache-Control", "no-store");
       return response;
     }
