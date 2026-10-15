@@ -237,21 +237,25 @@ Phase 2 commands remain future/nonexistent until that plan binds them.
 
 ## 10. Owner decisions and close gate
 
-| Question | Safe recommendation/fact | Why it is needed | Can wait until implementation? | Phase 1 status |
+| Question | Safe recommendation/fact | Why it is needed | Gate that consumes the decision | Phase 1 status |
 | --- | --- | --- | --- | --- |
-| SMS delivery account/provider | Evaluate existing Aligo only after capability and ownership review; no setup/send here | Current Aligo code is outbound SMS, not OTP auth | Provider adapter can wait; proof semantics cannot | **Owner/provider pending** |
-| Recovery proof | Require a separately approved proof path; do not use phone/email match alone | Recycled numbers and lost provider access can transfer risk | No; policy needed before sensitive recovery | **Owner pending** |
-| Link approval authority | Named operational role and audit event for accepting a client link | SMS possession is not record ownership | No; blocks active-link implementation | **Owner pending** |
-| Multiple records/branches | Start with one active link; allow explicit cross-branch links only if approved | Prevents accidental family sharing and ambiguity | No; data boundary depends on it | **Owner pending** |
-| Session/link/proof TTL and retention | No arbitrary defaults; owner chooses per artifact | Retention affects privacy, replay, recovery, and cleanup | No for contract closure | **Owner pending** |
-| App IDs/signing/developer account | Separate customer identities and named owners | Prevents staff/customer app collision and release ambiguity | No for Phase 2 | **Owner pending** |
-| Apple guideline 4.8 route | Recommend evaluating Sign in with Apple or a documented exception; Apple login is not selected | Third-party login may require an equivalent privacy-preserving option | No for iOS release planning | **Owner pending** |
-| Phone-only entry UX | Keep proposed until product owner chooses the entry point | Avoids inferring a new login surface | Yes, after policy is fixed | **Proposed, unselected** |
+| SMS delivery account/provider | Evaluate existing Aligo only after capability and ownership review; no setup/send here | Current Aligo code is outbound SMS, not OTP auth | Phase 3 provider adapter; SMS OTP semantics are already fixed | **Owner/provider pending** |
+| Recovery proof | Require a separately approved proof path; do not use phone/email match alone | Recycled numbers and lost provider access can transfer risk | Phase 3 auth/recovery implementation | **Owner pending** |
+| Link approval authority | Name the operational role and audit event for accepting a client link | SMS possession is not record ownership | Phase 1 boundary acknowledgement, then Phase 3 workflow | **Owner pending** |
+| Multiple records/branches | Start with one active link; allow explicit cross-branch links only if approved | Prevents accidental family sharing and ambiguity | Phase 1 boundary choice before link schema | **Owner pending** |
+| Session/link/proof TTL and retention | No arbitrary defaults; owner chooses per artifact | Retention affects privacy, replay, recovery, and cleanup | Phase 3 data/auth implementation; values may remain deferred in this draft | **Owner pending** |
+| App IDs/signing/developer account | Separate customer identities and named owners | Prevents staff/customer app collision and release ambiguity | Phase 2 build/release binding | **Owner pending** |
+| Apple guideline 4.8 route | Recommend evaluating Sign in with Apple or a documented exception; Apple login is not selected | Third-party login may require an equivalent privacy-preserving option | Phase 2 iOS release gate | **Owner pending** |
+| Phone-only entry UX | Keep proposed until product owner chooses the entry point | Avoids inferring a new login surface | Product follow-up; not required for the three confirmed capabilities | **Proposed, unselected** |
 
-Phase 1 can close only when the owner resolves the items marked required for
-implementation, the independent SOL review approves the exact candidate, and
-the main records the close gate. Provider console setup, app creation, native
-builds, schema migration, and Phase 2 execution remain later gates.
+Phase 1 close does not require exact provider accounts, environment key names,
+app IDs, signing values, schema table names, or TTL/retention numbers. It does
+require the owner to approve the principal/link/token boundary, acknowledge the
+three confirmed capabilities and the no-merge rule, and explicitly assign each
+open item to its Phase 2 or Phase 3 gate. The independent SOL review must approve
+the exact candidate; the main records the close gate. Provider console setup,
+app creation, native builds, schema migration, and Phase 2 execution remain
+later gates.
 
 ## 11. Traceability and verification contract
 

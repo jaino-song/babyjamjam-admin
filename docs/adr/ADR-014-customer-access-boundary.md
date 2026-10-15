@@ -92,7 +92,9 @@ route remain unresolved.
 - New principal/session/link data boundaries and customer guards will require a
   later schema and implementation review.
 - Provider app IDs, delivery account, recovery, approver, multiplicity, TTL,
-  retention, signing ownership, and Apple review path delay implementation.
+  retention, signing ownership, and Apple review path remain downstream owner
+  decisions. They may be explicitly deferred to the Phase 2/3 gates without
+  preventing review of this Phase 1 boundary draft.
 - Customer app and staff app must maintain separate native configuration and
   release evidence.
 
