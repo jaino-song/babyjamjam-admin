@@ -11,6 +11,8 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { EformsignController } from "interface/controllers/eformsign.controller";
 import { ContractSupersedeService } from "application/services/contract-supersede.service";
+import { CONTRACT_SUPERSEDE_REPOSITORY } from "domain/repositories/contract-supersede.repository.interface";
+import { PrismaContractSupersedeRepository } from "infrastructure/database/repositories/prisma-contract-supersede.repository";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
@@ -148,6 +150,7 @@ describe("EformsignController (Integration)", () => {
             providers: [
                 VoidContractDocumentUsecase,
                 ContractSupersedeService,
+                { provide: CONTRACT_SUPERSEDE_REPOSITORY, useClass: PrismaContractSupersedeRepository },
                 { provide: EFORMSIGN_DOC_REPOSITORY, useValue: voidRepository },
                 { provide: EformsignDocsEventBus, useValue: voidEvents },
                 { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
@@ -1738,6 +1741,7 @@ describe("EformsignController (Integration)", () => {
                 providers: [
                     VoidContractDocumentUsecase,
                     ContractSupersedeService,
+                    { provide: CONTRACT_SUPERSEDE_REPOSITORY, useClass: PrismaContractSupersedeRepository },
                     { provide: EformsignDocsEventBus, useValue: voidEvents },
                     { provide: HolidayCalendarService, useValue: mirrorCalendarStub },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },

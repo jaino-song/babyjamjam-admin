@@ -1,6 +1,7 @@
 import {
     ConflictException,
     HttpException,
+    Inject,
     Injectable,
     InternalServerErrorException,
     Logger,
@@ -16,7 +17,10 @@ import { EformsignService } from "application/services/eformsign.service";
 import { successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
 import { codeOnlyProblemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import { hasCustomerSigned, isCancellableUnsignedContract } from "domain/utils/eformsign-customer-signature";
-import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    CONTRACT_SUPERSEDE_REPOSITORY,
+    IContractSupersedeRepository,
+} from "domain/repositories/contract-supersede.repository.interface";
 import { isEformsignDocumentAbsentError } from "infrastructure/api/eformsign-api.error";
 
 export interface SupersedeContractParams {
@@ -40,7 +44,8 @@ export interface SupersedeContractParams {
 @Injectable()
 export class ContractSupersedeService {
     constructor(
-        private readonly prisma: PrismaService,
+        @Inject(CONTRACT_SUPERSEDE_REPOSITORY)
+        private readonly repository: IContractSupersedeRepository,
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly eformsignService: EformsignService,
         private readonly documentMirrorService: EformsignDocumentMirrorService,
@@ -53,13 +58,7 @@ export class ContractSupersedeService {
         try {
             // Only this client's own contract can be superseded, never another
             // client's document or a service-record snapshot.
-            const document = await this.prisma.eformsign_doc.findUnique({
-                where: { documentId },
-                select: {
-                    clientId: true, documentKind: true,
-                    statusType: true, stepType: true, stepName: true,
-                },
-            });
+            const document = await this.repository.findSupersedeCandidate(documentId);
             if (
                 !document
                 || document.documentKind === "service_record_snapshot"

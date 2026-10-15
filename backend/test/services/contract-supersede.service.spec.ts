@@ -15,15 +15,13 @@ function build(overrides: {
     cancelResult?: unknown;
     terminal?: string[];
 } = {}) {
-    const prisma = {
-        eformsign_doc: {
-            findUnique: jest.fn().mockResolvedValue(overrides.document === undefined
+    const repository = {
+        findSupersedeCandidate: jest.fn().mockResolvedValue(overrides.document === undefined
                 ? {
                     clientId: 7, documentKind: "contract",
                     statusType: "030", stepType: "05", stepName: "고객 서명",
                 }
                 : overrides.document),
-        },
     };
     const credentialBoundary = {
         withCredentials: jest.fn(async (
@@ -43,12 +41,12 @@ function build(overrides: {
         purgeDocuments: jest.fn().mockResolvedValue(undefined),
     };
     const service = new ContractSupersedeService(
-        prisma as never,
+        repository as never,
         credentialBoundary as never,
         eformsignService as never,
         documentMirrorService as never,
     );
-    return { service, prisma, credentialBoundary, eformsignService, documentMirrorService };
+    return { service, repository, credentialBoundary, eformsignService, documentMirrorService };
 }
 
 const params = { branchId: BRANCH_ID, clientId: 7, documentId: "old-doc", principal };
