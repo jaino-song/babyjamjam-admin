@@ -160,32 +160,12 @@ export class RetryServiceRecordDocumentDto {
     expectedGeneration!: string;
 }
 
-// Local until the parallel shared-contract unit is integrated.
-export type ServiceRecordRevisionChangeValue = string | number | boolean | null | string[];
-
-export interface ServiceRecordRevisionFieldChange {
-    path: string;
-    before: ServiceRecordRevisionChangeValue;
-    after: ServiceRecordRevisionChangeValue;
-}
-
-export interface ServiceRecordRevisionSessionChange {
-    sessionIndex: number;
-    kind: "added" | "removed" | "changed";
-    serviceDateBefore: string | null;
-    serviceDateAfter: string | null;
-    changes: ServiceRecordRevisionFieldChange[];
-}
-
-export interface ServiceRecordRevisionChangesResponse {
-    revisionId: string;
-    revisionNumber: number;
-    confirmedAt: string;
-    formVersion: number;
-    beforeAvailable: boolean;
-    basicInfo: ServiceRecordRevisionFieldChange[];
-    sessions: ServiceRecordRevisionSessionChange[];
-}
+export type {
+    ServiceRecordRevisionChangeValue,
+    ServiceRecordRevisionChangesResponse,
+    ServiceRecordRevisionFieldChange,
+    ServiceRecordRevisionSessionChange,
+} from "@babyjamjam/shared/types/service-record";
 
 // Explicit aliases make the adapter naming clear without introducing a second
 // validation shape for administrator routes.
