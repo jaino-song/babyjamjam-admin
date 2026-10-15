@@ -1,7 +1,7 @@
 # Galaxy helper 실행 경로와 재개 지점
 
 작성일: 2026-10-15 · [BJJ-354](https://linear.app/jaino-studio/issue/BJJ-354)
-상태: **Phase 0 OPEN — 문서 사전 점검만 진행**
+상태: **Phase 0 OPEN — 사용자 승인으로 검증용 APK 선제작 진행**
 
 ## 실행 기준
 
@@ -10,13 +10,13 @@
 | 저장소 | `jaino-song/babyjamjam-admin` |
 | 기준 브랜치 | `dev` |
 | 기준 커밋 | `037ed2bdde6188869017bbb7173f54cace9739b2` |
-| 계획 | implementation-plan-v1.1 |
+| 계획 | implementation-plan-v1.2 |
 | 문서 작업 | Task 0.1 / Execution: N/A / Documentation: MAIN / Audit: SOL |
 | 문서 브랜치 | `codex/unit/helper-contract-preflight` |
 | 문서 worktree | `/workspace/scratch/632338030b0b/implementation-worktrees/helper-contract-preflight` |
 | 실험 브랜치 | `codex/unit/helper-saf-spike` |
 | 실험 worktree | `/workspace/scratch/632338030b0b/implementation-worktrees/helper-saf-spike` |
-| 실험 시작 상태 | 기준 커밋에서 생성한 깨끗한 worktree. 코드 dispatch 없음 |
+| 실험 시작 상태 | 기준 커밋에서 시작. 2026-10-15 사용자 승인 후 지정 Luna에 코드 준비 배정 |
 
 `git ls-remote`와 checkout에서 같은 기준 SHA를 확인했다. 기존 앱의 코드·스키마·의존성·실행 설정은 변경하지 않았다. integration worktree는 아직 만들지 않았으며 merge도 수행하지 않았다.
 
@@ -47,17 +47,17 @@
 |---|---|---|
 | GitHub dev 읽기/clone | 성공, 위 SHA 일치 | 독립 worktree 준비 가능 |
 | Git worktree | 문서/실험 두 개 생성 | 환경 브랜치에 직접 쓰지 않음 |
-| 구현 agent | 요청된 `gpt-5.6-luna`, max 세션에서 exec preflight 완료 | 모델 실행 가능; 실제 code task는 미시작 |
-| Java | OpenJDK Runtime 17.0.20 | JDK compiler가 없으므로 빌드 가능으로 보지 않음 |
-| `javac`, `gradle`, `adb` | PATH에 없음 | 컴파일·APK 설치·기기 검색 NOT_RUN |
-| Android SDK | 확인한 표준 경로에 없음 | compile/target 37 빌드 NOT_RUN |
+| 구현 agent | `gpt-5.6-luna`, max로 검증용 APK 코드 준비 진행 | 실험 allow-list 내부만 변경 |
+| Java | 공식 Temurin JDK 17.0.20.1+1 설치, SHA-256 확인, javac 실행 성공 | 독립 Android 빌드에 사용 |
+| Gradle/adb | Gradle 9.4.1 공식 배포 SHA-256 확인, platform-tools 37.0.1 설치 | adb 기기 목록 비어 있음; 실기기 설치 NOT_RUN |
+| Android SDK | `platforms;android-37.0`, build-tools 36.0.0/37.0.0 설치 성공 | 실험 프로젝트의 빌드 결과는 별도 evidence에서 기록 |
 | `env-bootstrap`, `env-restore` | PATH에 없음 | env 복원 완료로 기록하지 않음; env 값 열람 없음 |
 | Codex Router/scout | 로컬 실행기·scout validator·역할 binding 부재 | Task 0.1 다중 파일 탐색 BLOCKED |
 | Vault resolver | 실행 경로/연결 도구 부재 | 검색·capture 미수행, 성공으로 기록하지 않음 |
-| 실제 Galaxy | 현재 세션에 기기 접근/실행 증거 없음 | SAF HW 테스트 NOT_RUN; gate BLOCKED |
-| Android 공식 SDK 다운로드 | HEAD 접근 1회 성공, repository XML 요청은 timeout | 패키지 설치·빌드 성공 증거 아님 |
+| 실제 Galaxy | `adb devices -l` 실행 결과 연결 기기 없음 | SAF HW 테스트 NOT_RUN; gate BLOCKED |
+| Android 공식 SDK 다운로드 | 기존 프록시를 통해 지정 패키지 설치 exit 0 | 다운로드/설치와 앱 빌드/기기 동작 검증을 구분 |
 
-Android 17/API 37 설정 근거: [Android 공식 SDK 설정](https://developer.android.com/about/versions/17/setup-sdk). AGP/Gradle/Kotlin/Compose 조합은 설치·빌드 후 고정하며 이 문서에서 호환을 단정하지 않는다.
+Android 17/API 37 설정 근거: [Android 공식 SDK 설정](https://developer.android.com/about/versions/17/setup-sdk). 실험 앱의 예정 조합은 AGP 9.2.1/Gradle 9.4.1/JDK 17과 API 37이다. 공식 AGP 9.2 호환표를 확인했으며 실제 빌드 결과는 실험 evidence에서 기록한다. 제품 Compose 조합은 후속 Phase에서 고정한다.
 
 ## 지정 탐색기 제약
 
@@ -76,7 +76,7 @@ Android 17/API 37 설정 근거: [Android 공식 SDK 설정](https://developer.a
 | UI 구조 | `pnpm lint:ui-architecture` | NOT_RUN — UI 변경 없음 |
 | QA 실행 | `pnpm qa:fe`, `pnpm qa:mobile -- --port <지정 포트>` | NOT_RUN — 서비스 미기동 |
 | package test/lint/type-check | 실제 package script에서 확정 필요 | BLOCKED — 지정 탐색기 필요 |
-| Android | 신규 독립 Gradle의 실제 task 확정 필요 | NOT_RUN — 프로젝트/SDK/Gradle 미준비 |
+| Android | 독립 실험 Gradle의 testDebugUnitTest/lintDebug/assembleDebug | 작업 중 — 최종 실행 결과는 실험 evidence에서 기록 |
 | PRD 수락/회귀 | 정본 Test Spec v1.0의 44개 ID | 전부 NOT_RUN |
 
 root에 `typecheck`라는 script가 있다고 가정하지 않는다. 문서 체크 성공을 backend/frontend/Android 테스트 성공으로 대체하지 않는다.
@@ -84,10 +84,10 @@ root에 `typecheck`라는 script가 있다고 가정하지 않는다. 문서 체
 ## 현재 gate와 재개 순서
 
 1. **Task 0.1 일부 진행:** 계약 이관, revision/이슈/worktree binding 완료. 정확한 구현/테스트 경로·API fixture·검증 명령·ADR는 지정 탐색기 복구 후 고정한다.
-2. **Task 0.2 BLOCKED:** 승인된 Phase 0 entry의 “폰이 없으면 문서 preflight만 진행” 조건을 유지한다. 최소 APK 코드도 아직 작성하지 않았다. 독립 dispatch 검수에서 이 제한을 재확인했다.
+2. **Task 0.2 코드 준비 진행 / HW BLOCKED:** 2026-10-15 사용자가 검증용 APK 선제작을 명시적으로 승인했다. Implementation Plan v1.2에 순서 변경을 반영하고 독립 dispatch 검수 APPROVE 후 구현에 착수했다. 실제 폰 검증과 Phase 0 close 조건은 그대로 유지한다.
 3. 대상 폰의 모델·Android/One UI/삼성 전화 버전, 사용자가 허용한 합성 시험 녹음, 설치/검증 방법을 준비한다. raw 녹음과 파일명은 작업 이슈에 올리지 않는다.
 4. Task 0.2의 원래 allow-list는 `experiments/helper-saf-spike/**`와 `docs/recording-helper/evidence/saf-spike.md`다. 실제 작성은 지정 Luna worker가 담당하고 실험 코드는 제품 `dev`에 병합하지 않는다.
 5. 실기기에서 폴더 선택/읽기, 영구 권한·재부팅, 권한 회수·복구, 녹음 중/종료 후 크기·시간·문서 ID 변화, rename/늦은 노출을 확인한다. 합성 fixture/에뮬레이터 결과는 Samsung 실기기 증거를 대신하지 않는다.
 6. Phase 0 close의 실제 근거가 모이기 전에는 Phase 1의 Drive/n8n 시험과 제품 Android scaffold를 시작하지 않는다.
 
-이 문서는 실행 중단 지점이며 Phase 0 완료 보고가 아니다. 독립 코드 리뷰, APK 빌드, 기기 테스트, Drive 업로드, backend 변경, 배포는 수행하지 않았다.
+이 문서는 Phase 0 완료 보고가 아니다. 검증 앱의 실제 빌드·코드 검수 결과는 `docs/recording-helper/evidence/saf-spike.md`에 기록한다. 실기기 테스트, Drive 업로드, backend 변경, 배포는 아직 수행하지 않았다.
