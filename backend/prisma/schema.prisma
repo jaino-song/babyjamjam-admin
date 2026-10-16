@@ -1363,6 +1363,7 @@ model service_record_revision {
   confirmedByUserId     String              @map("confirmed_by_user_id") @db.Uuid
   confirmedAt           DateTime            @default(now()) @map("confirmed_at") @db.Timestamptz(6)
   payload               Json                @db.JsonB
+  beforeSnapshot        Json?               @map("before_snapshot") @db.JsonB
   plannedSessions       Json                @map("planned_sessions") @db.JsonB
   provenance            Json                @db.JsonB
   formVersionAtConfirm Int                 @map("form_version_at_confirm")

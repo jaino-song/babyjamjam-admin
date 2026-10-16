@@ -49,6 +49,8 @@ import type {
     ServiceRecordRevisionHistoryResponse,
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { buildServiceRecordRevisionChanges } from "application/policies/service-record-revision-changes.policy";
+import type { ServiceRecordRevisionChangesResponse } from "interface/dto/admin-service-record-edit.dto";
 
 type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
@@ -279,6 +281,21 @@ export class AdminServiceRecordService {
         const result = await repository.listRevisionHistory(branchId, clientId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return normalizeRevisionHistoryResponse(result);
+    }
+
+    async getRevisionChanges(
+        branchId: string,
+        clientId: number,
+        revisionId: string,
+    ): Promise<ServiceRecordRevisionChangesResponse> {
+        const normalizedRevisionId = normalizePathIdentifier(revisionId);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedRevisionId)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        await this.assertClientBelongsToBranch(branchId, clientId);
+        const result = await this.getRevisionStatusRepository().findRevisionForChanges(branchId, clientId, normalizedRevisionId);
+        if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return buildServiceRecordRevisionChanges(result);
     }
 
     /**

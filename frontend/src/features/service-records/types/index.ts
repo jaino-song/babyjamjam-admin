@@ -48,17 +48,22 @@ export { AdminServiceRecordEditApiError } from "./admin-edit";
 
 export type {
     RetryServiceRecordDocumentInput,
+    ServiceRecordRevisionChangeValue,
+    ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionFieldChange,
     ServiceRecordRevisionHistoryEntry,
     ServiceRecordRevisionHistoryResponse,
+    ServiceRecordRevisionSessionChange,
 } from "./revisions";
 export {
     SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS,
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
     SERVICE_RECORD_DOCUMENT_OPERATIONS,
     SERVICE_RECORD_DOCUMENT_STATUSES,
+    normalizeServiceRecordRevisionChanges,
     normalizeServiceRecordRevisionDocumentSummary,
     normalizeServiceRecordRevisionHistory,
 } from "./revisions";

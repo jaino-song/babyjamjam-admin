@@ -2255,6 +2255,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 serviceRecordCaseId: input.serviceRecordCaseId,
             },
             orderBy: { revisionNumber: "desc" },
+            select: { revisionNumber: true },
         });
         const revisionNumber = (latest?.revisionNumber ?? 0) + 1;
         if (!Number.isInteger(revisionNumber) || revisionNumber < 1) {
@@ -2269,6 +2270,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     revisionNumber,
                     confirmedByUserId: input.actorUserId,
                     payload: toPrismaJson(input.payload),
+                    beforeSnapshot: input.beforeSnapshot == null ? Prisma.DbNull : toPrismaJson(input.beforeSnapshot),
                     plannedSessions: toPrismaJson(input.plannedSessions),
                     provenance: toPrismaJson(input.provenance),
                     formVersionAtConfirm: input.formVersionAtConfirm,
@@ -2282,6 +2284,32 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
             throw error;
         }
+    }
+
+    async findRevisionForChanges(branchId: string, clientId: number, revisionId: string) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        // Do not send malformed identifiers to PostgreSQL's uuid cast (or the
+        // conflict-oriented write validator). All unavailable revisions are 404.
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revisionId)) return null;
+        const revision = await this.prisma.service_record_revision.findFirst({
+            where: { id: revisionId, branchId, serviceRecordCase: { branchId, clientId } },
+            select: {
+                id: true,
+                revisionNumber: true,
+                confirmedAt: true,
+                formVersionAtConfirm: true,
+                payload: true,
+                plannedSessions: true,
+                beforeSnapshot: true,
+            },
+        });
+        return revision ? {
+            ...revision,
+            payload: toDomainJson(revision.payload),
+            plannedSessions: toDomainJson(revision.plannedSessions),
+            beforeSnapshot: toDomainJson(revision.beforeSnapshot),
+        } : null;
     }
 
     async listRevisionHistory(
