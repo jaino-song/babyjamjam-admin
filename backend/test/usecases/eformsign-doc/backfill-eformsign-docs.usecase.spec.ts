@@ -1694,3 +1694,108 @@ describe("BackfillEformsignDocsUsecase", () => {
         );
     });
 });
+
+describe("Backfill collection observation", () => {
+    const page = { documents: [], total_rows: 0 };
+    function setup(observer = { page: jest.fn().mockResolvedValue(undefined), scan: jest.fn().mockResolvedValue(undefined),
+        finish: jest.fn().mockResolvedValue(undefined) }) {
+        const client = { getInProgressDocumentsPage: jest.fn().mockResolvedValue(page),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue(page), getRejectedDocumentsPage: jest.fn().mockResolvedValue(page) };
+        const boundary = createBoundary();
+        const mirror = { mirrorRemoteDocument: jest.fn().mockResolvedValue(undefined) };
+        const writer = { begin: jest.fn().mockResolvedValue(observer) };
+        const usecase = new BackfillEformsignDocsUsecase(client as never, boundary as never,
+            { findByDocumentIdUnscoped: jest.fn() } as never, mirror as never, undefined, undefined, writer as never);
+        const receiptContext = { configuredCompanyId: "company-1", trigger: "operator-backfill" as const, lockMode: "valkey" as const };
+        return { client, boundary, mirror, writer, observer, usecase, receiptContext };
+    }
+
+    it("records six actual empty scans through the explicit optional writer binding", async () => {
+        const { usecase, observer, receiptContext } = setup();
+        await usecase.execute({ receiptContext }, TEST_PRINCIPAL);
+        expect(observer.page).toHaveBeenCalledTimes(6);
+        expect(observer.scan).toHaveBeenCalledTimes(6);
+        expect(observer.page.mock.calls.map(([value]) => [value.documentType, value.pass, value.startOffset,
+            value.returnedCount, value.totalCount, value.terminal])).toEqual([
+            ["01", 1, 0, 0, 0, true], ["01", 2, 0, 0, 0, true],
+            ["03", 1, 0, 0, 0, true], ["03", 2, 0, 0, 0, true],
+            ["04", 1, 0, 0, 0, true], ["04", 2, 0, 0, 0, true],
+        ]);
+        expect(observer.finish).toHaveBeenCalledWith("succeeded");
+    });
+
+    it("begins before credentials and observes the original credential rejection", async () => {
+        const { usecase, observer, boundary, writer, receiptContext } = setup();
+        const error = new Error("credential failure");
+        boundary.withCredentials.mockRejectedValueOnce(error as never);
+        await expect(usecase.execute({ receiptContext }, TEST_PRINCIPAL)).rejects.toBe(error);
+        expect(writer.begin.mock.invocationCallOrder[0]).toBeLessThan(boundary.withCredentials.mock.invocationCallOrder[0]!);
+        expect(observer.finish).toHaveBeenCalledWith("failed");
+    });
+
+    it("awaits observation before mirror and stops after lease loss during observation", async () => {
+        const { usecase, client, observer, mirror, receiptContext } = setup();
+        client.getInProgressDocumentsPage.mockResolvedValue({ documents: [createRemoteDocument("doc-1")], total_rows: 1 } as never);
+        let held = true;
+        observer.page.mockImplementationOnce(async () => { held = false; });
+        await expect(usecase.execute({ receiptContext, shouldContinue: () => held }, TEST_PRINCIPAL)).rejects.toThrow("lease");
+        expect(mirror.mirrorRemoteDocument).not.toHaveBeenCalled();
+        expect(observer.finish).toHaveBeenCalledWith("interrupted", expect.any(Function));
+    });
+
+    it("preserves the rejected fetch as the cause when the lease expires during failure observation", async () => {
+        const { usecase, client, observer, mirror, receiptContext } = setup();
+        const fetchError = new Error("provider request rejected");
+        client.getInProgressDocumentsPage.mockRejectedValueOnce(fetchError);
+        let held = true;
+        const shouldContinue = jest.fn(() => held);
+        observer.page.mockImplementationOnce(async () => { held = false; });
+        let rejected: unknown;
+        try { await usecase.execute({ receiptContext, shouldContinue }, TEST_PRINCIPAL); }
+        catch (error) { rejected = error; }
+        expect(rejected).toBeInstanceOf(BackfillEformsignDocsError);
+        expect((rejected as BackfillEformsignDocsError).cause).toBe(fetchError);
+        expect((rejected as Error).message).toContain("lease");
+        expect(shouldContinue.mock.invocationCallOrder.some(order => order > observer.page.mock.invocationCallOrder[0]!)).toBe(true);
+        expect(client.getCompletedDocumentsPage).not.toHaveBeenCalled();
+        expect(client.getRejectedDocumentsPage).not.toHaveBeenCalled();
+        expect(mirror.mirrorRemoteDocument).not.toHaveBeenCalled();
+        expect(observer.finish).toHaveBeenCalledWith("interrupted", shouldContinue);
+    });
+
+    it("keeps fetch failures unknown and preserves business success when the observer fails", async () => {
+        const first = setup();
+        first.client.getInProgressDocumentsPage.mockRejectedValueOnce(new Error("private provider text"));
+        await expect(first.usecase.execute({ receiptContext: first.receiptContext }, TEST_PRINCIPAL)).rejects.toThrow();
+        expect(first.observer.page).toHaveBeenCalledWith(expect.objectContaining({ returnedCount: null, totalCount: null,
+            terminal: null, outcome: "failed", failureCode: "fetch-failed" }));
+        expect(JSON.stringify(first.observer.page.mock.calls)).not.toContain("private provider text");
+        const second = setup();
+        second.observer.page.mockRejectedValue(new Error("ledger down"));
+        second.observer.finish.mockRejectedValue(new Error("ledger down"));
+        await expect(second.usecase.execute({ receiptContext: second.receiptContext }, TEST_PRINCIPAL)).resolves.toMatchObject({ failed: 0 });
+    });
+
+    it("observes a fetched page before a mirror failure and preserves the business failure", async () => {
+        const { usecase, client, observer, mirror, receiptContext } = setup();
+        client.getInProgressDocumentsPage.mockResolvedValue({ documents: [createRemoteDocument("private-doc")], total_rows: 1 } as never);
+        mirror.mirrorRemoteDocument.mockRejectedValue(new Error("mirror rejected"));
+        await expect(usecase.execute({ receiptContext }, TEST_PRINCIPAL)).rejects.toThrow();
+        expect(observer.page.mock.invocationCallOrder[0]).toBeLessThan(mirror.mirrorRemoteDocument.mock.invocationCallOrder[0]!);
+        expect(JSON.stringify(observer.page.mock.calls)).not.toContain("private-doc");
+        expect(observer.finish).toHaveBeenCalledWith("failed");
+    });
+
+    it("records actual offsets in both passes and a failed pass2 page2 without fabricated counts", async () => {
+        const { usecase, client, observer, receiptContext } = setup();
+        const docs = Array.from({ length: 100 }, (_, index) => createRemoteDocument(`doc-${index}`));
+        client.getInProgressDocumentsPage
+            .mockResolvedValueOnce({ documents: docs, total_rows: 101 } as never)
+            .mockResolvedValueOnce({ documents: [createRemoteDocument("last")], total_rows: 101 } as never)
+            .mockResolvedValueOnce({ documents: docs, total_rows: 101 } as never)
+            .mockRejectedValueOnce(new Error("down"));
+        await expect(usecase.execute({ receiptContext }, TEST_PRINCIPAL)).rejects.toThrow();
+        expect(observer.page.mock.calls.slice(0, 4).map(([value]) => [value.pass, value.ordinal, value.startOffset,
+            value.returnedCount])).toEqual([[1, 0, 0, 100], [1, 1, 100, 1], [2, 0, 0, 100], [2, 1, 100, null]]);
+    });
+});
