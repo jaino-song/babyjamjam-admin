@@ -118,7 +118,7 @@ describe("EformsignDocReconcileSchedulerService", () => {
 
             expect(lockService.runExclusive).toHaveBeenCalledTimes(1);
             expect(backfill.execute).toHaveBeenCalledWith(
-                expect.objectContaining({ shouldContinue: expect.any(Function) }),
+                expect.objectContaining({ shouldContinue: expect.any(Function), receiptContext: expect.objectContaining({ trigger: "reconciliation", lockMode: "valkey" }) }),
                 reconciliationPrincipal,
             );
         });
@@ -163,7 +163,7 @@ describe("EformsignDocReconcileSchedulerService", () => {
             expect(lockService.runExclusive).not.toHaveBeenCalled();
             expect(backfill.execute).toHaveBeenCalledTimes(2);
             expect(backfill.execute).toHaveBeenCalledWith(
-                expect.objectContaining({ shouldContinue: expect.any(Function) }),
+                expect.objectContaining({ shouldContinue: expect.any(Function), receiptContext: expect.objectContaining({ trigger: "reconciliation", lockMode: "approved-unlocked" }) }),
                 reconciliationPrincipal,
             );
             expect(warn.mock.calls.filter(([message]) =>

@@ -108,6 +108,8 @@ async function runWithoutDistributedLock(
         "Running without a distributed lock (EFORMSIGN_BACKFILL_ALLOW_UNLOCKED=true).\n",
     );
     return backfill.execute({
+        receiptContext: { configuredCompanyId: configService.get<string>("EFORMSIGN_COMPANY_ID")?.trim() || null,
+            trigger: "operator-backfill", lockMode: "approved-unlocked" },
         onProgress: logProgress,
         suppressOutboundAutomation: true,
     }, createEformsignGlobalWorkerPrincipal("backfill"));
@@ -138,6 +140,8 @@ async function main(): Promise<void> {
         const summary = lock.isAvailable()
             ? await lock.runExclusive((lease) =>
                 backfill.execute({
+                    receiptContext: { configuredCompanyId: configService.get<string>("EFORMSIGN_COMPANY_ID")?.trim() || null,
+                        trigger: "operator-backfill", lockMode: "valkey" },
                     onProgress: logProgress,
                     shouldContinue: lease.isHeld,
                     suppressOutboundAutomation: true,

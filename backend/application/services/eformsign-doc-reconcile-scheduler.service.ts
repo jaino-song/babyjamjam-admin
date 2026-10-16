@@ -182,6 +182,8 @@ export class EformsignDocReconcileSchedulerService {
         if (this.lockService.isAvailable()) {
             return this.lockService.runExclusive((lease) =>
                 this.backfillUsecase.execute({
+                    receiptContext: { configuredCompanyId: this.configService.get<string>("EFORMSIGN_COMPANY_ID")?.trim() || null,
+                        trigger: "reconciliation", lockMode: "valkey" },
                     shouldContinue: () => withinDeadline() && lease.isHeld() && this.schedulerLease.holdsLease(),
                 }, createEformsignGlobalWorkerPrincipal("reconciliation")));
         }
@@ -198,7 +200,9 @@ export class EformsignDocReconcileSchedulerService {
         }
 
         return this.backfillUsecase.execute(
-            { shouldContinue: () => withinDeadline() && this.schedulerLease.holdsLease() },
+            { receiptContext: { configuredCompanyId: this.configService.get<string>("EFORMSIGN_COMPANY_ID")?.trim() || null,
+                trigger: "reconciliation", lockMode: "approved-unlocked" },
+            shouldContinue: () => withinDeadline() && this.schedulerLease.holdsLease() },
             createEformsignGlobalWorkerPrincipal("reconciliation"),
         );
     }
