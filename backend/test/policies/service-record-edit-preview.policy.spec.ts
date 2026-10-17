@@ -138,6 +138,41 @@ describe("service-record-edit-preview.policy", () => {
         expect(preview.blockingReasons).toEqual([]);
     });
 
+    it("describes impacted assignments with caregiver name and stored period", () => {
+        const build = (assignmentOverrides: Partial<Omit<typeof assignment, "employeeName">> & { employeeName?: string | null }) => {
+            const base = source();
+            const named = source({ assignments: [{ ...assignment, ...assignmentOverrides }] });
+            const normalized = normalizeServiceRecordEditChanges(
+                base,
+                {},
+                { sessions: [{ sessionIndex: 3, notes: "변경" }] },
+                KR_BUILTIN_CALENDAR,
+                { sessionIndex: 3, toDate: "2026-09-11" },
+            );
+            return buildServiceRecordEditPreview({
+                calendar: KR_BUILTIN_CALENDAR,
+                draftId: "33333333-3333-4333-8333-333333333333",
+                draftVersion: 2,
+                sourceCaseVersion: 7,
+                sourceFingerprint: "source-fingerprint",
+                source: named,
+                changes: normalized.changes,
+                previewId: "preview-1",
+            });
+        };
+
+        const preview = build({ employeeName: "임선녀", startDate: "2026-09-01", endDate: "2026-09-30" });
+        expect(preview.impactedAssignments).toEqual([assignment.id]);
+        expect(preview.impactedAssignmentDetails).toEqual([
+            { assignmentId: assignment.id, employeeName: "임선녀", startDate: "2026-09-01", endDate: "2026-09-30" },
+        ]);
+
+        const unnamed = build({ employeeName: null, startDate: "", endDate: "", scheduleStartDate: "2026-09-02", scheduleEndDate: "2026-09-29" });
+        expect(unnamed.impactedAssignmentDetails).toEqual([
+            { assignmentId: assignment.id, employeeName: null, startDate: "2026-09-02", endDate: "2026-09-29" },
+        ]);
+    });
+
     it("allows a reverse move from the normalized current draft baseline", () => {
         const first = normalizeServiceRecordEditChanges(
             source(),

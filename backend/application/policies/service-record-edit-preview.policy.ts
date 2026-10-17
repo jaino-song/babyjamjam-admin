@@ -969,6 +969,16 @@ export function buildServiceRecordEditPreview(
         const entry = after.find((candidate) => candidate.sessionIndex === index);
         if (entry) impactedAssignments.add(entry.assignmentId);
     }
+    const impactedAssignmentIds = [...impactedAssignments].sort();
+    const impactedAssignmentDetails = impactedAssignmentIds.map((assignmentId) => {
+        const assignment = assignmentById(input.source, assignmentId);
+        return {
+            assignmentId,
+            employeeName: assignment?.employeeName ?? null,
+            startDate: assignment ? (assignment.startDate || assignment.scheduleStartDate || null) : null,
+            endDate: assignment ? (assignment.endDate || assignment.scheduleEndDate || null) : null,
+        };
+    });
     return {
         previewId: input.previewId,
         draftId: input.draftId,
@@ -981,7 +991,8 @@ export function buildServiceRecordEditPreview(
         after: vectorDates(after),
         provenance: previewRanges(after),
         contentChanges: content,
-        impactedAssignments: [...impactedAssignments].sort(),
+        impactedAssignments: impactedAssignmentIds,
+        impactedAssignmentDetails,
         blockingReasons,
         signatureMetadata: signatureMetadataForPreview(input.source, blockingReasons),
         documentScope: documentScopeForPreview(input.source),

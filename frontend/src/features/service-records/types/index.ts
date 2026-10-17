@@ -12,6 +12,7 @@ export type {
     ServiceRecordEditPreviewAssignmentRange,
     ServiceRecordEditPreviewBlockingReason,
     ServiceRecordEditPreviewContentChanges,
+    ServiceRecordEditPreviewImpactedAssignment,
     ServiceRecordEditPreviewResponse,
     ServiceRecordEditPreviewVector,
     ServiceRecordEditConfirmDocumentStatus,
