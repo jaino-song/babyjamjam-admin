@@ -243,9 +243,11 @@ function currentPlannedSessionsMatchDays(
  * the stored vector still attributes to an earlier, replaced one. Such a day
  * matches its slot when its writer is the single assignment of the case with
  * that schedule and employee, the vector's owner was replaced, and the writer
- * is that owner's successor: it starts on or after the owner's end (a handover
- * stores end == start). The date check in the caller still applies, and any
- * other disagreement stays a mismatch.
+ * is that owner's successor: its schedule id is greater (autoincrement, so
+ * later). Stored assignment dates are record-only and may overlap, so they
+ * never decide this. The service-date check in the caller still applies, and
+ * any other disagreement stays a mismatch. Twin of isSuccessorOf in
+ * service-record-edit-preview.policy.ts.
  */
 function isBackfilledBySuccessor(
     record: FinalizationCaseSnapshot,
@@ -260,7 +262,9 @@ function isBackfilledBySuccessor(
     if (writers.length !== 1) return false;
     const writer = writers[0]!;
     return writer.id !== plannedAssignment.id
-        && writer.startDate.getTime() >= plannedAssignment.endDate.getTime();
+        && writer.scheduleId !== null
+        && plannedAssignment.scheduleId !== null
+        && writer.scheduleId > plannedAssignment.scheduleId;
 }
 
 function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {

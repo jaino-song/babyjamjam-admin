@@ -376,10 +376,19 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
     const secondDate = new Date("2026-09-08T00:00:00.000Z");
 
     /** The stored vector attributes both sessions to the replaced caregiver (schedule 100, employee 11). */
-    function backfilledSource(options: { vectorOwner?: "replaced" | "current"; writerReplaced?: boolean } = {}) {
+    function backfilledSource(options: {
+        vectorOwner?: "replaced" | "current";
+        writerReplaced?: boolean;
+        /** Stored assignment dates, which are record-only and must not decide who may backfill. */
+        replacedDates?: { startDate: Date; endDate: Date };
+        writerDates?: { startDate: Date; endDate: Date };
+        /** Overrides the backfilling caregiver's schedule id (default 200). */
+        writerScheduleId?: number;
+    } = {}) {
+        const writerScheduleId = options.writerScheduleId ?? 200;
         const base = source();
         const vectorOwner = options.vectorOwner === "current"
-            ? { assignmentId: currentAssignmentId, scheduleId: 200, employeeId: 12 }
+            ? { assignmentId: currentAssignmentId, scheduleId: writerScheduleId, employeeId: 12 }
             : { assignmentId: replacedAssignmentId, scheduleId: 100, employeeId: 11 };
         const plannedEntry = (sessionIndex: number, serviceDate: string) => ({
             sessionIndex,
@@ -399,17 +408,17 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
                     scheduleId: 100,
                     employeeId: 11,
                     employeeNameSnapshot: "제공인력",
-                    startDate: date,
-                    endDate: secondDate,
+                    startDate: options.replacedDates?.startDate ?? date,
+                    endDate: options.replacedDates?.endDate ?? secondDate,
                     schedule: { replaced: true },
                 },
                 {
                     id: currentAssignmentId,
-                    scheduleId: 200,
+                    scheduleId: writerScheduleId,
                     employeeId: 12,
                     employeeNameSnapshot: "신규인력",
-                    startDate: secondDate,
-                    endDate: secondDate,
+                    startDate: options.writerDates?.startDate ?? secondDate,
+                    endDate: options.writerDates?.endDate ?? secondDate,
                     schedule: { replaced: options.writerReplaced ?? false },
                 },
             ],
@@ -418,7 +427,7 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
                 {
                     ...base.days[0]!,
                     id: "00000000-0000-4000-8000-000000000051",
-                    scheduleId: 200,
+                    scheduleId: writerScheduleId,
                     caseSessionIndex: 2,
                     sessionIndex: 2,
                     employeeId: 12,
@@ -480,6 +489,15 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
         expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
     });
 
+    it("accepts a backfill when the successor's stored start precedes the replaced caregiver's stored end", async () => {
+        // The replaced caregiver was stored [09-08, 09-08] while the successor starts earlier, on 09-07.
+        const jobService = await freeze(backfilledSource({
+            replacedDates: { startDate: secondDate, endDate: secondDate },
+            writerDates: { startDate: date, endDate: new Date("2026-09-30T00:00:00.000Z") },
+        }));
+        expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+    });
+
     const failsClosed = async (record: ReturnType<typeof backfilledSource>) => {
         await expect(freeze(record)).rejects.toMatchObject({
             response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
@@ -494,6 +512,11 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
         // The vector names the (replaced) later assignment for both slots; the earlier one wrote slot 1.
         const record = backfilledSource({ vectorOwner: "current", writerReplaced: true });
         await failsClosed(record);
+    });
+
+    it("still fails closed when the writer's schedule id is lower than the replaced vector owner's", async () => {
+        // The stored dates alone would have accepted this (writer starts on the owner's end).
+        await failsClosed(backfilledSource({ writerScheduleId: 50 }));
     });
 
     it("still fails closed when the vector's owner was not replaced, even for a later writer", async () => {
