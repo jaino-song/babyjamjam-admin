@@ -375,10 +375,14 @@ function documentStatusTone(client: Pick<Client, "documentStatus" | "hasSigned">
 }
 
 /**
- * What the contract card and the "현재 단계" row show. The coarse client summary is a liveness
- * summary: a rejected (071) contract still reads as signed there, so the document's own display
- * status takes over for 반려됨 and 파기됨. A linked older document must not inherit the
- * latest contract's coarse status. Clients without a loaded document retain the summary.
+ * What the contract card and the "현재 단계" row show. The loaded document's own display status
+ * decides, for the latest contract and for a linked older one alike, so the card reads the same
+ * as the contracts list and the desktop card (desktop ClientDetailPanel: the client summary must
+ * never override the document). The coarse client summary is a liveness summary — it reads 서명
+ * 완료 for a contract still at the provider-review step and for a rejected (071) one — so it is
+ * only the fallback when the document is not loaded yet (loading, paused) or carries no display
+ * status. A linked older document without a display status shows 알 수 없음 rather than inheriting
+ * the latest contract's coarse status.
  */
 function contractCardStatus(
   client: Pick<Client, "documentStatus" | "hasSigned" | "latestContractDocumentId" | "eDocId">,
@@ -398,7 +402,9 @@ function contractCardStatus(
       rowTone: "burgundy",
     };
   }
-  if (contractDocument && (client.documentStatus === "voided" || contractDocument.id !== (client.latestContractDocumentId ?? client.eDocId))) {
+  const isLinkedOlderDocument = Boolean(contractDocument)
+    && contractDocument?.id !== (client.latestContractDocumentId ?? client.eDocId);
+  if (contractDocument && (client.documentStatus === "voided" || isLinkedOlderDocument || isContractDocDisplayStatus(displayStatus))) {
     const ownStatus = isContractDocDisplayStatus(displayStatus) ? displayStatus : "unknown";
     const tone = ownStatus === "completed" || ownStatus === "signed" ? "green"
       : ownStatus === "revoked" ? "burgundy"
@@ -734,6 +740,10 @@ export function ClientDetailContent({
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
     enabled: activeTab === "serviceRecords",
   });
+  // Offline, a first load is paused: not loading, not failed, and no data. It must not fall through
+  // to "제공기록지 배정 정보가 없습니다." (BJJ-434) — hold the skeleton until the load can succeed or fail.
+  const isServiceRecordsLoading =
+    serviceRecordsQuery.isLoading || (serviceRecordsQuery.isPaused && serviceRecordsQuery.data === undefined);
   const authUserQuery = useGetAuthUser();
   const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
@@ -1699,7 +1709,7 @@ export function ClientDetailContent({
           client={client}
           activeTab={activeTab}
           overview={serviceRecordsQuery.data}
-          isLoading={serviceRecordsQuery.isLoading}
+          isLoading={isServiceRecordsLoading}
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}

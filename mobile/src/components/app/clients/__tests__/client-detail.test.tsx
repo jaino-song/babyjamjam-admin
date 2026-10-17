@@ -53,16 +53,22 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
   }),
 }));
 
+const mockServiceRecordsQuery: {
+  data: unknown;
+  isError: boolean;
+  isLoading: boolean;
+  isPaused: boolean;
+  isFetching: boolean;
+  refetch: jest.Mock;
+} = { data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false, refetch: jest.fn() };
+const mockServiceRecordsRenders: Array<{ isLoading: boolean; isError: boolean }> = [];
+
 jest.mock("@/hooks/useServiceRecords", () => ({
   applyServiceScheduleChange: jest.fn(),
   fetchClientServiceRecords: jest.fn(),
   previewServiceScheduleChange: jest.fn(),
   resetServiceRecordLink: jest.fn(),
-  useClientServiceRecords: () => ({
-    data: undefined,
-    isError: false,
-    isLoading: false,
-  }),
+  useClientServiceRecords: () => mockServiceRecordsQuery,
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -115,7 +121,10 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 jest.mock("../client-service-records", () => ({
-  ClientServiceRecords: () => null,
+  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean }) => {
+    mockServiceRecordsRenders.push({ isLoading: props.isLoading, isError: props.isError });
+    return null;
+  },
 }));
 
 jest.mock("../ServiceRecordLinkResetResultModal", () => ({
@@ -487,15 +496,16 @@ describe("ClientDetailContent", () => {
   });
 
   it.each([
-    ["signed", "070", "signed", "서명 완료", "primary"],
-    ["review", "070", "review", "서명 완료", "primary"],
-    ["unsigned", "060", "pending", "서명 요청됨", "orange"],
-  ])("keeps the %s contract card exactly as the client summary reads", (_state, statusType, displayStatus, label, tone) => {
-    const hasSigned = statusType === "070";
+    ["signed", "070", "signed", "서명 완료", "green"],
+    ["review", "060", "review", "검토 필요", "orange"],
+    ["pending", "060", "pending", "서명 대기", "primary"],
+  ])("shows the latest contract's own %s status, never the coarse client summary", (_state, statusType, displayStatus, label, tone) => {
+    // The summary reads 서명 완료 whenever hasSigned, which includes a contract still at the
+    // provider-review step; the document's display status must decide, as on the list and desktop.
     const detailClient = {
       ...client,
       eDocId: "document-1",
-      hasSigned,
+      hasSigned: true,
       documentStatus: "requested" as const,
     };
     const contractDocument = {
@@ -503,14 +513,15 @@ describe("ClientDetailContent", () => {
       display_status: displayStatus,
       current_status: {
         status_type: statusType,
-        step_type: hasSigned ? "06" : "05",
-        step_name: hasSigned ? "제공기관 확인" : "이용자",
+        step_type: "06",
+        step_name: "제공기관 확인",
       },
     } as EformsignDocument;
 
     const { container } = renderDetail(contractDocument, detailClient, "contracts");
 
     expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(label);
+    if (label !== "서명 완료") expect(screen.queryAllByText("서명 완료")).toHaveLength(0);
     expect(screen.queryAllByText("반려됨")).toHaveLength(0);
     const cardBadge = container.querySelector(
       '[data-component$="_contract-card_doc-row"] .badge-mini',
@@ -518,6 +529,24 @@ describe("ClientDetailContent", () => {
     expect(cardBadge).toHaveTextContent(label);
     expect(cardBadge).toHaveClass(tone);
     expect(cardBadge).not.toHaveClass("burgundy-solid");
+  });
+
+  it("labels an unassigned latest contract the way the desktop card does", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      display_status: "unassigned",
+      current_status: { status_type: "060", step_type: "06", step_name: "제공기관 확인" },
+    } as EformsignDocument;
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("고객 등록 필요");
   });
 
   it("falls back to the client summary when there is no contract document", () => {
@@ -1226,5 +1255,52 @@ describe("ClientDetailContent", () => {
       expect(cards.length).toBeGreaterThan(0);
       for (const element of cards) expect(element).toHaveAttribute("data-slot", "detail-empty-state");
     });
+  });
+});
+
+describe("service records tab: a load that has not succeeded is never an empty result (BJJ-434)", () => {
+  const baseProps = {
+    "data-component": "mobile_clients_detail-sheet_stack_detail-page_content",
+    client,
+    contractDocument: null,
+    onTabChange: jest.fn(),
+    onMessage: jest.fn(),
+    onIssueContract: jest.fn(),
+    onEdit: jest.fn(),
+    onDelete: jest.fn(),
+    onClientUpdated: jest.fn(),
+  } as const;
+  const lastRender = () => mockServiceRecordsRenders[mockServiceRecordsRenders.length - 1];
+
+  beforeEach(() => {
+    mockServiceRecordsRenders.length = 0;
+    Object.assign(mockServiceRecordsQuery, {
+      data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false,
+    });
+  });
+
+  it("passes loading to the tab for a first load paused by the offline pause", () => {
+    Object.assign(mockServiceRecordsQuery, { isPaused: true });
+    render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+
+    expect(lastRender()).toEqual({ isLoading: true, isError: false });
+  });
+
+  it("does not hold the skeleton over cached data when a refetch is paused", () => {
+    Object.assign(mockServiceRecordsQuery, { isPaused: true, data: { assignments: [] } });
+    render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+
+    expect(lastRender()).toEqual({ isLoading: false, isError: false });
+  });
+
+  it("keeps a real first load as loading and a settled query as not loading", () => {
+    Object.assign(mockServiceRecordsQuery, { isLoading: true });
+    const loading = render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+    expect(lastRender()).toEqual({ isLoading: true, isError: false });
+    loading.unmount();
+
+    Object.assign(mockServiceRecordsQuery, { isLoading: false, data: { assignments: [] } });
+    render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+    expect(lastRender()).toEqual({ isLoading: false, isError: false });
   });
 });
