@@ -400,9 +400,12 @@ function assignmentWrites(
         .sort((left, right) =>
             left.storedStart.localeCompare(right.storedStart)
             || left.storedEnd.localeCompare(right.storedEnd)
-            // Identical stored periods: a terminated session-less assignment sorts before an active one,
-            // so a same-day placeholder is deterministically on the head side whatever the source order.
-            || sessionlessTerminatedRank(left.assignment) - sessionlessTerminatedRank(right.assignment));
+            // Identical one-day stored periods: a terminated session-less placeholder sorts before an
+            // active one, so it is deterministically on the head side whatever the source order. Longer
+            // identical periods keep source order.
+            || (left.storedStart === left.storedEnd
+                ? sessionlessTerminatedRank(left.assignment) - sessionlessTerminatedRank(right.assignment)
+                : 0));
     if (stored.length === 0) return [];
     const ownsSession = (item: (typeof stored)[number]) =>
         item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id);
