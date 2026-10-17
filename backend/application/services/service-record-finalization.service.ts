@@ -260,9 +260,8 @@ function assignmentsWrittenOnDay(
  * the stored vector still attributes to an earlier, replaced one. Such a day
  * matches its slot when its writer is the single assignment of the case with
  * that schedule (and employee, when the day names one), the vector's owner was
- * replaced, and the writer
- * is that owner's successor: its schedule id is greater (autoincrement, so
- * later). Stored assignment dates are record-only and may overlap, so they
+ * replaced, and the writer is that owner's successor: its schedule id is
+ * greater (autoincrement, so later). Stored assignment dates are record-only and may overlap, so they
  * never decide this. The service-date check in the caller still applies, and
  * any other disagreement stays a mismatch. Twin of isSuccessorOf in
  * service-record-edit-preview.policy.ts.
