@@ -737,6 +737,45 @@ describe("ClientServiceRecordsTab", () => {
             expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         });
 
+        // The panel reports a query that is paused offline with no data as loading
+        // (BJJ-434): the tab must then show skeletons, never the empty texts.
+        it("shows the loading skeleton, not the empty text, while the overview has not loaded", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    clientId={100}
+                    isLoading
+                    isError={false}
+                    isRevisionHistoryLoading
+                />,
+            );
+
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("shows the revision-history skeleton, not the 'none' pointers or empty text, while the history has not loaded", () => {
+            const { container } = render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="desktop"
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    isRevisionHistoryLoading
+                />,
+            );
+
+            expect(
+                container.querySelector(`[data-component="${TEST_COMPONENT}_revision-history"] [data-slot="skeleton"]`),
+            ).not.toBeNull();
+            expect(screen.queryByText("확정된 수정본이 없습니다.")).not.toBeInTheDocument();
+            expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+            expect(screen.queryByText("없음")).not.toBeInTheDocument();
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        });
+
         it("offers a retry on the revision history when it failed and nothing is cached", () => {
             const onRefreshRevisionHistory = jest.fn();
             render(

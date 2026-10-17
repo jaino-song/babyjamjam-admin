@@ -225,6 +225,22 @@ describe("ClientDetailPanel contracts area: loading, failed and empty are differ
 
     afterEach(() => {
         cleanup();
+        onlineManager.setOnline(true);
+    });
+
+    it("shows the skeleton, not the empty state, while the contracts read is paused offline with no data", async () => {
+        onlineManager.setOnline(false);
+        openContractsTab();
+
+        await waitFor(() =>
+            expect(
+                queryClient.getQueryState(["eformsign-docs", "client", client.id])?.fetchStatus,
+            ).toBe("paused"),
+        );
+        expect(getDocuments).not.toHaveBeenCalled();
+        expect(skeleton()).not.toBeNull();
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
     it("shows the skeleton while loading, and neither the error panel nor the empty state", async () => {

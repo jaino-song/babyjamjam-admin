@@ -233,6 +233,15 @@ function getClientMessageHistoryTime(record: MessageLogRecord) {
     return Number.isNaN(time) ? 0 : time;
 }
 
+/**
+ * A query with no data that cannot run yet (React Query v5 pauses it while the browser is
+ * offline: `isLoading` stays false, `isError` stays false) has not loaded. It must read as
+ * loading, never fall through to an empty text for data that was never received (BJJ-434).
+ */
+function isQueryLoadPending(query: { isLoading: boolean; isPaused?: boolean; data: unknown }): boolean {
+    return query.isLoading || (Boolean(query.isPaused) && query.data === undefined);
+}
+
 function ClientMessageHistoryList({
     records,
     canLookupMessages,
@@ -1256,7 +1265,8 @@ function ClientDetailPanelBody({
 
     const {
         data: clientContracts,
-        isLoading: isClientContractsLoading,
+        isLoading: isClientContractsFetchingFirst,
+        isPaused: isClientContractsPaused,
         isError: isClientContractsError,
         isSuccess: isClientContractsSuccess,
         dataUpdatedAt: clientContractsUpdatedAt,
@@ -1272,6 +1282,12 @@ function ClientDetailPanelBody({
         refetchOnMount: "always",
         refetchOnReconnect: true,
         refetchOnWindowFocus: true,
+    });
+
+    const isClientContractsLoading = isQueryLoadPending({
+        isLoading: isClientContractsFetchingFirst,
+        isPaused: isClientContractsPaused,
+        data: clientContracts,
     });
 
     const clientContractDocs = useMemo(
@@ -1777,7 +1793,7 @@ function ClientDetailPanelBody({
                                         </div>
                                         <ClientUpcomingMessageList
                                             jobs={clientUpcomingMessageQuery.items}
-                                            isLoading={clientUpcomingMessageQuery.isLoading}
+                                            isLoading={isQueryLoadPending(clientUpcomingMessageQuery)}
                                             isError={clientUpcomingMessageQuery.isError}
                                             isFetchingNextPage={clientUpcomingMessageQuery.isFetchingNextPage}
                                             hasNextPage={Boolean(clientUpcomingMessageQuery.hasNextPage)}
@@ -1806,7 +1822,7 @@ function ClientDetailPanelBody({
                                         <ClientMessageHistoryList
                                             records={clientMessageHistory}
                                             canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
-                                            isLoading={clientMessageHistoryQuery.isLoading}
+                                            isLoading={isQueryLoadPending(clientMessageHistoryQuery)}
                                             isError={clientMessageHistoryQuery.isError}
                                             isFetchingNextPage={clientMessageHistoryQuery.isFetchingNextPage}
                                             hasNextPage={Boolean(clientMessageHistoryQuery.hasNextPage)}
@@ -1834,19 +1850,19 @@ function ClientDetailPanelBody({
                                     layout={layout}
                                     overview={serviceRecordsQuery.data}
                                     clientId={clientId}
-                                    isLoading={serviceRecordsQuery.isLoading}
+                                    isLoading={isQueryLoadPending(serviceRecordsQuery)}
                                     isError={serviceRecordsQuery.isError}
                                     isRefreshing={
                                         serviceRecordsQuery.isFetching
-                                        && !serviceRecordsQuery.isLoading
+                                        && !isQueryLoadPending(serviceRecordsQuery)
                                     }
                                     isTextRefreshing={serviceRecordsQuery.isRefetching}
                                     onRefresh={() => void serviceRecordsQuery.refetch()}
                                     revisionHistory={revisionHistoryQuery.data}
-                                    isRevisionHistoryLoading={revisionHistoryQuery.isLoading}
+                                    isRevisionHistoryLoading={isQueryLoadPending(revisionHistoryQuery)}
                                     isRevisionHistoryError={revisionHistoryQuery.isError}
                                     revisionHistoryErrorStatus={getErrorResponseStatus(revisionHistoryQuery.error)}
-                                    isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !revisionHistoryQuery.isLoading}
+                                    isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !isQueryLoadPending(revisionHistoryQuery)}
                                     onRefreshRevisionHistory={() => void revisionHistoryQuery.refetch()}
                                     onRetryRevisionDocument={(revisionId, documentStateId, expectedGeneration) =>
                                         retryRevisionDocumentMutation.mutateAsync({
