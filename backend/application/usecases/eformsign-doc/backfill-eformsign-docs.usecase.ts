@@ -26,6 +26,10 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 
+import { EformsignBackupCollectionWriter } from "application/services/eformsign-backup-collection-writer.service";
+import { documentIdSetDigest } from "domain/eformsign-backup/collection-receipt";
+import type { CollectionRunContext, EformsignCollectionObserver } from "domain/repositories/eformsign-backup-collection.repository.interface";
+
 const BACKFILL_PAGE_SIZE = 100;
 // Slack for very small lists, where doubling the page count barely adds anything.
 const BACKFILL_MIN_PAGE_BUDGET = 20;
@@ -73,6 +77,9 @@ export interface EformsignDocsBackfillProgress {
 }
 
 export interface BackfillEformsignDocsOptions {
+    receiptContext?: CollectionRunContext;
+    /** Explicit binding for isolated callers/tests; normal runtime has no writer registration. */
+    collectionObserver?: EformsignCollectionObserver;
     onProgress?: (progress: EformsignDocsBackfillProgress) => void;
     shouldContinue?: () => boolean;
     suppressOutboundAutomation?: boolean;
@@ -136,6 +143,8 @@ export class BackfillEformsignDocsUsecase {
         private readonly documentMirrorService?: EformsignDocumentMirrorService,
         @Optional()
         private readonly eformsignService?: EformsignService,
+        @Optional()
+        private readonly collectionWriter?: EformsignBackupCollectionWriter,
     ) {}
 
     async execute(
@@ -161,7 +170,16 @@ export class BackfillEformsignDocsUsecase {
             summary: cloneSummary(summary),
         });
 
-        return this.credentialBoundary.withCredentials(
+        let observer = options.collectionObserver;
+        let runOutcome: "succeeded" | "failed" | "interrupted" = "failed";
+        try {
+            if (!observer && this.collectionWriter && options.receiptContext) {
+                try { observer = await this.collectionWriter.begin(options.receiptContext); }
+                catch { this.logger.warn("Eformsign collection receipt persistence-unhealthy"); }
+                this.assertCanContinue(options, summary);
+            }
+            options = { ...options, collectionObserver: observer };
+            const result = await this.credentialBoundary.withCredentials(
             principal,
             "document.backfill",
             async (initialCredentials) => {
@@ -324,6 +342,79 @@ export class BackfillEformsignDocsUsecase {
                 }
             },
         );
+            runOutcome = "succeeded";
+            return result;
+        } catch (error) {
+            if (error instanceof EformsignBackfillLeaseLostError) runOutcome = "interrupted";
+            throw error;
+        } finally {
+            if (observer) {
+                try {
+                    if (options.shouldContinue) await observer.finish(runOutcome, options.shouldContinue);
+                    else await observer.finish(runOutcome);
+                }
+                catch { this.logger.warn("Eformsign collection receipt persistence-unhealthy"); }
+                // A ledger failure must preserve the original business exception.
+                try { this.assertCanContinue(options, summary); }
+                catch (error) { if (runOutcome === "succeeded") throw error; }
+            }
+        }
+    }
+
+    private async observe(
+        options: BackfillEformsignDocsOptions,
+        summary: EformsignDocsBackfillSummary,
+        operation: (observer: EformsignCollectionObserver) => Promise<void>,
+    ): Promise<void> {
+        if (!options.collectionObserver) return;
+        try { await operation(options.collectionObserver); }
+        catch { this.logger.warn("Eformsign collection receipt persistence-unhealthy"); }
+        this.assertCanContinue(options, summary);
+    }
+
+    private async observeScan(
+        params: { documentType: EformsignBackfillDocumentType; options: BackfillEformsignDocsOptions; summary: EformsignDocsBackfillSummary },
+        pass: 1 | 2,
+        ids: Set<string>,
+    ): Promise<void> {
+        await this.observe(params.options, params.summary, async observer => {
+            await observer.scan({ documentType: params.documentType, pass, distinctIdCount: ids.size,
+                documentIdSetSha256: documentIdSetDigest([...ids]) });
+        });
+    }
+
+    private async fetchObservedPage(
+        params: { documentType: EformsignBackfillDocumentType; fetchPage: (limit: number, skip: number) => Promise<EformsignApiListResponse>;
+            options: BackfillEformsignDocsOptions; summary: EformsignDocsBackfillSummary },
+        pass: 1 | 2, ordinal: number, startOffset: number,
+    ): Promise<EformsignApiListResponse> {
+        let page: EformsignApiListResponse;
+        try { page = await params.fetchPage(BACKFILL_PAGE_SIZE, startOffset); }
+        catch (error) {
+            try {
+                await this.observe(params.options, params.summary, observer => observer.page({ documentType: params.documentType,
+                    pass, ordinal, startOffset, requestedLimit: BACKFILL_PAGE_SIZE, returnedCount: null, totalCount: null,
+                    terminal: null, outcome: "failed", failureCode: "fetch-failed" }));
+            } catch (observationError) {
+                if (observationError instanceof EformsignBackfillLeaseLostError) {
+                    // Stop immediately after the required post-await lease check,
+                    // while retaining the provider failure that preceded it.
+                    throw new EformsignBackfillLeaseLostError(observationError.message, params.summary, error);
+                }
+                throw observationError;
+            }
+            throw error;
+        }
+        const valid = Number.isSafeInteger(page?.total_rows) && page.total_rows >= 0
+            && Array.isArray(page?.documents) && page.documents.length <= BACKFILL_PAGE_SIZE;
+        await this.observe(params.options, params.summary, observer => observer.page({ documentType: params.documentType,
+            pass, ordinal, startOffset, requestedLimit: BACKFILL_PAGE_SIZE,
+            returnedCount: valid ? page.documents.length : null, totalCount: valid ? page.total_rows : null,
+            terminal: valid ? startOffset + page.documents.length >= page.total_rows : null,
+            outcome: valid ? "succeeded" : "failed", failureCode: valid ? null : "invalid-page" }));
+        // Observation validation does not change the collector's existing business
+        // validation/exception behavior for malformed provider responses.
+        return page;
     }
 
     /**
@@ -371,8 +462,9 @@ export class BackfillEformsignDocsUsecase {
 
             let page: EformsignApiListResponse;
             try {
-                page = await params.fetchPage(BACKFILL_PAGE_SIZE, skip);
+                page = await this.fetchObservedPage(params, 1, pagesFetched, skip);
             } catch (error) {
+                if (error instanceof EformsignBackfillLeaseLostError) throw error;
                 throw new BackfillEformsignDocsError(
                     `Failed to fetch eformsign document page type=${params.documentType} skip=${skip}`,
                     params.summary,
@@ -408,6 +500,7 @@ export class BackfillEformsignDocsUsecase {
                     page.total_rows,
                     params.summary,
                 );
+                await this.observeScan(params, 1, seenDocumentIds);
                 await this.assertStableCoverage(
                     params,
                     seenDocumentIds,
@@ -470,6 +563,7 @@ export class BackfillEformsignDocsUsecase {
                     page.total_rows,
                     params.summary,
                 );
+                await this.observeScan(params, 1, seenDocumentIds);
                 await this.assertStableCoverage(
                     params,
                     seenDocumentIds,
@@ -518,8 +612,9 @@ export class BackfillEformsignDocsUsecase {
 
             let page: EformsignApiListResponse;
             try {
-                page = await params.fetchPage(BACKFILL_PAGE_SIZE, skip);
+                page = await this.fetchObservedPage(params, 2, pagesFetched, skip);
             } catch (error) {
+                if (error instanceof EformsignBackfillLeaseLostError) throw error;
                 throw new BackfillEformsignDocsError(
                     `Failed to verify eformsign document coverage`
                     + ` type=${params.documentType} skip=${skip}`,
@@ -598,6 +693,7 @@ export class BackfillEformsignDocsUsecase {
             }
         }
 
+        await this.observeScan(params, 2, verificationIds);
         this.assertCompleteCoverage(
             params.documentType,
             verificationIds.size,
