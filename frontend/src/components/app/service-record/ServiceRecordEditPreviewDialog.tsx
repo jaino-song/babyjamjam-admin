@@ -127,11 +127,11 @@ export function ServiceRecordEditPreviewDialog({
         headerChanged: false,
         changedSessionIndexes: [],
     };
-    // Older payloads carry only raw ids; show a generic name rather than the id.
-    const impactedAssignments: ServiceRecordEditPreviewImpactedAssignment[] = preview
-        ? preview.impactedAssignmentDetails
-            ?? preview.impactedAssignments.map((assignmentId) => ({ assignmentId, employeeName: null, startDate: null, endDate: null }))
-        : [];
+    // The id list is authoritative; details only label it. An id without details
+    // (older payloads) shows a generic name rather than the raw id.
+    const impactedAssignments: ServiceRecordEditPreviewImpactedAssignment[] = (preview?.impactedAssignments ?? []).map((assignmentId) =>
+        preview?.impactedAssignmentDetails?.find((detail) => detail.assignmentId === assignmentId)
+            ?? { assignmentId, employeeName: null, startDate: null, endDate: null });
 
     return (
         <Dialog open={open} onOpenChange={(nextOpen) => !busy && onOpenChange(nextOpen)}>

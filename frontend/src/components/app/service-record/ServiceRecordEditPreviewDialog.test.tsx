@@ -150,6 +150,19 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(screen.getByText("이름 없는 관리사 · 2026.10.14 ~ 없음")).toBeInTheDocument();
     });
 
+    it("still lists every impacted id when details are empty", () => {
+        render(
+            <ServiceRecordEditPreviewDialog
+                open
+                onOpenChange={jest.fn()}
+                preview={{ ...preview, impactedAssignmentDetails: [] }}
+                data-component={DATA_COMPONENT}
+            />,
+        );
+        expect(screen.getByText("이름 없는 관리사")).toBeInTheDocument();
+        expect(screen.queryByText("변경되는 배정이 없습니다.")).not.toBeInTheDocument();
+    });
+
     it("retains a visible error and does not expose preview controls while loading", () => {
         const onOpenChange = jest.fn();
         const { rerender } = render(
