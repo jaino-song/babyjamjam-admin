@@ -7,6 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import type {
     ServiceRecordEditConfirmResponse,
+    ServiceRecordEditPreviewImpactedAssignment,
     ServiceRecordEditPreviewResponse,
     ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
@@ -33,6 +34,12 @@ export interface ServiceRecordEditPreviewDialogProps {
 function formatDate(value: string | null): string {
     if (!value) return "없음";
     return value.replace(/^(\d{4})-(\d{2})-(\d{2}).*$/, "$1.$2.$3");
+}
+
+function formatImpactedAssignment(assignment: ServiceRecordEditPreviewImpactedAssignment): string {
+    const name = assignment.employeeName?.trim() || "이름 없는 관리사";
+    if (!assignment.startDate && !assignment.endDate) return name;
+    return `${name} · ${formatDate(assignment.startDate)} ~ ${formatDate(assignment.endDate)}`;
 }
 
 function formatTimestamp(value: string | null): string {
@@ -120,6 +127,11 @@ export function ServiceRecordEditPreviewDialog({
         headerChanged: false,
         changedSessionIndexes: [],
     };
+    // The id list is authoritative; details only label it. An id without details
+    // (older payloads) shows a generic name rather than the raw id.
+    const impactedAssignments: ServiceRecordEditPreviewImpactedAssignment[] = (preview?.impactedAssignments ?? []).map((assignmentId) =>
+        preview?.impactedAssignmentDetails?.find((detail) => detail.assignmentId === assignmentId)
+            ?? { assignmentId, employeeName: null, startDate: null, endDate: null });
 
     return (
         <Dialog open={open} onOpenChange={(nextOpen) => !busy && onOpenChange(nextOpen)}>
@@ -231,9 +243,13 @@ export function ServiceRecordEditPreviewDialog({
 
                             <section data-component={`${dataComponent}_content_assignments`} data-slot="assignments" className="flex flex-col gap-2">
                                 <h3 className="text-sm font-semibold text-v3-dark">배정 영향</h3>
-                                {preview.impactedAssignments.length > 0 ? (
+                                {impactedAssignments.length > 0 ? (
                                     <ul className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
-                                        {preview.impactedAssignments.map((assignmentId) => <li key={assignmentId}>{assignmentId}</li>)}
+                                        {impactedAssignments.map((assignment) => (
+                                            <li key={assignment.assignmentId} data-component={`${dataComponent}_content_assignments_item`} data-slot="assignment-item">
+                                                {formatImpactedAssignment(assignment)}
+                                            </li>
+                                        ))}
                                     </ul>
                                 ) : (
                                     <p data-slot="none" className="text-sm text-v3-text-muted">변경되는 배정이 없습니다.</p>

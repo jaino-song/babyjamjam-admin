@@ -11,6 +11,7 @@ import {
     type AdminServiceRecordEditState,
     type ServiceRecordEditDocumentChunk,
     type ServiceRecordEditDocumentScope,
+    type ServiceRecordEditPreviewImpactedAssignment,
     type ServiceRecordEditPreviewResponse,
     type ServiceRecordPlannedSession,
     type ServiceRecordEditSignatureMetadata,
@@ -485,6 +486,20 @@ function stripServiceDateSnapshots(changes: AdminServiceRecordEditChanges): Admi
     };
 }
 
+function normalizeImpactedAssignmentDetails(value: unknown[]): ServiceRecordEditPreviewImpactedAssignment[] {
+    const details: ServiceRecordEditPreviewImpactedAssignment[] = [];
+    for (const item of value) {
+        if (!isRecord(item) || typeof item.assignmentId !== "string" || item.assignmentId === "") continue;
+        details.push({
+            assignmentId: item.assignmentId,
+            employeeName: typeof item.employeeName === "string" && item.employeeName.trim() !== "" ? item.employeeName : null,
+            startDate: typeof item.startDate === "string" ? item.startDate : null,
+            endDate: typeof item.endDate === "string" ? item.endDate : null,
+        });
+    }
+    return details;
+}
+
 export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceRecordEditPreviewResponse {
     const payload = isRecord(value) ? value : {};
     const blockingReasonsPresent = Array.isArray(payload.blockingReasons);
@@ -576,6 +591,9 @@ export function normalizeAdminServiceRecordEditPreview(value: unknown): ServiceR
         impactedAssignments: Array.isArray(payload.impactedAssignments)
             ? payload.impactedAssignments.filter((assignmentId): assignmentId is string => typeof assignmentId === "string")
             : [],
+        ...(Array.isArray(payload.impactedAssignmentDetails)
+            ? { impactedAssignmentDetails: normalizeImpactedAssignmentDetails(payload.impactedAssignmentDetails) }
+            : {}),
         blockingReasons: normalizedReasons,
         signatureMetadata: signatureResult.metadata,
         documentScope: documentResult.scope,
