@@ -384,6 +384,9 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
         writerDates?: { startDate: Date; endDate: Date };
         /** Overrides the backfilling caregiver's schedule id (default 200). */
         writerScheduleId?: number;
+        /** A written day with no employee is identified by its schedule alone. */
+        firstDayEmployeeId?: number | null;
+        writerDayEmployeeId?: number | null;
     } = {}) {
         const writerScheduleId = options.writerScheduleId ?? 200;
         const base = source();
@@ -423,14 +426,17 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
                 },
             ],
             days: [
-                base.days[0]!,
+                {
+                    ...base.days[0]!,
+                    employeeId: options.firstDayEmployeeId === undefined ? base.days[0]!.employeeId : options.firstDayEmployeeId,
+                },
                 {
                     ...base.days[0]!,
                     id: "00000000-0000-4000-8000-000000000051",
                     scheduleId: writerScheduleId,
                     caseSessionIndex: 2,
                     sessionIndex: 2,
-                    employeeId: 12,
+                    employeeId: options.writerDayEmployeeId === undefined ? 12 : options.writerDayEmployeeId,
                     employeeNameSnapshot: "신규인력",
                     serviceDate: secondDate,
                 },
@@ -503,6 +509,37 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
             response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
         });
     };
+
+    it("accepts a backfilled day with no employee, identifying its writer by schedule order alone", async () => {
+        const jobService = await freeze(backfilledSource({ writerDayEmployeeId: null }));
+        expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts the planned owner's own day when it names no employee", async () => {
+        const jobService = await freeze(backfilledSource({ firstDayEmployeeId: null }));
+        expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it("still fails closed on a backfilled day with no employee when the writer's schedule id is lower", async () => {
+        await failsClosed(backfilledSource({ writerDayEmployeeId: null, writerScheduleId: 50 }));
+    });
+
+    it("still fails closed on a backfilled day with no employee when its schedule matches more than one assignment", async () => {
+        const record = backfilledSource({ writerDayEmployeeId: null });
+        record.assignments.push({
+            ...record.assignments[1]!,
+            id: "00000000-0000-4000-8000-000000000045",
+            employeeId: 14,
+        });
+        await failsClosed(record);
+    });
+
+    it("still fails closed on a day with no employee when its schedule is not the planned owner's", async () => {
+        // Session 1's day is written under schedule 999, which no assignment owns.
+        const record = backfilledSource({ firstDayEmployeeId: null });
+        record.days[0] = { ...record.days[0]!, scheduleId: 999 };
+        await failsClosed(record);
+    });
 
     it("still fails closed when the vector names the current assignment and the writer is another one", async () => {
         await failsClosed(backfilledSource({ vectorOwner: "current" }));

@@ -766,6 +766,17 @@ describe("service-record-edit-preview.policy", () => {
             });
         });
 
+        it("blocks a later schedule's write over a slot whose planned owner was never replaced", () => {
+            // A (701) still owns slots 1-7 in the vector and is not replaced; B (702) wrote slot 3.
+            const currentA = { ...caregiverA, replaced: false };
+            const rows = [written(3, caregiverB)];
+            const projection = resolveServiceRecordScheduleProjection(
+                persisted(rows, [currentA, caregiverB]),
+                KR_BUILTIN_CALENDAR,
+            );
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
+        });
+
         describe("when the backfilling caregiver was itself replaced", () => {
             const middle = {
                 ...caregiverB,
