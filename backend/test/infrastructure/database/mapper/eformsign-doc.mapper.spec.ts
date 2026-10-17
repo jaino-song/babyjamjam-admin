@@ -40,6 +40,32 @@ describe("eformsign step recipient type codec", () => {
 });
 
 describe("EformsignDocMapper", () => {
+    it("defaults void values to null and keeps the actor out of JSON", () => {
+        const entity = createEntity();
+        expect(entity.voidedAt).toBeNull();
+        expect(entity.voidedBy).toBeNull();
+        expect(entity.isVoided).toBe(false);
+        expect(entity.toJSON()).toHaveProperty("voidedAt", null);
+        expect(entity.toJSON()).not.toHaveProperty("voidedBy");
+    });
+    it("maps both void columns on read, but neither on create or update", () => {
+        const voidedAt = new Date("2026-10-14T00:00:00Z");
+        const entity = EformsignDocMapper.toDomain({
+            ...createEntity().toJSON(), id: 1, stepRecipientTypes: null,
+            voidedAt, voidedBy: "actor",
+        });
+        expect(entity.voidedAt).toEqual(voidedAt);
+        expect(entity.voidedBy).toBe("actor");
+        expect(entity.isVoided).toBe(true);
+        expect(entity.toJSON()).toHaveProperty("voidedAt", voidedAt);
+        expect(entity.toJSON()).not.toHaveProperty("voidedBy");
+        for (const value of [entity, createEntity()]) {
+            for (const payload of [EformsignDocMapper.toPrismaCreate(value), EformsignDocMapper.toPrismaUpdate(value)]) {
+                expect(payload).not.toHaveProperty("voidedAt");
+                expect(payload).not.toHaveProperty("voidedBy");
+            }
+        }
+    });
     it("encodes and decodes the list display fields at the persistence boundary", () => {
         const entity = createEntity({
             templateName: "표준 계약서",

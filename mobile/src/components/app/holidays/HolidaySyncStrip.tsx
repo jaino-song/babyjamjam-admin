@@ -10,6 +10,8 @@ const DEFAULT_DATA_COMPONENT = "mobile_holidays_settings_sync-strip";
 
 interface HolidaySyncStripProps {
   synced: boolean;
+  /** True while the sync state itself is not known (the year has not loaded): the status line shows "—". */
+  statusUnknown?: boolean;
   lastSyncedAt: string | null;
   pending: boolean;
   disabled?: boolean;
@@ -22,6 +24,7 @@ interface HolidaySyncStripProps {
 
 export function HolidaySyncStrip({
   synced,
+  statusUnknown = false,
   lastSyncedAt,
   pending,
   disabled = false,
@@ -40,9 +43,11 @@ export function HolidaySyncStrip({
     >
       <div data-component={`${dataComponent}_info`} className="grid min-w-0 gap-1">
         <p data-slot="holiday-sync-status" className="text-sm font-semibold text-v3-dark">
-          {synced
-            ? `마지막 동기화 ${lastSyncedLabel}`.trim()
-            : "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)"}
+          {statusUnknown
+            ? "—"
+            : synced
+              ? `마지막 동기화 ${lastSyncedLabel}`.trim()
+              : "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)"}
         </p>
         <p className="text-xs text-v3-text-muted">
           매일 새벽 4시에 한국천문연구원 특일 정보에서 받아와요.

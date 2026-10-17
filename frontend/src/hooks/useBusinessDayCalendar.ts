@@ -131,6 +131,8 @@ export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): Us
                 queryKey: holidayYearQueryKey(branchId, year),
                 queryFn: () => holidayCalendarApi.getYear(branchId, year),
                 staleTime: 0,
+                // A save must fail fast: this is awaited inside submit handlers, so it must not inherit the default 3-retry backoff.
+                retry: false,
             })));
             if (requestRef.current.branchId !== branchId || requestRef.current.years.join(",") !== years.join(",")) {
                 return { ok: false };

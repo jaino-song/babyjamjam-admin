@@ -1,5 +1,33 @@
 export type SmsProviderOutcome = "accepted" | "partial" | "rejected" | "unknown";
 
+export interface SmsProviderRejection {
+    kind: "transient" | "permanent";
+    reason: string;
+}
+
+// Aligo는 -101 외의 실패 코드표를 공개하지 않는다. 아래 문구 패턴은 잠정적이며
+// 실제 제공자 응답으로 확인해야 한다. 미확인 숫자 코드로 영구 실패를 추론하지 않는다.
+export const SMS_PERMANENT_REJECTION_PATTERNS = [
+    { pattern: /잔액|충전|포인트 부족/, reason: "잔액 부족" },
+    { pattern: /수신거부|수신 거부/, reason: "수신 거부" },
+    { pattern: /없는 번호|가입자없음|^(?=.*(?:수신번호|전화번호))(?=.*(?:형식|오류|잘못))/s, reason: "잘못된 번호" },
+] as const;
+
+/** Only call after classifySmsProviderOutcome has established a rejection. */
+export function classifySmsProviderRejection(result: unknown): SmsProviderRejection {
+    const response = smsResponse(result);
+    if (smsInteger(response?.["result_code"]) === -101) {
+        return { kind: "permanent", reason: "인증 오류" };
+    }
+    const message = typeof response?.["message"] === "string" ? response["message"] : "";
+    for (const { pattern, reason } of SMS_PERMANENT_REJECTION_PATTERNS) {
+        if (pattern.test(message)) {
+            return { kind: "permanent", reason };
+        }
+    }
+    return { kind: "transient", reason: message };
+}
+
 /**
  * Classifies one Aligo response using only evidence that is present in the
  * provider request/response pair. A result that cannot account for every

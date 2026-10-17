@@ -154,7 +154,7 @@ describe("NotificationPage", () => {
       expect(emailSwitch).toBeDisabled();
       expect(emailSwitch).toHaveAttribute("aria-checked", "false");
     });
-    expect(screen.getByText("이메일 알림 설정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("이메일 알림 설정을 불러오지 못했습니다");
     expect(mockedSettingsApi.updateNotificationPreferences).not.toHaveBeenCalled();
   });
 

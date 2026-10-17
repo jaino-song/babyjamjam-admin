@@ -425,10 +425,14 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       await fillClientContractDates(page, "2026-09-03", "2026-09-09");
       await page.locator(phase3Selectors.actions).nth(1).click();
       const confirmation = page.locator(selector("mobile_clients-new_screen_root_duration-confirmation"));
+      const errorSummary = page.locator(selector("mobile_clients-new_screen_root_error-summary"));
+      // The confirmation dialog renders after the click, so counting it right away
+      // can read 0 and skip it (the submit then never happens). Wait for whichever
+      // of the dialog or the error shows first, then confirm only if it is the dialog.
+      await expect(confirmation.or(errorSummary).first()).toBeVisible({ timeout: 10_000 });
       if (await confirmation.count()) {
         await confirmation.locator(selector("mobile_clients-new_screen_root_duration-confirmation_confirm-button")).click();
       }
-      const errorSummary = page.locator(selector("mobile_clients-new_screen_root_error-summary"));
       await expect(errorSummary).toBeVisible({ timeout: 10_000 });
       return errorSummary;
     };

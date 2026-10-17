@@ -708,6 +708,9 @@ export class EformsignWebhookService {
         const { statusType, statusDetail } = this.mapStatus(status);
         trace.mapped(statusType, statusDetail).source(webhookSourceUpdatedDate(document.updated_date));
 
+        // Void state of the row the status write just re-read; unknown on the completion path.
+        let documentIsVoided: boolean | undefined;
+
         if (status === DOCUMENT_STATUS.DOC_COMPLETE) {
             const shouldReturnClaim = deferCompletionEvent || deferCompletionEffects;
             const claimResult = await this.claimDocumentCompletion(
@@ -775,6 +778,7 @@ export class EformsignWebhookService {
                     trace.settle(EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_PROJECTION);
                     return;
                 }
+                documentIsVoided = applied.isVoided;
 
                 trace.settle(EFORMSIGN_WEBHOOK_OUTCOME.APPLIED);
                 this.logger.log(`Document ${documentId} status updated: ${status} -> ${statusDetail}`);
@@ -797,6 +801,7 @@ export class EformsignWebhookService {
             documentId,
             document_title,
             statusType,
+            documentIsVoided,
             mirroredDocument,
         );
 
@@ -900,7 +905,7 @@ export class EformsignWebhookService {
     private async updateStatusAndLinkClient(
         branchid: string,
         params: Parameters<UpdateEformsignDocStatusUsecase["execute"]>[1],
-    ): Promise<boolean> {
+    ): Promise<{ isVoided: boolean } | null> {
         const { document: updated, applied } =
             await this.updateStatusUsecase.executeWithOutcome(branchid, params);
         if (
@@ -912,7 +917,7 @@ export class EformsignWebhookService {
             )
         ) {
             this.logger.log(`Ignoring stale status webhook for ${params.documentId}`);
-            return false;
+            return null;
         }
         await this.bumpDocumentSnapshotVersion(branchid);
         try {
@@ -923,7 +928,8 @@ export class EformsignWebhookService {
                 sanitizeEformsignErrorMessage(error),
             );
         }
-        return true;
+        // The row the status write just re-read: the void state notifyReviewRequiredIfNeeded needs.
+        return { isVoided: updated.isVoided === true };
     }
 
     private async bumpDocumentSnapshotVersion(branchId: string): Promise<void> {
@@ -952,15 +958,24 @@ export class EformsignWebhookService {
             return;
         }
 
+        // A voided (파기) contract only records its status: no client pointer, period/end-date sync.
+        if (doc?.isVoided) {
+            this.logger.log(
+                `Document ${documentId} is voided; skipping contract-completion side effects (${source}).`,
+            );
+            return;
+        }
+
         this.logger.log(`Document ${documentId} completed (${source}), linking to client`);
 
         try {
             await this.linkDocumentUsecase.execute(branchid, documentId);
             this.logger.log(`Document ${documentId} successfully linked to client`);
 
-            // The legacy linker resolves a client by recipient phone before it
-            // enters the repository transaction. Re-read the complete
-            // document/client/revision tuple after that transaction so a
+            // The linker only refreshes the pointer of the client the document
+            // is already linked to (it never infers a client from the
+            // recipient phone) inside a repository transaction. Re-read the
+            // complete document/client/revision tuple after that transaction so a
             // delayed completion cannot continue into reconciler/end-date
             // writes after a newer contract or admin revision has won.
             const currentContractCheck = this.eformsignDocRepository
@@ -1256,6 +1271,7 @@ export class EformsignWebhookService {
             : new Date(Math.max(updatedTimestamp, existing.createdDate.getTime()));
         const updated = EformsignDocEntity.reconstitute({
             ...existing.toJSON(),
+            voidedBy: existing.voidedBy,
             documentName: documentName ?? null,
             templateId: templateId ?? null,
             templateName: templateName ?? null,
@@ -1353,6 +1369,7 @@ export class EformsignWebhookService {
         documentId: string,
         documentTitle: string,
         localStatusType: string,
+        isVoided: boolean | undefined,
         mirroredDocument?: EformsignApiDocumentResponse | null,
     ): Promise<void> {
         // A cheap pre-filter that avoids a vendor read on irrelevant events;
@@ -1362,6 +1379,20 @@ export class EformsignWebhookService {
         // "검토 필요" push away from the very event that needs it. 071/072 stay
         // out: isReviewRequiredStatus rejects them as terminal anyway.
         if (localStatusType !== "060" && localStatusType !== "070") {
+            return;
+        }
+
+        // A voided (파기) contract is dead: its status is still recorded, but it no longer asks
+        // staff for a review. The void state comes from the row the status write re-read, so no
+        // second lookup can fail; when it is unknown the notification is withheld (fail closed).
+        if (isVoided === undefined) {
+            this.logger.warn(
+                `Skipping review-required notification for document ${documentId}: void state unknown`,
+            );
+            return;
+        }
+        if (isVoided) {
+            this.logger.log(`Skipping review-required notification for voided document ${documentId}`);
             return;
         }
 

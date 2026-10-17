@@ -20,8 +20,8 @@ export interface IssueReceiptLinkTokenParams {
     clientId: number;
     eformsignDocId: number;
     jobId?: string | null;
-    /** 산모 생년월일 — 6자리(YYMMDD) 또는 8자리(YYYYMMDD). normalizeBirthdayInput으로 정규화 후 해시된다;
-     *  정규화에 실패하면 issue()가 던진다. */
+    /** 산모 생년월일 — 8자리(YYYYMMDD)는 전체를, 기존 6자리(YYMMDD)는 세기 추론 없이 해시한다.
+     *  normalizeBirthdayInput 정규화에 실패하면 issue()가 던진다. */
     birthday: string;
     storagePath: string;
     contentSha256: string;
@@ -69,11 +69,11 @@ export interface ReceiptLinkAccess {
 
 const DEFAULT_CLIENT_NAME = "산모";
 
-/** 6자리 그대로, 8자리(YYYYMMDD)는 뒤 6자리, 그 외는 null. 숫자 외 문자는 무시. */
+/** 저장된 생년월일의 6자리(YYMMDD) 또는 8자리(YYYYMMDD)를 그대로 보존, 그 외는 null. 숫자 외 문자는 무시. */
 export function normalizeBirthdayInput(raw: string): string | null {
     const digits = (raw ?? "").replace(/\D/g, "");
     if (digits.length === 6) return digits;
-    if (digits.length === 8) return digits.slice(2);
+    if (digits.length === 8) return digits;
     return null;
 }
 
@@ -111,20 +111,18 @@ export class ReceiptLinkTokenService {
         return this.salt;
     }
 
-    private hashBirthday(yymmdd: string): string {
-        return sha256(`${this.requireSalt()}:${yymmdd}`);
+    private hashBirthday(birthday: string): string {
+        return sha256(`${this.requireSalt()}:${birthday}`);
     }
 
     async issue(
         params: IssueReceiptLinkTokenParams,
         issuanceRepository: IReceiptLinkTokenIssuanceRepository = this.repository,
     ): Promise<IssuedReceiptLinkToken> {
-        // Must normalize before hashing: verifyBirthday always normalizes its input first, so an
-        // un-normalized expected hash (e.g. from an 8-digit or malformed birthday) would mint a
-        // link nobody could ever open.
+        // Strip separators before hashing, preserving all eight digits or the legacy six.
         const birthday = normalizeBirthdayInput(params.birthday);
         if (!birthday) {
-            throw new Error("issue: birthday must be YYMMDD (6 digits)");
+            throw new Error("issue: birthday must be YYYYMMDD (8 digits) or legacy YYMMDD (6 digits)");
         }
 
         const now = params.now ?? new Date();
@@ -208,7 +206,7 @@ export class ReceiptLinkTokenService {
         if (unusable || !row) return { ok: false, reason: unusable ?? "not_found" };
 
         const normalized = normalizeBirthdayInput(rawInput);
-        if (!normalized) return { ok: false, reason: "invalid_format" };
+        if (!normalized || normalized.length !== 8) return { ok: false, reason: "invalid_format" };
 
         // Atomic: the repository decides "still locked" / "reset" / "increment (+ maybe newly
         // lock)" all in the SAME write, never from a snapshot read before this call — two (or
@@ -233,7 +231,10 @@ export class ReceiptLinkTokenService {
             return { ok: false, reason: "locked", lockedUntil: reservation.lockedUntil.toISOString() };
         }
 
-        if (!timingSafeEqualHex(this.hashBirthday(normalized), reservation.expectedBirthdayHash)) {
+        // 기존 링크와 6자리 생년월일 고객만 뒤 6자리 해시로 호환한다. 두 비교는 같은 예약을 사용한다.
+        const matchesBirthday = timingSafeEqualHex(this.hashBirthday(normalized), reservation.expectedBirthdayHash)
+            || timingSafeEqualHex(this.hashBirthday(normalized.slice(2)), reservation.expectedBirthdayHash);
+        if (!matchesBirthday) {
             // This reservation's own write just tipped the counter to the limit — report locked
             // rather than a remainingAttempts count of 0 that implies another guess is possible.
             if (reservation.lockedAt) {

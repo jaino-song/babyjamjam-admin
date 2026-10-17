@@ -279,3 +279,64 @@ describe("useInfiniteContracts — the All tab and deletion tombstones", () => {
     },
   );
 });
+
+describe("useInfiniteContracts — voided (파기됨) documents are never live (BJJ-439)", () => {
+  function doc(id: string, code: string, displayStatus?: string) {
+    return {
+      id,
+      created_date: 100,
+      current_status: { status_type: code },
+      ...(displayStatus ? { display_status: displayStatus } : {}),
+    };
+  }
+  function pageOf(documents: unknown[]) {
+    return { documents, total_rows: documents.length, limit: 20, skip: 0 };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("keeps a voided document on the expired tab whatever its provider code says", async () => {
+    // The server filed it under expired; the client-side code re-check used to drop 060/003/070.
+    mockedApi.getExpiredDocuments.mockResolvedValue(
+      pageOf([doc("v-060", "060", "voided"), doc("v-003", "003", "voided"), doc("v-070", "070", "voided")]) as never,
+    );
+    const { result } = renderHook(() => useInfiniteContracts({ filterType: "expired" }), { wrapper });
+
+    await waitFor(() => expect(result.current.documents).toHaveLength(3));
+    expect(result.current.documents.map((d) => d.id).sort()).toEqual(["v-003", "v-060", "v-070"]);
+  });
+
+  it.each([
+    ["in-progress", "getInProgressDocuments", "060"],
+    ["completed", "getCompletedDocuments", "003"],
+  ] as const)("excludes a voided document from the %s tab re-check", async (filterType, apiName, code) => {
+    mockedApi[apiName].mockResolvedValue(
+      pageOf([doc("voided", code, "voided"), doc("live", code)]) as never,
+    );
+    const { result } = renderHook(() => useInfiniteContracts({ filterType }), { wrapper });
+
+    await waitFor(() => expect(result.current.documents.length).toBeGreaterThan(0));
+    expect(result.current.documents.map((d) => d.id)).toEqual(["live"]);
+  });
+
+  it("leaves non-voided documents classified by their code on the expired tab", async () => {
+    mockedApi.getExpiredDocuments.mockResolvedValue(
+      pageOf([doc("exp", "080"), doc("wrong-tab", "060")]) as never,
+    );
+    const { result } = renderHook(() => useInfiniteContracts({ filterType: "expired" }), { wrapper });
+
+    await waitFor(() => expect(result.current.documents.length).toBeGreaterThan(0));
+    expect(result.current.documents.map((d) => d.id)).toEqual(["exp"]);
+  });
+
+  it("does not hide a voided document on the All tab", async () => {
+    mockedApi.getAllDocuments.mockResolvedValue(
+      pageOf([doc("v", "060", "voided"), doc("p", "060")]) as never,
+    );
+    const { result } = renderHook(() => useInfiniteContracts({ filterType: null }), { wrapper });
+
+    await waitFor(() => expect(result.current.documents).toHaveLength(2));
+  });
+});

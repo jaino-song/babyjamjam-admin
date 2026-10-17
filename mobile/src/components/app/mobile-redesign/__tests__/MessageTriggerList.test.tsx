@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { MessageTriggerList } from "../MessageTriggerList";
 import {
@@ -36,6 +36,8 @@ function createRule(overrides: Partial<MessageTriggerRule> = {}): MessageTrigger
     offsetDays: 1,
     recipientType: "CLIENT",
     templateKey: "SERVICE_START_REMINDER",
+    targetClientStatus: "all",
+    retryOnFailure: true,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     ...overrides,
@@ -158,6 +160,20 @@ describe("MessageTriggerList", () => {
     ).toHaveTextContent(`${monthLabel()} 2건 · 서비스 시작 1일 전 14:37 (한국 시간) · 고객 · SMS`);
   });
 
+  it("displays the computed service-record timing instead of its carrier rule timing", () => {
+    mockUseMessageTriggerRules.mockReturnValue({
+      data: [createRule({
+        id: "system:service_record_link", branchId: null,
+        name: "제공기록지 작성 링크", offsetType: "SAME_DAY", offsetDays: 0,
+        sendTime: "15:00", recipientType: "PRIMARY_EMPLOYEE", templateKey: "SERVICE_RECORD_LINK",
+      }), createRule({ id: "other-start", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "15:00" })],
+      isError: false, isLoading: false,
+    });
+    renderPage();
+    expect(screen.getByText(/서비스 시작 1일 전 12:00 \(한국 시간\) · 늦게 등록되면 즉시 발송 · 주 담당 직원 · SMS/)).toBeInTheDocument();
+    expect(screen.getByText(/서비스 시작 당일 15:00 \(한국 시간\) · 고객 · SMS/)).toBeInTheDocument();
+  });
+
   it("updates the selected real rule when the toggle row is pressed", async () => {
     mockUseMessageTriggerRules.mockReturnValue({
       data: [createRule({ isActive: true })],
@@ -248,6 +264,75 @@ describe("MessageTriggerList", () => {
     renderPage();
 
     expect(screen.getByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("0개")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("shows an unknown count and skeleton for a cold rules load (paused=%s)", (isPaused) => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isPending: true, isLoading: !isPaused, isError: false, isFetching: !isPaused, isPaused, status: "pending", fetchStatus: isPaused ? "paused" : "fetching" });
+    const { container } = renderPage();
+    expect(screen.getByText("—개")).toBeInTheDocument();
+    expect(screen.queryByText("0개")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_items_loading_row"]')).toBeInTheDocument();
+  });
+
+  it("preserves the empty state for disabled pending rules that are not paused", () => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: false, status: "pending", fetchStatus: "idle" });
+    renderPage();
+    expect(screen.getByText("0개")).toBeInTheDocument();
+    expect(screen.getByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
+  });
+
+  it("keeps cached rules and count during a paused refetch", () => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: [createRule()], isLoading: false, isError: false, isPaused: true });
+    const { container } = renderPage();
+    expect(screen.getByText("실제 서비스 시작 규칙")).toBeInTheDocument();
+    expect(screen.getByText("1개")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_items_loading_row"]')).not.toBeInTheDocument();
+  });
+
+  it("shows an unavailable count and retries a failed first rules load", () => {
+    const refetch = jest.fn();
+    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isLoading: false, isError: true, isFetching: false, refetch });
+    renderPage();
+    expect(screen.getByText("—개")).toBeInTheDocument();
+    expect(screen.queryByText("0개")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("data-size", "panel");
+    expect(alert).toHaveTextContent("자동 전송 트리거를 불러오지 못했습니다.");
+    fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a cached successful zero count after a failed refetch", () => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: [], isLoading: false, isError: true, isFetching: false, refetch: jest.fn() });
+    renderPage();
+    expect(screen.getByText("0개")).toBeInTheDocument();
+    expect(screen.queryByText("—개")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps cached rules and count above a retryable inline notice (fetching=%s)", (isFetching) => {
+    const refetch = jest.fn();
+    mockUseMessageTriggerRules.mockReturnValue({ data: [createRule()], isLoading: false, isError: true, isFetching, refetch });
+    renderPage();
+    const alert = screen.getByRole("alert");
+    const row = screen.getByText("실제 서비스 시작 규칙");
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("1개")).toBeInTheDocument();
+    const retry = within(alert).getByRole("button", { name: "다시 시도" });
+    if (isFetching) {
+      expect(retry).toBeDisabled();
+    } else {
+      fireEvent.click(retry);
+      expect(refetch).toHaveBeenCalledTimes(1);
+    }
   });
 
   // M5: a branchless (system) rule is never editable (content is fixed), but this branch may

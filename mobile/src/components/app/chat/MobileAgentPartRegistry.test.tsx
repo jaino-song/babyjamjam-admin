@@ -2,6 +2,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
 import { MobileAgentPartRegistry } from "./MobileAgentPartRegistry";
+import { AgentContactCard } from "./AgentContactCard";
+
+jest.mock("./AgentContactCard", () => ({ AgentContactCard: jest.fn(() => null) }));
 
 jest.mock("next/link", () => ({
     __esModule: true,
@@ -65,6 +68,65 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
 }
 
 describe("MobileAgentPartRegistry", () => {
+    const proposal = {
+        actionId: "action-contact", capability: "contracts.dispatch", title: "발송", summary: "확인",
+        expiresAt: "2099-08-03T00:00:00.000Z", expectedRevision: "revision-1", changes: {},
+    };
+
+    it.each([
+        [{ clientId: 12 }, {}, { clientId: 12 }],
+        [{}, { clientId: 12 }, { clientId: 12 }],
+        [{ employeeId: 12 }, {}, { employeeId: 12 }],
+        [{}, { employeeId: 12 }, { employeeId: 12 }],
+        [{ clientId: "12" }, {}, { clientId: 12 }],
+        [{ clientId: 12, employeeId: 13 }, { clientId: 14 }, { clientId: 12 }],
+        [{ employeeId: 13 }, { clientId: 14 }, { employeeId: 13 }],
+        [{ clientId: "abc" }, { clientId: 14 }, { clientId: 14 }],
+    ])("passes only the highest priority valid contact id (%j, %j)", (target, changes, expected) => {
+        (AgentContactCard as jest.Mock).mockClear();
+        render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_proposal"
+            part={{ type: "data-action-proposal", data: { ...proposal, target, changes } }} />);
+        expect(AgentContactCard).toHaveBeenCalledTimes(1);
+        expect((AgentContactCard as jest.Mock).mock.calls[0][0]).toEqual({
+            "data-component": "mobile_chat_tests_proposal_content_contact", ...expected,
+        });
+    });
+
+    it.each([0, -1, "abc", 1.5, "1.5", " 12", Number.MAX_SAFE_INTEGER + 1, "9007199254740992", null])("rejects an invalid contact id %j", (clientId) => {
+        (AgentContactCard as jest.Mock).mockClear();
+        render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_proposal"
+            part={{ type: "data-action-proposal", data: { ...proposal, target: { clientId } } }} />);
+        expect(AgentContactCard).not.toHaveBeenCalled();
+    });
+
+    it("does not look up a user-account id", () => {
+        (AgentContactCard as jest.Mock).mockClear();
+        render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_proposal"
+            part={{ type: "data-action-proposal", data: { ...proposal, target: { userId: 12 } } }} />);
+        expect(AgentContactCard).not.toHaveBeenCalled();
+    });
+
+    it("filters result JSON without adding a result contact card", () => {
+        (AgentContactCard as jest.Mock).mockClear();
+        const { container } = render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_result"
+            part={{ type: "data-action-result", data: { actionId: "action-contact", status: "succeeded", summary: "완료",
+                result: { clientId: 12, phone: "unchanged", phoneLast4: "5678", maskedContact: "masked", maskedReceiver: "masked", RECEIVER: "masked" },
+            } }} />);
+        const block = container.querySelector('[data-slot="action-result-details"] pre');
+        expect(block).toBeInTheDocument();
+        expect(block?.textContent).not.toMatch(/phoneLast4|maskedContact|maskedReceiver|RECEIVER|masked/);
+        expect(block).toHaveTextContent("clientId");
+        expect(block).toHaveTextContent("phone");
+        expect(AgentContactCard).not.toHaveBeenCalled();
+    });
+
+    it("does not add a contact card to entity choices", () => {
+        (AgentContactCard as jest.Mock).mockClear();
+        render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_choice"
+            part={{ type: "data-entity-choice", data: { entityType: "clients", prompt: "선택", choices: [{ id: "12", label: "이름" }] } }} />);
+        expect(AgentContactCard).not.toHaveBeenCalled();
+    });
+
     it("preserves the entity domain when selecting a choice", () => {
         const onEntitySelect = jest.fn();
         render(<MobileAgentPartRegistry

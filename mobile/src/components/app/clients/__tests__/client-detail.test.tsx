@@ -1,7 +1,10 @@
-import { render, renderHook, screen } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
+import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { eformsignApi } from "@/services/api";
+import { toast } from "@/hooks/use-toast";
 
 import {
   ClientDetailContent,
@@ -12,6 +15,24 @@ import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useIssueContract } from "@/hooks/useIssueContract";
 import { useFormStore } from "@/stores/form-store";
+
+describe("client message lookup detail labels", () => {
+  it.each(["checking", "exhausted"])("renders %s in detail without changing the list label", async historyLookup => {
+    const row: ClientNotificationLogRecord = {
+      id: 901, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "failed",
+      receiver: "01012345678", messageBody: "내용", variables: { historyLookup },
+      recipientName: null, clientId: null, errorMessage: null, ruleName: null,
+      createdAt: "2026-10-12T00:00:00Z",
+    };
+    render(<ClientDetailContent data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+      client={client} contractDocument={null} activeTab="message" notificationLogs={[row]}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+    const button = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+    expect(button).toHaveTextContent("발송 실패");
+    await userEvent.setup().click(button);
+    expect(screen.getByText(historyLookup === "checking" ? "확인 중" : "확인 필요")).toBeInTheDocument();
+  });
+});
 
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({ data: [] }),
@@ -47,6 +68,10 @@ jest.mock("@/hooks/useServiceRecords", () => ({
 jest.mock("@/hooks/useClients", () => ({
   approveScheduleChange: jest.fn(),
   rejectScheduleChange: jest.fn(),
+}));
+
+jest.mock("@/features/clients", () => ({
+  useConfirmBooking: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -104,7 +129,7 @@ jest.mock("../ServiceScheduleChangeModal", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }) },
+  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }), getLinkConfirmations: jest.fn().mockResolvedValue([]), voidDocument: jest.fn() },
 }));
 
 const client: Client = {
@@ -132,6 +157,7 @@ const client: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,
@@ -196,6 +222,120 @@ function contractDocumentWithDates({
     detail_template_info: [],
   };
 }
+
+describe("contract void workflow", () => {
+  const linkedClient: Client = { ...client, eDocId: "document-1", latestContractDocumentId: "document-1", documentStatus: "requested", hasSigned: true };
+  const voidedAt = "2026-10-14T01:02:00Z";
+  const document = (display_status: string): EformsignDocument => ({
+    ...contractDocumentWithDates({ createdDate: Date.parse("2026-10-01T00:00:00Z") }),
+    display_status,
+  });
+  const refresh = jest.fn();
+  function renderVoid(doc = document("signed"), target = linkedClient) {
+    return render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
+      client={target} contractDocument={doc} activeTab="contracts" onContractVoided={refresh}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+      onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+  }
+  beforeEach(() => {
+    jest.mocked(eformsignApi.voidDocument).mockReset();
+    jest.mocked(toast).mockClear();
+    refresh.mockClear();
+  });
+  it.each(["003", "060"])("voided overrides provider code %s and shows time/name with no action", (code) => {
+    const doc = document("voided");
+    doc.current_status.status_type = code;
+    doc.voided_at = voidedAt;
+    doc.voided_by_name = "담당자";
+    renderVoid(doc, { ...linkedClient, hasSigned: false });
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.getByText("파기")).toBeInTheDocument();
+    expect(screen.getByText(`${formatMessageDateTimeCompact(voidedAt)} · 담당자`)).toBeInTheDocument();
+    expect(screen.getByText("서명 대기자").parentElement).toHaveTextContent("-");
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+    expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+  });
+  it("uses the void timestamp even when display status lags and the actor is unknown", () => {
+    renderVoid({ ...document("signed"), voided_at: voidedAt, voided_by_name: null });
+    expect(screen.getByText(`${formatMessageDateTimeCompact(voidedAt)} · 알 수 없음`)).toBeInTheDocument();
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("honors display_status voided without a timestamp regardless of a completed code", () => {
+    const doc = document("voided");
+    doc.current_status.status_type = "003";
+    renderVoid(doc, { ...linkedClient, documentStatus: "completed" });
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByText("계약 완료")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("uses only the coarse voided status when no document is loaded", () => {
+    renderDetail(null, { ...linkedClient, documentStatus: "voided" }, "contracts");
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByText("파기")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it.each(["revoked", "expired"])("does not offer void for %s", (status) => {
+    renderVoid(document(status));
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("does not void an older linked document or inherit the latest contract's voided badge", () => {
+    renderVoid(document("signed"), { ...linkedClient, latestContractDocumentId: "newer", documentStatus: "voided" });
+    expect(screen.getAllByText("서명 완료").length).toBeGreaterThan(0);
+    expect(screen.queryByText("파기됨")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("keeps the loaded document's status even when the same client's coarse status is voided", () => {
+    renderVoid(document("signed"), { ...linkedClient, documentStatus: "voided" });
+    expect(screen.queryByText("파기됨")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action })).toBeInTheDocument();
+  });
+  it("shows shared confirmation copy and cancels without a request", async () => {
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmTitle);
+    expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmDescription);
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel }));
+    expect(eformsignApi.voidDocument).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("submits once, disables pending actions, ignores dismissal, and refreshes on success", async () => {
+    let resolve!: (response: Awaited<ReturnType<typeof eformsignApi.voidDocument>>) => void;
+    jest.mocked(eformsignApi.voidDocument).mockImplementation(() => new Promise((done) => { resolve = done; }));
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
+    const pending = screen.getByRole("button", { name: CONTRACT_VOID_COPY.pending });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(eformsignApi.voidDocument).toHaveBeenCalledTimes(1);
+    expect(eformsignApi.voidDocument).toHaveBeenCalledWith("document-1");
+    await act(async () => resolve({ documentId: "document-1", voidedAt, voidedByName: null, displayStatus: "voided" }));
+    expect(toast).toHaveBeenCalledWith({ title: CONTRACT_VOID_COPY.success });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it.each([
+    [409, { isAxiosError: true, response: { status: 409 } }, CONTRACT_VOID_COPY.conflict, false],
+    [500, { isAxiosError: true, response: { status: 500 } }, CONTRACT_VOID_COPY.failure, true],
+    ["network", new Error("network"), CONTRACT_VOID_COPY.failure, true],
+  ])("refreshes after %s and preserves the correct modal state", async (_name, error, copy, staysOpen) => {
+    jest.mocked(eformsignApi.voidDocument).mockRejectedValue(error);
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(toast).toHaveBeenCalledWith({ title: copy, variant: "destructive" });
+    if (staysOpen) expect(screen.getByRole("dialog")).toBeInTheDocument();
+    else expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
 
 describe("ClientDetailContent", () => {
   it("leaves the payment date blank when the old document fetch fails during reissue", async () => {
@@ -317,6 +457,83 @@ describe("ClientDetailContent", () => {
     expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(shown);
     expect(screen.queryAllByText(hidden)).toHaveLength(0);
   });
+  it.each([
+    ["display_status", { display_status: "rejected_by_reviewer" }],
+    ["the 071 status code when display_status is absent", {}],
+  ])("shows a rejected contract as 반려됨 with the solid badge, from %s — never 서명 완료", (_source, extra) => {
+    // The backend reports a 071 contract as documentStatus requested + hasSigned, which the coarse
+    // summary alone would read as 서명 완료.
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: { status_type: "071", step_type: "06", step_name: "제공기관 확인" },
+      ...extra,
+    } as EformsignDocument;
+
+    const { container } = renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("반려됨");
+    expect(screen.queryAllByText("서명 완료")).toHaveLength(0);
+    const cardBadge = container.querySelector(
+      '[data-component$="_contract-card_doc-row"] .badge-mini',
+    );
+    expect(cardBadge).toHaveTextContent("반려됨");
+    expect(cardBadge).toHaveClass("burgundy-solid");
+  });
+
+  it.each([
+    ["signed", "070", "signed", "서명 완료", "primary"],
+    ["review", "070", "review", "서명 완료", "primary"],
+    ["unsigned", "060", "pending", "서명 요청됨", "orange"],
+  ])("keeps the %s contract card exactly as the client summary reads", (_state, statusType, displayStatus, label, tone) => {
+    const hasSigned = statusType === "070";
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      display_status: displayStatus,
+      current_status: {
+        status_type: statusType,
+        step_type: hasSigned ? "06" : "05",
+        step_name: hasSigned ? "제공기관 확인" : "이용자",
+      },
+    } as EformsignDocument;
+
+    const { container } = renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(label);
+    expect(screen.queryAllByText("반려됨")).toHaveLength(0);
+    const cardBadge = container.querySelector(
+      '[data-component$="_contract-card_doc-row"] .badge-mini',
+    );
+    expect(cardBadge).toHaveTextContent(label);
+    expect(cardBadge).toHaveClass(tone);
+    expect(cardBadge).not.toHaveClass("burgundy-solid");
+  });
+
+  it("falls back to the client summary when there is no contract document", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+
+    renderDetail(null, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("서명 완료");
+    expect(screen.queryAllByText("반려됨")).toHaveLength(0);
+  });
+
   it("does not supersede a signed contract that still reports documentStatus requested", async () => {
     const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
     jest.mocked(fetchClientServiceRecords).mockResolvedValue({
@@ -676,6 +893,7 @@ describe("ClientDetailContent", () => {
   it.each([
     ["canceled", "취소 사유", "사용자가 발송을 취소했습니다."],
     ["failed", "실패 사유", "발신번호 인증에 실패했습니다."],
+    ["needs_setup", "설정 필요 사유", "연락처가 연결되지 않았습니다."],
   ] as const)("shows only the %s reason in the real history detail", async (status, reasonLabel, reason) => {
     const view = render(
       <ClientDetailContent
@@ -711,7 +929,11 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText(reasonLabel)).toBeInTheDocument();
     expect(screen.getByText(reason)).toBeInTheDocument();
-    expect(screen.queryByText(status === "canceled" ? "실패 사유" : "취소 사유")).not.toBeInTheDocument();
+    for (const otherLabel of ["실패 사유", "취소 사유", "설정 필요 사유"]) {
+      if (otherLabel !== reasonLabel) expect(screen.queryByText(otherLabel)).not.toBeInTheDocument();
+    }
+    // The client detail passes no retry handler, so no row offers a resend.
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
     view.unmount();
   });
 
@@ -828,6 +1050,133 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText("발송 내역을 불러오지 못했습니다.")).toBeInTheDocument();
     expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
+  });
+
+  describe("failed history refetch over cached logs", () => {
+    const cachedLog: ClientNotificationLogRecord = {
+      id: 902, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "sent",
+      receiver: "01012345678", messageBody: "내용", variables: {},
+      recipientName: null, clientId: null, errorMessage: null, ruleName: "제공기록지 작성 링크",
+      createdAt: "2026-10-12T00:00:00Z",
+    };
+    const renderMessageTab = (props: Record<string, unknown>) =>
+      render(
+        <ClientDetailContent
+          data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+          client={client}
+          contractDocument={null}
+          activeTab="message"
+          onTabChange={jest.fn()}
+          onMessage={jest.fn()}
+          onIssueContract={jest.fn()}
+          onEdit={jest.fn()}
+          onDelete={jest.fn()}
+          onClientUpdated={jest.fn()}
+          {...props}
+        />,
+      );
+
+    it("keeps the cached logs and shows a notice whose retry refetches", async () => {
+      const onRetryNotificationLogs = jest.fn();
+      renderMessageTab({ notificationLogs: [cachedLog], isNotificationLogsError: true, onRetryNotificationLogs });
+
+      const row = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+      expect(alert).toHaveAttribute("data-size", "inline");
+      // The notice sits above the cached rows, and the no-data error UI is not used.
+      expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByText("발송 내역을 불러오지 못했습니다.")).not.toBeInTheDocument();
+
+      await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables the notice's retry while a refetch is in flight", () => {
+      renderMessageTab({
+        notificationLogs: [cachedLog],
+        isNotificationLogsError: true,
+        isNotificationLogsRetrying: true,
+        onRetryNotificationLogs: jest.fn(),
+      });
+
+      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    });
+
+    it("shows no notice over cached logs when the load succeeded", () => {
+      renderMessageTab({ notificationLogs: [cachedLog] });
+
+      expect(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    describe("while a message detail is open", () => {
+      const detailProps = (extra: Record<string, unknown> = {}) => ({
+        notificationLogs: [{ ...cachedLog, messageBody: "열린 메시지 본문" }],
+        onRetryNotificationLogs: jest.fn(),
+        ...extra,
+      });
+      const renderOpenDetail = async (extra: Record<string, unknown> = {}) => {
+        const props = detailProps(extra);
+        const view = renderMessageTab(props);
+        await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        return { view, props };
+      };
+      const rerenderWith = (view: ReturnType<typeof renderMessageTab>, props: Record<string, unknown>) =>
+        view.rerender(
+          <ClientDetailContent
+            data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+            client={client}
+            contractDocument={null}
+            activeTab="message"
+            onTabChange={jest.fn()}
+            onMessage={jest.fn()}
+            onIssueContract={jest.fn()}
+            onEdit={jest.fn()}
+            onDelete={jest.fn()}
+            onClientUpdated={jest.fn()}
+            {...props}
+          />,
+        );
+
+      it("shows the notice above the kept message body after a failed refetch, and its retry refetches", async () => {
+        const { view, props } = await renderOpenDetail();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true });
+
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        const body = screen.getByText("열린 메시지 본문");
+        expect(alert.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+        await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(props.onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+      });
+
+      it("disables the notice's retry while a refetch is in flight", async () => {
+        const { view, props } = await renderOpenDetail();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true, isNotificationLogsRetrying: true });
+
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      });
+
+      it("shows no notice over the open detail when the load succeeded", async () => {
+        await renderOpenDetail();
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+    });
+
+    it("keeps the truncation notice over cached logs after a failed refetch", () => {
+      renderMessageTab({ notificationLogs: [cachedLog], hasMoreNotificationLogs: true, isNotificationLogsError: true });
+
+      expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+    });
   });
 
   describe("detail-empty-state slot", () => {

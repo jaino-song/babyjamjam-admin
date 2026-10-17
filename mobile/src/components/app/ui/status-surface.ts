@@ -25,3 +25,14 @@ export const STATUS_SURFACE = {
   warning: "bg-status-warning border-status-warning-line text-status-warning-fg",
   danger: "bg-status-danger border-status-danger-line text-status-danger-fg",
 } as const satisfies Record<StatusBadgeVariant, string>;
+
+/**
+ * Solid (filled) status surfaces, kept apart from STATUS_SURFACE because they are not one of
+ * the shared StatusBadgeVariant names: a domain status asks for one by name. The values live in
+ * globals.css as --status-*-solid tokens.
+ */
+export const STATUS_SURFACE_SOLID = {
+  // 반려됨 (eformsign 071, rejected_by_reviewer): burgundy fill, white text — stronger than the
+  // soft `danger` surface used by 기간 만료 and 철회됨.
+  rejectedByReviewer: "bg-status-danger-solid border-status-danger-solid text-status-danger-solid-fg",
+} as const;

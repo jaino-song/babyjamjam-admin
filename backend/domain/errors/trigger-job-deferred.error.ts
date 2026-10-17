@@ -1,4 +1,4 @@
-export type TriggerJobDeferKind = "config" | "transient";
+export type TriggerJobDeferKind = "transient";
 
 export class TriggerJobDeferredError extends Error {
     constructor(

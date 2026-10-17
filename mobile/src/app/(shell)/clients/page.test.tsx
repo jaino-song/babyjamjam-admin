@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -94,7 +94,7 @@ jest.mock("@/components/app/mobile-redesign/primitives", () => ({
     <div>
       {title ? <div data-testid="list-card-header-count">{title} {count}</div> : null}
       {beforeFilters}
-      <div>
+      <div data-testid="list-card-filters">
         {filters.map((filter) => (
           <button key={filter.label} type="button" onClick={() => onFilterChange?.(filter.label)}>
             {filter.label} {filter.count}
@@ -219,6 +219,7 @@ function makeClient(id: number): Client {
     voucherClient: false,
     breastPump: false,
     serviceStatus: "active",
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,
@@ -344,5 +345,85 @@ describe("ClientsPage URL-selected detail identity", () => {
       expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("고객 1명");
       expect(screen.getByRole("button", { name: "전체 1" })).toBeInTheDocument();
     });
+  });
+});
+
+describe("ClientsPage list load states", () => {
+  const refetch = jest.fn();
+  function setList(rows: Client[], isError = false, isFetching = false, isLoading = false) {
+    mockedUseInfiniteClients.mockReturnValue({
+      allClients: rows, allFilteredClients: rows, total: rows.length,
+      isLoading, isError, isFetching, refetch,
+    } as unknown as ReturnType<typeof useInfiniteClients>);
+  }
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockClientId = null;
+    mockedUseClient.mockReturnValue({ data: undefined } as ReturnType<typeof useClient>);
+    mockedUseDeleteClient.mockReturnValue({ isPending: false, mutateAsync: jest.fn() } as unknown as ReturnType<typeof useDeleteClient>);
+  });
+
+  it("retries a failed first load without claiming zero clients, then recovers", () => {
+    setList([], true);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = renderPage(queryClient);
+    expect(screen.getByRole("alert")).toHaveAttribute("data-size", "panel");
+    expect(screen.getByText("불러오지 못했습니다")).toBeInTheDocument();
+    expect(screen.queryByText("등록된 고객이 없습니다.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("list-card-header-count")).not.toHaveTextContent("0명");
+    const pills = within(screen.getByTestId("list-card-filters")).getAllByRole("button");
+    expect(pills).toHaveLength(3);
+    for (const pill of pills) {
+      expect(pill).not.toHaveTextContent("0");
+      expect(pill).toBeEnabled();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    setList([makeClient(9)]);
+    view.rerender(<QueryClientProvider client={queryClient}><ClientsPage /></QueryClientProvider>);
+    expect(screen.getByRole("button", { name: "고객 9" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows empty text only for a successful empty load", () => {
+    setList([]);
+    renderPage(new QueryClient());
+    expect(screen.getByText("등록된 고객이 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("0명");
+    expect(screen.getByRole("button", { name: "전체 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 필요 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "진행 중 0" })).toBeInTheDocument();
+  });
+
+  it("keeps cached rows with an inline retry notice above them", () => {
+    setList([makeClient(9)], true);
+    renderPage(new QueryClient());
+    const alert = screen.getByRole("alert");
+    const row = screen.getByRole("button", { name: "고객 9" });
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("1명");
+    expect(screen.getByRole("button", { name: "전체 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 필요 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "진행 중 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables cached-data retry while fetching without hiding rows", () => {
+    setList([makeClient(9)], true, true);
+    renderPage(new QueryClient());
+    expect(screen.getByRole("button", { name: "고객 9" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+  });
+
+  it("keeps the existing loading state before the first result", () => {
+    setList([], false, true, true);
+    renderPage(new QueryClient());
+    expect(screen.getAllByText("로딩 중").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 고객이 없습니다.")).not.toBeInTheDocument();
   });
 });

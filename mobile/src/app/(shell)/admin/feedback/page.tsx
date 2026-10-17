@@ -9,6 +9,7 @@ import { MessageSquare, ThumbsUp, ThumbsDown, Sparkles, Send, Users, MessageCirc
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatsBar, ListPanel, AnimatedSlotList, ListEmptyState } from '@/components/app/v3';
 import { ShortcutGrid } from '@/components/app/v3/ShortcutGrid';
+import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
 
 type FilterType = 'all' | 'positive' | 'negative';
 
@@ -37,12 +38,12 @@ export default function AdminFeedbackPage() {
     []
   );
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading, isPaused: statsPaused, isError: statsError, isFetching: statsFetching, refetch: statsRefetch } = useQuery({
     queryKey: ['feedbackStats'],
     queryFn: getFeedbackStats,
   });
 
-  const { data: feedbackData, isLoading: feedbackLoading, error } = useQuery({
+  const { data: feedbackData, isLoading: feedbackLoading, isPaused: feedbackPaused, isError: feedbackError, isFetching: feedbackFetching, refetch } = useQuery({
     queryKey: ['feedbackList', 1, filterType],
     queryFn: () => getFeedbackList(1, 100, filterType === 'all' ? undefined : filterType),
   });
@@ -75,25 +76,41 @@ export default function AdminFeedbackPage() {
     return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
   };
 
-  if (error) {
-    return (
-      <div data-component={`${FEEDBACK_BASE}_error`} className="p-6">
-        <div data-component={`${FEEDBACK_BASE}_error_message`} className="bg-v3-burgundy-light text-v3-burgundy rounded-2xl p-6 text-center">
-          피드백을 불러오는데 실패했습니다.
-        </div>
-      </div>
-    );
-  }
+  const isFeedbackLoading = feedbackLoading || (feedbackPaused && feedbackData === undefined);
+  const hasFeedbackAlert = feedbackError && (feedbackData !== undefined || !isFeedbackLoading);
+  const retryFeedback = () => {
+    void refetch();
+    if (statsError) void statsRefetch();
+  };
+  const isFeedbackRetrying = feedbackFetching || (statsError && statsFetching);
 
   return (
     <section data-component={FEEDBACK_BASE} className="space-y-6">
+      {!hasFeedbackAlert && statsError && stats === undefined && (
+        <QueryErrorState
+          dataComponent={`${FEEDBACK_BASE}_stats-error`}
+          size="inline"
+          title="피드백 통계를 불러오지 못했습니다"
+          onRetry={() => void statsRefetch()}
+          isRetrying={statsFetching}
+        />
+      )}
+      {!hasFeedbackAlert && statsError && stats !== undefined && (
+        <QueryErrorState
+          dataComponent={`${FEEDBACK_BASE}_stats-cached-error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => void statsRefetch()}
+          isRetrying={statsFetching}
+        />
+      )}
       <StatsBar
         data-component={`${FEEDBACK_BASE}_stats`}
-        isLoading={statsLoading}
+        isLoading={statsLoading || (statsPaused && stats === undefined)}
         items={[
-          { icon: MessageSquare, value: stats?.total || 0, label: '전체', counter: '건' },
-          { icon: ThumbsUp, value: stats?.positive || 0, label: '긍정적', counter: '건', colorIndex: 1 },
-          { icon: ThumbsDown, value: stats?.negative || 0, label: '부정적', counter: '건', colorIndex: 2 },
+          { icon: MessageSquare, value: stats === undefined ? '—' : stats.total, label: '전체', counter: stats === undefined ? undefined : '건' },
+          { icon: ThumbsUp, value: stats === undefined ? '—' : stats.positive, label: '긍정적', counter: stats === undefined ? undefined : '건', colorIndex: 1 },
+          { icon: ThumbsDown, value: stats === undefined ? '—' : stats.negative, label: '부정적', counter: stats === undefined ? undefined : '건', colorIndex: 2 },
         ]}
       />
 
@@ -112,13 +129,29 @@ export default function AdminFeedbackPage() {
         onSearchChange={setSearchQuery}
         searchPlaceholder="사용자, 코멘트 검색..."
       >
-        {!feedbackLoading && filteredList.length === 0 ? (
+        {feedbackError && feedbackData !== undefined && (
+          <QueryErrorState
+            dataComponent={`${FEEDBACK_LIST_PANEL}_content_cached-error`}
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={retryFeedback}
+            isRetrying={isFeedbackRetrying}
+          />
+        )}
+        {!isFeedbackLoading && feedbackError && feedbackData === undefined ? (
+          <QueryErrorState
+            dataComponent={`${FEEDBACK_LIST_PANEL}_content_error`}
+            title="피드백을 불러오지 못했습니다"
+            onRetry={retryFeedback}
+            isRetrying={isFeedbackRetrying}
+          />
+        ) : !isFeedbackLoading && filteredList.length === 0 ? (
           <ListEmptyState message={searchQuery ? '검색 결과가 없습니다' : '피드백이 없습니다'} />
         ) : (
           <AnimatedSlotList<FeedbackItem>
             data-component={FEEDBACK_LIST}
             items={filteredList}
-            isLoading={feedbackLoading}
+            isLoading={isFeedbackLoading}
             loadingCount={5}
             className="space-y-2"
             slotClassName={({ isLoading: slotLoading }) =>

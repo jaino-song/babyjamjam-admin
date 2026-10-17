@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     ClientWithInitialSchedule,
+    ClientPhoneMatch,
     AutomaticServiceStatusUpdateResult,
     IClientRepository,
     InitialClientSchedule,
@@ -153,6 +154,7 @@ export class SbClientRepository implements IClientRepository {
             birthday: true,
             dueDate: true,
             serviceStatus: true,
+            bookingConfirmedAt: true,
             breastPump: true,
             eDocId: true,
             suppressGreetingSms: true,
@@ -773,7 +775,7 @@ export class SbClientRepository implements IClientRepository {
      *  - `startDate < addBusinessDays(today, threshold + 1)`: a start inside the business-day
      *    send window is exactly any date before the business day just past it (the same bound
      *    `getActionRequiredAlerts` uses); a null start never matches;
-     *  - not a stored manual pre_booking/terminated status, and `endDate >= today` (a finished
+     *  - confirmed and not a stored manual terminated status, and `endDate >= today` (a finished
      *    service is effectively completed), except 교체 요청 which keeps its stored status.
      * That leaves the branch's currently running or upcoming clients starting before the window
      * end, which is bounded by the branch's live clients rather than its whole history.
@@ -817,7 +819,6 @@ export class SbClientRepository implements IClientRepository {
                                     {
                                         serviceStatus: {
                                             notIn: [
-                                                SERVICE_STATUS.PRE_BOOKING,
                                                 SERVICE_STATUS.TERMINATED,
                                                 SERVICE_STATUS.REPLACEMENT_REQUESTED,
                                             ],
@@ -825,6 +826,7 @@ export class SbClientRepository implements IClientRepository {
                                     },
                                 ],
                             },
+                            { bookingConfirmedAt: { not: null } },
                             { endDate: { gte: todayStart } },
                         ],
                     },
@@ -849,6 +851,7 @@ export class SbClientRepository implements IClientRepository {
                         client.serviceStatus ?? null,
                         client.startDate ?? null,
                         client.endDate ?? null,
+                        client.bookingConfirmedAt,
                         now,
                     ),
                     startDate: client.startDate ?? null,
@@ -866,6 +869,17 @@ export class SbClientRepository implements IClientRepository {
             );
         }
         return needingSend.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]> {
+        if (phoneSuffixes.length === 0) return [];
+        return this.prismaService.client.findMany({
+            where: {
+                branchId,
+                OR: [...new Set(phoneSuffixes)].map(suffix => ({ phone: { endsWith: suffix } })),
+            },
+            select: { id: true, branchId: true, name: true, phone: true, birthday: true },
+        });
     }
 
     async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {

@@ -7,7 +7,8 @@ import { MessageTriggerDeliveryService } from "application/services/message-trig
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
-import { ActionCoordinatorService } from "application/agent/action-coordinator.service";
+import { ActionCoordinatorService, AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
+import { redactModelValue } from "application/agent/agent-model-redaction";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -135,7 +136,247 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
 
         expect(repository.findHistoryByBranch).toHaveBeenCalledWith(principal.branchId, 13, undefined);
         expect(result.jobs).toEqual([expect.objectContaining({ id: "job-a", status: "failed" })]);
-        expect(result.jobs[0]).toEqual(expect.objectContaining({ receiver: "••••5678" }));
+        expect(result.jobs[0]).toEqual({
+            id: "job-a", status: "failed", scheduledFor: "2026-08-03T00:00:00.000Z",
+            sentAt: null, templateKey: MessageTriggerTemplateKey.INFO, clientId: 1,
+            attempts: 0, updatedAt: "2026-08-03T00:00:00.000Z",
+        });
+    });
+
+    const smsCases = ["messages.sendSms", "messages.scheduleSms"];
+    const smsInput = { receiver: "01012345678", message: "안내", scheduledDate: "2099-08-03", scheduledTime: "12:00" };
+    function inputFor(name: string) {
+        return name === "messages.scheduleSms" ? smsInput : { receiver: smsInput.receiver, message: smsInput.message };
+    }
+
+    it.each(smsCases)("%s proposes only the client ID and name, never a contact", async (name) => {
+        const { capabilities, prisma } = setup();
+        const capability = capabilities.find((entry) => entry.meta.name === name)!;
+        const inspection = await capability.inspect!(context, inputFor(name));
+        expect(inspection.targetSnapshot).toEqual({ clientId: 1, name: "테스트 고객" });
+        expect(inspection.targetVersion).toBeUndefined();
+        expect(inspection.summary).toBe(name === "messages.sendSms"
+            ? "테스트 고객 님에게 2자 메시지를 발송합니다."
+            : "2099-08-03 12:00에 테스트 고객 님에게 발송합니다.");
+        expect(inspection.summary).not.toMatch(/[•*]|\d{9,}|0\d{1,2}[- ]\d{3,4}[- ]\d{4}/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
+        expect(prisma.employee.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each(smsCases)("%s proposes an employee ID when no client matches", async (name) => {
+        const { capabilities, prisma } = setup();
+        prisma.client.findFirst.mockResolvedValue(null);
+        prisma.employee.findFirst.mockResolvedValue({ id: 9, name: "테스트 직원", phone: smsInput.receiver } as never);
+        const inspection = await capabilities.find((entry) => entry.meta.name === name)!.inspect!(context, inputFor(name));
+        expect(inspection.targetSnapshot).toEqual({ employeeId: 9, name: "테스트 직원" });
+        expect(inspection.targetVersion).toBeUndefined();
+        expect(inspection.summary).toContain("테스트 직원 님에게");
+        expect(inspection.summary).not.toMatch(/[•*]|\d{9,}|0\d{1,2}[- ]\d{3,4}[- ]\d{4}/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
+    });
+
+    it.each(smsCases)("%s rejects unknown recipients at proposal time", async (name) => {
+        const { capabilities, prisma, repository, senderApproval } = setup();
+        prisma.client.findFirst.mockResolvedValue(null);
+        await expect(capabilities.find((entry) => entry.meta.name === name)!.inspect!(context, inputFor(name)))
+            .rejects.toThrow("SMS recipient is not an active client or employee in this branch");
+        expect(senderApproval.ensureApproved).toHaveBeenCalledWith(principal.branchId);
+        expect(repository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it.each(smsCases)("%s sends when the approved recipient ID still matches", async (name) => {
+        const { capabilities, repository } = setup();
+        const capability = capabilities.find((entry) => entry.meta.name === name)!;
+        const inspection = await capability.inspect!(context, inputFor(name));
+        await capability.execute({ ...context, approvedTargetSnapshot: inspection.targetSnapshot }, inputFor(name));
+        expect(repository.upsertPending).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(smsCases)("%s binds employee approvals and rejects changed employee IDs and kinds", async (name) => {
+        for (const approvedTargetSnapshot of [{ employeeId: 9 }, { employeeId: 10 }, { clientId: 9 }]) {
+            const { capabilities, prisma, repository } = setup();
+            prisma.client.findFirst.mockResolvedValue(null);
+            prisma.employee.findFirst.mockResolvedValue({ id: 9, name: "테스트 직원", phone: smsInput.receiver } as never);
+            const execution = capabilities.find((entry) => entry.meta.name === name)!.execute(
+                { ...context, approvedTargetSnapshot }, inputFor(name),
+            );
+            if (approvedTargetSnapshot.employeeId === 9) {
+                await expect(execution).resolves.toHaveProperty("jobId", "retry-job");
+                expect(repository.upsertPending).toHaveBeenCalledTimes(1);
+            } else {
+                await expect(execution).rejects.toEqual(new AgentActionCertainFailureError("SMS recipient changed after approval; review a new proposal"));
+                expect(repository.upsertPending).not.toHaveBeenCalled();
+                expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            }
+        }
+    });
+
+    it.each(smsCases)("%s uses a safe display name when the matched recipient has no name", async (name) => {
+        const { capabilities, prisma } = setup();
+        prisma.client.findFirst.mockResolvedValue({ id: 1, name: null, phone: smsInput.receiver } as never);
+        const inspection = await capabilities.find((entry) => entry.meta.name === name)!.inspect!(context, inputFor(name));
+        expect(inspection.targetSnapshot).toEqual({ clientId: 1, name: "수신자" });
+        expect(inspection.summary).toContain("수신자 님에게");
+    });
+
+    it.each(smsCases)("%s rejects a changed recipient ID or entity kind before enqueue", async (name) => {
+        for (const approvedTargetSnapshot of [{ clientId: 2 }, { employeeId: 1 }]) {
+            const { capabilities, repository, prisma, delivery } = setup();
+            await expect(capabilities.find((entry) => entry.meta.name === name)!.execute(
+                { ...context, approvedTargetSnapshot }, inputFor(name),
+            )).rejects.toEqual(new AgentActionCertainFailureError("SMS recipient changed after approval; review a new proposal"));
+            expect(repository.upsertPending).not.toHaveBeenCalled();
+            expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            expect(delivery.dispatchPendingJobNow).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(smsCases)("%s accepts old approval snapshots with no recipient ID", async (name) => {
+        const { capabilities, repository } = setup();
+        await capabilities.find((entry) => entry.meta.name === name)!.execute(
+            { ...context, approvedTargetSnapshot: { name: "수신자" } }, inputFor(name),
+        );
+        expect(repository.upsertPending).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        [MessageTriggerRecipientType.CLIENT, 7, { employeeId: 9 }],
+        [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, 7, { employeeId: 9 }],
+        [MessageTriggerRecipientType.SECONDARY_EMPLOYEE, 7, { employeeId: 9 }],
+        [MessageTriggerRecipientType.CLIENT, null, { employeeId: 9 }],
+    ])("retry and history distinguish the recipient from the job's client (%s, %s)", async (recipientType, clientId, expectedId) => {
+        const source = terminalJob({ recipientType, clientId });
+        const { capabilities, prisma, smsDelivery } = setup(source);
+        prisma.client.findFirst.mockResolvedValue(null);
+        prisma.employee.findFirst.mockResolvedValue({ id: 9, name: "테스트 직원", phone: smsInput.receiver } as never);
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await retry.inspect!(context, { jobId: source.id });
+        const target = inspection.targetSnapshot!;
+        expect(Object.fromEntries(Object.entries(target).filter(([key]) => key === "clientId" || key === "employeeId"))).toEqual(expectedId);
+        expect(inspection.summary).toContain("테스트 직원 님에게");
+        expect(prisma.client.findFirst).toHaveBeenCalledTimes(1);
+        expect(prisma.employee.findFirst).toHaveBeenCalledTimes(1);
+        expect(inspection.summary).not.toMatch(/[•*]|\d{9,}|0\d{1,2}[- ]\d{3,4}[- ]\d{4}/);
+        expect(JSON.stringify(redactModelValue(target))).not.toMatch(/[•*]|@|010[-\d]+/);
+        const canonical = await smsDelivery.resolveCanonicalDeliverySnapshot(source);
+        expect(() => smsDelivery.approvedSnapshotForExecution(source, target, canonical)).not.toThrow();
+        const history = capabilities.find((entry) => entry.meta.name === "messages.deliveryHistory")!;
+        prisma.client.findFirst.mockClear();
+        prisma.employee.findFirst.mockClear();
+        const result = history.outputSchema.parse(await history.execute(context, {})) as { jobs: Array<Record<string, unknown>> };
+        expect(result.jobs[0]?.["clientId"]).toBe(recipientType === MessageTriggerRecipientType.CLIENT ? clientId : null);
+        expect(result.jobs[0]).not.toHaveProperty("receiver");
+        expect(result.jobs[0]).not.toHaveProperty("recipient");
+        expect(prisma.client.findFirst).not.toHaveBeenCalled();
+        expect(prisma.employee.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("does not mislabel an unresolved employee retry with the job's client ID", async () => {
+        const source = terminalJob({ recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, clientId: 7 });
+        const { capabilities, prisma } = setup(source);
+        prisma.client.findFirst.mockResolvedValue(null);
+        const inspection = await capabilities.find((entry) => entry.meta.name === "messages.retrySms")!.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot).not.toHaveProperty("clientId");
+        expect(inspection.targetSnapshot).not.toHaveProperty("employeeId");
+        expect(inspection.summary).toContain("수신자 님에게");
+    });
+
+    it("uses the live client rather than the employee job's stored client ID", async () => {
+        const source = terminalJob({ recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, clientId: 7 });
+        const { capabilities } = setup(source);
+        const inspection = await capabilities.find((entry) => entry.meta.name === "messages.retrySms")!.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot?.["clientId"]).toBe(1);
+        expect(inspection.targetSnapshot).not.toHaveProperty("employeeId");
+        expect(inspection.summary).toContain("테스트 고객 님에게");
+    });
+
+    it("uses the client now owning the retry phone for both ID and summary", async () => {
+        const source = terminalJob({ clientId: 7 });
+        source.payload.recipientName = "이전 고객";
+        const { capabilities, prisma, smsDelivery } = setup(source);
+        prisma.client.findFirst.mockResolvedValue({ id: 9, name: "새 고객", phone: smsInput.receiver } as never);
+        const inspection = await capabilities.find((entry) => entry.meta.name === "messages.retrySms")!.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot?.["clientId"]).toBe(9);
+        expect(inspection.targetSnapshot).not.toHaveProperty("employeeId");
+        expect(inspection.summary).toContain("새 고객 님에게");
+        expect(inspection.summary).not.toContain("이전 고객");
+        expect(prisma.client.findFirst).toHaveBeenCalledTimes(1);
+        const canonical = await smsDelivery.resolveCanonicalDeliverySnapshot(source);
+        expect(() => smsDelivery.approvedSnapshotForExecution(source, inspection.targetSnapshot!, canonical)).not.toThrow();
+    });
+
+    it.each(["저장된 이름", ""])("omits retry IDs when unresolved and falls back from stored name %s", async (recipientName) => {
+        const source = terminalJob({ clientId: 7 });
+        source.payload.recipientName = recipientName;
+        const { capabilities, prisma } = setup(source);
+        prisma.client.findFirst.mockResolvedValue(null);
+        const inspection = await capabilities.find((entry) => entry.meta.name === "messages.retrySms")!.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot).not.toHaveProperty("clientId");
+        expect(inspection.targetSnapshot).not.toHaveProperty("employeeId");
+        expect(inspection.summary).toContain(`${recipientName || "수신자"} 님에게`);
+    });
+
+    it("falls back to the stored name when the resolved retry recipient has no name", async () => {
+        const source = terminalJob({ clientId: 7 });
+        source.payload.recipientName = "저장된 이름";
+        const { capabilities, prisma } = setup(source);
+        prisma.client.findFirst.mockResolvedValue({ id: 9, name: null, phone: smsInput.receiver } as never);
+        const inspection = await capabilities.find((entry) => entry.meta.name === "messages.retrySms")!.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot?.["clientId"]).toBe(9);
+        expect(inspection.summary).toContain("저장된 이름 님에게");
+    });
+
+    it.each([
+        ["changed client", { clientId: 7 }, { clientId: 9 }, false],
+        ["changed kind", { clientId: 7 }, { employeeId: 7 }, false],
+        ["same client", { clientId: 7 }, { clientId: 7 }, true],
+        ["same employee", { employeeId: 9 }, { employeeId: 9 }, true],
+        ["changed employee", { employeeId: 8 }, { employeeId: 9 }, false],
+        ["employee to client", { employeeId: 9 }, { clientId: 9 }, false],
+        ["legacy snapshot", {}, { clientId: 9 }, true],
+        ["unresolved inspection", {}, { employeeId: 9 }, true],
+    ] as const)("binds retry execution to the approved recipient: %s", async (_label, approvedId, resolvedId, proceeds) => {
+        const source = terminalJob({ clientId: 7 });
+        const { capabilities, prisma, repository, delivery, smsDelivery, aligoService } = setup(source);
+        prisma.client.findFirst.mockResolvedValue(null);
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await retry.inspect!(context, { jobId: source.id });
+        const approvedTargetSnapshot = { ...inspection.targetSnapshot, ...approvedId };
+        const canonical = await smsDelivery.resolveCanonicalDeliverySnapshot(source);
+        expect(() => smsDelivery.approvedSnapshotForExecution(source, approvedTargetSnapshot, canonical)).not.toThrow();
+        if ("clientId" in resolvedId) {
+            prisma.client.findFirst.mockResolvedValue({ id: resolvedId.clientId, name: "현재 고객", phone: smsInput.receiver } as never);
+        } else {
+            prisma.employee.findFirst.mockResolvedValue({ id: resolvedId.employeeId, name: "현재 직원", phone: smsInput.receiver } as never);
+        }
+        const execution = retry.execute({ ...context, approvedTargetSnapshot, approvedTargetVersion: inspection.targetVersion }, { jobId: source.id });
+        if (proceeds) {
+            await expect(execution).resolves.toEqual({ status: "sent", jobId: "retry-job" });
+            expect(repository.claimProviderRejectedForRetry).toHaveBeenCalledTimes(1);
+            expect(delivery.dispatchPendingJobNow).toHaveBeenCalledTimes(1);
+        } else {
+            await expect(execution).rejects.toEqual(new AgentActionCertainFailureError("SMS recipient changed after approval; review a new proposal"));
+            expect(repository.claimProviderRejectedForRetry).not.toHaveBeenCalled();
+            expect(repository.upsertPending).not.toHaveBeenCalled();
+            expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            expect(delivery.dispatchPendingJobNow).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        }
+    });
+
+    it("resolves an agent-sent retry with no stored client ID while history stays null", async () => {
+        const source = terminalJob({ clientId: null });
+        source.payload.recipientName = "테스트 고객";
+        const { capabilities, prisma } = setup(source);
+        const inspection = await capabilities.find((entry) => entry.meta.name === "messages.retrySms")!.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot?.["clientId"]).toBe(1);
+        expect(inspection.targetSnapshot).not.toHaveProperty("employeeId");
+        expect(inspection.summary).toContain("테스트 고객 님에게");
+        prisma.client.findFirst.mockClear();
+        const history = capabilities.find((entry) => entry.meta.name === "messages.deliveryHistory")!;
+        const result = await history.execute(context, {}) as { jobs: Array<Record<string, unknown>> };
+        expect(result.jobs[0]?.["clientId"]).toBeNull();
+        expect(prisma.client.findFirst).not.toHaveBeenCalled();
     });
 
     it("enforces the scheduled SMS minimum lead time in the capability schema", () => {
@@ -267,10 +508,10 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         }));
     });
 
-    it("returns a certain failed result for an explicit provider rejection", async () => {
+    it.each(["provider-rejected", "permanent-provider-rejected"])("returns a certain failed result for %s", async (retrySafety) => {
         const { delivery, capabilities } = setup();
         const failed = terminalJob({ id: "retry-job" });
-        failed.payload.templateVariables["retrySafety"] = "provider-rejected";
+        failed.payload.templateVariables["retrySafety"] = retrySafety;
         delivery.dispatchPendingJobNow.mockResolvedValue(failed);
         const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
 
@@ -308,14 +549,69 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             .rejects.toMatchObject({ name: "AgentActionUncertainError" });
     });
 
-    it("reconciles an explicitly provider-rejected persisted job as failed", async () => {
+    it.each(["provider-rejected", "permanent-provider-rejected"])("reconciles a persisted %s job as failed", async (retrySafety) => {
         const { prisma, capabilities } = setup();
         const failed = terminalJob({ id: "job-a" });
-        failed.payload.templateVariables["retrySafety"] = "provider-rejected";
+        failed.payload.templateVariables["retrySafety"] = retrySafety;
         prisma.message_trigger_job.findFirst.mockResolvedValue(failed as never);
         const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
 
         await expect(send.reconcile!(context, {}, { jobId: failed.id }))
+            .resolves.toEqual({ status: "failed", result: { status: "failed", jobId: failed.id } });
+    });
+
+    it("reports an Aligo permanent rejection as failed through send and later reconciliation, but refuses retry", async () => {
+        const { repository, delivery, prisma, smsDelivery, aligoService, capabilities } = setup();
+        aligoService.sendSms.mockResolvedValue({
+            request: { receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+            response: { result_code: -101, message: "인증오류입니다.", msg_id: 0, success_cnt: 0, error_cnt: 1 },
+        });
+        delivery.dispatchPendingJobNow.mockImplementation(async () => {
+            const job = repository.upsertPending.mock.calls[0][0] as MessageTriggerJobEntity;
+            expect(await smsDelivery.sendJob(job)).toBe(false);
+            job.status = "failed";
+            prisma.message_trigger_job.findFirst.mockResolvedValue(job as never);
+            repository.findByIdInBranch.mockResolvedValue(job);
+            return job;
+        });
+        const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const input = { receiver: "01012345678", message: "영구 거절 테스트" };
+
+        await expect(send.execute(context, input)).resolves.toEqual({ status: "failed", msgType: "LMS", jobId: "retry-job" });
+        await expect(send.reconcile!(context, input, { jobId: "retry-job" }))
+            .resolves.toEqual({ status: "failed", result: { status: "failed", jobId: "retry-job" } });
+        await expect(retry.inspect!(context, { jobId: "retry-job" })).rejects.toThrow("not safely retryable");
+        expect(repository.claimProviderRejectedForRetry).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps reconciliation of a genuinely uncertain failed job uncertain", async () => {
+        const { prisma, capabilities } = setup();
+        const failed = terminalJob();
+        failed.payload.templateVariables["retrySafety"] = "uncertain";
+        prisma.message_trigger_job.findFirst.mockResolvedValue(failed as never);
+        const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
+
+        await expect(send.reconcile!(context, {}, { jobId: failed.id }))
+            .resolves.toEqual(expect.objectContaining({ status: "uncertain" }));
+    });
+
+    it.each(["provider-rejected", "permanent-provider-rejected"])("reports an agent retry answered with %s as failed and reconciles it", async (retrySafety) => {
+        const { delivery, prisma, capabilities } = setup();
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await retry.inspect!(context, { jobId: "job-a" });
+        const failed = terminalJob({ id: "retry-job" });
+        failed.payload.templateVariables["retrySafety"] = retrySafety;
+        delivery.dispatchPendingJobNow.mockResolvedValue(failed);
+        prisma.message_trigger_job.findFirst.mockResolvedValue(failed as never);
+
+        await expect(retry.execute({
+            ...context,
+            approvedTargetVersion: inspection.targetVersion,
+            approvedTargetSnapshot: inspection.targetSnapshot,
+        }, { jobId: "job-a" })).resolves.toEqual({ status: "failed", jobId: failed.id });
+        await expect(retry.reconcile!(context, { jobId: "job-a" }, { jobId: failed.id }))
             .resolves.toEqual({ status: "failed", result: { status: "failed", jobId: failed.id } });
     });
 
@@ -491,7 +787,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             } as never,
             triggerDelivery,
             senderApproval as never,
-            {} as never,
+            { findByIdIncludingGlobal: jest.fn().mockResolvedValue(null) } as never,
             repository as never,
             { findSentTriggerJobIdsSystemScope: jest.fn().mockResolvedValue(new Set<string>()), save: jest.fn() } as never,
             systemTemplateService as never,
@@ -686,6 +982,28 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(inspection.targetSnapshot).toEqual(expect.objectContaining({ sendTime: "14:37" }));
         rule.sendTime = "16:00";
         await expect(update.revalidate!(context, { id: "rule-a", sendTime: "15:42" }, inspection.targetVersion!))
+            .resolves.toEqual(expect.objectContaining({ valid: false }));
+    });
+
+    it("binds automation approval to the persisted target client status and retry-on-failure (규칙 메시지-04)", async () => {
+        const { delivery, capabilities } = setup();
+        const update = capabilities.find((entry) => entry.meta.name === "automation.update")!;
+        const list = capabilities.find((entry) => entry.meta.name === "automation.list")!;
+        const rule = await delivery.getRule(principal.branchId, "rule-a");
+        rule.targetClientStatus = "waiting";
+        rule.retryOnFailure = false;
+
+        const listed = await list.execute(context, {}) as { rules: Array<{ id: string; targetClientStatus: string; retryOnFailure: boolean }> };
+        expect(listed.rules.find((entry) => entry.id === "rule-a")).toEqual(expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }));
+
+        const inspection = await update.inspect!(context, { id: "rule-a", name: "새 이름" });
+        expect(inspection.targetSnapshot).toEqual(expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }));
+        rule.targetClientStatus = "active";
+        await expect(update.revalidate!(context, { id: "rule-a", name: "새 이름" }, inspection.targetVersion!))
+            .resolves.toEqual(expect.objectContaining({ valid: false }));
+        rule.targetClientStatus = "waiting";
+        rule.retryOnFailure = true;
+        await expect(update.revalidate!(context, { id: "rule-a", name: "새 이름" }, inspection.targetVersion!))
             .resolves.toEqual(expect.objectContaining({ valid: false }));
     });
 

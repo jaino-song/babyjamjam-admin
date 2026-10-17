@@ -58,6 +58,7 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
 }));
 jest.mock("@/services/api", () => ({
   eformsignApi: {
+    getLinkConfirmations: jest.fn().mockResolvedValue([]),
     getDocumentClientNames: jest.fn().mockResolvedValue([]),
     getDocumentStatusCounts: jest.fn().mockResolvedValue({ documents: [] }),
   },

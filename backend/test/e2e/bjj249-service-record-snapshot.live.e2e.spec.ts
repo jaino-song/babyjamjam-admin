@@ -111,6 +111,7 @@ const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
         const client = await prisma.client.create({
             data: {
                 name: `테스트고객-${TEST_TAG}`,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 duration: SESSION_COUNT,
                 voucherClient: false,
                 branchId,

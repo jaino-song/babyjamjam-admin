@@ -71,7 +71,7 @@ const ROLE_LABELS: Record<string, string> = {
   owner: "오너",
   admin: "지점장",
   manager: "매니저",
-  user: "직원",
+  user: "회원",
 };
 
 const DEFAULT_BRANCH_FORM: SystemAdminBranchInput = {
@@ -174,10 +174,10 @@ function accountRows(users: readonly SystemAdminUser[]) {
   return [
     { id: "all", label: "전체", count: users.length },
     { id: "pending", label: "가입 대기", count: users.filter((user) => user.approvalStatus === "pending").length },
-    { id: "admin", label: "지점장", count: users.filter((user) => user.role === "admin").length },
-    { id: "manager", label: "매니저", count: users.filter((user) => user.role === "manager").length },
-    { id: "user", label: "직원", count: users.filter((user) => user.role === "user").length },
-    { id: "owner", label: "오너", count: users.filter((user) => user.role === "owner").length },
+    { id: "admin", label: ROLE_LABELS.admin, count: users.filter((user) => user.role === "admin").length },
+    { id: "manager", label: ROLE_LABELS.manager, count: users.filter((user) => user.role === "manager").length },
+    { id: "user", label: ROLE_LABELS.user, count: users.filter((user) => user.role === "user").length },
+    { id: "owner", label: ROLE_LABELS.owner, count: users.filter((user) => user.role === "owner").length },
   ];
 }
 

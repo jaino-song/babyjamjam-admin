@@ -39,6 +39,8 @@ export const EFORMSIGN_DOC_DOMAIN_READ_SELECT = {
     documentKind: true,
     employeeScheduleId: true,
     templateId: true,
+    voidedAt: true,
+    voidedBy: true,
 } satisfies Prisma.eformsign_docSelect;
 
 type EformsignDocCompatReadRow = Prisma.eformsign_docGetPayload<{
@@ -46,6 +48,8 @@ type EformsignDocCompatReadRow = Prisma.eformsign_docGetPayload<{
 }>;
 
 type PendingEformsignDocData = {
+    voidedAt?: unknown;
+    voidedBy?: unknown;
     documentKind?: unknown;
     employeeScheduleId?: unknown;
     templateId?: unknown;
@@ -124,6 +128,13 @@ const PENDING_EFORMSIGN_DOC_COLUMN_GROUPS = [
             },
         ],
     },
+    {
+        // Migration: 20261014000000_add_eformsign_doc_voided
+        columns: [
+            { databaseName: "voided_at", prismaName: "voidedAt" },
+            { databaseName: "voided_by", prismaName: "voidedBy" },
+        ],
+    },
 ] as const satisfies readonly { columns: readonly PendingEformsignDocColumn[] }[];
 
 export const PENDING_EFORMSIGN_DOC_COLUMN_NAMES = PENDING_EFORMSIGN_DOC_COLUMN_GROUPS.flatMap(
@@ -157,6 +168,8 @@ type EformsignDocPendingReadRow = Prisma.eformsign_docGetPayload<{
 }>;
 
 const PENDING_EFORMSIGN_DOC_NULLS = {
+    voidedAt: null,
+    voidedBy: null,
     documentKind: null,
     employeeScheduleId: null,
     templateId: null,

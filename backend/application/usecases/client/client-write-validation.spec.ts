@@ -13,7 +13,11 @@ import {
     deriveClientDuration,
     findClientByNormalizedPhone,
     mergeAndValidateClientServicePeriod,
+    BOOKING_STATUS_CONFIRM_ONLY_DETAIL,
     parseClientDate,
+    PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL,
+    resolveSavedServiceStatus,
+    type SavedServiceStatusInput,
 } from "./client-write-validation";
 
 /** Capture the exception thrown by a synchronous validation call. */
@@ -161,5 +165,104 @@ describe("confirmed business-day mismatch", () => {
     });
     it.each([null, 0, -1, 1.5, NaN, Infinity])("still rejects invalid duration %s after confirmation", (duration) => {
         expect(() => assertClientDurationMatchesDates(duration, 14, true)).toThrow();
+    });
+});
+
+describe("resolveSavedServiceStatus (rule 고객-04: a save may not change 예약 전)", () => {
+    // 2026-11-05 (KST): a 2026-11-02..2026-11-13 period is running, so a confirmed client's D is "active".
+    const now = new Date("2026-11-05T03:00:00.000Z");
+    const confirmedAt = new Date("2026-10-01T00:00:00.000Z");
+    const start = new Date("2026-11-02T00:00:00.000Z");
+    const end = new Date("2026-11-13T00:00:00.000Z");
+    const dated = { startDate: start, endDate: end };
+    const undated = { startDate: null, endDate: null };
+    const unconfirmed = { bookingConfirmedAt: null };
+    const confirmed = { bookingConfirmedAt: confirmedAt };
+
+    const resolve = (input: Partial<SavedServiceStatusInput> & { suppliedServiceStatus: string | null | undefined }) =>
+        resolveSavedServiceStatus({
+            currentServiceStatus: "pre_booking",
+            bookingConfirmedAt: null,
+            ...dated,
+            ...input,
+        }, now);
+    const refusal = (detail: string) => expect.objectContaining({
+        status: 400,
+        response: expect.objectContaining({
+            code: "VALIDATION_FAILED",
+            errors: [expect.objectContaining({
+                pointer: "/serviceStatus",
+                code: "INVALID_VALUE",
+                detail,
+                location: "body",
+            })],
+        }),
+    });
+
+    type Case = [
+        label: string,
+        client: Partial<SavedServiceStatusInput>,
+        supplied: string | null | undefined,
+        expected: { writes: string | undefined } | { refuses: string },
+    ];
+    const cases: Case[] = [
+        // 1: not supplied
+        ["row 1: unconfirmed, not supplied", { ...unconfirmed }, undefined, { writes: undefined }],
+        ["row 1: confirmed, not supplied", { ...confirmed, currentServiceStatus: "active" }, undefined, { writes: undefined }],
+        // 2: null is S = D
+        ["row 2: confirmed, null, stored status already the derived one", { ...confirmed, currentServiceStatus: "active" }, null, { writes: undefined }],
+        ["row 2: confirmed, null over a stored terminated is un-terminated to D", { ...confirmed, currentServiceStatus: "terminated" }, null, { writes: "active" }],
+        ["row 2: unconfirmed, null (D = 예약 전 = E)", { ...unconfirmed }, null, { writes: undefined }],
+        ["row 2: unconfirmed stored terminated, null becomes 예약 전", { ...unconfirmed, currentServiceStatus: "terminated" }, null, { writes: "pre_booking" }],
+        // 3: S equals E
+        ["row 3: unconfirmed, pre_booking", { ...unconfirmed }, "pre_booking", { writes: undefined }],
+        ["row 3: confirmed, S equals the date-derived E (stored value is stale)", { ...confirmed, currentServiceStatus: "waiting" }, "active", { writes: undefined }],
+        ["row 3: confirmed stored terminated, terminated", { ...confirmed, currentServiceStatus: "terminated" }, "terminated", { writes: undefined }],
+        ["row 3: confirmed stored replacement_requested, replacement_requested", { ...confirmed, currentServiceStatus: "replacement_requested" }, "replacement_requested", { writes: undefined }],
+        // 4: replacement_requested on a 예약 전 client
+        ["row 4: unconfirmed, replacement_requested", { ...unconfirmed }, "replacement_requested", { refuses: PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL }],
+        ["row 4: unconfirmed stored terminated, replacement_requested", { ...unconfirmed, currentServiceStatus: "terminated" }, "replacement_requested", { refuses: PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL }],
+        ["row 4: confirmed but a date missing, replacement_requested", { ...confirmed, ...undated }, "replacement_requested", { refuses: PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL }],
+        // 5: unconfirmed -> date-derived states
+        ["row 5: unconfirmed, waiting", { ...unconfirmed }, "waiting", { refuses: BOOKING_STATUS_CONFIRM_ONLY_DETAIL }],
+        ["row 5: unconfirmed, active", { ...unconfirmed }, "active", { refuses: BOOKING_STATUS_CONFIRM_ONLY_DETAIL }],
+        ["row 5: unconfirmed, completed", { ...unconfirmed }, "completed", { refuses: BOOKING_STATUS_CONFIRM_ONLY_DETAIL }],
+        // 6 / 7: unchanged for an unconfirmed client
+        ["row 6: unconfirmed, terminated is stored", { ...unconfirmed }, "terminated", { writes: "terminated" }],
+        ["row 7: unconfirmed stored terminated, pre_booking is stored", { ...unconfirmed, currentServiceStatus: "terminated" }, "pre_booking", { writes: "pre_booking" }],
+        // 8: confirmed -> 예약 전
+        ["row 8: confirmed with dates, pre_booking", { ...confirmed, currentServiceStatus: "active" }, "pre_booking", { refuses: BOOKING_STATUS_CONFIRM_ONLY_DETAIL }],
+        ["row 8: confirmed stored terminated, pre_booking", { ...confirmed, currentServiceStatus: "terminated" }, "pre_booking", { refuses: BOOKING_STATUS_CONFIRM_ONLY_DETAIL }],
+        // 9: confirmed + date-derived state is never authoritative
+        ["row 9: confirmed, completed while D is active stores D", { ...confirmed, currentServiceStatus: "active" }, "completed", { writes: "active" }],
+        ["row 9: confirmed stored terminated, waiting un-terminates to D", { ...confirmed, currentServiceStatus: "terminated" }, "waiting", { writes: "active" }],
+        ["row 9: confirmed stored replacement_requested, waiting un-requests to D", { ...confirmed, currentServiceStatus: "replacement_requested" }, "waiting", { writes: "active" }],
+        ["row 9: confirmed but a date missing, active stores 예약 전", { ...confirmed, ...undated, currentServiceStatus: "pre_booking" }, "active", { writes: "pre_booking" }],
+        // 10: manual states stay manual
+        ["row 10: confirmed, terminated is stored", { ...confirmed, currentServiceStatus: "active" }, "terminated", { writes: "terminated" }],
+        ["row 10: confirmed, replacement_requested is stored", { ...confirmed, currentServiceStatus: "active" }, "replacement_requested", { writes: "replacement_requested" }],
+        ["row 10: confirmed stored replacement_requested, terminated is stored", { ...confirmed, currentServiceStatus: "replacement_requested" }, "terminated", { writes: "terminated" }],
+    ];
+
+    it.each(cases)("%s", (_label, client, supplied, expected) => {
+        const run = () => resolve({ ...client, suppliedServiceStatus: supplied });
+        if ("refuses" in expected) {
+            expect(thrownErrorOf(run)).toEqual(refusal(expected.refuses));
+        } else {
+            expect(run()).toBe(expected.writes);
+        }
+    });
+
+    it("judges E on the dates AS THEY WILL BE after the save", () => {
+        const base = { ...confirmed, currentServiceStatus: "active" };
+        // Clearing both dates leaves a confirmed client in 예약 전, so S = pre_booking equals E (row 3).
+        expect(resolve({ ...base, ...undated, suppliedServiceStatus: "pre_booking" })).toBeUndefined();
+        // Keeping the dates, the same request would move an in-service client back to 예약 전 (row 8).
+        expect(thrownErrorOf(() => resolve({ ...base, ...dated, suppliedServiceStatus: "pre_booking" })))
+            .toEqual(refusal(BOOKING_STATUS_CONFIRM_ONLY_DETAIL));
+    });
+
+    it("uses the 예약 전 sentence the request-replacement route refuses with", () => {
+        expect(PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL).toBe("예약 전 고객은 제공인력 교체를 요청할 수 없습니다");
     });
 });

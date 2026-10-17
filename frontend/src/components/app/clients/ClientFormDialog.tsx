@@ -137,7 +137,7 @@ export const CLIENT_FORM_STEPPER_STEPS = [
 
 const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
 
-type ClientFormField = "name" | "phone" | "primaryEmployeeId" | "secondaryEmployeeId";
+type ClientFormField = "name" | "phone" | "primaryEmployeeId" | "secondaryEmployeeId" | "serviceStatus";
 
 /** Text inputs that show their validation message in the label-row slot. */
 type ClientInputField =
@@ -234,7 +234,9 @@ const isUnstructuredLegacyClientError = (
     return !isRecord(payload) || (!("type" in payload) && !("requestId" in payload));
 };
 
-const CLIENT_FORM_FIELDS: readonly ClientFormField[] = ["name", "phone", "primaryEmployeeId", "secondaryEmployeeId"];
+const CLIENT_FORM_FIELDS: readonly ClientFormField[] = ["name", "phone", "primaryEmployeeId", "secondaryEmployeeId", "serviceStatus"];
+const SERVICE_STATUS_SAVE_ERROR = "이 상태로는 저장할 수 없습니다. 예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
+const BOOKING_STATUS_GUIDANCE = "대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다.";
 
 const isClientFormField = (field: string): field is ClientFormField =>
     (CLIENT_FORM_FIELDS as readonly string[]).includes(field);
@@ -242,6 +244,8 @@ const isClientFormField = (field: string): field is ClientFormField =>
 const fieldForProblemError = (problemError: ProblemError): ClientFormField | undefined => {
     if (problemError.location !== undefined && problemError.location !== "body") return undefined;
     switch (problemError.pointer) {
+        case "/serviceStatus":
+            return "serviceStatus";
         case "/name":
             return "name";
         case "/phone":
@@ -269,6 +273,7 @@ const PANEL_STEP_OF_FIELD: Record<ClientFocusField, number> = {
     secondaryEmployeeId: 1,
     startDate: 3,
     endDate: 3,
+    serviceStatus: 3,
 };
 
 const combineAriaDescribedBy = (...ids: Array<string | undefined>): string | undefined => {
@@ -601,8 +606,10 @@ function ClientFormContent({
                 return primaryEmployeeTriggerRef;
             case "secondaryEmployeeId":
                 return secondaryEmployeeTriggerRef;
+            case "serviceStatus":
+                return { current: document.getElementById(surface === "panel" ? "clients-form-panel-contract-status" : "clients-form-contract-status") };
         }
-    }, []);
+    }, [surface]);
 
     const focusField = useCallback((field: ClientFocusField) => {
         const fieldStep = PANEL_STEP_OF_FIELD[field];
@@ -700,12 +707,16 @@ function ClientFormContent({
         }));
     }, [availableDurations, formData.voucherClient, outOfPocketPriceInfos]);
 
+    const isBookingUnconfirmed = !isEditMode || client?.bookingConfirmedAt == null;
     const serviceStatusOptions = useMemo(
-        () => SERVICE_STATUS_OPTIONS.map((status) => ({
-            value: status.value,
-            label: status.label,
-        })),
-        []
+        () => SERVICE_STATUS_OPTIONS.filter((status) => {
+            if (!isEditMode) return status.value === "pre_booking";
+            if (status.value === client?.serviceStatus) return true;
+            return isBookingUnconfirmed
+                ? status.value === "pre_booking" || status.value === "terminated"
+                : status.value !== "pre_booking";
+        }).map((status) => ({ value: status.value, label: status.label })),
+        [isEditMode, isBookingUnconfirmed, client?.serviceStatus]
     );
 
     const areaOptions = useMemo(() => {
@@ -1112,7 +1123,7 @@ function ClientFormContent({
     const serverFieldMessages: Partial<Record<ClientFormField, FieldMessageView>> = {};
     for (const { fieldError, field } of formErrorEntries) {
         if (field && !editedServerErrorFields.includes(field) && !serverFieldMessages[field]) {
-            serverFieldMessages[field] = { tone: "error", text: fieldError.detail };
+            serverFieldMessages[field] = { tone: "error", text: field === "serviceStatus" ? SERVICE_STATUS_SAVE_ERROR : fieldError.detail };
         }
     }
     const serverEmployeeMessages = {
@@ -1154,6 +1165,14 @@ function ClientFormContent({
                 {message.text}
             </FieldMessageText>
         ) : null;
+
+    const serviceStatusMessage = serverFieldMessages.serviceStatus ?? null;
+    const serviceStatusMessageId = `clients-form-${surface}-service-status-error`;
+    const serviceStatusGuidanceId = `clients-form-${surface}-service-status-guidance`;
+    const serviceStatusDescribedBy = combineAriaDescribedBy(
+        serviceStatusMessage ? serviceStatusMessageId : undefined,
+        isBookingUnconfirmed ? serviceStatusGuidanceId : undefined,
+    );
 
     const areaFieldMessage = withGuidance(null, AREA_FIELD_GUIDANCE);
     const areaMessageId = `clients-form-${surface}-area-helper`;
@@ -1420,7 +1439,7 @@ function ClientFormContent({
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
-                    serviceStatus: formData.serviceStatus,
+                    serviceStatus: "pre_booking",
                     applyMessageAutomation: formData.applyMessageAutomation,
                     areaId: formData.areaId || null,
                 };
@@ -1931,22 +1950,32 @@ function ClientFormContent({
                 description="선택 항목입니다. 예약이 확정되면 서비스 일정을 입력해 주세요."
             >
                 <FormGrid data-component={`${base}_contract-grid`} className="lg:grid-cols-3">
-                    <FormField
-                        data-component={`${base}_contract-grid_field-contract-status`}
-                        htmlFor="clients-form-contract-status"
-                        label={t(locale, "clients.form.contract-status")}
-                    >
-                        <FormNativeSelect
-                            id="clients-form-contract-status"
-                            value={formData.serviceStatus || ""}
-                            options={serviceStatusOptions}
-                            placeholder={t(locale, "clients.form.contract-status")}
-                            onValueChange={(value) => handleChange("serviceStatus", value)}
-                            wrapDataComponent={`${base}_contract-grid_field-contract-status_select-wrap`}
-                            selectDataComponent={`${base}_contract-grid_field-contract-status_select`}
-                            iconDataComponent={`${base}_contract-grid_field-contract-status_select-icon`}
-                        />
-                    </FormField>
+                    <div>
+                        <FormField
+                            data-component={`${base}_contract-grid_field-contract-status`}
+                            htmlFor="clients-form-contract-status"
+                            label={t(locale, "clients.form.contract-status")}
+                            labelAccessory={renderSlotMessage(serviceStatusMessage, serviceStatusMessageId, `${base}_contract-grid_field-contract-status_error`)}
+                        >
+                            <FormNativeSelect
+                                id="clients-form-contract-status"
+                                value={isEditMode ? formData.serviceStatus || "" : "pre_booking"}
+                                options={serviceStatusOptions}
+                                disabled={!isEditMode}
+                                aria-invalid={serviceStatusMessage ? true : undefined}
+                                aria-describedby={serviceStatusDescribedBy}
+                                onValueChange={(value) => handleChange("serviceStatus", value)}
+                                wrapDataComponent={`${base}_contract-grid_field-contract-status_select-wrap`}
+                                selectDataComponent={`${base}_contract-grid_field-contract-status_select`}
+                                iconDataComponent={`${base}_contract-grid_field-contract-status_select-icon`}
+                            />
+                        </FormField>
+                        {isBookingUnconfirmed ? (
+                            <FormHelperText id={serviceStatusGuidanceId} data-component={`${base}_contract-grid_booking-guidance`}>
+                                {BOOKING_STATUS_GUIDANCE}
+                            </FormHelperText>
+                        ) : null}
+                    </div>
 
                     <FormField
                         data-component={`${base}_contract-grid_field-start-date`}
@@ -2323,22 +2352,32 @@ function ClientFormContent({
 
     const panelContractInfoStep = (
         <>
-            <FormField
-                data-component={`${base}_contract-status-field`}
-                htmlFor="clients-form-panel-contract-status"
-                label={t(locale, "clients.form.contract-status")}
-            >
-                <FormNativeSelect
-                    id="clients-form-panel-contract-status"
-                    value={formData.serviceStatus || ""}
-                    options={serviceStatusOptions}
-                    placeholder={t(locale, "clients.form.contract-status")}
-                    onValueChange={(value) => handleChange("serviceStatus", value)}
-                    wrapDataComponent={`${base}_contract-status-field_select-wrap`}
-                    selectDataComponent={`${base}_contract-status-field_select`}
-                    iconDataComponent={`${base}_contract-status-field_select-icon`}
-                />
-            </FormField>
+            <div>
+                <FormField
+                    data-component={`${base}_contract-status-field`}
+                    htmlFor="clients-form-panel-contract-status"
+                    label={t(locale, "clients.form.contract-status")}
+                    labelAccessory={renderSlotMessage(serviceStatusMessage, serviceStatusMessageId, `${base}_contract-status-field_error`)}
+                >
+                    <FormNativeSelect
+                        id="clients-form-panel-contract-status"
+                        value={isEditMode ? formData.serviceStatus || "" : "pre_booking"}
+                        options={serviceStatusOptions}
+                        disabled={!isEditMode}
+                        aria-invalid={serviceStatusMessage ? true : undefined}
+                        aria-describedby={serviceStatusDescribedBy}
+                        onValueChange={(value) => handleChange("serviceStatus", value)}
+                        wrapDataComponent={`${base}_contract-status-field_select-wrap`}
+                        selectDataComponent={`${base}_contract-status-field_select`}
+                        iconDataComponent={`${base}_contract-status-field_select-icon`}
+                    />
+                </FormField>
+                {isBookingUnconfirmed ? (
+                    <FormHelperText id={serviceStatusGuidanceId} data-component={`${base}_booking-guidance`}>
+                        {BOOKING_STATUS_GUIDANCE}
+                    </FormHelperText>
+                ) : null}
+            </div>
 
             <FormField
                 data-component={`${base}_start-date-input`}

@@ -2,10 +2,13 @@ export const SERVICE_RECORD_LINK_RULE_ID = "system:service_record_link";
 export const SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY = "service_record_link_sms";
 export const SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY = "SERVICE_RECORD_LINK_SMS";
 export const SERVICE_RECORD_LINK_SMS_TITLE = "제공기록지 작성 링크";
+// Historical message-log label; scheduling is defined by getServiceRecordLinkScheduledFor.
 export const SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE = "service_start_at_15";
 export const SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON =
     "제공기록지 링크 발송 작업 생성 재시도 대기";
 export const SERVICE_RECORD_LINK_RESCHEDULED_REASON = "Service record link rescheduled";
+export const SERVICE_RECORD_LINK_ENDED_REASON = "Service record link schedule ended";
+export const SERVICE_RECORD_LINK_PRE_BOOKING_REASON = "예약 전 고객이라 제공기록지 링크를 발송하지 않았습니다";
 export const SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON = "Service record link branch disabled";
 
 /** Exact key shape emitted by ServiceRecordLinkService.sendNow manual jobs. */
@@ -25,26 +28,24 @@ export function atKstHour(date: Date, hour: number): Date {
 }
 
 export function getServiceRecordLinkScheduledFor(startDate: Date): Date {
-    return atKstHour(startDate, 15);
+    const previousDate = new Date(startDate.getTime() - 86_400_000);
+    return atKstHour(previousDate, 12);
 }
-
-/** Calendar days the caregiver's 제공기록지 link stays valid past the service end date. */
-export const SERVICE_RECORD_LINK_GRACE_DAYS = 7;
 
 /**
  * When the case transitions to AWAITING_COMPLETION / becomes due for finalization.
- * This is the end date itself at 20:00 KST — unaffected by the link's grace period.
+ * This is the end date itself at 20:00 KST — unaffected by the link's expiry.
  */
 export function getServiceRecordFinalizationDueAt(endDate: Date): Date {
     return atKstHour(endDate, 20);
 }
 
 /**
- * When the caregiver's 제공기록지 link expires: end date + grace period, 20:00 KST.
+ * When the caregiver's 제공기록지 link expires: midnight KST after the end date.
  * `endDate` values are UTC-midnight `@db.Date` values and `atKstHour` reads the date
  * portion via `toISOString().slice(0, 10)`, so plain UTC day arithmetic is correct here.
  */
 export function getServiceRecordTokenExpiresAt(endDate: Date): Date {
-    const graceEndDate = new Date(endDate.getTime() + SERVICE_RECORD_LINK_GRACE_DAYS * 86_400_000);
-    return atKstHour(graceEndDate, 20);
+    const nextDate = new Date(endDate.getTime() + 86_400_000);
+    return atKstHour(nextDate, 0);
 }

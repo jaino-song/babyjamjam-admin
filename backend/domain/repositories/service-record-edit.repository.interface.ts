@@ -353,6 +353,7 @@ export interface AppendServiceRecordRevisionInput {
     serviceRecordCaseId: string;
     actorUserId: string;
     payload: ServiceRecordEditJsonValue;
+    beforeSnapshot?: ServiceRecordEditJsonValue | null;
     plannedSessions: ServiceRecordEditJsonValue;
     provenance: ServiceRecordEditJsonValue;
     formVersionAtConfirm: number;
@@ -522,6 +523,12 @@ export interface IServiceRecordEditRepository {
     appendRevision(input: AppendServiceRecordRevisionInput): Promise<ServiceRecordRevision>;
     /** Read branch/client-scoped revision history and safe operation summaries. */
     listRevisionHistory(branchId: string, clientId: number): Promise<ServiceRecordRevisionHistoryResponse | null>;
+    /** Read immutable content only inside the owning branch and client. */
+    findRevisionForChanges(branchId: string, clientId: number, revisionId: string): Promise<
+        Pick<ServiceRecordRevision, "id" | "revisionNumber" | "confirmedAt" | "formVersionAtConfirm" | "payload" | "plannedSessions">
+        & { beforeSnapshot: ServiceRecordEditJsonValue | null }
+        | null
+    >;
     /** Read one mutable operation row by all server-owned scope keys. */
     findRevisionDocumentState(
         branchId: string,

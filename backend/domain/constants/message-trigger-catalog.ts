@@ -20,6 +20,22 @@ export enum MessageTriggerRecipientType {
     SECONDARY_EMPLOYEE = "SECONDARY_EMPLOYEE",
 }
 
+/**
+ * 대상 고객 상태 (규칙 메시지-04). `all` sends to every client; the other values
+ * only send while the client's effective service status equals the value.
+ */
+export const MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES = ["all", "pre_booking", "waiting", "active"] as const;
+export type MessageTriggerTargetClientStatus = (typeof MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES)[number];
+export const DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS: MessageTriggerTargetClientStatus = "all";
+export const DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = true;
+
+export function isMessageTriggerTargetClientStatus(
+    value: unknown,
+): value is MessageTriggerTargetClientStatus {
+    return typeof value === "string"
+        && (MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES as readonly string[]).includes(value);
+}
+
 export enum MessageTriggerTemplateKey {
     CLIENT_WELCOME = "CLIENT_WELCOME",
     SERVICE_START_REMINDER = "SERVICE_START_REMINDER",

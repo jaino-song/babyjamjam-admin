@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 export type AvatarTone = "primary" | "green" | "burgundy" | "orange" | "purple" | "muted";
 export type InfoTone = "green" | "burgundy" | "muted" | "primary" | "orange";
 export type DocRowTone = "green" | "muted" | "primary" | "burgundy" | "orange";
-export type BadgeTone = DocRowTone | "kakao" | "purple";
+export type BadgeTone = DocRowTone | "kakao" | "purple" | "burgundy-solid";
 export type DetailTab = { id: string; label: string };
 export type DetailHeaderBadge = {
   label: ReactNode;

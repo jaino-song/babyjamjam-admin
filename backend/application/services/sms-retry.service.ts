@@ -1,15 +1,20 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
-import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { MessageAutomationActivationService, type AutomaticRetryRulePolicy } from "application/services/message-automation-activation.service";
+import {
+    RULE_RETRY_DISABLED_REASON,
+    TARGET_CLIENT_STATUS_MISMATCH_REASON,
+    targetClientStatusAllowsSend,
+} from "application/policies/message-trigger-target-client-status.policy";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "application/services/sms-trigger-delivery.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
-import { maskPhone } from "application/utils/mask";
 import {
     MessageLogEntity,
+    withoutAligoHistoryBookkeeping,
     SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
     SMS_DELIVERY_RETRY_DELAY_MS,
     SMS_PARTIAL_RETRY_SAFETY,
@@ -26,6 +31,7 @@ import {
     SmsProviderReconciliationInput,
 } from "./sms-provider-acceptance.service";
 import {
+    classifySmsProviderRejection,
     classifySmsProviderOutcome,
     countSmsRecipients,
 } from "./sms-provider-outcome.service";
@@ -33,6 +39,9 @@ import { readAutomationRetrySeal, type AutomationRetrySealState } from "./automa
 import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTriggerJobStatus } from "domain/entities/message-trigger-job.entity";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
+import { MESSAGE_TRIGGER_JOB_REPOSITORY, IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 
 const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
@@ -83,6 +92,9 @@ export class SmsRetryService {
         private readonly automationAuthority?: AgentAutomationJobAuthorityService,
         @Optional()
         private readonly smsTriggerDeliveryService?: SmsTriggerDeliveryService,
+        @Optional()
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
+        private readonly jobRepository?: IMessageTriggerJobRepository,
     ) {}
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
@@ -125,6 +137,30 @@ export class SmsRetryService {
         sourceLog: MessageLogEntity,
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
+        if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
+            const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
+            if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
+                if (invocation === "automatic") {
+                    // The failed job would otherwise block re-issuing the link once the
+                    // client leaves 예약 전; a system-cancelled row is revivable by the claim.
+                    if (this.jobRepository && sourceLog.branchId && sourceLog.triggerJobId) {
+                        await this.jobRepository.cancelFailedServiceRecordLinkJobForPreBooking(
+                            sourceLog.triggerJobId,
+                            sourceLog.branchId,
+                        );
+                    }
+                    sourceLog.markRetrySuperseded(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+                    await this.logRepository.update(sourceLog);
+                    return sourceLog;
+                }
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/id",
+                    code: "INVALID_VALUE",
+                    detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다",
+                    location: "path",
+                }));
+            }
+        }
         if (
             invocation === "automatic"
             && sourceLog.branchId
@@ -142,7 +178,10 @@ export class SmsRetryService {
             const boundary = await this.messageAutomationActivationService.runAutomaticRetryIfEnabled(
                 sourceLog.branchId,
                 sourceLog.triggerJobId,
-                async (transaction): Promise<AutomaticRetryBoundary> => {
+                async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
+                    const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);
+                    if (policySkip) return { kind: "terminal", log: policySkip };
+
                     if (sourceLog.isPartialProviderOutcome()) {
                         sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
                         await this.logRepository.update(sourceLog, transaction);
@@ -281,6 +320,36 @@ export class SmsRetryService {
     }
 
     /**
+     * 규칙 메시지-04 at the automatic retry boundary, using the rule values read
+     * under the boundary's lock (so a toggle changed after the retry was
+     * scheduled still applies). Both outcomes are non-failure skips: the source
+     * log is superseded with a greppable reason token, nothing is sent and
+     * nothing is rescheduled. Manual [재발송] never reaches this method.
+     */
+    private async supersedeForRulePolicy(
+        transaction: Prisma.TransactionClient,
+        sourceLog: MessageLogEntity,
+        rulePolicy: AutomaticRetryRulePolicy | undefined,
+    ): Promise<MessageLogEntity | null> {
+        if (!rulePolicy) return null;
+        if (!rulePolicy.retryOnFailure) {
+            sourceLog.markRetrySuperseded(RULE_RETRY_DISABLED_REASON);
+            await this.logRepository.update(sourceLog, transaction);
+            return sourceLog;
+        }
+        // A job with no client is not subject to the target-status gate.
+        if (rulePolicy.targetClientStatus === "all" || !sourceLog.branchId || rulePolicy.clientId === null) return null;
+        const client = await transaction.client.findFirst({
+            where: { id: rulePolicy.clientId, branchId: sourceLog.branchId },
+            select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+        if (targetClientStatusAllowsSend(rulePolicy.targetClientStatus, client)) return null;
+        sourceLog.markRetrySuperseded(TARGET_CLIENT_STATUS_MISMATCH_REASON);
+        await this.logRepository.update(sourceLog, transaction);
+        return sourceLog;
+    }
+
+    /**
      * Automatic task-owned retries must prove the same persisted job, seal and
      * provider snapshot that produced the failed log. Legacy rows without a
      * job seal retain the existing retry path for backward compatibility.
@@ -407,6 +476,23 @@ export class SmsRetryService {
             );
             if (providerOutcome === "rejected") {
                 this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation);
+                // 수동 재시도의 주차 정책은 변경하지 않는다.
+                if (invocation === "automatic") {
+                    const rejection = classifySmsProviderRejection(result);
+                    if (rejection.kind === "permanent") {
+                        providerAttempt.nextRetryAt = null;
+                        providerAttempt.errorMessage = `발송 실패: ${rejection.reason}`;
+                        providerAttempt.variables = {
+                            ...providerAttempt.variables,
+                            retrySafety: "permanent-provider-rejected",
+                        };
+                    } else if (providerAttempt.nextRetryAt && !(await this.ruleStillPermitsAutomaticRetry(sourceLog))) {
+                        // 규칙 메시지-04: the toggle was read at admission, before the
+                        // provider call. Decide the next attempt from the rule's
+                        // CURRENT value, as for a rule that was off at first send.
+                        providerAttempt.nextRetryAt = null;
+                    }
+                }
                 await this.logRepository.update(providerAttempt);
                 this.logger.warn(`[Retry] SMS retry rejected for log ${providerAttempt.id}: ${this.providerResponseMessage(result)}`);
                 return providerAttempt;
@@ -454,8 +540,17 @@ export class SmsRetryService {
             }
             providerAttempt.providerAcceptanceState = "accepted";
             providerAttempt.providerAcceptedAt = new Date(Date.now());
+            if (providerAttempt.aligoMid) {
+                // Reserved sends are delivered at the reserved time, so the
+                // 30-minute carrier check counts from then; otherwise from now.
+                providerAttempt.scheduleCarrierCheck(
+                    isScheduledInFuture && schedule.scheduledAtMs !== null
+                        ? new Date(schedule.scheduledAtMs)
+                        : providerAttempt.providerAcceptedAt,
+                );
+            }
             await this.logRepository.update(providerAttempt);
-            this.logger.log(`[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${maskPhone(providerAttempt.receiver)}`);
+            this.logger.log(`[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${providerAttempt.receiver}`);
             return providerAttempt;
         } catch (error) {
             this.markSmsRetryUncertain(providerAttempt, error instanceof Error ? error.message : String(error));
@@ -469,6 +564,28 @@ export class SmsRetryService {
                 `[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`,
             );
             return providerAttempt;
+        }
+    }
+
+    /**
+     * Whether the rule's CURRENT 실패 시 재전송 still allows scheduling another
+     * automatic attempt after a provider rejection (the provider call has
+     * already happened). Off means no; a missing rule row means yes. A failed
+     * read is not permission: the rejection is final. Never throws, so the
+     * caller's outcome handling cannot misread a lookup failure as uncertain.
+     */
+    private async ruleStillPermitsAutomaticRetry(sourceLog: MessageLogEntity): Promise<boolean> {
+        if (!this.messageAutomationActivationService || !sourceLog.branchId || !sourceLog.triggerJobId) return true;
+        try {
+            return await this.messageAutomationActivationService
+                .readJobRuleRetryPermission(sourceLog.branchId, sourceLog.triggerJobId) !== "off";
+        } catch (error) {
+            this.logger.warn(
+                `[Retry] Could not read the current retry policy for log ${sourceLog.id}; the rejection is final: ${
+                    error instanceof Error ? error.name : "unknown error"
+                }`,
+            );
+            return false;
         }
     }
 
@@ -551,7 +668,7 @@ export class SmsRetryService {
             sourceLog.clientId,
             sourceLog.messageBody,
             {
-                ...sourceLog.variables,
+                ...withoutAligoHistoryBookkeeping(sourceLog.variables),
                 retryOfLogId: String(sourceLog.id),
                 retryAttempt: String(retryAttempt),
                 // Persist the attempt conservatively before the provider call. If the
@@ -634,6 +751,9 @@ export class SmsRetryService {
         // Trigger-delivery retries retain their existing bounded automatic
         // policy. Their provider-rejected marker remains distinct from the
         // manual marker above so a scheduler tick can continue that path.
+        // 규칙 메시지-04: this attempt was admitted with the rule's 실패 시 재전송
+        // on; sendRetryAttempt re-checks the rule's CURRENT value before keeping
+        // this schedule, and the next pick is superseded at the boundary too.
         log.nextRetryAt = log.canRetry()
             ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
             : null;

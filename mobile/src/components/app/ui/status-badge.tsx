@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
-import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
+import { STATUS_SURFACE, STATUS_SURFACE_SOLID } from "@/components/app/ui/status-surface";
 
 const statusBadgeVariants = cva(
   "inline-flex items-center justify-center rounded-[50px] border px-3 py-1 text-[0.65rem] font-semibold leading-none whitespace-nowrap shrink-0 transition-colors overflow-hidden gap-1 [&>svg]:size-3 [&>svg]:pointer-events-none",
@@ -16,6 +16,7 @@ const statusBadgeVariants = cva(
         success: STATUS_SURFACE.success,
         warning: STATUS_SURFACE.warning,
         danger: STATUS_SURFACE.danger,
+        rejected_by_reviewer: STATUS_SURFACE_SOLID.rejectedByReviewer,
         amber: "bg-amber-100 border-amber-200 text-amber-700",
         outline: "bg-transparent border-border text-v3-dark",
 

@@ -6,7 +6,7 @@ export interface EmployeeSummary {
 }
 
 // Document status type for eformsign documents
-export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | 'voided' | null;
 
 export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
@@ -70,6 +70,7 @@ export interface Client {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
+    bookingConfirmedAt: string | null;
     eDocId: string | null;
     areaId?: string | null;
     hasSigned: boolean;

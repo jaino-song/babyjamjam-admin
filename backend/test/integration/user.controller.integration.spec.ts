@@ -129,6 +129,7 @@ describe("UserController (Integration)", () => {
             expect(userService.findDirectory).toHaveBeenCalledWith({
                 branchId: undefined,
                 includeUnassigned: true,
+                callerRole: "owner",
             });
             expect(response.body).toHaveLength(1);
             expect(response.body[0]).not.toHaveProperty("kakaoId");
@@ -149,6 +150,7 @@ describe("UserController (Integration)", () => {
             expect(userService.findDirectory).toHaveBeenCalledWith({
                 branchId: "org-owner-1",
                 includeUnassigned: true,
+                callerRole: "owner",
             });
         });
 
@@ -166,6 +168,7 @@ describe("UserController (Integration)", () => {
             expect(userService.findDirectory).toHaveBeenCalledWith({
                 branchId: "org-admin-1",
                 includeUnassigned: false,
+                callerRole: "admin",
             });
         });
 
@@ -193,6 +196,7 @@ describe("UserController (Integration)", () => {
             expect(userService.findDirectory).toHaveBeenCalledWith({
                 branchId: undefined,
                 includeUnassigned: true,
+                callerRole: "owner",
                 status: "pending",
             });
         });

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { QUERY_RETRY_SETTLE_MS } from "./helpers/query-retry";
+
 // Canonical data-component values rendered by the clients detail sheet.
 // Producers: mobile/src/app/(shell)/clients/page.tsx:605 (list-row badges base),
 // :638 (ClientDetailContent base) → mobile/src/components/app/clients/client-detail.tsx:1166
@@ -281,7 +283,9 @@ test.describe("Mobile clients detail labels", () => {
     await page.locator(MESSAGE_TAB_BUTTON).click();
 
     const messageTab = page.locator('[data-component="mobile_clients_detail-sheet_stack_detail-page_content_tab-panel_message"]');
-    await expect(messageTab).toContainText("발송 내역을 불러오지 못했습니다.");
+    // The 500 is retried 3 times (1s/2s/4s backoff, lib/queryClient.ts) before
+    // the screen gives up, and the tab reads "불러오는 중" until then.
+    await expect(messageTab).toContainText("발송 내역을 불러오지 못했습니다.", { timeout: QUERY_RETRY_SETTLE_MS });
     await expect(messageTab).not.toContainText("발송 내역이 없습니다.");
     await expect(messageTab.locator('[data-component="mobile_clients_detail-sheet_stack_detail-page_content_tab-panel_message_history-card_error_retry"]')).toBeVisible();
   });

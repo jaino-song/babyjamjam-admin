@@ -211,6 +211,19 @@ export class DocumentController {
         }
 
         const verifiedTenant = requireDocumentTenant(tenant);
+        const isOwner = verifiedTenant.globalRole === "owner";
+        if (isOwner && !dto.visibilityScope) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/visibilityScope",
+                code: "REQUIRED",
+                detail: "파일 공개 범위를 선택해 주세요.",
+                location: "body",
+            }));
+        }
+        if (!isOwner && dto.visibilityScope === DOCUMENT_VISIBILITY_SCOPE.ALL_BRANCHES) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        const visibilityScope = isOwner ? dto.visibilityScope! : DOCUMENT_VISIBILITY_SCOPE.BRANCH;
         const documentName = dto.name?.trim() || file.originalname;
         if (documentName.length > 255) {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -244,9 +257,7 @@ export class DocumentController {
                 storagepath: storagePath,
                 branchid: branchId,
                 uploadedby: verifiedTenant.userId,
-                visibilityScope: verifiedTenant.globalRole === "owner"
-                    ? DOCUMENT_VISIBILITY_SCOPE.ALL_BRANCHES
-                    : DOCUMENT_VISIBILITY_SCOPE.BRANCH,
+                visibilityScope,
             });
         } catch (error) {
             // The object is already in storage, so a failed insert (claimed
@@ -273,6 +284,7 @@ export class DocumentController {
         const verifiedTenant = requireDocumentTenant(tenant);
         return {
             ...DOCUMENT_UPLOAD_CAPABILITIES,
+            canChooseVisibilityScope: verifiedTenant.globalRole === "owner",
             uploadVisibilityScope: verifiedTenant.globalRole === "owner"
                 ? DOCUMENT_VISIBILITY_SCOPE.ALL_BRANCHES
                 : DOCUMENT_VISIBILITY_SCOPE.BRANCH,

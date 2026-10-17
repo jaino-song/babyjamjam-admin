@@ -1,4 +1,6 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
+import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
+import { isDefinitiveVendorRefusal, successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -54,6 +56,7 @@ import {
     resolveEformsignDocDisplayStatus,
     type EformsignDocDisplayStatus,
 } from "application/utils/eformsign-doc-display-status";
+import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
 import {
     normalizeEformsignStatusCode,
     normalizeEformsignStepType,
@@ -149,11 +152,11 @@ function parseTemplateMatch(value: string | undefined): TemplateMatch {
 
 function parseDisplayStatus(value: string | undefined): EformsignDocDisplayStatus | undefined {
     if (value === undefined || value === "") return undefined;
-    if (value === "signed" || value === "review") return value;
+    if (value === "signed" || value === "review" || value === "rejected_by_reviewer") return value;
     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
         pointer: "/displayStatus",
         code: "INVALID_VALUE",
-        detail: "표시 상태는 서명 완료 또는 검토로 선택해 주세요.",
+        detail: "표시 상태는 서명 완료, 검토 또는 반려됨으로 선택해 주세요.",
         location: "query",
     }));
 }
@@ -188,6 +191,12 @@ type EformsignStatusSignal = {
     contract_end_date: string | null;
     /** Authoritative display status, stamped at serve time. */
     display_status: EformsignDocDisplayStatus;
+    /**
+     * True when the mirrored row is not claimed by any client. Carried apart from display_status
+     * because 071 (rejected_by_reviewer) resolves before the unassigned check and so loses that
+     * distinction; the stats fold needs it to count 071 where it counts the matching 070.
+     */
+    unassigned: boolean;
 };
 
 function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): EformsignStatusSignal {
@@ -217,6 +226,7 @@ function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): Eformsig
                 : null),
         contract_end_date: stringFromUnknown(contractEndDate),
         display_status: resolveEformsignDocDisplayStatus(doc as EformsignListDoc, new Date(), calendar),
+        unassigned: (doc as EformsignListDoc)[MIRROR_UNASSIGNED_KEY] === true,
     };
 }
 
@@ -239,6 +249,7 @@ export class EformsignController {
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly rasterizer: PdfPageRasterizerService,
         private readonly holidayCalendar: HolidayCalendarService,
+        private readonly voidContractDocumentUsecase: VoidContractDocumentUsecase,
     ) { }
 
     /**
@@ -810,6 +821,20 @@ export class EformsignController {
         }
     }
 
+    @Post("documents/:documentId/void")
+    @HttpCode(200)
+    async voidDocument(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Param("documentId") documentId: string,
+    ) {
+        if (!tenant.userId) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        const allowed = await this.filterDocumentsByBranch(
+            tenant.branchId ?? "", [{ id: documentId }], { includePermanentPurgePending: true },
+        );
+        if (allowed.length === 0) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        return this.voidContractDocumentUsecase.execute({ ...tenant, userId: tenant.userId }, documentId);
+    }
+
     /**
      * Cancel a contract that a re-issue replaced. Unlike a delete, this never
      * touches a signed or otherwise finished contract, and it refuses until the
@@ -1183,6 +1208,16 @@ export class EformsignController {
                 throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
 
+            // A voided (파기) contract cannot be re-requested: the UI hides the action, this is the
+            // server side of that hide. No vendor call. A document with no local row behaves as before.
+            const localDocument = await this.eformsignDocService.findByDocumentId(
+                tenant.branchId ?? "",
+                documentId,
+            );
+            if (localDocument?.isVoided) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+
             return await this.credentialBoundary.withCredentials(
                 tenant,
                 "document.re_request",
@@ -1203,42 +1238,6 @@ export class EformsignController {
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
-}
-
-/**
- * A vendor HTTP refusal that settles the outcome: 4xx other than a request timeout, rate
- * limit or confirmed document absence. Everything else (timeouts, network errors, 5xx,
- * absence) is ambiguous, and the generation-fenced purge intent must be kept for
- * reconciliation, which can verify the vendor state before purging.
- */
-function isDefinitiveVendorRefusal(error: unknown): boolean {
-    if (!(error instanceof EformsignApiError)) return false;
-    const { status } = error;
-    return status >= 400
-        && status < 500
-        // A confirmed absence may mean the document is already gone at the vendor,
-        // so there is nothing left to cancel. Retain the intent until reconciliation can
-        // purge the local detail and PDFs safely.
-        && !isEformsignDocumentAbsentError(error)
-        && ![408, 429].includes(status);
-}
-
-function successfulDeletedDocumentIds(result: unknown): string[] {
-    if (typeof result !== "object" || result === null) {
-        return [];
-    }
-    const resultBody = (result as Record<string, unknown>)["result"];
-    if (typeof resultBody !== "object" || resultBody === null) {
-        return [];
-    }
-    const successResult = (resultBody as Record<string, unknown>)["success_result"];
-    if (!Array.isArray(successResult)) {
-        return [];
-    }
-    return successResult.filter(
-        (documentId): documentId is string =>
-            typeof documentId === "string" && documentId.trim().length > 0,
-    );
 }
 
 function failedDeletedDocumentIds(result: unknown, requestedDocumentIds: string[]): string[] {

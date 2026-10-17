@@ -159,6 +159,7 @@ export function useClientDetailController({
     hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
+    isFetching: isNotificationLogsFetching,
     refetch: refetchNotificationLogs,
   } = useClientMessageHistory(detailClient);
   const { data: detailContractDocument } = useQuery<EformsignDocument>({
@@ -169,8 +170,22 @@ export function useClientDetailController({
     },
     enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
     staleTime: 1000 * 60,
-    retry: 1,
   });
+  const linkConfirmationsQuery = useQuery({
+    queryKey: ["eformsign-docs", "link-confirmations", resolvedClientId],
+    queryFn: () => {
+      if (resolvedClientId === null) throw new Error("clientId is required");
+      return eformsignApi.getLinkConfirmations(resolvedClientId);
+    },
+    enabled: resolvedClientId !== null && detailSheetTab === "contracts",
+  });
+
+  const handleContractVoided = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-docs", "document", detailClient?.eDocId] });
+    retryDetail();
+    void queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+  }, [detailClient?.eDocId, queryClient, retryDetail]);
 
   // The client detail response is the canonical contract projection. The
   // legacy eFormSign document is still passed through for field fallbacks,
@@ -273,11 +288,18 @@ export function useClientDetailController({
           data-component={dataComponent}
           client={localDetailClient}
           contractDocument={detailContractDocument ?? null}
+          linkConfirmations={linkConfirmationsQuery.data}
+          isLinkConfirmationsError={linkConfirmationsQuery.isError}
+          isLinkConfirmationsFetching={linkConfirmationsQuery.isFetching}
+          refetchLinkConfirmations={linkConfirmationsQuery.refetch}
+          onContractLinked={retryDetail}
+          onContractVoided={handleContractVoided}
           activeTab={detailSheetTab}
           notificationLogs={detailNotificationLogs as ClientNotificationLogRecord[]}
           hasMoreNotificationLogs={hasMoreNotificationLogs}
           isNotificationLogsLoading={isNotificationLogsLoading}
           isNotificationLogsError={isNotificationLogsError}
+          isNotificationLogsRetrying={isNotificationLogsFetching}
           onRetryNotificationLogs={() => {
             void refetchNotificationLogs();
           }}

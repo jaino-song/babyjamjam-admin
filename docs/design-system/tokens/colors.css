@@ -73,6 +73,9 @@
   --status-danger-bg: hsl(355 40% 94%);
   --status-danger-border: hsla(355, 36%, 45%, 0.2);
   --status-danger-fg: hsl(355 36% 45%);
+  /* Solid danger (filled burgundy + white text): 반려됨 / rejected_by_reviewer (eformsign 071). */
+  --status-danger-solid-bg: hsl(355 36% 45%);
+  --status-danger-solid-fg: hsl(0 0% 100%);
 
   /* Charts */
   --chart-1: hsl(217 91% 60%);
@@ -147,4 +150,6 @@
   --status-danger-bg: hsl(355 35% 16%);
   --status-danger-border: hsl(355 35% 26%);
   --status-danger-fg: hsl(355 70% 68%);
+  --status-danger-solid-bg: hsl(355 36% 45%);
+  --status-danger-solid-fg: hsl(0 0% 100%);
 }

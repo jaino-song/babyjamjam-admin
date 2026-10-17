@@ -28,6 +28,7 @@ export function createLifecycleTransactionProbe(options: { clientId?: number } =
                 endDate: new Date("2026-09-18T00:00:00.000Z"),
                 duration: 9,
                 serviceStatus: "in_progress",
+                bookingConfirmedAt: new Date("2026-01-01"),
                 employeeSchedules: [],
             }),
             findMany: jest.fn().mockResolvedValue([]),

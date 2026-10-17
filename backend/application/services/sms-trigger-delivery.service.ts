@@ -5,7 +5,6 @@ import { AligoService } from "application/services/aligo.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import {
     resolveAligoSmsMessageType,
-    SendAligoSmsResult,
     type AligoSmsMessageType,
 } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -23,11 +22,18 @@ import {
     SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
+import {
+    MESSAGE_TRIGGER_RULE_REPOSITORY,
+    IMessageTriggerRuleRepository,
+} from "domain/repositories/message-trigger-rule.repository.interface";
+import { resolveRuleRetryPermission } from "application/services/message-automation-activation.service";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -45,6 +51,7 @@ import {
 } from "./sms-provider-acceptance.service";
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
 import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
+import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecipients } from "./sms-provider-outcome.service";
 
 export interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -202,7 +209,51 @@ export class SmsTriggerDeliveryService {
         private readonly enricherRegistry?: SmsTriggerPayloadEnricherRegistry,
         @Optional()
         private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
+        @Optional()
+        @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
+        private readonly ruleRepository?: IMessageTriggerRuleRepository,
     ) {}
+
+    /**
+     * 규칙 메시지-04: the rule's CURRENT 실패 시 재전송, read BEFORE any provider
+     * bookkeeping starts. The rule being off means a rejection is final; a
+     * missing rule row (or no repository) means on. A failed read is neither:
+     * nothing has been sent yet, so the job is deferred as a transient
+     * infrastructure failure instead of guessing a permission.
+     *
+     * Manual-owned jobs (agent-approved retries and scheduled sends, manual
+     * service-record-link and service-end sends) are not governed by the
+     * automatic rule retry policy: the read is skipped, so an unreadable policy
+     * can neither defer nor fail them.
+     */
+    private async readRuleRetryOnFailureOrDefer(job: MessageTriggerJobEntity): Promise<boolean> {
+        if (isManualMessageTriggerJob(job)) return true;
+        if (!this.ruleRepository || !job.branchId) return true;
+        try {
+            const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId);
+            return resolveRuleRetryPermission(rule) !== "off";
+        } catch (error) {
+            this.logger.warn(
+                `Failed to read retryOnFailure for rule ${job.ruleId}; deferring job ${job.id}: ${this.formatErrorMessage(error)}`,
+            );
+            throw new TriggerJobDeferredError("transient", "Rule retry policy could not be read");
+        }
+    }
+
+    /**
+     * Same read for a job whose dispatch is already committed (the prepared
+     * path): deferring would re-queue a `dispatching` job for a second send, so a
+     * failed read here is final instead - the provider is still called once, but
+     * a rejection schedules nothing.
+     */
+    private async readRuleRetryOnFailureForDispatchedJob(job: MessageTriggerJobEntity): Promise<boolean> {
+        try {
+            return await this.readRuleRetryOnFailureOrDefer(job);
+        } catch (error) {
+            if (error instanceof TriggerJobDeferredError) return false;
+            throw error;
+        }
+    }
 
     canHandle(templateKey: MessageTriggerTemplateKey): boolean {
         return Boolean(SMS_TEMPLATE_DELIVERY[templateKey]);
@@ -384,10 +435,16 @@ export class SmsTriggerDeliveryService {
                 return false;
             }
             if (error instanceof MissingSmsTemplateVariablesError) {
-                job.cancel(`메시지 발송 건너뜀: 필수 정보 누락 (${error.variableKeys.join(", ")})`);
+                const reason = `필수 정보 누락 (${error.variableKeys.join(", ")})`;
+                if (isManualMessageTriggerJob(job)) job.cancel(`메시지 발송 건너뜀: ${reason}`);
+                else job.markNeedsSetup(reason);
                 this.logger.warn(
                     `[SMS Automation] ${job.templateKey} skipped for job ${job.id}: missing ${error.variableKeys.join(", ")}`,
                 );
+                return false;
+            }
+            if (error instanceof BranchSystemTemplateSnapshotError && !isManualMessageTriggerJob(job)) {
+                job.markNeedsSetup("템플릿을 찾을 수 없습니다");
                 return false;
             }
             throw error;
@@ -418,6 +475,9 @@ export class SmsTriggerDeliveryService {
         if (!config) {
             return null;
         }
+        // Probe only: an unreadable policy defers the job here, before the
+        // irreversible dispatch marker. sendPreparedJob reads it again, fresh.
+        await this.readRuleRetryOnFailureOrDefer(job);
 
         const previousVariables = { ...job.payload.templateVariables };
         const previousButtonUrl = job.payload.buttonUrl;
@@ -467,10 +527,16 @@ export class SmsTriggerDeliveryService {
                 return null;
             }
             if (error instanceof MissingSmsTemplateVariablesError) {
-                job.cancel(`메시지 발송 건너뜀: 필수 정보 누락 (${error.variableKeys.join(", ")})`);
+                const reason = `필수 정보 누락 (${error.variableKeys.join(", ")})`;
+                if (isManualMessageTriggerJob(job)) job.cancel(`메시지 발송 건너뜀: ${reason}`);
+                else job.markNeedsSetup(reason);
                 this.logger.warn(
                     `[SMS Automation] ${job.templateKey} skipped for job ${job.id}: missing ${error.variableKeys.join(", ")}`,
                 );
+                return null;
+            }
+            if (error instanceof BranchSystemTemplateSnapshotError && !isManualMessageTriggerJob(job)) {
+                job.markNeedsSetup("템플릿을 찾을 수 없습니다");
                 return null;
             }
             throw error;
@@ -521,6 +587,11 @@ export class SmsTriggerDeliveryService {
         preparedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<boolean> {
         const payload = job.payload;
+        // Before any attempt row or provider bookkeeping. A prepared send has
+        // already crossed the irreversible dispatch marker and cannot be deferred.
+        const retryOnFailure = preparedSnapshot
+            ? await this.readRuleRetryOnFailureForDispatchedJob(job)
+            : await this.readRuleRetryOnFailureOrDefer(job);
         const snapshot = preparedSnapshot ?? await this.resolveDeliverySnapshot(job);
 
         const pendingAttempt = this.buildSmsLog({
@@ -569,18 +640,37 @@ export class SmsTriggerDeliveryService {
                 title: snapshot.title,
                 msgType: snapshot.requestedDeliveryType,
             });
-            const isAccepted = this.isAcceptedSmsResult(result);
+            const outcome = classifySmsProviderOutcome(result, countSmsRecipients(snapshot.receiver));
+            attempt.aligoMid = result?.response?.msg_id ? String(result.response.msg_id) : null;
+            if (outcome === "unknown") {
+                // 기존 예외 경로에서 uncertain을 기록하고 작업에도 같은 실패를 전달한다.
+                attempt.nextRetryAt = null;
+                throw new Error("문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.");
+            }
+            const isAccepted = outcome === "accepted";
+            const rejection = outcome === "rejected" ? classifySmsProviderRejection(result) : null;
+            const isPermanent = rejection?.kind === "permanent";
             attempt.receiver = result.request.receiver;
             attempt.providerAcceptanceState = isAccepted ? "accepted" : "rejected";
             attempt.providerAcceptedAt = isAccepted ? new Date(Date.now()) : null;
-            attempt.aligoMid = result.response.msg_id ? String(result.response.msg_id) : null;
-            attempt.errorMessage = isAccepted ? null : result.response.message;
+            attempt.errorMessage = isAccepted ? null : isPermanent
+                ? `발송 실패: ${rejection.reason}`
+                : result.response.message;
             attempt.status = isAccepted ? "sent" : "failed";
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
-            attempt.nextRetryAt = isAccepted ? null : new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
+            attempt.nextRetryAt = !isAccepted && !isPermanent && retryOnFailure && attempt.canRetry()
+                ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
+                : null;
             attempt.updatedAt = new Date(Date.now());
-            job.payload.templateVariables["retrySafety"] = isAccepted ? "delivered" : "provider-rejected";
+            if (isAccepted && attempt.aligoMid) {
+                attempt.scheduleCarrierCheck(attempt.providerAcceptedAt ?? new Date(Date.now()));
+            }
+            job.payload.templateVariables["retrySafety"] = isAccepted ? "delivered"
+                : isPermanent ? "permanent-provider-rejected" : "provider-rejected";
+            if (isPermanent) {
+                attempt.variables = { ...attempt.variables, retrySafety: "permanent-provider-rejected" };
+            }
             await this.persistAttempt(attempt);
             return isAccepted;
         } catch (error) {
@@ -921,12 +1011,6 @@ export class SmsTriggerDeliveryService {
             configHash: snapshot.configHash,
             ...(snapshot.systemTemplateKey ? { systemTemplateKey: snapshot.systemTemplateKey } : {}),
         });
-    }
-
-    private isAcceptedSmsResult(result: SendAligoSmsResult): boolean {
-        const resultCode = Number(result.response.result_code);
-        const errorCount = Number(result.response.error_cnt ?? 0);
-        return resultCode === 1 && errorCount === 0;
     }
 
     private formatErrorMessage(error: unknown): string {

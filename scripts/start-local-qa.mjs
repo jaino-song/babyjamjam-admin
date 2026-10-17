@@ -130,6 +130,9 @@ function run() {
         DEVELOPMENT_API_BASE_URL: backend.origin,
         LOCAL_AUTO_LOGIN_EMAIL: email,
         LOCAL_AUTO_LOGIN_PASSWORD: password,
+        ...(sourceEnv.LOCAL_AUTO_LOGIN_BRANCH_NAME
+          ? { LOCAL_AUTO_LOGIN_BRANCH_NAME: sourceEnv.LOCAL_AUTO_LOGIN_BRANCH_NAME }
+          : {}),
       },
       stdio: "inherit",
     },

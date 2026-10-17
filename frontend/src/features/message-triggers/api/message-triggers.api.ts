@@ -2,6 +2,7 @@ import { api } from "@/lib/api/client";
 import type {
     MessageLogRecord,
     MessageTriggerRule,
+    ResendMessageTriggerJobResponse,
     CreateMessageTriggerRuleDto,
     TriggerEventType,
     TriggerRecipientType,
@@ -82,4 +83,6 @@ export const messageTriggersApi = {
         api.post<MessageLogRecord>(`/message-logs/${id}/retry`),
     cancelUpcomingJob: (id: string) =>
         api.post<{ id: string; status: "canceled" }>(`/message-trigger-jobs/${id}/cancel`),
+    resendJob: (jobId: string) =>
+        api.post<ResendMessageTriggerJobResponse>(`/message-trigger-jobs/${jobId}/resend`),
 };

@@ -1,7 +1,8 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
+import { extractEformsignContractClientCandidate } from "application/utils/eformsign-contract-client-candidate";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 import { createLifecycleTransactionProbe } from "../../utils/lifecycle-transaction-probe";
@@ -93,6 +94,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             $executeRaw: jest.fn().mockResolvedValue(1),
             $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
             eformsign_doc: {
+                // D3 blocker query: no newer voided contract unless a test says so.
+                findFirst: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockImplementation(async ({ data }) => {
                     Object.assign(document, data);
                     return { count: 1 };
@@ -115,6 +118,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                     branchId: "branch-1",
                     phone: "010-1234-5678",
                     eDocId: null,
+                    name: "김고객",
+                    birthday: "1992-03-04",
                 }]),
                 create: jest.fn().mockResolvedValue({ id: 31 }),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -208,6 +213,128 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     }
 
     it.each([
+        { name: "다른고객", birthday: "1992-03-04", knownClient: false, suppressed: false, autoRegistration: false },
+        { name: "김고객", birthday: "1992-03-05", knownClient: false, suppressed: false, autoRegistration: false },
+        { name: "김고객", birthday: null, knownClient: false, suppressed: false, autoRegistration: false },
+        { name: "", birthday: "1992-03-04", knownClient: false, suppressed: false, autoRegistration: false },
+        { name: "김고객", birthday: "invalid", knownClient: false, suppressed: false, autoRegistration: false },
+        { name: "다른고객", birthday: "1992-03-04", knownClient: true, suppressed: false, autoRegistration: false },
+        { name: "다른고객", birthday: "1992-03-04", knownClient: false, suppressed: true, autoRegistration: false },
+        { name: "김고객", birthday: "1992-03-05", knownClient: false, suppressed: true, autoRegistration: true },
+        { name: "다른고객", birthday: "1992-03-04", knownClient: false, suppressed: false, autoRegistration: true },
+        { name: "김고객", birthday: "1992-03-05", knownClient: false, suppressed: false, autoRegistration: true },
+    ])("requires confirmation without writes for $name/$birthday (known=$knownClient, suppressed=$suppressed, registration=$autoRegistration)", async ({ name, birthday, knownClient, suppressed, autoRegistration }) => {
+        const { transaction, settings, serviceRecordLifecycle, notificationService, usecase } = setup(mirroredDocument({
+            branchId: "branch-1", customerPhone: "01012345678", detailPayload: contractDetail(),
+        }));
+        settings.getClientAutoRegistrationEnabled.mockResolvedValue(autoRegistration);
+        transaction.client.findMany.mockResolvedValue([{
+            id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: null, name, birthday,
+        }]);
+
+        await expect(usecase.execute("doc-1", {
+            suppressOutboundAutomation: suppressed,
+            ...(knownClient ? { existingClientId: 21, existingClientBranchId: "branch-1" } : {}),
+        })).resolves.toBe("needs_confirmation");
+
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.create).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
+        if (suppressed) {
+            expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+        } else {
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                "branch-1", "계약서 연결 확인 필요",
+                "전화번호가 같은 고객이 있지만 이름 또는 생년월일이 달라 계약서를 자동으로 연결하지 않았습니다.",
+                {
+                    type: "eformsign_link_confirmation_required",
+                    documentId: "doc-1",
+                    clientId: 21,
+                    url: "/clients?id=21",
+                },
+                { dedupe: { type: "eformsign_link_confirmation_required", documentId: "doc-1" } },
+            );
+        }
+    });
+
+    it("requires confirmation when mirrored detail has no customer-qualified candidate", async () => {
+        const detail = contractDetail();
+        detail.fields = [];
+        expect(extractEformsignContractClientCandidate(detail)).toBeNull();
+        const { transaction, serviceRecordLifecycle, notificationService, usecase } = setup(mirroredDocument({
+            branchId: "branch-1", customerPhone: "01012345678", detailPayload: detail,
+        }));
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("needs_confirmation");
+
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.create).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("waits for detail before linking a single phone match without notifying (known=%s)", async (knownClient) => {
+        const { transaction, serviceRecordLifecycle, notificationService, usecase } = setup(mirroredDocument({
+            branchId: "branch-1", detailPayload: null,
+        }));
+
+        await expect(usecase.execute("doc-1", knownClient
+            ? { existingClientId: 21, existingClientBranchId: "branch-1" }
+            : undefined)).resolves.toBe("mirror_not_ready");
+
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.create).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+    });
+
+    it("compares transactional detail before taking client-link locks and logs only differing field names", async () => {
+        const { transaction, serviceRecordLifecycle, notificationService, usecase } = setup(mirroredDocument({
+            branchId: "branch-1", customerPhone: "01012345678", detailPayload: contractDetail(),
+        }));
+        const detail = contractDetail();
+        detail.fields[0]!.value = "다른고객";
+        detail.recipients[0]!.name = "다른고객";
+        transaction.eformsign_doc.findUnique.mockResolvedValue(mirroredDocument({
+            branchId: "branch-1", customerPhone: "01012345678", detailPayload: detail,
+        }));
+        Object.assign(transaction.employee_schedule, { findMany: jest.fn().mockResolvedValue([]) });
+        Object.assign(transaction, { service_record_case: { findUnique: jest.fn().mockResolvedValue(null) } });
+        const log = jest.spyOn(Logger.prototype, "log").mockImplementation();
+        try {
+            await expect(usecase.execute("doc-1")).resolves.toBe("needs_confirmation");
+            expect(transaction.$queryRaw).not.toHaveBeenCalled();
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+            expect(log).toHaveBeenCalledWith({
+                event: "eformsign_link_confirmation_required", fields: ["name"],
+            });
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+        } finally {
+            log.mockRestore();
+        }
+    });
+
+    it("keeps needs_confirmation when its notification fails", async () => {
+        const { transaction, notificationService, usecase } = setup(mirroredDocument({
+            branchId: "branch-1", customerPhone: "01012345678", detailPayload: contractDetail(),
+        }));
+        transaction.client.findMany.mockResolvedValue([{
+            id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: null, name: "다른고객", birthday: "1992-03-04",
+        }]);
+        notificationService.sendToBranchUsers.mockRejectedValue(new Error("push unavailable"));
+        await expect(usecase.execute("doc-1")).resolves.toBe("needs_confirmation");
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
         { completeLocks: false, knownClient: false, retry: false },
         { completeLocks: true, knownClient: false, retry: false },
         { completeLocks: false, knownClient: true, retry: false },
@@ -219,6 +346,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const document = mirroredDocument({
             branchId: probe.branchId,
             customerPhone: "01012345678",
+            detailPayload: contractDetail(),
         });
         const { prisma, transaction, settings } = setup(document, probe.holidayCalendar);
         settings.getClientAutoRegistrationEnabled.mockResolvedValue(false);
@@ -227,6 +355,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             branchId: probe.branchId,
             phone: "010-1234-5678",
             eDocId: null,
+            name: "김고객",
+            birthday: "1992-03-04",
         }]);
         transaction.client.findUnique.mockImplementation(async () => ({
             ...await probe.tables.client.findUnique(),
@@ -316,8 +446,15 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
     });
 
-    it("claims a later-mirrored legacy document for the one exact phone match", async () => {
-        const { transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
+    it("waits for detail then claims a later-mirrored legacy document for the one exact phone and identity match", async () => {
+        const { document, transaction, notificationService, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("mirror_not_ready");
+        expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        expect(transaction.client.updateMany).not.toHaveBeenCalled();
+        expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+
+        Object.assign(document, { detailPayload: contractDetail() });
 
         await expect(usecase.execute("doc-1")).resolves.toBe("linked");
 
@@ -332,6 +469,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 branchId: true,
                 phone: true,
                 eDocId: true,
+                name: true,
+                birthday: true,
             },
         });
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(
@@ -354,7 +493,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("claims a branchless existing-client mirror when the observed source generation is current", async () => {
-        const document = mirroredDocument({ branchId: null, clientId: null });
+        const document = mirroredDocument({ branchId: null, clientId: null, detailPayload: contractDetail() });
         const { transaction, settings, usecase } = setup(document);
         settings.getEformsignTemplateBranch.mockResolvedValue({
             branchId: "branch-1",
@@ -426,6 +565,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 branchId: true,
                 phone: true,
                 eDocId: true,
+                name: true,
+                birthday: true,
             },
         });
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
@@ -433,7 +574,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("links the matching client in the owning branch of a branchless document template", async () => {
-        const { transaction, settings, usecase } = setup();
+        const { transaction, settings, usecase } = setup(mirroredDocument({ detailPayload: contractDetail() }));
         settings.getEformsignTemplateBranch.mockResolvedValue({
             branchId: "branch-2",
             effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
@@ -446,6 +587,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                         branchId: "branch-2",
                         phone: "+82 10 1234 5678",
                         eDocId: null,
+                        name: "김고객",
+                        birthday: "1992-03-04",
                     }]
                     : [],
             ),
@@ -473,13 +616,15 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("uses the server-owned client scope for a client-initiated branchless link", async () => {
-        const document = mirroredDocument({ branchId: null, clientId: null });
+        const document = mirroredDocument({ branchId: null, clientId: null, detailPayload: contractDetail() });
         const { transaction, usecase } = setup(document);
         transaction.client.findMany.mockResolvedValue([{
             id: 21,
             branchId: "branch-1",
             phone: "010-1234-5678",
             eDocId: null,
+            name: "김고객",
+            birthday: "1992-03-04",
         }]);
 
         await expect(usecase.execute("doc-1", {
@@ -500,6 +645,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 branchId: true,
                 phone: true,
                 eDocId: true,
+                name: true,
+                birthday: true,
             },
         });
     });
@@ -523,7 +670,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("limits a completed-status mirror to an existing client without completion effects", async () => {
-        const document = mirroredDocument({ statusType: "072", branchId: "branch-1" });
+        const document = mirroredDocument({ statusType: "072", branchId: "branch-1", detailPayload: contractDetail() });
         const {
             transaction,
             settings,
@@ -584,7 +731,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
     describe("another client still points at the unassigned document", () => {
         const arrange = (pointerReads: number[][], documentOverrides: Record<string, unknown> = {}) => {
-            const document = mirroredDocument({ branchId: "branch-1", clientId: null, ...documentOverrides });
+            const document = mirroredDocument({ branchId: "branch-1", clientId: null, detailPayload: contractDetail(), ...documentOverrides });
             const { document: mirrored, transaction, usecase } = setup(document);
             const tx = transaction as typeof transaction & {
                 employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
@@ -610,7 +757,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             const { document, transaction, usecase } = arrange([[55]]);
             transaction.client.findUnique.mockResolvedValue({ id: 21, branchId: "branch-1", eDocId: "newer-doc" });
             transaction.client.findMany.mockResolvedValue([
-                { id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: "newer-doc" },
+                { id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: "newer-doc", name: "김고객", birthday: "1992-03-04" },
             ]);
             transaction.eformsign_doc.findUnique.mockImplementation(({ where }) =>
                 Promise.resolve(
@@ -720,12 +867,14 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     it("keeps the client pointer on a newer contract", async () => {
-        const { document, transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
+        const { document, transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1", detailPayload: contractDetail() }));
         transaction.client.findMany.mockResolvedValue([{
             id: 21,
             branchId: "branch-1",
             phone: "010-1234-5678",
             eDocId: "newer-doc",
+            name: "김고객",
+            birthday: "1992-03-04",
         }]);
         transaction.eformsign_doc.findUnique.mockImplementation(({ where }) =>
             Promise.resolve(
@@ -1057,6 +1206,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 eDocId: "doc-1",
                 suppressGreetingSms: true,
                 voucherClient: true,
+                serviceStatus: "pre_booking",
+                bookingConfirmedAt: null,
             }),
             select: { id: true },
         });
@@ -2250,6 +2401,457 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         },
     );
 
+    // 계약-05: 040 / 045 / 071 may be linked to an EXISTING client (see the
+    // describe block below) but must never register a NEW one. The two gates
+    // that enforce this are the status check before the transaction (decides
+    // whether creation is permitted at all) and the status check on the row
+    // read inside the transaction (decides whether to create).
+    describe("계약-05: 040 / 045 / 071 never auto-register a new client", () => {
+        const linkOnlyStatuses = ["040", "045", "071"];
+
+        it.each(linkOnlyStatuses)(
+            "does not create a client or touch the document at status %s",
+            async (statusType) => {
+                const document = mirroredDocument({
+                    branchId: "branch-1",
+                    customerPhone: "01012345678",
+                    detailPayload: contractDetail(),
+                    statusType,
+                });
+                const { transaction, settings, usecase } = setup(document);
+                transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+                expect(transaction.client.create).not.toHaveBeenCalled();
+                expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                // Creation was never permitted, so the greeting setting that is
+                // read only for a creatable document is not consulted either.
+                expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(linkOnlyStatuses)(
+            "refuses at status %s even when the status read before the transaction was a creating one",
+            async (statusType) => {
+                // Before the transaction the document looked creatable (060), so creation
+                // was permitted; the row read inside the transaction has moved to
+                // the link-only status and must still not create.
+                const before = mirroredDocument({
+                    branchId: "branch-1",
+                    customerPhone: "01012345678",
+                    detailPayload: contractDetail(),
+                    statusType: "060",
+                });
+                const inside = { ...before, statusType };
+                const { prisma, transaction, usecase } = setup(inside);
+                prisma.eformsign_doc.findUnique.mockResolvedValue(before);
+                transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+                expect(transaction.client.create).not.toHaveBeenCalled();
+                expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(linkOnlyStatuses)(
+            "does not create when the status read before the transaction is %s even if the row inside it is a creating status",
+            async (statusType) => {
+                // The pre-transaction status alone must withhold creation permission.
+                const before = mirroredDocument({
+                    branchId: "branch-1",
+                    customerPhone: "01012345678",
+                    detailPayload: contractDetail(),
+                    statusType,
+                });
+                const inside = { ...before, statusType: "060" };
+                const { prisma, transaction, usecase } = setup(inside);
+                prisma.eformsign_doc.findUnique.mockResolvedValue(before);
+                transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(usecase.execute("doc-1")).resolves.toBe("disabled");
+
+                expect(transaction.client.create).not.toHaveBeenCalled();
+                expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            },
+        );
+    });
+
+    describe("voided (파기) contract: no client pointer, assignment, auto-registration or lifecycle", () => {
+        const voidedAt = new Date("2026-10-01T00:00:00.000Z");
+
+        /** The complete service-record lock surface, so the locked path runs. */
+        const withLockSurface = (transaction: ReturnType<typeof setup>["transaction"]) => {
+            const tx = transaction as typeof transaction & {
+                employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+                service_record_case: { findUnique: jest.Mock };
+            };
+            tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+            // No other client points at the document (the default double would report client 11).
+            transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) =>
+                Promise.resolve(
+                    (query.strings?.join(" ").toLowerCase() ?? "").includes("pointer_client") ? [] : [{ id: 11 }],
+                ));
+        };
+
+        const expectNothingWritten = (
+            { transaction, serviceRecordLifecycle }: Pick<ReturnType<typeof setup>, "transaction" | "serviceRecordLifecycle">,
+        ) => {
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        };
+
+        const assignedDocument = (overrides: Record<string, unknown> = {}) =>
+            mirroredDocument({ branchId: "branch-1", clientId: 21, ...overrides });
+
+        const completedUnassigned = (overrides: Record<string, unknown> = {}) =>
+            mirroredDocument({
+                branchId: "branch-1",
+                customerPhone: "01012345678",
+                detailPayload: contractDetail(),
+                ...overrides,
+            });
+
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("assigned document, %s", (_label, lockSurface) => {
+            it("leaves a null client pointer untouched and skips lifecycle for a voided document", async () => {
+                const arranged = setup(assignedDocument({ voidedAt }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("skipped");
+
+                expect(arranged.prisma.$transaction).not.toHaveBeenCalled();
+                expectNothingWritten(arranged);
+            });
+
+            it("still repairs the pointer of a live document (control)", async () => {
+                const arranged = setup(assignedDocument());
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("linked");
+
+                expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                });
+                expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        it("re-checks the void state in the row re-read under the document lock (assigned repair)", async () => {
+            const live = assignedDocument();
+            const arranged = setup(live);
+            withLockSurface(arranged.transaction);
+            // The unlocked read saw a live row; the row re-read under the lock is voided.
+            arranged.transaction.eformsign_doc.findUnique.mockResolvedValue({ ...live, voidedAt });
+
+            await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("skipped");
+
+            expect(arranged.prisma.$transaction).toHaveBeenCalledTimes(1);
+            expectNothingWritten(arranged);
+        });
+
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("unassigned document, %s", (_label, lockSurface) => {
+            it("neither links an existing client nor auto-registers one for a voided document whose clientId is null", async () => {
+                const arranged = setup(completedUnassigned({ voidedAt }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("skipped");
+
+                expect(arranged.prisma.$transaction).not.toHaveBeenCalled();
+                expect(arranged.settings.getClientAutoRegistrationEnabled).not.toHaveBeenCalled();
+                expectNothingWritten(arranged);
+                expect(arranged.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            });
+
+            it("links the matching existing client of a live document (control)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("linked");
+
+                expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                });
+            });
+
+            it("auto-registers a client for a live document when none matches (control)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("created");
+
+                expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            });
+
+            it("writes nothing when the row became voided before the transaction's own read", async () => {
+                const live = completedUnassigned();
+                const arranged = setup(live);
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findMany.mockResolvedValue([]);
+                arranged.transaction.eformsign_doc.findUnique.mockResolvedValue({ ...live, voidedAt });
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("skipped");
+
+                expectNothingWritten(arranged);
+            });
+        });
+
+        /**
+         * D3: when the client owns a voided contract newer than the document being linked,
+         * the client has no live contract; the document may still be claimed, but it must not
+         * take `client.eDocId`. Applies on both lock surfaces and on every caller of
+         * `linkExistingClient` (assigned repair, existing-only link, general link).
+         */
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("D3: a newer voided contract of the same client blocks the pointer, %s", (_label, lockSurface) => {
+            const expectedBlockerQuery = {
+                where: {
+                    clientId: 21,
+                    voidedAt: { not: null },
+                    AND: [
+                        { OR: [{ documentKind: "contract" }, { documentKind: null }] },
+                        {
+                            OR: [
+                                { createdDate: { gt: new Date("2026-07-20T00:00:00.000Z") } },
+                                { createdDate: new Date("2026-07-20T00:00:00.000Z"), id: { gt: 11 } },
+                            ],
+                        },
+                    ],
+                },
+                select: { id: true },
+            };
+            const existingOnly = {
+                linkExistingOnly: true,
+                existingClientId: 21,
+                existingClientBranchId: "branch-1",
+            };
+
+            it("claims an unassigned document for the existing client but writes no pointer (existing-only)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+
+                await expect(arranged.usecase.execute("doc-1", existingOnly)).resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledTimes(1);
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({ id: 11 }),
+                    data: expect.objectContaining({ clientId: 21, branchId: "branch-1" }),
+                }));
+                expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("claims an unassigned document for the existing client but writes no pointer (general path)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({ id: 11 }),
+                }));
+                expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("repairs ownership of an assigned document without writing the pointer", async () => {
+                const arranged = setup(assignedDocument());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+                expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+            });
+
+            it("links a document newer than the voided one and lets it take the pointer", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue(null);
+
+                await expect(arranged.usecase.execute("doc-1", existingOnly)).resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                });
+            });
+
+            it("does not filter the blocker by status or purge flag (a voided row mirrored as deleted keeps blocking)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await arranged.usecase.execute("doc-1", existingOnly);
+
+                const [query] = arranged.transaction.eformsign_doc.findFirst.mock.calls[0]!;
+                expect(query.where).not.toHaveProperty("statusType");
+                expect(query.where).not.toHaveProperty("permanentPurgeRequestedAt");
+                expect(query.where.clientId).toBe(21);
+            });
+        });
+
+        it("does not let a revision candidate created before the voided contract replace the pointer (plain path)", async () => {
+            const document = assignedDocument({ revisionId: "rev-1" });
+            const arranged = setup(document);
+            arranged.transaction.client.findUnique.mockResolvedValue({
+                id: 21, branchId: "branch-1", eDocId: "doc-old",
+            });
+            arranged.transaction.eformsign_doc.findUnique.mockImplementation(({ where }) =>
+                Promise.resolve(
+                    where.documentId === "doc-1"
+                        ? document
+                        : where.documentId === "doc-old"
+                            ? {
+                                createdDate: new Date("2026-07-25T00:00:00.000Z"),
+                                revisionId: "rev-0",
+                                serviceRecordCaseId: null,
+                                branchId: "branch-1",
+                                clientId: 21,
+                            }
+                            : null,
+                ));
+
+            // Control: no newer voided contract, the revision supersedes the older pointer.
+            await arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration());
+            expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 21, branchId: "branch-1", eDocId: "doc-old" },
+                data: { eDocId: "doc-1" },
+            });
+
+            arranged.transaction.client.updateMany.mockClear();
+            arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+            await arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration());
+            expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledTimes(2);
+            expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        /**
+         * Provider-bearing auto-registration on the complete lock surface: the
+         * client, the schedule and the lifecycle write all happen inside the
+         * transaction before the locked re-read of the document row. The
+         * `$transaction` double records the promise of the callback handed to
+         * it, so the rollback is observed as a rejection instead of being
+         * inferred from later writes that never happened.
+         */
+        const arrangeProviderAutoRegistration = (voidUnderLock: boolean) => {
+            const live = completedUnassigned({ detailPayload: contractDetailWithProviders() });
+            const arranged = setup(live);
+            withLockSurface(arranged.transaction);
+            arranged.transaction.client.findMany.mockResolvedValue([]);
+            arranged.transaction.employee.findMany.mockResolvedValue([
+                { id: 55, name: "박관리사", phone: "010-5555-1111" },
+                { id: 56, name: "최관리사", phone: "01055552222" },
+            ]);
+            // The created schedule is visible to the locked schedule read, as it
+            // would be inside the real transaction.
+            let createdScheduleId: number | null = null;
+            const tx = arranged.transaction as typeof arranged.transaction & {
+                employee_schedule: { findMany: jest.Mock };
+            };
+            tx.employee_schedule.create.mockImplementation(async () => {
+                createdScheduleId = 91;
+                return { id: 91 };
+            });
+            tx.employee_schedule.findMany.mockImplementation(async () => (
+                createdScheduleId === null
+                    ? []
+                    : [{ id: createdScheduleId, primaryEmployeeId: 55, secondaryEmployeeId: 56 }]
+            ));
+            arranged.transaction.client.findUnique.mockImplementation(
+                async ({ where }: { where: { id: number } }) => ({
+                    id: where.id, branchId: "branch-1", eDocId: "doc-1",
+                }),
+            );
+            if (voidUnderLock) {
+                // First in-transaction read (before the client is created) is live; the
+                // re-read under the document lock sees the void.
+                arranged.transaction.eformsign_doc.findUnique
+                    .mockResolvedValueOnce(live)
+                    .mockResolvedValue({ ...live, voidedAt });
+            }
+            // A transaction COMMITS when its callback resolves and ROLLS BACK when it rejects.
+            const callbacks: Promise<unknown>[] = [];
+            arranged.prisma.$transaction.mockImplementation((
+                work: (candidate: typeof arranged.transaction) => Promise<unknown>,
+            ) => {
+                const result = work(arranged.transaction);
+                callbacks.push(result);
+                return result;
+            });
+            return { ...arranged, callbacks };
+        };
+
+        it("rolls the auto-registered client, schedule and lifecycle back when the row is voided under the document lock", async () => {
+            const arranged = arrangeProviderAutoRegistration(true);
+
+            await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("skipped");
+
+            // The transaction callback itself REJECTED, so the database rolls back
+            // everything it wrote; resolving "skipped" from inside it would commit
+            // the temporary client, schedule and lifecycle rows.
+            expect(arranged.callbacks).toHaveLength(1);
+            await expect(arranged.callbacks[0]).rejects.toMatchObject({ name: "VoidedDocumentRollback" });
+
+            // Written inside the rolled-back transaction, before the locked re-read saw the void.
+            expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            expect(arranged.transaction.employee_schedule.create).toHaveBeenCalledTimes(1);
+            expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+                31, arranged.transaction, expect.anything(),
+            );
+            // Nothing after the re-read: no claim, no automation intents, no notice.
+            expect(arranged.transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(arranged.transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
+            expect(arranged.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+        });
+
+        it("commits the same client, schedule and lifecycle writes for a live document (control)", async () => {
+            const arranged = arrangeProviderAutoRegistration(false);
+
+            await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("created");
+
+            // The first transaction is the registration itself (a later one belongs to
+            // the post-create automation follow-up).
+            await expect(arranged.callbacks[0]).resolves.toMatchObject({
+                status: "created",
+                createdClientId: 31,
+                createdBranchId: "branch-1",
+                createdScheduleId: 91,
+            });
+            expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            expect(arranged.transaction.employee_schedule.create).toHaveBeenCalledTimes(1);
+            expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+                31, arranged.transaction, expect.anything(),
+            );
+            expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+        });
+    });
+
     it("never links service-record documents as customer contracts", async () => {
         const { prisma, usecase } = setup();
         prisma.eformsign_doc.findUnique.mockResolvedValue(
@@ -2258,5 +2860,105 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
         await expect(usecase.execute("doc-1")).resolves.toBe("skipped");
         expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    describe("계약-05: an existing client is linked only to a document in an allowed status", () => {
+        const identityMatchingDocument = (overrides: Record<string, unknown> = {}) =>
+            mirroredDocument({
+                branchId: "branch-1",
+                customerPhone: "01012345678",
+                detailPayload: contractDetail(),
+                ...overrides,
+            });
+
+        /** The complete service-record lock surface, so the locked path runs. */
+        const withLockSurface = (transaction: ReturnType<typeof setup>["transaction"]) => {
+            const tx = transaction as typeof transaction & {
+                employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+                service_record_case: { findUnique: jest.Mock };
+            };
+            tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+        };
+
+        const expectNothingWritten = (
+            { transaction, serviceRecordLifecycle }: Pick<ReturnType<typeof setup>, "transaction" | "serviceRecordLifecycle">,
+        ) => {
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        };
+
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("%s", (_label, lockSurface) => {
+            it.each(["080", "001", "011", "042"])(
+                "returns not_completed and writes nothing for a matching identity in status %s",
+                async (statusType) => {
+                    const arranged = setup(identityMatchingDocument({ statusType }));
+                    if (lockSurface) withLockSurface(arranged.transaction);
+
+                    await expect(arranged.usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+                    expectNothingWritten(arranged);
+                },
+            );
+
+            it("still reports needs_confirmation for an identity mismatch in a non-linkable status", async () => {
+                const arranged = setup(identityMatchingDocument({ statusType: "080" }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findMany.mockResolvedValue([{
+                    id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: null,
+                    name: "다른고객", birthday: "1992-03-04",
+                }]);
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("needs_confirmation");
+
+                expectNothingWritten(arranged);
+            });
+
+            it.each(["060", "040", "045", "071"])(
+                "links a matching identity in status %s",
+                async (statusType) => {
+                    const arranged = setup(identityMatchingDocument({ statusType }));
+                    if (lockSurface) withLockSurface(arranged.transaction);
+
+                    await expect(arranged.usecase.execute("doc-1")).resolves.toBe("linked");
+
+                    expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                    expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: 21, branchId: "branch-1", eDocId: null },
+                        data: { eDocId: "doc-1" },
+                    });
+                },
+            );
+
+            it("returns already_linked for a document already linked to the client in status 080", async () => {
+                const arranged = setup(identityMatchingDocument({ statusType: "080", clientId: 21 }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findUnique.mockResolvedValue({
+                    id: 21, branchId: "branch-1", eDocId: "doc-1",
+                });
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("already_linked");
+            });
+        });
+
+        it("writes nothing when the status is not linkable in the re-read under the lock", async () => {
+            const arranged = setup(identityMatchingDocument({ statusType: "060" }));
+            withLockSurface(arranged.transaction);
+            const unlocked = arranged.document;
+            // First in-transaction read is the unlocked one (060); the `current` re-read
+            // under the lock sees the status moved to 080.
+            arranged.transaction.eformsign_doc.findUnique
+                .mockResolvedValueOnce(unlocked)
+                .mockResolvedValue({ ...unlocked, statusType: "080" });
+
+            await expect(arranged.usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+            expectNothingWritten(arranged);
+        });
     });
 });

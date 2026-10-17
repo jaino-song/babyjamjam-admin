@@ -1,7 +1,10 @@
 import {
+    findLatestContractSignalsByClientId,
     isActiveContractSignal,
+    isCompletedContractSignal,
     isContractSendRequired,
     isIncompleteContractSignal,
+    isVoidedContractSignal,
     selectCurrentContractDocument,
     type CurrentContractCandidate,
 } from "application/utils/current-contract-document";
@@ -11,6 +14,7 @@ type Row = CurrentContractCandidate & {
     documentId: string;
     createdDate: Date;
     permanentPurgeRequestedAt?: Date | null;
+    voidedAt?: Date | null;
 };
 
 const row = (overrides: Partial<Row> & Pick<Row, "id" | "documentId">): Row => ({
@@ -90,7 +94,7 @@ describe("selectCurrentContractDocument", () => {
     });
 });
 
-describe("requested-state contract signals (060 / 063 / 064)", () => {
+describe("requested-state contract signals (060 / 063 / 064 / 070 / 071)", () => {
     // Start date inside the send window, no other reason to skip: only the contract signal decides.
     const calendar = { diffBusinessDays: () => 0 } as unknown as Parameters<typeof isContractSendRequired>[1];
     const sendRequiredFor = (statusType: string | null) =>
@@ -107,7 +111,7 @@ describe("requested-state contract signals (060 / 063 / 064)", () => {
             calendar,
         );
 
-    it.each(["060", "063", "064"])("treats a current %s document as active, incomplete and not 발송 필요", (statusType) => {
+    it.each(["060", "063", "064", "070", "071"])("treats a current %s document as active, incomplete and not 발송 필요", (statusType) => {
         const contract = { statusType, permanentPurgeRequestedAt: null };
         expect(isActiveContractSignal(contract)).toBe(true);
         expect(isIncompleteContractSignal(contract)).toBe(true);
@@ -125,5 +129,123 @@ describe("requested-state contract signals (060 / 063 / 064)", () => {
         for (const statusType of ["080", "061", "049", "099", "042"]) {
             expect(sendRequiredFor(statusType)).toBe(true);
         }
+    });
+});
+
+describe("voided (계약 파기) newest contract", () => {
+    const VOIDED_AT = new Date("2026-07-10T00:00:00Z");
+    const calendar = { diffBusinessDays: () => 0 } as unknown as Parameters<typeof isContractSendRequired>[1];
+    const sendRequired = (hasActiveContractDocument: boolean) =>
+        isContractSendRequired(
+            {
+                serviceStatus: "active",
+                startDate: new Date("2026-07-16T00:00:00Z"),
+                hasActiveContractDocument,
+                now: new Date("2026-07-14T03:00:00Z"),
+            },
+            calendar,
+        );
+
+    it("keeps returning the voided newest row and never skips to an older signed contract", () => {
+        const older = row({ id: 1, documentId: "older-signed", createdDate: new Date("2026-01-01T00:00:00Z") });
+        const voided = row({ id: 2, documentId: "voided", createdDate: new Date("2026-06-01T00:00:00Z"), voidedAt: VOIDED_AT });
+        const current = selectCurrentContractDocument([voided, older], NO_TEMPLATES);
+        expect(current?.documentId).toBe("voided");
+        expect(current?.voidedAt).toEqual(VOIDED_AT);
+    });
+
+    it.each(["060", "041", "040", "020", "010", "003", "050", "070"])(
+        "treats a voided %s document as not active, not completed and not incomplete, whatever its eformsign code says",
+        (statusType) => {
+            const contract = { statusType, permanentPurgeRequestedAt: null, voidedAt: VOIDED_AT };
+            expect(isVoidedContractSignal(contract)).toBe(true);
+            expect(isActiveContractSignal(contract)).toBe(false);
+            expect(isCompletedContractSignal(contract)).toBe(false);
+            expect(isIncompleteContractSignal(contract)).toBe(false);
+        },
+    );
+
+    it.each(["060", "041", "040", "003", "050", "070"])(
+        "control: the same %s document that is not voided keeps its previous liveness",
+        (statusType) => {
+            for (const voidedAt of [null, undefined]) {
+                const contract = { statusType, permanentPurgeRequestedAt: null, voidedAt };
+                expect(isVoidedContractSignal(contract)).toBe(false);
+                expect(isActiveContractSignal(contract)).toBe(true);
+            }
+            expect(isActiveContractSignal({ statusType, permanentPurgeRequestedAt: null })).toBe(true);
+        },
+    );
+
+    it("control: completed codes stay completed and 070 stays incomplete when not voided", () => {
+        expect(isCompletedContractSignal({ statusType: "003", permanentPurgeRequestedAt: null, voidedAt: null })).toBe(true);
+        expect(isIncompleteContractSignal({ statusType: "070", permanentPurgeRequestedAt: null, voidedAt: null })).toBe(true);
+        expect(isIncompleteContractSignal({ statusType: "003", permanentPurgeRequestedAt: null, voidedAt: null })).toBe(false);
+    });
+
+    it("requires sending a contract when the newest document is voided, even though an older one is signed", () => {
+        const voidedNewest = { statusType: "003", permanentPurgeRequestedAt: null, voidedAt: VOIDED_AT };
+        expect(sendRequired(isActiveContractSignal(voidedNewest))).toBe(true);
+    });
+
+    it("control: does not require sending when the newest document is the same code and not voided", () => {
+        const liveNewest = { statusType: "003", permanentPurgeRequestedAt: null, voidedAt: null };
+        expect(sendRequired(isActiveContractSignal(liveNewest))).toBe(false);
+    });
+
+    it("isVoidedContractSignal is false for an absent contract", () => {
+        expect(isVoidedContractSignal(null)).toBe(false);
+        expect(isVoidedContractSignal(undefined)).toBe(false);
+    });
+});
+
+describe("findLatestContractSignalsByClientId voided column", () => {
+    const docRow = (overrides: Record<string, unknown>) => ({
+        clientId: 1,
+        documentId: "doc",
+        statusType: "003",
+        stepType: null,
+        stepName: null,
+        detailPayload: null,
+        permanentPurgeRequestedAt: null,
+        voidedAt: null,
+        documentKind: "contract",
+        serviceRecordCaseId: null,
+        templateId: null,
+        ...overrides,
+    });
+    const prismaWith = (rows: Record<string, unknown>[]) => {
+        const findMany = jest.fn().mockResolvedValue(rows);
+        return { prisma: { eformsign_doc: { findMany } } as never, findMany };
+    };
+
+    it("selects voidedAt and carries it on the signal of the newest document", async () => {
+        const voidedAt = new Date("2026-07-10T00:00:00Z");
+        const { prisma, findMany } = prismaWith([
+            docRow({ documentId: "newest-voided", voidedAt }),
+            docRow({ documentId: "older-signed" }),
+        ]);
+
+        const signals = await findLatestContractSignalsByClientId(prisma, NO_TEMPLATES, [1]);
+
+        expect(findMany.mock.calls[0][0].select.voidedAt).toBe(true);
+        expect(signals.get(1)?.documentId).toBe("newest-voided");
+        expect(signals.get(1)?.voidedAt).toEqual(voidedAt);
+        expect(isActiveContractSignal(signals.get(1))).toBe(false);
+    });
+
+    it("control: a non-voided newest document carries a null voidedAt and stays active", async () => {
+        const { prisma } = prismaWith([docRow({ documentId: "newest" })]);
+
+        const signals = await findLatestContractSignalsByClientId(prisma, NO_TEMPLATES, [1]);
+
+        expect(signals.get(1)?.voidedAt).toBeNull();
+        expect(isActiveContractSignal(signals.get(1))).toBe(true);
+    });
+
+    it("does not query for an empty client list", async () => {
+        const { prisma, findMany } = prismaWith([]);
+        await findLatestContractSignalsByClientId(prisma, NO_TEMPLATES, []);
+        expect(findMany).not.toHaveBeenCalled();
     });
 });

@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { SmtpEmailAdapter } from "infrastructure/adapters/smtp-email.adapter";
 
 const mockSendMail = jest.fn();
@@ -61,5 +62,16 @@ describe("SmtpEmailAdapter", () => {
             text: "인증 링크",
             html: "<p>인증 링크</p>",
         });
+    });
+
+    it("logs the plain recipient address", async () => {
+        const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+        mockSendMail.mockResolvedValue({ messageId: "smtp-message-2" });
+
+        const adapter = new SmtpEmailAdapter();
+        await adapter.send({ to: "recipient@example.com", subject: "제목", text: "본문", html: "<p>본문</p>" });
+
+        expect(logSpy).toHaveBeenCalledWith("SMTP email sent to recipient@example.com");
+        logSpy.mockRestore();
     });
 });

@@ -157,15 +157,25 @@ export class EformsignMirrorListService {
     async buildDetailDisplayFields(
         documentId: string,
         calendar: KrBusinessDayCalendar,
-    ): Promise<{ display_status: EformsignDocDisplayStatus; contract_end_date?: string } | null> {
+    ): Promise<{
+        display_status: EformsignDocDisplayStatus;
+        contract_end_date?: string;
+        voided_at: string | null;
+        voided_by_name: string | null;
+    } | null> {
         const stored = await this.eformsignDocRepository.findByDocumentIdUnscoped(documentId);
         if (!stored) return null;
 
         const listDoc = eformsignListDocFromMirror(stored.document);
         const withEndDate = (await this.attachContractEndDates([listDoc]))[0] ?? listDoc;
         const contractEndDate = withEndDate["contract_end_date"];
+        const actorNames = stored.document.voidedBy
+            ? await this.eformsignDocRepository.findVoidedByNames([stored.document.voidedBy])
+            : new Map<string, string | null>();
         return {
             display_status: resolveEformsignDocDisplayStatus(withEndDate, new Date(), calendar),
+            voided_at: stored.document.voidedAt?.toISOString() ?? null,
+            voided_by_name: stored.document.voidedBy ? actorNames.get(stored.document.voidedBy) ?? null : null,
             ...(typeof contractEndDate === "string" ? { contract_end_date: contractEndDate } : {}),
         };
     }

@@ -41,7 +41,7 @@ interface ServiceRecordLinkTokenParams {
  *   - link token: carried in the SMS URL (possession). Stored plaintext so the issued
  *     form URL can be recovered from the database when needed; only reaches the phone challenge.
  *   - access token: minted after a correct phone number (knowledge). Grants the service-record endpoints
- *     until expiresAt (= schedule.endDate + grace buffer).
+ *     until expiresAt (= midnight KST after schedule.endDate).
  * The access token and expected phone remain sha256 hashes. `linkTokenHash` retains its
  * legacy Prisma/database name even though newly issued form-link values are plaintext.
  */
@@ -221,7 +221,7 @@ export class ServiceRecordTokenService {
             const record = await this.findByLinkToken(params.linkToken, tx);
             if (
                 !record
-                || record.expiresAt.getTime() < Date.now()
+                || record.expiresAt.getTime() <= Date.now()
                 || record.branchId !== params.branchId
                 || record.scheduleId !== params.scheduleId
                 || record.employeeId !== params.employeeId
@@ -260,7 +260,7 @@ export class ServiceRecordTokenService {
     /** Resolve a usable (active, not revoked, not expired, not locked) link-token row, else null. */
     async resolveLink(linkToken: string) {
         const record = await this.findByLinkToken(linkToken, this.prismaService);
-        if (!record || (!record.active && !record.revokedAt) || record.expiresAt.getTime() < Date.now()) return null;
+        if (!record || (!record.active && !record.revokedAt) || record.expiresAt.getTime() <= Date.now()) return null;
         const current = await this.currentProvider(record, this.prismaService);
         if (!current || (record.revokedAt && record.scheduleId === current.id)) return null;
         const changed = record.scheduleId !== current.id || record.employeeId !== current.primaryEmployeeId
@@ -415,7 +415,7 @@ export class ServiceRecordTokenService {
                     Object.assign(record, rebound);
                 }
                 if (!record.active || record.revokedAt) return this.unavailable("invalid_token");
-                if (record.expiresAt.getTime() < now.getTime()) return this.unavailable("expired");
+                if (record.expiresAt.getTime() <= now.getTime()) return this.unavailable("expired");
                 if (record.lockedAt) return this.unavailable("locked");
 
                 let failedAttempts = record.failedAttempts;
@@ -505,7 +505,7 @@ export class ServiceRecordTokenService {
             !record.verifiedAt ||
             record.lockedAt ||
             record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS ||
-            record.expiresAt.getTime() < Date.now()
+            record.expiresAt.getTime() <= Date.now()
         ) {
             return null;
         }

@@ -70,4 +70,12 @@ export const clientsApi = {
    */
   completeReplacement: (id: number) =>
     api.patch<Client>(`/clients/${id}/complete-replacement`, {}),
+
+  /**
+   * Confirm the booking (rule 고객-04): the client stops being 예약 전 and its status
+   * starts following the service dates. The response is the raw client entity
+   * (no employees or badges), so callers merge only `bookingConfirmedAt` and `serviceStatus`.
+   */
+  confirmBooking: (id: number) =>
+    api.patch<Client>(`/clients/${id}/confirm-booking`, {}),
 };

@@ -322,6 +322,8 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 templateKey: currentRule!.templateKey,
                 isDefault: currentRule!.isDefault,
                 jobsStale: currentRule!.jobsStale,
+                targetClientStatus: currentRule!.targetClientStatus,
+                retryOnFailure: currentRule!.retryOnFailure,
                 createdAt: currentRule!.createdAt.toISOString(),
                 updatedAt: currentRule!.updatedAt.toISOString(),
             };
@@ -470,6 +472,8 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 templateKey: currentRule!.templateKey,
                 isDefault: currentRule!.isDefault,
                 jobsStale: currentRule!.jobsStale,
+                targetClientStatus: currentRule!.targetClientStatus,
+                retryOnFailure: currentRule!.retryOnFailure,
                 createdAt: currentRule!.createdAt.toISOString(),
                 updatedAt: currentRule!.updatedAt.toISOString(),
             };
@@ -751,6 +755,8 @@ describeAgentE2E("Release A runtime with Postgres, Valkey, and the deterministic
                 templateKey: r1Rule!.templateKey,
                 isDefault: r1Rule!.isDefault,
                 jobsStale: r1Rule!.jobsStale,
+                targetClientStatus: r1Rule!.targetClientStatus,
+                retryOnFailure: r1Rule!.retryOnFailure,
                 createdAt: r1Rule!.createdAt.toISOString(),
                 updatedAt: r1Rule!.updatedAt.toISOString(),
             };

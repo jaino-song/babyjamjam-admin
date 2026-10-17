@@ -67,6 +67,7 @@ const mockClients: Client[] = [
     voucherClient: false,
     breastPump: false,
     serviceStatus: null,
+    bookingConfirmedAt: null,
     eDocId: null,
     areaId: "Seogu",
     hasSigned: false,

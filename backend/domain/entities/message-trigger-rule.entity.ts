@@ -1,7 +1,10 @@
 import {
+    DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+    DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
+    MessageTriggerTargetClientStatus,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 
@@ -22,6 +25,8 @@ export class MessageTriggerRuleEntity {
         public jobsStale = false,
         public isLockedByGlobal = false,
         public sendTime = "09:00",
+        public targetClientStatus: MessageTriggerTargetClientStatus = DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+        public retryOnFailure = DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
     ) {}
 
     static create(params: {
@@ -36,6 +41,8 @@ export class MessageTriggerRuleEntity {
         templateKey: MessageTriggerTemplateKey;
         isDefault?: boolean;
         jobsStale?: boolean;
+        targetClientStatus?: MessageTriggerTargetClientStatus;
+        retryOnFailure?: boolean;
     }): MessageTriggerRuleEntity {
         const now = new Date();
         return new MessageTriggerRuleEntity(
@@ -54,6 +61,8 @@ export class MessageTriggerRuleEntity {
             params.jobsStale ?? false,
             false,
             params.sendTime ?? "09:00",
+            params.targetClientStatus ?? DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+            params.retryOnFailure ?? DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
         );
     }
 
@@ -72,6 +81,8 @@ export class MessageTriggerRuleEntity {
         isDefault = false,
         jobsStale = false,
         sendTime = "09:00",
+        targetClientStatus: MessageTriggerTargetClientStatus = DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+        retryOnFailure = DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
     ): MessageTriggerRuleEntity {
         return new MessageTriggerRuleEntity(
             id,
@@ -89,6 +100,8 @@ export class MessageTriggerRuleEntity {
             jobsStale,
             false,
             sendTime,
+            targetClientStatus,
+            retryOnFailure,
         );
     }
 
@@ -101,6 +114,8 @@ export class MessageTriggerRuleEntity {
         sendTime?: string;
         recipientType?: MessageTriggerRecipientType;
         templateKey?: MessageTriggerTemplateKey;
+        targetClientStatus?: MessageTriggerTargetClientStatus;
+        retryOnFailure?: boolean;
     }): void {
         this.name = params.name ?? this.name;
         this.isActive = params.isActive ?? this.isActive;
@@ -110,6 +125,8 @@ export class MessageTriggerRuleEntity {
         this.sendTime = params.sendTime ?? this.sendTime;
         this.recipientType = params.recipientType ?? this.recipientType;
         this.templateKey = params.templateKey ?? this.templateKey;
+        this.targetClientStatus = params.targetClientStatus ?? this.targetClientStatus;
+        this.retryOnFailure = params.retryOnFailure ?? this.retryOnFailure;
         this.updatedAt = new Date();
     }
 }

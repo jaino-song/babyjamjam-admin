@@ -21,6 +21,7 @@ export interface CreateClientFactoryParams {
     birthday?: string | null;
     dueDate?: Date | null;
     serviceStatus?: string | null;
+    bookingConfirmedAt?: Date | null;
     breastPump?: boolean;
     eDocId?: string | null;
     birthDate?: Date | null;
@@ -55,6 +56,10 @@ export class ClientFactory {
             null,
             false,
             params.birthDate ?? null,
+            undefined,
+            params.bookingConfirmedAt === undefined
+                ? (params.serviceStatus === "pre_booking" ? null : new Date("2024-01-01"))
+                : params.bookingConfirmedAt,
         );
     }
 

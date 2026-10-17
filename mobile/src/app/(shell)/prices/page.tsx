@@ -18,6 +18,7 @@ import {
   MobileDetailPage,
   MobileDetailSheet,
 } from "@/components/app/mobile-redesign/detail-sheet";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { VoucherPriceUploadForm } from "@/components/app/settings/VoucherPriceUploadForm";
 import {
@@ -81,7 +82,15 @@ function formatWon(amount: number): string {
 export default function PricesPage() {
   const { data: authUser, isLoading: isAuthUserLoading } = useGetAuthUser();
   const isOwner = authUser?.role === "owner";
-  const { data: years = [], isLoading: isYearsLoading } = useVoucherYears();
+  const {
+    data: yearsData,
+    isLoading: isYearsLoading,
+    isPaused: isYearsPaused,
+    isError: isYearsError,
+    isFetching: isYearsFetching,
+    refetch: refetchYears,
+  } = useVoucherYears();
+  const years = useMemo(() => yearsData ?? [], [yearsData]);
   const sortedYears = useMemo(() => [...years].sort((a, b) => a - b), [years]);
   const fallbackYear = sortedYears[sortedYears.length - 1];
   const [yearFilter, setYearFilter] = useState<number | undefined>(undefined);
@@ -98,8 +107,26 @@ export default function PricesPage() {
     };
   }, []);
 
-  const { data: rawRows, isLoading: isPricesLoading, isError } = useAllVoucherPrices(activeYear);
-  const isLoading = isYearsLoading || (activeYear !== undefined && isPricesLoading);
+  const {
+    data: rawRows,
+    isLoading: isPricesLoading,
+    isPaused: isPricesPaused,
+    isFetching: isPricesFetching,
+    isError,
+    isDataComplete: isPricesComplete = false,
+    isRetryingFailed: isPricesRetryingFailed = false,
+    refetch: refetchPrices,
+  } = useAllVoucherPrices(activeYear);
+  // Rows on screen win: loaded rows, or a completely known (possibly empty) list, are never replaced
+  // by skeletons or a failure panel while some voucher type loads or fails.
+  const isPricesKnown = rawRows.length > 0 || isPricesComplete;
+  const isLoading = isYearsLoading || (isYearsPaused && yearsData === undefined) || (activeYear !== undefined && (isPricesLoading || isPricesPaused) && !isPricesKnown);
+  // A failed load is judged against the data itself: cached years / rows stay on screen.
+  const isYearsFailedWithoutData = isYearsError && yearsData === undefined;
+  const isPricesFailedWithoutData = isError && !isPricesKnown;
+  // The prices notice also stays while a voucher type that failed before is being retried.
+  const isPricesNoticeVisible = (isError || isPricesRetryingFailed) && isPricesKnown;
+  const isStaleNoticeVisible = (isYearsError && yearsData !== undefined) || isPricesNoticeVisible;
 
   const displayRows = useMemo<DisplayRow[]>(() => {
     if (activeYear === undefined) return [];
@@ -180,11 +207,12 @@ export default function PricesPage() {
   const isOpen = selectedRow !== null || uploadOpen;
 
   const yearOptions = sortedYears.length > 0 ? sortedYears : activeYear ? [activeYear] : [];
+  const isCountUnknown = isYearsFailedWithoutData || isPricesFailedWithoutData;
   const typeFilterItems = isLoading
     ? TYPE_FILTERS.map((label) => ({ label, count: "00", skeleton: true }))
     : TYPE_FILTERS.map((label) => ({
         label,
-        count: String(typeCounts[label]),
+        count: isCountUnknown ? "—" : String(typeCounts[label]),
         active: label === typeFilter,
       }));
 
@@ -215,6 +243,8 @@ export default function PricesPage() {
                   <ListCountSkeleton
                     data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_header_count-skeleton"
                   />
+                ) : isCountUnknown ? (
+                  "—"
                 ) : (
                   `${displayRows.length}개`
                 )
@@ -270,6 +300,21 @@ export default function PricesPage() {
                 </div>
               }
             >
+              {isStaleNoticeVisible && (
+                <QueryErrorState
+                  dataComponent="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_cached-error"
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => {
+                    if (isYearsError && yearsData !== undefined) void refetchYears();
+                    if (isPricesNoticeVisible) void refetchPrices();
+                  }}
+                  isRetrying={
+                    (isYearsError && yearsData !== undefined && isYearsFetching)
+                    || (isPricesNoticeVisible && isPricesFetching)
+                  }
+                />
+              )}
               {isLoading ? (
                 <ListRowsSkeleton
                   data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton"
@@ -279,18 +324,22 @@ export default function PricesPage() {
                   groupHeader
                   variantHeader={typeFilter === "전체"}
                 />
-              ) : isError ? (
-                <div
-                  style={{
-                    padding: "32px 16px",
-                    textAlign: "center",
-                    fontSize: "0.82rem",
-                    color: "hsl(var(--v3-burgundy))",
-                  }}
-                  data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_error"
-                >
-                  가격 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
-                </div>
+              ) : isYearsFailedWithoutData ? (
+                <QueryErrorState
+                  dataComponent="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_years-error"
+                  size="panel"
+                  title="가격표 연도를 불러오지 못했습니다"
+                  onRetry={() => void refetchYears()}
+                  isRetrying={isYearsFetching}
+                />
+              ) : isPricesFailedWithoutData ? (
+                <QueryErrorState
+                  dataComponent="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_error"
+                  size="panel"
+                  title="가격 정보를 불러오지 못했습니다"
+                  onRetry={() => void refetchPrices()}
+                  isRetrying={isPricesFetching}
+                />
               ) : nestedSections.length === 0 ? (
                 <div
                   style={{

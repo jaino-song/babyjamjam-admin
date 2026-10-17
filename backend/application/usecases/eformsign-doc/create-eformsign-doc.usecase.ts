@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { extractPhoneCandidates } from "application/utils/normalize-phone";
 import {
     EFORMSIGN_DOCUMENT_KIND,
     EformsignDocEntity,
@@ -35,6 +34,8 @@ export interface CreateEformsignDocParams {
     templateId?: string | null;
     /** Internal adopt-path fence; ordinary document creation must leave this unset. */
     preserveExistingMirrorProjection?: boolean;
+    /** Inferred adoption only: do not overwrite a client linked since inference. */
+    expectedOwnerClientId?: number;
     /** Approval target hash used to prevent a stale post-provider client link. */
     clientTargetVersion?: string;
 }
@@ -100,11 +101,14 @@ export class CreateEformsignDocUsecase {
             employeeScheduleId: params.employeeScheduleId ?? null,
             templateId: params.templateId ?? null,
         });
-        const createdDoc = params.preserveExistingMirrorProjection
+        const createdDoc = params.preserveExistingMirrorProjection || params.expectedOwnerClientId !== undefined
             ? await this.eformsignDocRepository.upsertByDocumentId(
                 branchid,
                 entity,
-                { preserveExistingMirrorProjection: true },
+                {
+                    ...(params.preserveExistingMirrorProjection ? { preserveExistingMirrorProjection: true } : {}),
+                    ...(params.expectedOwnerClientId === undefined ? {} : { expectedOwnerClientId: params.expectedOwnerClientId }),
+                },
             )
             : await this.eformsignDocRepository.upsertByDocumentId(branchid, entity);
         const warnings: CreateEformsignDocWarning[] = [];
@@ -148,26 +152,8 @@ export class CreateEformsignDocUsecase {
         branchid: string,
         params: CreateEformsignDocParams,
     ): Promise<ClientEntity | null> {
-        const explicitClient = await this.clientRepository.findById(branchid, params.clientId);
-        if (explicitClient) {
-            return explicitClient;
-        }
-
-        const candidatePhones = extractPhoneCandidates(params.stepRecipientSms);
-
-        for (const phone of candidatePhones) {
-            const matchedClient = await this.clientRepository.findByPhone(branchid, phone);
-            if (!matchedClient) continue;
-
-            if (matchedClient.id !== params.clientId) {
-                this.logger.log(
-                    `Resolved document ${params.documentId} to client ${matchedClient.id} by recipient phone`,
-                );
-            }
-
-            return matchedClient;
-        }
-
-        return null;
+        // Only the client the caller named is linked. A recipient phone alone never
+        // selects a different client (business rule 계약-05).
+        return this.clientRepository.findById(branchid, params.clientId);
     }
 }

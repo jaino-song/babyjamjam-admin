@@ -129,7 +129,7 @@ describe("useClientMessageHistory", () => {
         expect(result.current.hasNextPage).toBe(true);
     });
 
-    it("drops loaded rows when a refetch errors", async () => {
+    it("returns no rows when the first load fails", async () => {
         mockListClientHistory.mockRejectedValue(new Error("boom"));
         const { wrapper } = createWrapper();
 
@@ -137,5 +137,43 @@ describe("useClientMessageHistory", () => {
 
         await waitFor(() => expect(result.current.isError).toBe(true));
         expect(result.current.items).toEqual([]);
+    });
+
+    it("keeps the loaded rows when a refetch errors", async () => {
+        mockListClientHistory.mockResolvedValueOnce(page([record(2), record(1)]) as never);
+        const { wrapper } = createWrapper();
+
+        const { result } = renderHook(() => useClientMessageHistory(42), { wrapper });
+
+        await waitFor(() => expect(result.current.items).toHaveLength(2));
+        expect(result.current.isError).toBe(false);
+
+        mockListClientHistory.mockRejectedValue(new Error("boom"));
+        await act(async () => {
+            await result.current.refetch();
+        });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(result.current.items.map((item) => item.id)).toEqual([2, 1]);
+    });
+
+    it("keeps the loaded rows when an older page fails, and reports it as the older page", async () => {
+        mockListClientHistory
+            .mockResolvedValueOnce(page([record(3), record(2)], "cursor-2") as never)
+            .mockRejectedValueOnce(new Error("boom"));
+        const { wrapper } = createWrapper();
+
+        const { result } = renderHook(() => useClientMessageHistory(42, { limit: 2 }), { wrapper });
+
+        await waitFor(() => expect(result.current.items).toHaveLength(2));
+
+        await act(async () => {
+            await result.current.fetchNextPage();
+        });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(result.current.isFetchNextPageError).toBe(true);
+        expect(result.current.items.map((item) => item.id)).toEqual([3, 2]);
+        expect(result.current.hasNextPage).toBe(true);
     });
 });

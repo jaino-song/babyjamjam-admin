@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Send, Users } from "lucide-react";
 
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +72,10 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
   });
   const recipientsData = recipientsQuery.data;
   const recipients: NotificationRecipient[] = useMemo(() => recipientsData ?? [], [recipientsData]);
+  // A paused first load (device offline) has no data and is not "loading" to react-query; treat it as loading.
+  const isRecipientsLoading =
+    recipientsQuery.isLoading || (recipientsQuery.isPaused && recipientsData === undefined);
+  const retryRecipients = () => void recipientsQuery.refetch();
   const selectedRecipient = recipients.find((recipient) => recipient.id === recipientId);
 
   const clearDraft = () => {
@@ -198,20 +203,30 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
         </div>
         <Separator className="mb-6" />
 
-        {recipientsQuery.isLoading ? (
+        {recipientsQuery.isError && recipientsData !== undefined ? (
+          <QueryErrorState
+            dataComponent={`${DATA_COMPONENT}_error`}
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            className="mb-4"
+            onRetry={retryRecipients}
+            isRetrying={recipientsQuery.isFetching}
+          />
+        ) : null}
+        {isRecipientsLoading ? (
           <div data-component={`${DATA_COMPONENT}_skeleton`} className="space-y-3">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-28 w-full" />
           </div>
-        ) : recipientsQuery.isError ? (
-          <p
-            role="alert"
-            data-component={`${DATA_COMPONENT}_error`}
-            className="text-sm font-medium text-red-700"
-          >
-            받는 사람 목록을 불러오지 못했습니다.
-          </p>
+        ) : recipientsQuery.isError && recipientsData === undefined ? (
+          <QueryErrorState
+            dataComponent={`${DATA_COMPONENT}_error`}
+            size="inline"
+            title="받는 사람 목록을 불러오지 못했습니다."
+            onRetry={retryRecipients}
+            isRetrying={recipientsQuery.isFetching}
+          />
         ) : !hasRecipients ? (
           <div
             data-component={`${DATA_COMPONENT}_empty`}

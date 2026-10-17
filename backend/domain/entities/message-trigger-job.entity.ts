@@ -3,7 +3,6 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
-    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
@@ -16,6 +15,7 @@ export type MessageTriggerJobStatus =
     | "dispatching"
     | "sent"
     | "failed"
+    | "needs_setup"
     | "canceled";
 
 export interface MessageTriggerCatchUpMetadata {
@@ -193,15 +193,8 @@ export class MessageTriggerJobEntity {
         this.updatedAt = new Date();
     }
 
-    defer(kind: "config" | "transient", reason: string): void {
+    defer(kind: "transient", reason: string): void {
         const now = new Date();
-
-        if (kind === "config") {
-            this.status = "pending";
-            this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_CONFIG_RETRY_DELAY_MS);
-            this.updatedAt = now;
-            return;
-        }
 
         this.attempts += 1;
         if (this.attempts >= TRIGGER_JOB_MAX_ATTEMPTS) {
@@ -216,6 +209,9 @@ export class MessageTriggerJobEntity {
 
     markSent(): void {
         this.status = "sent";
+        // A manual resend keeps its setup reason on the in-flight row as the
+        // durable resend mark; a sent job reports none.
+        this.cancelReason = null;
         this.sentAt = new Date();
         this.nextAttemptAt = null;
         this.updatedAt = new Date();
@@ -231,6 +227,14 @@ export class MessageTriggerJobEntity {
         this.status = "canceled";
         this.cancelReason = reason;
         this.canceledAt = new Date();
+        this.updatedAt = new Date();
+    }
+
+    markNeedsSetup(reason: string): void {
+        this.status = "needs_setup";
+        this.cancelReason = reason;
+        this.nextAttemptAt = null;
+        // Retain the claim token: repository.update() uses it as the write fence.
         this.updatedAt = new Date();
     }
 

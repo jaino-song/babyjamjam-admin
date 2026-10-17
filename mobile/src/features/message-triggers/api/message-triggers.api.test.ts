@@ -5,10 +5,12 @@ import { messageTriggersApi } from "./message-triggers.api";
 jest.mock("@/lib/api/client", () => ({
   api: {
     get: jest.fn(),
+    post: jest.fn(),
   },
 }));
 
 const mockGet = api.get as jest.MockedFunction<typeof api.get>;
+const mockPost = api.post as jest.MockedFunction<typeof api.post>;
 
 describe("messageTriggersApi.listHistory", () => {
   beforeEach(() => {
@@ -58,5 +60,22 @@ describe("messageTriggersApi.listHistoryPage", () => {
       params: { limit: 500 },
       signal: undefined,
     });
+  });
+});
+
+describe("messageTriggersApi.resendJob", () => {
+  beforeEach(() => {
+    mockPost.mockReset();
+    mockPost.mockResolvedValue({ data: { id: "job-uuid", status: "sent", reason: null } } as never);
+  });
+
+  it("posts an empty body to the bare job id resend endpoint", async () => {
+    await messageTriggersApi.resendJob("8f14e45f-ceea-467a-9575-7b1a6f2f6c11");
+
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledWith(
+      "/message-trigger-jobs/8f14e45f-ceea-467a-9575-7b1a6f2f6c11/resend",
+      {},
+    );
   });
 });

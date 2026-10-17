@@ -8,12 +8,21 @@ import {
   formatMessageFailureReason,
   getMessageChannelLabel,
   getMessageHistoryTitle,
+  getMessageHistoryDetailStatusLabel,
   getMessageHistoryTimestamp,
   getMessageTemplateLabel,
   isHistoryRecordInChannel,
   normalizeMessageHistoryPresentation,
 } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
+
+describe("history detail lookup status", () => {
+  it.each(["checking", "exhausted"])("uses %s only for detail labels", historyLookup => {
+    const record = historyRecord({ status: "failed", variables: { historyLookup } });
+    expect(getMessageHistoryDetailStatusLabel(record)).toBe(historyLookup === "checking" ? "확인 중" : "확인 필요");
+    expect(normalizeMessageHistoryPresentation(record).status).toBe("failed");
+  });
+});
 
 function historyRecord(overrides: Partial<MessageLogRecord> = {}): MessageLogRecord {
   return {
@@ -49,6 +58,12 @@ function historyRecord(overrides: Partial<MessageLogRecord> = {}): MessageLogRec
 }
 
 describe("shared message presentation contract", () => {
+  it.each(["잔액 부족", "인증 오류"])("preserves permanent failure prefix for %s", (reason) => {
+    const message = `발송 실패: ${reason}`;
+    expect(formatMessageFailureReason(message)).toBe(message);
+    expect(formatMessageFailureReason(formatMessageFailureReason(message))).toBe(message);
+    expect(normalizeMessageHistoryPresentation(historyRecord({ status: "failed", errorMessage: message })).failureReason).toBe(message);
+  });
   it("uses the same Korean labels for trigger, system, and delivery-log keys", () => {
     expect(getMessageTemplateLabel("SERVICE_RECORD_LINK")).toBe("제공기록지 작성 링크");
     expect(getMessageTemplateLabel("service_record_link_sms")).toBe("제공기록지 작성 링크");
@@ -111,11 +126,14 @@ describe("shared message presentation contract", () => {
     expect(getMessageChannelLabel("aligo_alimtalk")).toBe("메시지");
     expect(getMessageHistoryTimestamp(record)).toBe("2026-07-16T12:19:00.000Z");
     expect(formatMessageFailureReason("provider timeout (code: 500) 재시도 필요")).toBe("재시도 필요");
+    expect(formatMessageFailureReason("통신사 전달 실패: 1234 가입자없음, 5678 결번"))
+      .toBe("통신사 전달 실패: 1234 가입자없음, 5678 결번");
     expect(MESSAGE_HISTORY_STATUS_LABELS).toEqual({
       sent: "발송 성공",
       failed: "발송 실패",
       pending: "재시도 대기",
       canceled: "발송 취소",
+      needs_setup: "설정 필요",
     });
     // The past-status filter tabs must read exactly like the past-row badges.
     expect(MESSAGE_RECORD_STATUS_FILTER_LABELS).toEqual({
@@ -132,12 +150,14 @@ describe("shared message presentation contract", () => {
       sent: "발송 완료",
       failed: "발송 실패",
       canceled: "발송 취소",
+      needs_setup: "설정 필요",
     });
     expect(MESSAGE_LOG_STATUS_BADGE_VARIANT).toEqual({
       sent: "success",
       failed: "danger",
       pending: "warning",
       canceled: "neutral",
+      needs_setup: "warning",
     });
     expect(MESSAGE_JOB_STATUS_BADGE_VARIANT).toEqual({
       pending: "warning",
@@ -146,6 +166,7 @@ describe("shared message presentation contract", () => {
       sent: "success",
       failed: "danger",
       canceled: "neutral",
+      needs_setup: "warning",
     });
     // "scheduled" (발송 예정) is intentionally absent: its content is folding
     // into 발송 기록 via a follow-up task, so it's dropped from navigation in

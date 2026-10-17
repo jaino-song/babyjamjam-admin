@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  getMessageHistoryDetailStatusLabel,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_RECIPIENT_LABELS,
+  MESSAGE_SETUP_REASON_LABEL,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
   getMessageHistoryTimestamp as getSharedMessageHistoryTimestamp,
@@ -36,8 +38,9 @@ import { Button } from "@/components/ui/button";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
-export type MessageHistoryStatus = "sent" | "failed" | "pending" | "canceled";
-export type MessageHistoryFilter = "all" | MessageHistoryStatus;
+export type MessageHistoryStatus = "sent" | "failed" | "pending" | "canceled" | "needs_setup";
+// 설정 필요 rows appear under 전체 only; they get no filter tab of their own yet.
+export type MessageHistoryFilter = "all" | Exclude<MessageHistoryStatus, "needs_setup">;
 
 export interface MessageHistoryRecord {
   id: number | string;
@@ -49,9 +52,15 @@ export interface MessageHistoryRecord {
   channelLabel: string;
   sentAt: string;
   status: MessageHistoryStatus;
+  detailStatusLabel?: string;
   messagePreview: string;
   failureReason?: string;
   cancelReason?: string;
+  setupReason?: string;
+  // Id of the trigger job behind this row. A job row (`provider === "message_job"`)
+  // carries it as its identity; a log row may also carry one.
+  triggerJobId: string | null;
+  isTriggerJobRow: boolean;
   recipientType: TriggerRecipientType | null;
   icon: LucideIcon;
 }
@@ -66,6 +75,7 @@ interface MessageHistoryDetailPanelProps {
   canRetry?: boolean;
   isRetrying?: boolean;
   onRetry?: () => void;
+  retryPendingLabel?: string;
   backAction?: {
     label: ReactNode;
     onClick: () => void;
@@ -101,6 +111,11 @@ export const MESSAGE_HISTORY_STATUS_META: Record<
     label: MESSAGE_HISTORY_STATUS_LABELS.canceled,
     icon: AlertCircle,
     avatarClass: "border border-slate-200 bg-slate-100 text-slate-600",
+  },
+  needs_setup: {
+    label: MESSAGE_HISTORY_STATUS_LABELS.needs_setup,
+    icon: Clock3,
+    avatarClass: "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]",
   },
 };
 
@@ -235,7 +250,10 @@ export function normalizeMessageHistoryRecord(
 
   return {
     ...normalized,
+    detailStatusLabel: getMessageHistoryDetailStatusLabel(record),
     cancelReason,
+    triggerJobId: record.triggerJobId ?? null,
+    isTriggerJobRow: record.provider === "message_job",
     recipientType: record.recipientType,
     icon: record.eventType ? HISTORY_EVENT_ICON_BY_TYPE[record.eventType] : MessageCircle,
   };
@@ -268,6 +286,7 @@ export function MessageHistoryDetailPanel({
   canRetry = false,
   isRetrying = false,
   onRetry,
+  retryPendingLabel = "재시도 중",
   backAction,
   emptyMessage = "발송 기록을 선택하면 상세 정보가 표시됩니다.",
   emptyIcon = Users,
@@ -276,6 +295,7 @@ export function MessageHistoryDetailPanel({
   const showRetry = !!selectedRecord && canRetry && !!onRetry;
   const displayFailureReason = formatMessageHistoryFailureReason(selectedRecord?.failureReason);
   const displayCancelReason = selectedRecord?.cancelReason;
+  const displaySetupReason = selectedRecord?.status === "needs_setup" ? selectedRecord.setupReason : undefined;
 
   return (
     <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel"
@@ -313,7 +333,7 @@ export function MessageHistoryDetailPanel({
             variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[selectedRecord.status]}
             size="sm"
           >
-            {MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
+            {selectedRecord.detailStatusLabel ?? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
           </StatusBadge>
         ) : null
       }
@@ -329,7 +349,7 @@ export function MessageHistoryDetailPanel({
             className="rounded-full"
           >
             <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-            {isRetrying ? "재시도 중" : "재발송"}
+            {isRetrying ? retryPendingLabel : "재발송"}
           </Button>
         ) : null
       }
@@ -369,6 +389,13 @@ export function MessageHistoryDetailPanel({
                 data-component={`${dataComponentPrefix}_detail-content_info-card_cancel-reason`}
                 label="취소 사유"
                 value={<span className="text-slate-600">{displayCancelReason}</span>}
+              />
+            ) : null}
+            {displaySetupReason ? (
+              <InfoRow
+                data-component={`${dataComponentPrefix}_detail-content_info-card_setup-reason`}
+                label={MESSAGE_SETUP_REASON_LABEL}
+                value={<span className="text-amber-700">{displaySetupReason}</span>}
               />
             ) : null}
           </InfoCard>

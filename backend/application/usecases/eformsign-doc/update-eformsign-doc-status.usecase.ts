@@ -131,6 +131,7 @@ export class UpdateEformsignDocStatusUsecase {
             updateStepRecipient: false,
             updateDocumentNumber: false,
             updateExpiredDate: false,
+            updateOwnershipIdentity: false,
         };
 
         if (params.sourceUpdatedDate) {

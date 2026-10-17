@@ -163,6 +163,30 @@ describe("042 (doc_revoke) / 090 (withdrawal) 철회됨", () => {
   });
 });
 
+describe("071 (doc_reject_reviewer) 반려됨, 계약-04", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 반려됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "071" }, null, "rejected_by_reviewer")).toBe("반려됨");
+    for (const code of ["071", "doc_reject_reviewer"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("반려됨");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2027-12-31")).toBe("반려됨");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2025-01-01")).toBe("반려됨");
+    }
+  });
+
+  it("is in progress, never expired; 080 stays 기간 만료", () => {
+    expect(getStatusCategory("071")).toBe("in-progress");
+    expect(getStatusCategory("080")).toBe("expired");
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
+    expect(mapDocStatusLabel({ status_type: "061" })).toBe("기간 만료");
+  });
+
+  it("is destructive-toned in the badge colour helper", () => {
+    expect(getStatusColor("반려됨")).toBe("destructive");
+  });
+});
+
 describe("045 (doc_request_reject) is treated exactly like 040", () => {
   it("is labelled 철회 요청됨 with the expired category kept for the filter tab", () => {
     expect(mapDocStatusLabel({ status_type: "045" })).toBe("철회 요청됨");
@@ -187,5 +211,29 @@ describe("041 (doc_refuse_revoke) reads exactly like 060", () => {
       }
     }
     expect(mapDocStatusLabel({ status_type: "041", ...customerStep })).toBe("서명 대기");
+  });
+});
+
+describe("voided (계약 파기, BJJ-439) 파기됨", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 파기됨 from display_status whatever the provider code says", () => {
+    for (const code of ["003", "060", "070", "042", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, null, "voided")).toBe("파기됨");
+    }
+  });
+
+  it("uses the neutral (secondary) variant, not a danger tone", () => {
+    expect(getStatusColor("파기됨")).toBe("secondary");
+    expect(getStatusColor("파기됨")).not.toBe("destructive");
+  });
+
+  it("is never receipt-sendable", () => {
+    expect(isReceiptSendableOnCalendar({
+      category: "completed",
+      displayStatus: "voided",
+      currentStatus: { status_type: "003", ...reviewStep },
+      contractEndDate: null,
+    })).toBe(false);
   });
 });

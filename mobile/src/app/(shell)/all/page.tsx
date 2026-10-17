@@ -57,10 +57,17 @@ export default function AllMenuPage() {
   const employees = safeArrayPayload(employeesQuery.data);
   const messageTemplates = safeArrayPayload(messageTemplatesQuery.data);
   const unreadConsultationCount = unreadCountQuery.data?.total;
-  const isClientsInitialLoading = clientsQuery.isLoading && clientsQuery.data === undefined;
-  const isEmployeesInitialLoading = employeesQuery.isLoading && employeesQuery.data === undefined;
-  const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && messageTemplatesQuery.data === undefined;
+  // A load paused offline has no data and is not "loading" to react-query, but it is no more a known
+  // zero than a running one: both read as loading until a load has actually succeeded.
+  const isClientsInitialLoading = (clientsQuery.isLoading || clientsQuery.isPaused) && clientsQuery.data === undefined;
+  // No employee value to show: nothing is cached (loading, failed, or a retry paused offline).
+  // Judged from the data alone, so an unknown count is never printed as "0명".
+  const isEmployeesValueUnavailable = employeesQuery.data === undefined;
+  const isMessageTemplatesInitialLoading = (messageTemplatesQuery.isLoading || messageTemplatesQuery.isPaused) && messageTemplatesQuery.data === undefined;
   const isUnreadInitialLoading = unreadCountQuery.isLoading && unreadCountQuery.data === undefined;
+  const employeesNormalizedError = employeesQuery.error
+    ? normalizeApiError(employeesQuery.error, { operation: "read", locale: "ko-KR" })
+    : null;
   const clientsNormalizedError = clientsQuery.error
     ? normalizeApiError(clientsQuery.error, { operation: "read", locale: "ko-KR" })
     : null;
@@ -70,6 +77,9 @@ export default function AllMenuPage() {
   const unreadNormalizedError = unreadCountQuery.error
     ? normalizeApiError(unreadCountQuery.error, { operation: "read", locale: "ko-KR" })
     : null;
+  // Unlike the other counts, a suppressed (canceled) read still shows the alert: with no cached
+  // value the count would otherwise sit on a skeleton forever with nothing to retry.
+  const showEmployeesError = employeesQuery.isError;
   const showClientsError = clientsQuery.isError && Boolean(clientsNormalizedError) && !clientsNormalizedError?.suppress;
   const showMessageTemplatesError = messageTemplatesQuery.isError && Boolean(messageTemplatesNormalizedError) && !messageTemplatesNormalizedError?.suppress;
   const showUnreadError = unreadCountQuery.isError && Boolean(unreadNormalizedError) && !unreadNormalizedError?.suppress;
@@ -104,8 +114,8 @@ export default function AllMenuPage() {
             href: "/employees",
             icon: UserCheck,
             tone: "purple",
-            value: isEmployeesInitialLoading ? undefined : `${employees.length}명`,
-            valueLoading: isEmployeesInitialLoading,
+            value: isEmployeesValueUnavailable ? undefined : `${employees.length}명`,
+            valueLoading: isEmployeesValueUnavailable,
             valueSkeletonWidth: "28px",
           },
           {
@@ -194,7 +204,7 @@ export default function AllMenuPage() {
     employees.length,
     messageTemplates.length,
     unreadConsultationCount,
-    isEmployeesInitialLoading,
+    isEmployeesValueUnavailable,
     isClientsValueUnavailable,
     isMessageTemplatesValueUnavailable,
     isUnreadInitialLoading,
@@ -224,6 +234,31 @@ export default function AllMenuPage() {
                 className="mt-3"
                 onClick={() => void clientsQuery.refetch()}
                 disabled={clientsQuery.isFetching}
+              >
+                다시 시도
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
+      {showEmployeesError ? (
+        <div className="space-y-3 px-4 pt-4">
+          <Alert
+            variant="warning"
+            role="status"
+            aria-live="polite"
+            data-component="mobile_all_page_employees-read-error"
+          >
+            <AlertTitle>직원 수를 새로 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+              <p>{employeesNormalizedError?.message}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void employeesQuery.refetch()}
+                disabled={employeesQuery.isFetching}
               >
                 다시 시도
               </Button>

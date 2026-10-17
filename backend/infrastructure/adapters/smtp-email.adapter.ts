@@ -5,7 +5,6 @@ import {
     EmailOptions,
     EmailPort,
 } from "domain/ports/email.port";
-import { maskEmail } from "application/utils/mask";
 
 const DEFAULT_FROM_EMAIL = "admin@babyjamjam.local";
 const SENDER_DISPLAY_NAME = "아가잼잼 어드민";
@@ -39,7 +38,7 @@ export class SmtpEmailAdapter implements EmailPort {
             from: this.from,
             ...options,
         });
-        this.logger.log(`SMTP email sent to ${maskEmail(options.to)}`);
+        this.logger.log(`SMTP email sent to ${options.to}`);
         return result.messageId;
     }
 

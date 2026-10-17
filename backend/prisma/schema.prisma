@@ -260,6 +260,7 @@ model client {
   birthday               String?                   @db.VarChar(10)
   breastPump             Boolean                   @default(false) @map("breast_pump")
   serviceStatus          String?                   @map("service_status")
+  bookingConfirmedAt     DateTime?                 @map("booking_confirmed_at") @db.Timestamptz(6)
   serviceEndNoticeSentAt DateTime?                 @map("service_end_notice_sent_at") @db.Timestamptz(6)
   eDocId                 String?                   @unique @map("e_doc_id")
   dueDate                DateTime?                 @map("due_date") @db.Date
@@ -385,6 +386,8 @@ model eformsign_doc {
   syncError                  String?                        @map("sync_error")
   syncErrorAt                DateTime?                      @map("sync_error_at") @db.Timestamptz(6)
   permanentPurgeRequestedAt  DateTime?                      @map("permanent_purge_requested_at") @db.Timestamptz(6)
+  voidedAt                  DateTime?                      @map("voided_at") @db.Timestamptz(6)
+  voidedBy                  String?                        @map("voided_by") @db.Uuid // Deliberately no FK to user: the audit value must survive user deletion.
   autoFinalizeAttempts       Int                            @default(0) @map("auto_finalize_attempts")
   autoFinalizeLastAttemptAt  DateTime?                      @map("auto_finalize_last_attempt_at") @db.Timestamptz(6)
   autoFinalizeLastError      String?                        @map("auto_finalize_last_error")
@@ -1030,6 +1033,9 @@ model auth_flow_state {
   @@index([kind, expiresAt], map: "idx_auth_flow_state_kind_expires_at")
 }
 
+/// Database note: partial index `idx_message_log_carrier_check_due` on
+/// (carrier_check_due_at) WHERE carrier_check_due_at IS NOT NULL exists in the
+/// database but cannot be expressed in Prisma (created via migration SQL).
 model message_log {
   id             Int                  @id @default(autoincrement())
   branchId       String?              @map("branch_id") @db.Uuid
@@ -1058,6 +1064,12 @@ model message_log {
   providerReconciledAt          DateTime?            @map("provider_reconciled_at") @db.Timestamptz(6)
   providerReconciledBy          String?              @map("provider_reconciled_by") @db.VarChar(200)
   providerReconciliationReason  String?              @map("provider_reconciliation_reason") @db.VarChar(1000)
+  // One-shot carrier delivery check, scheduled when Aligo accepts an SMS.
+  // carrierCheckDueAt is cleared once the check result is saved.
+  carrierCheckDueAt             DateTime?            @map("carrier_check_due_at") @db.Timestamptz(6)
+  carrierCheckedAt              DateTime?            @map("carrier_checked_at") @db.Timestamptz(6)
+  carrierResultState            String?              @map("carrier_result_state") @db.VarChar(32) // "delivered" | "failed" | "unconfirmed" | "lookup_error"
+  carrierResults                Json?                @map("carrier_results")
   createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch         branch?              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1090,6 +1102,10 @@ model message_trigger_rule {
   templateKey   String                @map("template_key")
   isDefault     Boolean               @default(false) @map("is_default")
   jobsStale     Boolean               @default(false) @map("jobs_stale")
+  /// 대상 고객 상태 (규칙 메시지-04): all | pre_booking | waiting | active.
+  targetClientStatus String           @default("all") @map("target_client_status") @db.VarChar(20)
+  /// 실패 시 재전송 (규칙 메시지-04): false면 일시 실패를 자동으로 다시 보내지 않는다.
+  retryOnFailure Boolean              @default(true) @map("retry_on_failure")
   createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch        branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1347,6 +1363,7 @@ model service_record_revision {
   confirmedByUserId     String              @map("confirmed_by_user_id") @db.Uuid
   confirmedAt           DateTime            @default(now()) @map("confirmed_at") @db.Timestamptz(6)
   payload               Json                @db.JsonB
+  beforeSnapshot        Json?               @map("before_snapshot") @db.JsonB
   plannedSessions       Json                @map("planned_sessions") @db.JsonB
   provenance            Json                @db.JsonB
   formVersionAtConfirm Int                 @map("form_version_at_confirm")

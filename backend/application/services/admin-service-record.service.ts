@@ -49,6 +49,8 @@ import type {
     ServiceRecordRevisionHistoryResponse,
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { buildServiceRecordRevisionChanges } from "application/policies/service-record-revision-changes.policy";
+import type { ServiceRecordRevisionChangesResponse } from "interface/dto/admin-service-record-edit.dto";
 
 type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
@@ -279,6 +281,21 @@ export class AdminServiceRecordService {
         const result = await repository.listRevisionHistory(branchId, clientId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return normalizeRevisionHistoryResponse(result);
+    }
+
+    async getRevisionChanges(
+        branchId: string,
+        clientId: number,
+        revisionId: string,
+    ): Promise<ServiceRecordRevisionChangesResponse> {
+        const normalizedRevisionId = normalizePathIdentifier(revisionId);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedRevisionId)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        await this.assertClientBelongsToBranch(branchId, clientId);
+        const result = await this.getRevisionStatusRepository().findRevisionForChanges(branchId, clientId, normalizedRevisionId);
+        if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return buildServiceRecordRevisionChanges(result);
     }
 
     /**
@@ -552,8 +569,32 @@ export class AdminServiceRecordService {
         const isSupersededLease = (job: ServiceRecordLinkJob): boolean => (
             isCanceledSchedulingLease(job) && latestSuccessTime > job.createdAt.getTime()
         );
+        // A carrier-check failure lands ~30 minutes after the send, flips the log
+        // to "failed" and happens after its trigger job already went "sent". That
+        // failure is the verdict on THAT job's delivery, so it replaces its own
+        // job as an attempt. It deliberately does not lift the log's time: an
+        // unrelated newer job (e.g. a link created after the send but before the
+        // check) is a newer attempt and must still win.
+        const carrierFailedJobIds = new Set(
+            logs
+                .filter((log) => (
+                    (log.status === "sent" || log.status === "failed")
+                    && log.carrierResultState === "failed"
+                    && log.carrierCheckedAt
+                    && log.triggerJobId !== null
+                    && !inFlightJobIds.has(log.triggerJobId)
+                ))
+                .flatMap((log) => {
+                    const ownJob = jobs.find((job) => job.id === log.triggerJobId);
+                    return ownJob && log.carrierCheckedAt!.getTime() >= this.jobActivityTime(ownJob)
+                        ? [ownJob.id]
+                        : [];
+                }),
+        );
         const attempts: LinkAttempt[] = [
-            ...jobs.filter((job) => !isSupersededLease(job)).map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
+            ...jobs
+                .filter((job) => !isSupersededLease(job) && !carrierFailedJobIds.has(job.id))
+                .map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
             ...logs
                 .filter((log) => (
                     (log.status === "sent" || log.status === "failed")
@@ -615,7 +656,7 @@ export class AdminServiceRecordService {
 
     private getTokenState(token: ScheduleForOverview["serviceRecordTokens"][number]): AdminServiceRecordTokenState {
         if (token.revokedAt) return "revoked";
-        if (token.expiresAt.getTime() < Date.now()) return "expired";
+        if (token.expiresAt.getTime() <= Date.now()) return "expired";
         if (token.active) return "active";
         return "revoked";
     }

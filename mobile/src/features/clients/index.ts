@@ -25,6 +25,7 @@ export {
     useTerminateService,
     useRequestReplacement,
     useCompleteReplacement,
+    useConfirmBooking,
 } from './hooks/use-clients';
 export { clientKeys } from './hooks/keys';
 

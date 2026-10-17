@@ -199,6 +199,7 @@ const buildContract = (
         const makeClient = async (suffix: string) => prisma.client.create({
             data: {
                 name: `${suffix}-${TEST_TAG}`,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 phone: suffix === "생성" ? TEST_CUSTOMER_PHONE : "01000000001",
                 address: "E2E 삭제예정 테스트 주소",
                 birthday: "900101",

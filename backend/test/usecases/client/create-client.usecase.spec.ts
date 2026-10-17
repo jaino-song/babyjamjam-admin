@@ -60,6 +60,8 @@ describe("CreateClientUsecase", () => {
             expect(result.address).toBe("서울시 강남구");
             expect(result.phone).toBe("010-1234-5678");
             expect(result.voucherClient).toBe(true);
+            expect(result.serviceStatus).toBe("pre_booking");
+            expect(result.bookingConfirmedAt).toBeNull();
         });
 
         it("should accept a supplied duration smaller than the business-day count and persist it unchanged", async () => {
