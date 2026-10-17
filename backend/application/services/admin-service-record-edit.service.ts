@@ -330,27 +330,29 @@ function hasPlannedDateDifference(
 /**
  * Dates written to service_record_assignment and employee_schedule on confirm.
  *
- * A confirmed edit never moves an inner handover boundary: the caregiver
- * replacement flow owns those (it deliberately stores the outgoing end equal to
- * the incoming start), so every stored assignment keeps its dates except the two
- * outer edges of the case. The outer edges follow the assignments, not who wrote
- * the sessions: an unwritten service record does not mean the caregiver did not
- * work, so a replaced caregiver whose period covers a day worked it even when a
- * successor backfilled that day's record. The earliest active assignment
+ * An assignment period is a record only: it never gates who may write the service
+ * record, and a session dated outside every period never blocks the confirm. The
+ * confirm keeps that record as accurate as it safely can, so only the two outer
+ * edges follow the planned session dates; an inner handover boundary (outgoing
+ * end == incoming start) is owned by the caregiver replacement flow, which
+ * deliberately stores it that way, so every stored assignment keeps its dates
+ * except those two outer edges. The outer edges follow the assignments, not who
+ * wrote the sessions: an unwritten service record does not mean the caregiver did
+ * not work, so a replaced caregiver whose period covers a day worked it even when
+ * a successor backfilled that day's record. The earliest active assignment
  * (replaced ones are candidates; a terminated schedule is one only when it owns a
- * session, so a case ended early still follows its session dates, while a
- * session-less terminated schedule is never an edge) therefore starts
- * on the first planned session and the latest active one ends on the last one,
- * regardless of which caregiver owns the sessions (ownership in the records and
- * documents stays with the writer). That also keeps a single caregiver's schedule
- * following moved session dates. An outer edge never crosses into a session-less
- * terminated assignment's stored period: when an assignment sorting before the earliest
- * active one stored an end after the new start, or one sorting after the latest
- * active one stored a start before the new end, the stored date is kept, since
- * taking the session date would move that boundary. Every stored assignment is
- * still emitted so the repository re-evaluates each schedule's message automation
- * as before, but only the ones whose service_record_assignment or
- * employee_schedule dates differ from the computed ones are flagged
+ * session, so a case ended early still follows its session dates) therefore
+ * starts on the first planned session and the latest active one ends on the last
+ * one, regardless of which caregiver owns the sessions (ownership in the records
+ * and documents stays with the writer). That also keeps a single caregiver's
+ * schedule following moved session dates. An outer edge never crosses into a
+ * session-less terminated assignment's stored period: when an assignment sorting
+ * before the earliest active one stored an end after the new start, or one sorting
+ * after the latest active one stored a start before the new end, the stored date
+ * is kept, since taking the session date would move that boundary. Every stored
+ * assignment is still emitted so the repository re-evaluates each schedule's
+ * message automation as before, but only the ones whose service_record_assignment
+ * or employee_schedule dates differ from the computed ones are flagged
  * `datesChanged`; those are re-synced in both tables.
  *
  * An edge also stays put when a neighbour merely touches it (a neighbour's stored
@@ -358,11 +360,18 @@ function hasPlannedDateDifference(
  * never pulled apart. A terminated edge candidate keeps its contracted period: its
  * start may only move earlier and its end only later, never shrink.
  *
- * Moving an outer edge across a neighbour's stored boundary cannot be done
+ * The one exception is a single session-less terminated zero-length placeholder (a
+ * caregiver replaced before the service started, stored as a one-day period) whose
+ * date equals the edge's stored start (or end) and which sits directly before the
+ * earliest (after the latest) active assignment: it is no real boundary, only a
+ * marker of the same day, so when the edge moves earlier (later) the placeholder
+ * moves with it and stays on the edge's date, which keeps the handover invariant
+ * (its end == the edge's start). With several such placeholders none moves.
+ *
+ * Moving an outer edge across any other neighbour's stored boundary cannot be done
  * without moving that boundary, so the stored date is kept silently; changing
  * boundaries belongs to the caregiver replacement flow. An edge candidate that
- * owns no session and whose new edge would fall outside its own period (e.g. a
- * caregiver replaced before the contract start, stored as a one-day period) keeps
+ * owns no session and whose new edge would fall outside its own period keeps
  * its stored dates and no other assignment takes the edge. Only a session-owning
  * candidate whose computed start falls after its end is refused as a conflict.
  */
@@ -401,24 +410,48 @@ function assignmentWrites(
         const tail = stored[activeIndexes[activeIndexes.length - 1]!]!;
         const first = activeIndexes[0]!;
         const last = activeIndexes[activeIndexes.length - 1]!;
+        // A single session-less terminated zero-length placeholder on the edge's own stored date is no
+        // boundary: it moves with the edge (see the doc comment). Anything else stays a blocking neighbour.
+        const isPlaceholderAt = (item: (typeof stored)[number], date: string) =>
+            isTerminated(item) && !ownsSession(item) && item.storedStart === date && item.storedEnd === date;
+        const headPlaceholders = stored.slice(0, first).filter((item) => isPlaceholderAt(item, head.storedStart));
+        const headPlaceholder = headPlaceholders.length === 1 && stored[first - 1] === headPlaceholders[0]
+            ? headPlaceholders[0]
+            : undefined;
+        const tailPlaceholders = stored.slice(last + 1).filter((item) => isPlaceholderAt(item, tail.storedEnd));
+        const tailPlaceholder = tailPlaceholders.length === 1 && stored[last + 1] === tailPlaceholders[0]
+            ? tailPlaceholders[0]
+            : undefined;
         // A candidate that owns no session (a caregiver replaced before the contract start is stored
         // as a zero-length period) cannot take an edge date beyond its own stored period: keep it.
         // Only a candidate that owns sessions may produce the start-after-end conflict below.
         if (
             startDate
-            && stored.slice(0, first).every((item) => item.storedEnd < head.storedStart && item.storedEnd <= startDate)
+            && stored.slice(0, first).every((item) =>
+                (item === headPlaceholder && startDate < head.storedStart)
+                || (item.storedEnd < head.storedStart && item.storedEnd <= startDate))
             && (ownsSession(head) || startDate <= head.storedEnd)
             && (!isTerminated(head) || startDate < head.storedStart)
         ) {
             head.startDate = startDate;
+            if (headPlaceholder) {
+                headPlaceholder.startDate = startDate;
+                headPlaceholder.endDate = startDate;
+            }
         }
         if (
             endDate
-            && stored.slice(last + 1).every((item) => item.storedStart > tail.storedEnd && item.storedStart >= endDate)
+            && stored.slice(last + 1).every((item) =>
+                (item === tailPlaceholder && endDate > tail.storedEnd)
+                || (item.storedStart > tail.storedEnd && item.storedStart >= endDate))
             && (ownsSession(tail) || endDate >= tail.storedStart)
             && (!isTerminated(tail) || endDate > tail.storedEnd)
         ) {
             tail.endDate = endDate;
+            if (tailPlaceholder) {
+                tailPlaceholder.startDate = endDate;
+                tailPlaceholder.endDate = endDate;
+            }
         }
     }
     return stored.map((item) => {
