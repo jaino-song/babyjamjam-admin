@@ -1720,3 +1720,40 @@ model end_date_review_item {
   @@index([branchId, clientId, status], map: "idx_end_date_review_item_branch_client_status")
   @@index([branchId, status], map: "idx_end_date_review_item_branch_status")
 }
+
+// Inactive Phase 1B draft. Global evidence, independent of mutable documents.
+model eformsign_backup_collection_run {
+  id                  String @id @db.Uuid
+  configuredCompanyId String? @map("configured_company_id") @db.VarChar(256)
+  trigger             String @db.VarChar(24)
+  lockMode            String @map("lock_mode") @db.VarChar(24)
+  outcome             String @db.VarChar(16)
+  receiptVersion      Int @default(1) @map("receipt_version")
+  scanSummary         Json @map("scan_summary") @db.JsonB
+  failureCode         String? @map("failure_code") @db.VarChar(40)
+  revision            Int @default(0)
+  startedAt           DateTime @map("started_at") @db.Timestamptz(6)
+  finishedAt          DateTime? @map("finished_at") @db.Timestamptz(6)
+  pages               eformsign_backup_collection_page[]
+
+  @@index([outcome, startedAt])
+}
+
+model eformsign_backup_collection_page {
+  id             String @id @default(uuid()) @db.Uuid
+  runId          String @map("run_id") @db.Uuid
+  documentType   String @map("document_type") @db.VarChar(2)
+  pass           Int
+  ordinal        Int
+  startOffset    Int @map("start_offset")
+  requestedLimit Int @map("requested_limit")
+  returnedCount  Int? @map("returned_count")
+  totalCount     Int? @map("total_count")
+  terminal       Boolean?
+  outcome        String @db.VarChar(16)
+  failureCode    String? @map("failure_code") @db.VarChar(40)
+  observedAt     DateTime @default(now()) @map("observed_at") @db.Timestamptz(6)
+  run            eformsign_backup_collection_run @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, documentType, pass, ordinal])
+}
