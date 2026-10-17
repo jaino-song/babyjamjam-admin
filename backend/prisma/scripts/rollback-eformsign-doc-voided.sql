@@ -10,6 +10,12 @@
 -- dropped. It refuses to drop while voided rows exist, and the check and the DROP live in
 -- one DO block so a failed check cannot be followed by a top-level DROP under psql's default
 -- ON_ERROR_STOP=0. Idempotent: it is a no-op notice when the table or columns are absent.
+--
+-- The check is only valid if no void can commit between the count and the DROP, so the DO
+-- block takes ACCESS EXCLUSIVE on eformsign_doc before counting and holds it to the end of
+-- its transaction. It waits behind any in-flight writer; set e.g. `SET lock_timeout = '5s'`
+-- in the session before running so it fails instead of queueing behind live traffic. Still
+-- stop or drain every backend that can void contracts on this database first.
 DO $$
 DECLARE
   voided_count bigint;
@@ -30,6 +36,9 @@ BEGIN
     EXECUTE 'ALTER TABLE eformsign_doc DROP COLUMN IF EXISTS voided_by';
     RETURN;
   END IF;
+
+  -- Held until this DO block's transaction ends: no void can commit between count and DROP.
+  EXECUTE 'LOCK TABLE eformsign_doc IN ACCESS EXCLUSIVE MODE';
 
   EXECUTE 'SELECT count(*) FROM eformsign_doc WHERE voided_at IS NOT NULL' INTO voided_count;
 

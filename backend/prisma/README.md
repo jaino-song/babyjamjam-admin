@@ -86,5 +86,10 @@ Rollback: roll forward only once the first contract is voided. Before any applic
 rollback that crosses BJJ-439 run
 `psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/scripts/preflight-app-rollback-voided.sql`;
 it fails while voided rows exist. `scripts/rollback-eformsign-doc-voided.sql` is only for
-a database where no void ever happened and refuses to drop the columns otherwise. Both
-are manual operator tools and are not wired into `database-patches.yml`.
+a database where no void ever happened and refuses to drop the columns otherwise; it takes
+an ACCESS EXCLUSIVE lock on `eformsign_doc` before counting so no void can commit between
+the check and the DROP, so set `SET lock_timeout = '5s'` first if it should fail instead of
+queueing behind live traffic. The preflight is a point-in-time check only: before running
+it, stop or drain every backend that can void contracts on the shared database (preview
+Cloud Run AND production), and keep voiding unavailable while any pre-BJJ-439 runtime is
+serving. Both are manual operator tools and are not wired into `database-patches.yml`.

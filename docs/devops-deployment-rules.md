@@ -98,6 +98,8 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 - **첫 계약이 무효화된 뒤에는 앱을 BJJ-439 이전 릴리스로 롤백하지 않는다.** 문제는 롤포워드(수정 릴리스)로 푼다.
 - BJJ-439을 가로지르는 앱 롤백 전에 반드시 `psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f backend/prisma/scripts/preflight-app-rollback-voided.sql`을 실행한다. 무효화된 행이 하나라도 있으면 실패한다(컬럼이 없으면 notice와 함께 통과).
 - `rollback-eformsign-doc-voided.sql`은 무효화가 한 번도 없던 DB 전용이며, 무효화된 행이 있으면 DROP을 거부한다.
+- preflight는 **실행 시점의 확인일 뿐**이다. 실행 전에 같은 DB를 쓰는 계약 무효화 가능 백엔드(preview Cloud Run과 프로덕션 모두 — DB 공유)를 모두 중지하거나 드레인하고, BJJ-439 이전 런타임이 서빙되는 동안에는 무효화를 사용할 수 없게 유지한다. 그렇지 않으면 preflight와 앱 다운그레이드 사이에 새 무효화가 생길 수 있다.
+- `rollback-eformsign-doc-voided.sql`은 카운트 전에 `eformsign_doc`에 ACCESS EXCLUSIVE 락을 잡아 카운트와 DROP 사이에 void가 커밋되지 못하게 한다. 대신 진행 중인 쓰기 뒤에서 대기하므로, 실행 전에 `SET lock_timeout = '5s'` 같은 값을 세션에 설정해 라이브 트래픽 뒤에서 큐잉되는 대신 실패하게 할 수 있다.
 - preview 백엔드는 프로덕션과 같은 DB를 쓴다(§10 5번, `docs/plans/2026-09-23-preview-cloud-run.md:239`). preview에서 무효화한 계약은 main이 이 릴리스를 배포하기 전까지 프로덕션 앱에서 활성으로 보인다. main이 이 릴리스를 돌리기 전에는 preview에서 계약을 무효화하지 말고, 하게 되면 main 승격을 지체하지 않는다.
 - 두 SQL은 수동 운영자 도구다. `database-patches.yml`에 배선하지 않는다(void 이후 매 패치 런이 실패한다).
 
