@@ -157,11 +157,17 @@ export function useClientDetailController({
   const {
     notificationLogs: detailNotificationLogs,
     hasMore: hasMoreNotificationLogs,
-    isLoading: isNotificationLogsLoading,
+    isLoading: isNotificationLogsQueryLoading,
+    isPaused: isNotificationLogsPaused,
+    hasData: hasNotificationLogsData,
     isError: isNotificationLogsError,
     isFetching: isNotificationLogsFetching,
     refetch: refetchNotificationLogs,
   } = useClientMessageHistory(detailClient);
+  // Offline, a first load is paused, not loading or failed. It is not an empty history either
+  // (BJJ-434): hold the loading state until the load can actually succeed or fail.
+  const isNotificationLogsLoading =
+    isNotificationLogsQueryLoading || (isNotificationLogsPaused && !hasNotificationLogsData);
   const { data: detailContractDocument } = useQuery<EformsignDocument>({
     queryKey: ["eformsign-docs", "document", detailClient?.eDocId],
     queryFn: async () => {

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 
 import type { Client } from "@/lib/client/types";
@@ -111,6 +111,33 @@ describe("useClientMessageHistory", () => {
 
         expect(result.current.isFetching).toBe(true);
         await waitFor(() => expect(result.current.isFetching).toBe(false));
+    });
+
+    it("reports a first load held back by the offline pause as paused with no data, not as loaded", async () => {
+        onlineManager.setOnline(false);
+        try {
+            fetchClientLogs.mockResolvedValue({ logs: [] as never, hasMore: false });
+
+            const { result } = renderHook(() => useClientMessageHistory(client), { wrapper });
+
+            // React Query v5 pauses the query instead of failing it: not loading, not an error.
+            await waitFor(() => expect(result.current.isPaused).toBe(true));
+            expect(result.current.hasData).toBe(false);
+            expect(result.current.isLoading).toBe(false);
+            expect(result.current.isError).toBe(false);
+            expect(fetchClientLogs).not.toHaveBeenCalled();
+        } finally {
+            onlineManager.setOnline(true);
+        }
+    });
+
+    it("reports data once the history has loaded", async () => {
+        fetchClientLogs.mockResolvedValue({ logs: [] as never, hasMore: false });
+
+        const { result } = renderHook(() => useClientMessageHistory(client), { wrapper });
+
+        await waitFor(() => expect(result.current.hasData).toBe(true));
+        expect(result.current.isPaused).toBe(false);
     });
 
     it("does not fetch without a client", () => {

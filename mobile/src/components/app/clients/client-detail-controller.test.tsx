@@ -35,11 +35,15 @@ jest.mock("@/hooks/useEmployees", () => ({
 }));
 
 let mockHistoryHasMore = false;
+let mockHistoryPaused = false;
+let mockHistoryHasData = true;
 jest.mock("@/hooks/useClientMessageHistory", () => ({
   useClientMessageHistory: () => ({
     notificationLogs: [],
     hasMore: mockHistoryHasMore,
     isLoading: false,
+    isPaused: mockHistoryPaused,
+    hasData: mockHistoryHasData,
     isError: false,
     isFetching: false,
     refetch: jest.fn(),
@@ -175,6 +179,17 @@ function findHasMoreNotificationLogs(node: ReactNode): boolean | undefined {
   return undefined;
 }
 
+function findNotificationLogsLoading(node: ReactNode): boolean | undefined {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as { isNotificationLogsLoading?: boolean; children?: ReactNode };
+    if (props.isNotificationLogsLoading !== undefined) return props.isNotificationLogsLoading;
+    const nested = findNotificationLogsLoading(props.children);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 describe("useClientDetailController", () => {
   it("invalidates the document and both lists and reloads manual client state after void outcomes", async () => {
     const linked: Client = { ...makeClient(1), eDocId: "doc-1", documentStatus: "requested", hasSigned: true };
@@ -197,6 +212,8 @@ describe("useClientDetailController", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockHistoryHasMore = false;
+    mockHistoryPaused = false;
+    mockHistoryHasData = true;
     mockedFetchClient.mockResolvedValue(makeClient(1));
     mockedUseClient.mockReturnValue({ data: undefined } as ReturnType<typeof useClient>);
     mockedUseDeleteClient.mockReturnValue({
@@ -247,6 +264,24 @@ describe("useClientDetailController", () => {
     );
 
     expect(findHasMoreNotificationLogs(result.current.detail)).toBe(hasMore);
+  });
+
+  it.each([
+    ["paused with no data (offline first load)", true, false, true],
+    ["paused over cached history", true, true, false],
+    ["settled", false, true, false],
+  ])("treats history that is %s as loading only when there is nothing to show", (_name, paused, hasData, expected) => {
+    mockHistoryPaused = paused;
+    mockHistoryHasData = hasData;
+    const { result } = renderHook(
+      () => useClientDetailController({
+        client: makeClient(1),
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { wrapper: createWrapper() },
+    );
+
+    expect(findNotificationLogsLoading(result.current.detail)).toBe(expected);
   });
 
   it.each([
