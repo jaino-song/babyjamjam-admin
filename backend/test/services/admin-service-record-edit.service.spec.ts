@@ -2892,6 +2892,63 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
+    it("keeps the placeholder and the successor's start when the first session moves later (inward)", async () => {
+        // T [10-01,10-01] owns nothing; B [10-01,10-23] owns every session. Sessions 1 and 2 move later
+        // (first now 10-03): an inward move never pulls the shared boundary apart, so T and B keep their dates.
+        const placeholder = placeholderOn("2026-10-01", "01", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder]),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-10-03" }, { sessionIndex: 2, serviceDate: "2026-10-04" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the placeholder and the last active end when the last session moves earlier (inward)", async () => {
+        const placeholder = placeholderOn("2026-10-23", "03", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder], "others-last"),
+            {
+                sessions: [
+                    { sessionIndex: 11, serviceDate: "2026-10-17" },
+                    { sessionIndex: 12, serviceDate: "2026-10-18" },
+                    { sessionIndex: 13, serviceDate: "2026-10-19" },
+                    { sessionIndex: 14, serviceDate: "2026-10-20" },
+                    { sessionIndex: 15, serviceDate: "2026-10-22" },
+                ],
+            },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-10-23", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("treats a same-day placeholder as the head side whatever the source order of identical stored periods", async () => {
+        // B stored [10-01,10-01] owns the sessions and the placeholder is listed AFTER it: the sort still puts
+        // the session-less terminated one first, so the first session moving to 09-29 carries both.
+        const placeholder = placeholderOn("2026-10-01", "01", 704);
+        const successor = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-01",
+            scheduleEndDate: "2026-10-01",
+        };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder], "others-last"),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-29" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-09-29", endDate: "2026-09-29", datesChanged: true }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-09-29" }),
+        ]);
+    });
+
     it("never writes a conflict for a pause between caregivers: the later caregiver's period is a record only", async () => {
         // A [10-01,10-14] (replaced) owns every session (9); B [10-22,10-23] owns none. Sessions 8 and 9
         // move to 10-15 and 10-16, which lie in neither period's outer reach for B. The confirm succeeds and

@@ -366,7 +366,8 @@ function hasPlannedDateDifference(
  * earliest (after the latest) active assignment: it is no real boundary, only a
  * marker of the same day, so when the edge moves earlier (later) the placeholder
  * moves with it and stays on the edge's date, which keeps the handover invariant
- * (its end == the edge's start). With several such placeholders none moves.
+ * (its end == the edge's start). With several such placeholders none moves: the ordinary neighbour
+ * guard is what keeps them all in place.
  *
  * Moving an outer edge across any other neighbour's stored boundary cannot be done
  * without moving that boundary, so the stored date is kept silently; changing
@@ -381,6 +382,8 @@ function assignmentWrites(
     endDate: string | null,
     ownerAssignmentIds: ReadonlySet<string>,
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
+    const sessionlessTerminatedRank = (assignment: (typeof source.assignments)[number]) =>
+        assignment.scheduleTerminatedAt && !(assignment.id !== null && ownerAssignmentIds.has(assignment.id)) ? 0 : 1;
     const stored = source.assignments
         .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
         .map((assignment) => {
@@ -395,7 +398,11 @@ function assignmentWrites(
             };
         })
         .sort((left, right) =>
-            left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
+            left.storedStart.localeCompare(right.storedStart)
+            || left.storedEnd.localeCompare(right.storedEnd)
+            // Identical stored periods: a terminated session-less assignment sorts before an active one,
+            // so a same-day placeholder is deterministically on the head side whatever the source order.
+            || sessionlessTerminatedRank(left.assignment) - sessionlessTerminatedRank(right.assignment));
     if (stored.length === 0) return [];
     const ownsSession = (item: (typeof stored)[number]) =>
         item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id);
