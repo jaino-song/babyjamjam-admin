@@ -9,7 +9,48 @@ function setup() {
     return { tx, prisma, repository: new SbEformsignBackupCollectionRepository(prisma as never) };
 }
 
+type Tx = ReturnType<typeof setup>["tx"];
+// Every other tx method call in the transaction, so lock_timeout can be shown to run before all of them.
+function otherTxCalls(tx: Tx): number[] {
+    return [tx.eformsign_backup_collection_run.updateMany, tx.eformsign_backup_collection_run.create,
+        tx.eformsign_backup_collection_page.findUnique, tx.eformsign_backup_collection_page.create]
+        .flatMap(fn => fn.mock.invocationCallOrder);
+}
+function expectLockTimeoutFirst(tx: Tx): void {
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings] = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray];
+    const sql = strings.join("?");
+    expect(sql).toContain("lock_timeout");
+    expect(sql).toContain("1000ms");
+    const others = otherTxCalls(tx);
+    expect(others.length).toBeGreaterThan(0);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(Math.min(...others));
+}
+
 describe("SbEformsignBackupCollectionRepository", () => {
+    it("begin sets a 1000ms lock_timeout before any other transaction call", async () => {
+        const { tx, repository } = setup();
+        await repository.begin({ id: "run", configuredCompanyId: null, trigger: "manual", lockMode: "advisory", startedAt: new Date(),
+            scanSummary: { version: 1, scans: [], assessment: { observedScan: "incomplete", companyCoverage: "unverified", reasons: [] } } } as never);
+        expect(tx.eformsign_backup_collection_run.create).toHaveBeenCalledTimes(1);
+        expectLockTimeoutFirst(tx);
+    });
+
+    it("append sets a 1000ms lock_timeout before any other transaction call", async () => {
+        const { tx, repository } = setup();
+        await repository.append("run", page, { isHealthy: () => true });
+        expectLockTimeoutFirst(tx);
+    });
+
+    it("finish sets a 1000ms lock_timeout before any other transaction call", async () => {
+        const { tx, repository } = setup();
+        await repository.finish({ id: "run", outcome: "failed", finishedAt: new Date(), failureCode: "x",
+            scanSummary: { version: 1, scans: [], assessment: { observedScan: "incomplete", companyCoverage: "unverified", reasons: [] } } } as never,
+        { isHealthy: () => true });
+        expect(tx.eformsign_backup_collection_run.updateMany).toHaveBeenCalledTimes(2);
+        expectLockTimeoutFirst(tx);
+    });
+
     it("uses DB-owned deadlines, a row lock and an idempotent page key", async () => {
         const { tx, prisma, repository } = setup();
         await repository.append("run", page, { isHealthy: () => true });

@@ -51,7 +51,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uq_eformsign_backup_collection_page_run_scan_
 -- AddForeignKey
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eformsign_backup_collection_page_run_id_fkey') THEN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'eformsign_backup_collection_page_run_id_fkey'
+          AND conrelid = '"eformsign_backup_collection_page"'::regclass
+    ) THEN
         ALTER TABLE "eformsign_backup_collection_page" ADD CONSTRAINT "eformsign_backup_collection_page_run_id_fkey"
             FOREIGN KEY ("run_id") REFERENCES "eformsign_backup_collection_run"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
