@@ -231,7 +231,7 @@ function currentPlannedSessionsMatchDays(
             return false;
         }
         const matchesPlannedOwner = day.scheduleId === planned.scheduleId
-            && day.employeeId === planned.employeeId
+            && (day.employeeId === null || day.employeeId === planned.employeeId)
             && assignment.scheduleId === planned.scheduleId
             && assignment.employeeId === planned.employeeId;
         return matchesPlannedOwner || isBackfilledBySuccessor(record, assignment, day);
@@ -239,13 +239,33 @@ function currentPlannedSessionsMatchDays(
 }
 
 /**
+ * The assignments a written day can belong to: those with the day's schedule,
+ * narrowed by employee only when the day names one. Assignment and employee
+ * records are record-only, so a day with no employee is identified by its
+ * schedule alone. Twin of the row matching in backfillWriter and
+ * persistedDayReasons in service-record-edit-preview.policy.ts.
+ */
+function assignmentsWrittenOnDay(
+    record: FinalizationCaseSnapshot,
+    day: FinalizationDaySnapshot,
+): FinalizationAssignmentSnapshot[] {
+    return record.assignments.filter((candidate) => (
+        candidate.scheduleId === day.scheduleId
+        && (day.employeeId === null || candidate.employeeId === day.employeeId)
+    ));
+}
+
+/**
  * Write authority moves forward, so a later caregiver may backfill a session
  * the stored vector still attributes to an earlier, replaced one. Such a day
  * matches its slot when its writer is the single assignment of the case with
- * that schedule and employee, the vector's owner was replaced, and the writer
- * is that owner's successor: it starts on or after the owner's end (a handover
- * stores end == start). The date check in the caller still applies, and any
- * other disagreement stays a mismatch.
+ * that schedule (and employee, when the day names one), the vector's owner was
+ * replaced, and the writer
+ * is that owner's successor: its schedule id is greater (autoincrement, so
+ * later). Stored assignment dates are record-only and may overlap, so they
+ * never decide this. The service-date check in the caller still applies, and
+ * any other disagreement stays a mismatch. Twin of isSuccessorOf in
+ * service-record-edit-preview.policy.ts.
  */
 function isBackfilledBySuccessor(
     record: FinalizationCaseSnapshot,
@@ -253,14 +273,15 @@ function isBackfilledBySuccessor(
     day: FinalizationDaySnapshot,
 ): boolean {
     if (plannedAssignment.schedule?.replaced !== true) return false;
-    if (day.scheduleId === null || day.employeeId === null) return false;
-    const writers = record.assignments.filter((candidate) => (
-        candidate.scheduleId === day.scheduleId && candidate.employeeId === day.employeeId
-    ));
+    if (day.scheduleId === null) return false;
+    const writers = assignmentsWrittenOnDay(record, day);
     if (writers.length !== 1) return false;
     const writer = writers[0]!;
-    return writer.id !== plannedAssignment.id
-        && writer.startDate.getTime() >= plannedAssignment.endDate.getTime();
+    return writer.employeeId !== null
+        && writer.id !== plannedAssignment.id
+        && writer.scheduleId !== null
+        && plannedAssignment.scheduleId !== null
+        && writer.scheduleId > plannedAssignment.scheduleId;
 }
 
 function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {
@@ -307,10 +328,7 @@ function isCompleteFinalizationSource(record: FinalizationCaseSnapshot, calendar
     const seen = new Set<number>();
     for (const day of record.days) {
         const index = day.caseSessionIndex;
-        const assignment = record.assignments.find((candidate) => (
-            candidate.scheduleId === day.scheduleId
-            && candidate.employeeId === day.employeeId
-        ));
+        const assignment = assignmentsWrittenOnDay(record, day)[0];
         if (
             typeof index !== "number"
             ||
@@ -326,8 +344,7 @@ function isCompleteFinalizationSource(record: FinalizationCaseSnapshot, calendar
             || !assignment
             || !Number.isInteger(day.scheduleId)
             || (day.scheduleId ?? 0) < 1
-            || !Number.isInteger(day.employeeId)
-            || (day.employeeId ?? 0) < 1
+            || (day.employeeId !== null && (!Number.isInteger(day.employeeId) || day.employeeId < 1))
             || !day.employeeNameSnapshot?.trim()
             || !Number.isInteger(day.formVersion)
             || day.formVersion < 1

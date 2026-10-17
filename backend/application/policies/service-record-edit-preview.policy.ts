@@ -234,29 +234,25 @@ function sourceAssignmentEntry(
     };
 }
 
-/** The date an assignment's range starts or ends on, falling back to its schedule's. */
-function assignmentStart(assignment: ServiceRecordEditSourceAssignment): string {
-    return assignment.startDate || assignment.scheduleStartDate;
-}
-
-function assignmentEnd(assignment: ServiceRecordEditSourceAssignment): string {
-    return assignment.endDate || assignment.scheduleEndDate;
-}
-
 /**
  * A caregiver may write over a slot the vector gives to an earlier one: write
- * authority moved forward, never back. The writer therefore has to start on or
- * after the planned owner's end (a hand-over stores end == start), and the
- * planned owner has to have been replaced.
+ * authority moved forward, never back. The planned owner therefore has to have
+ * been replaced and the writer's schedule has to come after the owner's.
+ * Schedule ids are autoincrement, so "later" is "greater id" (the same order
+ * the token service uses to pick the current caregiver). Stored assignment
+ * dates are record-only and never decide this: they may legitimately overlap
+ * (a caregiver replaced before her own start is stored as [start, start]).
+ * Twin of isBackfilledBySuccessor in service-record-finalization.service.ts.
  */
 function isSuccessorOf(
     writer: ServiceRecordEditSourceAssignment,
     planned: ServiceRecordEditSourceAssignment,
 ): boolean {
-    if (!planned.replaced || writer.id === planned.id) return false;
-    const writerStart = assignmentStart(writer);
-    const plannedEnd = assignmentEnd(planned);
-    return Boolean(writerStart) && Boolean(plannedEnd) && writerStart >= plannedEnd;
+    return planned.replaced
+        && writer.id !== planned.id
+        && writer.scheduleId !== null
+        && planned.scheduleId !== null
+        && writer.scheduleId > planned.scheduleId;
 }
 
 /**

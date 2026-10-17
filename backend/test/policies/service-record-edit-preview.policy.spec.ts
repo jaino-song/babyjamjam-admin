@@ -682,6 +682,101 @@ describe("service-record-edit-preview.policy", () => {
             expect(projection.entries.slice(3).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
         });
 
+        describe("successor is decided by schedule order, not by stored assignment dates", () => {
+            const allTo = (owner: typeof caregiverA) => () => owner;
+            const blocked = (projection: { blockingReasons: Array<{ code: string }> }) =>
+                projection.blockingReasons.map(({ code }) => code);
+
+            it("accepts a backfill when the replaced caregiver was stored as [start, start] inside the successor's range", () => {
+                // Scenario A: A was replaced before her own start, so she is stored [10-06, 10-06]
+                // while B (current) starts on the earlier replacement date.
+                const replacedBeforeStart = {
+                    ...caregiverA,
+                    startDate: "2026-10-06",
+                    endDate: "2026-10-06",
+                    scheduleStartDate: "2026-10-06",
+                    scheduleEndDate: "2026-10-06",
+                };
+                const current = {
+                    ...caregiverB,
+                    startDate: "2026-10-01",
+                    endDate: "2026-10-23",
+                    scheduleStartDate: "2026-10-01",
+                    scheduleEndDate: "2026-10-23",
+                };
+                const rows = [1, 2, 3].map((index) => written(index, current));
+                const source = persisted(rows, [replacedBeforeStart, current], allTo(replacedBeforeStart));
+                const projection = resolveServiceRecordScheduleProjection(source, KR_BUILTIN_CALENDAR);
+                expect(blocked(projection)).toEqual([]);
+                expect(projection.entries.every((entry) => entry.assignmentId === current.id)).toBe(true);
+                const preview = buildServiceRecordEditPreview({
+                    calendar: KR_BUILTIN_CALENDAR,
+                    draftId: "33333333-3333-4333-8333-333333333333",
+                    draftVersion: 1,
+                    sourceCaseVersion: 7,
+                    sourceFingerprint: "source-fingerprint",
+                    source,
+                    changes: {},
+                    previewId: "preview-1",
+                });
+                expect(preview.blockingReasons).toEqual([]);
+            });
+
+            it("accepts a backfill when the successor's stored start was moved before the replaced caregiver's end", () => {
+                // Scenario B: A [10-01, 10-15] replaced, B [10-14, 10-23]; the vector gives 1-7 to A.
+                const overlappedA = { ...caregiverA, endDate: "2026-10-15", scheduleEndDate: "2026-10-15" };
+                const rows = [written(1, overlappedA), ...[2, 3, 4, 5, 6, 7].map((index) => written(index, caregiverB))];
+                const projection = resolveServiceRecordScheduleProjection(
+                    persisted(rows, [overlappedA, caregiverB]),
+                    KR_BUILTIN_CALENDAR,
+                );
+                expect(blocked(projection)).toEqual([]);
+                expect(projection.entries.slice(1).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+            });
+
+            it("still accepts the non-overlapping control (A [10-01, 10-14], B [10-14, 10-23])", () => {
+                const rows = [written(1, caregiverA), ...[2, 3, 4, 5, 6, 7].map((index) => written(index, caregiverB))];
+                expect(blocked(resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR))).toEqual([]);
+            });
+
+            it("still blocks a writer whose schedule id is lower than the replaced planned owner's", () => {
+                // The vector names the later (replaced) schedule 702; the earlier schedule 701 wrote slot 3,
+                // even though its stored dates would have satisfied the old date comparison.
+                const laterReplaced = {
+                    ...caregiverB,
+                    replaced: true,
+                    startDate: "2026-10-01",
+                    scheduleStartDate: "2026-10-01",
+                    endDate: "2026-10-02",
+                    scheduleEndDate: "2026-10-02",
+                };
+                const earlier = {
+                    ...caregiverA,
+                    startDate: "2026-10-05",
+                    endDate: "2026-10-23",
+                    scheduleStartDate: "2026-10-05",
+                    scheduleEndDate: "2026-10-23",
+                };
+                const rows = [written(3, earlier)];
+                const projection = resolveServiceRecordScheduleProjection(
+                    persisted(rows, [earlier, laterReplaced], allTo(laterReplaced)),
+                    KR_BUILTIN_CALENDAR,
+                );
+                expect(blocked(projection)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
+            });
+        });
+
+        it("blocks a later schedule's write over a slot whose planned owner was never replaced", () => {
+            // A (701) still owns slots 1-7 in the vector and is not replaced; B (702) wrote slot 3.
+            const currentA = { ...caregiverA, replaced: false };
+            const rows = [written(3, caregiverB)];
+            const projection = resolveServiceRecordScheduleProjection(
+                persisted(rows, [currentA, caregiverB]),
+                KR_BUILTIN_CALENDAR,
+            );
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
+        });
+
         describe("when the backfilling caregiver was itself replaced", () => {
             const middle = {
                 ...caregiverB,
