@@ -184,15 +184,15 @@ describe("RevisionHistoryView", () => {
         return screen.getByText(label).closest('[role="group"]') as HTMLElement;
     }
 
-    it("titles the page 수정 이력 and lists the edit times newest first in KST", async () => {
+    it("titles the page 수정 이력 and lists the edit times newest first in KST, numbered so same-minute edits stay distinct", async () => {
         open();
         expect(screen.getByRole("heading", { level: 1, name: "수정 이력" })).toBeInTheDocument();
 
         const options = await screen.findAllByRole("option");
         expect(options.map((option) => option.textContent)).toEqual([
-            "2026-09-12 00:05",
-            "2026-09-10 01:30",
-            "2026-09-08 10:02",
+            "#3 · 2026-09-12 00:05",
+            "#2 · 2026-09-10 01:30",
+            "#1 · 2026-09-08 10:02",
         ]);
         // The newest one is selected on entering the view.
         expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
@@ -242,18 +242,18 @@ describe("RevisionHistoryView", () => {
 
     it("shows the plain notice and no diff for an edit without stored before content", async () => {
         const { container } = open();
-        fireEvent.click(await screen.findByRole("option", { name: "2026-09-10 01:30" }));
+        fireEvent.click(await screen.findByRole("option", { name: "#2 · 2026-09-10 01:30" }));
 
         expect(await screen.findByText("변경 전 내용이 기록되지 않은 수정입니다.")).toBeInTheDocument();
         expect(mockChanges).toHaveBeenCalledWith(42, "rev-2");
         expect(container.querySelector('[data-slot="change"], [data-slot="changes"]')).toBeNull();
         expect(screen.queryByText("표시할 변경 내용이 없습니다.")).not.toBeInTheDocument();
-        expect(screen.getByRole("option", { name: "2026-09-10 01:30" })).toHaveAttribute("aria-selected", "true");
+        expect(screen.getByRole("option", { name: "#2 · 2026-09-10 01:30" })).toHaveAttribute("aria-selected", "true");
     });
 
     it("says there is nothing to show for an edit with no listed changes", async () => {
         open();
-        fireEvent.click(await screen.findByRole("option", { name: "2026-09-08 10:02" }));
+        fireEvent.click(await screen.findByRole("option", { name: "#1 · 2026-09-08 10:02" }));
         expect(await screen.findByText("표시할 변경 내용이 없습니다.")).toBeInTheDocument();
         expect(screen.queryByText("변경 전 내용이 기록되지 않은 수정입니다.")).not.toBeInTheDocument();
     });
@@ -276,7 +276,7 @@ describe("RevisionHistoryView", () => {
         mockChanges.mockRejectedValue(new Error("boom"));
         open();
         expect(await screen.findByText("변경 내용을 불러오지 못했습니다.")).toBeInTheDocument();
-        expect(screen.getByRole("option", { name: "2026-09-12 00:05" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "#3 · 2026-09-12 00:05" })).toBeInTheDocument();
     });
 
     it("calls onBack from the back control", async () => {

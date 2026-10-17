@@ -83,7 +83,7 @@ export function RevisionHistoryView({ "data-component": root, clientId, onBack }
                         <SelectContent>
                             {revisions.map((revision) => (
                                 <SelectItem key={revision.id} value={revision.id}>
-                                    {formatRevisionTimestamp(revision.confirmedAt)}
+                                    {`#${revision.revisionNumber} · ${formatRevisionTimestamp(revision.confirmedAt)}`}
                                 </SelectItem>
                             ))}
                         </SelectContent>
