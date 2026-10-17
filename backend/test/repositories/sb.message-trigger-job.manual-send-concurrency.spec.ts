@@ -15,6 +15,8 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
+import { isoDateInKorea } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 
@@ -230,10 +232,34 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
 
     const allTokensInactive = async () => (await tokenStates()).every((row) => row.active === false);
 
+    type StubClient = {
+        id: number;
+        name: string;
+        serviceStatus: string | null;
+        startDate: Date | null;
+        endDate: Date | null;
+        bookingConfirmedAt: Date | null;
+    };
+    /**
+     * The client of the stubbed schedule. Since BJJ-438/450 both scheduling gates read the client's
+     * service facts, so the default is a booking-confirmed client whose service is running (start today
+     * on the Korean calendar, end 30 days out); a partial override replaces just the named facts.
+     */
+    const stubClient = (overrides: Partial<StubClient> = {}): StubClient => ({
+        id: 20,
+        name: "client",
+        serviceStatus: null,
+        startDate: new Date(`${isoDateInKorea()}T00:00:00.000Z`),
+        endDate: new Date(Date.now() + 30 * 86_400_000),
+        bookingConfirmedAt: new Date(Date.now() - 86_400_000),
+        ...overrides,
+    });
+
     const linkService = (
         jobRepository: SbMessageTriggerJobRepository,
         duringLinkPreparation: () => Promise<void> = async () => undefined,
         logRepository: unknown = { findRetryableServiceRecordSmsByScheduleId: async () => [] },
+        client: StubClient = stubClient(),
     ): ServiceRecordLinkService => {
         const prisma = {
             employee_schedule: {
@@ -241,7 +267,7 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
                     id: SCHEDULE, branchId: BRANCH, clientId: 20, replaced: false,
                     startDate: new Date(), endDate: new Date(),
                     primaryEmployee: { id: 30, name: "provider", phone: "01011112222" },
-                    client: { id: 20, name: "client" },
+                    client,
                 }),
             },
         };
@@ -273,12 +299,13 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
     const automaticService = (
         duringLinkPreparation: () => Promise<void> = async () => undefined,
         duringLifecyclePreparation?: () => Promise<void>,
+        client: StubClient = stubClient(),
     ): ServiceRecordLinkService => {
         const schedule = {
             id: SCHEDULE, branchId: BRANCH, clientId: 20, replaced: false,
             startDate: new Date(), endDate: new Date(Date.now() + 30 * 86_400_000),
             primaryEmployee: { id: 30, name: "provider", phone: "01011112222" },
-            client: { id: 20, name: "client" },
+            client,
         };
         const prisma = new Proxy(db, {
             get(target, key) {
@@ -372,6 +399,25 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             expect(result).toEqual({ kind: "in_flight", inFlightJobIds: [original] });
             expect(await jobs()).toHaveLength(1);
             expect(await statusOf(original)).toBe(status);
+        });
+
+        it("the default stub client is in service, so the allowing scenarios are not 예약 전", () => {
+            const client = stubClient();
+
+            const status = getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt);
+
+            expect(status).toBe("active");
+            expect(stubClient({ bookingConfirmedAt: null })).toMatchObject({ bookingConfirmedAt: null });
+            expect(getEffectiveClientServiceStatus(null, client.startDate, client.endDate, null)).toBe("pre_booking");
+        });
+
+        it("sendNow refuses a pre-booking client (no booking confirmation) and creates no job", async () => {
+            const failure = await linkService(repository, undefined, undefined, stubClient({ bookingConfirmedAt: null }))
+                .sendNow(SCHEDULE).then(() => null, (error: unknown) => error);
+
+            expect(failure).toMatchObject({ status: 400 });
+            expect(JSON.stringify((failure as { getResponse: () => unknown }).getResponse())).toContain("예약 전 고객");
+            expect(await jobs()).toHaveLength(0);
         });
 
         it("sendNow answers a 409 and creates no job behind an in-flight one", async () => {
@@ -863,6 +909,15 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             const live = await liveJobs();
             expect(live).toHaveLength(1);
             expect(live[0]!.status).toBe("pending");
+        });
+
+        it("a pre-booking client is refused by the automatic path before any claim: false and no live job", async () => {
+            const service = automaticService(undefined, undefined, stubClient({ bookingConfirmedAt: null }));
+
+            expect(await service.scheduleForServiceStart(SCHEDULE)).toBe(false);
+
+            expect(await liveJobs()).toHaveLength(0);
+            expect(await jobs()).toHaveLength(0);
         });
 
         it("a manual send the dispatcher claimed during link preparation is never joined by a second job", async () => {
