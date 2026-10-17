@@ -71,3 +71,20 @@ compatible API. Do not narrow the columns or strip year digits after ISO dates
 have been saved: that would lose century information. Reverting to the old
 six-digit API requires a separate data-preservation plan. No bulk data backfill
 is part of this change. Staging verification is required before production.
+
+## BJJ-439 void rollout
+
+`20261014000000_add_eformsign_doc_voided` adds nullable `eformsign_doc.voided_at` /
+`voided_by`; null means not voided. Only the BJJ-439 application reads them, so an
+older release treats a voided contract (signed ones included) as active again even
+while the columns exist. The preview backend shares the production database
+(`docs/devops-deployment-rules.md` §10 item 5, `docs/plans/2026-09-23-preview-cloud-run.md:239`),
+so a contract voided on preview is active for the production app until main runs this
+release; do not void contracts on preview before then, or promote main promptly.
+
+Rollback: roll forward only once the first contract is voided. Before any application
+rollback that crosses BJJ-439 run
+`psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/scripts/preflight-app-rollback-voided.sql`;
+it fails while voided rows exist. `scripts/rollback-eformsign-doc-voided.sql` is only for
+a database where no void ever happened and refuses to drop the columns otherwise. Both
+are manual operator tools and are not wired into `database-patches.yml`.
