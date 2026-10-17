@@ -152,6 +152,11 @@ describe("admin service-record edit API adapter", () => {
                 provenance: [],
                 contentChanges: { headerChanged: false, changedSessionIndexes: [2] },
                 impactedAssignments: ["assignment-1"],
+                impactedAssignmentDetails: [
+                    { assignmentId: "assignment-1", employeeName: "임선녀", startDate: "2026-07-01", endDate: "2026-07-31" },
+                    { assignmentId: "assignment-2", employeeName: "", startDate: 5, endDate: null },
+                    { employeeName: "무효" },
+                ],
                 blockingReasons: [],
             }, 200));
 
@@ -185,6 +190,10 @@ describe("admin service-record edit API adapter", () => {
             draftVersion: 2,
             requiredSessionCount: 3,
             impactedAssignments: ["assignment-1"],
+            impactedAssignmentDetails: [
+                { assignmentId: "assignment-1", employeeName: "임선녀", startDate: "2026-07-01", endDate: "2026-07-31" },
+                { assignmentId: "assignment-2", employeeName: null, startDate: null, endDate: null },
+            ],
             contentChanges: { headerChanged: false, changedSessionIndexes: [2] },
         }));
     });
