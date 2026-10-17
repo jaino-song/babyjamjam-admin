@@ -156,6 +156,13 @@ export interface ServiceRecordEditPreviewVector {
     sessions: ServiceRecordPlannedSession[];
 }
 
+export interface ServiceRecordEditPreviewImpactedAssignment {
+    assignmentId: string;
+    employeeName: string | null;
+    startDate: string | null;
+    endDate: string | null;
+}
+
 /**
  * Server-owned preview contract. The identifier is bound to every value that
  * a later atomic confirm will recheck; clients cannot supply provenance or
@@ -174,6 +181,8 @@ export interface ServiceRecordEditPreviewResponse {
     provenance: ServiceRecordEditPreviewAssignmentRange[];
     contentChanges: ServiceRecordEditPreviewContentChanges;
     impactedAssignments: string[];
+    /** Display details for `impactedAssignments`, in the same order. */
+    impactedAssignmentDetails?: ServiceRecordEditPreviewImpactedAssignment[];
     blockingReasons: ServiceRecordEditPreviewBlockingReason[];
     signatureMetadata: ServiceRecordEditSignatureMetadata;
     documentScope: ServiceRecordEditDocumentScope;

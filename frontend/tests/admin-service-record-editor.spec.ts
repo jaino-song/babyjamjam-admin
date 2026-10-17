@@ -323,6 +323,9 @@ function previewFor(state: DraftState): Record<string, unknown> {
             changedSessionIndexes: [...new Set(changedSessionIndexes)],
         },
         impactedAssignments: ["assignment-phase6"],
+        impactedAssignmentDetails: [
+            { assignmentId: "assignment-phase6", employeeName: "관리사", startDate: "2026-08-03", endDate: "2026-08-10" },
+        ],
         blockingReasons: [],
         signatureMetadata: {
             treatment: "preserve_existing",
