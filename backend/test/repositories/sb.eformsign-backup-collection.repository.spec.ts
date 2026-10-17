@@ -3,7 +3,7 @@ import { SbEformsignBackupCollectionRepository, COLLECTION_TRANSACTION_OPTIONS }
 const page = { documentType: "01" as const, pass: 1 as const, ordinal: 0, startOffset: 0, requestedLimit: 100,
     returnedCount: 0, totalCount: 0, terminal: true, outcome: "succeeded" as const, failureCode: null };
 function setup() {
-    const tx = { eformsign_backup_collection_run: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
+    const tx = { $queryRaw: jest.fn(), eformsign_backup_collection_run: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
         eformsign_backup_collection_page: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() } };
     const prisma = { $transaction: jest.fn(async (operation: (value: typeof tx) => Promise<unknown>) => operation(tx)) };
     return { tx, prisma, repository: new SbEformsignBackupCollectionRepository(prisma as never) };

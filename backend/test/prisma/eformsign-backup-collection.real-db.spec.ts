@@ -67,6 +67,23 @@ describeReal("collection ledger (real PostgreSQL; requires generated additive mi
         expect(summary.scans.every(scan => scan.distinctIdCount === null)).toBe(true);
     });
 
+    it("keeps both ledger tables as private as eformsign_webhook_event and closed to general API roles", async () => {
+        const tables = ["eformsign_backup_collection_run", "eformsign_backup_collection_page"];
+        const rls = await prisma.$queryRaw<Array<{ relname: string; relrowsecurity: boolean }>>`
+            SELECT c.relname, c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname IN ('eformsign_webhook_event', 'eformsign_backup_collection_run', 'eformsign_backup_collection_page')`;
+        const rlsOf = (name: string) => rls.find(row => row.relname === name)?.relrowsecurity;
+        expect(rlsOf("eformsign_webhook_event")).toBeDefined();
+        for (const table of tables) expect(rlsOf(table)).toBe(rlsOf("eformsign_webhook_event"));
+        const roles = await prisma.$queryRaw<Array<{ rolname: string }>>`
+            SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated')`;
+        for (const { rolname } of roles) for (const table of tables) {
+            const rows = await prisma.$queryRaw<Array<{ held: boolean }>>`
+                SELECT has_table_privilege(${rolname}::text, ${`public.${table}`}::text, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS held`;
+            expect({ rolname, table, held: rows[0]?.held }).toEqual({ rolname, table, held: false });
+        }
+    });
+
     it("rolls back timed-out complete finalize while failure-marker storage is unavailable", async () => {
         const repository = new SbEformsignBackupCollectionRepository(prisma as never);
         let id = "";

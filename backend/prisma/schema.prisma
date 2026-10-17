@@ -1736,7 +1736,7 @@ model eformsign_backup_collection_run {
   finishedAt          DateTime? @map("finished_at") @db.Timestamptz(6)
   pages               eformsign_backup_collection_page[]
 
-  @@index([outcome, startedAt])
+  @@index([outcome, startedAt], map: "idx_eformsign_backup_collection_run_outcome_started")
 }
 
 model eformsign_backup_collection_page {
@@ -1755,5 +1755,5 @@ model eformsign_backup_collection_page {
   observedAt     DateTime @default(now()) @map("observed_at") @db.Timestamptz(6)
   run            eformsign_backup_collection_run @relation(fields: [runId], references: [id], onDelete: Restrict)
 
-  @@unique([runId, documentType, pass, ordinal])
+  @@unique([runId, documentType, pass, ordinal], map: "uq_eformsign_backup_collection_page_run_scan_ordinal")
 }

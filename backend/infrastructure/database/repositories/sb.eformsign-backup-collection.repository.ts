@@ -16,6 +16,7 @@ export class SbEformsignBackupCollectionRepository implements IEformsignBackupCo
 
     async begin(run: CollectionRunStart): Promise<void> {
         await this.prisma.$transaction(async tx => {
+            await tx.$queryRaw`SELECT set_config('lock_timeout', '1000ms', true)`;
             await tx.eformsign_backup_collection_run.create({ data: {
                 id: run.id, configuredCompanyId: run.configuredCompanyId, trigger: run.trigger,
                 lockMode: run.lockMode, outcome: "started", receiptVersion: 1,
@@ -26,6 +27,7 @@ export class SbEformsignBackupCollectionRepository implements IEformsignBackupCo
 
     async append(runId: string, page: CollectionPageObservation, guard: CollectionWriteGuard): Promise<void> {
         await this.prisma.$transaction(async tx => {
+            await tx.$queryRaw`SELECT set_config('lock_timeout', '1000ms', true)`;
             await this.lockStarted(tx, runId);
             this.check(guard);
             const { documentType, pass, ordinal, startOffset, requestedLimit, returnedCount, totalCount,
@@ -49,9 +51,12 @@ export class SbEformsignBackupCollectionRepository implements IEformsignBackupCo
 
     async finish(run: CollectionRunFinish, guard: CollectionWriteGuard): Promise<void> {
         // No Promise.race: Prisma owns timeout and rollback, including the final update.
-        // Row locking serializes all writes across sessions/processes. A failed guard
+        // Row locking serializes all writes across sessions/processes, and the lock wait
+        // is bounded by the transaction-local lock_timeout set below (Prisma's timeout
+        // alone does not cancel a statement blocked on a row lock). A failed guard
         // cannot complete even when a separate failure-marker write is unavailable.
         await this.prisma.$transaction(async tx => {
+            await tx.$queryRaw`SELECT set_config('lock_timeout', '1000ms', true)`;
             const deadline = Date.now() + COLLECTION_TRANSACTION_OPTIONS.timeout;
             const checkCompletion = () => {
                 this.check(guard);
