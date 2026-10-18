@@ -40,6 +40,21 @@ describe("UpdateEmployeeUsecase", () => {
                 expect(result.grade).toBe("프리미엄");
             });
 
+            it("should toggle only smsAutomationEnabled and leave an omitted flag untouched", async () => {
+                const employee = EmployeeFactory.create({ id: 1, name: "그대로" });
+                mockRepository.setData([employee]);
+
+                const disabled = await usecase.execute(branchId, 1, { smsAutomationEnabled: false });
+                expect(disabled.smsAutomationEnabled).toBe(false);
+                expect(disabled.name).toBe("그대로");
+
+                const renamed = await usecase.execute(branchId, 1, { name: "새 이름" });
+                expect(renamed.smsAutomationEnabled).toBe(false);
+
+                const enabled = await usecase.execute(branchId, 1, { smsAutomationEnabled: true });
+                expect(enabled.smsAutomationEnabled).toBe(true);
+            });
+
             it("should update only workArea", async () => {
                 // Arrange
                 const employee = EmployeeFactory.create({

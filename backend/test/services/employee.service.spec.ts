@@ -158,6 +158,21 @@ describe("EmployeeService", () => {
             expect(createUsecase.execute).not.toHaveBeenCalled();
         });
 
+        it.each([undefined, false, true])("forwards smsAutomationEnabled=%s to the create usecase", async (flag) => {
+            createUsecase.execute.mockResolvedValue(EmployeeFactory.create());
+
+            await service.create(branchId, {
+                name: "직원",
+                workArea: ["서울"],
+                phone: "010-1234-5678",
+                grade: "베스트",
+                openToNextWork: true,
+                smsAutomationEnabled: flag,
+            });
+
+            expect(createUsecase.execute.mock.calls[0]![9]).toBe(flag);
+        });
+
         it("should map a branch phone unique conflict to 409", async () => {
             const error = new Prisma.PrismaClientKnownRequestError("duplicate", {
                 code: "P2002",
@@ -234,6 +249,8 @@ describe("EmployeeService", () => {
                 params.openToNextWork,
                 undefined,
                 undefined,
+                undefined,
+                undefined,
             );
             expect(result).toBe(mockEmployee);
         });
@@ -264,6 +281,8 @@ describe("EmployeeService", () => {
                 params.openToNextWork,
                 new Date("2024-06-15"),
                 undefined,
+                undefined,
+                undefined,
             );
         });
 
@@ -290,6 +309,8 @@ describe("EmployeeService", () => {
                 params.phone,
                 params.grade,
                 params.openToNextWork,
+                undefined,
+                undefined,
                 undefined,
                 undefined,
             );
@@ -329,6 +350,19 @@ describe("EmployeeService", () => {
     // update
     // ============================================
     describe("update", () => {
+        it("forwards smsAutomationEnabled to the update usecase without a profile refresh", async () => {
+            updateUsecase.execute.mockResolvedValue(EmployeeFactory.create());
+
+            await service.update(branchId, 1, { smsAutomationEnabled: false });
+
+            expect(updateUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                1,
+                expect.objectContaining({ smsAutomationEnabled: false }),
+            );
+            expect(triggerService.syncEmployeeAssignmentRulesForEmployee).not.toHaveBeenCalled();
+        });
+
         it("rejects malformed phone before invoking the update usecase or refresh", async () => {
             await expect(service.update(branchId, 1, { phone: "not-a-phone" }))
                 .rejects.toMatchObject({
