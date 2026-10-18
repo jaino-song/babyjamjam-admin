@@ -199,6 +199,7 @@ export interface ClientWithEmployees {
     breastPump: boolean;
     eDocId: string | null;
     areaId: string | null;
+    smsAutomationEnabled: boolean;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
     /** ID of the same latest contract used for documentStatus. */
@@ -1256,6 +1257,8 @@ export class ClientService {
         areaId?: string | null;
         suppressGreetingSms?: boolean;
         applyMessageAutomation?: boolean;
+        /** Persisted per-client SMS switch; an explicit value wins over `applyMessageAutomation`. */
+        smsAutomationEnabled?: boolean;
         reuseExistingClient?: boolean;
         source?: string;
     }): Promise<ClientEntity> {
@@ -1283,6 +1286,9 @@ export class ClientService {
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
         const applyMessageAutomation = params.applyMessageAutomation ?? true;
+        // The create-time intent gating above stays keyed to applyMessageAutomation;
+        // the persisted flag prefers the explicit field.
+        const smsAutomationEnabled = params.smsAutomationEnabled ?? params.applyMessageAutomation ?? true;
         if (params.source === CONTRACT_AUTO_REGISTRATION_SOURCE) {
             const autoRegistrationEnabled = await this.systemSettingService
                 .getClientAutoRegistrationEnabled(branchid);
@@ -1311,6 +1317,14 @@ export class ClientService {
                 }));
             }
             this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
+            if (params.smsAutomationEnabled !== undefined) {
+                // Only an explicitly supplied value touches a reused client's flag.
+                await this.prismaService.client.updateMany({
+                    where: { id: existing.id, branchId: branchid },
+                    data: { smsAutomationEnabled: params.smsAutomationEnabled },
+                });
+                existing.smsAutomationEnabled = params.smsAutomationEnabled;
+            }
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
                 const assignment = await this.syncEmployeeAssignment(branchid, {
                     clientId: existing.id,
@@ -1382,6 +1396,7 @@ export class ClientService {
             eDocId: params.eDocId ?? null,
             areaId: params.areaId ?? null,
             suppressGreetingSms,
+            smsAutomationEnabled,
         };
 
         const primaryEmployeeId = params.primaryEmployeeId ?? null;
@@ -1766,6 +1781,7 @@ export class ClientService {
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
+                    smsAutomationEnabled: client.smsAutomationEnabled,
                     hasSigned: latestContract?.permanentPurgeRequestedAt == null
                         && !isVoidedContractSignal(latestContract)
                         && hasCustomerSigned(latestContract),
@@ -1932,6 +1948,7 @@ export class ClientService {
         breastPump?: boolean;
         eDocId?: string | null;
         areaId?: string | null;
+        smsAutomationEnabled?: boolean;
         /**
          * Optimistic guard for callers that compute a change from a snapshot
          * (the holiday review fix). When supplied, the locked client row's end
@@ -2357,6 +2374,7 @@ export class ClientService {
                 breastPump: params.breastPump,
                 eDocId: params.eDocId === undefined ? undefined : params.eDocId,
                 areaId: params.areaId === undefined ? undefined : params.areaId,
+                smsAutomationEnabled: params.smsAutomationEnabled,
             };
             // An employee-only edit still owns the client lock and may create
             // a replacement schedule, but Prisma reports zero rows for an

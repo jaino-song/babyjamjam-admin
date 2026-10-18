@@ -412,6 +412,80 @@ describe("ClientService", () => {
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
         });
 
+        describe("smsAutomationEnabled persistence", () => {
+            const baseParams = {
+                name: "Automation Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            };
+            const persistedFlag = () => createClientUsecase.execute.mock.calls[0]![1].smsAutomationEnabled;
+
+            it("persists false when applyMessageAutomation is false and keeps the intent gating", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, { ...baseParams, applyMessageAutomation: false });
+
+                expect(persistedFlag()).toBe(false);
+                expect(messageAutomationIntentService.persistClientIntent).not.toHaveBeenCalled();
+            });
+
+            it("defaults to true when neither field is supplied", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, baseParams);
+
+                expect(persistedFlag()).toBe(true);
+            });
+
+            it("lets an explicit smsAutomationEnabled win over applyMessageAutomation", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, {
+                    ...baseParams,
+                    applyMessageAutomation: true,
+                    smsAutomationEnabled: false,
+                });
+
+                expect(persistedFlag()).toBe(false);
+                // Intent gating still follows applyMessageAutomation.
+                expect(messageAutomationIntentService.persistClientIntent).toHaveBeenCalled();
+            });
+
+            it("persists the explicit flag on the initial-schedule create path too", async () => {
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: createClientEntity(),
+                    scheduleId: 42,
+                });
+
+                await service.create(branchId, {
+                    ...baseParams,
+                    primaryEmployeeId: 7,
+                    applyMessageAutomation: false,
+                    smsAutomationEnabled: true,
+                });
+
+                expect(createClientUsecase.executeWithInitialSchedule.mock.calls[0]![1].smsAutomationEnabled).toBe(true);
+            });
+
+            it("changes a reused client's flag only when it is explicitly provided", async () => {
+                const reused = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                await service.create(branchId, { ...baseParams, reuseExistingClient: true, applyMessageAutomation: false });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(reused.smsAutomationEnabled).toBe(true);
+
+                await service.create(branchId, { ...baseParams, reuseExistingClient: true, smsAutomationEnabled: false });
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: reused.id, branchId },
+                    data: { smsAutomationEnabled: false },
+                });
+                expect(reused.smsAutomationEnabled).toBe(false);
+            });
+        });
+
         it("allows an explicit null phone clear on create", async () => {
             const client = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(client);
@@ -2168,6 +2242,28 @@ describe("ClientService", () => {
             expect(clientRepository.findByPhone).not.toHaveBeenCalled();
             expect(prismaService.$transaction).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        describe("smsAutomationEnabled", () => {
+            it.each([false, true])("writes only the flag when %s is the sole requested change", async (enabled) => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.update(branchId, 1, { smsAutomationEnabled: enabled });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 1, branchId },
+                    data: expect.objectContaining({ smsAutomationEnabled: enabled }),
+                });
+            });
+
+            it("leaves the column out of the write when the flag is not supplied", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.update(branchId, 1, { address: "Somewhere" });
+
+                const data = prismaService.client.updateMany.mock.calls[0]![0].data;
+                expect(data.smsAutomationEnabled).toBeUndefined();
+            });
         });
 
         describe("given existing client and no employee change", () => {

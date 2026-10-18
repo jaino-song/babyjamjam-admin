@@ -116,6 +116,7 @@ export interface UserDirectoryItem {
     authProvider: string;
     approvalStatus: string;
     requestedRole: string | null;
+    smsAutomationEnabled: boolean;
     branches: UserDirectoryBranch[];
 }
 
@@ -129,6 +130,7 @@ export interface UserApprovalSummary {
     approvedBy: string | null;
     requestedRole: string | null;
     tokenVersion: number;
+    smsAutomationEnabled?: boolean;
 }
 
 @Injectable()
@@ -544,6 +546,7 @@ export class UserService {
                 authProvider: true,
                 approvalStatus: true,
                 requestedRole: true,
+                smsAutomationEnabled: true,
                 userBranches: {
                     orderBy: { joinedAt: "asc" },
                     select: {
@@ -579,6 +582,7 @@ export class UserService {
                 authProvider: user.authProvider,
                 approvalStatus: user.approvalStatus,
                 requestedRole: user.requestedRole,
+                smsAutomationEnabled: user.smsAutomationEnabled,
                 branches,
             };
         });
@@ -1108,6 +1112,8 @@ export class UserService {
             approvedBy: string;
             branchId: string;
             ownerBranchId?: string;
+            /** Omitted leaves the stored value (column default true for a fresh sign-up). */
+            smsAutomationEnabled?: boolean;
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
@@ -1156,6 +1162,9 @@ export class UserService {
                     approvedBy: params.approvedBy,
                     role: params.role,
                     tokenVersion: { increment: 1 },
+                    ...(params.smsAutomationEnabled !== undefined
+                        ? { smsAutomationEnabled: params.smsAutomationEnabled }
+                        : {}),
                 },
                 select: {
                     id: true,
@@ -1167,6 +1176,7 @@ export class UserService {
                     approvedBy: true,
                     requestedRole: true,
                     tokenVersion: true,
+                    smsAutomationEnabled: true,
                 },
             });
 
@@ -1231,6 +1241,34 @@ export class UserService {
             });
 
             return user;
+        });
+    }
+
+    /**
+     * Toggles whether automatic SMS may be sent to this user. Same authority as
+     * approval: the caller must still be a global owner when the write runs.
+     */
+    setSmsAutomationEnabled(id: string, enabled: boolean, callerId: string): Promise<UserEntity> {
+        return this.prismaService.$transaction(async (tx) => {
+            await this.assertCallerStillOwner(tx, callerId);
+            await this.lockRow(tx, "user", id);
+            const current = await tx.user.findUnique({
+                where: { id },
+                select: { id: true, smsAutomationEnabled: true },
+            });
+            if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            const updated = await tx.user.update({
+                where: { id },
+                data: { smsAutomationEnabled: enabled },
+            });
+            await this.appendAudit(tx, currentAdminAuditActor() ?? { userId: callerId, globalRole: "owner" }, {
+                action: "user.sms_automation.updated",
+                targetType: "user",
+                targetId: id,
+                before: { id, smsAutomationEnabled: current.smsAutomationEnabled },
+                after: { id, smsAutomationEnabled: updated.smsAutomationEnabled },
+            });
+            return UserMapper.toDomain(updated);
         });
     }
 

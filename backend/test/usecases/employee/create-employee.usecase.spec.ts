@@ -48,6 +48,19 @@ describe("CreateEmployeeUsecase", () => {
             expect(result.registeredDate).toEqual(registeredDate);
         });
 
+        it("defaults smsAutomationEnabled to true and persists an explicit false", async () => {
+            const defaulted = await usecase.execute(
+                branchId, "기본 직원", ["서울"], "010-1111-2222", "베스트", true,
+            );
+            const optedOut = await usecase.execute(
+                branchId, "제외 직원", ["서울"], "010-1111-3333", "베스트", true,
+                undefined, undefined, undefined, false,
+            );
+
+            expect(defaulted.smsAutomationEnabled).toBe(true);
+            expect(optedOut.smsAutomationEnabled).toBe(false);
+        });
+
         it("should persist an omitted registeredDate as today's Korean calendar date and make it queryable", async () => {
             jest.useFakeTimers().setSystemTime(new Date("2026-08-27T23:30:00.000Z"));
             try {

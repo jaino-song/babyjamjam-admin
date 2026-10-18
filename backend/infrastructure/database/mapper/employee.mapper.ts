@@ -12,6 +12,7 @@ type EmployeeRow = {
     birthday: string | null;
     deletedAt?: Date | null;
     phoneNormalized?: string | null;
+    smsAutomationEnabled?: boolean;
 };
 
 export class EmployeeMapper {
@@ -27,6 +28,7 @@ export class EmployeeMapper {
             row.birthday ?? undefined,
             row.deletedAt ?? undefined,
             row.phoneNormalized,
+            row.smsAutomationEnabled ?? true,
         );
     }
 
@@ -40,6 +42,7 @@ export class EmployeeMapper {
             openToNextWork: entity.openToNextWork,
             companyRegisteredDate: entity.registeredDate,
             birthday: entity.birthday ?? null,
+            smsAutomationEnabled: entity.smsAutomationEnabled,
         };
     }
 
@@ -52,6 +55,7 @@ export class EmployeeMapper {
             grade: normalizeEmployeeGrade(entity.grade),
             openToNextWork: entity.openToNextWork,
             birthday: entity.birthday ?? null,
+            smsAutomationEnabled: entity.smsAutomationEnabled,
         };
     }
 }

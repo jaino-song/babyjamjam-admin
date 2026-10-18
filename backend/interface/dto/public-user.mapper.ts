@@ -2,7 +2,7 @@ import { UserEntity } from "domain/entities/user.entity";
 
 export type PublicUser = Pick<UserEntity,
     "id" | "email" | "name" | "profileImage" | "role" | "createdAt"
-    | "emailVerified" | "emailVerifiedAt" | "authProvider"
+    | "emailVerified" | "emailVerifiedAt" | "authProvider" | "smsAutomationEnabled"
 >;
 
 export function toPublicUser(user: UserEntity): PublicUser;
@@ -19,5 +19,6 @@ export function toPublicUser(user: UserEntity | null): PublicUser | null {
         emailVerified: user.emailVerified,
         emailVerifiedAt: user.emailVerifiedAt,
         authProvider: user.authProvider,
+        smsAutomationEnabled: user.smsAutomationEnabled,
     };
 }

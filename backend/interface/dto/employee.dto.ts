@@ -35,6 +35,10 @@ export class CreateEmployeeDto {
     @ValidateIf((_, value) => value !== "")
     @IsBirthdayDate()
     birthday?: string;
+
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    smsAutomationEnabled?: boolean;
 }
 
 export class UpdateEmployeeDto {
@@ -68,6 +72,10 @@ export class UpdateEmployeeDto {
     @ValidateIf((_, value) => value !== "")
     @IsBirthdayDate()
     birthday?: string;
+
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    smsAutomationEnabled?: boolean;
 }
 
 export class ChangeEmployeeOpenStatusDto {

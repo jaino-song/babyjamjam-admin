@@ -13,6 +13,8 @@ export class UserEntity {
         public emailVerified: boolean,
         public emailVerifiedAt: Date | null,
         public authProvider: AuthProvider,
+        /** Per-user switch for automatic SMS; written only through the dedicated service method. */
+        public smsAutomationEnabled: boolean = true,
     ) {}
 
     isAdmin(): boolean {
@@ -153,6 +155,7 @@ export class UserEntity {
         emailVerified: boolean,
         emailVerifiedAt: Date | null,
         authProvider: AuthProvider,
+        smsAutomationEnabled: boolean = true,
     ): UserEntity {
         return new UserEntity(
             id,
@@ -166,6 +169,7 @@ export class UserEntity {
             emailVerified,
             emailVerifiedAt,
             authProvider,
+            smsAutomationEnabled,
         );
     }
 }
