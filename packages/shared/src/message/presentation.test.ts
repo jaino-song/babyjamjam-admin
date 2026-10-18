@@ -1,12 +1,13 @@
 import type { MessageLogRecord } from "../types/message";
 import {
-  MESSAGE_JOB_RESEND_BLOCKED_COPY,
+  type MessageResendBlock,
   MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_SETUP_REASON_LABEL,
   formatMessageFailureReason,
+  getMessageResendBlockCard,
   normalizeMessageHistoryPresentation,
 } from "./presentation";
 
@@ -74,26 +75,97 @@ describe("needs_setup presentation", () => {
     expect(normalizeMessageHistoryPresentation(historyRecord()).setupReason).toBeUndefined();
   });
 
-  it("passes resendBlockedBy through for needs_setup rows only", () => {
+  it("builds resendBlock for needs_setup rows the server would refuse to resend, and for no others", () => {
     expect(
-      normalizeMessageHistoryPresentation(historyRecord({ resendBlockedBy: "recipient" })).resendBlockedBy,
-    ).toBe("recipient");
+      normalizeMessageHistoryPresentation(historyRecord({
+        resendBlockedBy: "recipient",
+        resendBlockedRecipient: { kind: "client", id: 10 },
+        ruleId: "rule-1",
+        ruleName: "서비스 시작 안내",
+      })).resendBlock,
+    ).toEqual({
+      level: "recipient",
+      recipient: { kind: "client", id: 10 },
+      recipientName: "김고객",
+      ruleId: "rule-1",
+      ruleName: "서비스 시작 안내",
+    });
     expect(
-      normalizeMessageHistoryPresentation(historyRecord({ resendBlockedBy: null })).resendBlockedBy,
+      normalizeMessageHistoryPresentation(historyRecord({ resendBlockedBy: null })).resendBlock,
     ).toBeUndefined();
-    expect(normalizeMessageHistoryPresentation(historyRecord()).resendBlockedBy).toBeUndefined();
+    expect(normalizeMessageHistoryPresentation(historyRecord()).resendBlock).toBeUndefined();
     expect(
       normalizeMessageHistoryPresentation(
         historyRecord({ status: "failed", resendBlockedBy: "branch" }),
-      ).resendBlockedBy,
+      ).resendBlock,
     ).toBeUndefined();
   });
 
-  it("has one hint per safeguard level", () => {
-    expect(MESSAGE_JOB_RESEND_BLOCKED_COPY).toEqual({
-      rule: "자동화 규칙이 꺼져 있어 재발송할 수 없어요",
-      recipient: "받는 사람의 자동 문자가 꺼져 있어 재발송할 수 없어요",
-      branch: "지점 자동 전송이 꺼져 있어 재발송할 수 없어요",
+  describe("getMessageResendBlockCard", () => {
+    const block = (overrides: Partial<MessageResendBlock> = {}): MessageResendBlock => ({
+      level: "recipient",
+      recipient: { kind: "employee", id: 7 },
+      recipientName: "송진호",
+      ruleId: "rule-1",
+      ruleName: "제공기록지 작성 링크",
+      ...overrides,
+    });
+
+    it.each([
+      [{ kind: "client", id: 10 }, "고객", "고객 정보에서 켜기 →", "/clients?id=10", "/clients?id=10"],
+      [{ kind: "employee", id: 7 }, "관리사", "관리사 정보에서 켜기 →", "/employees", "/employees"],
+      [
+        { kind: "user", id: "u-1" },
+        "사용자",
+        "계정 관리에서 켜기 →",
+        "/system-admin?section=accounts",
+        "/system-admin?section=accounts&item=u-1",
+      ],
+    ] as const)("names the %j recipient and links to where the switch lives", (recipient, noun, label, desktopHref, mobileHref) => {
+      const desktop = getMessageResendBlockCard(block({ recipient }), "desktop");
+      expect(desktop).toEqual({
+        title: "자동 문자가 꺼져 있어요",
+        emphasis: "송진호",
+        description: `${noun}의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`,
+        action: { label, href: desktopHref },
+      });
+      expect(getMessageResendBlockCard(block({ recipient }), "mobile").action).toEqual({ label, href: mobileHref });
+    });
+
+    it("drops the name and the link when the recipient is unknown", () => {
+      expect(getMessageResendBlockCard(block({ recipient: null, recipientName: null }), "desktop")).toEqual({
+        title: "자동 문자가 꺼져 있어요",
+        emphasis: null,
+        description: "받는 사람의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.",
+        action: null,
+      });
+    });
+
+    it("explains a branch block and points at the 자동 전송 실행 switch", () => {
+      const copy = { title: "지점 자동 전송이 꺼져 있어요", emphasis: null, description: "이 지점의 ‘자동 전송 실행’이 꺼져 있어 재발송할 수 없어요." };
+      expect(getMessageResendBlockCard(block({ level: "branch", recipient: null }), "desktop")).toEqual({
+        ...copy,
+        action: { label: "자동화 설정 열기 →", href: "/messages?section=settings" },
+      });
+      expect(getMessageResendBlockCard(block({ level: "branch", recipient: null }), "mobile").action).toEqual({
+        label: "자동화 설정 열기 →",
+        href: "/messages/settings?item=trigger-dispatch",
+      });
+    });
+
+    it("names the rule and links to the automation screen", () => {
+      expect(getMessageResendBlockCard(block({ level: "rule", recipient: null }), "desktop")).toEqual({
+        title: "자동화 규칙이 꺼져 있어요",
+        emphasis: "제공기록지 작성 링크",
+        description: "규칙이 꺼져 있어 재발송할 수 없어요.",
+        action: { label: "규칙 보기 →", href: "/messages?section=triggers" },
+      });
+      expect(getMessageResendBlockCard(block({ level: "rule", recipient: null }), "mobile").action?.href)
+        .toBe("/messages/automation?item=rule-1");
+      const unnamed = getMessageResendBlockCard(block({ level: "rule", recipient: null, ruleName: null, ruleId: null }), "mobile");
+      expect(unnamed.emphasis).toBeNull();
+      expect(unnamed.description).toBe("자동화 규칙이 꺼져 있어 재발송할 수 없어요.");
+      expect(unnamed.action?.href).toBe("/messages/automation");
     });
   });
 

@@ -5,6 +5,7 @@ import {
     smsAutomationSafeguardReason,
     type SmsAutomationSafeguardDecision,
     type SmsAutomationSafeguardLevel,
+    type SmsAutomationSafeguardRecipient,
 } from "./sms-automation-safeguard.service";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
@@ -360,6 +361,8 @@ export interface MessageLogRecordView {
      * resend (null when it would pass or could not be checked).
      */
     resendBlockedBy?: SmsAutomationSafeguardLevel | null;
+    /** With a recipient-level `resendBlockedBy`: the entity whose automation flag is off, when known. */
+    resendBlockedRecipient?: SmsAutomationSafeguardRecipient | null;
 }
 
 export interface MessageHistoryPageView {
@@ -382,6 +385,8 @@ const MESSAGE_HISTORY_MAX_LIMIT = 500;
 const MESSAGE_HISTORY_JOB_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLIENT_HISTORY_MAX_LIMIT = 100;
 const CLIENT_HISTORY_DEFAULT_LIMIT = 50;
+/** Safeguard checks run per history page: at most this many jobs at a time. */
+const RESEND_BLOCK_CHECK_CONCURRENCY = 5;
 const CLIENT_UPCOMING_CURSOR_VERSION = 1;
 const CLIENT_UPCOMING_MAX_LIMIT = 100;
 const CLIENT_UPCOMING_DEFAULT_LIMIT = 50;
@@ -820,7 +825,6 @@ export class MessageTriggerService {
         const jobsById = new Map(jobs.map((job) => [job.id, job]));
         const rules = await this.ruleRepository.findAll(branchId);
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
-        const resendBlockedByJobId = await this.resolveResendBlockedBy(terminalJobs);
 
         const logRecords = logs.map((log): MessageLogRecordView => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
@@ -901,13 +905,13 @@ export class MessageTriggerService {
                     recipientName: job.payload.recipientName,
                     clientName: job.payload.clientName ?? null,
                     employeeName: job.payload.employeeName ?? null,
-                    ...(job.status === "needs_setup" ? { resendBlockedBy: resendBlockedByJobId.get(job.id) ?? null } : {}),
                 };
             });
 
-        return [...logRecords, ...terminalJobRecords]
+        const page = [...logRecords, ...terminalJobRecords]
             .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
             .slice(skip, skip + limit);
+        return this.attachResendBlock(page, terminalJobs);
     }
 
     /**
@@ -984,7 +988,6 @@ export class MessageTriggerService {
             ? await this.ruleRepository.findAll(branchId)
             : [];
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
-        const resendBlockedByJobId = await this.resolveResendBlockedBy(terminalJobs);
 
         const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
@@ -1071,7 +1074,6 @@ export class MessageTriggerService {
                     recipientName: job.payload.recipientName,
                     clientName: job.payload.clientName ?? null,
                     employeeName: job.payload.employeeName ?? null,
-                    ...(job.status === "needs_setup" ? { resendBlockedBy: resendBlockedByJobId.get(job.id) ?? null } : {}),
                 };
                 return {
                     record,
@@ -1086,7 +1088,10 @@ export class MessageTriggerService {
         // boundary.
         const candidates = [...logCandidates, ...jobCandidates];
         const hasMore = logLookahead || jobCandidates.length > remainingSlots;
-        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const items = await this.attachResendBlock(
+            candidates.slice(0, limit).map((candidate) => candidate.record),
+            terminalJobs,
+        );
         const lastCandidate = candidates[limit - 1];
         const nextCursor = hasMore && lastCandidate
             ? encodeMessageHistoryCursor({
@@ -1197,7 +1202,6 @@ export class MessageTriggerService {
             ? await this.ruleRepository.findAll(branchId)
             : [];
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
-        const resendBlockedByJobId = await this.resolveResendBlockedBy(terminalJobs);
 
         const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
@@ -1281,7 +1285,6 @@ export class MessageTriggerService {
                         recipientName: job.payload.recipientName,
                         clientName: job.payload.clientName ?? null,
                         employeeName: job.payload.employeeName ?? null,
-                        ...(job.status === "needs_setup" ? { resendBlockedBy: resendBlockedByJobId.get(job.id) ?? null } : {}),
                     },
                     source: "job",
                     nativeId: job.id,
@@ -1290,7 +1293,10 @@ export class MessageTriggerService {
 
         const candidates = [...logCandidates, ...jobCandidates];
         const hasMore = logLookahead || jobCandidates.length > remainingSlots;
-        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const items = await this.attachResendBlock(
+            candidates.slice(0, limit).map((candidate) => candidate.record),
+            terminalJobs,
+        );
         const lastCandidate = candidates[limit - 1];
         const nextCursor = hasMore && lastCandidate
             ? encodeMessageHistoryCursor({
@@ -1803,35 +1809,68 @@ export class MessageTriggerService {
     }
 
     /**
-     * For the history rows of '추가 정보 필요' jobs: the SMS automation safeguard
-     * level that would refuse a resend, so the UI can disable 재발송 instead of
-     * letting the admin hit a 409. Same decision `resendNeedsSetupJob` enforces
-     * (admin-direct sends bypass it). A failed check yields null — it must never
-     * fail the history list.
+     * Stamps the SMS automation safeguard outcome onto the '추가 정보 필요' job
+     * rows of one already-sliced history page, so the UI can disable 재발송
+     * instead of letting the admin hit a 409. Runs after paging on purpose:
+     * only the rows actually returned are checked, never the over-read window
+     * or a lookahead row.
      */
-    private async resolveResendBlockedBy(
+    private async attachResendBlock(
+        items: MessageLogRecordView[],
+        terminalJobs: readonly MessageTriggerJobEntity[],
+    ): Promise<MessageLogRecordView[]> {
+        const pageJobIds = new Set(
+            items
+                .filter((item) => item.provider === "message_job" && item.status === "needs_setup" && item.triggerJobId)
+                .map((item) => item.triggerJobId as string),
+        );
+        if (pageJobIds.size === 0) return items;
+
+        const blockByJobId = await this.resolveResendBlock(
+            terminalJobs.filter((job) => pageJobIds.has(job.id)),
+        );
+        return items.map((item) => {
+            if (item.provider !== "message_job" || item.status !== "needs_setup" || !item.triggerJobId) return item;
+            const block = blockByJobId.get(item.triggerJobId);
+            return {
+                ...item,
+                resendBlockedBy: block?.level ?? null,
+                ...(block?.recipient ? { resendBlockedRecipient: block.recipient } : {}),
+            };
+        });
+    }
+
+    /**
+     * The safeguard level (and, for a recipient block, the entity) that would
+     * refuse a resend of each job: the same decision `resendNeedsSetupJob`
+     * enforces (admin-direct sends bypass it). A failed check yields no block —
+     * it must never fail the history list. Checked in small chunks so a page
+     * never fans out one query burst per row.
+     */
+    private async resolveResendBlock(
         jobs: readonly MessageTriggerJobEntity[],
-    ): Promise<Map<string, SmsAutomationSafeguardLevel | null>> {
-        const result = new Map<string, SmsAutomationSafeguardLevel | null>();
+    ): Promise<Map<string, { level: SmsAutomationSafeguardLevel; recipient: SmsAutomationSafeguardRecipient | null }>> {
+        const result = new Map<string, { level: SmsAutomationSafeguardLevel; recipient: SmsAutomationSafeguardRecipient | null }>();
         const safeguard = this.smsAutomationSafeguard;
         const needsSetupJobs = jobs.filter((job) => job.status === "needs_setup");
         if (!safeguard || needsSetupJobs.length === 0) return result;
 
-        await Promise.all(needsSetupJobs.map(async (job) => {
-            if (safeguard.isAdminDirectSend(job)) {
-                result.set(job.id, null);
-                return;
-            }
-            try {
-                const decision = await safeguard.check(job);
-                result.set(job.id, decision.allowed ? null : decision.level);
-            } catch (error) {
-                this.logger.warn(
-                    `Could not check the resend safeguard for trigger job ${job.id}: ${error instanceof Error ? error.message : String(error)}`,
-                );
-                result.set(job.id, null);
-            }
-        }));
+        for (let offset = 0; offset < needsSetupJobs.length; offset += RESEND_BLOCK_CHECK_CONCURRENCY) {
+            const chunk = needsSetupJobs.slice(offset, offset + RESEND_BLOCK_CHECK_CONCURRENCY);
+            await Promise.all(chunk.map(async (job) => {
+                if (safeguard.isAdminDirectSend(job)) return;
+                try {
+                    const decision = await safeguard.check(job);
+                    if (!decision.allowed) {
+                        result.set(job.id, { level: decision.level, recipient: decision.recipient ?? null });
+                    }
+                } catch (error) {
+                    this.logger.warn(
+                        `Could not check the resend safeguard for trigger job ${job.id}: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                }
+            }));
+        }
         return result;
     }
 

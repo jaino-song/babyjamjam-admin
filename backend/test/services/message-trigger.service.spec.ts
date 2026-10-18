@@ -3045,7 +3045,59 @@ describe("MessageTriggerService", () => {
         it("names the recipient level when the client's automatic-SMS flag is off", async () => {
             const rows = await allRows(historyFixture({ clientFlags: new Map([[1, false]]) }));
             expect(rows).toHaveLength(3);
-            for (const row of rows) expect(row.resendBlockedBy).toBe("recipient");
+            for (const row of rows) {
+                expect(row.resendBlockedBy).toBe("recipient");
+                expect(row.resendBlockedRecipient).toEqual({ kind: "client", id: 1 });
+            }
+        });
+
+        it("carries no recipient entity for a rule or branch block", async () => {
+            for (const rows of [
+                await allRows(historyFixture({ ruleActive: false })),
+                await allRows(historyFixture({ branchOn: false })),
+            ]) {
+                for (const row of rows) expect(row).not.toHaveProperty("resendBlockedRecipient");
+            }
+        });
+
+        it("checks the safeguard only for the rows of the returned slice, not the whole over-read window", async () => {
+            const fx = historyFixture();
+            const jobs = Array.from({ length: 7 }, (_, index) => createJob({
+                id: `waiting-${index}`, status: "needs_setup", cancelReason: "필수 정보 누락 (name)", clientId: 1,
+            }));
+            (fx.jobRepository as unknown as Record<string, jest.Mock>)["findTerminalByBranch"]!.mockResolvedValue(jobs);
+
+            const rows = await fx.service.listHistory(branchId, 2, 1);
+
+            expect(rows.map((row) => row.triggerJobId)).toEqual(["waiting-1", "waiting-2"]);
+            for (const row of rows) expect(row.resendBlockedBy).toBeNull();
+            // The branch level is the last check a passing job reaches: one call per returned row only.
+            expect(fx.messageAutomationActivationService.getTriggerDispatchEnabled).toHaveBeenCalledTimes(2);
+        });
+
+        it("skips the lookahead job of a history page and never checks more than five jobs at once", async () => {
+            const fx = historyFixture();
+            const jobs = Array.from({ length: 13 }, (_, index) => createJob({
+                id: `waiting-${index}`, status: "needs_setup", cancelReason: "필수 정보 누락 (name)", clientId: 1,
+            }));
+            // 12 rows requested, 13 read: the 13th is the lookahead row and is not returned.
+            (fx.jobRepository as unknown as Record<string, jest.Mock>)["findHistoryPageByBranch"]!.mockResolvedValue(jobs);
+            let inFlight = 0;
+            let maxInFlight = 0;
+            fx.messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async () => {
+                inFlight += 1;
+                maxInFlight = Math.max(maxInFlight, inFlight);
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                inFlight -= 1;
+                return true;
+            });
+
+            const page = await fx.service.listHistoryPage(branchId, 12);
+
+            expect(page.items).toHaveLength(12);
+            expect(fx.messageAutomationActivationService.getTriggerDispatchEnabled).toHaveBeenCalledTimes(12);
+            expect(maxInFlight).toBeGreaterThan(1);
+            expect(maxInFlight).toBeLessThanOrEqual(5);
         });
 
         it("names the branch level when the branch trigger-dispatch switch is off", async () => {

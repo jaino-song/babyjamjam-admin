@@ -15,13 +15,13 @@ describe("SmsAutomationSafeguardService", () => {
         override: { isActive: boolean } | null;
         client: { smsAutomationEnabled: boolean } | null;
         schedule: {
-            primaryEmployee: { smsAutomationEnabled: boolean } | null;
-            secondaryEmployee: { smsAutomationEnabled: boolean } | null;
+            primaryEmployee: { id?: number; smsAutomationEnabled: boolean } | null;
+            secondaryEmployee: { id?: number; smsAutomationEnabled: boolean } | null;
         } | null;
         /** Phone-match lookups: entities with the flag off, by phone key. */
         disabledClientPhones: string[];
         disabledEmployeePhones: string[];
-        disabledUsers: Array<{ phone: string | null }>;
+        disabledUsers: Array<{ id?: string; phone: string | null }>;
         branchOn: boolean;
     }
 
@@ -119,7 +119,9 @@ describe("SmsAutomationSafeguardService", () => {
 
         it("blocks at the recipient level when the client flag is off, with the other two on", async () => {
             const { service } = harness({ client: { smsAutomationEnabled: false } });
-            await expect(service.check(clientJob())).resolves.toMatchObject({ allowed: false, level: "recipient" });
+            await expect(service.check(clientJob())).resolves.toMatchObject({
+                allowed: false, level: "recipient", recipient: { kind: "client", id: 7 },
+            });
         });
 
         it("blocks when the referenced client row is missing", async () => {
@@ -128,11 +130,13 @@ describe("SmsAutomationSafeguardService", () => {
         });
 
         it.each([
-            [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, { primaryEmployee: { smsAutomationEnabled: false }, secondaryEmployee: { smsAutomationEnabled: true } }],
-            [MessageTriggerRecipientType.SECONDARY_EMPLOYEE, { primaryEmployee: { smsAutomationEnabled: true }, secondaryEmployee: { smsAutomationEnabled: false } }],
-        ])("blocks at the recipient level when the %s flag is off", async (type, schedule) => {
+            [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, { primaryEmployee: { id: 11, smsAutomationEnabled: false }, secondaryEmployee: { id: 12, smsAutomationEnabled: true } }, 11],
+            [MessageTriggerRecipientType.SECONDARY_EMPLOYEE, { primaryEmployee: { id: 11, smsAutomationEnabled: true }, secondaryEmployee: { id: 12, smsAutomationEnabled: false } }, 12],
+        ])("blocks at the recipient level when the %s flag is off, naming that employee", async (type, schedule, employeeId) => {
             const { service } = harness({ schedule });
-            await expect(service.check(employeeJob(type))).resolves.toMatchObject({ allowed: false, level: "recipient" });
+            await expect(service.check(employeeJob(type))).resolves.toMatchObject({
+                allowed: false, level: "recipient", recipient: { kind: "employee", id: employeeId },
+            });
         });
 
         it("checks only the addressed employee of the schedule", async () => {
@@ -193,18 +197,22 @@ describe("SmsAutomationSafeguardService", () => {
             for (const phone of ["010-1234-5678", "01012345678", "+82 10-1234-5678"]) {
                 const { service } = harness({ disabledClientPhones: ["01012345678"] });
                 await expect(service.check(agentJob({ recipientPhone: phone })))
-                    .resolves.toMatchObject({ allowed: false, level: "recipient" });
+                    .resolves.toMatchObject({ allowed: false, level: "recipient", recipient: { kind: "client", id: 1 } });
             }
         });
 
         it("are blocked when the phone matches an employee whose automation is off", async () => {
             const { service } = harness({ disabledEmployeePhones: ["01012345678"] });
-            await expect(service.check(agentJob())).resolves.toMatchObject({ allowed: false, level: "recipient" });
+            await expect(service.check(agentJob())).resolves.toMatchObject({
+                allowed: false, level: "recipient", recipient: { kind: "employee", id: 2 },
+            });
         });
 
         it("are blocked when the phone matches a user of the branch whose automation is off", async () => {
-            const { service, db } = harness({ disabledUsers: [{ phone: "010 1234 5678" }] });
-            await expect(service.check(agentJob())).resolves.toMatchObject({ allowed: false, level: "recipient" });
+            const { service, db } = harness({ disabledUsers: [{ id: "user-9", phone: "010 1234 5678" }] });
+            await expect(service.check(agentJob())).resolves.toMatchObject({
+                allowed: false, level: "recipient", recipient: { kind: "user", id: "user-9" },
+            });
             expect(db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({
                     smsAutomationEnabled: false,
