@@ -13,11 +13,11 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_HISTORY_STATUS_LABELS,
   MESSAGE_JOB_CANCEL_COPY,
-  MESSAGE_JOB_RESEND_BLOCKED_COPY,
   MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
@@ -953,9 +953,7 @@ function MessageHistorySection() {
   const canRetry = failedLog || needsSetupJob;
   // The server refuses a resend while a safeguard level is off; say so up front
   // instead of letting the admin hit the 409.
-  const retryDisabledReason = needsSetupJob && selectedRecord?.resendBlockedBy
-    ? MESSAGE_JOB_RESEND_BLOCKED_COPY[selectedRecord.resendBlockedBy]
-    : undefined;
+  const retryBlock = needsSetupJob ? selectedRecord?.resendBlock : undefined;
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord || typeof selectedRecord.id !== "number") return;
@@ -1019,12 +1017,12 @@ function MessageHistorySection() {
 
   const handleRetryOrResend = useCallback(() => {
     if (needsSetupJob) {
-      if (retryDisabledReason) return;
+      if (retryBlock) return;
       void handleResendJob();
       return;
     }
     void handleRetry();
-  }, [handleResendJob, handleRetry, needsSetupJob, retryDisabledReason]);
+  }, [handleResendJob, handleRetry, needsSetupJob, retryBlock]);
 
   // Only a pending trigger job can be canceled (POST /message-trigger-jobs/:id/cancel
   // refuses processing/sent/canceled/missing jobs), and manual scheduled entries
@@ -1538,7 +1536,7 @@ function MessageHistorySection() {
           isRetrying={isRetrying || resendMutation.isPending}
           onRetry={handleRetryOrResend}
           retryPendingLabel={needsSetupJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
-          retryDisabledReason={retryDisabledReason}
+          retryBlock={retryBlock}
         />
       )}
     </SplitLayout>
@@ -1562,7 +1560,10 @@ function MessageHistorySection() {
 
 export default function MessagesPage() {
   const locale = useLocale();
-  const [activeSection, setActiveSection] = useState<MessageSectionId>("send");
+  // The section the viewer picked in the nav; until then the `?section=` deep
+  // link (e.g. the "자동화 설정 열기" link of a disabled 재발송 button) or 전송하기.
+  const [pickedSectionId, setPickedSectionId] = useState<MessageSectionId | null>(null);
+  const requestedSectionId = useSearchParams()?.get("section") ?? null;
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
@@ -1585,6 +1586,11 @@ export default function MessagesPage() {
     })),
     [canManageBranchMessages, isSenderApprovalRequired],
   );
+
+  // A locked section (auth and approval load after mount) is not opened by the link.
+  const requestedSection = messageSections.find((section) => section.id === requestedSectionId);
+  const activeSection: MessageSectionId =
+    pickedSectionId ?? (requestedSection && !requestedSection.disabled ? requestedSection.id : "send");
 
   const {
     data: userTemplatesData,
@@ -2028,7 +2034,7 @@ export default function MessagesPage() {
           ariaLabel="메시지 기능"
           items={messageSections}
           activeId={activeSection}
-          onSelect={(id) => setActiveSection(id as MessageSectionId)}
+          onSelect={(id) => setPickedSectionId(id as MessageSectionId)}
         />
 
         <div data-component="desktop_messages_sections_section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">

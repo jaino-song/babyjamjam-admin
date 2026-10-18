@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MESSAGE_JOB_RESEND_BLOCKED_COPY } from "@babyjamjam/shared";
+import type { MessageResendBlock } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
 
 import {
@@ -173,49 +173,99 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     expect(screen.queryByRole("button", { name: "재시도 중" })).not.toBeInTheDocument();
   });
 
-  it("carries resendBlockedBy through normalization for a needs_setup job only", () => {
-    const blocked = normalizeMessageHistoryRecord({ ...needsSetupJobRow, resendBlockedBy: "branch" });
-    expect(blocked.resendBlockedBy).toBe("branch");
-    expect(normalizeMessageHistoryRecord(needsSetupJobRow).resendBlockedBy).toBeUndefined();
+  it("carries resendBlock through normalization for a needs_setup job only", () => {
+    const blocked = normalizeMessageHistoryRecord({
+      ...needsSetupJobRow,
+      resendBlockedBy: "recipient",
+      resendBlockedRecipient: { kind: "client", id: 10 },
+    });
+    expect(blocked.resendBlock).toMatchObject({
+      level: "recipient",
+      recipient: { kind: "client", id: 10 },
+      recipientName: "김고객",
+      ruleName: "제공기록지 링크",
+    });
+    expect(normalizeMessageHistoryRecord(needsSetupJobRow).resendBlock).toBeUndefined();
     expect(
-      normalizeMessageHistoryRecord({ ...baseLog, resendBlockedBy: "branch" }).resendBlockedBy,
+      normalizeMessageHistoryRecord({ ...baseLog, resendBlockedBy: "branch" }).resendBlock,
     ).toBeUndefined();
   });
 
-  it("disables the 재발송 button and carries the reason when one is given; click does not retry", () => {
-    const onRetry = jest.fn();
-    render(
-      <MessageHistoryDetailPanel
-        selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
-        dataComponentPrefix={prefix}
-        canRetry
-        onRetry={onRetry}
-        retryDisabledReason={MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient}
-      />,
-    );
+  describe("blocked 재발송", () => {
+    const recipientBlock: MessageResendBlock = {
+      level: "recipient",
+      recipient: { kind: "employee", id: 7 },
+      recipientName: "송진호",
+      ruleId: "rule-1",
+      ruleName: "제공기록지 링크",
+    };
 
-    const button = screen.getByRole("button", { name: "재발송" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("data-disabled-reason", MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient);
-    fireEvent.click(button);
-    expect(onRetry).not.toHaveBeenCalled();
-    // No always-visible hint line; a hover card will present the reason later.
-    expect(screen.queryByText(MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient)).not.toBeInTheDocument();
-  });
+    beforeAll(() => {
+      if (!("ResizeObserver" in globalThis)) {
+        globalThis.ResizeObserver = class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        } as unknown as typeof ResizeObserver;
+      }
+    });
 
-  it("shows an enabled 재발송 button and no reason without a disabled reason", () => {
-    render(
-      <MessageHistoryDetailPanel
-        selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
-        dataComponentPrefix={prefix}
-        canRetry
-        onRetry={jest.fn()}
-      />,
-    );
+    it("keeps the button disabled, never retries on click, and shows no always-visible hint", () => {
+      const onRetry = jest.fn();
+      render(
+        <MessageHistoryDetailPanel
+          selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+          dataComponentPrefix={prefix}
+          canRetry
+          onRetry={onRetry}
+          retryBlock={recipientBlock}
+        />,
+      );
 
-    const button = screen.getByRole("button", { name: "재발송" });
-    expect(button).toBeEnabled();
-    expect(button).not.toHaveAttribute("data-disabled-reason");
+      const button = screen.getByRole("button", { name: "재발송" });
+      expect(button).toBeDisabled();
+      expect(button).not.toHaveAttribute("data-disabled-reason");
+      fireEvent.click(button);
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(screen.queryByText("자동 문자가 꺼져 있어요")).not.toBeInTheDocument();
+    });
+
+    it("explains the block and links to where it is turned on once the wrapper is focused", async () => {
+      render(
+        <MessageHistoryDetailPanel
+          selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+          dataComponentPrefix={prefix}
+          canRetry
+          onRetry={jest.fn()}
+          retryBlock={recipientBlock}
+        />,
+      );
+
+      const wrapper = screen.getByRole("button", { name: "재발송" }).closest('[data-slot="hover-card-trigger"]');
+      expect(wrapper).not.toBeNull();
+      fireEvent.focus(wrapper as HTMLElement);
+
+      expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+      const card = document.querySelector(`[data-component="${prefix}_detail-retry_blocked-hover-card"]`);
+      expect(card).not.toBeNull();
+      expect(card).toHaveTextContent("송진호 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.");
+      expect(screen.getByRole("link", { name: "관리사 정보에서 켜기 →" })).toHaveAttribute("href", "/employees");
+    });
+
+    it("renders a plain enabled button, with no hover card wrapper, when nothing blocks the resend", () => {
+      render(
+        <MessageHistoryDetailPanel
+          selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+          dataComponentPrefix={prefix}
+          canRetry
+          onRetry={jest.fn()}
+        />,
+      );
+
+      const button = screen.getByRole("button", { name: "재발송" });
+      expect(button).toBeEnabled();
+      expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
+    });
   });
 
   it("shows no 추가 필요 정보 row for a failed log and keeps the old retry labels", () => {

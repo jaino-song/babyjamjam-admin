@@ -4,7 +4,7 @@ import { fireEvent, render as renderView, screen, waitFor, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createContext, useContext, type ReactElement, type ReactNode } from "react";
 import { AxiosError, AxiosHeaders } from "axios";
-import { MESSAGE_JOB_RESEND_BLOCKED_COPY, MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
+import { MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
 
 import MessagesPage from "./page";
 
@@ -114,6 +114,21 @@ function mockAuthUser(data: Record<string, unknown> | null) {
     isFetching: false,
     isError: false,
   });
+}
+
+let mockSearchParams = new URLSearchParams();
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useSearchParams: () => mockSearchParams,
+}));
+
+// Radix Popper (the hover card) measures with ResizeObserver, which jsdom lacks.
+if (!("ResizeObserver" in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
 }
 
 jest.mock("@/providers/LocaleProvider", () => ({
@@ -440,6 +455,7 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  mockSearchParams = new URLSearchParams();
   document.cookie = "selected_branch_id=branch-test; path=/";
   mockAuthUser({ id: "user-1", role: "user", branchRole: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
@@ -1188,6 +1204,29 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 });
 
+describe("messages page — ?section= deep link", () => {
+  it("opens the requested section on arrival", async () => {
+    mockSearchParams = new URLSearchParams("section=history");
+    mockData({ history: [] });
+    render(<MessagesPage />);
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).not.toBeNull();
+    });
+  });
+
+  it("stays on the default section for a section the viewer cannot open or that does not exist", async () => {
+    mockAuthUser({ id: "user-2", role: "user", branchRole: "user" });
+    for (const value of ["triggers", "nope", "scheduled"]) {
+      mockSearchParams = new URLSearchParams(`section=${value}`);
+      const { unmount } = render(<MessagesPage />);
+      await act(async () => {});
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_send-section"]')).not.toBeNull();
+      unmount();
+    }
+  });
+});
+
 describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () => {
   const jobUuid = "6f0c7a52-6d41-4c63-9d0e-3a5b8a5f2b11";
 
@@ -1254,33 +1293,45 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
     expect(mockRetryMutateAsync).not.toHaveBeenCalled();
   });
 
-  it.each(["rule", "recipient", "branch"] as const)(
-    "disables the 재발송 button with the %s reason and never resends when the safeguard blocks it",
-    (level) => {
-      mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: level })] });
+  it.each([
+    { level: "rule", title: "자동화 규칙이 꺼져 있어요", linkName: "규칙 보기 →", href: "/messages?section=triggers" },
+    { level: "recipient", title: "자동 문자가 꺼져 있어요", linkName: "고객 정보에서 켜기 →", href: "/clients?id=10" },
+    { level: "branch", title: "지점 자동 전송이 꺼져 있어요", linkName: "자동화 설정 열기 →", href: "/messages?section=settings" },
+  ] as const)(
+    "disables the 재발송 button and explains the $level block in a hover card with a link; never resends",
+    async ({ level, title, linkName, href }) => {
+      mockData({
+        history: [buildNeedsSetupJobRow({
+          resendBlockedBy: level,
+          ...(level === "recipient" ? { resendBlockedRecipient: { kind: "client", id: 10 } } : {}),
+        })],
+      });
       render(<MessagesPage />);
       goToHistorySection();
       fireEvent.click(screen.getByText("설정고객"));
 
       const button = getRetryButton();
       expect(button).toBeDisabled();
-      expect(button).toHaveAttribute("data-disabled-reason", MESSAGE_JOB_RESEND_BLOCKED_COPY[level]);
-      expect(screen.queryByText(MESSAGE_JOB_RESEND_BLOCKED_COPY[level])).not.toBeInTheDocument();
+      expect(screen.queryByText(title)).not.toBeInTheDocument();
 
       fireEvent.click(button as HTMLButtonElement);
       expect(mockResendMutateAsync).not.toHaveBeenCalled();
       expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+
+      fireEvent.focus((button as HTMLButtonElement).closest('[data-slot="hover-card-trigger"]') as HTMLElement);
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
     },
   );
 
-  it("keeps the 재발송 button enabled with no reason when the safeguard would pass", () => {
+  it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", () => {
     mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: null })] });
     render(<MessagesPage />);
     goToHistorySection();
     fireEvent.click(screen.getByText("설정고객"));
 
     expect(getRetryButton()).toBeEnabled();
-    expect(getRetryButton()).not.toHaveAttribute("data-disabled-reason");
+    expect(getRetryButton()?.closest('[data-slot="hover-card-trigger"]')).toBeNull();
   });
 
   it.each([
