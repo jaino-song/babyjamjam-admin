@@ -59,7 +59,7 @@ export const MESSAGE_HISTORY_STATUS_LABELS: Readonly<Record<MessageLogStatus, st
   failed: "발송 실패",
   pending: "재시도 대기",
   canceled: "발송 취소",
-  needs_setup: "설정 필요",
+  needs_setup: "추가 정보 필요",
 };
 
 /** Detail-only provider-history state; list badges retain the stored status. */
@@ -90,7 +90,7 @@ export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus,
   sent: "발송 완료",
   failed: "발송 실패",
   canceled: "발송 취소",
-  needs_setup: "설정 필요",
+  needs_setup: "추가 정보 필요",
 };
 
 // Single source of truth for message-status -> StatusBadge variant. Both
@@ -156,16 +156,16 @@ export const MESSAGE_JOB_CANCEL_COPY = {
 export const MESSAGE_RECORD_REASON_LABEL = "사유";
 
 /** Reason label for a `needs_setup` row, where "사유" alone reads as a failure. */
-export const MESSAGE_SETUP_REASON_LABEL = "설정 필요 사유";
+export const MESSAGE_SETUP_REASON_LABEL = "추가 정보 필요 사유";
 
 // Copy for re-sending a `needs_setup` job after the operator fixed the setup.
 export const MESSAGE_JOB_RESEND_COPY = {
   action: "재발송",
   pending: "재발송 중",
   success: "재발송했습니다.",
-  stillNeedsSetup: "아직 설정이 필요합니다. 사유를 확인해 주세요.",
+  stillNeedsSetup: "아직 추가 정보가 필요합니다. 사유를 확인해 주세요.",
   notSent: "재발송하지 않았습니다.",
-  conflict: "지금은 재발송할 수 없습니다. 자동 전송 설정을 확인해 주세요.",
+  conflict: "지금은 재발송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.",
   failure: "재발송하지 못했습니다. 잠시 후 다시 시도해 주세요.",
 } as const;
 

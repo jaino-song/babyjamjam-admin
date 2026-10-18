@@ -922,7 +922,7 @@ describe("ClientDetailContent", () => {
   it.each([
     ["canceled", "취소 사유", "사용자가 발송을 취소했습니다."],
     ["failed", "실패 사유", "발신번호 인증에 실패했습니다."],
-    ["needs_setup", "설정 필요 사유", "연락처가 연결되지 않았습니다."],
+    ["needs_setup", "추가 정보 필요 사유", "연락처가 연결되지 않았습니다."],
   ] as const)("shows only the %s reason in the real history detail", async (status, reasonLabel, reason) => {
     const view = render(
       <ClientDetailContent
@@ -958,7 +958,7 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText(reasonLabel)).toBeInTheDocument();
     expect(screen.getByText(reason)).toBeInTheDocument();
-    for (const otherLabel of ["실패 사유", "취소 사유", "설정 필요 사유"]) {
+    for (const otherLabel of ["실패 사유", "취소 사유", "추가 정보 필요 사유"]) {
       if (otherLabel !== reasonLabel) expect(screen.queryByText(otherLabel)).not.toBeInTheDocument();
     }
     // The client detail passes no retry handler, so no row offers a resend.

@@ -9,7 +9,7 @@ const baseView: ClientMessageHistoryDetailView = {
   title: "서비스 안내",
   templateLabel: "서비스 안내",
   channelLabel: "메시지",
-  statusLabel: "설정 필요",
+  statusLabel: "추가 정보 필요",
   statusTone: "orange",
   sentAtLabel: "7월 16일 오전 10:00",
   recipientName: "김고객",
@@ -33,18 +33,18 @@ function renderDetail(
 }
 
 describe("ClientMessageHistoryDetail", () => {
-  it("shows the 설정 필요 사유 row for a needs_setup message and no 실패 사유", () => {
+  it("shows the 추가 정보 필요 사유 row for a needs_setup message and no 실패 사유", () => {
     renderDetail({ setupReason: "연락처가 연결되지 않았습니다." });
 
-    expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
     expect(screen.getByText("연락처가 연결되지 않았습니다.")).toBeInTheDocument();
     expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
   });
 
-  it("hides the 설정 필요 사유 row when there is no setup reason", () => {
+  it("hides the 추가 정보 필요 사유 row when there is no setup reason", () => {
     renderDetail({ setupReason: null });
 
-    expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument();
   });
 
   it("shows no 재발송 button for a needs_setup message when the caller passes no handler", () => {

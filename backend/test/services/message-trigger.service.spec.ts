@@ -3009,7 +3009,7 @@ describe("MessageTriggerService", () => {
         });
     });
 
-    // 규칙 메시지-04 / BJJ-444: manual, one-at-a-time resend of a '설정 필요' job.
+    // 규칙 메시지-04 / BJJ-444: manual, one-at-a-time resend of a '추가 정보 필요' job.
     describe("resendNeedsSetupJob", () => {
         const SETUP_REASON = "필수 정보 누락 (name)";
         const DAY_MS = 24 * 60 * 60 * 1000;
@@ -3301,7 +3301,7 @@ describe("MessageTriggerService", () => {
             expect(failure).toBeInstanceOf(ConflictException);
             expect((failure as ConflictException).getResponse()).toMatchObject({
                 code: "REQUEST_CONFLICT",
-                message: "지금은 재전송할 수 없습니다. 자동 전송 설정을 확인해 주세요.",
+                message: "지금은 재전송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.",
             });
             if (cause === "dispatch-off") expect(jobRepository.claimNeedsSetupWithRuleFence).not.toHaveBeenCalled();
             expect(deliveryService.prepareJob).not.toHaveBeenCalled();
@@ -3370,7 +3370,7 @@ describe("MessageTriggerService", () => {
             for (const written of beforeTerminal) expect(written.cancelReason).toBe(SETUP_REASON);
         });
 
-        it("returns '설정 필요' with the fresh reason, attempts unchanged, when the cause is still there", async () => {
+        it("returns '추가 정보 필요' with the fresh reason, attempts unchanged, when the cause is still there", async () => {
             const { service, job, deliveryService, writtenStatuses } = resendFixture();
             deliveryService.sendJob.mockImplementation(async () => {
                 job.markNeedsSetup("템플릿을 찾을 수 없습니다");
@@ -3466,7 +3466,7 @@ describe("MessageTriggerService", () => {
         });
 
         describe("a transient deferral never leaves the job pending", () => {
-            it("from preparation: back to '설정 필요' with the transient reason, attempts and schedule unchanged", async () => {
+            it("from preparation: back to '추가 정보 필요' with the transient reason, attempts and schedule unchanged", async () => {
                 const { service, job, deliveryService, writtenStatuses } = resendFixture();
                 const scheduledFor = job.scheduledFor;
                 deliveryService.prepareJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Rule retry policy could not be read"));
@@ -3481,7 +3481,7 @@ describe("MessageTriggerService", () => {
                 expect(deliveryService.sendJob).not.toHaveBeenCalled();
             });
 
-            it("from delivery: back to '설정 필요' with the transient reason, attempts and schedule unchanged", async () => {
+            it("from delivery: back to '추가 정보 필요' with the transient reason, attempts and schedule unchanged", async () => {
                 const { service, job, deliveryService, writtenStatuses } = resendFixture();
                 const scheduledFor = job.scheduledFor;
                 deliveryService.sendJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Provider timeout"));
@@ -3505,7 +3505,7 @@ describe("MessageTriggerService", () => {
                 expect(job.attempts).toBe(TRIGGER_JOB_MAX_ATTEMPTS - 1);
             });
 
-            it("from a catch-up postponement: back to '설정 필요', scheduledFor unchanged", async () => {
+            it("from a catch-up postponement: back to '추가 정보 필요', scheduledFor unchanged", async () => {
                 const scheduledFor = new Date(Date.now() - 3 * DAY_MS);
                 const { service, job, prisma, deliveryService, writtenStatuses } = resendFixture({
                     scheduledFor,
@@ -3544,7 +3544,7 @@ describe("MessageTriggerService", () => {
             });
         });
 
-        describe("an in-flight resend that is reclaimed returns to '설정 필요', never pending", () => {
+        describe("an in-flight resend that is reclaimed returns to '추가 정보 필요', never pending", () => {
             const processingResendRow = (overrides: Parameters<typeof createJob>[0] = {}) => {
                 const row = createJob({
                     id: "waiting-job", status: "processing", cancelReason: SETUP_REASON, attempts: 1,
@@ -3656,23 +3656,44 @@ describe("MessageTriggerService", () => {
             });
         });
 
-        it("sends an admin resend although the recipient flag is off, while the scheduler blocks the same kind of job", async () => {
+        it("refuses an admin resend when the recipient flag is off: 409, row kept needs_setup, no provider call", async () => {
             const fx = resendFixture();
             const { updateMany } = attachSafeguard(fx, { clientDefault: false });
+
+            const failure = await fx.service.resendNeedsSetupJob(branchId, fx.job.id).catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect((failure as ConflictException).getResponse()).toMatchObject({
+                code: "REQUEST_CONFLICT",
+                message: expect.stringContaining("받는 사람의 자동 문자 설정"),
+            });
+            expect(fx.jobRepository.claimNeedsSetupWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            expect(fx.job.status).toBe("needs_setup");
+            expect(updateMany).not.toHaveBeenCalled();
+        });
+
+        it("refuses an admin resend when the branch switch is off, keeping the row needs_setup", async () => {
+            const fx = resendFixture();
+            const { updateMany } = attachSafeguard(fx, { branchOn: false });
+
+            const failure = await fx.service.resendNeedsSetupJob(branchId, fx.job.id).catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(fx.job.status).toBe("needs_setup");
+            expect(updateMany).not.toHaveBeenCalled();
+        });
+
+        it("still sends an admin resend when rule, recipient and branch all allow it", async () => {
+            const fx = resendFixture();
+            attachSafeguard(fx, { clientDefault: true });
 
             const result = await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
 
             expect(result).toEqual({ id: fx.job.id, status: "sent", reason: null });
             expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
-            expect(updateMany).not.toHaveBeenCalled();
-
-            const scheduled = createJob({ id: "scheduled-same-kind", clientId: 1 });
-            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([scheduled]);
-            await fx.service.dispatchDueJobs();
-
-            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("recipient"));
-            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
-            expect(scheduled.status).toBe("canceled");
         });
     });
 

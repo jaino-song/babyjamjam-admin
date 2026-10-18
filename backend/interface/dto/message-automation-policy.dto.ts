@@ -155,7 +155,7 @@ export class MessageAutomationPoliciesResponseDto {
             {
                 id: "trigger-job-retry",
                 title: "자동 전송 재시도",
-                description: "자동 전송 처리 중 일시 오류가 발생하면 정해진 간격으로 재시도합니다. 설정 미비는 설정 필요 상태로 남겨 관리자가 확인합니다.",
+                description: "자동 전송 처리 중 일시 오류가 발생하면 정해진 간격으로 재시도합니다. 정보가 부족하면 추가 정보 필요 상태로 남겨 관리자가 확인합니다.",
                 active: policyActivations["trigger-job-retry"],
                 requiresApproval: true,
                 rows: [

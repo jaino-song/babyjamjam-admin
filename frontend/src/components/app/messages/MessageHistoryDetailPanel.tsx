@@ -39,7 +39,7 @@ import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 export type MessageHistoryStatus = "sent" | "failed" | "pending" | "canceled" | "needs_setup";
-// 설정 필요 rows appear under 전체 only; they get no filter tab of their own yet.
+// 추가 정보 필요 rows appear under 전체 only; they get no filter tab of their own yet.
 export type MessageHistoryFilter = "all" | Exclude<MessageHistoryStatus, "needs_setup">;
 
 export interface MessageHistoryRecord {

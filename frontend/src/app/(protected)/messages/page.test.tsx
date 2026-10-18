@@ -1188,7 +1188,7 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 });
 
-describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
+describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () => {
   const jobUuid = "6f0c7a52-6d41-4c63-9d0e-3a5b8a5f2b11";
 
   function buildNeedsSetupJobRow(overrides: Partial<MessageLogRecord> = {}): MessageLogRecord {
@@ -1214,10 +1214,10 @@ describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
     return document.querySelector('[data-component$="_detail-retry"]') as HTMLButtonElement | null;
   }
 
-  it("shows the 설정 필요 사유 row for a needs_setup job row", () => {
+  it("shows the 추가 정보 필요 사유 row for a needs_setup job row", () => {
     openNeedsSetupRow();
 
-    expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
     expect(within(getDetailPanel() as HTMLElement).getByText("수신자 연락처가 필요합니다.")).toBeInTheDocument();
   });
 
@@ -1345,7 +1345,7 @@ describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
     goToHistorySection();
     fireEvent.click(screen.getByText("이하은"));
 
-    expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument();
     fireEvent.click(getRetryButton() as HTMLButtonElement);
 
     await waitFor(() => expect(mockRetryMutateAsync).toHaveBeenCalledTimes(1));
