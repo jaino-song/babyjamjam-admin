@@ -133,6 +133,11 @@ export class CreateClientDto {
     @IsBoolean()
     applyMessageAutomation?: boolean;
 
+    /** Per-client switch for automatic SMS; when set it wins over `applyMessageAutomation`. */
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    smsAutomationEnabled?: boolean;
+
     @IsOptional()
     @IsBoolean()
     reuseExistingClient?: boolean;
@@ -243,6 +248,10 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     areaId?: string | null;
+
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    smsAutomationEnabled?: boolean;
 
     /**
      * Optimistic guard for a form that edited from a snapshot: the client's stored end date
