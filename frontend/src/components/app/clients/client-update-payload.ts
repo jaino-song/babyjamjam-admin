@@ -42,7 +42,6 @@ export function serializeClientUpdateFields(form: ClientFormData): UpdateClientD
         breastPump: form.breastPump,
         serviceStatus: form.serviceStatus,
         areaId: form.areaId || null,
-        smsAutomationEnabled: form.smsAutomationEnabled ?? true,
     };
 }
 

@@ -20,7 +20,6 @@ import {
     CreateUserDto,
     UpdateUserAccountDto,
     UpdateUserDto,
-    UpdateUserSmsAutomationDto,
 } from "../dto/user.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
@@ -194,24 +193,7 @@ export class UserController {
             branchId: approveUserDto.branchId,
             approvedBy: req.user.userId,
             ...(approveUserDto.ownerBranchId ? { ownerBranchId: approveUserDto.ownerBranchId } : {}),
-            ...(approveUserDto.smsAutomationEnabled !== undefined
-                ? { smsAutomationEnabled: approveUserDto.smsAutomationEnabled }
-                : {}),
         }));
-    }
-
-    @Patch(":id/sms-automation")
-    @UseGuards(JwtGuard, OwnerOnlyGuard)
-    async updateSmsAutomation(
-        @Req() req: AuthenticatedRequest,
-        @Param("id", new ParseUUIDPipe({ version: "4" })) id: string,
-        @Body() dto: UpdateUserSmsAutomationDto,
-    ) {
-        return toPublicUser(await runWithAdminAuditActor({
-            userId: req.user.userId,
-            globalRole: req.user.role,
-            branchRole: req.user.branchRole,
-        }, () => this.userService.setSmsAutomationEnabled(id, dto.enabled, req.user.userId)));
     }
 
     @Post(":id/reject")

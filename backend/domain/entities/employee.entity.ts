@@ -43,8 +43,6 @@ export class EmployeeEntity {
         public readonly deletedAt?: Date,
         /** Canonical identity key; display formatting remains in `phone`. */
         public phoneNormalized: string | null = normalizePhone(phone),
-        /** Per-employee switch for automatic SMS. */
-        public smsAutomationEnabled: boolean = true,
     ) {}
 
     get isDeleted(): boolean {
@@ -66,7 +64,6 @@ export class EmployeeEntity {
         grade?: string,
         openToNextWork?: boolean,
         birthday?: string,
-        smsAutomationEnabled?: boolean,
     ): void {
         this.name = name ?? this.name;
         this.workArea = workArea ?? this.workArea;
@@ -78,7 +75,6 @@ export class EmployeeEntity {
         this.grade = grade ?? this.grade;
         this.openToNextWork = openToNextWork ?? this.openToNextWork;
         this.birthday = birthday ?? this.birthday;
-        this.smsAutomationEnabled = smsAutomationEnabled ?? this.smsAutomationEnabled;
     }
 
     static create(
@@ -89,7 +85,6 @@ export class EmployeeEntity {
         openToNextWork: boolean,
         registeredDate?: Date | null,
         birthday?: string,
-        smsAutomationEnabled: boolean = true,
     ): EmployeeEntity {
         const phoneNormalized = assertRequiredPhone(phone);
         return new EmployeeEntity(
@@ -103,7 +98,6 @@ export class EmployeeEntity {
             birthday,
             undefined,
             phoneNormalized,
-            smsAutomationEnabled,
         );
     }
 
@@ -122,7 +116,6 @@ export class EmployeeEntity {
         birthday?: string,
         deletedAt?: Date,
         phoneNormalized?: string | null,
-        smsAutomationEnabled: boolean = true,
     ): EmployeeEntity {
         return new EmployeeEntity(
             id,
@@ -135,7 +128,6 @@ export class EmployeeEntity {
             birthday,
             deletedAt,
             phoneNormalized,
-            smsAutomationEnabled,
         );
     }
 }

@@ -11,7 +11,6 @@ export type UpdateEmployeeParams = {
     grade?: string;
     openToNextWork?: boolean;
     birthday?: string;
-    smsAutomationEnabled?: boolean;
 };
 
 export class EmployeeTargetVersionMismatchError extends Error {
@@ -45,7 +44,6 @@ export class UpdateEmployeeUsecase {
             updates.grade,
             updates.openToNextWork,
             updates.birthday,
-            updates.smsAutomationEnabled,
         );
 
         return this.employeeRepository.update(branchid, employee);

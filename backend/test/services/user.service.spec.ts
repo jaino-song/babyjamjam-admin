@@ -9,7 +9,6 @@ import {
 } from "../../application/usecases/user";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { AdminAuditActor, AdminAuditEventWriter } from "../../application/services/admin-audit-event.service";
-import { runWithAdminAuditActor } from "../../application/services/admin-audit-context";
 
 describe("UserService", () => {
     // ============================================
@@ -112,19 +111,6 @@ describe("UserService", () => {
             expect(prismaService.auth_session.updateMany.mock.invocationCallOrder[0])
                 .toBeGreaterThan(prismaService.user_branch.deleteMany.mock.invocationCallOrder[0] ?? Infinity);
         });
-        it("selects smsAutomationEnabled and reports a stored false in the directory item", async () => {
-            prismaService.user.findMany.mockResolvedValue([{
-                id: "u1", email: null, name: "Opted Out", phone: null, birthDate: null, profileImage: null,
-                role: "user", createdAt: new Date("2026-01-01"), emailVerified: true, authProvider: "email",
-                approvalStatus: "approved", requestedRole: null, smsAutomationEnabled: false, userBranches: [],
-            }]);
-
-            const result = await service.findDirectory({ callerRole: "owner" });
-
-            expect(prismaService.user.findMany.mock.calls[0][0].select).toMatchObject({ smsAutomationEnabled: true });
-            expect(result[0]?.smsAutomationEnabled).toBe(false);
-        });
-
         it("should query without a where clause when no filters are provided (owner caller)", async () => {
             await service.findDirectory({ callerRole: "owner" });
 
@@ -1364,69 +1350,6 @@ describe("UserService", () => {
     // ============================================
     // approve
     // ============================================
-    describe("setSmsAutomationEnabled", () => {
-        const persistedRow = (smsAutomationEnabled: boolean) => ({
-            id: "u1",
-            kakaoId: null,
-            email: "u1@example.com",
-            name: "U1",
-            profileImage: null,
-            role: "user",
-            createdAt: new Date("2026-01-01"),
-            passwordHash: null,
-            emailVerified: true,
-            emailVerifiedAt: null,
-            authProvider: "email",
-            smsAutomationEnabled,
-        });
-
-        beforeEach(() => {
-            prismaService.user.findUnique.mockImplementation(async (args: { where: { id: string } }) =>
-                args.where.id === "owner-1" ? { role: "owner" } : { id: "u1", smsAutomationEnabled: true });
-        });
-
-        it("updates only the flag, audits the change and returns the updated user", async () => {
-            prismaService.user.update.mockResolvedValue(persistedRow(false));
-
-            const result = await runWithAdminAuditActor(ownerActor, () =>
-                service.setSmsAutomationEnabled("u1", false, "owner-1"));
-
-            expect(prismaService.user.update).toHaveBeenCalledWith({
-                where: { id: "u1" },
-                data: { smsAutomationEnabled: false },
-            });
-            expect(result.smsAutomationEnabled).toBe(false);
-            expect(auditAppend).toHaveBeenCalledWith(
-                prismaService,
-                expect.objectContaining({
-                    action: "user.sms_automation.updated",
-                    targetId: "u1",
-                    before: { id: "u1", smsAutomationEnabled: true },
-                    after: { id: "u1", smsAutomationEnabled: false },
-                }),
-            );
-        });
-
-        it("refuses a caller who is no longer an owner before touching the user", async () => {
-            prismaService.user.findUnique.mockResolvedValue({ role: "admin" });
-
-            await expect(service.setSmsAutomationEnabled("u1", false, "owner-1"))
-                .rejects.toBeInstanceOf(ForbiddenException);
-
-            expect(prismaService.user.update).not.toHaveBeenCalled();
-        });
-
-        it("answers 404 for an unknown user", async () => {
-            prismaService.user.findUnique.mockImplementation(async (args: { where: { id: string } }) =>
-                args.where.id === "owner-1" ? { role: "owner" } : null);
-
-            await expect(service.setSmsAutomationEnabled("missing", true, "owner-1"))
-                .rejects.toBeInstanceOf(NotFoundException);
-
-            expect(prismaService.user.update).not.toHaveBeenCalled();
-        });
-    });
-
     describe("approve", () => {
         beforeEach(() => {
             prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
@@ -1469,39 +1392,6 @@ describe("UserService", () => {
             expect(result.approvedBy).toBe("owner-1");
             expect(result.role).toBe("admin");
             expect(result.tokenVersion).toBe(1);
-        });
-
-        it.each([false, true])("persists an explicit smsAutomationEnabled=%s in the same update that approves", async (enabled) => {
-            prismaService.user.update.mockResolvedValue({
-                id: "u1",
-                approvalStatus: "approved",
-                tokenVersion: 1,
-                smsAutomationEnabled: enabled,
-            });
-
-            const result = await service.approve("u1", {
-                role: "user",
-                approvedBy: "owner-1",
-                actor: ownerActor,
-                branchId: "branch-1",
-                smsAutomationEnabled: enabled,
-            });
-
-            expect(prismaService.user.update).toHaveBeenCalledTimes(1);
-            expect(prismaService.user.update).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    data: expect.objectContaining({ approvalStatus: "approved", smsAutomationEnabled: enabled }),
-                }),
-            );
-            expect(result.smsAutomationEnabled).toBe(enabled);
-        });
-
-        it("leaves the stored flag alone when approval does not supply one", async () => {
-            prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "approved", tokenVersion: 1 });
-
-            await service.approve("u1", { role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1" });
-
-            expect(prismaService.user.update.mock.calls[0][0].data).not.toHaveProperty("smsAutomationEnabled");
         });
 
         it("should create or update the selected branch membership", async () => {
