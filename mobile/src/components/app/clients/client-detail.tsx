@@ -40,6 +40,8 @@ import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  MESSAGE_JOB_RESEND_COPY,
+  normalizeApiError,
   getMessageHistoryDetailStatusLabel,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
@@ -77,8 +79,8 @@ import {
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
-import { canRetryFailedHistory, retryMessageHistory } from "@/features/message-triggers/retry-history";
+import { useResendMessageTriggerJob, useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 import { ContractLinkConfirmSheet } from "./contract-link-confirm-sheet";
 
@@ -492,7 +494,8 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
 export type DetailTabId = "scheduleChange" | "basic" | "contracts" | "message" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
-  id: number;
+  id: number | string;
+  triggerJobId?: string | null;
   provider: string;
   templateKey: string;
   receiver: string | null;
@@ -749,11 +752,48 @@ export function ClientDetailContent({
   const authUserQuery = useGetAuthUser();
   const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
   const retryMessageMutation = useRetryMessageHistory(client.id);
+  const resendMessageMutation = useResendMessageTriggerJob(client.id);
+  const isRetryingMessage = retryMessageMutation.isPending || resendMessageMutation.isPending;
   const [messageRetryTarget, setMessageRetryTarget] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
   const retryLog = messageRetryTarget?.key === detailKey ? messageRetryTarget.log : null;
-  const canRetryMessage = canRetryFailedHistory(selectedLog, canManageBranchFeatures);
+  const canRetryMessage = canManageBranchFeatures && (
+    canRetryFailedHistory(selectedLog, true) || getResendableJobId(selectedLog) !== null
+  );
   const handleConfirmMessageRetry = async () => {
-    if (!retryLog || !canRetryFailedHistory(retryLog, canManageBranchFeatures) || retryMessageMutation.isPending) return;
+    if (!retryLog || !canManageBranchFeatures || isRetryingMessage) return;
+    const jobId = getResendableJobId(retryLog);
+    if (jobId !== null) {
+      try {
+        const response = await resendMessageMutation.mutateAsync(jobId);
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: response.status === "sent" ? MESSAGE_JOB_RESEND_COPY.success
+            : response.status === "needs_setup" ? MESSAGE_JOB_RESEND_COPY.stillNeedsSetup
+            : response.status === "canceled"
+              ? response.reason ? `${MESSAGE_JOB_RESEND_COPY.notSent} ${response.reason}` : MESSAGE_JOB_RESEND_COPY.notSent
+              : MESSAGE_JOB_RESEND_COPY.failure,
+          variant: response.status === "sent" ? "success" : "destructive",
+        });
+        if (response.status === "needs_setup") {
+          setSelectedEntry(current => current && { ...current, log: { ...current.log, errorMessage: response.reason ?? null } });
+        } else {
+          setSelectedEntry(null);
+        }
+      } catch (error) {
+        const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: normalized.status === 409 ? MESSAGE_JOB_RESEND_COPY.conflict
+            : normalized.verified ? normalized.message : MESSAGE_JOB_RESEND_COPY.failure,
+          variant: "destructive",
+        });
+        setSelectedEntry(null);
+      } finally {
+        setMessageRetryTarget(null);
+      }
+      return;
+    }
+    if (!canRetryFailedHistory(retryLog, true) || typeof retryLog.id !== "number") return;
     toast(await retryMessageHistory(retryMessageMutation.mutateAsync, retryLog.id));
     setMessageRetryTarget(null);
     setSelectedEntry(null);
@@ -1603,13 +1643,13 @@ export function ClientDetailContent({
       <ApprovalTwoButtonModal
         data-component={`${dataComponent}_tab-panel_message_retry-modal`}
         open={retryLog !== null && activeTab === "message"}
-        onOpenChange={(open) => { if (!open && !retryMessageMutation.isPending) setMessageRetryTarget(null); }}
+        onOpenChange={(open) => { if (!open && !isRetryingMessage) setMessageRetryTarget(null); }}
         title="메시지를 다시 보낼까요?"
         description={`${retryLog?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="재발송"
         pendingLabel="재발송 중..."
-        isPending={retryMessageMutation.isPending}
+        isPending={isRetryingMessage}
         onApprove={handleConfirmMessageRetry}
       />
 
@@ -1651,7 +1691,7 @@ export function ClientDetailContent({
             }}
             onBack={() => setSelectedEntry(null)}
             canRetry={canRetryMessage}
-            isRetrying={retryMessageMutation.isPending}
+            isRetrying={isRetryingMessage}
             onRetry={() => { if (selectedLog && canRetryMessage) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
           />
           </>

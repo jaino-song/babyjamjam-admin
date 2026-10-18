@@ -1,7 +1,8 @@
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
+import { formatMessageDateTimeCompact, MESSAGE_JOB_RESEND_COPY } from "@babyjamjam/shared";
+import { AxiosError, AxiosHeaders } from "axios";
 import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import { eformsignApi } from "@/services/api";
 import { toast } from "@/hooks/use-toast";
@@ -17,10 +18,13 @@ import { useIssueContract } from "@/hooks/useIssueContract";
 import { useFormStore } from "@/stores/form-store";
 
 const mockRetryHistory = jest.fn();
+const mockResendJob = jest.fn();
+const mockUseResendJob = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockResendJob, isPending: false }));
 const mockUseRetryHistory = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockRetryHistory, isPending: false }));
 let mockMessageBranchRole = "manager";
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useRetryMessageHistory: (...args: unknown[]) => mockUseRetryHistory(...args),
+  useResendMessageTriggerJob: (...args: unknown[]) => mockUseResendJob(...args),
 }));
 
 describe("client message lookup detail labels", () => {
@@ -50,11 +54,12 @@ describe("customer message retry", () => {
   beforeEach(() => {
     mockMessageBranchRole = "manager";
     mockRetryHistory.mockReset().mockResolvedValue({ status: "sent" });
+    mockResendJob.mockReset().mockResolvedValue({ status: "sent" });
   });
   afterEach(() => { mockMessageBranchRole = "manager"; });
-  async function openRecord(status = "failed") {
+  async function openRecord(status = "failed", overrides: Partial<ClientNotificationLogRecord> = {}) {
     render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
-      client={client} activeTab="message" notificationLogs={[{ ...row, status }]}
+      client={client} activeTab="message" notificationLogs={[{ ...row, status, ...overrides }]}
       onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
     await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
   }
@@ -77,6 +82,65 @@ describe("customer message retry", () => {
     mockMessageBranchRole = "staff";
     await openRecord();
     expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  const jobRow = { id: "job:job-123", provider: "message_job", triggerJobId: "job-123" };
+  it("confirms a needs_setup job resend with its bare job id and client context", async () => {
+    await openRecord("needs_setup", jobRow);
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    expect(mockResendJob).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("메시지를 다시 보낼까요?");
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(mockResendJob).toHaveBeenCalledWith("job-123"));
+    expect(mockUseResendJob).toHaveBeenCalledWith(client.id);
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "재발송", variant: "success" }));
+  });
+  it.each([null, "", "   "])("hides job resend without a usable triggerJobId (%s)", async triggerJobId => {
+    await openRecord("needs_setup", { ...jobRow, triggerJobId });
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it.each(["sent", "pending", "failed", "canceled"])("hides job resend for %s", async status => {
+    await openRecord(status, jobRow);
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it("hides needs_setup job resend for non-managers", async () => {
+    mockMessageBranchRole = "staff";
+    await openRecord("needs_setup", jobRow);
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it.each([
+    ["sent", null, MESSAGE_JOB_RESEND_COPY.success, "success"],
+    ["needs_setup", "새 설정 사유", MESSAGE_JOB_RESEND_COPY.stillNeedsSetup, "destructive"],
+    ["canceled", "발송 취소 사유", `${MESSAGE_JOB_RESEND_COPY.notSent} 발송 취소 사유`, "destructive"],
+    ["canceled", null, MESSAGE_JOB_RESEND_COPY.notSent, "destructive"],
+    ["failed", null, MESSAGE_JOB_RESEND_COPY.failure, "destructive"],
+  ])("matches global resend feedback for %s (%s)", async (status, reason, description, variant) => {
+    mockResendJob.mockResolvedValue({ status, reason });
+    await openRecord("needs_setup", jobRow);
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith({ title: MESSAGE_JOB_RESEND_COPY.action, description, variant }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    if (status === "needs_setup") {
+      expect(screen.getByText("새 설정 사유")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("button", { name: "목록으로" })).not.toBeInTheDocument();
+    }
+  });
+  it.each([409, 500])("uses safe error copy for HTTP %s and closes the snapshot", async status => {
+    mockResendJob.mockRejectedValue(new AxiosError("internal", "ERR_BAD_REQUEST", undefined, undefined, {
+      status, statusText: "Error", data: { message: "internal" }, headers: {}, config: { headers: new AxiosHeaders() },
+    }));
+    await openRecord("needs_setup", jobRow);
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith({
+      title: MESSAGE_JOB_RESEND_COPY.action, variant: "destructive",
+      description: status === 409 ? MESSAGE_JOB_RESEND_COPY.conflict : MESSAGE_JOB_RESEND_COPY.failure,
+    }));
+    expect(screen.queryByRole("button", { name: "목록으로" })).not.toBeInTheDocument();
   });
 });
 

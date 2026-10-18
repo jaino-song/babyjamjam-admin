@@ -8,7 +8,7 @@ import type { Client } from "@/lib/client/types";
 import { ClientDetailContent } from "../client-detail";
 
 const mockMutateAsync = jest.fn();
-jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({ useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({ useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }), useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
 let mockIsPending = false;
 
 jest.mock("@/features/clients", () => ({

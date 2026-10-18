@@ -1,5 +1,13 @@
 import { MESSAGE_JOB_RESEND_COPY, normalizeApiError } from "@babyjamjam/shared";
 
+/** Return the bare job id, never the prefixed history row id. */
+export function getResendableJobId(
+  record: { provider: string; status: string; triggerJobId?: string | null } | null,
+): string | null {
+  if (record?.provider !== "message_job" || record.status !== "needs_setup") return null;
+  return record.triggerJobId?.trim() ? record.triggerJobId : null;
+}
+
 export function canRetryFailedHistory(
   record: { id: number | string; status: string } | null,
   canManage: boolean,

@@ -1,6 +1,20 @@
 import { AxiosError, AxiosHeaders } from "axios";
 import { MESSAGE_JOB_RESEND_COPY } from "@babyjamjam/shared";
-import { canRetryFailedHistory, retryMessageHistory } from "./retry-history";
+import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "./retry-history";
+
+describe("getResendableJobId", () => {
+  it.each([
+    [{ provider: "message_job", status: "needs_setup", triggerJobId: "uuid" }, "uuid"],
+    [{ provider: "message_job", status: "needs_setup", triggerJobId: null }, null],
+    [{ provider: "message_job", status: "needs_setup", triggerJobId: "   " }, null],
+    [{ provider: "message_job", status: "needs_setup" }, null],
+    [{ provider: "aligo_sms", status: "needs_setup", triggerJobId: "uuid" }, null],
+    [{ provider: "message_job", status: "sent", triggerJobId: "uuid" }, null],
+    [null, null],
+  ] as const)("returns only eligible job ids (%j)", (row, expected) => {
+    expect(getResendableJobId(row)).toBe(expected);
+  });
+});
 
 describe("shared history retry", () => {
   it.each([
