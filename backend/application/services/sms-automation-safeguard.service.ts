@@ -27,9 +27,27 @@ export interface SmsSafeguardJob {
 
 export type SmsAutomationSafeguardLevel = "rule" | "recipient" | "branch";
 
+/** The entity whose `smsAutomationEnabled` flag blocked a send (recipient level only). */
+export type SmsAutomationSafeguardRecipient =
+    | { kind: "client"; id: number }
+    | { kind: "employee"; id: number }
+    | { kind: "user"; id: string };
+
 export type SmsAutomationSafeguardDecision =
     | { allowed: true }
-    | { allowed: false; level: SmsAutomationSafeguardLevel; reason: string };
+    | {
+        allowed: false;
+        level: SmsAutomationSafeguardLevel;
+        reason: string;
+        /** Set when a recipient-level block names the entity that has the flag off. */
+        recipient?: SmsAutomationSafeguardRecipient;
+    };
+
+type BlockedDecision = Extract<SmsAutomationSafeguardDecision, { allowed: false }>;
+
+function recipientBlock(reason: string, recipient: SmsAutomationSafeguardRecipient | null): BlockedDecision {
+    return { allowed: false, level: "recipient", reason, ...(recipient ? { recipient } : {}) };
+}
 
 /** Cancel / supersede reason recorded when the safeguard blocks a send. */
 export function smsAutomationSafeguardReason(level: SmsAutomationSafeguardLevel): string {
@@ -172,7 +190,7 @@ export class SmsAutomationSafeguardService {
             });
             if (!client) return { allowed: false, level: "recipient", reason: "recipient client is missing" };
             if (!client.smsAutomationEnabled) {
-                return { allowed: false, level: "recipient", reason: "client SMS automation is off" };
+                return recipientBlock("client SMS automation is off", { kind: "client", id: job.clientId });
             }
             return null;
         }
@@ -183,8 +201,8 @@ export class SmsAutomationSafeguardService {
             const schedule = await db.employee_schedule.findFirst({
                 where: { id: job.employeeScheduleId, ...branchScope },
                 select: {
-                    primaryEmployee: { select: { smsAutomationEnabled: true } },
-                    secondaryEmployee: { select: { smsAutomationEnabled: true } },
+                    primaryEmployee: { select: { id: true, smsAutomationEnabled: true } },
+                    secondaryEmployee: { select: { id: true, smsAutomationEnabled: true } },
                 },
             });
             const employee = job.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
@@ -192,7 +210,10 @@ export class SmsAutomationSafeguardService {
                 : schedule?.secondaryEmployee;
             if (!employee) return { allowed: false, level: "recipient", reason: "recipient employee is missing" };
             if (!employee.smsAutomationEnabled) {
-                return { allowed: false, level: "recipient", reason: "employee SMS automation is off" };
+                return recipientBlock(
+                    "employee SMS automation is off",
+                    typeof employee.id === "number" ? { kind: "employee", id: employee.id } : null,
+                );
             }
             return null;
         }
@@ -224,13 +245,23 @@ export class SmsAutomationSafeguardService {
             where: { branchId: job.branchId, smsAutomationEnabled: false, ...phoneMatch },
             select: { id: true },
         });
-        if (client) return { allowed: false, level: "recipient", reason: "matched client SMS automation is off" };
+        if (client) {
+            return recipientBlock(
+                "matched client SMS automation is off",
+                typeof client.id === "number" ? { kind: "client", id: client.id } : null,
+            );
+        }
 
         const employee = await db.employee.findFirst({
             where: { branchId: job.branchId, smsAutomationEnabled: false, ...phoneMatch },
             select: { id: true },
         });
-        if (employee) return { allowed: false, level: "recipient", reason: "matched employee SMS automation is off" };
+        if (employee) {
+            return recipientBlock(
+                "matched employee SMS automation is off",
+                typeof employee.id === "number" ? { kind: "employee", id: employee.id } : null,
+            );
+        }
 
         // Users carry no normalized phone and no branchId; they are scoped by user_branch.
         const users = await db.user.findMany({
@@ -239,11 +270,15 @@ export class SmsAutomationSafeguardService {
                 phone: { not: null },
                 userBranches: { some: { branchId: job.branchId } },
             },
-            select: { phone: true },
+            select: { id: true, phone: true },
             take: PHONE_MATCH_USER_LIMIT,
         });
-        if (users.some((user) => keySet.has(normalizeKoreanPhoneLookupKey(user.phone)))) {
-            return { allowed: false, level: "recipient", reason: "matched user SMS automation is off" };
+        const matchedUser = users.find((user) => keySet.has(normalizeKoreanPhoneLookupKey(user.phone)));
+        if (matchedUser) {
+            return recipientBlock(
+                "matched user SMS automation is off",
+                typeof matchedUser.id === "string" ? { kind: "user", id: matchedUser.id } : null,
+            );
         }
         return null;
     }

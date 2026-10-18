@@ -311,7 +311,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     /**
-     * Manual resend of a '설정 필요' job (BJJ-444): the same rule fence and
+     * Manual resend of a '추가 정보 필요' (needs_setup) job (BJJ-444): the same rule fence and
      * token-minting claim as the pending claim, but the predicate is
      * `needs_setup`. `attempts` is untouched; a lost race, an inactive rule or
      * branch override, or a stale rule generation returns null and leaves the

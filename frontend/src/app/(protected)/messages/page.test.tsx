@@ -116,12 +116,36 @@ function mockAuthUser(data: Record<string, unknown> | null) {
   });
 }
 
+let mockSearchParams = new URLSearchParams();
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useSearchParams: () => mockSearchParams,
+}));
+
+// Radix Popper (the hover card) measures with ResizeObserver, which jsdom lacks.
+if (!("ResizeObserver" in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => mockUseGetAuthUser(),
+}));
+
+// The deep-link tests only need to know which section rendered; their own
+// data hooks are not part of this page's fixtures.
+jest.mock("@/components/app/messages/MessageTenantApplicationSettings", () => ({
+  MessageTenantApplicationSettings: () => null,
+}));
+jest.mock("@/components/app/messages/TriggerRulesManager", () => ({
+  TriggerRulesManager: () => null,
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -440,6 +464,7 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  mockSearchParams = new URLSearchParams();
   document.cookie = "selected_branch_id=branch-test; path=/";
   mockAuthUser({ id: "user-1", role: "user", branchRole: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
@@ -1188,7 +1213,64 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 });
 
-describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
+describe("messages page — ?section= deep link", () => {
+  it("opens the requested section on arrival", async () => {
+    mockSearchParams = new URLSearchParams("section=history");
+    mockData({ history: [] });
+    render(<MessagesPage />);
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).not.toBeNull();
+    });
+  });
+
+  it.each(["settings", "triggers"] as const)(
+    "follows a link to ?section=%s from the history section the viewer reached via the nav",
+    async (value) => {
+      mockData({ history: [] });
+      const { rerender } = render(<MessagesPage />);
+      goToHistorySection();
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).not.toBeNull();
+
+      mockSearchParams = new URLSearchParams(`section=${value}`);
+      rerender(<MessagesPage />);
+
+      await waitFor(() => {
+        expect(document.querySelector(`[data-component="desktop_messages_sections_section-content_${value}-section"]`)).not.toBeNull();
+      });
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).toBeNull();
+    },
+  );
+
+  it("writes the nav pick into ?section= with a null history state so Next's router syncs useSearchParams", () => {
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    try {
+      mockData({ history: [] });
+      render(<MessagesPage />);
+      goToHistorySection();
+
+      expect(replaceState).toHaveBeenCalled();
+      const [state, , url] = replaceState.mock.calls[replaceState.mock.calls.length - 1];
+      expect(state).toBeNull();
+      expect(new URL(String(url)).searchParams.get("section")).toBe("history");
+    } finally {
+      replaceState.mockRestore();
+    }
+  });
+
+  it("stays on the default section for a section the viewer cannot open or that does not exist", async () => {
+    mockAuthUser({ id: "user-2", role: "user", branchRole: "user" });
+    for (const value of ["triggers", "nope", "scheduled"]) {
+      mockSearchParams = new URLSearchParams(`section=${value}`);
+      const { unmount } = render(<MessagesPage />);
+      await act(async () => {});
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_send-section"]')).not.toBeNull();
+      unmount();
+    }
+  });
+});
+
+describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () => {
   const jobUuid = "6f0c7a52-6d41-4c63-9d0e-3a5b8a5f2b11";
 
   function buildNeedsSetupJobRow(overrides: Partial<MessageLogRecord> = {}): MessageLogRecord {
@@ -1214,10 +1296,10 @@ describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
     return document.querySelector('[data-component$="_detail-retry"]') as HTMLButtonElement | null;
   }
 
-  it("shows the 설정 필요 사유 row for a needs_setup job row", () => {
+  it("shows the 추가 필요 정보 row for a needs_setup job row", () => {
     openNeedsSetupRow();
 
-    expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     expect(within(getDetailPanel() as HTMLElement).getByText("수신자 연락처가 필요합니다.")).toBeInTheDocument();
   });
 
@@ -1252,6 +1334,73 @@ describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
     await waitFor(() => expect(mockResendMutateAsync).toHaveBeenCalledTimes(1));
     expect(mockResendMutateAsync).toHaveBeenCalledWith(jobUuid);
     expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { level: "rule", title: "자동화 규칙이 꺼져 있어요", linkName: "규칙 보기 →", href: "/messages?section=triggers" },
+    { level: "recipient", title: "자동 문자가 꺼져 있어요", linkName: "고객 정보에서 켜기 →", href: "/clients?id=10" },
+    { level: "branch", title: "지점 자동 전송이 꺼져 있어요", linkName: "자동화 설정 열기 →", href: "/messages?section=settings" },
+  ] as const)(
+    "disables the 재발송 button and explains the $level block in a hover card with a link; never resends",
+    async ({ level, title, linkName, href }) => {
+      mockData({
+        history: [buildNeedsSetupJobRow({
+          resendBlockedBy: level,
+          ...(level === "recipient" ? { resendBlockedRecipient: { kind: "client", id: 10 } } : {}),
+        })],
+      });
+      render(<MessagesPage />);
+      goToHistorySection();
+      fireEvent.click(screen.getByText("설정고객"));
+
+      const button = getRetryButton();
+      expect(button).toBeDisabled();
+      expect(screen.queryByText(title)).not.toBeInTheDocument();
+
+      fireEvent.click(button as HTMLButtonElement);
+      expect(mockResendMutateAsync).not.toHaveBeenCalled();
+      expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+
+      fireEvent.focus((button as HTMLButtonElement).closest('[data-slot="hover-card-trigger"]') as HTMLElement);
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
+    },
+  );
+
+  it.each([
+    { role: "user", label: "a non-owner", hasLink: false },
+    { role: "owner", label: "an owner", hasLink: true },
+  ] as const)("links a blocked user recipient to the accounts screen for $label only", async ({ role, hasLink }) => {
+    mockAuthUser({ id: "viewer-1", role, branchRole: "manager" });
+    mockData({
+      history: [buildNeedsSetupJobRow({
+        resendBlockedBy: "recipient",
+        resendBlockedRecipient: { kind: "user", id: "u-1" },
+      })],
+    });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+
+    const trigger = getRetryButton()?.closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+    fireEvent.focus(trigger);
+    expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+    const link = screen.queryByRole("link", { name: "계정 관리에서 켜기 →" });
+    if (hasLink) {
+      expect(link).toHaveAttribute("href", "/system-admin?section=accounts");
+    } else {
+      expect(link).toBeNull();
+    }
+  });
+
+  it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", () => {
+    mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: null })] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+
+    expect(getRetryButton()).toBeEnabled();
+    expect(getRetryButton()?.closest('[data-slot="hover-card-trigger"]')).toBeNull();
   });
 
   it.each([
@@ -1345,7 +1494,7 @@ describe("messages page — 설정 필요 job 재발송 (BJJ-444)", () => {
     goToHistorySection();
     fireEvent.click(screen.getByText("이하은"));
 
-    expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
     fireEvent.click(getRetryButton() as HTMLButtonElement);
 
     await waitFor(() => expect(mockRetryMutateAsync).toHaveBeenCalledTimes(1));
