@@ -298,6 +298,25 @@ describe("EformsignBackupExportService", () => {
             await expectCode(service.getSnapshot(principal, SNAPSHOT_ID), "SNAPSHOT_EXPIRED");
         });
 
+        it("a snapshot of another company is NOT_FOUND even when the principal may use that company: only the configured company counts", async () => {
+            const bodyOf = (error: ExportError) => ({ code: error.code, reasonCode: error.reasonCode, retryAfterSeconds: error.retryAfterSeconds });
+            const twoCompanies: ExportPrincipal = { ...principal, companyIds: [COMPANY, "other"] };
+            const { service, repository } = setup();
+            repository.findSnapshot.mockResolvedValue(null);
+            const unknownBody = bodyOf(await expectCode(service.getSnapshot(twoCompanies, SNAPSHOT_ID), "NOT_FOUND"));
+
+            repository.findSnapshot.mockResolvedValue(snapshotRecord({ companyId: "other" }));
+            repository.findCandidateArtifact.mockResolvedValue({ documentId: "D001", fileType: "document", sha256: SHA, byteSize: BYTES.length });
+            const errors = [
+                await expectCode(service.getSnapshot(twoCompanies, SNAPSHOT_ID), "NOT_FOUND"),
+                await expectCode(service.listCandidates(twoCompanies, SNAPSHOT_ID), "NOT_FOUND"),
+                await expectCode(service.readArtifact(twoCompanies, SNAPSHOT_ID, IDENTITY), "NOT_FOUND"),
+            ];
+            for (const error of errors) expect(bodyOf(error)).toEqual(unknownBody);
+            expect(repository.listCandidates).not.toHaveBeenCalled();
+            expect(repository.readArtifactForDownload).not.toHaveBeenCalled();
+        });
+
         it("returns the view for ready, building and failed snapshots", async () => {
             const { service, repository } = setup();
             const ready = await service.getSnapshot(principal, SNAPSHOT_ID);
