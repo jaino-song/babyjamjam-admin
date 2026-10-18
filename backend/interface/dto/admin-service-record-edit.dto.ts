@@ -160,6 +160,13 @@ export class RetryServiceRecordDocumentDto {
     expectedGeneration!: string;
 }
 
+export type {
+    ServiceRecordRevisionChangeValue,
+    ServiceRecordRevisionChangesResponse,
+    ServiceRecordRevisionFieldChange,
+    ServiceRecordRevisionSessionChange,
+} from "@babyjamjam/shared/types/service-record";
+
 // Explicit aliases make the adapter naming clear without introducing a second
 // validation shape for administrator routes.
 export {

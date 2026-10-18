@@ -4,7 +4,7 @@ import type { Employee, CreateEmployeeDto, UpdateEmployeeDto } from '../types';
 export const employeesApi = {
     list: () => api.get<Employee[]>('/employees'),
 
-    getById: (id: number) => api.get<Employee>(`/employees/${id}`),
+    getById: (id: number) => api.get<Employee>('/employees/id', { params: { id } }),
 
     create: (data: CreateEmployeeDto) => api.post<Employee>('/employees', data),
 

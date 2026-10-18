@@ -94,7 +94,7 @@ function withClientReadBarrier(
     }) as unknown as PrismaClient;
 }
 
-function contractDetail(documentId: string): EformsignApiDocumentResponse {
+function contractDetail(documentId: string, phone: string): EformsignApiDocumentResponse {
     return {
         id: documentId,
         document_number: `MIRROR-${documentId}`,
@@ -115,7 +115,11 @@ function contractDetail(documentId: string): EformsignApiDocumentResponse {
             step_recipients: [],
             step_group: 3,
         },
-        fields: [],
+        fields: [
+            { id: "이용자 성명", value: "김고객", type: "text" },
+            { id: "이용자 생년월일", value: "1992-03-04", type: "text" },
+        ],
+        recipients: [{ recipient_type: "02", name: "김고객", sms: phone }],
     };
 }
 
@@ -147,7 +151,7 @@ async function createContractDocument(
     const updatedDate = overrides.updatedDate ?? createdDate;
     const sourceUpdatedDate = overrides.sourceUpdatedDate ?? new Date("2026-09-01T01:00:00.000Z");
     const syncedAt = overrides.syncedAt ?? new Date("2026-09-01T01:01:00.000Z");
-    const detail = contractDetail(documentId);
+    const detail = contractDetail(documentId, overrides.customerPhone ?? "01012345678");
     const serviceRecordCaseId = overrides.serviceRecordCaseId === undefined
         ? (overrides.revisionId ? fixture.record.id : null)
         : overrides.serviceRecordCaseId;
@@ -333,7 +337,7 @@ describeE2E("mirrored contract completion event ownership fence (real disposable
         const phone = `010${String((process.pid * 9_000 + Date.now()) % 100_000_000).padStart(8, "0")}`;
         await prisma.client.update({
             where: { id: fixture.client.id },
-            data: { phone, phoneNormalized: phone },
+            data: { phone, phoneNormalized: phone, name: "김고객", birthday: "1992-03-04" },
         });
         const legacyDocument = await createContractDocument(prisma, fixture, {
             clientId: null,

@@ -6,6 +6,7 @@ import { Activity, AlertTriangle, CheckCircle2, ListTodo } from 'lucide-react';
 import { normalizeApiError } from '@babyjamjam/shared';
 import { Button } from '@/components/ui/button';
 import { InfoCard, InfoRow, PageSection, StatsBar } from '@/components/app/v3';
+import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
 
 type AgentDiagnostics = {
   agentVersion: string;
@@ -39,24 +40,35 @@ type AgentAction = {
   errorCode?: string | null;
 };
 
+// The shared retry policy reads `error.response.status`; a bare Error would look like a network failure and be retried.
+function httpFailure(message: string, response: Response) {
+  return Object.assign(new Error(message), { response: { status: response.status } });
+}
+
 export default function AgentDiagnosticsPage() {
-  const { data, isLoading, error } = useQuery<AgentDiagnostics>({
+  const { data, isLoading: diagnosticsQueryLoading, isPaused: diagnosticsPaused, isError: diagnosticsError, isFetching: diagnosticsFetching, refetch: refetchDiagnostics } = useQuery<AgentDiagnostics>({
     queryKey: ['agentDiagnostics'],
     queryFn: async () => {
       const response = await fetch('/api/ai/agent/diagnostics', { credentials: 'same-origin' });
-      if (!response.ok) throw new Error('diagnostics unavailable');
+      if (!response.ok) throw httpFailure('diagnostics unavailable', response);
       return response.json() as Promise<AgentDiagnostics>;
     },
   });
-  const { data: actions = [] } = useQuery<AgentAction[]>({
+  const hasDiagnostics = data !== undefined;
+  const isLoading = diagnosticsQueryLoading || (diagnosticsPaused && !hasDiagnostics);
+  const { data: actionsData, isLoading: actionsQueryLoading, isPaused: actionsPaused, isError: actionsError, isFetching: actionsFetching, refetch: refetchActions } = useQuery<AgentAction[]>({
     queryKey: ['agentActions'],
     queryFn: async () => {
       const response = await fetch('/api/ai/agent/diagnostics/actions', { credentials: 'same-origin' });
-      if (!response.ok) return [];
+      // A failed load must reach the screen as a failure, never as an empty list.
+      if (!response.ok) throw httpFailure('agent actions unavailable', response);
       const value = await response.json() as unknown;
       return Array.isArray(value) ? value as AgentAction[] : [];
     },
   });
+  const hasActions = actionsData !== undefined;
+  const actions = actionsData ?? [];
+  const actionsLoading = actionsQueryLoading || (actionsPaused && !hasActions);
   const queryClient = useQueryClient();
   const [disabling, setDisabling] = useState(false);
   const [confirmingDisable, setConfirmingDisable] = useState(false);
@@ -84,35 +96,41 @@ export default function AgentDiagnosticsPage() {
     }
   };
 
-  if (error) return <PageSection name="agent-diagnostics"><InfoCard data-component="desktop_admin_agent-diagnostics_error" title="진단을 불러올 수 없어요"><p>owner 권한과 에이전트 백엔드 연결을 확인해 주세요.</p></InfoCard></PageSection>;
+  if (diagnosticsError && !hasDiagnostics) return <PageSection name="agent-diagnostics"><QueryErrorState dataComponent="desktop_admin_agent-diagnostics_error" size="panel" title="에이전트 진단 정보를 불러오지 못했습니다" description="owner 권한과 에이전트 백엔드 연결을 확인해 주세요." onRetry={() => void refetchDiagnostics()} isRetrying={diagnosticsFetching} /></PageSection>;
   return <PageSection name="agent-diagnostics">
-    <StatsBar name="agent-diagnostics" isLoading={isLoading} items={[{ icon: Activity, value: data?.capabilityCount ?? 0, label: 'Capabilities', counter: '개' }, { icon: ListTodo, value: data?.actions.pending ?? 0, label: 'Pending actions', counter: '건', colorIndex: 1 }, { icon: AlertTriangle, value: data?.actions.uncertain ?? 0, label: 'Uncertain', counter: '건', colorIndex: 2 }, { icon: CheckCircle2, value: data?.actions.succeeded ?? 0, label: 'Succeeded', counter: '건', colorIndex: 3 }]} />
+    {diagnosticsError && hasDiagnostics ? <QueryErrorState dataComponent="desktop_admin_agent-diagnostics_load-error" size="inline" title="최신 정보를 불러오지 못했습니다" onRetry={() => void refetchDiagnostics()} isRetrying={diagnosticsFetching} /> : null}
+    <StatsBar name="agent-diagnostics" isLoading={isLoading} items={[{ icon: Activity, value: hasDiagnostics ? data.capabilityCount : '—', label: 'Capabilities', counter: '개' }, { icon: ListTodo, value: hasDiagnostics ? data.actions.pending : '—', label: 'Pending actions', counter: '건', colorIndex: 1 }, { icon: AlertTriangle, value: hasDiagnostics ? data.actions.uncertain : '—', label: 'Uncertain', counter: '건', colorIndex: 2 }, { icon: CheckCircle2, value: hasDiagnostics ? data.actions.succeeded : '—', label: 'Succeeded', counter: '건', colorIndex: 3 }]} />
     <InfoCard data-component="desktop_admin_agent-diagnostics_overview" title="에이전트 런타임">
       <InfoRow label="버전" value={data?.agentVersion ?? '-'} />
       <InfoRow label="모델" value={data?.model ?? '-'} />
-      <InfoRow label="글로벌 플래그" value={data?.enabled ? 'enabled' : 'disabled'} />
+      <InfoRow label="글로벌 플래그" value={hasDiagnostics ? (data.enabled ? 'enabled' : 'disabled') : '-'} />
       <InfoRow label="롤아웃 단계" value={data?.rolloutStage ?? '-'} />
-      <InfoRow label="허용 목록" value={`지점 ${data?.allowlists.branches ?? 0} · 사용자 ${data?.allowlists.users ?? 0}`} />
-      <InfoRow label="읽기" value={data?.readEnabled ? 'enabled' : 'disabled'} />
-      <InfoRow label="쓰기" value={data?.writeEnabled ? 'enabled' : 'disabled'} />
-      <InfoRow label="외부 부작용" value={data?.externalEnabled ? 'enabled' : 'disabled'} />
-      <InfoRow label="권한 작업" value={data?.privilegedEnabled ? 'enabled' : 'disabled'} />
-      <InfoRow label="Manifest drift" value={`${data?.drift.status ?? '-'} (${data?.drift.inventory ?? 0})`} />
-      <InfoRow label="Manifest freshness" value={data?.manifestFresh ? 'fresh' : 'failed'} />
+      <InfoRow label="허용 목록" value={hasDiagnostics ? `지점 ${data.allowlists.branches} · 사용자 ${data.allowlists.users}` : '-'} />
+      <InfoRow label="읽기" value={hasDiagnostics ? (data.readEnabled ? 'enabled' : 'disabled') : '-'} />
+      <InfoRow label="쓰기" value={hasDiagnostics ? (data.writeEnabled ? 'enabled' : 'disabled') : '-'} />
+      <InfoRow label="외부 부작용" value={hasDiagnostics ? (data.externalEnabled ? 'enabled' : 'disabled') : '-'} />
+      <InfoRow label="권한 작업" value={hasDiagnostics ? (data.privilegedEnabled ? 'enabled' : 'disabled') : '-'} />
+      <InfoRow label="Manifest drift" value={hasDiagnostics ? `${data.drift.status} (${data.drift.inventory})` : '-'} />
+      <InfoRow label="Manifest freshness" value={hasDiagnostics ? (data.manifestFresh ? 'fresh' : 'failed') : '-'} />
       <InfoRow label="Capability 버전" value={Object.entries(data?.capabilityVersions ?? {}).map(([name, version]) => `${name}@${version}`).join(', ') || '-'} />
-      <InfoRow label="도메인 플래그" value={JSON.stringify(data?.effectiveFlags.domains ?? {})} />
-      <InfoRow label="Capability 플래그" value={JSON.stringify(data?.effectiveFlags.capabilities ?? {})} />
+      <InfoRow label="도메인 플래그" value={hasDiagnostics ? JSON.stringify(data.effectiveFlags.domains) : '-'} />
+      <InfoRow label="Capability 플래그" value={hasDiagnostics ? JSON.stringify(data.effectiveFlags.capabilities) : '-'} />
       <InfoRow label="허용 지점" value={data?.effectiveFlags.branchAllowlist.join(', ') || '-'} />
       <InfoRow label="허용 사용자" value={data?.effectiveFlags.userAllowlist.join(', ') || '-'} />
-      <InfoRow label="실제 런타임 평가" value={`${data?.evals.evidence.status ?? 'missing'} · ${data?.evals.evidence.caseCount ?? 0}/${data?.evals.requiredCases ?? 0} cases`} />
+      <InfoRow label="실제 런타임 평가" value={hasDiagnostics ? `${data.evals.evidence.status} · ${data.evals.evidence.caseCount ?? 0}/${data.evals.requiredCases} cases` : '-'} />
       <Button type="button" variant="destructive" disabled={disabling || data?.enabled === false} onClick={() => confirmingDisable ? void emergencyDisable() : setConfirmingDisable(true)}>{disabling ? '비활성화 중…' : confirmingDisable ? '확인: 전체 비활성화' : '긴급 비활성화'}</Button>
       {confirmingDisable && !disabling && <Button type="button" variant="outline" onClick={() => setConfirmingDisable(false)}>취소</Button>}
       {disableError && <p data-slot="disable-error">{disableError}</p>}
     </InfoCard>
     <InfoCard data-component="desktop_admin_agent-diagnostics_actions" title="전체 대기·확인 필요 작업">
-      {actions.length === 0
-        ? <InfoRow label="상태" value="대기 중이거나 확인이 필요한 작업이 없습니다." />
-        : <ul data-slot="actions">{actions.map((action) => <li key={action.id} data-component="desktop_admin_agent-diagnostics_actions_item"><InfoRow label={`${action.capability}@${action.capabilityVersion}`} value={`${action.status} · ${action.risk} · 지점 ${action.branchId} · 생성 ${new Date(action.createdAt).toLocaleString()} · 만료 ${new Date(action.expiresAt).toLocaleString()}${action.errorCode ? ` · ${action.errorCode}` : ''}`} /></li>)}</ul>}
+      {actionsError && hasActions ? <QueryErrorState dataComponent="desktop_admin_agent-diagnostics_actions_load-error" size="inline" title="최신 정보를 불러오지 못했습니다" onRetry={() => void refetchActions()} isRetrying={actionsFetching} /> : null}
+      {actionsLoading
+        ? <InfoRow label="상태" value="-" />
+        : actionsError && !hasActions
+          ? <QueryErrorState dataComponent="desktop_admin_agent-diagnostics_actions_load-error" size="inline" title="작업 목록을 불러오지 못했습니다" onRetry={() => void refetchActions()} isRetrying={actionsFetching} />
+          : actions.length === 0
+            ? <InfoRow label="상태" value="대기 중이거나 확인이 필요한 작업이 없습니다." />
+            : <ul data-slot="actions">{actions.map((action) => <li key={action.id} data-component="desktop_admin_agent-diagnostics_actions_item"><InfoRow label={`${action.capability}@${action.capabilityVersion}`} value={`${action.status} · ${action.risk} · 지점 ${action.branchId} · 생성 ${new Date(action.createdAt).toLocaleString()} · 만료 ${new Date(action.expiresAt).toLocaleString()}${action.errorCode ? ` · ${action.errorCode}` : ''}`} /></li>)}</ul>}
     </InfoCard>
   </PageSection>;
 }

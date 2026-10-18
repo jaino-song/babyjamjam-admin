@@ -366,7 +366,7 @@ export class PwaNotificationSchedulerService {
         job: MessageTriggerJobEntity,
     ): DailyDigestNotificationItem | null {
         const recipientName = job.payload.recipientName?.trim();
-        if (!job.id || !recipientName || (job.status !== "failed" && job.status !== "canceled")) {
+        if (!job.id || !recipientName || (job.status !== "failed" && job.status !== "canceled" && job.status !== "needs_setup")) {
             return null;
         }
 
@@ -385,10 +385,10 @@ export class PwaNotificationSchedulerService {
         const templateLabel = job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
             ? "제공기록지"
             : MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey]?.name ?? "안내";
-        const deliveryResult = job.status === "failed" ? "실패했습니다" : "취소되었습니다";
+        const deliveryResult = job.status === "needs_setup" ? "설정 확인이 필요합니다" : job.status === "failed" ? "실패했습니다" : "취소되었습니다";
 
         return {
-            title: job.status === "failed" ? "메시지 전송 실패" : "메시지 전송 취소",
+            title: job.status === "needs_setup" ? "메시지 설정 필요" : job.status === "failed" ? "메시지 전송 실패" : "메시지 전송 취소",
             body: `${recipient}에게 보낸 ${templateLabel} 메시지 전송이 ${deliveryResult}.`,
             data: {
                 type: "daily-summary-item",

@@ -13,10 +13,17 @@ import {
 } from "domain/repositories/message-automation-database.repository.interface";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import {
+    DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+    DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+    isMessageTriggerTargetClientStatus,
+} from "domain/constants/message-trigger-catalog";
+import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
+import type { RuleSendPolicy } from "application/policies/message-trigger-target-client-status.policy";
+import { ruleSendPolicyFrom } from "application/policies/message-trigger-target-client-status.policy";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
 import {
@@ -47,6 +54,8 @@ type RuleRow = {
     templateKey: string;
     isDefault: boolean;
     jobsStale: boolean;
+    targetClientStatus: string;
+    retryOnFailure: boolean;
     createdAt: Date;
     updatedAt: Date;
 };
@@ -64,7 +73,33 @@ type RetryRuleLockRow = {
     branch_id: string | null;
     is_active: boolean;
     template_key: string;
+    target_client_status: string;
+    retry_on_failure: boolean;
 };
+
+/**
+ * What an automatic retry may rely on, read from the rule row locked by the
+ * retry boundary: the rule's CURRENT 대상 고객 상태 / 실패 시 재전송 (규칙
+ * 메시지-04) and the client the source job belongs to.
+ */
+export interface AutomaticRetryRulePolicy extends RuleSendPolicy {
+    clientId: number | null;
+}
+
+/**
+ * Whether a rejected automatic send may be scheduled for another attempt, from
+ * the rule's CURRENT row: `on`, `off`, or `rule-missing` (the row is gone; only
+ * reachable where the log's job link was set null, treated as `on`). A failed
+ * READ is none of these: callers must not invent a permission for it.
+ */
+export type RuleRetryPermission = "on" | "off" | "rule-missing";
+
+export function resolveRuleRetryPermission(
+    rule: { targetClientStatus?: unknown; retryOnFailure?: unknown } | null | undefined,
+): RuleRetryPermission {
+    if (!rule) return "rule-missing";
+    return ruleSendPolicyFrom(rule).retryOnFailure ? "on" : "off";
+}
 
 interface ActivationOptions {
     actor?: AdminAuditActor;
@@ -280,6 +315,20 @@ export class MessageAutomationActivationService {
     }
 
     /**
+     * The rule's CURRENT 실패 시 재전송 for a job, read fresh (no lock) when a
+     * provider rejection is finalized, after the admission-time policy may have
+     * changed. Rejects when the read fails; never answers on a failure.
+     */
+    async readJobRuleRetryPermission(branchId: string, triggerJobId: string): Promise<RuleRetryPermission> {
+        const job = await this.prisma.message_trigger_job.findUnique({
+            where: { id: triggerJobId },
+            select: { branchId: true, rule: { select: { targetClientStatus: true, retryOnFailure: true } } },
+        });
+        if (!job || job.branchId !== branchId) return "rule-missing";
+        return resolveRuleRetryPermission(job.rule);
+    }
+
+    /**
      * Run an automatic retry's claim/provider-start boundary while holding the
      * branch lock. The callback must persist the retry row and mark provider
      * acceptance started through the supplied transaction before returning.
@@ -287,7 +336,7 @@ export class MessageAutomationActivationService {
     async runAutomaticRetryIfEnabled<T>(
         branchId: string,
         triggerJobId: string,
-        work: (transaction: AutomationTransaction) => Promise<T>,
+        work: (transaction: AutomationTransaction, rulePolicy: AutomaticRetryRulePolicy) => Promise<T>,
     ): Promise<{ allowed: boolean; applies: boolean; value?: T }> {
         this.requireBranch(branchId);
         return this.branchLock.runExclusive(branchId, async (transaction) => {
@@ -307,7 +356,7 @@ export class MessageAutomationActivationService {
             // before re-reading the source job so a global disable cannot
             // commit between the activation check and provider-start callback.
             const ruleRows = await transaction.$queryRaw<RetryRuleLockRow[]>(Prisma.sql`
-                SELECT id, branch_id, is_active, template_key
+                SELECT id, branch_id, is_active, template_key, target_client_status, retry_on_failure
                 FROM "message_trigger_rule"
                 WHERE id = ${candidate.ruleId}
                 ORDER BY id
@@ -350,7 +399,14 @@ export class MessageAutomationActivationService {
                 }))?.isActive !== false)
                 : lockedRule.branch_id === branchId && lockedRule.is_active;
             if (!ruleActive) return { allowed: false, applies: true };
-            return { allowed: true, applies: true, value: await work(transaction) };
+            const rulePolicy: AutomaticRetryRulePolicy = {
+                ...ruleSendPolicyFrom({
+                    targetClientStatus: lockedRule.target_client_status,
+                    retryOnFailure: lockedRule.retry_on_failure,
+                }),
+                clientId: job.clientId,
+            };
+            return { allowed: true, applies: true, value: await work(transaction, rulePolicy) };
         });
     }
 
@@ -402,6 +458,8 @@ export class MessageAutomationActivationService {
                 template_key AS "templateKey",
                 is_default AS "isDefault",
                 jobs_stale AS "jobsStale",
+                target_client_status AS "targetClientStatus",
+                retry_on_failure AS "retryOnFailure",
                 created_at AS "createdAt",
                 updated_at AS "updatedAt"
             FROM "message_trigger_rule"
@@ -533,6 +591,10 @@ export class MessageAutomationActivationService {
             row.isDefault,
             row.jobsStale,
             row.sendTime,
+            isMessageTriggerTargetClientStatus(row.targetClientStatus)
+                ? row.targetClientStatus
+                : DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+            row.retryOnFailure ?? DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
         );
     }
 

@@ -1,5 +1,5 @@
 import { ClientEntity } from "domain/entities/client.entity";
-import { SERVICE_STATUS, ServiceStatusType, clientCalendarDate } from "domain/value-objects/service-status.vo";
+import { SERVICE_STATUS, ServiceStatusType, computeServiceStatus } from "domain/value-objects/service-status.vo";
 import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type { Prisma } from "@prisma/client";
 
@@ -57,7 +57,6 @@ export interface ClientListDateRanges {
 }
 
 const MANUAL_CLIENT_SERVICE_STATUSES = [
-    SERVICE_STATUS.PRE_BOOKING,
     SERVICE_STATUS.TERMINATED,
     SERVICE_STATUS.REPLACEMENT_REQUESTED,
 ] as const;
@@ -158,29 +157,16 @@ export function getClientDateWindow(
 /**
  * Resolve the status shown by the client list from the stored status and the
  * authoritative Korean calendar date. The stored manual states are preserved;
- * every other state follows the service period dates.
+ * every other state follows booking confirmation and the service period dates.
  */
 export function getEffectiveClientServiceStatus(
     currentStatus: string | null,
     startDate: Date | null,
     endDate: Date | null,
+    bookingConfirmedAt: Date | null,
     now = new Date(),
 ): ServiceStatusType {
-    if (currentStatus === SERVICE_STATUS.PRE_BOOKING
-        || currentStatus === SERVICE_STATUS.TERMINATED
-        || currentStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
-        return currentStatus;
-    }
-
-    if (!startDate || !endDate) return SERVICE_STATUS.PRE_BOOKING;
-
-    const today = isoDateInKorea(now);
-    const start = clientCalendarDate(startDate);
-    const end = clientCalendarDate(endDate);
-
-    if (start > today) return SERVICE_STATUS.WAITING;
-    if (end < today) return SERVICE_STATUS.COMPLETED;
-    return SERVICE_STATUS.ACTIVE;
+    return computeServiceStatus(currentStatus, startDate, endDate, bookingConfirmedAt, now);
 }
 
 function nonManualClientServiceStatusWhere(): Prisma.clientWhereInput {
@@ -206,26 +192,24 @@ export function clientListTabWhere(
 ): Prisma.clientWhereInput {
     switch (tab) {
         case SERVICE_STATUS.PRE_BOOKING:
-            return {
-                OR: [
-                    { serviceStatus: SERVICE_STATUS.PRE_BOOKING },
-                    withNonManualStatus([
-                        { OR: [{ startDate: null }, { endDate: null }] },
-                    ]),
-                ],
-            };
+            return withNonManualStatus([
+                { OR: [{ bookingConfirmedAt: null }, { startDate: null }, { endDate: null }] },
+            ]);
         case SERVICE_STATUS.WAITING:
             return withNonManualStatus([
+                { bookingConfirmedAt: { not: null } },
                 { startDate: { gt: todayStart } },
                 { endDate: { not: null } },
             ]);
         case SERVICE_STATUS.ACTIVE:
             return withNonManualStatus([
+                { bookingConfirmedAt: { not: null } },
                 { startDate: { lte: todayStart } },
                 { endDate: { gte: todayStart } },
             ]);
         case SERVICE_STATUS.COMPLETED:
             return withNonManualStatus([
+                { bookingConfirmedAt: { not: null } },
                 { startDate: { lte: todayStart } },
                 { endDate: { lt: todayStart } },
             ]);
@@ -276,6 +260,8 @@ export interface ClientWithInitialSchedule {
 }
 
 export interface IClientRepository {
+    /** Branch-scoped suffix prefilter; callers must compare normalized phones exactly. */
+    findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]>;
     findById(branchid: string, id: number): Promise<ClientEntity | null>;
     /**
      * Lock one branch-owned client row for an approval-bound mutation or
@@ -427,3 +413,11 @@ export interface IClientRepository {
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";
+
+export interface ClientPhoneMatch {
+    id: number;
+    branchId: string | null;
+    name: string;
+    phone: string | null;
+    birthday: string | null;
+}

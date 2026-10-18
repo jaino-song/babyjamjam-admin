@@ -1,5 +1,7 @@
 import {
+    isDeletedEformsignStatusCode,
     isProviderReviewWorkflowStep,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
     isRevokedEformsignStatus,
 } from "./eformsign-status-codes";
@@ -19,7 +21,7 @@ export { KR_HOLIDAYS } from "../utils/business-days";
  * 1 business day before the contract end date, so until then the document is
  * surfaced as 서명 완료 and flips to 검토 필요 when the window opens.
  */
-export type ContractDocStatusLabel = "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "철회 요청됨" | "철회됨" | "기간 만료";
+export type ContractDocStatusLabel = "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "철회 요청됨" | "철회됨" | "반려됨" | "기간 만료" | "파기됨";
 
 export type ContractDocStatusCategory = "completed" | "expired" | "in-progress";
 
@@ -56,7 +58,22 @@ export type ContractDocDisplayStatus =
      * the "expired" category for tabs/filters/stats — only the label and tone differ.
      */
     | "revoked"
+    /**
+     * eformsign 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document.
+     * Shown "반려됨" (solid burgundy). NOT terminal: a later 070 returns it to 서명 완료/검토 필요,
+     * a later 072 completes it, and the customer's signature stays valid (receipt link and
+     * service-end notice may be sent). Its category is in-progress, not expired.
+     */
+    | "rejected_by_reviewer"
     | "expired"
+    /**
+     * BJJ-439 계약 파기: the branch voided the document in the app (eformsign_doc.voided_at is set).
+     * App-only state with no eformsign code, so it overrides every code in every resolver (checked
+     * first) — eformsign keeps reporting codes for a voided document. Shown "파기됨" (neutral grey).
+     * It keeps the "expired" category for tabs/filters/stats — only the label and tone differ — and
+     * is never receipt-sendable.
+     */
+    | "voided"
     | "unknown";
 
 export const CONTRACT_DOC_DISPLAY_STATUS_LABELS = {
@@ -67,9 +84,30 @@ export const CONTRACT_DOC_DISPLAY_STATUS_LABELS = {
     completed: "계약 완료",
     revoke_requested: "철회 요청됨",
     revoked: "철회됨",
+    rejected_by_reviewer: "반려됨",
     expired: "기간 만료",
+    voided: "파기됨",
     unknown: "알 수 없음",
 } as const satisfies Record<ContractDocDisplayStatus, string>;
+
+/** Label of the "파기" row on a voided contract card (`time · name`). */
+export const CONTRACT_VOID_ROW_LABEL = "파기";
+
+/** Shown in the 파기 row when the voiding user's name cannot be resolved. */
+export const CONTRACT_VOIDED_BY_UNKNOWN_LABEL = "알 수 없음";
+
+/** UI copy of the 계약 파기 flow, shared by the desktop and mobile contract cards. */
+export const CONTRACT_VOID_COPY = {
+    action: "계약 파기",
+    confirmTitle: "계약을 파기할까요?",
+    confirmDescription: "파기하면 되돌릴 수 없습니다. 서명 전 계약서는 서명 링크도 함께 취소됩니다.",
+    confirm: "파기",
+    cancel: "취소",
+    pending: "파기 중",
+    success: "계약을 파기했습니다.",
+    conflict: "이미 파기되었거나 파기할 수 없는 계약서입니다.",
+    failure: "계약을 파기하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+} as const;
 
 /**
  * Every label a display status can carry, derived from the map so the two
@@ -83,6 +121,22 @@ export type ContractDocDisplayStatusLabel =
 
 export function isContractDocDisplayStatus(value: unknown): value is ContractDocDisplayStatus {
     return typeof value === "string" && value in CONTRACT_DOC_DISPLAY_STATUS_LABELS;
+}
+
+/**
+ * UI side of the "what you see" rule (BJJ-439 D4): a contract can be voided unless it is already
+ * voided or its display status reads 철회됨 / 기간 만료. Completed, signed, in-progress, 철회 요청됨
+ * and 반려됨 documents are voidable. The server enforces the remaining refusals (non-contract kind,
+ * no client, deleted codes), so this only decides whether the button is offered.
+ */
+export function isContractVoidable(input: { displayStatus: string; voidedAt?: string | null }): boolean {
+    if (input.voidedAt) return false;
+    if (input.displayStatus === "voided") return false;
+    const label = isContractDocDisplayStatus(input.displayStatus)
+        ? CONTRACT_DOC_DISPLAY_STATUS_LABELS[input.displayStatus]
+        : null;
+    return label !== CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoked
+        && label !== CONTRACT_DOC_DISPLAY_STATUS_LABELS.expired;
 }
 
 const KST_TIME_ZONE = "Asia/Seoul";
@@ -152,6 +206,11 @@ export function resolveContractDocDisplayStatus(params: {
      * (cancellation requested) and 042/090 (revoked) are not folded into the "expired" category.
      */
     statusType?: string | number | null;
+    /**
+     * eformsign_doc.voided_at (BJJ-439). When set the document reads "voided" before any provider
+     * code or category is looked at, because eformsign keeps reporting codes for a voided document.
+     */
+    voidedAt?: string | null;
     now?: Date;
     /** Holiday calendar to use; defaults to the built-in Korean calendar. */
     calendar?: KrBusinessDayCalendar;
@@ -160,8 +219,11 @@ export function resolveContractDocDisplayStatus(params: {
     // cannot decide it and must not pretend to. A payload carrying
     // display_status gets the backend's answer, which can be "unassigned".
 }): Exclude<ContractDocDisplayStatus, "unknown" | "unassigned"> {
+    if (params.voidedAt) return "voided";
     if (isRevokeRequestedEformsignStatus(params.statusType)) return "revoke_requested";
     if (isRevokedEformsignStatus(params.statusType)) return "revoked";
+    // 071 is in the in-progress category (not terminal), but it is neither 서명 대기 nor 서명 완료.
+    if (isReviewerRejectedEformsignStatus(params.statusType)) return "rejected_by_reviewer";
     if (params.category === "completed") return "completed";
     if (params.category === "expired") return "expired";
     if (!isProviderReviewWorkflowStep(params.currentStatus)) return "pending";
@@ -179,13 +241,15 @@ const RECEIPT_SENDABLE_DISPLAY_STATUSES: ReadonlySet<ContractDocDisplayStatus> =
     "signed",
     "review",
     "completed",
+    // 071: the reviewer rejected the document, but the customer's signature is still valid.
+    "rejected_by_reviewer",
 ]);
 
 /**
  * Gate for the receipt-link send action, shared by mobile and desktop.
  *
  * The backend's serve-time `display_status` is authoritative when present:
- * only a customer-signed document (서명 완료 / 검토 필요 / 계약 완료) may send.
+ * only a customer-signed document (서명 완료 / 검토 필요 / 계약 완료 / 반려됨) may send.
  * For payloads predating the field, fall back to the shared resolver —
  * in-progress/unknown categories resolve like an in-progress document, so the
  * gate matches the status label the UI already renders (parity with the
@@ -194,14 +258,25 @@ const RECEIPT_SENDABLE_DISPLAY_STATUSES: ReadonlySet<ContractDocDisplayStatus> =
 export function isContractReceiptSendable(params: {
     displayStatus?: string | null;
     category: ContractDocStatusCategory | "unknown";
-    currentStatus?: { step_type?: string | null; step_name?: string | null } | null;
+    /**
+     * The provider status code rides along on `current_status`; the fallback resolver needs it
+     * so a payload without `display_status` reads the same status the label resolvers read
+     * (071 → 반려됨 stays sendable, 040/045/042/090 are never folded into a signed document).
+     */
+    currentStatus?: { status_type?: string | number | null; step_type?: string | null; step_name?: string | null } | null;
     contractEndDate?: string | null;
+    /** eformsign_doc.voided_at: a voided document is never sendable, whatever its provider code says. */
+    voidedAt?: string | null;
     now?: Date;
     calendar?: KrBusinessDayCalendar;
 }): boolean {
+    if (params.voidedAt) return false;
     if (isContractDocDisplayStatus(params.displayStatus)) {
         return RECEIPT_SENDABLE_DISPLAY_STATUSES.has(params.displayStatus);
     }
+    // A deleted document (047/049/099) is never sendable. 099 sits in no category list, so the
+    // fallback resolver would otherwise read it as in-progress and open it at the review step.
+    if (isDeletedEformsignStatusCode(params.currentStatus?.status_type)) return false;
     const fallbackCategory: ContractDocStatusCategory = params.category === "completed"
         || params.category === "expired"
         ? params.category
@@ -210,6 +285,7 @@ export function isContractReceiptSendable(params: {
         resolveContractDocDisplayStatus({
             category: fallbackCategory,
             currentStatus: params.currentStatus ?? null,
+            statusType: params.currentStatus?.status_type,
             contractEndDate: params.contractEndDate ?? null,
             now: params.now,
             calendar: params.calendar,
@@ -222,8 +298,10 @@ export function resolveContractDocStatusLabel(params: {
     category: ContractDocStatusCategory;
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
-    /** See resolveContractDocDisplayStatus: 040/045 resolve to 철회 요청됨 and 042/090 to 철회됨 before the category. */
+    /** See resolveContractDocDisplayStatus: 040/045 resolve to 철회 요청됨, 042/090 to 철회됨 and 071 to 반려됨 before the category. */
     statusType?: string | number | null;
+    /** See resolveContractDocDisplayStatus: a set voidedAt resolves to 파기됨 before any provider code. */
+    voidedAt?: string | null;
     now?: Date;
     calendar?: KrBusinessDayCalendar;
 }): ContractDocStatusLabel {

@@ -1,5 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
+import { QUERY_RETRY_SETTLE_MS } from "./helpers/query-retry";
+
 const MOCK_EMPLOYEES = [
   {
     id: 101,
@@ -303,7 +305,9 @@ test.describe("employees mobile detail layout", () => {
     await errorRow.click();
     await page.getByRole("button", { name: "근무 내역" }).click();
 
-    await expect(page.getByText("근무 내역을 불러오지 못했어요")).toBeVisible();
+    // The failing schedule request is retried 3 times (1s/2s/4s backoff,
+    // lib/queryClient.ts) before the error state replaces the loading one.
+    await expect(page.getByText("근무 내역을 불러오지 못했어요")).toBeVisible({ timeout: QUERY_RETRY_SETTLE_MS });
     await expect(page.getByText("잠시 후 다시 시도해 주세요.")).toBeVisible();
     await expect(page.getByText("internal employee schedule details")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "다시 시도" })).toBeVisible();

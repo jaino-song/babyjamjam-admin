@@ -23,6 +23,8 @@ describe("EformsignWebhookService", () => {
         templateName: string | null;
         updatedDate: Date;
         expired: boolean;
+        voidedAt: Date | null;
+        voidedBy: string | null;
     }> = {}): EformsignDocEntity =>
         EformsignDocEntity.reconstitute({
             id: 1,
@@ -46,14 +48,20 @@ describe("EformsignWebhookService", () => {
             expiredDate: new Date("2026-06-01T00:00:00.000Z"),
             expired: overrides.expired ?? false,
             clientId: overrides.clientId ?? 9,
+            voidedAt: overrides.voidedAt,
+            voidedBy: overrides.voidedBy,
         });
 
-    const createClientEntity = (): ClientEntity =>
+    const createClientEntity = (
+        id = 9,
+        phone = "010-1234-5678",
+        eDocId: string | null = documentId,
+    ): ClientEntity =>
         ClientEntity.reconstitute(
-            9,
+            id,
             "테스트 고객",
             "인천",
-            "010-1234-5678",
+            phone,
             "A",
             15,
             "1000000",
@@ -67,7 +75,7 @@ describe("EformsignWebhookService", () => {
             null,
             "waiting",
             false,
-            documentId,
+            eDocId,
             new Date("2026-04-01T00:00:00.000Z"),
         );
 
@@ -783,6 +791,19 @@ describe("EformsignWebhookService", () => {
         expect(syncClientEndDateUsecase.execute).not.toHaveBeenCalled();
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
         expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it("preserves void audit values in the webhook rebuild without writing either column", async () => {
+        const voidedAt = new Date("2026-05-02T01:00:00Z");
+        const existing = createDocEntity({ voidedAt, voidedBy: "actor-id" });
+        eformsignDocRepository.findByDocumentIdUnscoped.mockResolvedValue({ document: existing, branchId: null });
+        await service.processWebhook(createReadyPdfPayload());
+        const rebuilt = eformsignDocRepository.upsertUnassignedByDocumentId.mock.calls[0]?.[0] as EformsignDocEntity;
+        expect(rebuilt.voidedAt).toEqual(voidedAt);
+        expect(rebuilt.voidedBy).toBe("actor-id");
+        expect(rebuilt.isVoided).toBe(true);
+        expect(EformsignDocMapper.toPrismaUpdate(rebuilt)).not.toHaveProperty("voidedAt");
+        expect(EformsignDocMapper.toPrismaUpdate(rebuilt)).not.toHaveProperty("voidedBy");
     });
 
     it("ignores a stale non-terminal webhook for a terminal unassigned document", async () => {
@@ -1843,77 +1864,71 @@ describe("EformsignWebhookService", () => {
         expect(linkDocumentUsecase.execute).toHaveBeenCalledWith(branchId, documentId);
     });
 
-    it("preserves the webhook documentName when status persistence is followed by client reassignment", async () => {
-        let storedDoc = createDocEntity({
-            clientId: 7,
-            documentName: "기존 문서명",
-        });
+    /**
+     * A webhook service wired to the REAL status and link usecases over a
+     * stateful in-memory document repository, so the stored document shows
+     * what a status webhook leaves behind.
+     */
+    const createStatefulWebhookService = (
+        initialDoc: EformsignDocEntity,
+        clients: ClientEntity[],
+    ) => {
+        const state = { storedDoc: initialDoc };
+        const toStored = (overrides: Record<string, unknown>): EformsignDocEntity => {
+            const storedId = state.storedDoc.id;
+            if (storedId === undefined) {
+                throw new Error("stored document id is required");
+            }
+            return EformsignDocMapper.toDomain({
+                id: storedId,
+                ...EformsignDocMapper.toPrismaCreate(state.storedDoc),
+                voidedAt: state.storedDoc.voidedAt,
+                voidedBy: state.storedDoc.voidedBy,
+                ...overrides,
+            });
+        };
         const statefulDocRepository = {
             findByDocumentIdUnscoped: jest.fn().mockImplementation(() => Promise.resolve({
-                document: storedDoc,
+                document: state.storedDoc,
                 branchId,
             })),
-            findByDocumentId: jest.fn().mockImplementation(() => Promise.resolve(storedDoc)),
+            findByDocumentId: jest.fn().mockImplementation(() => Promise.resolve(state.storedDoc)),
             update: jest.fn().mockImplementation((_branchid, doc: EformsignDocEntity) => {
-                const storedId = storedDoc.id;
-                if (storedId === undefined) {
-                    throw new Error("stored document id is required");
-                }
-                storedDoc = EformsignDocMapper.toDomain({
-                    id: storedId,
-                    ...EformsignDocMapper.toPrismaCreate(storedDoc),
-                    ...EformsignDocMapper.toPrismaUpdate(doc),
-                });
-                return Promise.resolve(storedDoc);
+                state.storedDoc = toStored(EformsignDocMapper.toPrismaUpdate(doc));
+                return Promise.resolve(state.storedDoc);
             }),
             updateIfSourceNewer: jest.fn().mockImplementation(
                 async (_branchid, doc: EformsignDocEntity) => {
-                    const storedId = storedDoc.id;
-                    if (storedId === undefined) {
-                        throw new Error("stored document id is required");
-                    }
-                    storedDoc = EformsignDocMapper.toDomain({
-                        id: storedId,
-                        ...EformsignDocMapper.toPrismaCreate(storedDoc),
-                        ...EformsignDocMapper.toPrismaUpdate(doc),
-                    });
-                    return { document: storedDoc, applied: true };
+                    state.storedDoc = toStored(EformsignDocMapper.toPrismaUpdate(doc));
+                    return { document: state.storedDoc, applied: true };
                 },
             ),
             linkClientIfActive: jest.fn().mockImplementation(
                 async (_branchid: string, targetDocumentId: string, clientId: number) => {
-                    const storedId = storedDoc.id;
-                    if (
-                        storedId === undefined
-                        || storedDoc.documentId !== targetDocumentId
-                    ) {
+                    if (state.storedDoc.documentId !== targetDocumentId) {
                         return false;
                     }
-                    storedDoc = EformsignDocMapper.toDomain({
-                        id: storedId,
-                        ...EformsignDocMapper.toPrismaCreate(storedDoc),
-                        clientId,
-                    });
+                    state.storedDoc = toStored({ clientId });
                     return true;
                 },
             ),
         };
-        const phoneMatchedClient = createClientEntity();
         const statefulClientRepository = {
-            findByPhone: jest.fn().mockResolvedValue(phoneMatchedClient),
-            findById: jest.fn(),
-            update: jest.fn().mockResolvedValue(phoneMatchedClient),
+            // Resolves the client by the recipient phone. Nothing on the
+            // status-webhook path may call it any more.
+            findByPhone: jest.fn().mockImplementation(async (_branchid: string, phone: string) =>
+                clients.find((client) => client.phone?.replace(/\D/g, "") === phone) ?? null),
+            findById: jest.fn().mockImplementation(async (_branchid: string, id: number) =>
+                clients.find((client) => client.id === id) ?? null),
+            update: jest.fn(),
         };
-        const realUpdateStatusUsecase = new UpdateEformsignDocStatusUsecase(
-            statefulDocRepository as never,
-        );
-        const realLinkDocumentUsecase = new LinkDocumentToClientUsecase(
-            statefulDocRepository as never,
-            statefulClientRepository as never, createHolidayCalendarStub(),
-        );
         const statefulService = new EformsignWebhookService(
-            realUpdateStatusUsecase,
-            realLinkDocumentUsecase,
+            new UpdateEformsignDocStatusUsecase(statefulDocRepository as never),
+            new LinkDocumentToClientUsecase(
+                statefulDocRepository as never,
+                statefulClientRepository as never,
+                createHolidayCalendarStub(),
+            ),
             syncClientEndDateUsecase as never,
             eventBus as never,
             notificationService as never,
@@ -1924,24 +1939,273 @@ describe("EformsignWebhookService", () => {
             employeeScheduleRepository as never,
             employeeRepository as never,
             mirrorUnassignedDocUsecase as never,
+            undefined,
+            undefined,
+            documentSnapshotService as never,
         );
+        return { state, statefulService, statefulDocRepository, statefulClientRepository };
+    };
+
+    const createStatusWebhookPayload = (): EformsignWebhookPayloadDto => {
         const payload = createDocumentPayload();
         if (!payload.document) {
             throw new Error("document payload is required");
         }
         payload.document.status = "doc_request_participant";
+        return payload;
+    };
 
-        await statefulService.processWebhook(payload);
+    it("keeps the linked client and preserves the webhook documentName when the recipient phone belongs to another client", async () => {
+        // The document is linked to client 7; its recipient phone (01012345678)
+        // belongs to client 9. A status webhook must not move it to 9.
+        const linkedClient = createClientEntity(7, "010-0000-0000", null);
+        const phoneOwner = createClientEntity(9, "010-1234-5678", null);
+        const { state, statefulService, statefulDocRepository, statefulClientRepository } =
+            createStatefulWebhookService(
+                createDocEntity({ clientId: 7, documentName: "기존 문서명" }),
+                [linkedClient, phoneOwner],
+            );
+
+        await statefulService.processWebhook(createStatusWebhookPayload());
 
         expect(statefulDocRepository.updateIfSourceNewer).toHaveBeenCalledTimes(1);
-        expect(statefulDocRepository.linkClientIfActive).toHaveBeenCalledWith(
-            branchId,
-            documentId,
+        expect(statefulDocRepository.linkClientIfActive).toHaveBeenCalledTimes(1);
+        expect(statefulDocRepository.linkClientIfActive).toHaveBeenCalledWith(branchId, documentId, 7);
+        expect(statefulDocRepository.linkClientIfActive).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
             9,
         );
+        expect(statefulClientRepository.findByPhone).not.toHaveBeenCalled();
         expect(statefulDocRepository.update).not.toHaveBeenCalled();
-        expect(storedDoc.clientId).toBe(9);
-        expect(storedDoc.documentName).toBe("산모신생아건강관리서비스 계약서");
+        expect(state.storedDoc.clientId).toBe(7);
+        expect(state.storedDoc.documentName).toBe("산모신생아건강관리서비스 계약서");
+        expect(linkedClient.eDocId).toBe(documentId);
+        expect(phoneOwner.eDocId).toBeNull();
+    });
+
+    it("applies a status webhook to an unlinked document without inferring a client from the recipient phone", async () => {
+        const phoneOwner = createClientEntity(9, "010-1234-5678", null);
+        const unlinkedDoc = EformsignDocMapper.toDomain({
+            id: 1,
+            ...EformsignDocMapper.toPrismaCreate(createDocEntity({ documentName: "기존 문서명" })),
+            voidedAt: null,
+            voidedBy: null,
+            clientId: null,
+        });
+        const { state, statefulService, statefulDocRepository, statefulClientRepository } =
+            createStatefulWebhookService(unlinkedDoc, [phoneOwner]);
+
+        await expect(statefulService.processWebhook(createStatusWebhookPayload())).resolves.toBeUndefined();
+
+        expect(statefulDocRepository.updateIfSourceNewer).toHaveBeenCalledTimes(1);
+        expect(statefulDocRepository.linkClientIfActive).not.toHaveBeenCalled();
+        expect(statefulClientRepository.findByPhone).not.toHaveBeenCalled();
+        expect(state.storedDoc.clientId).toBeNull();
+        expect(state.storedDoc.documentName).toBe("산모신생아건강관리서비스 계약서");
+        expect(phoneOwner.eDocId).toBeNull();
+        expect(eventBus.emit).toHaveBeenCalledWith({
+            branchId,
+            documentId,
+            reason: "doc:doc_request_participant",
+        });
+    });
+
+    describe("voided (파기) contract", () => {
+        const voidedAt = new Date("2026-10-01T00:00:00.000Z");
+        const reviewerPayload = (): EformsignWebhookPayloadDto => {
+            const payload = createDocumentPayload();
+            if (!payload.document) {
+                throw new Error("document payload is required");
+            }
+            payload.document.status = "doc_request_reviewer";
+            return payload;
+        };
+        const providerReviewDetail = {
+            current_status: {
+                status_type: "070",
+                step_type: "06",
+                step_name: "제공기관 검토",
+                step_recipients: [{ recipient_type: "01" }],
+            },
+        };
+
+        it("stores the status of a voided document but performs no link and keeps the client pointer", async () => {
+            const linkedClient = createClientEntity(7, "010-0000-0000", null);
+            const { state, statefulService, statefulDocRepository } = createStatefulWebhookService(
+                createDocEntity({ clientId: 7, voidedAt, voidedBy: "user-1" }),
+                [linkedClient],
+            );
+
+            await expect(statefulService.processWebhook(createStatusWebhookPayload())).resolves.toBeUndefined();
+
+            expect(statefulDocRepository.updateIfSourceNewer).toHaveBeenCalledTimes(1);
+            expect(state.storedDoc.statusType).toBe("060");
+            expect(state.storedDoc.voidedAt).toEqual(voidedAt);
+            expect(statefulDocRepository.linkClientIfActive).not.toHaveBeenCalled();
+            expect(linkedClient.eDocId).toBeNull();
+            expect(eventBus.emit).toHaveBeenCalledWith({
+                branchId,
+                documentId,
+                reason: "doc:doc_request_participant",
+            });
+        });
+
+        it("links a non-voided document on the same status update (control)", async () => {
+            const linkedClient = createClientEntity(7, "010-0000-0000", null);
+            const { statefulService, statefulDocRepository } = createStatefulWebhookService(
+                createDocEntity({ clientId: 7 }),
+                [linkedClient],
+            );
+
+            await statefulService.processWebhook(createStatusWebhookPayload());
+
+            expect(statefulDocRepository.linkClientIfActive).toHaveBeenCalledWith(branchId, documentId, 7);
+            expect(linkedClient.eDocId).toBe(documentId);
+        });
+
+        it("records the reviewer-request status of a voided document without a review notification", async () => {
+            eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+            const { state, statefulService } = createStatefulWebhookService(
+                createDocEntity({ clientId: 7, voidedAt, voidedBy: "user-1" }),
+                [createClientEntity(7, "010-0000-0000", null)],
+            );
+
+            await statefulService.processWebhook(reviewerPayload());
+
+            expect(state.storedDoc.statusType).toBe("070");
+            expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            expect(eventBus.emit).toHaveBeenCalledWith({
+                branchId,
+                documentId,
+                reason: "doc:doc_request_reviewer",
+            });
+        });
+
+        it("still notifies for the same reviewer request when the document is not voided (control)", async () => {
+            eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+            const { statefulService } = createStatefulWebhookService(
+                createDocEntity({ clientId: 7 }),
+                [createClientEntity(7, "010-0000-0000", null)],
+            );
+
+            await statefulService.processWebhook(reviewerPayload());
+
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+        });
+
+        describe("when the document row cannot be read again after the status write", () => {
+            // The status usecase's own read succeeds; every later read of the row fails.
+            const failLaterLookups = (
+                statefulDocRepository: { findByDocumentId: jest.Mock },
+                state: { storedDoc: EformsignDocEntity },
+            ) => {
+                statefulDocRepository.findByDocumentId
+                    .mockImplementationOnce(() => Promise.resolve(state.storedDoc))
+                    .mockRejectedValue(new Error("lookup failed"));
+            };
+
+            it("voided: sends no review notification but still stores the status, bumps the snapshot and emits once", async () => {
+                eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+                const { state, statefulService, statefulDocRepository } = createStatefulWebhookService(
+                    createDocEntity({ clientId: 7, voidedAt, voidedBy: "user-1" }),
+                    [createClientEntity(7, "010-0000-0000", null)],
+                );
+                failLaterLookups(statefulDocRepository, state);
+
+                await expect(statefulService.processWebhook(reviewerPayload())).resolves.toBeUndefined();
+
+                expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+                expect(state.storedDoc.statusType).toBe("070");
+                expect(statefulDocRepository.updateIfSourceNewer).toHaveBeenCalledTimes(1);
+                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+                expect(eventBus.emit).toHaveBeenCalledTimes(1);
+                expect(eventBus.emit).toHaveBeenCalledWith({
+                    branchId,
+                    documentId,
+                    reason: "doc:doc_request_reviewer",
+                });
+            });
+
+            it("live: still notifies, because the void state came from the status write and not from a second read", async () => {
+                eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+                const { state, statefulService, statefulDocRepository } = createStatefulWebhookService(
+                    createDocEntity({ clientId: 7 }),
+                    [createClientEntity(7, "010-0000-0000", null)],
+                );
+                failLaterLookups(statefulDocRepository, state);
+
+                await expect(statefulService.processWebhook(reviewerPayload())).resolves.toBeUndefined();
+
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+                expect(state.storedDoc.statusType).toBe("070");
+                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+                expect(eventBus.emit).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        it("withholds the review notification and warns with only the document id when the void state is unknown", async () => {
+            const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+            try {
+                await (service as unknown as {
+                    notifyReviewRequiredIfNeeded: (
+                        branchid: string,
+                        documentId: string,
+                        documentTitle: string,
+                        localStatusType: string,
+                        isVoided: boolean | undefined,
+                        mirroredDocument?: unknown,
+                    ) => Promise<void>;
+                }).notifyReviewRequiredIfNeeded(
+                    branchId,
+                    documentId,
+                    "계약서",
+                    "070",
+                    undefined,
+                    providerReviewDetail,
+                );
+
+                expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+                expect(warn).toHaveBeenCalledTimes(1);
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining(documentId));
+            } finally {
+                warn.mockRestore();
+            }
+        });
+
+        it("does nothing for a webhook whose document has no local row (unchanged)", async () => {
+            eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+            const { statefulService, statefulDocRepository } = createStatefulWebhookService(
+                createDocEntity({ clientId: 7 }),
+                [createClientEntity(7, "010-0000-0000", null)],
+            );
+            statefulDocRepository.findByDocumentId.mockResolvedValue(null);
+
+            await expect(statefulService.processWebhook(reviewerPayload())).resolves.toBeUndefined();
+
+            expect(statefulDocRepository.updateIfSourceNewer).not.toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            expect(eventBus.emit).not.toHaveBeenCalled();
+        });
+
+        it("claims the completion of a voided document but runs no link or end-date sync", async () => {
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(
+                createDocEntity({ clientId: 9, voidedAt, voidedBy: "user-1" }),
+            );
+
+            await expect(service.processWebhook(createDocumentPayload())).resolves.toBeUndefined();
+
+            expect(eformsignDocRepository.claimCompletionStatus).toHaveBeenCalledTimes(1);
+            expect(linkDocumentUsecase.execute).not.toHaveBeenCalled();
+            expect(syncClientEndDateUsecase.execute).not.toHaveBeenCalled();
+            expect(syncClientEndDateUsecase.executeFromDocument).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.syncEndDateFromContract).not.toHaveBeenCalled();
+            expect(eventBus.emit).toHaveBeenCalledWith({
+                branchId,
+                documentId,
+                reason: "doc:doc_complete",
+            });
+        });
     });
 
     it("should not notify branch users for a user participant step even when eformsign reports recipient_type 01", async () => {

@@ -6,7 +6,7 @@ export interface EmployeeSummary {
 }
 
 // Document status type for eformsign documents
-export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | 'voided' | null;
 
 export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
@@ -70,8 +70,11 @@ export interface Client {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
+    bookingConfirmedAt: string | null;
     eDocId: string | null;
     areaId?: string | null;
+    /** false이면 이 고객에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요. */
+    smsAutomationEnabled?: boolean;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
     /** ID of the same latest contract used for documentStatus. */
@@ -107,6 +110,8 @@ export interface CreateClientDto {
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
     applyMessageAutomation?: boolean;
+    /** 명시하면 applyMessageAutomation보다 우선해요. */
+    smsAutomationEnabled?: boolean;
     areaId?: string | null;
     source?: "contract_auto_registration";
     reuseExistingClient?: boolean;
@@ -135,6 +140,7 @@ export interface UpdateClientDto {
     endDate?: string | null;
     careCenter?: boolean | null;
     areaId?: string | null;
+    smsAutomationEnabled?: boolean;
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;

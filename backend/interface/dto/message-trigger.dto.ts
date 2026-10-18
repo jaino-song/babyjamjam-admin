@@ -1,8 +1,10 @@
-import { Equals, IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, Min, Matches, ValidateIf } from "class-validator";
+import { Equals, IsBoolean, IsEnum, IsIn, IsNotEmpty, IsOptional, IsString, IsInt, Min, Matches, ValidateIf } from "class-validator";
 import {
+    MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
+    MessageTriggerTargetClientStatus,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 
@@ -36,6 +38,14 @@ export class CreateMessageTriggerRuleDto {
 
     @IsEnum(MessageTriggerTemplateKey)
     templateKey!: MessageTriggerTemplateKey;
+
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsIn(MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES)
+    targetClientStatus?: MessageTriggerTargetClientStatus;
+
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsBoolean()
+    retryOnFailure?: boolean;
 }
 
 export class UpdateMessageTriggerRuleDto {
@@ -73,6 +83,14 @@ export class UpdateMessageTriggerRuleDto {
     @IsOptional()
     @IsEnum(MessageTriggerTemplateKey)
     templateKey?: MessageTriggerTemplateKey;
+
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsIn(MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES)
+    targetClientStatus?: MessageTriggerTargetClientStatus;
+
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsBoolean()
+    retryOnFailure?: boolean;
 }
 
 export class UpdateMessageTriggerRuleBranchActivationDto {

@@ -1,4 +1,23 @@
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import type { Prisma } from "@prisma/client";
+
+export interface EformsignLinkConfirmationCandidate {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: Date;
+    branchId: string | null;
+    clientId: number | null;
+    permanentPurgeRequestedAt: Date | null;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    templateId: string | null;
+    customerName: string | null;
+    customerPhone: string | null;
+    stepRecipientSms: string;
+    detailPayload: Prisma.JsonValue | null;
+}
 
 export interface EformsignDocClientSummary {
     documentId: string;
@@ -18,6 +37,18 @@ export interface EformsignDocUnscopedResult {
     branchId: string | null;
 }
 
+export interface EformsignVoidCandidate {
+    documentId: string;
+    clientId: number | null;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    statusType: string;
+    stepType: string;
+    stepName: string;
+    voidedAt: Date | null;
+    permanentPurgeRequestedAt: Date | null;
+}
+
 /**
  * Projection for `contracts.recent` — a contract-or-unclassified document (never a
  * service-record snapshot), newest updated first, with the client name resolved by
@@ -34,6 +65,7 @@ export interface RecentEformsignDocRow {
     stepName: string;
     updatedDate: Date;
     expired: boolean;
+    isVoided: boolean;
 }
 
 /**
@@ -51,6 +83,7 @@ export interface EformsignContractCandidateRow {
     stepType: string;
     stepName: string;
     permanentPurgeRequestedAt: Date | null;
+    voidedAt: Date | null;
 }
 
 export class EformsignDocMappingError extends Error {
@@ -118,6 +151,11 @@ export interface EformsignDocConditionalUpdateResult {
  * false to leave that column out of the UPDATE; the default (true) writes the entity's value.
  */
 export interface EformsignDocStepWriteOptions {
+    /**
+     * Set false to withhold clientId, documentKind, employeeScheduleId and templateId
+     * from a stale entity's write. Defaults to writing; only the update* methods honour it.
+     */
+    updateOwnershipIdentity?: boolean;
     updateStepType?: boolean;
     updateStepIndex?: boolean;
     /**
@@ -183,6 +221,8 @@ export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWri
 }
 
 export interface UpsertEformsignDocByDocumentIdOptions {
+    /** Atomically accept only an unlinked row or one already owned by this client. */
+    expectedOwnerClientId?: number;
     /**
      * Adoption may assign branch/client ownership to a row whose detail/PDF
      * generation is already ready. Keep that existing vendor projection intact
@@ -209,6 +249,8 @@ export interface ReviewStageContract {
 }
 
 export interface IEformsignDocRepository {
+    /** Unlinked contract-or-unclassified documents owned by the branch. */
+    findLinkConfirmationCandidates(branchId: string, normalizedPhone?: string): Promise<EformsignLinkConfirmationCandidate[]>;
     findById(branchid: string, id: number): Promise<EformsignDocEntity | null>;
     findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null>;
     /** Ownership-only lookup used to retry an already pending permanent purge. */
@@ -268,6 +310,8 @@ export interface IEformsignDocRepository {
      * simply absent from the map.
      */
     findContractEndDatesByDocumentIds(documentIds: string[]): Promise<Map<string, string>>;
+
+    findVoidedByNames(userIds: string[]): Promise<Map<string, string | null>>;
     /** All provider-review-stage (070) contracts, unscoped — the nightly auto-finalize pool and the dashboard card share this. */
     findReviewStageContracts(): Promise<ReviewStageContract[]>;
     /**
@@ -276,6 +320,8 @@ export interface IEformsignDocRepository {
      */
     recordAutoFinalizeFailure(documentId: string, error: string): Promise<number>;
     create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    findVoidCandidate(branchid: string, documentId: string): Promise<EformsignVoidCandidate | null>;
+    markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean>;
     update(
         branchid: string,
         doc: EformsignDocEntity,

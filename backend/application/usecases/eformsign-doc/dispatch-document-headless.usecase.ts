@@ -21,6 +21,7 @@ import {
     EFORMSIGN_REJECTED_STATUS_CODES,
     EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL,
     TERMINAL_STATUS_CODES,
+    isReviewerRejectedStatus,
     isRevokeRequestedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
@@ -299,6 +300,8 @@ export class DispatchDocumentHeadlessUsecase {
                 const duplicate = localDocuments
                     .find((document) => (
                         document.templateId === (templateId ?? null)
+                        // A voided (파기) contract is dead: a new one may be sent right after a void.
+                        && !document.isVoided
                         && !TERMINAL_STATUS_CODES.has(document.statusType)
                         && start - document.createdDate.getTime() >= 0
                         && start - document.createdDate.getTime() <= DUPLICATE_WINDOW_MS
@@ -787,7 +790,8 @@ export class DispatchDocumentHeadlessUsecase {
         if (isRevokeRequestedStatus(statusType)) {
             return EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL;
         }
-        if (EFORMSIGN_REJECTED_STATUS_CODES.has(statusType)) {
+        // 071 left the rejected set (계약-04: not terminal) but the detail written for it stays "거부".
+        if (EFORMSIGN_REJECTED_STATUS_CODES.has(statusType) || isReviewerRejectedStatus(statusType)) {
             return "거부";
         }
         return stepName?.trim() || "진행중";

@@ -146,3 +146,20 @@ export function useCompleteReplacement() {
     },
   });
 }
+
+/**
+ * Confirm booking mutation (rule 고객-04)
+ * Moves the client out of 예약 전; the status then follows the service dates.
+ */
+export function useConfirmBooking() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) =>
+      clientsApi.confirmBooking(id).then(r => r.data),
+    onSuccess: async (_, id) => {
+      await queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      await queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+    },
+  });
+}

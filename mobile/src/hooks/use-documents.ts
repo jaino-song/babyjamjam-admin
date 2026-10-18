@@ -3,7 +3,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import {
-    DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
     type DocumentUploadCapabilities,
 } from "@babyjamjam/shared/file-storage";
 
@@ -33,6 +32,7 @@ export interface UploadDocumentParams {
     categoryId: string;
     tags?: string[];
     onProgress?: (progress: number) => void;
+    visibilityScope?: "branch" | "all_branches";
 }
 
 export interface UpdateDocumentParams {
@@ -59,7 +59,6 @@ export function useDocumentUploadCapabilities() {
             const { data } = await api.get<DocumentUploadCapabilities>("/file-storage/capabilities");
             return data;
         },
-        placeholderData: DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
         staleTime: 1000 * 60 * 5,
     });
 }
@@ -103,6 +102,7 @@ export function useUploadDocument() {
             description,
             categoryId,
             tags,
+            visibilityScope,
             onProgress,
         }: UploadDocumentParams) => {
             const formData = new FormData();
@@ -111,6 +111,7 @@ export function useUploadDocument() {
             if (description) formData.append("description", description);
             formData.append("categoryId", categoryId);
             if (tags) formData.append("tags", JSON.stringify(tags));
+            if (visibilityScope !== undefined) formData.append("visibilityScope", visibilityScope);
 
             const { data } = await api.post<Document>("/file-storage/files", formData, {
                 onUploadProgress: (progressEvent) => {

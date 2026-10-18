@@ -6,9 +6,12 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
     SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
@@ -77,7 +80,7 @@ function readStoredCustomVariables(
 
 /**
  * Issues / revokes the no-login 제공기록지 link for an assignment (BJJ-247).
- * Assignment flows schedule the SMS for service-start day 15:00 KST; the existing
+ * Assignment flows schedule the SMS for noon KST the day before service start; the existing
  * Message trigger scheduler later dispatches it and writes retryable SMS logs.
  */
 @Injectable()
@@ -180,12 +183,16 @@ export class ServiceRecordLinkService {
     }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
-            include: { primaryEmployee: true },
+            include: {
+                primaryEmployee: true,
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+            },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        this.assertClientCanReceiveLink(schedule.client);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -224,12 +231,16 @@ export class ServiceRecordLinkService {
     }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
-            include: { primaryEmployee: true },
+            include: {
+                primaryEmployee: true,
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+            },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        this.assertClientCanReceiveLink(schedule.client);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -346,6 +357,22 @@ export class ServiceRecordLinkService {
         }
     }
 
+    private assertClientCanReceiveLink(client: {
+        serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    }): void {
+        if (getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/scheduleId",
+                code: "INVALID_VALUE",
+                detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다",
+                location: "body",
+            }));
+        }
+    }
+
     private async issueServiceRecordLinkJob(
         scheduleId: number,
         options: {
@@ -371,6 +398,7 @@ export class ServiceRecordLinkService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(
@@ -382,6 +410,21 @@ export class ServiceRecordLinkService {
         const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
         if (!options.isManualSend) {
+            // 종료일은 KST 자정까지 유효하므로 종료일 당일의 늦은 등록도 발송한다.
+            if (
+                schedule.terminatedAt
+                || getEffectiveClientServiceStatus(
+                    schedule.client.serviceStatus,
+                    schedule.client.startDate,
+                    schedule.client.endDate,
+                    schedule.client.bookingConfirmedAt,
+                ) === "pre_booking"
+                || schedule.client?.serviceStatus === "completed"
+                || schedule.client?.serviceStatus === "terminated"
+                || getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()
+            ) {
+                return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
+            }
             automaticSchedulingClaim = await this.claimAutomaticScheduling({
                 branchId: schedule.branchId,
                 scheduleId,
@@ -732,7 +775,9 @@ export class ServiceRecordLinkService {
                 AND "message_trigger_job"."canceled_by_user" = false
                 AND "message_trigger_job"."cancel_reason" IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
+                    ${SERVICE_RECORD_LINK_ENDED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
+                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON},
                     ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
                 )
             )
@@ -905,7 +950,7 @@ export class ServiceRecordLinkService {
 
     private resolveExpiry(endDate: Date, allowLateReissue: boolean): Date {
         const normalExpiry = getServiceRecordTokenExpiresAt(endDate);
-        if (!allowLateReissue || normalExpiry.getTime() >= Date.now()) return normalExpiry;
+        if (!allowLateReissue || normalExpiry.getTime() > Date.now()) return normalExpiry;
         return new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 }

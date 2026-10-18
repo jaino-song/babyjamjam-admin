@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { serviceRecordsApi } from "../api/service-records.api";
 import type {
     RetryServiceRecordDocumentInput,
+    ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionHistoryResponse,
     ServiceRecordOverview,
 } from "../types";
@@ -42,6 +43,24 @@ export function useClientServiceRecordRevisionHistory(
         staleTime: 0,
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,
+    });
+}
+
+/** One revision's before -> after changes. Disabled until a revision is selected. */
+export function useClientServiceRecordRevisionChanges(
+    clientId: number | null,
+    revisionId: string | null,
+    options?: { enabled?: boolean },
+) {
+    return useQuery<ServiceRecordRevisionChangesResponse>({
+        queryKey: serviceRecordKeys.revisionChanges(clientId, revisionId),
+        queryFn: () => {
+            if (clientId === null || revisionId === null) {
+                throw new Error("clientId and revisionId are required");
+            }
+            return serviceRecordsApi.getClientRevisionChanges(clientId, revisionId).then((response) => response.data);
+        },
+        enabled: clientId !== null && revisionId !== null && (options?.enabled ?? true),
     });
 }
 

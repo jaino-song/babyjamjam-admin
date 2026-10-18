@@ -14,6 +14,11 @@ import { ContractDataDto } from "application/dto/contract.dto";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
 import { EFORMSIGN_DOCUMENT_KIND, type EformsignDocumentKind } from "domain/entities/eformsign-doc.entity";
+import type { EformsignLinkConfirmation } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
+
+export interface EformsignLinkConfirmationDto extends EformsignLinkConfirmation {
+    canConfirm: boolean;
+}
 
 /**
  * DTO for creating a new eformsign doc record in local DB

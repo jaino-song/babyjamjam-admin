@@ -31,6 +31,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { isTriggerRuleInChannel } from "@/features/message-triggers/channel";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
@@ -246,20 +247,46 @@ export function MessageTenantApplicationSettings() {
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: messageSenderApproval, isLoading: isMessageSenderApprovalLoading } = useQuery({
+  const {
+    data: messageSenderApproval,
+    isLoading: isMessageSenderApprovalQueryLoading,
+    isPaused: isMessageSenderApprovalPaused,
+    isError: isMessageSenderApprovalError,
+    isFetching: isMessageSenderApprovalFetching,
+    refetch: refetchMessageSenderApproval,
+  } = useQuery({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
   });
+  // A paused load with no data has not started: it reads as loading, never as an answer.
+  const isMessageSenderApprovalLoading =
+    isMessageSenderApprovalQueryLoading ||
+    (isMessageSenderApprovalPaused && messageSenderApproval === undefined);
   const {
     data: messageAutomationPolicies,
-    isLoading: isMessageAutomationPoliciesLoading,
+    isLoading: isMessageAutomationPoliciesQueryLoading,
+    isPaused: isMessageAutomationPoliciesPaused,
     isError: isMessageAutomationPoliciesError,
     refetch: refetchMessageAutomationPolicies,
   } = useQuery({
     queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
-  const { data: triggerRulesData = [], isLoading: isTriggerRulesLoading } = useMessageTriggerRules();
+  const isMessageAutomationPoliciesLoading =
+    isMessageAutomationPoliciesQueryLoading ||
+    (isMessageAutomationPoliciesPaused && messageAutomationPolicies === undefined);
+  const {
+    data: triggerRulesData,
+    isLoading: isTriggerRulesQueryLoading,
+    isPaused: isTriggerRulesPaused,
+    isError: isTriggerRulesError,
+    isFetching: isTriggerRulesFetching,
+    refetch: refetchTriggerRules,
+  } = useMessageTriggerRules();
+  const isTriggerRulesLoading =
+    isTriggerRulesQueryLoading || (isTriggerRulesPaused && triggerRulesData === undefined);
+  const isTriggerRulesLoadFailed = isTriggerRulesError && triggerRulesData === undefined;
+  const isTriggerRulesRefreshFailed = isTriggerRulesError && triggerRulesData !== undefined;
   const [agreements, setAgreements] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(ALIGO_POLICY_ITEMS.map((item) => [item.id, false])),
   );
@@ -272,6 +299,9 @@ export function MessageTenantApplicationSettings() {
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
   const canSubmit = allAgreed;
   const isMessageSenderApproved = messageSenderApproval?.isApproved === true;
+  // A failed approval load with no earlier answer is neither "approved" nor "not approved".
+  const isMessageSenderApprovalUnknown =
+    messageSenderApproval === undefined && isMessageSenderApprovalError;
   const isMessageSettingsListLoading =
     isMessageSenderApprovalLoading || isMessageAutomationPoliciesLoading;
   const isAdminOrOwner = messageAutomationPolicies?.canManageActivation === true;
@@ -300,7 +330,7 @@ export function MessageTenantApplicationSettings() {
 
       const items: TenantApplicationListItem[] = [];
 
-      if (!isMessageSenderApproved) {
+      if (!isMessageSenderApproved && !isMessageSenderApprovalUnknown) {
         items.push({
           id: CURRENT_TENANT_ITEM_ID,
           title: "메시지 발송 기능 신청",
@@ -352,12 +382,13 @@ export function MessageTenantApplicationSettings() {
       isTriggerDispatchUnavailable,
       isMessageSettingsListLoading,
       isMessageSenderApproved,
+      isMessageSenderApprovalUnknown,
       messageAutomationPolicies?.policies,
       requestedAt,
       triggerDispatchActive,
     ],
   );
-  const fallbackSelectedItemId = isMessageSenderApproved
+  const fallbackSelectedItemId = isMessageSenderApproved || isMessageSenderApprovalUnknown
     ? (listItems.find((item) => item.kind === "automation-policy")?.id ?? DUPLICATE_SEND_POLICY_ITEM_ID)
     : CURRENT_TENANT_ITEM_ID;
   const selectedItem = listItems.find((item) => item.id === (selectedItemId ?? fallbackSelectedItemId))
@@ -386,7 +417,11 @@ export function MessageTenantApplicationSettings() {
       draftRetroactiveSendIntervalMinutes !== null &&
       Number(draftRetroactiveSendIntervalMinutes) !== savedPastTriggerConfig.sendIntervalMinutes
     );
-  const canSavePastTriggerConfig = isPastTriggerConfigDirty && Number(retroactiveSendIntervalMinutes) >= 1;
+  // Without the rules list, a save would merge an order built from zero rules.
+  const canSavePastTriggerConfig =
+    isPastTriggerConfigDirty &&
+    Number(retroactiveSendIntervalMinutes) >= 1 &&
+    !isTriggerRulesLoadFailed;
 
   const moveRetroactiveRuleOrder = (ruleId: string, direction: -1 | 1) => {
     const currentOrderIds = retroactiveTriggerOrderItems.map((item) => item.id);
@@ -545,11 +580,6 @@ export function MessageTenantApplicationSettings() {
         <ListPanel data-component="desktop_messages_sections_split-layout_list-panel"
           title="설정"
           subtitle="메시지에 관련된 설정들을 정할 수 있어요"
-          headerActions={
-            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
-              {listItems.length}개
-            </span>
-          }
         >
           <ListEmptyState
             message={emptyListMessage}
@@ -582,6 +612,15 @@ export function MessageTenantApplicationSettings() {
           </span>
         }
       >
+        {isMessageSenderApprovalUnknown ? (
+          <QueryErrorState
+            dataComponent="desktop_messages_sections_settings-sender-approval-error"
+            size="inline"
+            title="발신 승인 상태를 불러오지 못했습니다"
+            onRetry={() => void refetchMessageSenderApproval()}
+            isRetrying={isMessageSenderApprovalFetching}
+          />
+        ) : null}
         {isTriggerDispatchUnavailable ? (
           <InfoCard
             title="메시지 자동 발송 상태"
@@ -630,6 +669,11 @@ export function MessageTenantApplicationSettings() {
                     <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
                       {item.statusLabel}
                     </span>
+                  ) : item.requiresApproval &&
+                    item.id !== TRIGGER_DISPATCH_POLICY_ID &&
+                    isMessageSenderApprovalUnknown ? (
+                    // An "off" switch derived from an unknown approval would be a definite value.
+                    undefined
                   ) : (
                     <Switch
                       aria-label={`${item.title} 활성화`}
@@ -734,11 +778,28 @@ export function MessageTenantApplicationSettings() {
                   data-component="desktop_messages_sections_settings-past-trigger-policy-order-card_form"
                   className="-mt-1"
                 >
+                  {isTriggerRulesRefreshFailed ? (
+                    <QueryErrorState
+                      dataComponent="desktop_messages_sections_settings-past-trigger-policy-order-card_form_refresh-error"
+                      size="inline"
+                      title="최신 정보를 불러오지 못했습니다"
+                      onRetry={() => void refetchTriggerRules()}
+                      isRetrying={isTriggerRulesFetching}
+                    />
+                  ) : null}
                   {isTriggerRulesLoading ? (
                     <InfoRow
                       data-component="desktop_messages_sections_settings-past-trigger-policy-order-card_form_loading"
                       label="상태"
                       value="자동 전송 루틴을 불러오는 중"
+                    />
+                  ) : isTriggerRulesLoadFailed ? (
+                    <QueryErrorState
+                      dataComponent="desktop_messages_sections_settings-past-trigger-policy-order-card_form_load-error"
+                      size="inline"
+                      title="자동 전송 루틴을 불러오지 못했습니다"
+                      onRetry={() => void refetchTriggerRules()}
+                      isRetrying={isTriggerRulesFetching}
                     />
                   ) : retroactiveTriggerOrderItems.length > 0 ? retroactiveTriggerOrderItems.map((item, index) => (
                     <InfoRow

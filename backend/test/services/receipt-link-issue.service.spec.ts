@@ -45,6 +45,8 @@ interface DocFixture {
     serviceRecordCaseId?: string | null;
     templateId?: string | null;
     permanentPurgeRequestedAt?: Date | null;
+    voidedAt?: Date | null;
+    isVoided?: boolean;
 }
 
 interface MakeServiceOverrides {
@@ -123,6 +125,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
             .fn()
             .mockResolvedValue((overrides.docById === undefined ? doc : overrides.docById) as unknown as EformsignDocEntity | null),
         findByDocumentId: jest.fn().mockResolvedValue(doc as unknown as EformsignDocEntity | null),
+        findByDocumentIdUnscoped: jest.fn().mockResolvedValue(doc ? { document: doc, branchId: BRANCH } : null),
         findByClientId: jest
             .fn()
             .mockResolvedValue((overrides.docsByClient ?? (doc ? [doc] : [])) as unknown as EformsignDocEntity[]),
@@ -140,6 +143,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
                 stepType: "06",
                 stepName: "제공기관 확인",
                 permanentPurgeRequestedAt: row.permanentPurgeRequestedAt ?? null,
+                voidedAt: row.voidedAt ?? null,
             })).sort((a, b) => b.createdDate.getTime() - a.createdDate.getTime() || b.id - a.id),
         ),
     } as unknown as IEformsignDocRepository;
@@ -251,6 +255,52 @@ function makeService(overrides: MakeServiceOverrides = {}) {
 }
 
 describe("ReceiptLinkIssueService", () => {
+    it.each([true, false])("newest voided=%s never falls through to the older signed contract", async (isVoided) => {
+        const { service } = makeService({ docsByClient: [
+            { id: 43, documentId: "new", createdDate: new Date("2026-02-01"), voidedAt: isVoided ? new Date() : null },
+            { id: 42, documentId: "old", createdDate: new Date("2026-01-01") },
+        ] });
+        const result = service.preflight({ branchId: BRANCH, clientId: 7 });
+        if (isVoided) await expect(result).rejects.toMatchObject({ skipReason: "contract_voided" });
+        else await expect(result).resolves.toMatchObject({ doc: { id: 43, documentId: "new" } });
+    });
+    it.each([true, false])("explicit voided=%s refuses only the voided contract", async (isVoided) => {
+        const { service } = makeService({ docById: { id: 42, documentId: "doc-ext-1", documentKind: "contract", clientId: 7, isVoided } });
+        const result = service.preflight({ branchId: BRANCH, clientId: 7, eformsignDocId: 42 });
+        if (isVoided) await expect(result).rejects.toMatchObject({ skipReason: "contract_voided" });
+        else await expect(result).resolves.toMatchObject({ doc: { id: 42 } });
+    });
+    it.each(["string", "auto", "explicit"])("refuses a contract voided after approval at the %s delivery boundary", async (form) => {
+        const doc = { id: 42, documentId: "doc-ext-1", documentKind: "contract", clientId: 7, isVoided: false };
+        const { service, eformsignDocRepository } = makeService({ doc });
+        const target = form === "string" ? doc.documentId : { branchId: BRANCH, clientId: 7, ...(form === "explicit" ? { eformsignDocId: 42 } : { expectedEformsignDocId: 42 }) };
+        await service.preflight({ branchId: BRANCH, clientId: 7 });
+        await expect(service.assertDocumentSyncReady(target)).resolves.toBeUndefined();
+        doc.isVoided = true;
+        jest.mocked(eformsignDocRepository.findContractCandidatesByClientId).mockResolvedValue([
+            { ...doc, voidedAt: new Date(), createdDate: new Date(), serviceRecordCaseId: null, templateId: null, statusType: "070", stepType: "06", stepName: "제공기관 확인", permanentPurgeRequestedAt: null } as never,
+        ]);
+        await expect(service.assertDocumentSyncReady(target)).rejects.toMatchObject({ skipReason: "contract_voided" });
+    });
+    it.each([
+        ["1994-03-07", "19940307"],
+        ["940307", "940307"],
+    ])("issues stored birthday %s without inferring or dropping its century", async (birthday, expected) => {
+        const { service, tokenService } = makeService({
+            client: { id: 7, name: "김산모", phone: null, voucherClient: true, birthday, eDocId: "doc-ext-1" },
+        });
+        await service.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
+        expect(tokenService.issue).toHaveBeenCalledWith(expect.objectContaining({ birthday: expected }));
+    });
+
+    it.each([null, "", "garbage", "1994030", "199403070"])("skips unusable birthday %s before issuing", async (birthday) => {
+        const { service, tokenService } = makeService({
+            client: { id: 7, name: "김산모", phone: null, voucherClient: true, birthday, eDocId: "doc-ext-1" },
+        });
+        await expect(service.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).rejects.toMatchObject({ skipReason: "missing_birthday" });
+        expect(tokenService.issue).not.toHaveBeenCalled();
+    });
+
     it("renders page 7, uploads under an issuance-specific path, issues a token and builds the url", async () => {
         const { service, rasterizer, storage, tokenService, clientRepository } = makeService();
         const result = await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1" });
@@ -337,6 +387,61 @@ describe("ReceiptLinkIssueService", () => {
         expect(tokenService.issue).not.toHaveBeenCalled();
     });
 
+    // 계약-04: 071 (the provider's reviewer rejected the document) is not terminal and the customer's
+    // signature stays valid, so the receipt link may be issued — whatever step the row last reports.
+    it.each([
+        ["제공기관 확인", "06"],
+        ["검토 반려", "06"],
+        ["이용자 서명", "05"],
+    ] as const)(
+        "allows sending for status 071 (reviewer rejection) at step %s (step type %s)",
+        async (stepName, stepType) => {
+            const { service, tokenService } = makeService({
+                mirrorState: {
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: "071",
+                            step_type: stepType,
+                            step_name: stepName,
+                        },
+                    } as EformsignDocumentMirrorState["detailPayload"],
+                },
+            });
+
+            const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
+
+            expect(preflight.pdf.equals(PDF)).toBe(true);
+            expect(tokenService.issue).not.toHaveBeenCalled();
+        },
+    );
+
+    it("still refuses status 060 (customer has not signed) and the other terminal contracts", async () => {
+        for (const [statusType, stepType, stepName] of [
+            ["060", "05", "이용자 서명"],
+            ["011", "06", "제공기관 확인"],
+            ["021", "06", "제공기관 확인"],
+            ["031", "06", "제공기관 확인"],
+        ] as const) {
+            const { service } = makeService({
+                mirrorState: {
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: statusType,
+                            step_type: stepType,
+                            step_name: stepName,
+                        },
+                    } as EformsignDocumentMirrorState["detailPayload"],
+                },
+            });
+            await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
+                .rejects.toMatchObject({ skipReason: "contract_not_signed" });
+        }
+    });
+
     it("skips with contract_not_signed when the mirror cannot prove a signature at all", async () => {
         const { service } = makeService({ mirrorState: null });
         await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
@@ -353,7 +458,8 @@ describe("ReceiptLinkIssueService", () => {
     });
 
     const terminalWithProviderReviewStepCases = [
-        ["071", "검토 반려"],
+        ["042", "철회"],
+        ["061", "거부"],
         ["080", "만료"],
     ] as const;
     it.each(terminalWithProviderReviewStepCases)(
@@ -425,7 +531,8 @@ describe("ReceiptLinkIssueService", () => {
     });
 
     it.each([
-        ["071", "검토 반려"],
+        ["042", "철회"],
+        ["061", "거부"],
         ["080", "만료"],
     ] as const)(
         "rejects a terminal status %s introduced by the PDF re-sync before issuance",
@@ -457,7 +564,8 @@ describe("ReceiptLinkIssueService", () => {
     );
 
     it.each([
-        ["071", "검토 반려"],
+        ["042", "철회"],
+        ["061", "거부"],
         ["080", "만료"],
     ] as const)(
         "rejects a terminal status %s observed at the delivery-readiness boundary",

@@ -40,6 +40,11 @@ const CONTRACT_STATUS_AVATAR_CLASSES = {
     container: "bg-v3-burgundy-light",
     icon: "text-v3-burgundy",
   },
+  // 반려됨 (071): the badge is the solid burgundy; the avatar keeps the soft burgundy tint.
+  rejected_by_reviewer: {
+    container: "bg-v3-burgundy-light",
+    icon: "text-v3-burgundy",
+  },
 } as const satisfies Record<
   ReturnType<typeof contractStatusBadgeType>,
   { container: string; icon: string }

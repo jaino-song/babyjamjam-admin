@@ -367,6 +367,8 @@ test.describe("Call inbox", () => {
   });
 
   test("does not hammer the server when a page fails to load", async ({ page }) => {
+    // Waits out the query client's retry backoff (~7s) plus two quiet windows.
+    test.setTimeout(90_000);
     let draftCalls = 0;
     await page.route("**/api/auth/me", (route) =>
       route.fulfill(json({ id: "owner-1", name: "관리자", role: "owner" })),
@@ -389,18 +391,32 @@ test.describe("Call inbox", () => {
     await page.goto("/calls");
     await expect(loadMoreButton(page)).toBeVisible();
     await revealAll(page);
-    await page.waitForTimeout(1500);
+
+    // A failed page is retried by the query client itself (500s retry 3 times,
+    // 1s/2s/4s apart — lib/queryClient.ts), so page 2 keeps arriving for ~7s
+    // after its first failure. That is bounded and not the hammering this test
+    // guards against, so let the retries run out before asking whether anything
+    // is still firing: a gap longer than the largest backoff step (4s) with no
+    // new request means the sequence is over.
+    const RETRY_QUIET_WINDOW_MS = 5000;
+    let settled = -1;
+    for (let attempt = 0; attempt < 6 && settled !== draftCalls; attempt += 1) {
+      settled = draftCalls;
+      await page.waitForTimeout(RETRY_QUIET_WINDOW_MS);
+    }
+    expect(settled).toBe(draftCalls);
 
     // Retrying is allowed — the reveal moving on is the user asking again, and
-    // page 2 is retried once per step, so the count is bounded by how far the
-    // reveal walked. What must never happen is the effect firing on its own.
+    // page 2 is retried (with its query-level retries) once per step, so the
+    // count is bounded by how far the reveal walked. What must never happen is
+    // the effect firing on its own.
     const afterReveal = draftCalls;
     expect(afterReveal).toBeLessThan(DRAFT_TOTAL);
 
     // Nothing touches the page from here; an unguarded effect would keep
     // re-firing because a failure leaves hasNextPage true and clears
     // isFetchingNextPage without changing anything else it reads.
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(RETRY_QUIET_WINDOW_MS);
     expect(draftCalls).toBe(afterReveal);
 
     // Whatever did arrive stays on screen.

@@ -3,8 +3,13 @@ import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { documentCustomerNameValue } from "application/utils/eformsign-document-customer-name";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { compareEformsignClientIdentity } from "application/utils/eformsign-client-identity";
+import { extractEformsignContractClientCandidate } from "application/utils/eformsign-contract-client-candidate";
+import { isEformsignAutoLinkEligibleStatus } from "domain/constants/eformsign-auto-link-status";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
+import { EFORMSIGN_DOC_REPOSITORY, EformsignDocOwnershipConflictError, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { eformsignExpiryDateFromRemainingDays } from "domain/utils/eformsign-expiry-date";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
@@ -30,6 +35,8 @@ export class AdoptEformsignDocUsecase {
         private readonly createEformsignDocUsecase: CreateEformsignDocUsecase,
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
         private readonly documentMirrorService: EformsignDocumentMirrorService,
+        @Inject(EFORMSIGN_DOC_REPOSITORY)
+        private readonly eformsignDocRepository: IEformsignDocRepository,
     ) {}
 
     async execute(
@@ -51,9 +58,8 @@ export class AdoptEformsignDocUsecase {
                 );
                 const recipient = remote.current_status.step_recipients?.[0];
 
-                const clientId = params.clientId ?? (recipient?.id
-                    ? (await this.clientRepository.findByPhone(branchId, recipient.id))?.id
-                    : undefined);
+                const clientId = params.clientId
+                    ?? await this.inferClientId(branchId, remote, params.documentId, recipient?.id);
                 if (!clientId) {
                     throw new Error("clientId가 필요합니다.");
                 }
@@ -61,6 +67,7 @@ export class AdoptEformsignDocUsecase {
                 const result = await this.createEformsignDocUsecase.execute(branchId, {
                     documentId: remote.id || params.documentId,
                     clientId,
+                    ...(params.clientId === undefined ? { expectedOwnerClientId: clientId } : {}),
                     statusType: normalizeEformsignStatusCode(remote.current_status.status_type),
                     statusDetail: remote.current_status.status_doc_detail || remote.current_status.step_name || "진행중",
                     stepType: remote.current_status.step_type || "01",
@@ -88,6 +95,11 @@ export class AdoptEformsignDocUsecase {
                     stepRecipientTypes: remote.current_status.step_recipients
                         ?.map((item) => item.recipient_type)
                         ?? null,
+                }).catch((error: unknown) => {
+                    if (params.clientId === undefined && error instanceof EformsignDocOwnershipConflictError) {
+                        throw new Error("clientId가 필요합니다.");
+                    }
+                    throw error;
                 });
 
                 try {
@@ -117,5 +129,45 @@ export class AdoptEformsignDocUsecase {
                 return result;
             },
         );
+    }
+
+    /**
+     * Picks a client for an adoption nobody chose a client for. A phone match is only a
+     * candidate: the document's own customer phone, name and birthday must all agree with
+     * the client, and a document already linked to another client is never moved (business rule 계약-05).
+     * The document must also be in a status that may be linked automatically. Any rejection
+     * returns undefined, so the caller reports the usual "clientId required" error.
+     */
+    private async inferClientId(
+        branchId: string,
+        remote: EformsignApiDocumentResponse,
+        requestedDocumentId: string,
+        recipientPhone: string | undefined,
+    ): Promise<number | undefined> {
+        if (!isEformsignAutoLinkEligibleStatus(
+            normalizeEformsignStatusCode(remote.current_status.status_type),
+        )) {
+            return undefined;
+        }
+        if (!recipientPhone) return undefined;
+        const client = await this.clientRepository.findByPhone(branchId, recipientPhone);
+        if (!client) return undefined;
+
+        // The lookup used the first recipient's id, which need not be the customer. The
+        // candidate's phone is already normalized the same way as client.phoneNormalized.
+        const candidate = extractEformsignContractClientCandidate(remote);
+        if (!candidate?.phone || candidate.phone !== client.phoneNormalized) return undefined;
+        if (compareEformsignClientIdentity(candidate, client, new Date()).length > 0) {
+            return undefined;
+        }
+
+        const existing = await this.eformsignDocRepository.findByDocumentId(
+            branchId,
+            remote.id || requestedDocumentId,
+        );
+        if (existing?.clientId != null && existing.clientId !== client.id) {
+            return undefined;
+        }
+        return client.id;
     }
 }

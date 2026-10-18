@@ -59,7 +59,29 @@ export const MESSAGE_HISTORY_STATUS_LABELS: Readonly<Record<MessageLogStatus, st
   failed: "발송 실패",
   pending: "재시도 대기",
   canceled: "발송 취소",
+  needs_setup: "설정 필요",
 };
+
+/** Detail-only provider-history state; list badges retain the stored status. */
+export function getMessageHistoryDetailStatusLabel(record: {
+  status: string;
+  variables?: Record<string, unknown> | null;
+}): string {
+  if (record.status !== "sent") {
+    if (record.variables?.["historyLookup"] === "checking") return "확인 중";
+    if (record.variables?.["historyLookup"] === "exhausted") return "확인 필요";
+  }
+  switch (record.status) {
+    case "sent":
+    case "failed":
+    case "pending":
+    case "canceled":
+    case "needs_setup":
+      return MESSAGE_HISTORY_STATUS_LABELS[record.status];
+    default:
+      return record.status || "-";
+  }
+}
 
 export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus, string>> = {
   pending: "발송 대기",
@@ -68,6 +90,7 @@ export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus,
   sent: "발송 완료",
   failed: "발송 실패",
   canceled: "발송 취소",
+  needs_setup: "설정 필요",
 };
 
 // Single source of truth for message-status -> StatusBadge variant. Both
@@ -81,6 +104,7 @@ export const MESSAGE_LOG_STATUS_BADGE_VARIANT: Readonly<Record<MessageLogStatus,
   failed: "danger",
   pending: "warning",
   canceled: "neutral",
+  needs_setup: "warning",
 };
 
 export const MESSAGE_JOB_STATUS_BADGE_VARIANT: Readonly<Record<MessageTriggerJobStatus, MessageStatusBadgeVariant>> = {
@@ -90,6 +114,7 @@ export const MESSAGE_JOB_STATUS_BADGE_VARIANT: Readonly<Record<MessageTriggerJob
   sent: "success",
   failed: "danger",
   canceled: "neutral",
+  needs_setup: "warning",
 };
 
 // Copy for the merged 발송 기록 screen, which shows upcoming sends and past
@@ -129,6 +154,20 @@ export const MESSAGE_JOB_CANCEL_COPY = {
 } as const;
 
 export const MESSAGE_RECORD_REASON_LABEL = "사유";
+
+/** Reason label for a `needs_setup` row, where "사유" alone reads as a failure. */
+export const MESSAGE_SETUP_REASON_LABEL = "설정 필요 사유";
+
+// Copy for re-sending a `needs_setup` job after the operator fixed the setup.
+export const MESSAGE_JOB_RESEND_COPY = {
+  action: "재발송",
+  pending: "재발송 중",
+  success: "재발송했습니다.",
+  stillNeedsSetup: "아직 설정이 필요합니다. 사유를 확인해 주세요.",
+  notSent: "재발송하지 않았습니다.",
+  conflict: "지금은 재발송할 수 없습니다. 자동 전송 설정을 확인해 주세요.",
+  failure: "재발송하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+} as const;
 
 export const MESSAGE_EVENT_LABELS: Readonly<Record<MessageTriggerEventType, string>> = {
   CLIENT_CREATED: "고객 등록",
@@ -270,14 +309,26 @@ export function formatMessageDateTimeDetail(dateString: string | null): string {
   });
 }
 
+const CARRIER_FAILURE_REASON_PREFIX = "통신사 전달 실패:";
+
 export function formatMessageFailureReason(reason: string | null | undefined): string {
   if (!reason) return "";
 
-  return reason
-    .replace(/[^\uAC00-\uD7A3\u3131-\u318E\s.]/g, "")
+  const permanentFailure = reason.trim().startsWith("발송 실패:");
+  const body = permanentFailure ? reason.trim().slice("발송 실패:".length) : reason;
+
+  // Carrier-check failures ("통신사 전달 실패: 1234 가입자없음, 5678 결번") carry the
+  // last four digits of the receiver; keep digits, colon and commas for them.
+  const keepPattern = body.trimStart().startsWith(CARRIER_FAILURE_REASON_PREFIX)
+    ? /[^\uAC00-\uD7A3\u3131-\u318E\s.0-9:,]/g
+    : /[^\uAC00-\uD7A3\u3131-\u318E\s.]/g;
+
+  const sanitizedReason = body
+    .replace(keepPattern, "")
     .replace(/\s+/g, " ")
     .replace(/\s+\./g, ".")
     .trim();
+  return permanentFailure && sanitizedReason ? `발송 실패: ${sanitizedReason}` : sanitizedReason;
 }
 
 export interface NormalizeMessageHistoryPresentationOptions {
@@ -297,6 +348,8 @@ export interface NormalizedMessageHistoryPresentation {
   status: MessageLogStatus;
   messagePreview: string;
   failureReason?: string;
+  /** Why a `needs_setup` row cannot be sent; `failureReason` stays unset for it. */
+  setupReason?: string;
 }
 
 export function normalizeMessageHistoryPresentation(
@@ -323,6 +376,9 @@ export function normalizeMessageHistoryPresentation(
   const failureReason = record.status === "failed"
     ? formatMessageFailureReason(record.errorMessage)
     : "";
+  const setupReason = record.status === "needs_setup"
+    ? formatMessageFailureReason(record.errorMessage)
+    : "";
 
   return {
     id: record.id,
@@ -336,5 +392,6 @@ export function normalizeMessageHistoryPresentation(
     status: record.status,
     messagePreview: record.messageBody,
     failureReason: failureReason || undefined,
+    setupReason: setupReason || undefined,
   };
 }

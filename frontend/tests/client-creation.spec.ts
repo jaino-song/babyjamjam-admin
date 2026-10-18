@@ -274,18 +274,13 @@ test.describe('Client Creation Flow', () => {
             await expect(endDate).toHaveValue('2026-12-19');
         });
 
-        test('offers every service status', async ({ page }) => {
+        test('keeps new clients in pre-booking until confirmation', async ({ page }) => {
             const status = page.getByRole('combobox', { name: '계약 상태' });
 
             await expect(status.getByRole('option')).toHaveText([
-                '계약 상태',
                 '예약 전',
-                '대기',
-                '교체 요청',
-                '진행중',
-                '완료',
-                '중단',
             ]);
+            await expect(status).toBeDisabled();
             await expect(status).toHaveValue('pre_booking');
         });
 

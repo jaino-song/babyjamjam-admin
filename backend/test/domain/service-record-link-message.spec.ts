@@ -3,7 +3,6 @@ import {
     getServiceRecordFinalizationDueAt,
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
-    SERVICE_RECORD_LINK_GRACE_DAYS,
 } from "domain/constants/service-record-link-message";
 
 /**
@@ -92,17 +91,21 @@ describe("service-record-link-message date contract (P2-9)", () => {
     });
 
     describe("getServiceRecordLinkScheduledFor", () => {
-        it("schedules the 제공기록지 링크 SMS at 15:00 KST on the @db.Date-sourced startDate's calendar day", () => {
-            const startDate = new Date("2025-06-15T00:00:00.000Z");
+        it.each([
+            ["2026-11-02", "2026-11-01T03:00:00.000Z"],
+            ["2026-11-03", "2026-11-02T03:00:00.000Z"],
+            ["2027-01-01", "2026-12-31T03:00:00.000Z"],
+        ])("schedules %s at noon KST the previous calendar day, including Sunday", (start, expected) => {
+            const startDate = new Date(`${start}T00:00:00.000Z`);
 
             const result = getServiceRecordLinkScheduledFor(startDate);
 
-            expect(result.toISOString()).toBe("2025-06-15T06:00:00.000Z");
+            expect(result.toISOString()).toBe(expected);
         });
     });
 
     describe("getServiceRecordFinalizationDueAt", () => {
-        it("is due at 20:00 KST on the @db.Date-sourced endDate's calendar day (unaffected by the link's grace period)", () => {
+        it("is due at 20:00 KST on the @db.Date-sourced endDate's calendar day (unaffected by link expiry)", () => {
             const endDate = new Date("2026-09-02T00:00:00.000Z");
 
             const result = getServiceRecordFinalizationDueAt(endDate);
@@ -112,22 +115,21 @@ describe("service-record-link-message date contract (P2-9)", () => {
     });
 
     describe("getServiceRecordTokenExpiresAt", () => {
-        it(`expires the access token ${SERVICE_RECORD_LINK_GRACE_DAYS} calendar days after the @db.Date-sourced endDate, at 20:00 KST`, () => {
-            const endDate = new Date("2026-09-02T00:00:00.000Z");
+        it("expires the access token at midnight KST after the service end date", () => {
+            const endDate = new Date("2026-11-14T00:00:00.000Z");
 
             const result = getServiceRecordTokenExpiresAt(endDate);
 
-            // endDate + 7 calendar days = 2026-09-09, at 20:00 KST
-            expect(result.toISOString()).toBe("2026-09-09T11:00:00.000Z");
+            expect(result.toISOString()).toBe("2026-11-14T15:00:00.000Z");
+            expect(getServiceRecordFinalizationDueAt(endDate).toISOString()).toBe("2026-11-14T11:00:00.000Z");
         });
 
-        it("rolls over the calendar month when the +7-day grace period crosses a month boundary", () => {
-            const endDate = new Date("2026-08-28T00:00:00.000Z");
+        it("rolls over the calendar month at next-day midnight", () => {
+            const endDate = new Date("2026-08-31T00:00:00.000Z");
 
             const result = getServiceRecordTokenExpiresAt(endDate);
 
-            // 2026-08-28 + 7 calendar days = 2026-09-04, at 20:00 KST
-            expect(result.toISOString()).toBe("2026-09-04T11:00:00.000Z");
+            expect(result.toISOString()).toBe("2026-08-31T15:00:00.000Z");
         });
     });
 });

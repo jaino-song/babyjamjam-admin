@@ -45,6 +45,11 @@ export const EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES: readonly string[] = [
  * "revoked" for a document that is still signable — and let a delete purge a document
  * whose cancellation the vendor had not completed. 045 gets exactly the same treatment.
  * "041" (a refused revoke) is not a rejection either: the document continues.
+ *
+ * "071" (doc_reject_reviewer, 계약-04) is absent too: the provider's reviewer rejected the
+ * document, but a later 070 (resubmitted for review) or 072 (accepted) legitimately follows,
+ * and the customer's signature stays valid. It is a live, in-progress document shown "반려됨"
+ * (see {@link EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE}).
  */
 export const EFORMSIGN_REJECTED_STATUS_CODES: ReadonlySet<string> = new Set([
     "011",
@@ -54,7 +59,6 @@ export const EFORMSIGN_REJECTED_STATUS_CODES: ReadonlySet<string> = new Set([
     "047",
     "049",
     "061",
-    "071",
     "080",
 ]);
 
@@ -81,7 +85,24 @@ export const EFORMSIGN_REFUSE_REVOKE_STATUS_CODE = "041";
  */
 export const EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL = "철회 요청";
 
-/** In-progress codes: the document is live and waiting on someone (041 reads exactly like 060). */
+/**
+ * "071" (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document. Not
+ * terminal and not "rejected" in the sense of {@link EFORMSIGN_REJECTED_STATUS_CODES}, yet no
+ * writer may treat it as an ordinary live document either: finalize must not start on it, and
+ * the status detail it carries stays "거부"/"검토 반려" as before.
+ */
+export const EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE = "071";
+
+export function isReviewerRejectedStatus(
+    statusType: string | number | null | undefined,
+): boolean {
+    return normalizeEformsignStatusCode(statusType) === EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE;
+}
+
+/**
+ * In-progress codes: the document is live and waiting on someone (041 reads exactly like 060).
+ * 071 (a reviewer rejection) is live too: 070 and 072 still follow it.
+ */
 export const EFORMSIGN_IN_PROGRESS_STATUS_CODES: ReadonlySet<string> = new Set([
     "001",
     "002",
@@ -94,6 +115,7 @@ export const EFORMSIGN_IN_PROGRESS_STATUS_CODES: ReadonlySet<string> = new Set([
     "063",
     "064",
     "070",
+    "071",
 ]);
 
 export function isRevokeRequestedStatus(

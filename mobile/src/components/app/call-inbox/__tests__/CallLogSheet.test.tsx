@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { CallLogSheet } from "../CallLogSheet";
 import { NEUTRAL_SPEAKER } from "@/lib/call-inbox/types";
@@ -46,6 +46,43 @@ const baseRecord = {
 describe("CallLogSheet — transcript speaker rendering", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("shows a retryable inline failure rather than endless loading", () => {
+    const refetch = jest.fn();
+    mockUseCallRecord.mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
+    render(<CallLogSheet recordId="rec-1" />);
+    expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
+    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows loading without a failure while the request is pending", () => {
+    mockUseCallRecord.mockReturnValue({ data: undefined, isLoading: true, isError: false, isFetching: true });
+    render(<CallLogSheet recordId="rec-1" />);
+    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached detail below one inline notice and disables an in-flight retry", () => {
+    const refetch = jest.fn();
+    mockUseCallRecord.mockReturnValue({ data: baseRecord, isError: true, isFetching: false, refetch });
+    const { rerender } = render(<CallLogSheet recordId="rec-1" />);
+    const alert = screen.getByRole("alert");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(screen.getByText("김서연")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    mockUseCallRecord.mockReturnValue({ data: baseRecord, isError: true, isFetching: true, refetch });
+    rerender(<CallLogSheet recordId="rec-1" />);
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByText("김서연")).toBeInTheDocument();
+    mockUseCallRecord.mockReturnValue({ data: baseRecord, isError: false });
+    rerender(<CallLogSheet recordId="rec-1" />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
   });
 
   it("renders known staff and customer roles on their expected sides (regression)", () => {

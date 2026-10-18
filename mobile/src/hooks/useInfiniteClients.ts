@@ -148,6 +148,10 @@ export function useInfiniteClients({
     isLoading: query.isLoading,
     isError: query.isError,
     isFetching: query.isFetching,
+    // A paused query (offline) has no data yet but is not `isLoading`.
+    isPaused: query.isPaused,
+    // True once any load has succeeded, even one that returned an empty list.
+    hasData: query.data !== undefined,
     isFetchingNextPage: false,
     hasNextPage,
     fetchNextPage,

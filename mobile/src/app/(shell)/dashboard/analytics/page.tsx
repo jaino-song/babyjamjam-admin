@@ -1,5 +1,6 @@
 "use client";
 
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useClients } from "@/hooks/useClients";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
 import { formatAnalyticsCount } from "@/lib/dashboard/analytics";
@@ -9,14 +10,28 @@ export default function DashboardAnalyticsPage() {
   const {
     data: analytics,
     isLoading: analyticsLoading,
+    isPaused: analyticsPaused,
     isError: analyticsError,
+    isFetching: analyticsFetching,
+    refetch: refetchAnalytics,
   } = useDashboardAnalytics();
-  const { data: clientsPage, isLoading: clientsLoading } = useClients(1, 1);
+  const {
+    data: clientsPage,
+    isLoading: clientsLoading,
+    isPaused: clientsPaused,
+    isError: clientsError,
+    isFetching: clientsFetching,
+    refetch: refetchClients,
+  } = useClients(1, 1);
 
   const isLoading = analyticsLoading || clientsLoading;
   const hasData = !isLoading && analytics && clientsPage;
 
-  const totalClients = clientsPage?.total ?? 0;
+  // Each card is masked only by the query that feeds it, and only while that query has no data.
+  const clientsPending = (clientsLoading || clientsPaused) && !clientsPage;
+  const analyticsPending = (analyticsLoading || analyticsPaused) && !analytics;
+  // A failed count with nothing cached shows "—", never 0.
+  const totalClients = clientsError && !clientsPage ? "—" : String(clientsPage?.total ?? 0);
   // Unknown counts (server stats unavailable) show "-", never 0.
   const pendingReview = analytics?.contractsPendingSignature;
   const pendingSend = analytics?.contractsNotSent;
@@ -25,11 +40,11 @@ export default function DashboardAnalyticsPage() {
       ? pendingReview + pendingSend
       : null;
 
-  const cards: Array<[string, string]> = [
-    [String(totalClients), "전체 고객"],
-    [formatAnalyticsCount(analytics?.activeClients), "진행중"],
-    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작"],
-    [formatAnalyticsCount(pendingActions), "처리 필요"],
+  const cards: Array<[string, string, boolean]> = [
+    [totalClients, "전체 고객", clientsPending],
+    [formatAnalyticsCount(analytics?.activeClients), "진행중", analyticsPending || (analyticsError && !analytics)],
+    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작", analyticsPending || (analyticsError && !analytics)],
+    [formatAnalyticsCount(pendingActions), "처리 필요", analyticsPending || (analyticsError && !analytics)],
   ];
 
   return (
@@ -41,44 +56,61 @@ export default function DashboardAnalyticsPage() {
             <span className="list-count">이번 달</span>
           </span>
         </div>
-        {analyticsError ? (
-          <div
-            className="action-feedback"
-            role="alert"
-            data-component="mobile_dashboard_analytics-page_card_error"
-          >
-            통계를 불러오지 못했습니다.
-          </div>
-        ) : (
-          <div
-            className="stats-grid"
-            style={{ padding: "8px" }}
-            data-component="mobile_dashboard_analytics-page_card_grid"
-          >
-            {cards.map(([value, label]) => (
-              <div
-                className="mini-stat"
-                data-component="mobile_dashboard_analytics-page_card_grid_stat"
-                key={label}
-              >
-                <div data-component="mobile_dashboard_analytics-page_card_grid_stat_content">
-                  <div
-                    className="mini-stat-num"
-                    data-component="mobile_dashboard_analytics-page_card_grid_stat_content_value"
-                  >
-                    {isLoading ? "—" : value}
-                  </div>
-                  <div
-                    className="mini-stat-label"
-                    data-component="mobile_dashboard_analytics-page_card_grid_stat_content_label"
-                  >
-                    {label}
-                  </div>
+        {clientsError ? (
+          <QueryErrorState
+            dataComponent="mobile_dashboard_analytics-page_card_clients-error"
+            size="inline"
+            title={clientsPage ? "최신 정보를 불러오지 못했습니다" : "전체 고객 정보를 불러오지 못했습니다"}
+            isRetrying={clientsFetching}
+            onRetry={() => void refetchClients()}
+          />
+        ) : null}
+        {analyticsError && analytics ? (
+          <QueryErrorState
+            dataComponent="mobile_dashboard_analytics-page_card_stale-error"
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            isRetrying={analyticsFetching}
+            onRetry={() => void refetchAnalytics()}
+          />
+        ) : null}
+        {analyticsError && !analytics ? (
+          <QueryErrorState
+            dataComponent="mobile_dashboard_analytics-page_card_error"
+            size="inline"
+            title="통계를 불러오지 못했습니다"
+            isRetrying={analyticsFetching}
+            onRetry={() => void refetchAnalytics()}
+          />
+        ) : null}
+        <div
+          className="stats-grid"
+          style={{ padding: "8px" }}
+          data-component="mobile_dashboard_analytics-page_card_grid"
+        >
+          {cards.map(([value, label, pending]) => (
+            <div
+              className="mini-stat"
+              data-component="mobile_dashboard_analytics-page_card_grid_stat"
+              key={label}
+            >
+              <div data-component="mobile_dashboard_analytics-page_card_grid_stat_content">
+                <div
+                  className="mini-stat-num"
+                  data-component="mobile_dashboard_analytics-page_card_grid_stat_content_value"
+                >
+                  {pending ? "—" : value}
+                </div>
+                <div
+                  className="mini-stat-label"
+                  data-component="mobile_dashboard_analytics-page_card_grid_stat_content_label"
+                >
+                  {label}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
         {hasData && (
           <div
             className="action-feedback"

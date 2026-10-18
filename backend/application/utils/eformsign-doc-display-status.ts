@@ -6,7 +6,10 @@ import {
     type EformsignListDoc,
 } from "application/utils/eformsign-document-list";
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
-import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
+import {
+    isReviewerRejectedStatus,
+    isRevokeRequestedStatus,
+} from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
     isoDateInKorea,
@@ -32,6 +35,7 @@ import {
  * shared test fixtures — change both files together.
  */
 export type EformsignDocDisplayStatus =
+    | "voided"
     | "pending"
     | "signed"
     | "review"
@@ -50,6 +54,13 @@ export type EformsignDocDisplayStatus =
      * neither 기간 만료 (080) nor 철회 요청됨 (040/045).
      */
     | "revoked"
+    /**
+     * eformsign 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document.
+     * Shown "반려됨" (solid burgundy). NOT terminal: a later 070 returns it to 서명 완료/검토 필요, a
+     * later 072 completes it, and the customer's signature stays valid. Its category is
+     * in-progress, not expired.
+     */
+    | "rejected_by_reviewer"
     | "expired"
     | "unknown";
 
@@ -103,6 +114,7 @@ export function resolveEformsignDocDisplayStatus(
     now: Date,
     calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
+    if (document.isVoided === true) return "voided";
     // Before the category checks: 040/045 sit in the expired bucket for filtering, but the document
     // is not expired — independent of step, unassigned state and end date.
     const statusType = stringFromUnknown(getCurrentStatus(document)?.["status_type"]);
@@ -112,6 +124,11 @@ export function resolveEformsignDocDisplayStatus(
     // Same reason: 042/090 sit in the expired bucket for filtering, but the document was revoked.
     if (REVOKED_STATUS_CODES.has(normalizeEformsignStatusCode(statusType))) {
         return "revoked";
+    }
+    // 071 sits in the in-progress list (it is not terminal), but it is neither 서명 대기 nor
+    // 서명 완료 — independent of step, unassigned state and end date, like the revoke codes.
+    if (isReviewerRejectedStatus(statusType)) {
+        return "rejected_by_reviewer";
     }
     const category = getDocumentStatusCategory(document);
     if (category === "completed") return "completed";

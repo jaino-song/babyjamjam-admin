@@ -27,3 +27,26 @@ mode intentionally retains the regular login boundary.
 
 After changing the local credentials, back up the local file yourself with
 `env-backup frontend/.env.local`. The committed manifest contains blank values only.
+
+
+## Plain dev servers
+
+The regular dev commands use the same settings, so agents and people never hit the login
+screen locally:
+
+- Admin web: `pnpm run dev` in `frontend/` (binds `127.0.0.1`, reads `frontend/.env.local`).
+- Mobile: `pnpm run dev` in `mobile/` runs `scripts/start-mobile-dev.mjs`, which borrows
+  `LOCAL_AUTO_LOGIN_*` and the loopback backend origin from `frontend/.env.local` and starts
+  `next dev` as before. Without those settings it starts without automatic login.
+- Backend: `pnpm run start:dev` reads `backend/.env`; `AUTH_RATE_LIMIT_DISABLED=true` there turns
+  the login rate limit off locally (ignored when `NODE_ENV=production`).
+
+Optional `LOCAL_AUTO_LOGIN_BRANCH_NAME` (exact branch name) selects that branch right after the
+automatic login, skipping `/select-branch`. If the name is not found or selection fails, the
+session stays signed in and the branch screen appears as usual.
+
+The mobile dev server listens on the LAN so phones can open service-record links. Automatic
+login only answers requests addressed to `localhost`/`127.0.0.1`, but a device on the same
+network can forge that `Host` header and receive a signed-in session (accepted for local
+development on 2026-10-15). On shared networks use `pnpm qa:mobile`, which listens on
+loopback only.

@@ -12,6 +12,7 @@ import {
     EformsignReRequestDocumentRequest,
     HeadlessDispatchResponse,
     HeadlessFinalizeResponse,
+    VoidContractDocumentResponse,
 } from '@babyjamjam/shared/types/eformsign';
 import type { EformsignStatusCountsResponse } from "@/lib/eformsign/types";
 
@@ -93,6 +94,21 @@ export interface ReceiptLinkPreparation {
     expiresAt: string;
 }
 
+export interface EformsignLinkConfirmation {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: string;
+    /** `phone` is digits only; `birthday` is YYYY-MM-DD or null. */
+    document: { name: string | null; phone: string; birthday: string | null };
+    client: { id: number; name: string; phone: string | null; birthday: string | null };
+    /** Never empty. */
+    differences: Array<"name" | "birthday">;
+    /** False when the caller's role may not adopt a document (branch `user`). */
+    canConfirm: boolean;
+}
+
 export interface LocalEformsignDocRecord {
     id?: number;
     documentId: string;
@@ -116,6 +132,14 @@ export interface LocalEformsignDocRecord {
     contractEndDate?: string | null;
     /** Authoritative display status stamped by the backend at serve time. */
     displayStatus?: string | null;
+    /** ISO timestamp when the contract was voided (계약 파기); null/absent when it was not. */
+    voidedAt?: string | null;
+    /** Name of the user who voided it; null when unresolved (the UI shows 알 수 없음). */
+    voidedByName?: string | null;
+    /** Sent by the server for the contract card's 문서 보기 preview. */
+    documentName?: string | null;
+    documentNumber?: string | null;
+    templateName?: string | null;
 }
 
 export function normalizeDocumentListResponse(
@@ -278,6 +302,14 @@ export const eformsignApi = {
     supersedeDocument: async (documentId: string, clientId: number): Promise<void> => {
         await api.post(`/eformsign/documents/${encodeURIComponent(documentId)}/supersede`, { clientId });
     },
+    // 계약 파기 (BJJ-439). Sends no body; the server cancels an unsigned document's signing
+    // link first. A failure with no response leaves the outcome uncertain.
+    voidContractDocument: async (documentId: string): Promise<VoidContractDocumentResponse> => {
+        const { data } = await api.post<VoidContractDocumentResponse>(
+            `/eformsign/documents/${encodeURIComponent(documentId)}/void`,
+        );
+        return data;
+    },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');
@@ -350,6 +382,17 @@ export const eformsignApi = {
     getDocumentsByClientId: async (clientId: number): Promise<LocalEformsignDocRecord[]> => {
         const { data } = await api.get('/eformsign-docs/client', {
             params: { clientId },
+        });
+        return data;
+    },
+    /**
+     * Contracts whose signer phone matches a client but whose name or birthday differs.
+     * Omitting clientId lists all pending entries in the caller's branch.
+     * They are not linked automatically; a person confirms them (S3 / 계약-05).
+     */
+    getLinkConfirmations: async (clientId?: number): Promise<EformsignLinkConfirmation[]> => {
+        const { data } = await api.get('/eformsign-docs/link-confirmations', {
+            ...(clientId === undefined ? {} : { params: { clientId } }),
         });
         return data;
     },

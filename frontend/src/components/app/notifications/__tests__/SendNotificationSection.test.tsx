@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { notificationSendApi } from "@/services/api";
@@ -139,6 +139,137 @@ describe("SendNotificationSection", () => {
     expect(
       await screen.findByText("이 지점에는 알림을 받을 직원이 없습니다."),
     ).toBeInTheDocument();
+  });
+
+  describe("unknown load states (rule S5)", () => {
+    const SKELETON = '[data-component="desktop_settings_sections_send-notification_skeleton"]';
+    const EMPTY_TEXT = "이 지점에는 알림을 받을 직원이 없습니다.";
+
+    it("failed with no data: titled failure with retry, no empty text, no form; retry calls the API again", async () => {
+      mockedListRecipients.mockRejectedValueOnce(new Error("network error"));
+      mockedListRecipients.mockResolvedValueOnce(RECIPIENTS);
+
+      renderSection();
+
+      expect(await screen.findByText("받는 사람 목록을 불러오지 못했습니다.")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("제목")).not.toBeInTheDocument();
+      expect(mockedListRecipients).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+      expect(await screen.findByLabelText("제목")).toBeInTheDocument();
+      expect(mockedListRecipients).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("paused with no data: skeleton, no empty text, no form, no alert", async () => {
+      onlineManager.setOnline(false);
+      try {
+        const { container } = renderSection();
+
+        await waitFor(() => {
+          expect(container.querySelector(SKELETON)).not.toBeNull();
+        });
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByLabelText("제목")).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(mockedListRecipients).not.toHaveBeenCalled();
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
+    it("paused refetch over cached recipients: the form stays, no skeleton, no alert", async () => {
+      mockedListRecipients.mockResolvedValue(RECIPIENTS);
+      const { container, queryClient } = renderSection();
+      await screen.findByLabelText("제목");
+
+      onlineManager.setOnline(false);
+      try {
+        act(() => {
+          void queryClient.invalidateQueries({ queryKey: RECIPIENTS_QUERY_KEY });
+        });
+        await waitFor(() => {
+          expect(queryClient.getQueryState(RECIPIENTS_QUERY_KEY)?.fetchStatus).toBe("paused");
+        });
+
+        expect(screen.getByLabelText("제목")).toBeInTheDocument();
+        expect(screen.getByText("지점 전체 (2명)")).toBeInTheDocument();
+        expect(container.querySelector(SKELETON)).toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(mockedListRecipients).toHaveBeenCalledTimes(1);
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
+    it("successful empty load: the existing empty text and no alert", async () => {
+      mockedListRecipients.mockResolvedValue([]);
+
+      const { container } = renderSection();
+
+      expect(await screen.findByText(EMPTY_TEXT)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(container.querySelector(SKELETON)).toBeNull();
+    });
+
+    it("successful load: the form renders with no alert", async () => {
+      mockedListRecipients.mockResolvedValue(RECIPIENTS);
+
+      renderSection();
+
+      expect(await screen.findByLabelText("제목")).toBeInTheDocument();
+      expect(screen.getByText("지점 전체 (2명)")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("cached recipients + failed refetch: the form stays submittable with exactly one notice whose retry refetches", async () => {
+      mockedListRecipients.mockResolvedValueOnce(RECIPIENTS);
+      const { queryClient } = renderSection();
+      await screen.findByLabelText("제목");
+
+      mockedListRecipients.mockRejectedValue(new Error("network error"));
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: RECIPIENTS_QUERY_KEY });
+      });
+
+      expect(await screen.findByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.queryByText("받는 사람 목록을 불러오지 못했습니다.")).not.toBeInTheDocument();
+      expect(screen.getByText("지점 전체 (2명)")).toBeInTheDocument();
+
+      // Still usable with the cached recipients.
+      mockedBroadcast.mockResolvedValue({ sent: 2, failed: 0 });
+      await fillTitleAndBody("공지", "본문");
+      submitForm();
+      fireEvent.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "보내기" }));
+      await waitFor(() => expect(mockedBroadcast).toHaveBeenCalledWith({ title: "공지", body: "본문" }));
+      // Wait for the send to settle (the draft clears on success) so no state update lands outside act().
+      await waitFor(() => expect(screen.getByLabelText("제목")).toHaveValue(""));
+
+      mockedListRecipients.mockResolvedValue(RECIPIENTS);
+      const callsBefore = mockedListRecipients.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+      await waitFor(() => expect(mockedListRecipients.mock.calls.length).toBeGreaterThan(callsBefore));
+      await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    });
+
+    it("cached empty list + failed refetch: empty text plus the notice, not the no-data failure", async () => {
+      mockedListRecipients.mockResolvedValueOnce([]);
+      const { queryClient } = renderSection();
+      await screen.findByText(EMPTY_TEXT);
+
+      mockedListRecipients.mockRejectedValueOnce(new Error("network error"));
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: RECIPIENTS_QUERY_KEY });
+      });
+
+      expect(await screen.findByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.getByText(EMPTY_TEXT)).toBeInTheDocument();
+    });
   });
 
   describe("with recipients loaded", () => {

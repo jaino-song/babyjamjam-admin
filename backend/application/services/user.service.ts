@@ -44,6 +44,30 @@ function getAccountAssignmentRoleRank(role: string | null | undefined): number |
     return ACCOUNT_ASSIGNMENT_ROLE_RANK[role as AccountAssignmentRole];
 }
 
+/**
+ * 권한-04: roles delegate top-down, owner > admin(지점장) > manager > user. A non-owner may
+ * only grant, change or remove a role that ranks strictly below their own branch role.
+ * Unknown strings have no rank and fail closed.
+ */
+const BRANCH_DELEGATION_ROLE_RANK: ReadonlyMap<string, number> = new Map([
+    ["user", 0],
+    ["manager", 1],
+    ["admin", 2],
+]);
+
+/** A missing role is the lowest rank; an unrecognised role string has none (undefined). */
+function getBranchDelegationRank(role: string | null | undefined): number | undefined {
+    if (role === null || role === undefined) {
+        return 0;
+    }
+
+    return BRANCH_DELEGATION_ROLE_RANK.get(role);
+}
+
+type BranchCaller =
+    | { isOwner: true }
+    | { isOwner: false; userId: string; rank: number };
+
 function isAccountAssignmentRoleDemotion(
     currentGlobalRole: string | null | undefined,
     selectedGlobalRole: AccountAssignmentRole,
@@ -92,6 +116,7 @@ export interface UserDirectoryItem {
     authProvider: string;
     approvalStatus: string;
     requestedRole: string | null;
+    smsAutomationEnabled: boolean;
     branches: UserDirectoryBranch[];
 }
 
@@ -105,6 +130,7 @@ export interface UserApprovalSummary {
     approvedBy: string | null;
     requestedRole: string | null;
     tokenVersion: number;
+    smsAutomationEnabled?: boolean;
 }
 
 @Injectable()
@@ -143,7 +169,7 @@ export class UserService {
     }): Promise<UserEntity> {
         const actor = params.actor ?? currentAdminAuditActor();
         if (params.branchId && params.branchRole !== undefined) {
-            return this.updateBranchMembership(id, params.branchId, params.branchRole, params.callerRole, actor);
+            return this.updateBranchMembership(id, params.branchId, params.branchRole, actor);
         }
         if (params.branchId) {
             // branchId without branchRole is not a recognized branch-scoped update; the
@@ -181,9 +207,8 @@ export class UserService {
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
-        if (params.callerRole !== "owner") {
-            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
-        }
+        // Authorization is decided on the caller row re-read inside the transaction
+        // (assertCallerStillOwner); the callerRole parameter is deliberately not trusted.
         if (
             !Array.isArray(params.branchIds)
             || params.branchIds.length === 0
@@ -198,7 +223,9 @@ export class UserService {
             throw new BadRequestException(this.branchSelectionProblem("예상 지점 정보가 올바르지 않아요.", "/expectedBranchIds"));
         }
 
+        const callerId = (params.actor ?? currentAdminAuditActor())?.userId;
         const runTransaction = () => this.prismaService.$transaction(async (tx) => {
+            await this.assertCallerStillOwner(tx, callerId);
             const target = await tx.user.findUnique({
                 where: { id },
                 select: {
@@ -467,7 +494,15 @@ export class UserService {
         );
     }
 
-    async findDirectory(params?: { branchId?: string, status?: string, includeUnassigned?: boolean }): Promise<UserDirectoryItem[]> {
+    async findDirectory(params?: {
+        branchId?: string,
+        status?: string,
+        includeUnassigned?: boolean,
+        // The authenticated caller's current global role. Owner accounts (global role
+        // "owner") are invisible to every caller who is not an owner; a missing role is
+        // treated as a non-owner so a forgotten argument fails closed.
+        callerRole?: string,
+    }): Promise<UserDirectoryItem[]> {
         const where: Prisma.userWhereInput = {};
 
         if (params?.branchId) {
@@ -487,6 +522,14 @@ export class UserService {
             where.approvalStatus = params.status;
         }
 
+        if (params?.callerRole !== "owner") {
+            // `role` is nullable, and a bare `not: "owner"` would also drop role-less users
+            // (SQL NULL), so the null case is spelled out. This covers owners reached through
+            // ownedBranches and owners who are plain members alike: both are users whose
+            // global role is "owner".
+            where.AND = [{ OR: [{ role: null }, { role: { not: "owner" } }] }];
+        }
+
         const users = await this.prismaService.user.findMany({
             where: Object.keys(where).length > 0 ? where : undefined,
             orderBy: { createdAt: "desc" },
@@ -503,6 +546,7 @@ export class UserService {
                 authProvider: true,
                 approvalStatus: true,
                 requestedRole: true,
+                smsAutomationEnabled: true,
                 userBranches: {
                     orderBy: { joinedAt: "asc" },
                     select: {
@@ -538,6 +582,7 @@ export class UserService {
                 authProvider: user.authProvider,
                 approvalStatus: user.approvalStatus,
                 requestedRole: user.requestedRole,
+                smsAutomationEnabled: user.smsAutomationEnabled,
                 branches,
             };
         });
@@ -650,18 +695,37 @@ export class UserService {
         id: string,
         branchId: string,
         branchRole: string,
-        callerRole: string | undefined,
         actor?: AdminAuditActor,
     ): Promise<UserEntity> {
         return runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "branch", branchId);
             const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { ownerId: true } });
             if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            // 권한-04: the caller's authority is read again here, inside the write
+            // transaction, so a caller demoted a moment ago cannot complete a change.
+            const caller = await this.readBranchCaller(tx, actor, branchId);
             const current = await tx.user.findUnique({ where: { id } });
             if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-            if (current.role === "owner" && callerRole !== "owner") {
+            if (current.role === "owner" && !caller.isOwner) {
                 // Owner targets stay hidden behind a 404 for non-owner callers.
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+
+            const membership = await tx.user_branch.findUnique({
+                where: { userId_branchId: { userId: id, branchId } },
+            });
+            if (!caller.isOwner) {
+                if (!membership && branch.ownerId !== id) {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                this.assertDelegatedBranchChange(caller, {
+                    targetId: id,
+                    targetGlobalRole: current.role,
+                    targetApprovalStatus: current.approvalStatus,
+                    targetMembershipRole: membership?.role,
+                    branchOwnerId: branch.ownerId,
+                    requestedRole: branchRole,
+                });
             }
             if (current.role === "owner" && branchRole !== "admin") {
                 throw new ConflictException(this.ownerRoleChangeProblem());
@@ -670,9 +734,6 @@ export class UserService {
                 throw new ConflictException(this.branchOwnershipProblem());
             }
 
-            const membership = await tx.user_branch.findUnique({
-                where: { userId_branchId: { userId: id, branchId } },
-            });
             if (!membership && branch.ownerId !== id) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
@@ -701,6 +762,116 @@ export class UserService {
                 after: { userId: id, branchId, role: branchRole, ownerId: branch.ownerId },
             });
             return UserMapper.toDomain(persisted);
+        });
+    }
+
+    /**
+     * Reads the caller's CURRENT authority inside the transaction: the global role for an
+     * owner, otherwise the caller's membership role in this branch. Nothing the controller
+     * or token carried is trusted. A missing caller id, a vanished account or membership,
+     * or a branch role below manager all refuse with 403 before anything is written.
+     */
+    private async readBranchCaller(
+        tx: Prisma.TransactionClient,
+        actor: AdminAuditActor | undefined,
+        branchId: string,
+    ): Promise<BranchCaller> {
+        const callerId = (actor ?? currentAdminAuditActor())?.userId;
+        if (!callerId) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        const caller = await tx.user.findUnique({ where: { id: callerId }, select: { role: true } });
+        if (!caller) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        if (caller.role === "owner") {
+            return { isOwner: true };
+        }
+        const callerMembership = await tx.user_branch.findUnique({
+            where: { userId_branchId: { userId: callerId, branchId } },
+            select: { role: true },
+        });
+        const rank = callerMembership ? getBranchDelegationRank(callerMembership.role) : undefined;
+        if (rank === undefined || rank < 1) {
+            throw new ForbiddenException(this.delegationDeniedProblem());
+        }
+        return { isOwner: false, userId: callerId, rank };
+    }
+
+    /**
+     * The one rank rule behind changing and removing a branch member: the caller's branch
+     * role must rank strictly above BOTH the target's current role and (for a change) the
+     * requested role, and a non-owner never acts on their own membership. The target's rank
+     * is the highest of its role in this branch and its global role; the branch's appointed
+     * 지점장 ranks as admin. Runs before the ownership 409s so a non-owner is answered with
+     * 403 rather than a conflict that describes the branch.
+     */
+    private assertDelegatedBranchChange(
+        caller: Extract<BranchCaller, { isOwner: false }>,
+        target: {
+            targetId: string;
+            targetGlobalRole: string | null | undefined;
+            targetApprovalStatus: string | null | undefined;
+            targetMembershipRole: string | null | undefined;
+            branchOwnerId: string | null;
+            requestedRole?: string;
+        },
+    ): void {
+        if (caller.userId === target.targetId) {
+            throw new ForbiddenException(this.delegationDeniedProblem());
+        }
+        const membershipRank = getBranchDelegationRank(target.targetMembershipRole);
+        const globalRank = getBranchDelegationRank(target.targetGlobalRole);
+        if (membershipRank === undefined || globalRank === undefined) {
+            throw new ForbiddenException(this.delegationDeniedProblem());
+        }
+        const targetRank = Math.max(
+            membershipRank,
+            globalRank,
+            target.branchOwnerId === target.targetId ? BRANCH_DELEGATION_ROLE_RANK.get("admin")! : 0,
+        );
+        if (targetRank >= caller.rank) {
+            throw new ForbiddenException(this.delegationDeniedProblem());
+        }
+        if (target.requestedRole !== undefined) {
+            const requestedRank = BRANCH_DELEGATION_ROLE_RANK.get(target.requestedRole);
+            if (requestedRank === undefined || requestedRank >= caller.rank) {
+                throw new ForbiddenException(this.delegationDeniedProblem());
+            }
+        }
+        if (target.targetApprovalStatus !== "approved") {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/id",
+                code: "INVALID_VALUE",
+                detail: "승인된 계정만 수정할 수 있어요.",
+            }));
+        }
+    }
+
+    /**
+     * The owner-only global paths (approve, reject, account assignment) stay owner-only, but
+     * the caller's global role is read again inside the transaction, so an owner demoted a
+     * moment ago cannot complete the write.
+     */
+    private async assertCallerStillOwner(
+        tx: Prisma.TransactionClient,
+        callerId: string | null | undefined,
+    ): Promise<void> {
+        if (!callerId) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        const caller = await tx.user.findUnique({ where: { id: callerId }, select: { role: true } });
+        if (caller?.role !== "owner") {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+    }
+
+    /** 403 body: the caller's branch role does not outrank the target or the requested role. */
+    private delegationDeniedProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/role",
+            code: "INVALID_VALUE",
+            detail: "내 역할보다 낮은 역할의 계정만 지정하거나 해제할 수 있어요.",
         });
     }
 
@@ -773,8 +944,42 @@ export class UserService {
     ): Promise<void> {
         await runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "branch", branchId);
-            const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { ownerId: true } });
+            const branch = await tx.branch.findUnique({
+                where: { id: branchId },
+                select: { ownerId: true, isActive: true },
+            });
             if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            // 권한-04: same in-transaction caller re-read and rank rule as a role change.
+            const caller = await this.readBranchCaller(tx, actor, branchId);
+            // The branch must still be active when the delete runs, not only when the guard
+            // admitted the request. Checked after the caller re-read so a caller who lost
+            // authority still gets 403, and before any target lookup or write.
+            if (branch.isActive !== true) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            if (!caller.isOwner) {
+                const target = await tx.user.findUnique({
+                    where: { id },
+                    select: { role: true, approvalStatus: true },
+                });
+                if (!target || target.role === "owner") {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                const targetMembership = await tx.user_branch.findUnique({
+                    where: { userId_branchId: { userId: id, branchId } },
+                    select: { role: true },
+                });
+                if (!targetMembership && branch.ownerId !== id) {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                this.assertDelegatedBranchChange(caller, {
+                    targetId: id,
+                    targetGlobalRole: target.role,
+                    targetApprovalStatus: target.approvalStatus,
+                    targetMembershipRole: targetMembership?.role,
+                    branchOwnerId: branch.ownerId,
+                });
+            }
             if (branch.ownerId === id) {
                 throw new ConflictException(this.branchOwnershipProblem());
             }
@@ -907,10 +1112,13 @@ export class UserService {
             approvedBy: string;
             branchId: string;
             ownerBranchId?: string;
+            /** Omitted leaves the stored value (column default true for a fresh sign-up). */
+            smsAutomationEnabled?: boolean;
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
         return this.prismaService.$transaction(async (tx) => {
+            await this.assertCallerStillOwner(tx, params.approvedBy);
             const branch = await tx.branch.findUnique({
                 where: { id: params.branchId },
                 select: { id: true },
@@ -954,6 +1162,9 @@ export class UserService {
                     approvedBy: params.approvedBy,
                     role: params.role,
                     tokenVersion: { increment: 1 },
+                    ...(params.smsAutomationEnabled !== undefined
+                        ? { smsAutomationEnabled: params.smsAutomationEnabled }
+                        : {}),
                 },
                 select: {
                     id: true,
@@ -965,6 +1176,7 @@ export class UserService {
                     approvedBy: true,
                     requestedRole: true,
                     tokenVersion: true,
+                    smsAutomationEnabled: true,
                 },
             });
 
@@ -1032,9 +1244,38 @@ export class UserService {
         });
     }
 
+    /**
+     * Toggles whether automatic SMS may be sent to this user. Same authority as
+     * approval: the caller must still be a global owner when the write runs.
+     */
+    setSmsAutomationEnabled(id: string, enabled: boolean, callerId: string): Promise<UserEntity> {
+        return this.prismaService.$transaction(async (tx) => {
+            await this.assertCallerStillOwner(tx, callerId);
+            await this.lockRow(tx, "user", id);
+            const current = await tx.user.findUnique({
+                where: { id },
+                select: { id: true, smsAutomationEnabled: true },
+            });
+            if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            const updated = await tx.user.update({
+                where: { id },
+                data: { smsAutomationEnabled: enabled },
+            });
+            await this.appendAudit(tx, currentAdminAuditActor() ?? { userId: callerId, globalRole: "owner" }, {
+                action: "user.sms_automation.updated",
+                targetType: "user",
+                targetId: id,
+                before: { id, smsAutomationEnabled: current.smsAutomationEnabled },
+                after: { id, smsAutomationEnabled: updated.smsAutomationEnabled },
+            });
+            return UserMapper.toDomain(updated);
+        });
+    }
+
     reject(id: string, actor?: AdminAuditActor): Promise<UserApprovalSummary> {
         return this.prismaService.$transaction(async (tx) => {
             const effectiveActor = actor ?? currentAdminAuditActor();
+            await this.assertCallerStillOwner(tx, effectiveActor?.userId);
             if (effectiveActor?.userId && effectiveActor.userId === id) {
                 throw new ForbiddenException(this.selfRejectionProblem());
             }

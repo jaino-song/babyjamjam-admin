@@ -103,6 +103,7 @@ describeReal("session-save auto-extend closes the open review item (real Postgre
                 endDate: d("2026-09-29"),
                 duration: 15,
                 serviceStatus: "active",
+                bookingConfirmedAt: new Date("2026-01-01"),
             },
         });
         const schedule = await raw.employee_schedule.create({

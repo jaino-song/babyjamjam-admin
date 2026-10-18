@@ -121,7 +121,7 @@ describe("ReceiptLinkController", () => {
             .expect(400)
             .expect((res) => {
                 expect(res.body).toEqual(expect.objectContaining({ code: "VALIDATION_FAILED", reason: "invalid_format" }));
-                expect(res.body.errors).toEqual(expect.arrayContaining([expect.objectContaining({ pointer: "/birthday" })]));
+                expect(res.body.errors).toEqual(expect.arrayContaining([expect.objectContaining({ pointer: "/birthday", detail: "생년월일 8자리를 입력해 주세요." })]));
             });
 
         expect(tokenService.verifyBirthday).toHaveBeenCalledWith("efr_x", longBirthday, expect.any(Date));

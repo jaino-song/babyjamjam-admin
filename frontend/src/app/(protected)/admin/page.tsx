@@ -7,6 +7,7 @@ import { matchesSearchQuery } from '@/lib/search/korean-search';
 import { cn } from '@/lib/utils';
 import { MessageSquare, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from '@/components/app/v3';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -25,15 +26,28 @@ export default function AdminFeedbackPage() {
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsQueryLoading, isPaused: statsPaused } = useQuery({
     queryKey: ['feedbackStats'],
     queryFn: getFeedbackStats,
   });
+  // A stat from a query with no data (loading, paused or failed) is unknown, never 0.
+  const statsLoading = statsQueryLoading || (statsPaused && stats === undefined);
+  const statValue = (pick: (s: NonNullable<typeof stats>) => number | undefined): string | number =>
+    stats === undefined ? '—' : pick(stats) ?? 0;
 
-  const { data: feedbackData, isLoading: feedbackLoading, error } = useQuery({
+  const {
+    data: feedbackData,
+    isLoading: feedbackQueryLoading,
+    isPaused: feedbackPaused,
+    isError: feedbackError,
+    isFetching: feedbackFetching,
+    refetch: refetchFeedback,
+  } = useQuery({
     queryKey: ['feedbackList', 1, filterType],
     queryFn: () => getFeedbackList(1, 100, filterType === 'all' ? undefined : filterType),
   });
+  const hasFeedbackData = feedbackData !== undefined;
+  const feedbackLoading = feedbackQueryLoading || (feedbackPaused && !hasFeedbackData);
 
   const filteredList = useMemo(() => {
     const feedbackList = feedbackData?.data ?? [];
@@ -64,25 +78,15 @@ export default function AdminFeedbackPage() {
     return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
   };
 
-  if (error) {
-    return (
-      <div data-component="desktop_admin_error_state" className="p-6">
-        <div data-component="desktop_admin_error_state_message" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
-          피드백을 불러오는데 실패했습니다.
-        </div>
-      </div>
-    );
-  }
-
   return (
     <PageSection name="admin">
       <StatsBar
         name="admin"
         isLoading={statsLoading}
         items={[
-          { icon: MessageSquare, value: stats?.total || 0, label: '전체', counter: '건' },
-          { icon: ThumbsUp, value: stats?.positive || 0, label: '긍정적', counter: '건', colorIndex: 1 },
-          { icon: ThumbsDown, value: stats?.negative || 0, label: '부정적', counter: '건', colorIndex: 2 },
+          { icon: MessageSquare, value: statValue(s => s.total), label: '전체', counter: '건' },
+          { icon: ThumbsUp, value: statValue(s => s.positive), label: '긍정적', counter: '건', colorIndex: 1 },
+          { icon: ThumbsDown, value: statValue(s => s.negative), label: '부정적', counter: '건', colorIndex: 2 },
         ]}
       />
 
@@ -96,9 +100,29 @@ export default function AdminFeedbackPage() {
           onSearchChange={setSearchQuery}
           searchPlaceholder="사용자, 코멘트 검색..."
           emptyState={!feedbackLoading && filteredList.length === 0 ? (
-            <ListEmptyState message={searchQuery ? '검색 결과가 없습니다' : '피드백이 없습니다'} />
+            feedbackError && !hasFeedbackData ? (
+              <QueryErrorState
+                dataComponent="desktop_admin_split-layout_list-panel_load-error"
+                size="panel"
+                className="pointer-events-auto"
+                title="피드백을 불러오지 못했습니다"
+                onRetry={() => void refetchFeedback()}
+                isRetrying={feedbackFetching}
+              />
+            ) : (
+              <ListEmptyState message={searchQuery ? '검색 결과가 없습니다' : '피드백이 없습니다'} />
+            )
           ) : undefined}
         >
+          {feedbackError && hasFeedbackData ? (
+            <QueryErrorState
+              dataComponent="desktop_admin_split-layout_list-panel_load-error"
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              onRetry={() => void refetchFeedback()}
+              isRetrying={feedbackFetching}
+            />
+          ) : null}
           <AnimatedSlotList<FeedbackItem>
               items={filteredList}
               isLoading={feedbackLoading}
@@ -167,10 +191,19 @@ export default function AdminFeedbackPage() {
 }
 
 function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; formatDate: (d: string) => string }) {
-  const { data: detail, isLoading: detailLoading } = useQuery({
+  const {
+    data: detail,
+    isLoading: detailQueryLoading,
+    isPaused: detailPaused,
+    isError: detailError,
+    isFetching: detailFetching,
+    refetch: refetchDetail,
+  } = useQuery({
     queryKey: ['feedbackDetail', feedback.id],
     queryFn: () => getFeedbackDetail(feedback.id),
   });
+  const hasDetail = detail !== undefined;
+  const detailLoading = detailQueryLoading || (detailPaused && !hasDetail);
 
   return (
     <DetailPanel data-component="desktop_admin_split-layout_detail-panel"
@@ -195,6 +228,16 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
           <InfoRow label="코멘트" value={feedback.comment || '-'} />
         </InfoCard>
 
+        {detailError && hasDetail ? (
+          <QueryErrorState
+            dataComponent="desktop_admin_detail-panel_detail-load-error"
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={() => void refetchDetail()}
+            isRetrying={detailFetching}
+          />
+        ) : null}
+
         {detailLoading ? (
           <InfoCard data-component="desktop_admin_detail-panel_info-card-2" title="대화 내역">
             <div data-component="desktop_admin_detail-panel_info-card-2_loading-messages" className="space-y-3">
@@ -206,6 +249,14 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
               ))}
             </div>
           </InfoCard>
+        ) : detailError && !hasDetail ? (
+          <QueryErrorState
+            dataComponent="desktop_admin_detail-panel_detail-load-error"
+            size="inline"
+            title="대화 내역을 불러오지 못했습니다"
+            onRetry={() => void refetchDetail()}
+            isRetrying={detailFetching}
+          />
         ) : detail?.session?.messages && detail.session.messages.length > 0 ? (
           <InfoCard data-component="desktop_admin_detail-panel_info-card-3" title="대화 내역">
             <div data-component="desktop_admin_detail-panel_info-card-3_messages" className="space-y-3">

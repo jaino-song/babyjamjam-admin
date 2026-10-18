@@ -3,11 +3,15 @@ import {
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
 } from "@babyjamjam/shared/types/service-record";
 import type {
+    ServiceRecordRevisionChangeValue,
+    ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionFieldChange,
     ServiceRecordRevisionHistoryEntry,
     ServiceRecordRevisionHistoryResponse,
+    ServiceRecordRevisionSessionChange,
 } from "@babyjamjam/shared/types/service-record";
 
 export {
@@ -17,11 +21,15 @@ export {
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES as SERVICE_RECORD_DOCUMENT_STATUSES,
 };
 export type {
+    ServiceRecordRevisionChangeValue,
+    ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionDocumentSummary,
+    ServiceRecordRevisionFieldChange,
     ServiceRecordRevisionHistoryEntry,
     ServiceRecordRevisionHistoryResponse,
+    ServiceRecordRevisionSessionChange,
 };
 
 export type RetryServiceRecordDocumentInput = {
@@ -144,5 +152,79 @@ export function normalizeServiceRecordRevisionHistory(
         currentRevisionId,
         currentUsableRevisionId,
         revisions,
+    };
+}
+
+const REVISION_SESSION_CHANGE_KINDS = ["added", "removed", "changed"] as const;
+
+function normalizeChangeValue(value: unknown, field: string): ServiceRecordRevisionChangeValue {
+    if (value === null) return null;
+    if (typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) return value as string[];
+    throw new Error(`Invalid service-record revision changes response: ${field}`);
+}
+
+function nullableDateOnly(value: unknown, field: string): string | null {
+    if (value === null) return null;
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new Error(`Invalid service-record revision changes response: ${field}`);
+    }
+    return value;
+}
+
+function normalizeFieldChange(value: unknown): ServiceRecordRevisionFieldChange {
+    if (!isRecord(value)) {
+        throw new Error("Invalid service-record revision changes response: change");
+    }
+    return {
+        path: requiredString(value.path, "change.path"),
+        before: normalizeChangeValue(value.before, "change.before"),
+        after: normalizeChangeValue(value.after, "change.after"),
+    };
+}
+
+function normalizeFieldChanges(value: unknown, field: string): ServiceRecordRevisionFieldChange[] {
+    if (!Array.isArray(value)) {
+        throw new Error(`Invalid service-record revision changes response: ${field}`);
+    }
+    return value.map(normalizeFieldChange);
+}
+
+function normalizeSessionChange(value: unknown): ServiceRecordRevisionSessionChange {
+    if (!isRecord(value)) {
+        throw new Error("Invalid service-record revision changes response: session");
+    }
+    const kind = value.kind;
+    if (typeof kind !== "string"
+        || !REVISION_SESSION_CHANGE_KINDS.includes(kind as (typeof REVISION_SESSION_CHANGE_KINDS)[number])) {
+        throw new Error("Invalid service-record revision changes response: session.kind");
+    }
+    return {
+        sessionIndex: positiveInteger(value.sessionIndex, "session.sessionIndex"),
+        kind: kind as ServiceRecordRevisionSessionChange["kind"],
+        serviceDateBefore: nullableDateOnly(value.serviceDateBefore, "session.serviceDateBefore"),
+        serviceDateAfter: nullableDateOnly(value.serviceDateAfter, "session.serviceDateAfter"),
+        changes: normalizeFieldChanges(value.changes, "session.changes"),
+    };
+}
+
+export function normalizeServiceRecordRevisionChanges(
+    value: unknown,
+): ServiceRecordRevisionChangesResponse {
+    if (!isRecord(value) || typeof value.beforeAvailable !== "boolean") {
+        throw new Error("Invalid service-record revision changes response");
+    }
+    if (!Array.isArray(value.sessions)) {
+        throw new Error("Invalid service-record revision changes response: sessions");
+    }
+    return {
+        revisionId: requiredString(value.revisionId, "revisionId"),
+        revisionNumber: positiveInteger(value.revisionNumber, "revisionNumber"),
+        confirmedAt: normalizeDate(value.confirmedAt, "confirmedAt"),
+        formVersion: positiveInteger(value.formVersion, "formVersion"),
+        beforeAvailable: value.beforeAvailable,
+        basicInfo: normalizeFieldChanges(value.basicInfo, "basicInfo"),
+        sessions: value.sessions.map(normalizeSessionChange),
     };
 }

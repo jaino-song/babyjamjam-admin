@@ -7,8 +7,10 @@ import {
     MessageHistoryPageQuery,
     MessageRetryInvocation,
     MessageRetryStartResult,
+    SaveCarrierCheckResultInput,
+    SaveCarrierCheckResultOutcome,
 } from "domain/repositories/message-log.repository.interface";
-import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { ALIGO_HISTORY_MAX_AGE_MS, ALIGO_HISTORY_MIN_AGE_MS, MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -48,6 +50,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const row = await this.prisma.message_log.create({
             data: MessageLogMapper.toPrismaCreate(log),
         });
+        log.markCarrierCheckPersisted();
         return MessageLogMapper.toDomain(row);
     }
 
@@ -62,9 +65,39 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             }
             return MessageLogMapper.toDomain(row);
         };
+        // With a caller-owned transaction the commit is not ours to observe, so the
+        // scheduled flag stays set (a rollback must not lose the schedule).
         if (transaction) return run(transaction);
-        if (this.isDeliveredServiceEndNotice(log)) return this.prisma.$transaction(run);
-        return run(this.prisma);
+        const persisted = this.isDeliveredServiceEndNotice(log)
+            ? await this.prisma.$transaction(run)
+            : await run(this.prisma);
+        log.markCarrierCheckPersisted();
+        return persisted;
+    }
+
+    async findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{
+        serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    } | null> {
+        if (!log.branchId) return null;
+        const select = { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } as const;
+        if (log.triggerJobId) {
+            const job = await this.prisma.message_trigger_job.findFirst({
+                where: { id: log.triggerJobId, branchId: log.branchId },
+                select: { employeeSchedule: { select: { client: { select: { ...select, branchId: true } } } } },
+            });
+            const client = job?.employeeSchedule?.client;
+            if (client?.branchId === log.branchId) {
+                return { serviceStatus: client.serviceStatus, startDate: client.startDate, endDate: client.endDate, bookingConfirmedAt: client.bookingConfirmedAt };
+            }
+        }
+        if (log.clientId == null) return null;
+        return this.prisma.client.findFirst({
+            where: { id: log.clientId, branchId: log.branchId },
+            select,
+        });
     }
 
     async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
@@ -140,6 +173,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         actor: string,
         reason: string,
         providerMessageId?: string | null,
+        options?: { retry?: "schedule" | "none"; expectedUpdatedAt?: Date; variables?: Record<string, string> },
     ): Promise<MessageLogEntity | null> {
         const branchWhere = this.branchWhereFragment(log);
         return this.prisma.$transaction(async (transaction) => {
@@ -149,6 +183,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             if (!current) return null;
 
             const currentEntity = MessageLogMapper.toDomain(current);
+            if (options?.expectedUpdatedAt && currentEntity.updatedAt.getTime() !== options.expectedUpdatedAt.getTime()) return null;
             if (!currentEntity.canReconcileProviderOutcome()) {
                 return null;
             }
@@ -160,7 +195,10 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 actor,
                 reason,
                 providerMessageId,
+                retry: options?.retry,
             });
+            // The reconciliation transition always sets retrySafety before metadata replacement.
+            if (options?.variables) currentEntity.variables = { ...options.variables, retrySafety: currentEntity.variables["retrySafety"]! };
             const claimed = await transaction.message_log.updateMany({
                 where: {
                     id: log.id,
@@ -180,6 +218,56 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 where: { id: log.id, ...branchWhere },
             });
             return updated ? MessageLogMapper.toDomain(updated) : null;
+        });
+    }
+
+    async findAligoHistoryCandidatesSystemScope(now: Date, limit: number): Promise<MessageLogEntity[]> {
+        const oldest = new Date(now.getTime() - ALIGO_HISTORY_MAX_AGE_MS);
+        const newest = new Date(now.getTime() - ALIGO_HISTORY_MIN_AGE_MS);
+        // Missing JSON keys must remain eligible (NOT equals on JSON would lose NULLs).
+        const ids = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id FROM message_log
+            WHERE provider = 'aligo_sms'
+              AND provider_acceptance_state IN ('started', 'uncertain')
+              AND provider_call_started_at >= ${oldest} AND provider_call_started_at <= ${newest}
+              AND variables->>'historyLookup' IS DISTINCT FROM 'exhausted'
+              AND variables->>'retrySafety' IS DISTINCT FROM 'partial'
+              AND variables->>'msgType' IS DISTINCT FROM 'MMS'
+              AND COALESCE(variables->>'scheduledDate', '') = ''
+              AND variables->>'testMode' IS DISTINCT FROM 'true'
+              AND receiver ~ '^[0-9 +()-]+$'
+              AND length(regexp_replace(receiver, '[^0-9]', '', 'g')) BETWEEN 10 AND 11
+              AND (variables->>'historyLookupAt' IS NULL OR variables->>'historyLookupAt' <= ${newest.toISOString()})
+            ORDER BY provider_call_started_at, id
+            LIMIT ${limit}
+        `);
+        if (ids.length === 0) return [];
+        const rows = await this.prisma.message_log.findMany({ where: { id: { in: ids.map(row => row.id) } }, orderBy: [{ providerCallStartedAt: "asc" }, { id: "asc" }] });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findAligoMidsStoredOnOtherLogs(mids: string[], logId: number): Promise<Set<string>> {
+        if (mids.length === 0) return new Set();
+        const rows = await this.prisma.message_log.findMany({
+            where: { id: { not: logId }, aligoMid: { in: mids } }, select: { aligoMid: true },
+        });
+        return new Set(rows.flatMap(row => row.aligoMid ? [row.aligoMid] : []));
+    }
+
+    async claimAligoHistoryBookkeeping(
+        log: MessageLogEntity,
+        expectedState: "started" | "uncertain",
+        expectedUpdatedAt: Date,
+    ): Promise<MessageLogEntity | null> {
+        return this.prisma.$transaction(async transaction => {
+            const branchWhere = this.branchWhereFragment(log);
+            const claimed = await transaction.message_log.updateMany({
+                where: { id: log.id, ...branchWhere, providerAcceptanceState: expectedState, updatedAt: expectedUpdatedAt },
+                data: MessageLogMapper.toPrismaUpdate(log),
+            });
+            if (claimed.count !== 1) return null;
+            const row = await transaction.message_log.findUnique({ where: { id: log.id, ...branchWhere } });
+            return row ? MessageLogMapper.toDomain(row) : null;
         });
     }
 
@@ -303,7 +391,9 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const rows = await this.prisma.message_log.findMany({
             where: {
                 triggerJobId: { in: jobIds },
-                status: "sent",
+                // A carrier-check failure flips status to "failed" after the provider
+                // already accepted the send; it still counts as sent (never auto-resend).
+                OR: [{ status: "sent" }, { carrierResultState: "failed" }],
             },
             select: { triggerJobId: true },
         });
@@ -343,6 +433,70 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             take: 50,
         });
         return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findCarrierChecksDueSystemScope(limit: number, now: Date = new Date()): Promise<MessageLogEntity[]> {
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                provider: "aligo_sms",
+                aligoMid: { not: null },
+                carrierCheckDueAt: { not: null, lte: now },
+            },
+            orderBy: [{ carrierCheckDueAt: "asc" }, { id: "asc" }],
+            take: limit,
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async saveCarrierCheckResult(input: SaveCarrierCheckResultInput): Promise<SaveCarrierCheckResultOutcome> {
+        const carrierData = {
+            carrierCheckDueAt: null,
+            carrierCheckedAt: input.checkedAt,
+            carrierResultState: input.state,
+            carrierResults: input.results as Prisma.InputJsonValue,
+        };
+        const matchBase = {
+            id: input.id,
+            aligoMid: input.expectedMid,
+            carrierCheckDueAt: { not: null },
+        } satisfies Prisma.message_logWhereInput;
+
+        return this.prisma.$transaction(async (transaction) => {
+            if (input.state === "failed") {
+                // Reserved sends stay "pending" after acceptance, so both
+                // "sent" and accepted-"pending" rows are flipped.
+                const flipped = await transaction.message_log.updateMany({
+                    where: {
+                        ...matchBase,
+                        OR: [
+                            { status: "sent" },
+                            { status: "pending", providerAcceptanceState: "accepted" },
+                        ],
+                    },
+                    data: {
+                        ...carrierData,
+                        status: "failed",
+                        errorMessage: input.failureMessage,
+                        nextRetryAt: null,
+                    },
+                });
+                if (flipped.count === 1) return "saved_status_failed";
+            }
+
+            const saved = await transaction.message_log.updateMany({
+                where: matchBase,
+                data: carrierData,
+            });
+            return saved.count === 1 ? "saved" : "stale";
+        });
+    }
+
+    async postponeCarrierCheck(id: number, expectedMid: string, until: Date): Promise<boolean> {
+        const result = await this.prisma.message_log.updateMany({
+            where: { id, aligoMid: expectedMid, carrierCheckDueAt: { not: null } },
+            data: { carrierCheckDueAt: until },
+        });
+        return result.count === 1;
     }
 
     async findRetryableServiceRecordSmsByScheduleId(

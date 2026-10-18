@@ -23,6 +23,7 @@ import { HolidaySettingsSection } from "@/components/app/holidays/HolidaySetting
 import { SendNotificationBranchRequired } from "@/components/app/notifications/SendNotificationBranchRequired";
 import { SendNotificationSection } from "@/components/app/notifications/SendNotificationSection";
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { SectionNav } from "@/components/app/v3";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
@@ -129,7 +130,7 @@ export default function SettingsPage() {
 
   const emailNotificationsEnabled =
     NOTIFICATION_EMAIL_ENABLED
-      && (notificationPreferencesQuery.data?.emailNotificationsEnabled ?? true);
+      && (notificationPreferencesQuery.data?.emailNotificationsEnabled ?? false);
 
   const updateNotificationPreferencesMutation = useMutation({
     mutationFn: settingsApi.updateNotificationPreferences,
@@ -152,7 +153,7 @@ export default function SettingsPage() {
   };
 
   const accountInitials = user?.name ? user.name.slice(0, 2) : "사용";
-  const isProfileSummaryLoading = authUserQuery.isLoading && !user;
+  const isProfileSummaryLoading = authUserQuery.isLoading || (authUserQuery.isPaused && authUserQuery.data === undefined);
 
   return (
     <section data-component="desktop_settings_sections" className="space-y-6">
@@ -185,6 +186,16 @@ export default function SettingsPage() {
 
               <div data-component="desktop_settings_sections_profile_profile-summary-wrap" className="flex justify-center">
                 <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary" className="mb-6 flex w-full flex-col gap-5 rounded-[24px] bg-[hsl(var(--v3-bg))] p-5 lg:w-1/2">
+                  {authUserQuery.isError && authUserQuery.data === undefined ? (
+                    <QueryErrorState
+                      dataComponent="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_load-error"
+                      size="inline"
+                      title="내 정보를 불러오지 못했습니다"
+                      onRetry={() => { void authUserQuery.refetch(); }}
+                      isRetrying={authUserQuery.isFetching}
+                    />
+                  ) : (
+                  <>
                   <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-summary-header" className="flex items-center gap-4">
                     <Avatar
                       data-component="desktop_settings_sections_profile-summary-avatar"
@@ -248,6 +259,8 @@ export default function SettingsPage() {
                       )}
                     </div>
                   </div>
+                  </>
+                  )}
                 </div>
               </div>
             </ContentPaper>
@@ -269,6 +282,17 @@ export default function SettingsPage() {
               <Separator className="mb-4" />
 
               <div data-component="desktop_settings_sections_notifications_notifications-content" className="space-y-4">
+                {NOTIFICATION_EMAIL_ENABLED && notificationPreferencesQuery.isError ? (
+                  <QueryErrorState
+                    dataComponent="desktop_settings_sections_notifications_notifications-content_email-load-error"
+                    size="inline"
+                    title={notificationPreferencesQuery.data !== undefined
+                      ? "최신 정보를 불러오지 못했습니다"
+                      : "이메일 알림 설정을 불러오지 못했습니다"}
+                    onRetry={() => { void notificationPreferencesQuery.refetch(); }}
+                    isRetrying={notificationPreferencesQuery.isFetching}
+                  />
+                ) : null}
                 <div data-component="desktop_settings_sections_notifications_notifications-content_notifications-email" className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
                   <div data-component="desktop_settings_sections_notifications_notifications-content_notifications-email_notifications-email-text" className="space-y-0.5">
                     <Label htmlFor="notif-email" className="text-sm font-medium">
@@ -284,7 +308,7 @@ export default function SettingsPage() {
                     id="notif-email"
                     checked={emailNotificationsEnabled}
                     onCheckedChange={handleEmailNotificationToggle}
-                    disabled={!NOTIFICATION_EMAIL_ENABLED || notificationPreferencesQuery.isLoading || updateNotificationPreferencesMutation.isPending}
+                    disabled={!NOTIFICATION_EMAIL_ENABLED || notificationPreferencesQuery.data === undefined || updateNotificationPreferencesMutation.isPending}
                   />
                 </div>
 

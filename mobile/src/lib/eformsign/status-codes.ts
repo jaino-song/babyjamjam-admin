@@ -13,6 +13,7 @@ import {
   getEformsignStatusCategory,
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
   isRevokedEformsignStatus,
   normalizeEformsignStatusCode,
@@ -37,6 +38,7 @@ export {
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
   isRevokedEformsignStatus,
   normalizeEformsignStatusCode,
@@ -103,6 +105,10 @@ export function mapDocStatusLabel(
   if (isRevokedEformsignStatus(currentStatus?.status_type)) {
     return CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoked;
   }
+  // 071 (reviewer rejection, 계약-04): in-progress, not expired — its own 반려됨 label.
+  if (isReviewerRejectedEformsignStatus(currentStatus?.status_type)) {
+    return CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer;
+  }
   const category = getStatusCategory(currentStatus?.status_type);
   if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;
   const params = { category, currentStatus, contractEndDate: contractEndDate ?? null };
@@ -145,6 +151,10 @@ export type BadgeVariant = "success" | "warning" | "destructive" | "info" | "sec
 export function getStatusColor(status: string): BadgeVariant {
   const lowerStatus = status.toLowerCase();
 
+  // 파기됨 (계약 파기) reads neutral; checked first so no keyword below can recolour it.
+  if (lowerStatus.includes("파기됨")) {
+    return "secondary";
+  }
   if (lowerStatus.includes("서명 완료")) {
     return "info";
   }
@@ -154,7 +164,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("철회됨") || lowerStatus.includes("기간 만료") || lowerStatus.includes("만료") || lowerStatus.includes("expired") || lowerStatus.includes("reject")) {
+  if (lowerStatus.includes("반려됨") || lowerStatus.includes("철회됨") || lowerStatus.includes("기간 만료") || lowerStatus.includes("만료") || lowerStatus.includes("expired") || lowerStatus.includes("reject")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {

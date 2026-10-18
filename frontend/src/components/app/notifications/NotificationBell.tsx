@@ -160,7 +160,12 @@ export function NotificationBell({ className }: { className?: string }) {
 
         if (notification.data?.url) {
             const url = notification.data.url as string;
-            const parsed = parseNotificationUrl(url);
+            // A contract-link confirmation lands on the clients page, which is
+            // the only surface that shows the pending contract and its confirm
+            // action; the dialog below is a summary without it.
+            const parsed = notification.data.type === "eformsign_link_confirmation_required"
+                ? null
+                : parseNotificationUrl(url);
 
             if (parsed) {
                 if (parsed.type === "filter") {

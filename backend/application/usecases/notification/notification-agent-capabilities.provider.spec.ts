@@ -20,6 +20,11 @@ const context = {
     principal: { userId: "user-1", branchId: "branch-1", globalRole: "admin", branchRole: "admin" },
 };
 
+const ownerPrincipalContext = {
+    ...context,
+    principal: { ...context.principal, userId: "owner-principal", globalRole: "owner" },
+};
+
 describe("NotificationAgentCapabilitiesProvider", () => {
     const targetUserId = "11111111-1111-4111-8111-111111111111";
     const member = {
@@ -82,7 +87,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         });
     });
 
-    it("resolves a branch member into a masked human-verifiable approval snapshot and summary", async () => {
+    it("resolves a branch member into an ID-only contact snapshot and summary", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
@@ -95,14 +100,15 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
         const serialized = JSON.stringify(inspection);
 
-        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "홍길동", maskedContact: "010-****-5678" });
-        expect(inspection.summary).toContain("홍길동");
-        expect(inspection.summary).toContain("010-****-5678");
+        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "홍길동" });
+        expect(inspection.summary).toBe("홍길동 사용자에게 테스트 알림을 발송합니다.");
+        expect(inspection.summary).not.toMatch(/[•*]|\d[\d -]{7,}\d/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
         expect(serialized).not.toContain("010-1234-5678");
         expect(serialized).not.toContain("member@example.com");
     });
 
-    it("resolves a branch owner with a masked email when no member row exists", async () => {
+    it("resolves a branch owner without exposing email when no member row exists", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
             branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
@@ -114,9 +120,10 @@ describe("NotificationAgentCapabilitiesProvider", () => {
 
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
 
-        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "김대표", maskedContact: "o***@example.com" });
-        expect(inspection.summary).toContain("김대표");
-        expect(inspection.summary).toContain("o***@example.com");
+        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "김대표" });
+        expect(inspection.summary).toBe("김대표 사용자에게 테스트 알림을 발송합니다.");
+        expect(inspection.summary).not.toMatch(/[•*]|\d[\d -]{7,}\d/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
     });
 
     it("rejects a user who is neither a member nor the branch owner", async () => {
@@ -331,13 +338,107 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             }),
         };
         const provider = new NotificationAgentCapabilitiesProvider(
-            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
         );
         const capability = provider.getCapabilities()[0]!;
-        const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
+        const expected = await capability.inspect!(ownerPrincipalContext, { userId: targetUserId, title: "테스트", body: "본문" });
 
-        await expect(capability.executeApprovedTarget!(context, { userId: targetUserId, title: "테스트", body: "본문" }, expected.targetVersion!))
+        await expect(capability.executeApprovedTarget!(ownerPrincipalContext, { userId: targetUserId, title: "테스트", body: "본문" }, expected.targetVersion!))
             .resolves.toEqual({ status: "delivered", notificationId: 11, subscriptions: 1, delivered: 1, failed: 0 });
         expect(sendNotification.executeWithOutcome).toHaveBeenCalled();
+    });
+    describe("owner accounts are invisible to non-owner principals (권한-02a, BJJ-436)", () => {
+        const ownerContext = ownerPrincipalContext;
+        const input = () => ({ userId: targetUserId, title: "테스트", body: "본문" });
+
+        const ownerViaBranchOwnership = () => ({
+            user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+        });
+        const ownerViaMembership = () => ({
+            user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+        });
+
+        it.each([
+            ["branch owner", ownerViaBranchOwnership],
+            ["plain member", ownerViaMembership],
+        ])("rejects a global-owner target (%s) for an admin principal, same error as a non-member", async (_label, prismaFor) => {
+            const provider = new NotificationAgentCapabilitiesProvider(
+                {} as never, prismaFor() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
+            );
+            const capability = provider.getCapabilities()[0]!;
+
+            await expect(capability.inspect!(context, input())).rejects.toThrow("outside the current branch");
+        });
+
+        it.each([
+            ["branch owner", ownerViaBranchOwnership],
+            ["plain member", ownerViaMembership],
+        ])("still resolves a global-owner target (%s) for an owner principal", async (_label, prismaFor) => {
+            const provider = new NotificationAgentCapabilitiesProvider(
+                {} as never, prismaFor() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
+            );
+            const capability = provider.getCapabilities()[0]!;
+
+            const inspection = await capability.inspect!(ownerContext, input());
+
+            expect(inspection.targetSnapshot).toMatchObject({ userId: targetUserId });
+        });
+
+        it("fails closed when the principal carries no global role", async () => {
+            const provider = new NotificationAgentCapabilitiesProvider(
+                {} as never, ownerViaBranchOwnership() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
+            );
+            const capability = provider.getCapabilities()[0]!;
+            const roleless = { ...context, principal: { ...context.principal, globalRole: undefined } };
+
+            await expect(capability.inspect!(roleless as never, input())).rejects.toThrow("outside the current branch");
+        });
+
+        it("keeps a non-owner target resolvable for an admin principal", async () => {
+            const provider = new NotificationAgentCapabilitiesProvider(
+                {} as never, ownerViaMembership() as never, userRepositoryStub({ id: targetUserId, role: "admin" }) as never,
+            );
+            const capability = provider.getCapabilities()[0]!;
+
+            const inspection = await capability.inspect!(context, input());
+
+            expect(inspection.targetSnapshot).toMatchObject({ userId: targetUserId, name: "홍길동" });
+        });
+
+        it("revalidates an owner target as gone for an admin principal", async () => {
+            const provider = new NotificationAgentCapabilitiesProvider(
+                {} as never, ownerViaBranchOwnership() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
+            );
+            const capability = provider.getCapabilities()[0]!;
+
+            const revalidation = await capability.revalidate!(context, input(), "any-version");
+
+            expect(revalidation.valid).toBe(false);
+            expect(revalidation.currentVersion).toBeUndefined();
+        });
+
+        it("re-checks the locked user row at the execution boundary: promoted to owner after inspect means no send for an admin principal", async () => {
+            const prisma = {
+                $transaction: jest.fn(),
+                notification: { findFirst: jest.fn().mockResolvedValue(null) },
+                ...ownerViaMembership(),
+                user: { findUnique: jest.fn() },
+                agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            };
+            prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+            const sendNotification = { executeWithOutcome: jest.fn() };
+            const provider = new NotificationAgentCapabilitiesProvider(
+                sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId, role: "admin" }) as never,
+            );
+            const capability = provider.getCapabilities()[0]!;
+            const expected = await capability.inspect!(context, input());
+
+            prisma.user.findUnique.mockResolvedValue({ approvalStatus: "approved", role: "owner" });
+            await expect(capability.executeApprovedTarget!(context, input(), expected.targetVersion!))
+                .rejects.toThrow("membership changed");
+            expect(sendNotification.executeWithOutcome).not.toHaveBeenCalled();
+        });
     });
 });

@@ -19,6 +19,11 @@ describe("getDocumentStatusCategory", () => {
         ["042", "expired"],
         ["090", "expired"],
         ["080", "expired"],
+        ["061", "expired"],
+        // 071 (reviewer rejection, 계약-04) is not terminal: it files like 070, never under "expired" or "unknown".
+        ["070", "drafting"],
+        ["071", "drafting"],
+        ["doc_reject_reviewer", "drafting"],
         // 047/049/099 are deleted rows: never listed under a tab.
         ["047", "unknown"],
         ["099", "unknown"],
@@ -29,5 +34,10 @@ describe("getDocumentStatusCategory", () => {
     it("files 041 at the provider review step under in-progress, like 060", () => {
         expect(getDocumentStatusCategory(doc("041", "06", "제공기관 확인"))).toBe("in-progress");
         expect(getDocumentStatusCategory(doc("060", "06", "제공기관 확인"))).toBe("in-progress");
+    });
+
+    it("files 071 at the provider review step under in-progress, like 070 (so it stays in the in-progress tab)", () => {
+        expect(getDocumentStatusCategory(doc("071", "06", "제공기관 확인"))).toBe("in-progress");
+        expect(getDocumentStatusCategory(doc("070", "06", "제공기관 확인"))).toBe("in-progress");
     });
 });

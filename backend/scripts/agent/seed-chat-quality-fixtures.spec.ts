@@ -214,6 +214,7 @@ describe("diffAgainstExisting", () => {
                 id: 501, name: c1.name, phone: c1.phone, phoneNormalized: c1.phoneNormalized,
                 address: "다른 주소", type: c1.type, startDate: c1.startDate, endDate: c1.endDate,
                 serviceStatus: c1.serviceStatus, voucherClient: c1.voucherClient, suppressGreetingSms: c1.suppressGreetingSms,
+                bookingConfirmedAt: "2026-01-01T00:00:00.000Z",
             }],
         };
         const diff = diffAgainstExisting(plan, state);
@@ -232,6 +233,7 @@ describe("diffAgainstExisting", () => {
                 id: 501, name: c1.name, phone: c1.phone, phoneNormalized: c1.phoneNormalized,
                 address: c1.address, type: c1.type, startDate: c1.startDate, endDate: c1.endDate,
                 serviceStatus: c1.serviceStatus, voucherClient: c1.voucherClient, suppressGreetingSms: c1.suppressGreetingSms,
+                bookingConfirmedAt: "2026-01-01T00:00:00.000Z",
             }],
         };
         const diff = diffAgainstExisting(plan, state);
@@ -248,6 +250,7 @@ describe("diffAgainstExisting", () => {
                 id: 9, name: c1.name, phone: "010-9999-0000", phoneNormalized: "01099990000",
                 address: null, type: null, startDate: null, endDate: null,
                 serviceStatus: null, voucherClient: true, suppressGreetingSms: false,
+                bookingConfirmedAt: null,
             }],
         };
         const diff = diffAgainstExisting(plan, state);

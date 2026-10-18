@@ -1,9 +1,9 @@
-import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
-import { useAllVoucherPriceInfos, type ContractVoucherPriceInfo } from "../useVoucherData";
+import { useAllVoucherPriceInfos, useAllVoucherPrices, voucherQueryKeys, VOUCHER_TYPES, type ContractVoucherPriceInfo } from "../useVoucherData";
 
 jest.mock("@/lib/api/client", () => ({
   api: {
@@ -67,5 +67,52 @@ describe("useVoucherData contract price reads", () => {
     });
 
     expect(mockedApiGet).not.toHaveBeenCalled();
+  });
+
+  it("reports paused when offline with no price data", () => {
+    mockedApiGet.mockResolvedValue({ data: [] });
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(() => useAllVoucherPrices(2026), { wrapper: createWrapper(queryClient) });
+      expect(result.current.isPaused).toBe(true);
+      expect(result.current.isLoading).toBe(false);
+      expect(mockedApiGet).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("does not report paused for online prices", async () => {
+    mockedApiGet.mockResolvedValue({ data: [] });
+    const { result } = renderHook(() => useAllVoucherPrices(2026), { wrapper: createWrapper(queryClient) });
+    expect(result.current.isPaused).toBe(false);
+    await waitFor(() => expect(result.current.isDataComplete).toBe(true));
+    expect(result.current.isPaused).toBe(false);
+  });
+
+  it("does not report paused for a disabled year even offline", () => {
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(() => useAllVoucherPrices(), { wrapper: createWrapper(queryClient) });
+      expect(result.current.isPaused).toBe(false);
+      expect(mockedApiGet).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("does not report paused during an offline refetch with cached empty data", async () => {
+    mockedApiGet.mockResolvedValue({ data: [] });
+    VOUCHER_TYPES.forEach((type) => queryClient.setQueryData(voucherQueryKeys.voucherPriceInfos(type, 2026), []));
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(() => useAllVoucherPrices(2026), { wrapper: createWrapper(queryClient) });
+      act(() => { void queryClient.refetchQueries({ queryKey: ["voucher-price-infos"] }); });
+      await waitFor(() => expect(queryClient.getQueryState(voucherQueryKeys.voucherPriceInfos(VOUCHER_TYPES[0], 2026))?.fetchStatus).toBe("paused"));
+      expect(result.current.isPaused).toBe(false);
+      expect(result.current.isDataComplete).toBe(true);
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 });

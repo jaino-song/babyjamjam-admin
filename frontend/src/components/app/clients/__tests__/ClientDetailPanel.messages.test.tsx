@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
@@ -12,6 +12,9 @@ import { eformsignApi } from "@/services/api";
 
 const mockUseClientMessageHistory = jest.fn();
 const mockUseClientUpcomingMessageTriggerJobs = jest.fn();
+const mockUseClientServiceRecords = jest.fn();
+const mockUseClientServiceRecordRevisionHistory = jest.fn();
+const mockServiceRecordsTabProps: Array<Record<string, unknown>> = [];
 
 jest.mock("@/providers/LocaleProvider", () => ({
     useLocale: () => "ko",
@@ -20,6 +23,7 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("@/features/clients/hooks/use-clients", () => ({
     useApproveScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
     useRejectScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
+    useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
@@ -28,15 +32,8 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 }));
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
-    useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
-    useClientServiceRecordRevisionHistory: () => ({
-        data: undefined,
-        error: undefined,
-        isError: false,
-        isLoading: false,
-        isFetching: false,
-        refetch: jest.fn(),
-    }),
+    useClientServiceRecords: () => mockUseClientServiceRecords(),
+    useClientServiceRecordRevisionHistory: () => mockUseClientServiceRecordRevisionHistory(),
     useRetryServiceRecordDocument: () => ({
         isPending: false,
         variables: undefined,
@@ -51,6 +48,7 @@ jest.mock("@/hooks/use-toast", () => ({
 jest.mock("@/services/api", () => ({
     eformsignApi: {
         getDocumentsByClientId: jest.fn().mockResolvedValue([]),
+        getLinkConfirmations: jest.fn().mockResolvedValue([]),
     },
 }));
 
@@ -85,7 +83,10 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
 }));
 
 jest.mock("@/components/app/clients/ClientServiceRecordsTab", () => ({
-    ClientServiceRecordsTab: () => null,
+    ClientServiceRecordsTab: (props: Record<string, unknown>) => {
+        mockServiceRecordsTabProps.push(props);
+        return null;
+    },
 }));
 
 jest.mock("@/components/app/v3", () => ({
@@ -185,6 +186,7 @@ const client: Client = {
     voucherClient: false,
     breastPump: false,
     serviceStatus: null,
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,
@@ -250,13 +252,59 @@ const upcomingJob: ClientUpcomingMessageTriggerJob = {
 
 function historyQuery(
     items: MessageLogRecord[],
-    overrides: Partial<{ isError: boolean; isLoading: boolean; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: jest.Mock }> = {},
+    overrides: Partial<{
+        isError: boolean;
+        isLoading: boolean;
+        isPaused: boolean;
+        data: unknown;
+        hasNextPage: boolean;
+        isFetchingNextPage: boolean;
+        isFetchNextPageError: boolean;
+        isRefetching: boolean;
+        fetchNextPage: jest.Mock;
+        refetch: jest.Mock;
+    }> = {},
 ) {
     return {
         items,
+        data: { pages: [] } as unknown,
         isError: false,
         isLoading: false,
+        isPaused: false,
         isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        isRefetching: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+        refetch: jest.fn(),
+        ...overrides,
+    };
+}
+
+function upcomingQuery(
+    items: ClientUpcomingMessageTriggerJob[],
+    overrides: Partial<{
+        isError: boolean;
+        isLoading: boolean;
+        isPaused: boolean;
+        data: unknown;
+        isFetchingNextPage: boolean;
+        isFetchNextPageError: boolean;
+        isRefetching: boolean;
+        hasNextPage: boolean;
+        fetchNextPage: jest.Mock;
+        refetch: jest.Mock;
+    }> = {},
+) {
+    return {
+        items,
+        data: { pages: [] } as unknown,
+        isError: false,
+        isLoading: false,
+        isPaused: false,
+        isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        isRefetching: false,
         hasNextPage: false,
         fetchNextPage: jest.fn(),
         refetch: jest.fn(),
@@ -277,6 +325,17 @@ describe("ClientDetailPanel messages tab", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         (eformsignApi.getDocumentsByClientId as jest.Mock).mockResolvedValue([]);
+        mockServiceRecordsTabProps.length = 0;
+        mockUseClientServiceRecords.mockReturnValue({ data: undefined, isError: false, isLoading: false, isPaused: false });
+        mockUseClientServiceRecordRevisionHistory.mockReturnValue({
+            data: undefined,
+            error: undefined,
+            isError: false,
+            isLoading: false,
+            isPaused: false,
+            isFetching: false,
+            refetch: jest.fn(),
+        });
         mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord]));
         mockUseClientUpcomingMessageTriggerJobs.mockReturnValue({
             items: [upcomingJob],
@@ -409,5 +468,209 @@ describe("ClientDetailPanel messages tab", () => {
         openMessagesTab("mobile");
         const mobilePresentation = document.querySelector('[data-slot="client-detail-presentation"]');
         expect(mobilePresentation).toHaveClass("min-w-0", "w-full", "max-w-full");
+    });
+
+    describe("failed loads", () => {
+        const historyZone = () => document.querySelectorAll<HTMLElement>('[data-slot="message-zone"]')[1];
+        const upcomingZone = () => document.querySelectorAll<HTMLElement>('[data-slot="message-zone"]')[0];
+
+        it("shows the failed-load state with a retry, not the empty text, when the history failed and nothing is loaded", () => {
+            const refetch = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isError: true, refetch }));
+            openMessagesTab();
+
+            const alert = within(historyZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("메시지 발송 내역을 불러오지 못했습니다");
+            expect(within(historyZone()).queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the loaded history and adds a notice whose retry refetches when a refresh failed", () => {
+            const refetch = jest.fn();
+            const fetchNextPage = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(
+                historyQuery([historyRecord], { isError: true, refetch, fetchNextPage }),
+            );
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("모니터링 설문")).toBeInTheDocument();
+            const alert = within(historyZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+            expect(fetchNextPage).not.toHaveBeenCalled();
+        });
+
+        it("retries the older page when that is what failed", () => {
+            const refetch = jest.fn();
+            const fetchNextPage = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], {
+                isError: true,
+                isFetchNextPageError: true,
+                hasNextPage: true,
+                refetch,
+                fetchNextPage,
+            }));
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("모니터링 설문")).toBeInTheDocument();
+            fireEvent.click(within(within(historyZone()).getByRole("alert")).getByRole("button", { name: "다시 시도" }));
+            expect(fetchNextPage).toHaveBeenCalledTimes(1);
+            expect(refetch).not.toHaveBeenCalled();
+        });
+
+        it("shows no alert for a healthy history, and the empty text only after a successful empty load", () => {
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([]));
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("메시지 발송 내역이 없습니다")).toBeInTheDocument();
+            expect(within(historyZone()).queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("keeps the cached upcoming jobs and adds a notice whose retry refetches when a refresh failed", () => {
+            const refetch = jest.fn();
+            mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(
+                upcomingQuery([upcomingJob], { isError: true, refetch }),
+            );
+            openMessagesTab();
+
+            expect(within(upcomingZone()).getByRole("heading", { name: "서비스 종료 안내" })).toBeInTheDocument();
+            const alert = within(upcomingZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+            expect(within(upcomingZone()).queryByText("예정된 자동 메시지를 불러오지 못했어요")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the screen's own failure UI and its retry for upcoming jobs when nothing is loaded", () => {
+            const refetch = jest.fn();
+            mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([], { isError: true, refetch }));
+            openMessagesTab();
+
+            expect(within(upcomingZone()).getByText("예정된 자동 메시지를 불러오지 못했어요")).toBeInTheDocument();
+            expect(within(upcomingZone()).queryByRole("alert")).not.toBeInTheDocument();
+            expect(within(upcomingZone()).queryByText("예정된 자동 메시지가 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(upcomingZone()).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        describe("paused (offline) loads are loading, never empty", () => {
+            it("shows the history skeleton, not the empty text, while the first read is paused with no data", () => {
+                mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isPaused: true, data: undefined }));
+                openMessagesTab();
+
+                expect(within(historyZone()).getByRole("status", { name: "메시지 발송 내역을 불러오는 중" })).toBeInTheDocument();
+                expect(within(historyZone()).queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+                expect(within(historyZone()).queryByRole("alert")).not.toBeInTheDocument();
+            });
+
+            it("shows the upcoming loading state, not the empty text, while the first read is paused with no data", () => {
+                mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(
+                    upcomingQuery([], { isPaused: true, data: undefined }),
+                );
+                openMessagesTab();
+
+                // The loading state is the list's own skeleton slots inside the list wrapper.
+                expect(upcomingZone().querySelector('[data-slot="upcoming-messages"]')).not.toBeNull();
+                expect(within(upcomingZone()).queryByText("예정된 자동 메시지가 없습니다")).not.toBeInTheDocument();
+                expect(within(upcomingZone()).queryByRole("alert")).not.toBeInTheDocument();
+            });
+
+            it("keeps the empty text when a paused refetch already has a successful empty load", () => {
+                mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isPaused: true }));
+                mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([], { isPaused: true }));
+                openMessagesTab();
+
+                expect(within(historyZone()).getByText("메시지 발송 내역이 없습니다")).toBeInTheDocument();
+                expect(within(upcomingZone()).getByText("예정된 자동 메시지가 없습니다")).toBeInTheDocument();
+            });
+
+            it("hands the service-record tab a loading state for a paused overview and a paused revision history", () => {
+                mockUseClientServiceRecords.mockReturnValue({ data: undefined, isError: false, isLoading: false, isPaused: true });
+                mockUseClientServiceRecordRevisionHistory.mockReturnValue({
+                    data: undefined,
+                    error: undefined,
+                    isError: false,
+                    isLoading: false,
+                    isPaused: true,
+                    isFetching: false,
+                    refetch: jest.fn(),
+                });
+                renderPanel("desktop");
+                fireEvent.click(screen.getByRole("button", { name: "제공기록지" }));
+
+                const props = mockServiceRecordsTabProps[mockServiceRecordsTabProps.length - 1];
+                expect(props.isLoading).toBe(true);
+                expect(props.isRevisionHistoryLoading).toBe(true);
+                expect(props.isError).toBe(false);
+                expect(props.isRevisionHistoryError).toBe(false);
+            });
+
+            it("does not call the service-record tab loading once the overview has data", () => {
+                mockUseClientServiceRecords.mockReturnValue({
+                    data: { record: null, assignments: [] },
+                    isError: false,
+                    isLoading: false,
+                    isPaused: true,
+                });
+                renderPanel("desktop");
+                fireEvent.click(screen.getByRole("button", { name: "제공기록지" }));
+
+                const props = mockServiceRecordsTabProps[mockServiceRecordsTabProps.length - 1];
+                expect(props.isLoading).toBe(false);
+            });
+        });
+
+        describe("retry button reflects the in-flight retry", () => {
+            const retryButton = (zone: HTMLElement) =>
+                within(within(zone).getByRole("alert")).getByRole("button", { name: "다시 시도" });
+
+            const sections = [
+                {
+                    name: "message history",
+                    zone: historyZone,
+                    mockFor: (overrides: Parameters<typeof historyQuery>[1]) =>
+                        mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], {
+                            isError: true,
+                            ...overrides,
+                        })),
+                },
+                {
+                    name: "upcoming jobs",
+                    zone: upcomingZone,
+                    mockFor: (overrides: Parameters<typeof upcomingQuery>[1]) =>
+                        mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([upcomingJob], {
+                            isError: true,
+                            ...overrides,
+                        })),
+                },
+            ];
+
+            it.each(sections)("$name: disables retry while a failed next page is being refetched", ({ zone, mockFor }) => {
+                mockFor({ isFetchNextPageError: true, hasNextPage: true, isFetchingNextPage: true, isRefetching: false });
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeDisabled();
+            });
+
+            it.each(sections)("$name: disables retry while the list is being refetched", ({ zone, mockFor }) => {
+                mockFor({ isRefetching: true });
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeDisabled();
+            });
+
+            it.each(sections)("$name: keeps retry enabled when nothing is in flight", ({ zone, mockFor }) => {
+                mockFor({});
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeEnabled();
+            });
+        });
     });
 });

@@ -17,6 +17,7 @@ export interface DocumentUploadCapabilities {
     formatGroups: readonly DocumentUploadFormatGroup[];
     preview: DocumentPreviewCapabilities;
     uploadVisibilityScope: "branch" | "all_branches";
+    canChooseVisibilityScope: boolean;
 }
 
 export const DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES: DocumentUploadCapabilities = {
@@ -82,6 +83,7 @@ export const DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES: DocumentUploadCapabilities = 
         downloadOnlyFormats: ["DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX", "HEIC", "HEIF", "ZIP", "TXT", "CSV"],
     },
     uploadVisibilityScope: "branch",
+    canChooseVisibilityScope: false,
 };
 
 export interface DocumentUploadCandidate {

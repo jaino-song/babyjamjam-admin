@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import CallsPage from "../page";
@@ -91,6 +91,9 @@ function listResult<T extends { id: string }>(
     hasNextPage: false,
     isFetchingNextPage: false,
     isLoadMoreError: false,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
     fetchNextPage: jest.fn(),
     ...overrides,
   };
@@ -117,6 +120,16 @@ describe("CallsPage", () => {
     expect(screen.getByText("신규 상담")).toBeInTheDocument();
     expect(screen.getByText(/김서연/)).toBeInTheDocument();
     expect(screen.getByText(/확신도 낮음/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows an unknown failed log count even on the queue tab and leaves the unknown queue count blank", () => {
+    mockUseCallRecords.mockReturnValue(recordsResult([], { data: undefined, isError: true }));
+    mockUsePendingDraftCount.mockReturnValue({ data: undefined, isError: true });
+    render(<CallsPage />);
+    expect(within(screen.getByText("통화 기록", { selector: "button", exact: false })).getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("검토 대기", { selector: "button", exact: false })).toHaveTextContent(/^검토 대기$/);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("switches to the call-log tab and shows its empty state", async () => {
@@ -132,7 +145,7 @@ describe("CallsPage", () => {
   });
 
   it("says the queue failed to load rather than that it is empty", () => {
-    mockUseClientDrafts.mockReturnValue(draftsResult([], { isError: true }));
+    mockUseClientDrafts.mockReturnValue(draftsResult([], { data: undefined, isError: true }));
     render(<CallsPage />);
 
     expect(screen.getByText(/불러오지 못했습니다/)).toBeInTheDocument();
@@ -155,7 +168,115 @@ describe("CallsPage", () => {
     render(<CallsPage />);
 
     expect(screen.getByText(/김서연/)).toBeInTheDocument();
-    expect(screen.queryByText(/불러오지 못했습니다/)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+  });
+
+  describe.each(["queue", "log"] as const)("%s load states", (tab) => {
+    const record = { id: "rec-1", callerName: "박지훈", callerPhone: null, summaryLine: "요약" };
+    const setResult = (rows: unknown[], overrides: Record<string, unknown>) => {
+      const mock = tab === "queue" ? mockUseClientDrafts : mockUseCallRecords;
+      mock.mockReturnValue((tab === "queue" ? draftsResult : recordsResult)(rows, overrides));
+    };
+    const open = () => {
+      const result = render(<CallsPage />);
+      if (tab === "log") fireEvent.click(screen.getByText("통화 기록", { selector: "button", exact: false }));
+      return result;
+    };
+    const emptyText = tab === "queue" ? "검토할 통화가 없습니다" : "통화 기록이 없습니다";
+
+    it("shows a retryable failure, not empty rows or a zero log count", () => {
+      const refetch = jest.fn();
+      setResult([], { data: undefined, isError: true, refetch });
+      open();
+      expect(screen.getByRole("alert")).toHaveAttribute("data-size", "panel");
+      expect(screen.getByRole("alert")).toHaveTextContent(tab === "queue" ? "검토 대기 목록을 불러오지 못했습니다" : "통화 기록을 불러오지 못했습니다");
+      expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(refetch).toHaveBeenCalledTimes(1);
+      if (tab === "log") {
+        const pill = screen.getByText("통화 기록", { selector: "button", exact: false });
+        expect(within(pill).getByText("—")).toBeInTheDocument();
+        expect(within(pill).queryByText("0")).not.toBeInTheDocument();
+      }
+    });
+
+    it("shows successful empty data and real zero without an alert", () => {
+      setResult([], {});
+      open();
+      expect(screen.getByText(emptyText)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      if (tab === "log") expect(within(screen.getByText("통화 기록", { selector: "button", exact: false })).getByText("0")).toBeInTheDocument();
+    });
+
+    it.each([false, true])("retains cached rows and retries the right request (later page: %s)", (laterPage) => {
+      const refetch = jest.fn();
+      const fetchNextPage = jest.fn();
+      const rows = [tab === "queue" ? draft : record];
+      setResult(rows, { isError: true, isLoadMoreError: laterPage, refetch, fetchNextPage });
+      const { rerender, container } = open();
+      const alert = screen.getByRole("alert");
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(alert).toHaveAttribute("data-size", "inline");
+      expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+      const row = screen.getByText(tab === "queue" ? /김서연/ : /박지훈/);
+      expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(laterPage ? fetchNextPage : refetch).toHaveBeenCalledTimes(1);
+      expect(laterPage ? refetch : fetchNextPage).not.toHaveBeenCalled();
+      if (tab === "log") expect(within(screen.getByText("통화 기록", { selector: "button", exact: false })).getByText("1")).toBeInTheDocument();
+      setResult(rows, { isError: true, isLoadMoreError: laterPage, isFetching: true, isRefetching: !laterPage, isFetchingNextPage: laterPage });
+      rerender(<CallsPage />);
+      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(container.querySelector('[data-slot="query-error-state"]')).toBeInTheDocument();
+    });
+
+    it("keeps cached empty data with an inline notice and a real zero", () => {
+      setResult([], { isError: true });
+      open();
+      expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
+      expect(screen.getByText(emptyText)).toBeInTheDocument();
+    });
+
+    it("uses the existing loading state while a no-data retry is running", () => {
+      setResult([], { data: undefined, isLoading: true, isPending: true, isFetching: true });
+      const { container } = open();
+      expect(container.querySelector(`[data-component$="${tab}-skeleton"]`)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
+    });
+
+    // react-query state for a query started offline: pending but paused, so isLoading is false.
+    const PAUSED_NO_DATA = {
+      data: undefined,
+      isPending: true,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      isPaused: true,
+      status: "pending",
+      fetchStatus: "paused",
+    };
+
+    it("uses the loading state, not the empty text, while the load is paused offline with nothing cached", () => {
+      setResult([], PAUSED_NO_DATA);
+      const { container } = open();
+      expect(container.querySelector(`[data-component$="${tab}-skeleton"]`)).toBeInTheDocument();
+      expect(container.querySelector(`[data-component$="${tab}-empty"]`)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
+      if (tab === "log") {
+        // Blank, exactly as during an ordinary load: neither a zero nor the failure dash.
+        const pill = screen.getByText("통화 기록", { selector: "button", exact: false });
+        expect(pill).toHaveTextContent(/^통화 기록$/);
+      }
+    });
+
+    it("keeps cached rows when a refetch is paused offline", () => {
+      setResult([tab === "queue" ? draft : record], { isPaused: true, fetchStatus: "paused" });
+      const { container } = open();
+      expect(screen.getByText(tab === "queue" ? /김서연/ : /박지훈/)).toBeInTheDocument();
+      expect(container.querySelector(`[data-component$="${tab}-skeleton"]`)).not.toBeInTheDocument();
+    });
   });
 
   describe("server-page glue", () => {

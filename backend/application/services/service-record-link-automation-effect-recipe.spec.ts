@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG } from "domain/entities/system-setting.entity";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -143,6 +144,50 @@ function fixture() {
 }
 
 describe("service-record-link automation effect recipe", () => {
+    it("preserves the pinned recipe digests for current and pre-기록-08 jobs", () => {
+        const f = fixture();
+        const current = describeServiceRecordLinkEffect({
+            ...f.input, scheduledFor: new Date("2026-09-30T03:00:00.000Z"),
+        });
+        const legacy = describeServiceRecordLinkEffect({
+            ...f.input, scheduledFor: new Date("2026-10-01T06:00:00.000Z"),
+        });
+        expect(current).not.toBeNull();
+        expect(legacy).not.toBeNull();
+        expect(current?.recipeDigest).toBe("3539dd6d9d2d4e49eaf26f8f98615682b1e385c25061eed94a7872fe017cb9df");
+        expect(legacy?.recipeDigest).toBe("a95c69e0986a35c46b9b9dd9d29b70734781b50f339e3ea6d37b3ad402b876de");
+        expect(legacy?.recipeDigest).toBe(agentBindingHash({
+            version: "service-record-link-automation-recipe-v1",
+            operation: "service-record-link",
+            scheduling: { kind: "service-start-15-kst", scheduledFor: "2026-10-01T06:00:00.000Z" },
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.SAME_DAY,
+            offsetDays: 0,
+            sendTime: "15:00",
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            scheduleIdentity: agentAutomationScheduleIdentity("76000000-0000-4000-8000-000000000003"),
+            serviceRecordCaseId: "76000000-0000-4000-8000-000000000004",
+        }));
+        for (const digest of ["recipientDigest", "sourceDigest", "templateDigest", "policyDigest"] as const) {
+            expect(legacy?.[digest]).toBe(current?.[digest]);
+        }
+    });
+
+    it.each(["2026-10-01T05:00:00.000Z", "2026-09-29T03:00:00.000Z", "2026-09-17T00:00:00.000Z"])(
+        "refuses a non-nominal or immediate send time %s", (scheduledFor) => {
+            expect(describeServiceRecordLinkEffect({ ...fixture().input, scheduledFor: new Date(scheduledFor) })).toBeNull();
+        },
+    );
+
+    it("refuses a manual dedupe key even at the legacy send time", () => {
+        const f = fixture();
+        expect(describeServiceRecordLinkEffect({
+            ...f.input,
+            scheduledFor: new Date("2026-10-01T06:00:00.000Z"),
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${scheduleId}:primary:manual:synthetic`,
+        })).toBeNull();
+    });
+
     it("describes a current link using digests only and no provider data", () => {
         const f = fixture();
         const effect = describeServiceRecordLinkEffect(f.input);

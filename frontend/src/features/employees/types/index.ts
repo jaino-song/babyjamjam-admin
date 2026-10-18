@@ -11,6 +11,7 @@ export interface Employee {
     openToNextWork: boolean;
     registeredDate: string | null;
     status: EmployeeStatus;
+    smsAutomationEnabled?: boolean;
 }
 
 export interface CreateEmployeeDto {
@@ -19,6 +20,7 @@ export interface CreateEmployeeDto {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    smsAutomationEnabled?: boolean;
 }
 
 export interface UpdateEmployeeDto {
@@ -27,6 +29,7 @@ export interface UpdateEmployeeDto {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    smsAutomationEnabled?: boolean;
 }
 
 // Grade options

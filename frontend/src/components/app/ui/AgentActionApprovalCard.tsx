@@ -22,11 +22,23 @@ export type AgentActionApprovalCardProps = {
     estimatedCost?: string;
     acknowledgementToken?: string;
     terminal?: boolean;
+    /** Rendered directly under the summary; the card itself never fetches. */
+    contact?: React.ReactNode;
     onApprove?: (actionId: string, expectedRevision: string, acknowledgementToken?: string) => void;
     onReject?: (actionId: string) => void;
 };
 
-export function AgentActionApprovalCard({ "data-component": dataComponent, actionId, capability, title, summary, expiresAt, expectedRevision, risk, branchId, target, changes, provider, estimatedCost, acknowledgementToken, terminal = false, onApprove, onReject }: AgentActionApprovalCardProps) {
+// Top-level keys that carry a masked contact value. They are not printed in
+// the JSON blocks; the real contact is looked up by id in the contact slot.
+const MASKED_CONTACT_KEYS: ReadonlySet<string> = new Set(["phonelast4", "maskedcontact", "maskedreceiver", "receiver"]);
+
+export function omitMaskedContactKeys<T extends Record<string, unknown>>(value: T): Partial<T> {
+    return Object.fromEntries(
+        Object.entries(value).filter(([key]) => !MASKED_CONTACT_KEYS.has(key.toLowerCase())),
+    ) as Partial<T>;
+}
+
+export function AgentActionApprovalCard({ "data-component": dataComponent, actionId, capability, title, summary, expiresAt, expectedRevision, risk, branchId, target, changes, provider, estimatedCost, acknowledgementToken, terminal = false, contact, onApprove, onReject }: AgentActionApprovalCardProps) {
     const [now, setNow] = useState(0);
     const [acknowledged, setAcknowledged] = useState(false);
     useEffect(() => {
@@ -44,11 +56,12 @@ export function AgentActionApprovalCard({ "data-component": dataComponent, actio
             <CardContent data-component={`${dataComponent}_content`} className="flex flex-col gap-3 p-4">
                 <div data-component={`${dataComponent}_content_header`} data-slot="header" className="flex items-start justify-between gap-3"><div data-component={`${dataComponent}_content_header_identity`}><p data-component={`${dataComponent}_content_header_title`} className="text-sm font-semibold">{title}</p><p data-component={`${dataComponent}_content_header_capability`} className="text-xs opacity-75">{capability}</p></div><span data-component={`${dataComponent}_content_header_expiry`} data-slot="expiry" className="text-xs">{expired ? "만료됨" : `만료 ${new Date(expiresAt).toLocaleString()}`}</span></div>
                 <p data-component={`${dataComponent}_content_summary`} data-slot="summary" className="whitespace-pre-wrap text-sm">{summary}</p>
+                {contact}
                 <dl data-component={`${dataComponent}_content_details`} data-slot="details" className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                     {risk && <><dt data-component={`${dataComponent}_content_details_risk-label`} className="text-amber-800/70">위험도</dt><dd data-component={`${dataComponent}_content_details_risk-value`}>{risk}</dd></>}
                     {branchId && <><dt data-component={`${dataComponent}_content_details_branch-label`} className="text-amber-800/70">지점</dt><dd data-component={`${dataComponent}_content_details_branch-value`} className="truncate">{branchId}</dd></>}
-                    {target && <><dt data-component={`${dataComponent}_content_details_target-label`} className="text-amber-800/70">대상 변경</dt><dd data-component={`${dataComponent}_content_details_target-value`} className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(target)}</dd></>}
-                    <dt data-component={`${dataComponent}_content_details_changes-label`} className="text-amber-800/70">실제 변경값</dt><dd data-component={`${dataComponent}_content_details_changes-value`} className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(changes, null, 2)}</dd>
+                    {target && <><dt data-component={`${dataComponent}_content_details_target-label`} className="text-amber-800/70">대상 변경</dt><dd data-component={`${dataComponent}_content_details_target-value`} className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(omitMaskedContactKeys(target))}</dd></>}
+                    <dt data-component={`${dataComponent}_content_details_changes-label`} className="text-amber-800/70">실제 변경값</dt><dd data-component={`${dataComponent}_content_details_changes-value`} className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(omitMaskedContactKeys(changes), null, 2)}</dd>
                     {provider && <><dt data-component={`${dataComponent}_content_details_provider-label`} className="text-amber-800/70">외부 제공자</dt><dd data-component={`${dataComponent}_content_details_provider-value`}>{provider}</dd></>}
                     {estimatedCost && <><dt data-component={`${dataComponent}_content_details_cost-label`} className="text-amber-800/70">예상 비용</dt><dd data-component={`${dataComponent}_content_details_cost-value`}>{estimatedCost}</dd></>}
                 </dl>

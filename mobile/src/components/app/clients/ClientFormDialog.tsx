@@ -28,9 +28,13 @@ import {
     Client,
     CreateClientDto,
     UpdateClientDto,
-    SERVICE_STATUS_OPTIONS,
     type ServiceStatus
 } from "@/lib/client/types";
+import {
+    getServiceStatusFormOptions,
+    SERVICE_STATUS_BOOKING_HELPER,
+    SERVICE_STATUS_BOOKING_REFUSAL,
+} from "@/lib/client/service-status-form-options";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -100,7 +104,7 @@ interface ClientFormErrorState {
 
 interface StructuredErrorPresentation {
     detail: string;
-    fieldId?: "name" | "phone";
+    fieldId?: "name" | "phone" | "serviceStatus";
     label: string;
     pointer: string;
     summaryId: string;
@@ -176,12 +180,13 @@ function FieldLabelRow({
     );
 }
 
-const getKnownFieldId = (problemError: ProblemError): "name" | "phone" | undefined => {
+const getKnownFieldId = (problemError: ProblemError): "name" | "phone" | "serviceStatus" | undefined => {
     if (problemError.location !== undefined && problemError.location !== "body") {
         return undefined;
     }
     if (problemError.pointer === "/name") return "name";
     if (problemError.pointer === "/phone") return "phone";
+    if (problemError.pointer === "/serviceStatus") return "serviceStatus";
     return undefined;
 };
 
@@ -551,7 +556,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
-                    serviceStatus: formData.serviceStatus,
+                    // 고객-04: creating always starts at 예약 전.
+                    serviceStatus: "pre_booking",
                 };
                 const newClient = await createClient.mutateAsync(createDto);
                 onSuccess?.(newClient);
@@ -587,15 +593,26 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     };
 
     const isSubmitting = createClient.isPending || updateClient.isPending;
+    // 고객-04: a new client is always 예약 전, and a save can no longer move a client between 예약 전
+    // and 대기·진행·완료 (only [예약 확정] does), so the select offers only what the server accepts.
+    const serviceStatusOptions = getServiceStatusFormOptions({
+        isCreate: !isEditMode,
+        bookingConfirmedAt: client?.bookingConfirmedAt,
+        currentStatus: client?.serviceStatus ?? "pre_booking",
+    });
+    const isBookingUnconfirmed = !isEditMode || client?.bookingConfirmedAt == null;
     const structuredErrors = useMemo<StructuredErrorPresentation[]>(() => {
         const problemErrors = errorState?.normalized?.problem?.errors ?? [];
         return problemErrors.map((problemError, index) => {
             const fieldId = getKnownFieldId(problemError);
-            const label = fieldId
-                ? t(locale, `clients.form.${fieldId}`)
-                : resolveProblemPresentation(locale).unmappedField;
+            const label = fieldId === "serviceStatus"
+                ? t(locale, "clients.form.contract-status")
+                : fieldId
+                    ? t(locale, `clients.form.${fieldId}`)
+                    : resolveProblemPresentation(locale).unmappedField;
             return {
-                detail: problemError.detail,
+                // 고객-04: the server's catalog text does not say what to do; the form shows its own sentence.
+                detail: fieldId === "serviceStatus" ? SERVICE_STATUS_BOOKING_REFUSAL : problemError.detail,
                 fieldId,
                 label,
                 pointer: problemError.pointer || "/",
@@ -605,9 +622,10 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     }, [errorState, locale]);
 
     const fieldErrorMessageIds = useMemo(() => {
-        const ids: Record<"name" | "phone", string[]> = {
+        const ids: Record<"name" | "phone" | "serviceStatus", string[]> = {
             name: [],
             phone: [],
+            serviceStatus: [],
         };
         structuredErrors.forEach((problemError) => {
             if (problemError.fieldId) {
@@ -621,7 +639,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         fieldMessages.slot(field)?.tone === "err"
         || (field === "name" && fieldErrorMessageIds.name.length > 0)
         || (field === "phone" && fieldErrorMessageIds.phone.length > 0);
-    const describedBy = (field: ClientFormField, serverErrorIds: readonly string[] = []): string =>
+    const describedBy = (field: ClientFormField | "serviceStatus", serverErrorIds: readonly string[] = []): string =>
         [messageIdFor(field), ...serverErrorIds].join(" ");
 
     useEffect(() => {
@@ -637,7 +655,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         return () => clearTimeout(timeoutId);
     }, [errorState]);
 
-    const focusFormField = (fieldId: "name" | "phone") => {
+    const focusFormField = (fieldId: "name" | "phone" | "serviceStatus") => {
         const field = document.getElementById(fieldId);
         if (field instanceof HTMLElement) {
             field.focus();
@@ -1058,22 +1076,38 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                     data-component={`${CLIENT_FORM_DIALOG_BASE}_content_contract-status-field`}
                                     htmlFor="serviceStatus"
                                     label={t(locale, "clients.form.contract-status")}
+                                    message={fieldErrorMessageIds.serviceStatus.length > 0
+                                        ? { text: SERVICE_STATUS_BOOKING_REFUSAL, tone: "err" }
+                                        : null}
                                 />
                                 <Select
-                                    value={formData.serviceStatus || ""}
+                                    value={isEditMode ? formData.serviceStatus || "" : "pre_booking"}
                                     onValueChange={(value) => handleChange("serviceStatus", value as ServiceStatus)}
+                                    disabled={!isEditMode}
                                 >
-                                    <SelectTrigger id="serviceStatus" aria-describedby={messageIdFor("serviceStatus")}>
+                                    <SelectTrigger
+                                        id="serviceStatus"
+                                        aria-describedby={describedBy("serviceStatus", fieldErrorMessageIds.serviceStatus)}
+                                        aria-invalid={fieldErrorMessageIds.serviceStatus.length > 0}
+                                    >
                                         <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {SERVICE_STATUS_OPTIONS.map((status) => (
+                                        {serviceStatusOptions.map((status) => (
                                             <SelectItem key={status.value} value={status.value}>
                                                 {status.label}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
+                                {isBookingUnconfirmed ? (
+                                    <p
+                                        className="text-[0.75rem] leading-snug text-v3-text-muted"
+                                        data-component={`${CLIENT_FORM_DIALOG_BASE}_content_contract-status-field_booking-helper`}
+                                    >
+                                        {SERVICE_STATUS_BOOKING_HELPER}
+                                    </p>
+                                ) : null}
                             </div>
                             <div className="space-y-2">
                                 <FieldLabelRow

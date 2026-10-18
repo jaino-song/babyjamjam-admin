@@ -5,6 +5,7 @@ import { CreditCard, Upload } from "lucide-react";
 
 import { useAllVoucherPriceInfos, useVoucherYears } from "@/hooks";
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { CompactDateSelect } from "@/components/app/v3";
 import { CardHeader } from "@/components/ui/card";
 import {
@@ -150,8 +151,40 @@ export function VoucherPriceTable() {
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  const { data: years = [], isLoading: isYearsLoading } = useVoucherYears();
-  const { data: prices = [], isLoading: isPricesLoading } = useAllVoucherPriceInfos(selectedYear);
+  const {
+    data: yearsData,
+    isLoading: isYearsQueryLoading,
+    isPaused: isYearsPaused,
+    isError: isYearsError,
+    isFetching: isYearsFetching,
+    refetch: refetchYears,
+  } = useVoucherYears();
+  const {
+    data: pricesData,
+    isLoading: isPricesQueryLoading,
+    isPaused: isPricesPaused,
+    isError: isPricesError,
+    isFetching: isPricesFetching,
+    refetch: refetchPrices,
+  } = useAllVoucherPriceInfos(selectedYear);
+  const years = yearsData ?? [];
+  const prices = useMemo(() => pricesData ?? [], [pricesData]);
+
+  // A paused first load (device offline) has no data yet: it reads as loading, not as "none".
+  const isYearsLoading = isYearsQueryLoading || (isYearsPaused && yearsData === undefined);
+  const isPricesLoading = isPricesQueryLoading || (isPricesPaused && pricesData === undefined);
+  const isYearsFailed = isYearsError && yearsData === undefined;
+  const isPricesFailed = isPricesError && pricesData === undefined;
+  // A failed refetch behind data that did load: keep the data, flag it as possibly out of date.
+  const isYearsStale = isYearsError && yearsData !== undefined;
+  const isPricesStale = isPricesError && pricesData !== undefined;
+  // One outage, one alert: the stale notice already retries every query that is in error.
+  const showStaleNotice = !isPricesFailed && (isPricesStale || isYearsStale);
+  const showYearsAlert = isYearsFailed && !isPricesFailed && !showStaleNotice;
+  const retryLoads = () => {
+    if (isPricesError) void refetchPrices();
+    if (isYearsError) void refetchYears();
+  };
 
   const yearOptions = years.length > 0
     ? years
@@ -311,8 +344,37 @@ export function VoucherPriceTable() {
 
       <Separator className="shrink-0 mb-4" />
 
+      {showYearsAlert ? (
+        <QueryErrorState
+          dataComponent="desktop_settings_voucher-price-table_years-load-error"
+          size="inline"
+          title="연도 목록을 불러오지 못했습니다"
+          className="shrink-0"
+          onRetry={() => void refetchYears()}
+          isRetrying={isYearsFetching}
+        />
+      ) : null}
+      {showStaleNotice ? (
+        <QueryErrorState
+          dataComponent="desktop_settings_voucher-price-table_stale-load-error"
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          className="shrink-0"
+          onRetry={retryLoads}
+          isRetrying={isPricesFetching || isYearsFetching}
+        />
+      ) : null}
+
       {isPricesLoading ? (
         <TableSkeleton />
+      ) : isPricesFailed ? (
+        <QueryErrorState
+          dataComponent="desktop_settings_voucher-price-table_prices-load-error"
+          size="panel"
+          title="요금 정보를 불러오지 못했습니다"
+          onRetry={retryLoads}
+          isRetrying={isPricesFetching || isYearsFetching}
+        />
       ) : prices.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
           <CreditCard size={40} className="mb-3 opacity-30" />

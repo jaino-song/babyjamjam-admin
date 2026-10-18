@@ -175,7 +175,7 @@ describe("SbReceiptLinkTokenRepository", () => {
         }));
     });
 
-    it("promotes only the frozen active tokens after state proof and current contract checks", async () => {
+    it.each([true, false])("promotes only a current live target (voided=%s)", async (isVoided) => {
         const prisma = makeFakePrisma();
         const repository = new SbReceiptLinkTokenRepository(prisma as never);
         const branchId = "11111111-1111-4111-8111-111111111111";
@@ -229,6 +229,9 @@ describe("SbReceiptLinkTokenRepository", () => {
                 documentKind: "contract",
                 serviceRecordCaseId: null,
                 templateId: "contract-template",
+                voidedAt: isVoided ? now : null,
+            }, {
+                id: 98, documentId: "older-signed", documentKind: "contract", serviceRecordCaseId: null, templateId: "contract-template", voidedAt: null,
             }])
             .mockResolvedValueOnce(tokenIds.map((id) => ({
                 id,
@@ -264,6 +267,14 @@ describe("SbReceiptLinkTokenRepository", () => {
             now,
         });
 
+        const candidateSql = prisma.__tx.$queryRaw.mock.calls[6]?.[0];
+        expect(candidateSql.strings.join("")).toContain('voided_at AS "voidedAt"');
+        if (isVoided) {
+            expect(result).toEqual({ disposition: "stale", tokenIds: [], stateVersion: 1 });
+            expect(prisma.__tx.receipt_link_token.updateMany).not.toHaveBeenCalled();
+            expect(prisma.__tx.$queryRaw).toHaveBeenCalledTimes(7);
+            return;
+        }
         expect(result).toEqual({ disposition: "promoted", tokenIds, stateVersion: 2 });
         expect(prisma.__tx.receipt_link_token.updateMany).toHaveBeenCalledWith({
             where: expect.objectContaining({ id: { in: tokenIds }, active: true }),

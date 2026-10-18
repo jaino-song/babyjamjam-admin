@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Tabs, TabsList, TabsTrigger } from "@/components/app/ui/tabs";
 import { EmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -127,6 +128,11 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
     addMutation.isPending || excludeMutation.isPending || deleteMutation.isPending || syncMutation.isPending;
 
   const data = yearQuery.data;
+  // A year switched or opened while offline is a paused query with no data: still loading, not an empty list.
+  const isYearLoading = yearQuery.isLoading || (yearQuery.isPaused && data === undefined);
+  const retryYear = () => {
+    void yearQuery.refetch();
+  };
   const holidays = data?.holidays ?? [];
   // A past inactive override can no longer be deleted (HOLIDAY_DATE_IN_PAST), so it is not offered at all.
   const inactiveOverrides: InactiveHolidayOverride[] = (data?.inactiveOverrides ?? []).filter(
@@ -144,6 +150,7 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
     >
       <HolidaySyncStrip
         synced={data?.synced ?? false}
+        statusUnknown={data === undefined}
         lastSyncedAt={data?.lastSyncedAt ?? null}
         pending={syncMutation.isPending}
         disabled={busy}
@@ -189,20 +196,29 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         {branchName ? <b>{branchName}에만</b> : "이 지점에만"} 적용돼요.
       </p>
 
-      {yearQuery.isLoading ? (
+      {data !== undefined && yearQuery.isError ? (
+        <QueryErrorState
+          dataComponent={`${DATA_COMPONENT}_stale-error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={retryYear}
+          isRetrying={yearQuery.isFetching}
+        />
+      ) : null}
+      {isYearLoading ? (
         <div data-component={`${DATA_COMPONENT}_skeleton`} className="space-y-2">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />
         </div>
-      ) : yearQuery.isError ? (
-        <p
-          role="alert"
-          data-component={`${DATA_COMPONENT}_error`}
-          className="text-sm font-medium text-v3-burgundy"
-        >
-          공휴일 목록을 불러오지 못했어요.
-        </p>
+      ) : data === undefined && yearQuery.isError ? (
+        <QueryErrorState
+          dataComponent={`${DATA_COMPONENT}_error`}
+          size="inline"
+          title="공휴일 목록을 불러오지 못했어요."
+          onRetry={retryYear}
+          isRetrying={yearQuery.isFetching}
+        />
       ) : holidays.length === 0 ? (
         <EmptyState
           name={`${DATA_COMPONENT}_empty`}

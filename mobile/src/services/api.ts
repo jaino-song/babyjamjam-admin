@@ -11,6 +11,7 @@ import {
     EformsignReRequestDocumentRequest,
     FinalizeHeadlessResponse,
     HeadlessDispatchResponse,
+    VoidContractDocumentResponse,
 } from "@babyjamjam/shared/types/eformsign";
 import type {
     MessageAutomationPastTriggerConfig,
@@ -25,6 +26,18 @@ import type {
 } from "@babyjamjam/shared/types/message";
 import type { RegisterRequest } from "@babyjamjam/shared";
 import { isAxiosError } from "axios";
+
+export interface EformsignLinkConfirmation {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: string;
+    document: { name: string | null; phone: string; birthday: string | null };
+    client: { id: number; name: string; phone: string | null; birthday: string | null };
+    differences: Array<"name" | "birthday">;
+    canConfirm: boolean;
+}
 
 export interface ContractDataDto {
   customerName: string;
@@ -178,7 +191,7 @@ export type EformsignStatusCategoryParam =
  * configured 제공기록지 tiers), so clients never send templateId/templateMatch.
  */
 export type EformsignContractsSectionParam = "maternity" | "service-records";
-export type EformsignDisplayStatusParam = "signed" | "review";
+export type EformsignDisplayStatusParam = "signed" | "review" | "rejected_by_reviewer";
 
 export interface GetAllDocumentsParams {
     limit?: number;
@@ -316,6 +329,10 @@ export const authApi = {
 // eformsign APIs
 // Note: axios client baseURL is '/api', so paths here should NOT include '/api/' prefix
 export const eformsignApi = {
+    getLinkConfirmations: async (clientId?: number): Promise<EformsignLinkConfirmation[]> => {
+        const { data } = await api.get('/eformsign-docs/link-confirmations', { params: clientId === undefined ? undefined : { clientId } });
+        return data;
+    },
     generateSignature: async (executionTime: number) => {
         const { data } = await api.post('/generate-signature', { executionTime });
         return data;
@@ -524,6 +541,10 @@ export const eformsignApi = {
     // and refuses until the client is linked to the replacement.
     supersedeDocument: async (documentId: string, clientId: number): Promise<void> => {
         await api.post(`/eformsign/documents/${encodeURIComponent(documentId)}/supersede`, { clientId });
+    },
+    voidDocument: async (documentId: string): Promise<VoidContractDocumentResponse> => {
+        const { data } = await api.post<VoidContractDocumentResponse>(`/eformsign/documents/${encodeURIComponent(documentId)}/void`);
+        return data;
     },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {

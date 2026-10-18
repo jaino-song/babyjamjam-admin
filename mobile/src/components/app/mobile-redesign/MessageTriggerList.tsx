@@ -6,6 +6,7 @@ import { MessageSquareText, type LucideIcon } from "lucide-react";
 import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_RECIPIENT_LABELS,
+  SERVICE_RECORD_LINK_RULE_ID,
   getMessageTemplateLabel,
 } from "@babyjamjam/shared";
 
@@ -15,6 +16,7 @@ import {
   SettingsListRowsSkeleton,
 } from "@/components/app/mobile-redesign/settings/SettingsListCard";
 import { Switch } from "@/components/ui/switch";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   useMessageTriggerRules,
   useUpdateMessageTriggerRuleBranchActivation,
@@ -66,6 +68,10 @@ function getRuleTitle(rule: MessageTriggerRule) {
 }
 
 function getRuleTimingLabel(rule: MessageTriggerRule) {
+  // getServiceRecordLinkScheduledFor computes this timing, not the carrier rule's sendTime.
+  if (rule.id === SERVICE_RECORD_LINK_RULE_ID) {
+    return "서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송";
+  }
   const eventLabel = MESSAGE_EVENT_LABELS[rule.eventType];
 
   if (rule.offsetType === "IMMEDIATE") {
@@ -148,10 +154,14 @@ export function MessageTriggerList({
 }) {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const {
-    data: rulesResponse = [],
+    data: rulesResponse,
     isError: isRulesError,
     isLoading: isRulesLoading,
+    isPaused: isRulesPaused,
+    refetch: refetchRules,
+    isFetching: isRulesFetching,
   } = useMessageTriggerRules();
+  const isRulesLoadPending = isRulesLoading || (isRulesPaused && rulesResponse === undefined);
   const updateRuleMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
 
@@ -219,12 +229,21 @@ export function MessageTriggerList({
     <SettingsListCard
       data-component={dataComponent}
       title="자동 전송"
-      count={displayRows.length}
+      count={isRulesLoadPending || (isRulesError && rulesResponse === undefined) ? "—" : displayRows.length}
       subtitle="메시지 자동 전송 규칙을 정할 수 있어요"
       actionLabel={canManage && onCreate ? "+ 규칙" : undefined}
       onAction={canManage ? onCreate : undefined}
     >
       {beforeItems}
+      {!isRulesLoading && isRulesError ? (
+        <QueryErrorState
+          dataComponent={sub("items_error")}
+          size={displayRows.length > 0 ? "inline" : "panel"}
+          title={displayRows.length > 0 ? "최신 정보를 불러오지 못했습니다" : "자동 전송 트리거를 불러오지 못했습니다."}
+          onRetry={() => void refetchRules()}
+          isRetrying={isRulesFetching}
+        />
+      ) : null}
       {displayRows.map((row) => {
           const rowActive = row.rule.isActive;
           const rowKey = row.rule.id;
@@ -281,17 +300,11 @@ export function MessageTriggerList({
           );
       })}
 
-      {isRulesLoading ? (
+      {isRulesLoadPending ? (
         <SettingsListRowsSkeleton data-component={sub("items_loading")} />
       ) : null}
 
-      {!isRulesLoading && isRulesError ? (
-        <div className="message-empty-state" data-component={sub("items_error")}>
-          자동 전송 트리거를 불러오지 못했습니다.
-        </div>
-      ) : null}
-
-      {!isRulesLoading && !isRulesError && displayRows.length === 0 ? (
+      {!isRulesLoadPending && !isRulesError && displayRows.length === 0 ? (
         <div className="message-empty-state" data-component={sub("items_empty")}>
           등록된 자동 전송 트리거가 없습니다.
         </div>

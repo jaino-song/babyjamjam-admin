@@ -3,6 +3,7 @@ import {
     ServiceRecordEditNotFoundError,
     ServiceRecordRevisionOperationUnresolvedError,
 } from "domain/errors/service-record-edit.error";
+import { Prisma } from "@prisma/client";
 import type {
     ServiceRecordEditConfirmPlan,
     ServiceRecordEditSource,
@@ -530,6 +531,10 @@ describe("ServiceRecordEditRepository", () => {
         ["062", "completed"],
         ["050", "completed"],
         ["070", "in_progress"],
+        // 계약-04: a reviewer rejection is a live contract, not a rejected one.
+        ["071", "in_progress"],
+        ["080", "rejected"],
+        ["061", "rejected"],
         ["xyz", "unknown"],
     ])("reports contract status %s as the %s stage", async (contractStatus, stage) => {
         const { repository } = buildDraftSourceFixture(contractStatus);
@@ -929,6 +934,7 @@ describe("ServiceRecordEditRepository", () => {
                 serviceRecordCaseId: caseId,
                 revisionNumber: 5,
                 payload: { header: { momName: "Confirmed" }, sessions: [] },
+                beforeSnapshot: Prisma.DbNull,
                 plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-08", assignmentId: "assignment-1" }],
                 provenance: { sourceCaseVersion: 7 },
                 formVersionAtConfirm: 1,
@@ -958,6 +964,37 @@ describe("ServiceRecordEditRepository", () => {
             formVersionAtConfirm: 1,
         })).rejects.toBeInstanceOf(ServiceRecordEditNotFoundError);
         expect(tx.service_record_revision.create).not.toHaveBeenCalled();
+    });
+
+    it("persists before snapshots separately and selects only the revision counter", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
+            service_record_revision: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(revisionRow()) },
+        };
+        const repository = new ServiceRecordEditRepository(transactionalPrisma(tx) as never);
+        const beforeSnapshot = { snapshotVersion: 1, header: { momName: "Before" } };
+        const input = { branchId, serviceRecordCaseId: caseId, actorUserId: actorId, payload: { header: { momName: "After" } }, plannedSessions: [], provenance: {}, formVersionAtConfirm: 1 };
+        await repository.appendRevision({ ...input, beforeSnapshot });
+        expect(tx.service_record_revision.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ payload: input.payload, beforeSnapshot }) });
+        expect(tx.service_record_revision.findFirst).toHaveBeenCalledWith({ where: { branchId, serviceRecordCaseId: caseId }, orderBy: { revisionNumber: "desc" }, select: { revisionNumber: true } });
+        await repository.appendRevision({ ...input, beforeSnapshot: null });
+        expect(tx.service_record_revision.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ beforeSnapshot: Prisma.DbNull }) });
+    });
+
+    it("reads changes by branch, client and revision and rejects malformed IDs before querying", async () => {
+        const findFirst = jest.fn().mockResolvedValue({ ...revisionRow(), beforeSnapshot: { snapshotVersion: 1 } });
+        const repository = new ServiceRecordEditRepository({ service_record_revision: { findFirst } } as never);
+        const id = revisionRow().id;
+        expect(await repository.findRevisionForChanges(branchId, 42, id)).toMatchObject({ id, beforeSnapshot: { snapshotVersion: 1 } });
+        expect(findFirst).toHaveBeenCalledWith({
+            where: { id, branchId, serviceRecordCase: { branchId, clientId: 42 } },
+            select: { id: true, revisionNumber: true, confirmedAt: true, formVersionAtConfirm: true, payload: true, plannedSessions: true, beforeSnapshot: true },
+        });
+        findFirst.mockClear();
+        expect(await repository.findRevisionForChanges(branchId, 42, "not-a-uuid")).toBeNull();
+        expect(findFirst).not.toHaveBeenCalled();
+        findFirst.mockResolvedValue(null);
+        expect(await repository.findRevisionForChanges(branchId, 42, id)).toBeNull();
     });
 
     it("allocates contiguous revision numbers without accepting caller overrides", async () => {

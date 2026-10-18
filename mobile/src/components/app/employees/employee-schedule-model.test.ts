@@ -29,6 +29,7 @@ function makeClient(overrides: Partial<Client>): Client {
     voucherClient: true,
     breastPump: false,
     serviceStatus: "active",
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,

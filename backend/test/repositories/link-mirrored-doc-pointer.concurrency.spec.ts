@@ -52,8 +52,8 @@ describeWithDatabase("mirrored phone link with another client pointing at the do
         observer = new PrismaClient({ datasources: { db: { url: URL } } });
         await db.$executeRawUnsafe("DROP TABLE IF EXISTS eformsign_doc_file, employee_schedule, service_record_case, eformsign_doc, client CASCADE");
         for (const sql of [
-            `CREATE TABLE client (id int PRIMARY KEY, branch_id uuid, phone text, phone_normalized text, e_doc_id text UNIQUE, name text DEFAULT 'Client', UNIQUE(branch_id, phone_normalized))`,
-            `CREATE TABLE eformsign_doc (id int PRIMARY KEY, document_id text UNIQUE, client_id int REFERENCES client(id), branch_id uuid, document_kind text, service_record_case_id uuid, revision_id uuid, template_id text, template_name text, step_recipient_sms text, customer_phone text, detail_payload jsonb, status_type text, created_date timestamptz, detail_source_updated_date timestamptz, detail_synced_at timestamptz, sync_status text, permanent_purge_requested_at timestamptz, auto_registered_client boolean DEFAULT false, updated_date timestamptz)`,
+            `CREATE TABLE client (id int PRIMARY KEY, branch_id uuid, phone text, phone_normalized text, e_doc_id text UNIQUE, name text DEFAULT 'Client', birthday varchar(10), UNIQUE(branch_id, phone_normalized))`,
+            `CREATE TABLE eformsign_doc (id int PRIMARY KEY, document_id text UNIQUE, client_id int REFERENCES client(id), branch_id uuid, document_kind text, service_record_case_id uuid, revision_id uuid, template_id text, template_name text, step_recipient_sms text, customer_phone text, detail_payload jsonb, status_type text, created_date timestamptz, detail_source_updated_date timestamptz, detail_synced_at timestamptz, sync_status text, permanent_purge_requested_at timestamptz, auto_registered_client boolean DEFAULT false, updated_date timestamptz, voided_at timestamptz, voided_by uuid)`,
             `ALTER TABLE client ADD FOREIGN KEY (e_doc_id) REFERENCES eformsign_doc(document_id)`,
             `CREATE TABLE eformsign_doc_file (id int PRIMARY KEY, eformsign_doc_id int REFERENCES eformsign_doc(id), file_type text, source_updated_date timestamptz)`,
             `CREATE TABLE employee_schedule (id int PRIMARY KEY, branch_id uuid, client_id int, primary_employee_id int, secondary_employee_id int)`,
@@ -62,8 +62,15 @@ describeWithDatabase("mirrored phone link with another client pointing at the do
     });
     beforeEach(async () => {
         await db.$executeRawUnsafe("TRUNCATE eformsign_doc_file, eformsign_doc, client, employee_schedule, service_record_case CASCADE");
-        await db.$executeRaw(Prisma.sql`INSERT INTO client(id, branch_id, phone, phone_normalized) VALUES (7, ${BRANCH}::uuid, '010-9999-9999', '01099999999'), (8, ${BRANCH}::uuid, '010-1234-5678', ${PHONE})`);
-        await db.$executeRaw(Prisma.sql`INSERT INTO eformsign_doc(id, document_id, branch_id, document_kind, template_id, step_recipient_sms, customer_phone, detail_payload, status_type, created_date, updated_date, detail_source_updated_date, detail_synced_at, sync_status) VALUES (20, 'doc-B', ${BRANCH}::uuid, 'contract', 'template-1', '010-1234-5678', ${PHONE}, '{}'::jsonb, '070', '2026-08-10', '2026-09-01', ${generation.detailSourceUpdatedDate}, ${generation.detailSyncedAt}, 'ready')`);
+        await db.$executeRaw(Prisma.sql`INSERT INTO client(id, branch_id, phone, phone_normalized, birthday) VALUES (7, ${BRANCH}::uuid, '010-9999-9999', '01099999999', '1990-01-01'), (8, ${BRANCH}::uuid, '010-1234-5678', ${PHONE}, '1990-01-01')`);
+        const detail = JSON.stringify({
+            fields: [
+                { id: "이용자 성명", value: "Client", type: "text" },
+                { id: "이용자 생년월일", value: "1990-01-01", type: "text" },
+            ],
+            recipients: [{ recipient_type: "02", name: "Client", sms: PHONE }],
+        });
+        await db.$executeRaw(Prisma.sql`INSERT INTO eformsign_doc(id, document_id, branch_id, document_kind, template_id, step_recipient_sms, customer_phone, detail_payload, status_type, created_date, updated_date, detail_source_updated_date, detail_synced_at, sync_status) VALUES (20, 'doc-B', ${BRANCH}::uuid, 'contract', 'template-1', '010-1234-5678', ${PHONE}, ${detail}::jsonb, '070', '2026-08-10', '2026-09-01', ${generation.detailSourceUpdatedDate}, ${generation.detailSyncedAt}, 'ready')`);
         await db.$executeRawUnsafe("INSERT INTO eformsign_doc_file VALUES (201, 20, 'document', '2026-09-01T00:00:00Z'), (202, 20, 'audit_trail', '2026-09-01T00:00:00Z')");
         await db.$executeRawUnsafe("UPDATE client SET e_doc_id = 'doc-B' WHERE id = 7");
     });

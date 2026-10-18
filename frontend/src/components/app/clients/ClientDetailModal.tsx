@@ -81,6 +81,7 @@ const DOC_STATUS_LABEL_KEYS = {
     revoke_requested: "clients.form.doc-revoke-requested",
     revoked: "clients.form.doc-revoked",
     deleted: "clients.form.doc-deleted",
+    voided: "clients.form.doc-voided",
     none: "clients.form.doc-not-sent",
 } as const satisfies Record<ClientDocumentDisplayStatus, string>;
 

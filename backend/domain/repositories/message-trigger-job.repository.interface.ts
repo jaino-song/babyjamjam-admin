@@ -1,11 +1,14 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
+import type { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
     employeeScheduleId?: number;
     scheduledBefore?: Date;
+    /** Supersede refusals only for removed sources or a dispatchable rebuild. */
+    needsSetup?: "all" | "within_window";
 }
 
 /** Internal review read; user cancellation is needed to match the existing upsert fence. */
@@ -89,6 +92,12 @@ export interface IMessageTriggerJobRepository {
      * to every terminal update/fence before a provider call.
      */
     claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
+    /**
+     * Same rule fence and token as `claimPendingWithRuleFence`, but for a job in
+     * `needs_setup` (manual resend). Returns null when the job is not in that
+     * state or the rule fence refuses; the row is left unchanged.
+     */
+    claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
     findUpcomingPendingByBranch(
@@ -152,6 +161,15 @@ export interface IMessageTriggerJobRepository {
     ): Promise<MessageTriggerJobEntity[]>;
     /** Whether a rule still has active jobs persisted before its current version fence. */
     hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean>;
+    /** Whether a newer qualifying client-rule job exists, answered in the database without a row cap. */
+    hasNewerClientRuleSibling(params: {
+        branchId: string;
+        clientId: number;
+        ruleId: string;
+        recipientType: MessageTriggerRecipientType;
+        excludeJobId: string;
+        createdAfter: Date;
+    }): Promise<boolean>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
     /** Bounded, ordered read of actual automation generations, including terminal dedupe rows. */
     findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]>;
@@ -212,6 +230,13 @@ export interface IMessageTriggerJobRepository {
      * below never resurrects it. Returns whether the cancel matched a row.
      */
     cancelPendingByUser(id: string, branchId: string, reason: string): Promise<boolean>;
+    /**
+     * Move one `failed` service-record link job to the system `canceled`
+     * pre-booking state so a later schedule claim can revive it. Only the
+     * link rule's `failed` row in this branch qualifies, and a row carrying
+     * the scheduling-retry lease is left alone. Returns whether a row moved.
+     */
+    cancelFailedServiceRecordLinkJobForPreBooking(id: string, branchId: string): Promise<boolean>;
     /**
      * Promote only the exact automatic service-record scheduling marker owned
      * by this claim version. A null result means the claim was replaced or

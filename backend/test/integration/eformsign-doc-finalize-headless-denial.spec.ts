@@ -12,6 +12,7 @@ import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import { ListReviewStageContractsUsecase } from "application/usecases/eformsign-doc/list-review-stage-contracts.usecase";
+import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
@@ -56,6 +57,7 @@ describe("POST /eformsign-docs/finalize-headless (denied targets)", () => {
                 { provide: EformsignDocService, useValue: eformsignDocService },
                 { provide: ListClientNamesByBranchUsecase, useValue: {} },
                 { provide: ListReviewStageContractsUsecase, useValue: {} },
+                { provide: ListEformsignLinkConfirmationsUsecase, useValue: {} },
                 { provide: DispatchDocumentHeadlessUsecase, useValue: {} },
                 { provide: FinalizeDocumentHeadlessUsecase, useValue: finalizeHeadlessUsecase },
                 { provide: AdoptEformsignDocUsecase, useValue: {} },

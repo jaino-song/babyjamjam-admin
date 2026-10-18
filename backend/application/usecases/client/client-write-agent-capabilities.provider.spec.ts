@@ -25,6 +25,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             grant: "50000",
             actualPrice: "50000",
             serviceStatus: "active",
+            bookingConfirmedAt: new Date("2024-01-01"),
             areaId: "global",
         };
         const findClient = { execute: jest.fn().mockResolvedValue(existingClient) };
@@ -55,6 +56,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) },
             employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
         };
+        const serviceRecordLinkService = { scheduleForServiceStart: jest.fn().mockResolvedValue(true) };
         const provider = new ClientWriteAgentCapabilitiesProvider(
             createClient as never,
             updateClient as never,
@@ -65,6 +67,9 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             holidayCalendar, voucherServiceSelection as never,
             triggerService as never,
             messageAutomationIntentService as never,
+            undefined,
+            undefined,
+            serviceRecordLinkService as never,
         );
         return {
             holidayCalendar,
@@ -79,6 +84,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             voucherServiceSelection,
             triggerService,
             messageAutomationIntentService,
+            serviceRecordLinkService,
             capabilities: provider.getCapabilities(),
         };
     }
@@ -1319,6 +1325,158 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    describe("service-record link SMS for already-assigned schedules when a client leaves 예약 전", () => {
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+        const entryPoints = ["execute", "executeApprovedTarget"] as const;
+
+        function arrange(after: { serviceStatus: string }) {
+            const fixture = setup();
+            const before = { ...fixture.existingClient, serviceStatus: "pre_booking", endDate: null };
+            fixture.findClient.execute.mockResolvedValue(before);
+            const updated = { ...fixture.existingClient, ...after,
+                endDate: after.serviceStatus === "pre_booking" ? null : fixture.existingClient.endDate };
+            fixture.updateClient.execute.mockResolvedValue(updated);
+            fixture.updateClient.executeApprovedTarget.mockResolvedValue(updated);
+            const capability = fixture.capabilities.find((entry) => entry.meta.name === "clients.update")!;
+            const updates = { id: 1, endDate: after.serviceStatus === "pre_booking" ? null : "2024-06-01" };
+            const run = (entry: (typeof entryPoints)[number]) => entry === "execute"
+                ? capability.execute!(context, updates)
+                : capability.executeApprovedTarget!(context, updates, "approved-target");
+            return { ...fixture, capability, run };
+        }
+
+        it.each(entryPoints)("%s schedules the link for the active schedule once the update has resolved", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+
+            await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(prisma.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                where: { branchId: "branch-a", clientId: 1, replaced: false, terminatedAt: null },
+                orderBy: { id: "asc" },
+            }));
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+        });
+
+        // The schedule read and the scheduling call must wait for the write to
+        // COMMIT: from outside the transaction the client still reads as 예약 전,
+        // so `scheduleForServiceStart` would refuse and the provider would get no
+        // link. The write is held unresolved after its work has run; nothing may
+        // be scheduled (or even read) until it is released.
+        it.each(entryPoints)("%s schedules only after the write has resolved, never inside it", async (entry) => {
+            const { run, prisma, updateClient, existingClient, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            let release!: () => void;
+            const held = new Promise<void>((resolve) => { release = resolve; });
+            let writeBodyDone = false;
+            if (entry === "execute") {
+                // `execute` writes through the update use case, whose own transaction
+                // commits when its promise resolves.
+                updateClient.execute.mockImplementation(async () => {
+                    writeBodyDone = true;
+                    await held;
+                    return { ...existingClient, serviceStatus: "waiting" };
+                });
+            } else {
+                const callback = prisma.$transaction.getMockImplementation()!;
+                prisma.$transaction.mockImplementation(async (operation) => {
+                    const result = await callback(operation);
+                    writeBodyDone = true;
+                    await held;
+                    return result;
+                });
+            }
+
+            const running = run(entry);
+            for (let turn = 0; turn < 50 && !writeBodyDone; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(writeBodyDone).toBe(true);
+            expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+
+            release();
+            await expect(running).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
+        });
+
+        it.each(entryPoints)("%s schedules every active schedule", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }, { id: 9 }]);
+
+            await run(entry);
+
+            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
+        });
+
+        it.each(entryPoints)("%s does nothing when the client stays 예약 전", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "pre_booking" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+
+            await run(entry);
+
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it.each(entryPoints)("%s keeps the update successful and logs when scheduling a link rejects", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            serviceRecordLinkService.scheduleForServiceStart.mockRejectedValue(new Error("sms unavailable"));
+
+            await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+        });
+
+        it("does not schedule from the task-automation path (its link intents are staged by the reviewed artifact)", async () => {
+            const fixture = setup();
+            fixture.findClient.execute.mockResolvedValue({ ...fixture.existingClient, serviceStatus: "pre_booking" });
+            fixture.prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            const automationRecords = {
+                runTaskMutation: jest.fn().mockResolvedValue({ result: { id: 1, name: "홍길동", status: "updated" } }),
+            };
+            const provider = new ClientWriteAgentCapabilitiesProvider(
+                fixture.createClient as never,
+                fixture.updateClient as never,
+                fixture.findClient as never,
+                fixture.clientRepository as never,
+                fixture.prisma as never,
+                fixture.serviceRecordLifecycle as never,
+                fixture.holidayCalendar,
+                undefined,
+                fixture.triggerService as never,
+                fixture.messageAutomationIntentService as never,
+                undefined,
+                automationRecords as never,
+                fixture.serviceRecordLinkService as never,
+            );
+            const capability = provider.getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
+
+            await expect(capability.executeApprovedTarget!({
+                ...context,
+                taskAutomation: {
+                    actionId: "70000000-0000-4000-8000-000000000022",
+                    taskId: "70000000-0000-4000-8000-000000000023",
+                    taskRevision: 1,
+                    capability: "clients.update",
+                    branchId: "branch-a",
+                    targetClientId: 1,
+                    impact: { availability: "available", effects: [], complete: true },
+                    consent: { choice: "no" },
+                    noSend: true,
+                },
+            } as never, { id: 1, serviceStatus: "waiting" }, "approved-target")).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(automationRecords.runTaskMutation).toHaveBeenCalledTimes(1);
+            expect(fixture.serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            expect(fixture.prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+        });
+    });
+
     it("replaces existing employee intents only for schedules the reviewed artifact actually re-staffed", async () => {
         const createClient = { execute: jest.fn().mockResolvedValue({ id: 7, name: "합성고객" }) };
         const updateClient = { execute: jest.fn(), executeApprovedTarget: jest.fn() };
@@ -1463,5 +1621,187 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         expect(setupResult.messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
         expect(setupResult.triggerService.syncEmployeeAssignmentRulesForClient).not.toHaveBeenCalled();
+    });
+
+    describe("a save may not change 예약 전 (rule 고객-04)", () => {
+        const BODY_REFUSAL = "예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
+        const PRE_BOOKING_REPLACEMENT = "예약 전 고객은 제공인력 교체를 요청할 수 없습니다";
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+        // The default existing client is confirmed, with a 2024 period: its date-derived status is "completed".
+        const unconfirmed = { bookingConfirmedAt: null, serviceStatus: "pre_booking" };
+
+        type Setup = ReturnType<typeof setup>;
+        type Entry = "inspect" | "execute" | "executeApprovedTarget";
+        const entries: Entry[] = ["inspect", "execute", "executeApprovedTarget"];
+        const run = (arranged: Setup, entry: Entry, input: Record<string, unknown>) => {
+            const capability = arranged.capabilities.find((candidate) => candidate.meta.name === "clients.update")!;
+            return entry === "executeApprovedTarget"
+                ? capability.executeApprovedTarget!(context, input, "approved-target")
+                : capability[entry]!(context, input);
+        };
+        const writtenUpdates = (arranged: Setup, entry: Entry): Record<string, unknown> =>
+            (entry === "execute" ? arranged.updateClient.execute : arranged.updateClient.executeApprovedTarget)
+                .mock.calls[0]![2] as Record<string, unknown>;
+
+        it.each(entries)("%s refuses an unconfirmed client's move to a date-derived state with the authored sentence", async (entry) => {
+            const arranged = setup();
+            Object.assign(arranged.existingClient, unconfirmed);
+
+            const error = await run(arranged, entry, { id: 1, serviceStatus: "waiting" }).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(AgentActionCertainFailureError);
+            expect((error as Error).message).toBe(BODY_REFUSAL);
+            expect(arranged.updateClient.execute).not.toHaveBeenCalled();
+            expect(arranged.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+        });
+
+        it.each(entries)("%s refuses replacement_requested for an unconfirmed client with the request-replacement sentence", async (entry) => {
+            const arranged = setup();
+            Object.assign(arranged.existingClient, unconfirmed);
+
+            await expect(run(arranged, entry, { id: 1, serviceStatus: "replacement_requested" }))
+                .rejects.toThrow(PRE_BOOKING_REPLACEMENT);
+
+            expect(arranged.updateClient.execute).not.toHaveBeenCalled();
+            expect(arranged.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+        });
+
+        it.each(entries)("%s refuses moving a confirmed client back to pre_booking while it keeps its dates", async (entry) => {
+            const arranged = setup();
+
+            await expect(run(arranged, entry, { id: 1, serviceStatus: "pre_booking" }))
+                .rejects.toThrow(BODY_REFUSAL);
+
+            expect(arranged.updateClient.execute).not.toHaveBeenCalled();
+            expect(arranged.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+        });
+
+        it.each(entries)("%s accepts pre_booking for a confirmed client whose same save clears its dates", async (entry) => {
+            const arranged = setup();
+
+            await expect(run(arranged, entry, { id: 1, startDate: null, endDate: null, serviceStatus: "pre_booking" }))
+                .resolves.toBeDefined();
+        });
+
+        it.each(["execute", "executeApprovedTarget"] as const)("%s replaces a confirmed client's supplied date-derived status with the derived one (row 9)", async (entry) => {
+            const arranged = setup();
+            Object.assign(arranged.existingClient, { serviceStatus: "terminated" });
+
+            await run(arranged, entry, { id: 1, serviceStatus: "waiting" });
+
+            expect(writtenUpdates(arranged, entry)).toMatchObject({ serviceStatus: "completed" });
+        });
+
+        it.each(["execute", "executeApprovedTarget"] as const)("%s drops a serviceStatus equal to the effective one and treats null as the derived one (rows 2 and 3)", async (entry) => {
+            const equal = setup();
+            await run(equal, entry, { id: 1, address: "변경 주소", serviceStatus: "completed" });
+            expect(writtenUpdates(equal, entry)).not.toHaveProperty("serviceStatus");
+
+            const cleared = setup();
+            await run(cleared, entry, { id: 1, address: "변경 주소", serviceStatus: null });
+            expect(writtenUpdates(cleared, entry)).not.toHaveProperty("serviceStatus");
+
+            const terminated = setup();
+            Object.assign(terminated.existingClient, { serviceStatus: "terminated" });
+            await run(terminated, entry, { id: 1, serviceStatus: null });
+            expect(writtenUpdates(terminated, entry)).toMatchObject({ serviceStatus: "completed" });
+        });
+
+        it.each(["execute", "executeApprovedTarget"] as const)("%s keeps today's behaviour for terminated (row 10)", async (entry) => {
+            const arranged = setup();
+
+            await run(arranged, entry, { id: 1, serviceStatus: "terminated" });
+
+            expect(writtenUpdates(arranged, entry)).toMatchObject({ serviceStatus: "terminated" });
+        });
+
+        it("applies the same rule on the task-automation branch of executeApprovedTarget", async () => {
+            const setupResult = setup();
+            const transaction = {
+                client: { findFirst: jest.fn().mockResolvedValue({ id: 1, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
+                employee_schedule: { findFirst: jest.fn() },
+                agent_action: { updateMany: jest.fn() },
+            };
+            const impact = { availability: "available", effects: [], complete: true, clientIdentity: "1".repeat(64), sourceGuard: "f".repeat(64), affectedJobs: [] };
+            const records = {
+                runTaskMutation: jest.fn(async (_context: unknown, _artifact: unknown, prepare: (tx: typeof transaction) => Promise<unknown>) => {
+                    await prepare(transaction);
+                    return { actionId: "action-a", capability: "clients.update", resourceType: "client", resourceId: 1, result: { id: 1, name: "홍길동", status: "updated" }, recordedAt: new Date().toISOString() };
+                }),
+            };
+            const provider = new ClientWriteAgentCapabilitiesProvider(
+                setupResult.createClient as never, setupResult.updateClient as never, setupResult.findClient as never,
+                setupResult.clientRepository as never, setupResult.prisma as never,
+                setupResult.serviceRecordLifecycle as never, createHolidayCalendarStub(), undefined, setupResult.triggerService as never,
+                setupResult.messageAutomationIntentService as never,
+                { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
+                records as never,
+            );
+            const update = provider.getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
+            const taskContext = {
+                ...context,
+                taskAutomation: { capability: "clients.update", taskId: "task-a", branchId: "branch-a", targetClientId: 1, targetVersion: "approved-target", impact,
+                    consent: { choice: "no", binding: null }, noSend: false },
+            } as never;
+
+            Object.assign(setupResult.existingClient, unconfirmed);
+            await expect(update.executeApprovedTarget!(taskContext, { id: 1, serviceStatus: "active" }, "approved-target"))
+                .rejects.toThrow(BODY_REFUSAL);
+            expect(records.runTaskMutation).not.toHaveBeenCalled();
+            expect(setupResult.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+
+            Object.assign(setupResult.existingClient, { bookingConfirmedAt: new Date("2024-01-01"), serviceStatus: "terminated" });
+            await update.executeApprovedTarget!(taskContext, { id: 1, serviceStatus: "waiting" }, "approved-target");
+            expect(setupResult.updateClient.executeApprovedTarget).toHaveBeenCalledWith(
+                "branch-a", 1, expect.objectContaining({ serviceStatus: "completed" }), "approved-target", transaction, expect.anything(),
+            );
+        });
+
+        describe("reconcile", () => {
+            const reconcile = (arranged: Setup, input: Record<string, unknown>) =>
+                arranged.capabilities.find((candidate) => candidate.meta.name === "clients.update")!
+                    .reconcile!(context, input, null);
+            const succeeded = { status: "succeeded", result: { id: 1, name: "홍길동", status: "updated" } };
+
+            it("does not report uncertain when the stored status is what the rule stored instead of the approved one", async () => {
+                // Row 9: approved "waiting", the rule stored the derived "completed".
+                const derived = setup();
+                Object.assign(derived.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(derived, { id: 1, serviceStatus: "waiting" })).resolves.toEqual(succeeded);
+
+                // Row 2: approved null is the derived status.
+                const cleared = setup();
+                Object.assign(cleared.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(cleared, { id: 1, serviceStatus: null })).resolves.toEqual(succeeded);
+
+                // Row 3: approved equals the effective status, so nothing was stored for it.
+                const equal = setup();
+                Object.assign(equal.existingClient, { serviceStatus: "active" });
+                await expect(reconcile(equal, { id: 1, serviceStatus: "completed" })).resolves.toEqual(succeeded);
+            });
+
+            it("still reports uncertain for a genuinely different stored status", async () => {
+                const manual = setup();
+                Object.assign(manual.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(manual, { id: 1, serviceStatus: "terminated" }))
+                    .resolves.toMatchObject({ status: "uncertain" });
+
+                // A refused request never applied, so the raw comparison stays.
+                const refused = setup();
+                Object.assign(refused.existingClient, unconfirmed);
+                await expect(reconcile(refused, { id: 1, serviceStatus: "waiting" }))
+                    .resolves.toMatchObject({ status: "uncertain" });
+            });
+
+            it("keeps every other field of the comparison", async () => {
+                const arranged = setup();
+                Object.assign(arranged.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(arranged, { id: 1, serviceStatus: "waiting", name: "다른 이름" }))
+                    .resolves.toMatchObject({ status: "uncertain" });
+            });
+        });
     });
 });

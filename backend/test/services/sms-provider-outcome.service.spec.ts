@@ -1,4 +1,5 @@
 import {
+    classifySmsProviderRejection,
     classifySmsProviderOutcome,
 } from "application/services/sms-provider-outcome.service";
 
@@ -98,4 +99,31 @@ describe("classifySmsProviderOutcome", () => {
             1,
         )).toBe("unknown");
     });
+});
+
+describe("classifySmsProviderRejection", () => {
+    it.each([
+        [-101, "등록되지 않은 IP 입니다.", "인증 오류"],
+        [-999, "잔액이 없습니다", "잔액 부족"],
+        [-999, "충전이 필요합니다", "잔액 부족"],
+        [-999, "포인트 부족", "잔액 부족"],
+        [-999, "수신거부 번호", "수신 거부"],
+        [-999, "수신 거부", "수신 거부"],
+        [-999, "없는 번호", "잘못된 번호"],
+        [-999, "가입자없음", "잘못된 번호"],
+        [-999, "수신번호 형식 오류", "잘못된 번호"],
+        [-999, "전화번호가 잘못되었습니다", "잘못된 번호"],
+        [-999, "잘못된 전화번호", "잘못된 번호"],
+        [-999, "수신번호\n형식 오류", "잘못된 번호"],
+    ])("classifies %s / %s as permanent", (result_code, message, reason) => {
+        expect(classifySmsProviderRejection({ response: { result_code, message } }))
+            .toEqual({ kind: "permanent", reason });
+    });
+
+    it.each(["일시적인 서버 장애", "전화번호 확인", "형식 오류"])(
+        "does not infer permanent failure from unrelated text: %s", (message) => {
+            expect(classifySmsProviderRejection({ response: { result_code: -999, message } }))
+                .toEqual({ kind: "transient", reason: message });
+        },
+    );
 });

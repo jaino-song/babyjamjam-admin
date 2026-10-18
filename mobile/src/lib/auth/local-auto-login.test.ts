@@ -178,3 +178,117 @@ it("rejects a mismatched loopback port", async () => {
     ).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
 });
+
+describe("LOCAL_AUTO_LOGIN_BRANCH_NAME", () => {
+    const loginResponse = {
+        ok: true,
+        json: async () => ({
+            success: true,
+            accessToken: "access",
+            refreshToken: "refresh",
+            requiresBranchSelection: true,
+        }),
+    };
+    const branchesResponse = {
+        ok: true,
+        json: async () => ({
+            branches: [
+                { id: "branch-goyang", name: "고양점" },
+                { id: "branch-goyang-paju", name: "고양파주점" },
+            ],
+        }),
+    };
+
+    beforeEach(() => {
+        process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "고양파주점";
+    });
+
+    it("selects the exactly named branch and returns its session", async () => {
+        fetchMock
+            .mockResolvedValueOnce(loginResponse)
+            .mockResolvedValueOnce(branchesResponse)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ accessToken: "branch-access", refreshToken: "branch-refresh" }),
+            });
+
+        await expect(tryLocalAutoLogin(request(), "http://localhost:3001")).resolves.toEqual({
+            accessToken: "branch-access",
+            refreshToken: "branch-refresh",
+            requiresBranchSelection: false,
+        });
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            2,
+            new URL("http://localhost:3001/auth/branches"),
+            expect.objectContaining({ headers: { Authorization: "Bearer access" } }),
+        );
+        expect(fetchMock).toHaveBeenNthCalledWith(
+            3,
+            new URL("http://localhost:3001/auth/select-branch"),
+            expect.objectContaining({ method: "POST", body: JSON.stringify({ branchId: "branch-goyang-paju" }) }),
+        );
+    });
+
+    it("keeps the plain login session when the branch is not found", async () => {
+        process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "없는지점";
+        fetchMock.mockResolvedValueOnce(loginResponse).mockResolvedValueOnce(branchesResponse);
+
+        await expect(tryLocalAutoLogin(request(), "http://localhost:3001")).resolves.toEqual({
+            accessToken: "access",
+            refreshToken: "refresh",
+            requiresBranchSelection: true,
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps the plain login session when branch selection fails", async () => {
+        fetchMock
+            .mockResolvedValueOnce(loginResponse)
+            .mockRejectedValueOnce(new Error("backend down"));
+
+        await expect(tryLocalAutoLogin(request(), "http://localhost:3001")).resolves.toEqual({
+            accessToken: "access",
+            refreshToken: "refresh",
+            requiresBranchSelection: true,
+        });
+    });
+});
+
+describe("LOCAL_AUTO_LOGIN_BRANCH_NAME after select-branch was sent", () => {
+    const loginResponse = {
+        ok: true,
+        json: async () => ({ success: true, accessToken: "access", refreshToken: "refresh" }),
+    };
+    const branchesResponse = {
+        ok: true,
+        json: async () => ({ branches: [{ id: "branch-1", name: "고양파주점" }] }),
+    };
+
+    beforeEach(() => {
+        process.env.LOCAL_AUTO_LOGIN_BRANCH_NAME = "고양파주점";
+    });
+
+    it.each([
+        ["the connection drops", () => Promise.reject(new Error("socket hang up"))],
+        ["the server fails", () => Promise.resolve({ ok: false, status: 500, json: async () => ({}) })],
+        ["the reply has no tokens", () => Promise.resolve({ ok: true, status: 200, json: async () => ({}) })],
+    ])("drops the session when %s, because the login refresh token may be revoked", async (_label, reply) => {
+        fetchMock
+            .mockResolvedValueOnce(loginResponse)
+            .mockResolvedValueOnce(branchesResponse)
+            .mockImplementationOnce(reply);
+        await expect(tryLocalAutoLogin(request(), "http://localhost:3001")).resolves.toBeNull();
+    });
+
+    it("keeps the plain login session when select-branch refuses with a 4xx", async () => {
+        fetchMock
+            .mockResolvedValueOnce(loginResponse)
+            .mockResolvedValueOnce(branchesResponse)
+            .mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({}) });
+        await expect(tryLocalAutoLogin(request(), "http://localhost:3001")).resolves.toEqual({
+            accessToken: "access",
+            refreshToken: "refresh",
+            requiresBranchSelection: false,
+        });
+    });
+});

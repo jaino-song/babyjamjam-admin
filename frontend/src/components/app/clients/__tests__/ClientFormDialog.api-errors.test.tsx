@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
 import { expectNoFieldMessageBelowControl, getFieldMessages } from "@/test-utils/field-message-slot";
 import { ClientFormDialog, ClientFormPanel } from "../ClientFormDialog";
+import { mockClients } from "@/mocks/mock-data";
+import { SERVICE_STATUS_OPTIONS, type Client } from "@/features/clients/types";
 
 jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
@@ -102,10 +104,85 @@ const fillRequiredFields = () => {
 
 describe("ClientFormDialog API errors", () => {
   beforeEach(() => {
+    HTMLElement.prototype.scrollTo = jest.fn();
     mockApiGet.mockReset();
     mockApiGet.mockResolvedValue({ data: { exists: false } });
     mockCreateClientMutateAsync.mockReset();
     mockUpdateClientMutateAsync.mockReset();
+  });
+
+  describe.each(["dialog", "panel"] as const)("booking status on %s", (surface) => {
+    const renderForm = (client?: Client) => surface === "dialog"
+      ? render(<ClientFormDialog open client={client} onClose={jest.fn()} />)
+      : render(<ClientFormPanel open client={client} activeStep={3} onClose={jest.fn()} />);
+
+    const createClient = (overrides: Partial<Client>): Client => ({
+      ...mockClients[0], name: "예약고객", birthday: "1990-01-01", phone: "01012345678",
+      birthDate: null, hasSigned: false, documentStatus: null,
+      startDate: null, endDate: null, duration: null, primaryEmployee: null, secondaryEmployee: null,
+      bookingConfirmedAt: null, serviceStatus: "pre_booking", ...overrides,
+    });
+
+    it("renders a disabled create select with only pre-booking", async () => {
+      renderForm();
+      await flushOpenEffect();
+      const status = screen.getByLabelText("계약 상태");
+      expect(status).toBeDisabled();
+      expect(status).toHaveValue("pre_booking");
+      expect(within(status).getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(["pre_booking"]);
+      expect(screen.getByText("대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다.")).toBeInTheDocument();
+    });
+
+    it.each([
+      [null, "pre_booking", ["pre_booking", "terminated"]],
+      [null, "active", ["pre_booking", "active", "terminated"]],
+      [null, "replacement_requested", ["pre_booking", "replacement_requested", "terminated"]],
+      [null, "terminated", ["pre_booking", "terminated"]],
+      ["2026-10-13T00:00:00.000Z", "waiting", SERVICE_STATUS_OPTIONS.filter((option) => option.value !== "pre_booking").map((option) => option.value)],
+      ["2026-10-13T00:00:00.000Z", "pre_booking", SERVICE_STATUS_OPTIONS.map((option) => option.value)],
+    ] as const)("keeps allowed options and effective current value (%s, %s)", async (bookingConfirmedAt, serviceStatus, expected) => {
+      renderForm(createClient({ bookingConfirmedAt, serviceStatus }));
+      await flushOpenEffect();
+      const status = screen.getByLabelText("계약 상태");
+      expect(status).toBeEnabled();
+      expect(status).toHaveValue(serviceStatus);
+      expect(within(status).getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(expected);
+      expect(Boolean(screen.queryByText("대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다."))).toBe(bookingConfirmedAt == null);
+    });
+
+    it("always sends pre_booking on create even if a synthetic change bypasses the disabled control", async () => {
+      const prefill = { name: "예약고객", birthday: "1990-01-01", address: "서울시 강남구", phone: "01012345678" };
+      if (surface === "dialog") render(<ClientFormDialog open prefill={prefill} onClose={jest.fn()} />);
+      else render(<ClientFormPanel open activeStep={3} prefill={prefill} onClose={jest.fn()} />);
+      await flushOpenEffect();
+      fireEvent.change(screen.getByLabelText("계약 상태"), { target: { value: "active" } });
+      const submit = screen.getByRole("button", { name: "생성" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      await waitFor(() => expect(mockCreateClientMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ serviceStatus: "pre_booking" })));
+    });
+
+    it("puts /serviceStatus refusal on the select with authored copy", async () => {
+      const problem = createProblemDetails({
+        code: "VALIDATION_FAILED", requestId: "booking-status-refusal", status: 400,
+        errors: [{ pointer: "/serviceStatus", code: "INVALID_FORMAT", detail: "ignored" }],
+      });
+      mockUpdateClientMutateAsync.mockRejectedValue({ response: { status: 400, data: problem } });
+      renderForm(createClient({}));
+      await flushOpenEffect();
+      const submit = screen.getByRole("button", { name: "저장" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      const message = await screen.findByText("이 상태로는 저장할 수 없습니다. 예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.");
+      expect(message).toHaveAttribute("data-slot", "field-error-message");
+      const status = screen.getByLabelText("계약 상태");
+      expect(status).toHaveAttribute("aria-invalid", "true");
+      expect(status.getAttribute("aria-describedby")?.split(" ")).toContain(message.id);
+      expect(message.closest('[data-source-component="FormField"]')).toContainElement(status);
+      fireEvent.change(status, { target: { value: "terminated" } });
+      expect(screen.queryByText(message.textContent as string)).not.toBeInTheDocument();
+      expect(status).not.toHaveAttribute("aria-invalid", "true");
+    });
   });
 
   it("renders every structured field error, preserves values, and links dialog inputs", async () => {

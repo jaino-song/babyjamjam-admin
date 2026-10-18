@@ -1,4 +1,4 @@
-import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { CarrierResultState, MessageLogEntity } from "domain/entities/message-log.entity";
 import type { Prisma } from "@prisma/client";
 
 export type MessageRetryInvocation = "automatic" | "manual";
@@ -37,6 +37,22 @@ export type MessageRetryStartResult =
     | { kind: "suppressed"; log: MessageLogEntity }
     | { kind: "lost" };
 
+export interface SaveCarrierCheckResultInput {
+    id: number;
+    expectedMid: string;
+    state: CarrierResultState;
+    results: unknown[];
+    checkedAt: Date;
+    failureMessage: string | null;
+}
+
+/**
+ * "saved": result stored. "saved_status_failed": result stored and the log
+ * status was flipped to failed. "stale": no row matched (mid changed by a
+ * retry, or the check already ran).
+ */
+export type SaveCarrierCheckResultOutcome = "saved" | "saved_status_failed" | "stale";
+
 export interface IMessageLogRepository {
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;
@@ -54,6 +70,14 @@ export interface IMessageLogRepository {
         actor: string,
         reason: string,
         providerMessageId?: string | null,
+        options?: { retry?: "schedule" | "none"; expectedUpdatedAt?: Date; variables?: Record<string, string> },
+    ): Promise<MessageLogEntity | null>;
+    findAligoHistoryCandidatesSystemScope(now: Date, limit: number): Promise<MessageLogEntity[]>;
+    findAligoMidsStoredOnOtherLogs(mids: string[], logId: number): Promise<Set<string>>;
+    claimAligoHistoryBookkeeping(
+        log: MessageLogEntity,
+        expectedState: "started" | "uncertain",
+        expectedUpdatedAt: Date,
     ): Promise<MessageLogEntity | null>;
     startRetryAttempt(
         sourceLog: MessageLogEntity,
@@ -62,9 +86,30 @@ export interface IMessageLogRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageRetryStartResult>;
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
+    findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{
+        serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    } | null>;
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findPendingRetriesSystemScope(): Promise<MessageLogEntity[]>;
+    /** aligo_sms rows whose one-shot carrier check is due (system scope, no branch filter). */
+    findCarrierChecksDueSystemScope(limit: number, now?: Date): Promise<MessageLogEntity[]>;
+    /**
+     * Atomically store a carrier check result. Only matches id + expected mid
+     * with a check still pending; flips sent/accepted-pending rows to failed
+     * when the carrier reported failure. Never touches provider acceptance
+     * fields or client.serviceEndNoticeSentAt.
+     */
+    saveCarrierCheckResult(input: SaveCarrierCheckResultInput): Promise<SaveCarrierCheckResultOutcome>;
+    /**
+     * Push a still-due carrier check out to `until` (backoff for a row whose
+     * processing threw). Conditional on id + expected mid + a pending check, so
+     * it never resurrects a checked row. Returns whether a row was updated.
+     */
+    postponeCarrierCheck(id: number, expectedMid: string, until: Date): Promise<boolean>;
     findRetryableServiceRecordSmsByScheduleId(
         scheduleId: number,
         transaction?: Prisma.TransactionClient,

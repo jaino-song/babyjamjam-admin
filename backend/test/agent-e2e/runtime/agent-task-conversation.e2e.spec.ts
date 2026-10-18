@@ -224,6 +224,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
             actualPrice: values.actualPrice, startDate: values.startDate, endDate: values.endDate,
             dueDate: values.dueDate, birthDate: values.birthDate, careCenter: values.careCenter,
             voucherClient: values.voucherClient, birthday: values.birthday, serviceStatus: values.serviceStatus,
+            bookingConfirmedAt: values.serviceStatus === "pre_booking" ? null : new Date("2026-01-01"),
             breastPump: values.breastPump, areaId: values.areaId,
         } });
         const target = row as unknown as ClientEntity;

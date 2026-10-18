@@ -26,6 +26,41 @@ function createService(
 }
 
 describe("AdminServiceRecordService revision status", () => {
+    const revisionId = "55555555-5555-4555-8555-555555555555";
+    it("reads a scoped revision and returns only its safe diff", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue({ id: 42 });
+        const findRevisionForChanges = jest.fn().mockResolvedValue({
+            id: revisionId, revisionNumber: 2, confirmedAt: new Date("2026-10-16T00:00:00Z"), formVersionAtConfirm: 3,
+            beforeSnapshot: { header: { momName: "A" } }, payload: { header: { momName: "B" } }, plannedSessions: [],
+        });
+        const result = await createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 42, revisionId);
+        expect(findRevisionForChanges).toHaveBeenCalledWith("branch-1", 42, revisionId);
+        expect(result.basicInfo).toEqual([{ path: "header.momName", before: "A", after: "B" }]);
+    });
+
+    it.each(["not-a-uuid", "", "x".repeat(256)])("returns 404 for malformed revision ID %s without querying", async (id) => {
+        const prisma = createPrisma();
+        const findRevisionForChanges = jest.fn();
+        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 42, id)).rejects.toBeInstanceOf(NotFoundException);
+        expect(findRevisionForChanges).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 for a foreign client before reading changes", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue(null);
+        const findRevisionForChanges = jest.fn();
+        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 99, revisionId)).rejects.toBeInstanceOf(NotFoundException);
+        expect(findRevisionForChanges).not.toHaveBeenCalled();
+    });
+
+    it("returns the same 404 when a branch/client-scoped revision is absent", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue({ id: 42 });
+        const findRevisionForChanges = jest.fn().mockResolvedValue(null);
+        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 42, revisionId)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
     it("uses the core list seam and preserves the safe history shape", async () => {
         const prisma = createPrisma();
         prisma.client.findFirst.mockResolvedValue({ id: 42 });

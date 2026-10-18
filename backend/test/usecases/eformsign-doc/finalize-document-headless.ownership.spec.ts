@@ -125,6 +125,42 @@ describe("FinalizeDocumentHeadlessUsecase ownership boundary", () => {
         }));
     });
 
+    it("still finalizes a document whose void state is explicitly clear (control)", async () => {
+        const { usecase, credentialBoundary, headlessService, eformsignService } =
+            buildUsecase({ ...document, isVoided: false, voidedAt: null });
+
+        await expect(usecase.execute({
+            branchId: "branch-a",
+            documentId: "provider-doc-1",
+        }, TEST_PRINCIPAL)).resolves.toMatchObject({ ok: true, completed: true });
+        expect(credentialBoundary.withCredentials).toHaveBeenCalledTimes(1);
+        expect(eformsignService.generateStaffCompletionOptions).toHaveBeenCalledTimes(1);
+        expect(headlessService.dispatchFinalize).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops a finalize job that was queued before the void when it runs (no vendor/editor call)", async () => {
+        // The queue worker calls the same usecase with the same params: the void landed between
+        // enqueue and execution, so the row the usecase loads is voided.
+        const { usecase, repository, credentialBoundary, headlessService, eformsignService, dispatchBoundary } =
+            buildUsecase({ ...document, isVoided: true });
+
+        await expect(usecase.execute({
+            branchId: "branch-a",
+            documentId: "provider-doc-1",
+        }, TEST_PRINCIPAL)).resolves.toMatchObject({
+            ok: false,
+            reason: "authorization_denied",
+            code: "ACCESS_DENIED",
+            outcome: "NOT_APPLIED",
+            recovery: RECOVERY_NONE,
+        });
+        expect(repository.findByDocumentId).toHaveBeenCalledWith("branch-a", "provider-doc-1");
+        expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(eformsignService.generateStaffCompletionOptions).not.toHaveBeenCalled();
+        expect(headlessService.dispatchFinalize).not.toHaveBeenCalled();
+        expect(dispatchBoundary.claim).not.toHaveBeenCalled();
+    });
+
     it.each([
         ["terminal", { statusType: "050" }],
         ["expired", { expired: true }],
@@ -132,6 +168,9 @@ describe("FinalizeDocumentHeadlessUsecase ownership boundary", () => {
         ["stale assignment", { employeeScheduleId: 99 }],
         ["unassigned scheduled row", { clientId: null, employeeScheduleId: 13 }],
         ["unassigned row", { clientId: null, employeeScheduleId: null }],
+        // 파기: a voided contract is dead whatever its eformsign code; the same denial as a terminal row.
+        ["voided (파기) contract", { isVoided: true, voidedAt: new Date("2026-10-01T00:00:00.000Z") }],
+        ["voided (파기) contract still in a live eformsign status", { isVoided: true, statusType: "060" }],
     ])("refuses a %s lifecycle target before provider access", async (_label, overrides) => {
         const { usecase, credentialBoundary, headlessService, eformsignService, dispatchBoundary } =
             buildUsecase({ ...document, ...overrides });

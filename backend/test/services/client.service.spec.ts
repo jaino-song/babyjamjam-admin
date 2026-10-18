@@ -26,8 +26,9 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
-import { findManyFrom } from "../utils/prisma-where-evaluator";
+import { findManyFrom, matchesWhere } from "../utils/prisma-where-evaluator";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
 import { isActiveContractSignal } from "application/utils/current-contract-document";
 import { legacyClientBadges } from "../../../packages/shared/src/client/badges";
@@ -106,6 +107,8 @@ describe("ClientService", () => {
             },
             eformsign_doc: {
                 findMany: jest.fn().mockResolvedValue([]),
+                // D3 blocker query: no newer voided contract unless a test says so.
+                findFirst: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
             schedule_change_request: {
@@ -223,6 +226,11 @@ describe("ClientService", () => {
         findWithIncompleteContractsStartingWithinDays: jest.fn().mockResolvedValue([]),
         findWithoutContractSentStartingWithinDays: jest.fn().mockResolvedValue([]),
         findByPhone: jest.fn().mockResolvedValue(null),
+        findPhoneMatches: jest.fn(async (branchId: string, phoneSuffixes: string[]) => {
+            void branchId;
+            void phoneSuffixes;
+            return [];
+        }),
         findNamesByIds: jest.fn().mockResolvedValue([]),
     });
 
@@ -244,9 +252,42 @@ describe("ClientService", () => {
         "pending",
         false,
         null,
+        null, null, null, null, false, null, undefined,
+        new Date("2024-01-01"),
     );
 
     const branchId = "org-1";
+
+    const matchingContractDetail = (name = "Test Client", birthday = "1990-01-01") => ({
+        id: "DOC-IDENTITY",
+        recipients: [{ recipient_type: "05", name, sms: "01012345678" }],
+        fields: [
+            { id: "이용자 성명", value: name },
+            { id: "이용자 생년월일", value: birthday },
+            { id: "이용자 연락처", value: "01012345678" },
+        ],
+    });
+
+    /** 계약-05: statuses a document may be in to be linked to a client automatically (spelled out on purpose). */
+    const ELIGIBLE_LINK_STATUSES = [
+        "002", "003", "010", "012", "020", "022", "030", "032", "041", "043",
+        "050", "060", "062", "063", "064", "070", "072", "092",
+        "040", "045", "071",
+    ];
+
+    /**
+     * The client row as the phone-link transaction re-reads it under the client lock
+     * (identity of the stored client, not of the caller's earlier snapshot).
+     */
+    const lockedClientRow = (
+        client: Pick<ClientEntity, "phone" | "name" | "birthday">,
+        overrides: Partial<{ phone: string | null; name: string | null; birthday: string | null }> = {},
+    ) => ({
+        phone: client.phone,
+        name: client.name,
+        birthday: client.birthday,
+        ...overrides,
+    });
 
     /** Public problem contract body carried by converted client pre-write throws. */
     const clientProblemResponse = (topCode: string, pointer: string, errorCode: string, detail: unknown) => ({
@@ -369,6 +410,80 @@ describe("ClientService", () => {
             expect(clientRepository.findByPhone).not.toHaveBeenCalled();
             expect(createClientUsecase.execute).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        describe("smsAutomationEnabled persistence", () => {
+            const baseParams = {
+                name: "Automation Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            };
+            const persistedFlag = () => createClientUsecase.execute.mock.calls[0]![1].smsAutomationEnabled;
+
+            it("persists false when applyMessageAutomation is false and keeps the intent gating", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, { ...baseParams, applyMessageAutomation: false });
+
+                expect(persistedFlag()).toBe(false);
+                expect(messageAutomationIntentService.persistClientIntent).not.toHaveBeenCalled();
+            });
+
+            it("defaults to true when neither field is supplied", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, baseParams);
+
+                expect(persistedFlag()).toBe(true);
+            });
+
+            it("lets an explicit smsAutomationEnabled win over applyMessageAutomation", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, {
+                    ...baseParams,
+                    applyMessageAutomation: true,
+                    smsAutomationEnabled: false,
+                });
+
+                expect(persistedFlag()).toBe(false);
+                // Intent gating still follows applyMessageAutomation.
+                expect(messageAutomationIntentService.persistClientIntent).toHaveBeenCalled();
+            });
+
+            it("persists the explicit flag on the initial-schedule create path too", async () => {
+                createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
+                    client: createClientEntity(),
+                    scheduleId: 42,
+                });
+
+                await service.create(branchId, {
+                    ...baseParams,
+                    primaryEmployeeId: 7,
+                    applyMessageAutomation: false,
+                    smsAutomationEnabled: true,
+                });
+
+                expect(createClientUsecase.executeWithInitialSchedule.mock.calls[0]![1].smsAutomationEnabled).toBe(true);
+            });
+
+            it("changes a reused client's flag only when it is explicitly provided", async () => {
+                const reused = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                await service.create(branchId, { ...baseParams, reuseExistingClient: true, applyMessageAutomation: false });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(reused.smsAutomationEnabled).toBe(true);
+
+                await service.create(branchId, { ...baseParams, reuseExistingClient: true, smsAutomationEnabled: false });
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: reused.id, branchId },
+                    data: { smsAutomationEnabled: false },
+                });
+                expect(reused.smsAutomationEnabled).toBe(false);
+            });
         });
 
         it("allows an explicit null phone clear on create", async () => {
@@ -699,24 +814,63 @@ describe("ClientService", () => {
             return "other";
         };
 
+        it.each([false, true])("saves without linking a different-name contract through create (reuse=%s)", async (reuse) => {
+            const mockClient = createClientEntity();
+            if (reuse) clientRepository.findByPhone.mockResolvedValue(mockClient);
+            else createClientUsecase.execute.mockResolvedValue(mockClient);
+            prismaService.eformsign_doc.findMany
+                .mockResolvedValueOnce([{
+                    id: 11,
+                    documentId: "DOC-DIFFERENT-NAME",
+                    clientId: null,
+                    branchId,
+                    customerPhone: "01012345678",
+                    detailPayload: matchingContractDetail("Other Client"),
+                }])
+                .mockResolvedValue([]);
+
+            await expect(service.create(branchId, {
+                name: "Test Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                reuseExistingClient: reuse,
+            })).resolves.toBe(mockClient);
+
+            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+            expect(mockClient.eDocId).toBeNull();
+            expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
+        });
+
         it("links every matching contract by normalized phone after manual client creation", async () => {
             const branchId = "11111111-1111-1111-1111-111111111111";
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
             prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 2 });
+            prismaService.client.findUnique.mockResolvedValue(lockedClientRow(mockClient));
             prismaService.eformsign_doc.findMany.mockResolvedValue([
                 {
                     id: 11,
                     documentId: "DOC-LATEST",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
+                    voidedAt: null,
+                    detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
                 {
                     id: 10,
                     documentId: "DOC-OLDER",
-                    clientId: 99,
+                    clientId: null,
                     branchId,
+                    statusType: "060",
+                    voidedAt: null,
+                    detailPayload: matchingContractDetail(),
                     stepRecipientSms: "연락처 +82 10 1234 5678",
                 },
                 {
@@ -781,6 +935,7 @@ describe("ClientService", () => {
                     clientId: true,
                     branchId: true,
                     documentKind: true,
+                    createdDate: true,
                     serviceRecordCaseId: true,
                     templateId: true,
                     stepRecipientSms: true,
@@ -788,13 +943,15 @@ describe("ClientService", () => {
                     detailPayload: true,
                     detailSourceUpdatedDate: true,
                     detailSyncedAt: true,
+                    statusType: true,
+                    voidedAt: true,
                 },
             });
             expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith({
                 where: {
                     id: { in: [11, 10] },
                     permanentPurgeRequestedAt: null,
-                    statusType: { notIn: ["047", "049", "099"] },
+                    statusType: { in: ELIGIBLE_LINK_STATUSES },
                     syncStatus: "ready",
                     detailSourceUpdatedDate: { not: null },
                     detailSyncedAt: { not: null },
@@ -834,24 +991,33 @@ describe("ClientService", () => {
                 breastPump: false,
             };
 
-            /** Documents 11 (unowned) and 10 (owned by client 99); both match the phone. */
+            /** Both documents are unowned; other clients may retain stale pointers. */
             const arrangeCandidates = () => {
                 const mockClient = createClientEntity();
                 createClientUsecase.execute.mockResolvedValue(mockClient);
                 prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 2 });
+                prismaService.client.findUnique.mockResolvedValue(lockedClientRow(mockClient));
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
                     {
                         id: 11,
                         documentId: "DOC-LATEST",
                         clientId: null,
                         branchId: null,
+                        statusType: "060",
+                        createdDate: new Date("2026-09-02T00:00:00Z"),
+                        voidedAt: null,
+                        detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
                     {
                         id: 10,
                         documentId: "DOC-OLDER",
-                        clientId: 99,
+                        clientId: null,
                         branchId,
+                        statusType: "060",
+                        createdDate: new Date("2026-09-01T00:00:00Z"),
+                        voidedAt: null,
+                        detailPayload: matchingContractDetail(),
                         stepRecipientSms: "연락처 +82 10 1234 5678",
                     },
                 ]);
@@ -883,7 +1049,7 @@ describe("ClientService", () => {
 
             it("locks the target, every owner and every pointer client in id order before the documents", async () => {
                 const mockClient = arrangeCandidates();
-                // 99 owns DOC-OLDER; 55 points at one of the documents; the target is client 1.
+                // 99 and 55 retain pointers to unowned documents; the target is client 1.
                 arrangeQueries([[99, 55]]);
 
                 await service.create(branchId, CREATE_DTO);
@@ -899,7 +1065,7 @@ describe("ClientService", () => {
                 expect(documentLock.values).toEqual([10, 11, branchId]);
                 // Nothing is written before both lock groups are held.
                 expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-                // The other locked clients (owner 99, pointer 55) are released from the documents
+                // The other locked pointer clients (99, 55) are released from the documents
                 // that move to the target first; only then does the target take the pointer.
                 expect(prismaService.client.updateMany.mock.calls).toEqual([
                     [{
@@ -918,34 +1084,44 @@ describe("ClientService", () => {
                 expect(mockClient.eDocId).toBe("DOC-LATEST");
             });
 
-            it("starts over, re-reading the owners, when a document moved to an unlocked client", async () => {
+            it.each([false, true])("preserves a newly owned document under the lock (lock-set retry=%s) and saves the client", async (retry) => {
                 const mockClient = arrangeCandidates();
-                // Attempt 1 locked [1, 99]; once the documents are locked 77 turns out to own one of
-                // them. Attempt 2 reads the owners afresh, locks 77 too, and its re-read agrees.
-                arrangeQueries([[99], [99, 77], [99, 77], [99, 77]]);
+                const candidate = {
+                    id: 11,
+                    documentId: "DOC-LATEST",
+                    clientId: null,
+                    branchId,
+                    customerPhone: "01012345678",
+                    statusType: "060",
+                    voidedAt: null,
+                    detailPayload: matchingContractDetail(),
+                    detailSourceUpdatedDate: new Date("2026-07-30T00:00:00Z"),
+                    detailSyncedAt: new Date("2026-07-30T00:01:00Z"),
+                };
+                prismaService.eformsign_doc.findMany
+                    .mockResolvedValueOnce([candidate])
+                    .mockResolvedValue([{ ...candidate, clientId: 77 }]);
+                prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                // A new owner forces a retry if it was absent from the initial client lock set.
+                arrangeQueries(retry ? [[99], [99, 77], [99, 77], [99, 77]] : [[99, 77]]);
 
-                await service.create(branchId, CREATE_DTO);
+                await expect(service.create(branchId, CREATE_DTO)).resolves.toBe(mockClient);
 
                 const queries = phoneLinkQueries();
-                expect(queries.map(phoneLinkQueryKind)).toEqual([
-                    "owners", "client-lock", "document-lock", "owners",
-                    "owners", "client-lock", "document-lock", "owners",
-                ]);
+                expect(queries.filter((query) => phoneLinkQueryKind(query) === "document-lock")).toHaveLength(retry ? 2 : 1);
                 const clientLocks = queries.filter((query) => phoneLinkQueryKind(query) === "client-lock");
-                expect(clientLocks.map((query) => query.values)).toEqual([
+                expect(clientLocks.map((query) => query.values)).toEqual(retry ? [
                     [mockClient.id, 99],
                     [mockClient.id, 77, 99],
-                ]);
-                // The aborted attempt wrote nothing; the retry wrote once.
-                expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-                // the release of the locked clients (77, 99) + the target's pointer write, once each.
-                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(2);
-                expect(prismaService.client.updateMany.mock.calls[0]![0]).toMatchObject({
-                    where: { id: { in: [77, 99] } },
-                    data: { eDocId: null },
-                });
-                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
-                expect(mockClient.eDocId).toBe("DOC-LATEST");
+                ] : [[mockClient.id, 77, 99]]);
+                expect(prismaService.eformsign_doc.findMany).toHaveBeenNthCalledWith(
+                    2,
+                    expect.objectContaining({ select: expect.objectContaining({ clientId: true }) }),
+                );
+                expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+                expect(mockClient.eDocId).toBeNull();
             });
 
             it("releases another client's pointer even when the latest document already belongs to the target", async () => {
@@ -957,6 +1133,7 @@ describe("ClientService", () => {
                     documentId: "DOC-LATEST",
                     clientId: mockClient.id,
                     branchId,
+                    voidedAt: null,
                     stepRecipientSms: "고객 010-1234-5678",
                 }]);
                 arrangeQueries([[55]]);
@@ -989,6 +1166,98 @@ describe("ClientService", () => {
                         data: { eDocId: "DOC-LATEST" },
                     }],
                 ]);
+            });
+
+            describe("D3: a voided contract newer than the pointer candidate", () => {
+                const expectedBlockerQuery = (clientId: number, createdDate: Date, id: number) => ({
+                    where: {
+                        clientId,
+                        voidedAt: { not: null },
+                        AND: [
+                            { OR: [{ documentKind: "contract" }, { documentKind: null }] },
+                            { OR: [{ createdDate: { gt: createdDate } }, { createdDate, id: { gt: id } }] },
+                        ],
+                    },
+                    select: { id: true },
+                });
+
+                it("claims the documents but does not write the pointer when a newer voided contract blocks", async () => {
+                    const mockClient = arrangeCandidates();
+                    arrangeQueries([[55]]);
+                    prismaService.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+                    const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+                    try {
+                        await service.create(branchId, CREATE_DTO);
+
+                        expect(prismaService.eformsign_doc.findFirst).toHaveBeenCalledTimes(1);
+                        expect(prismaService.eformsign_doc.findFirst).toHaveBeenCalledWith(
+                            expectedBlockerQuery(mockClient.id, new Date("2026-09-02T00:00:00Z"), 11),
+                        );
+                        // Ownership of both documents is still claimed and the other client's
+                        // stale pointer to them released; only the pointer write is skipped.
+                        expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                            where: expect.objectContaining({ id: { in: [11, 10] } }),
+                        }));
+                        expect(prismaService.client.updateMany.mock.calls).toEqual([
+                            [{
+                                where: { id: { in: [55] }, branchId, eDocId: { in: ["DOC-LATEST", "DOC-OLDER"] } },
+                                data: { eDocId: null },
+                            }],
+                        ]);
+                        expect(mockClient.eDocId).toBeNull();
+                        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
+                        expect(errorLog).not.toHaveBeenCalledWith(expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"));
+                    } finally {
+                        errorLog.mockRestore();
+                    }
+                });
+
+                it("keeps an existing pointer and releases nobody when the blocked latest document is not reassigned", async () => {
+                    const mockClient = arrangeCandidates();
+                    mockClient.eDocId = "DOC-EXISTING";
+                    prismaService.eformsign_doc.findMany.mockResolvedValue([{
+                        id: 11,
+                        documentId: "DOC-LATEST",
+                        clientId: mockClient.id,
+                        branchId,
+                        createdDate: new Date("2026-09-02T00:00:00Z"),
+                        voidedAt: null,
+                        stepRecipientSms: "고객 010-1234-5678",
+                    }]);
+                    arrangeQueries([[55]]);
+                    prismaService.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+                    const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+                    try {
+                        await service.create(branchId, CREATE_DTO);
+
+                        expect(prismaService.eformsign_doc.findFirst).toHaveBeenCalledTimes(1);
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(mockClient.eDocId).toBe("DOC-EXISTING");
+                        expect(errorLog).not.toHaveBeenCalledWith(expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"));
+                    } finally {
+                        errorLog.mockRestore();
+                    }
+                });
+
+                it("takes the pointer when no voided contract is newer, querying only this client's voided contracts regardless of status", async () => {
+                    const mockClient = arrangeCandidates();
+                    arrangeQueries([[]]);
+                    prismaService.eformsign_doc.findFirst.mockResolvedValue(null);
+
+                    await service.create(branchId, CREATE_DTO);
+
+                    const [query] = prismaService.eformsign_doc.findFirst.mock.calls[0]!;
+                    expect(query).toEqual(expectedBlockerQuery(mockClient.id, new Date("2026-09-02T00:00:00Z"), 11));
+                    // Another client's void never blocks (clientId scoped); a voided row mirrored
+                    // as deleted (049) or purge-requested still blocks (no status/purge filter).
+                    expect(query.where).not.toHaveProperty("statusType");
+                    expect(query.where).not.toHaveProperty("permanentPurgeRequestedAt");
+                    expect(prismaService.client.updateMany.mock.calls).toEqual([
+                        [{ where: { id: mockClient.id, branchId }, data: { eDocId: "DOC-LATEST" } }],
+                    ]);
+                    expect(mockClient.eDocId).toBe("DOC-LATEST");
+                });
             });
 
             it("gives up after three stale attempts, writes nothing and logs the phone-link failure", async () => {
@@ -1093,7 +1362,7 @@ describe("ClientService", () => {
             expect(documentSnapshotService.bumpCompanyEpoch).toHaveBeenCalledTimes(1);
         });
 
-        it("does not refresh the client pointer when a partial contract is ambiguous", async () => {
+        it.each(["ambiguous", "needs_confirmation"])("does not refresh the client pointer or snapshots when a partial contract returns %s", async (result) => {
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
             prismaService.eformsign_doc.findMany
@@ -1102,15 +1371,15 @@ describe("ClientService", () => {
                     documentId: "DOC-PARTIAL",
                     branchId: null,
                 }]);
-            linkMirroredDocumentByPhoneUsecase.execute.mockResolvedValue("ambiguous");
+            linkMirroredDocumentByPhoneUsecase.execute.mockResolvedValue(result);
 
-            await service.create(branchId, {
+            await expect(service.create(branchId, {
                 name: "New Client",
                 phone: "010-1234-5678",
                 careCenter: false,
                 voucherClient: true,
                 breastPump: false,
-            });
+            })).resolves.toBe(mockClient);
 
             expect(prismaService.client.findUnique).not.toHaveBeenCalled();
             expect(mockClient.eDocId).toBeNull();
@@ -1127,6 +1396,9 @@ describe("ClientService", () => {
                     documentId: "DOC-PURGED",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
+                    voidedAt: null,
+                    detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
             ]);
@@ -1165,12 +1437,14 @@ describe("ClientService", () => {
                     documentId: "DOC-RECIPIENT-CHANGED",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
+                    voidedAt: null,
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: null,
                     customerPhone: "01012345678",
                     stepRecipientSms: "고객 010-1234-5678",
-                    detailPayload: null,
+                    detailPayload: matchingContractDetail(),
                     detailSourceUpdatedDate: initialSourceUpdatedAt,
                     detailSyncedAt: initialSyncedAt,
                 }])
@@ -1219,12 +1493,14 @@ describe("ClientService", () => {
                     documentId: "DOC-GENERATION-CHANGED",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
+                    voidedAt: null,
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: null,
                     customerPhone: "01012345678",
                     stepRecipientSms: "고객 010-1234-5678",
-                    detailPayload: null,
+                    detailPayload: matchingContractDetail(),
                     detailSourceUpdatedDate: new Date("2026-07-30T00:00:00.000Z"),
                     detailSyncedAt: new Date("2026-07-30T00:01:00.000Z"),
                 }])
@@ -1274,12 +1550,14 @@ describe("ClientService", () => {
                     documentId: "SERVICE-RECORD-LEGACY",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
+                    voidedAt: null,
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: "service-record-template",
                     stepRecipientSms: "고객 010-1234-5678",
                     customerPhone: "01012345678",
-                    detailPayload: null,
+                    detailPayload: matchingContractDetail(),
                 },
             ]);
 
@@ -1576,11 +1854,15 @@ describe("ClientService", () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);
                 prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                prismaService.client.findUnique.mockResolvedValue(lockedClientRow(existingClient));
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
                     {
                         id: 9,
                         documentId: "DOC-0009",
                         clientId: null,
+                        statusType: "060",
+                        voidedAt: null,
+                        detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
                 ]);
@@ -1598,7 +1880,7 @@ describe("ClientService", () => {
                     where: {
                         id: { in: [9] },
                         permanentPurgeRequestedAt: null,
-                        statusType: { notIn: ["047", "049", "099"] },
+                        statusType: { in: ELIGIBLE_LINK_STATUSES },
                         syncStatus: "ready",
                         detailSourceUpdatedDate: { not: null },
                         detailSyncedAt: { not: null },
@@ -1948,6 +2230,22 @@ describe("ClientService", () => {
     // ============================================
     // update
     // ============================================
+    describe("smsAutomationEnabled in responses", () => {
+        it("reports a stored false in the list and detail outputs", async () => {
+            const optedOut = createClientEntity();
+            optedOut.smsAutomationEnabled = false;
+            prismaService.eformsign_doc.findMany.mockResolvedValue([]);
+            listClientsUsecase.execute.mockResolvedValue([optedOut]);
+            findClientByIdUsecase.execute.mockResolvedValue(optedOut);
+
+            const [listed] = await service.findAll(branchId);
+            const detail = await service.findById(branchId, optedOut.id);
+
+            expect(listed?.smsAutomationEnabled).toBe(false);
+            expect(detail?.smsAutomationEnabled).toBe(false);
+        });
+    });
+
     describe("update", () => {
         it("rejects malformed phone before reading or mutating the client", async () => {
             await expect(service.update(branchId, 1, { phone: "not-a-phone" }))
@@ -1960,6 +2258,28 @@ describe("ClientService", () => {
             expect(clientRepository.findByPhone).not.toHaveBeenCalled();
             expect(prismaService.$transaction).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        describe("smsAutomationEnabled", () => {
+            it.each([false, true])("writes only the flag when %s is the sole requested change", async (enabled) => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.update(branchId, 1, { smsAutomationEnabled: enabled });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 1, branchId },
+                    data: expect.objectContaining({ smsAutomationEnabled: enabled }),
+                });
+            });
+
+            it("leaves the column out of the write when the flag is not supplied", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.update(branchId, 1, { address: "Somewhere" });
+
+                const data = prismaService.client.updateMany.mock.calls[0]![0].data;
+                expect(data.smsAutomationEnabled).toBeUndefined();
+            });
         });
 
         describe("given existing client and no employee change", () => {
@@ -2302,7 +2622,8 @@ describe("ClientService", () => {
                 ["birthday", "birthday"],
                 ["dueDate", "dueDate"],
                 ["birthDate", "birthDate"],
-                ["serviceStatus", "serviceStatus"],
+                // serviceStatus: null is no longer written as NULL — it is treated as the
+                // date-derived status (rule 고객-04); see "update: a save may not change 예약 전".
                 ["eDocId", "eDocId"],
                 ["areaId", "areaId"],
             ])("writes explicit null for nullable %s instead of treating it as omission", async (field, dataKey) => {
@@ -2641,19 +2962,360 @@ describe("ClientService", () => {
                 }
             });
 
+            describe("ready contract identity on client save", () => {
+                const arrangeDocument = (
+                    clientId: number | null,
+                    detailPayload: unknown,
+                    lockedClient: ReturnType<typeof lockedClientRow> = lockedClientRow(createClientEntity()),
+                    statusType = "060",
+                ) => {
+                    prismaService.client.findUnique.mockResolvedValue(lockedClient);
+                    const doc = {
+                        id: 12,
+                        documentId: "DOC-IDENTITY",
+                        clientId,
+                        branchId,
+                        customerPhone: "01012345678",
+                        statusType,
+                        voidedAt: null as Date | null,
+                        detailPayload,
+                        detailSourceUpdatedDate: new Date("2026-09-01T00:00:00Z"),
+                        detailSyncedAt: new Date("2026-09-01T00:01:00Z"),
+                    };
+                    prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                        where.syncStatus?.not ? [] : [doc]);
+                    prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                    prismaService.$queryRaw.mockImplementation(async (query: Prisma.Sql) =>
+                        query.sql.includes("UNION") ? []
+                            : query.sql.includes("eformsign_doc AS doc") ? [{ id: 12 }] : [{ id: 1 }]);
+                    return doc;
+                };
+
+                it.each([
+                    ["different name", matchingContractDetail("Other Client"), "900101", null],
+                    ["different birthday", matchingContractDetail("Test Client", "1990-01-02"), "900101", null],
+                    ["missing saved birthday", matchingContractDetail(), null, null],
+                    ["missing detail", null, "900101", null],
+                    ["another owner with matching identity", matchingContractDetail(), "900101", 99],
+                ])("silently leaves a ready document unchanged for %s", async (_label, detail, birthday, owner) => {
+                    const client = createClientEntity();
+                    client.birthday = birthday;
+                    findClientByIdUsecase.execute.mockResolvedValue(client);
+                    const doc = arrangeDocument(owner, detail);
+                    const before = { ...doc };
+
+                    await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                    expect(doc).toEqual(before);
+                    expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                    expect(prismaService.$transaction).not.toHaveBeenCalled();
+                    expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+                    expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+                    expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+                    expect(client.eDocId).toBeNull();
+                });
+
+                it.each([null, 1])("keeps matching/unassigned or already-owned behavior (owner %s)", async (owner) => {
+                    const client = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(client);
+                    arrangeDocument(owner, owner === null ? matchingContractDetail() : null);
+
+                    await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                    expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(owner === null ? 1 : 0);
+                    expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: client.id, branchId },
+                        data: { eDocId: "DOC-IDENTITY" },
+                    });
+                    expect(client.eDocId).toBe("DOC-IDENTITY");
+                    expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+                });
+
+                it.each([
+                    ["Other Client", "Test Client", true],
+                    ["Test Client", "Other Client", false],
+                ])("compares the saved name (%s -> %s)", async (oldName, savedName, linked) => {
+                    const stale = createClientEntity();
+                    stale.name = oldName;
+                    const saved = createClientEntity();
+                    saved.name = savedName;
+                    findClientByIdUsecase.execute.mockResolvedValueOnce(stale).mockResolvedValue(saved);
+                    arrangeDocument(null, matchingContractDetail(), lockedClientRow(saved));
+
+                    await expect(service.update(branchId, stale.id, { name: savedName })).resolves.toBe(saved);
+
+                    expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(linked ? 1 : 0);
+                    const pointerWrites = prismaService.client.updateMany.mock.calls.filter(([args]) =>
+                        args.data.eDocId !== undefined);
+                    expect(pointerWrites).toHaveLength(linked ? 1 : 0);
+                    expect(saved.eDocId).toBe(linked ? "DOC-IDENTITY" : null);
+                    expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+                });
+
+                it.each([
+                    ["1990-01-02", "1990-01-01", true],
+                    ["1990-01-01", "1990-01-02", false],
+                ])("compares the saved birthday (%s -> %s)", async (oldBirthday, savedBirthday, linked) => {
+                    const stale = createClientEntity();
+                    stale.birthday = oldBirthday;
+                    const saved = createClientEntity();
+                    saved.birthday = savedBirthday;
+                    findClientByIdUsecase.execute.mockResolvedValueOnce(stale).mockResolvedValue(saved);
+                    arrangeDocument(null, matchingContractDetail(), lockedClientRow(saved));
+
+                    await expect(service.update(branchId, stale.id, { birthday: savedBirthday })).resolves.toBe(saved);
+
+                    expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(linked ? 1 : 0);
+                    expect(prismaService.client.updateMany.mock.calls.filter(([args]) =>
+                        args.data.eDocId !== undefined)).toHaveLength(linked ? 1 : 0);
+                    expect(saved.eDocId).toBe(linked ? "DOC-IDENTITY" : null);
+                });
+
+                describe("voided ready contracts on client save", () => {
+                    const voidedAt = new Date("2026-10-01T00:00:00Z");
+
+                    it.each([null, "EXISTING-POINTER"])("keeps pointer %s when the newest owned contract is voided without falling back", async (pointer) => {
+                        const client = createClientEntity();
+                        client.eDocId = pointer;
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const older = arrangeDocument(client.id, null);
+                        const newest = { ...older, id: 11, documentId: "DOC-VOIDED", voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : [newest, older]);
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(prismaService.$transaction).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(client.eDocId).toBe(pointer);
+                    });
+
+                    it("reassigns only non-voided unlinked rows without promoting the older contract", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const older = arrangeDocument(null, matchingContractDetail());
+                        const newest = { ...older, id: 11, documentId: "DOC-VOIDED", voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : where.id ? [older] : [newest, older]);
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                            where: expect.objectContaining({ id: { in: [older.id] } }),
+                        }));
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(client.eDocId).toBeNull();
+                    });
+
+                    it("filters another owner's voided newest document before choosing this client's live pointer", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const older = arrangeDocument(client.id, null);
+                        const newest = { ...older, id: 11, documentId: "DOC-OTHER", clientId: 99, voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : where.id ? [older] : [newest, older]);
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(client.eDocId).toBe(older.documentId);
+                        expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                            where: { id: client.id, branchId }, data: { eDocId: older.documentId },
+                        });
+                    });
+
+                    it.each([null, 1])("writes nothing and logs failure when owner %s's candidate becomes voided under lock", async (owner) => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const doc = arrangeDocument(owner, matchingContractDetail());
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : where.id ? [{ ...doc, voidedAt }] : [doc]);
+                        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+                        try {
+                            await service.update(branchId, client.id, {});
+
+                            expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                            expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"));
+                        } finally {
+                            errorLog.mockRestore();
+                        }
+                    });
+
+                    it("does not link a voided not-ready candidate through the existing-only usecase", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const document = { id: 13, documentId: "DOC-VOIDED-PARTIAL", branchId, voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [document] : []);
+                        const findUnique = jest.fn().mockResolvedValue(document);
+                        const usecase = new LinkMirroredEformsignDocByPhoneUsecase(
+                            { ...prismaService, eformsign_doc: { ...prismaService.eformsign_doc, findUnique } } as unknown as PrismaService,
+                            configService as unknown as ConfigService,
+                            systemSettingService as unknown as SystemSettingService,
+                            holidayCalendar,
+                        );
+                        linkMirroredDocumentByPhoneUsecase.execute.mockImplementation(usecase.execute.bind(usecase));
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(linkMirroredDocumentByPhoneUsecase.execute).toHaveBeenCalledWith(document.documentId, {
+                            existingClientId: client.id, existingClientBranchId: branchId, linkExistingOnly: true,
+                        });
+                        expect(await linkMirroredDocumentByPhoneUsecase.execute.mock.results[0]!.value).toBe("skipped");
+                        expect(findUnique).toHaveBeenCalled();
+                        expect(prismaService.$transaction).not.toHaveBeenCalled();
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(client.eDocId).toBeNull();
+                    });
+                });
+
+                describe("계약-05: only an allowed document status is linked", () => {
+                    it.each(["001", "011", "042", "080"])(
+                        "does not link an unlinked document in status %s even when the identity matches",
+                        async (statusType) => {
+                            const client = createClientEntity();
+                            findClientByIdUsecase.execute.mockResolvedValue(client);
+                            arrangeDocument(null, matchingContractDetail(), lockedClientRow(client), statusType);
+
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.$transaction).not.toHaveBeenCalled();
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                        },
+                    );
+
+                    it.each(["060", "003", "040", "045", "071"])(
+                        "links an unlinked document in status %s",
+                        async (statusType) => {
+                            const client = createClientEntity();
+                            findClientByIdUsecase.execute.mockResolvedValue(client);
+                            arrangeDocument(null, matchingContractDetail(), lockedClientRow(client), statusType);
+
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                            expect(client.eDocId).toBe("DOC-IDENTITY");
+                        },
+                    );
+
+                    it("keeps a document already linked to the client in status 080 as the pointer target", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        arrangeDocument(client.id, null, lockedClientRow(client), "080");
+
+                        await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                        // Nothing is reassigned (it is already this client's) and the locked
+                        // document SELECT carries no status condition that would make this throw.
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                            where: { id: client.id, branchId },
+                            data: { eDocId: "DOC-IDENTITY" },
+                        });
+                        const documentLock = prismaService.$queryRaw.mock.calls
+                            .map(([query]) => query as Prisma.Sql)
+                            .find((query) => query.sql.includes("eformsign_doc AS doc") && query.sql.includes("FOR UPDATE"))!;
+                        expect(documentLock).toBeDefined();
+                        expect(documentLock.sql).toContain("doc.status_type NOT IN ('047', '049', '099')");
+                        expect(documentLock.sql).not.toContain("'060'");
+                        expect(client.eDocId).toBe("DOC-IDENTITY");
+                    });
+
+                    it("writes nothing when the document is 080 in the locked re-read although eligible in the unlocked read", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const doc = arrangeDocument(null, matchingContractDetail(), lockedClientRow(client), "060");
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? []
+                                : where.id ? [{ ...doc, statusType: "080" }] : [doc]);
+                        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+                        try {
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                            expect(errorLog).toHaveBeenCalledWith(
+                                expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"),
+                            );
+                        } finally {
+                            errorLog.mockRestore();
+                        }
+                    });
+                });
+
+                describe("the locked client's identity is re-read under the lock", () => {
+                    it.each([
+                        ["birthday", { birthday: "1990-01-02" }],
+                        ["name", { name: "Other Client" }],
+                        ["phone", { phone: "010-9999-9999" }],
+                        ["missing row", null],
+                    ])("writes nothing when the locked client's %s differs from the caller's snapshot", async (_label, change) => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        arrangeDocument(
+                            null,
+                            matchingContractDetail(),
+                            change === null ? (null as never) : lockedClientRow(client, change),
+                        );
+                        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+                        try {
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.client.findUnique).toHaveBeenCalledWith({
+                                where: { id: client.id },
+                                select: { phone: true, name: true, birthday: true },
+                            });
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                            expect(errorLog).toHaveBeenCalledWith(
+                                expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"),
+                            );
+                        } finally {
+                            errorLog.mockRestore();
+                        }
+                    });
+
+                    it("links as before when the locked client still matches", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        arrangeDocument(null, matchingContractDetail(), lockedClientRow(client));
+
+                        await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                        expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                        expect(client.eDocId).toBe("DOC-IDENTITY");
+                    });
+                });
+            });
+
             it("links matching contracts by the effective phone after client information is updated", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
                 prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                prismaService.client.findUnique.mockResolvedValue(lockedClientRow(existingClient));
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
                     {
                         id: 12,
                         documentId: "DOC-AFTER-UPDATE",
                         clientId: null,
                         branchId: null,
+                        statusType: "060",
+                        voidedAt: null,
                         stepRecipientSms: "제공기관 010 9999 9999",
                         customerPhone: "01012345678",
-                        detailPayload: null,
+                        detailPayload: matchingContractDetail(),
                     },
                 ]);
                 prismaService.client.findMany.mockResolvedValue([{
@@ -2695,7 +3357,7 @@ describe("ClientService", () => {
                     where: {
                         id: { in: [12] },
                         permanentPurgeRequestedAt: null,
-                        statusType: { notIn: ["047", "049", "099"] },
+                        statusType: { in: ELIGIBLE_LINK_STATUSES },
                         syncStatus: "ready",
                         detailSourceUpdatedDate: { not: null },
                         detailSyncedAt: { not: null },
@@ -2744,7 +3406,7 @@ describe("ClientService", () => {
                         branchId: null,
                         stepRecipientSms: "고객 010-1234-5678",
                         customerPhone: "01012345678",
-                        detailPayload: null,
+                        detailPayload: matchingContractDetail(),
                     },
                 ]);
                 prismaService.client.findMany.mockResolvedValue([
@@ -2817,6 +3479,180 @@ describe("ClientService", () => {
 
                 syncCompletion.resolve();
                 await expect(update).resolves.toBe(existingClient);
+            });
+        });
+
+        describe("given a client that leaves 예약 전 (service-record link SMS for already-assigned schedules)", () => {
+            const futureStart = new Date("2026-11-02T00:00:00.000Z");
+            const futureEnd = new Date("2026-11-30T00:00:00.000Z");
+
+            type StatusInputs = {
+                serviceStatus: string | null;
+                startDate: Date | null;
+                endDate: Date | null;
+            };
+
+            // The preflight read (and the locked row, absent from this mock) sees
+            // the client before the write; the re-read after commit sees it after.
+            const arrange = (before: StatusInputs, after: StatusInputs) => {
+                const beforeClient = Object.assign(createClientEntity(), before);
+                const afterClient = Object.assign(createClientEntity(), after);
+                findClientByIdUsecase.execute.mockImplementation(async () =>
+                    prismaService.client.updateMany.mock.calls.length > 0 ? afterClient : beforeClient);
+                const events: string[] = [];
+                prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
+                    const result = await callback(prismaService);
+                    events.push("committed");
+                    return result;
+                });
+                serviceRecordLinkService.scheduleForServiceStart.mockImplementation(async (scheduleId: number) => {
+                    events.push(`schedule:${scheduleId}`);
+                });
+                return { events, afterClient };
+            };
+
+            const activeSchedulesAfterCommit = (ids: number[]) => {
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                    where["terminatedAt"] === null ? ids.map((id) => ({ id })) : []);
+            };
+
+            const preBooking: StatusInputs = { serviceStatus: "pre_booking", startDate: futureStart, endDate: null };
+            const waiting: StatusInputs = { serviceStatus: "waiting", startDate: futureStart, endDate: futureEnd };
+
+            it("schedules the link for the one active schedule after the transaction commits", async () => {
+                const { events } = arrange(preBooking, waiting);
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { endDate: "2026-11-30" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+                expect(events).toEqual(["committed", "schedule:7"]);
+                expect(prismaService.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({
+                        branchId,
+                        clientId: 1,
+                        replaced: false,
+                        terminatedAt: null,
+                    }),
+                    orderBy: { id: "asc" },
+                }));
+            });
+
+            it("schedules the link for every active schedule, in id order", async () => {
+                arrange(preBooking, waiting);
+                activeSchedulesAfterCommit([7, 9]);
+
+                await service.update(branchId, 1, { endDate: "2026-11-30" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
+            });
+
+            it("does not schedule while the end date is still missing (effective status stays 예약 전)", async () => {
+                arrange(
+                    preBooking,
+                    { serviceStatus: "waiting", startDate: futureStart, endDate: null },
+                );
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { serviceStatus: "waiting" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("schedules the link when the save fills in the missing end date of a client with no stored status", async () => {
+                arrange(
+                    { serviceStatus: null, startDate: futureStart, endDate: null },
+                    { serviceStatus: null, startDate: futureStart, endDate: futureEnd },
+                );
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { endDate: "2026-11-30" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+            });
+
+            it("does not schedule when the save keeps the client in 예약 전", async () => {
+                arrange(preBooking, preBooking);
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { name: "새 고객 이름" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("does not schedule when the client was not 예약 전 before the save", async () => {
+                arrange(waiting, waiting);
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { name: "새 고객 이름" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("schedules a schedule created by the same save exactly once", async () => {
+                arrange(preBooking, waiting);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+                activeSchedulesAfterCommit([20]);
+
+                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
+
+                expect(prismaService.employee_schedule.create).toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20]]);
+            });
+
+            it("still schedules the other active schedules when the save also creates one", async () => {
+                arrange(preBooking, waiting);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+                activeSchedulesAfterCommit([20, 21]);
+
+                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20], [21]]);
+            });
+
+            it("keeps the save successful and logs when scheduling a link rejects", async () => {
+                const { afterClient } = arrange(preBooking, waiting);
+                activeSchedulesAfterCommit([7, 9]);
+                serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.update(branchId, 1, { endDate: "2026-11-30" })).resolves.toBe(afterClient);
+
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
+                // The failure of one schedule does not stop the next one.
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
+            });
+
+            it("keeps the save successful and logs when reading the active schedules fails", async () => {
+                const { afterClient } = arrange(preBooking, waiting);
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+                    if (where["terminatedAt"] === null) throw new Error("read unavailable");
+                    return [];
+                });
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.update(branchId, 1, { endDate: "2026-11-30" })).resolves.toBe(afterClient);
+
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("read unavailable"));
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
         });
 
@@ -3318,7 +4154,18 @@ describe("ClientService", () => {
                 expect(result?.hasSigned).toBe(true);
             });
 
-            it.each(["071", "042", "049", "080", "999"])(
+            it("is true for 071 (reviewer rejection, 계약-04) on the provider-review step: the customer's signature is still valid", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "071", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(true);
+            });
+
+            it.each(["042", "049", "080", "999"])(
                 "fails closed for dead or unknown status %s",
                 async (statusType) => {
                     listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
@@ -3343,6 +4190,117 @@ describe("ClientService", () => {
             });
         });
 
+        describe("voided (계약 파기) newest contract", () => {
+            const VOIDED_AT = new Date("2026-07-10T00:00:00.000Z");
+
+            // Service start 07-16 is inside the six-business-day send window from 07-13.
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            const waitingClient = () => {
+                const client = createClientEntity();
+                client.eDocId = "document-1";
+                client.serviceStatus = "waiting";
+                client.startDate = new Date("2026-07-16T00:00:00.000Z");
+                return client;
+            };
+            // Newest first, like the database order the helper relies on.
+            const seedDocs = (...docs: Record<string, unknown>[]) => {
+                listClientsUsecase.execute.mockResolvedValue([waitingClient()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue(
+                    docs.map((doc) => ({ clientId: 1, voidedAt: null, permanentPurgeRequestedAt: null, ...doc })),
+                );
+            };
+
+            it("selects the void column so the per-client status can read it", async () => {
+                seedDocs({ documentId: "doc", statusType: "003" });
+
+                await service.findAll(branchId);
+
+                expect(prismaService.eformsign_doc.findMany).toHaveBeenCalledWith(
+                    expect.objectContaining({ select: expect.objectContaining({ voidedAt: true }) }),
+                );
+            });
+
+            it("reads a voided newest contract as voided, not signed, and needing a contract, even with an older signed one", async () => {
+                seedDocs(
+                    { documentId: "newest-voided", statusType: "003", voidedAt: VOIDED_AT },
+                    { documentId: "older-signed", statusType: "003" },
+                );
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("voided");
+                expect(result?.hasSigned).toBe(false);
+                expect(result?.latestContractDocumentId).toBe("newest-voided");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
+                expect(result?.actionRequired).not.toBeNull();
+            });
+
+            it.each(["060", "041", "040", "070", "003", "042"])(
+                "reads a voided %s newest document as voided whatever its eformsign code says",
+                async (statusType) => {
+                    seedDocs({ documentId: "voided", statusType, stepType: "06", stepName: "제공기관 확인", voidedAt: VOIDED_AT });
+
+                    const [result] = await service.findAll(branchId);
+
+                    expect(result?.documentStatus).toBe("voided");
+                    expect(result?.hasSigned).toBe(false);
+                },
+            );
+
+            it("lets purge-requested win over voided: the status stays deleted", async () => {
+                seedDocs({
+                    documentId: "purged-voided",
+                    statusType: "003",
+                    voidedAt: VOIDED_AT,
+                    permanentPurgeRequestedAt: new Date("2026-07-11T00:00:00.000Z"),
+                });
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("deleted");
+                expect(result?.hasSigned).toBe(false);
+            });
+
+            it("control: the same newest documents without a void keep their previous status and hasSigned", async () => {
+                seedDocs({ documentId: "doc", statusType: "003" });
+                const [completed] = await service.findAll(branchId);
+                expect(completed?.documentStatus).toBe("completed");
+                expect(completed?.hasSigned).toBe(true);
+                expect(completed?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+                expect(completed?.actionRequired).toBeNull();
+
+                seedDocs({ documentId: "doc", statusType: "060", stepType: "05", stepName: "고객 서명" });
+                const [requested] = await service.findAll(branchId);
+                expect(requested?.documentStatus).toBe("requested");
+                expect(requested?.hasSigned).toBe(false);
+
+                seedDocs({ documentId: "doc", statusType: "042" });
+                const [revoked] = await service.findAll(branchId);
+                expect(revoked?.documentStatus).toBe("revoked");
+            });
+
+            it("control: a voided OLDER document does not affect a live newest one (no skipping either way)", async () => {
+                seedDocs(
+                    { documentId: "newest-live", statusType: "003" },
+                    { documentId: "older-voided", statusType: "003", voidedAt: VOIDED_AT },
+                );
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("completed");
+                expect(result?.hasSigned).toBe(true);
+                expect(result?.latestContractDocumentId).toBe("newest-live");
+            });
+        });
+
         describe("contract required badge", () => {
             const createWaitingClient = (startDate: string, eDocId: string | null = null) =>
                 new ClientEntity(
@@ -3363,6 +4321,7 @@ describe("ClientService", () => {
                     "waiting",
                     false,
                     eDocId,
+                    null, null, null, null, false, null, undefined, new Date("2026-01-01"),
                 );
 
             beforeEach(() => {
@@ -3451,11 +4410,24 @@ describe("ClientService", () => {
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
             });
 
+            it("should not show contract required for a document at 071 (reviewer rejection, 계약-04): it is a live contract", async () => {
+                const client = createWaitingClient("2026-07-16", "reviewer-rejected-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "071", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("requested");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
             it("should show contract required when a document rejected at the review step is the latest", async () => {
                 const client = createWaitingClient("2026-07-16", "rejected-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
-                    { clientId: 1, statusType: "071", stepType: "06", stepName: "제공기관 확인" },
+                    { clientId: 1, statusType: "061", stepType: "06", stepName: "제공기관 확인" },
                 ]);
 
                 const [result] = await service.findAll(branchId);
@@ -3617,6 +4589,7 @@ describe("ClientService", () => {
                         stepName: true,
                         detailPayload: true,
                         permanentPurgeRequestedAt: true,
+                        voidedAt: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
                         templateId: true,
@@ -3750,6 +4723,7 @@ describe("ClientService", () => {
                         stepName: true,
                         detailPayload: true,
                         permanentPurgeRequestedAt: true,
+                        voidedAt: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
                         templateId: true,
@@ -3823,6 +4797,8 @@ describe("ClientService", () => {
                     serviceStatus,
                     false,
                     eDocId,
+                    null, null, null, null, false, null, undefined,
+                    serviceStatus === "pre_booking" ? null : new Date("2026-01-01"),
                 );
                 return client;
             };
@@ -3991,6 +4967,7 @@ describe("ClientService", () => {
             endDate: new Date("2026-04-04T00:00:00.000Z"),
             serviceStatus: "active",
             eDocId: "doc-1",
+            bookingConfirmedAt: new Date("2026-01-01"),
             ...overrides,
         });
 
@@ -4137,6 +5114,49 @@ describe("ClientService", () => {
             ]);
         });
 
+        it.each(["pre_booking"])("scans confirmed dated clients with stale stored %s but excludes unconfirmed clients", async (serviceStatus) => {
+            const rows = [
+                alertClient({ id: 1, branchId, serviceStatus, eDocId: null }),
+                alertClient({ id: 2, branchId, serviceStatus: "waiting", bookingConfirmedAt: null, eDocId: null }),
+            ];
+            prismaService.client.findMany.mockImplementation(findManyFrom(rows));
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([
+                expect.objectContaining({ id: 1, reason: "발송 필요" }),
+            ]);
+        });
+
+        it("keeps finished clients from crowding a waiting client's alert out of the scan window", async () => {
+            const finishedClientCount = 12;
+            const waitingClientId = finishedClientCount + 1;
+            const rows = [
+                alertClient({ id: waitingClientId, branchId, serviceStatus: "waiting", eDocId: null }),
+                ...Array.from({ length: finishedClientCount }, (_, index) => alertClient({
+                    id: index + 1,
+                    branchId,
+                    serviceStatus: "completed",
+                    createdAt: new Date(`2026-03-${String(index + 2).padStart(2, "0")}T00:00:00.000Z`),
+                    startDate: new Date("2026-02-02T00:00:00.000Z"),
+                    endDate: new Date("2026-02-20T00:00:00.000Z"),
+                    eDocId: null,
+                })),
+            ];
+            prismaService.client.findMany.mockImplementation(async (args: {
+                where: Record<string, unknown>;
+                orderBy: { createdAt: "asc" | "desc" };
+                take: number;
+            }) => rows
+                .filter((row) => matchesWhere(row, args.where))
+                .sort((left, right) => args.orderBy.createdAt === "desc"
+                    ? right.createdAt.getTime() - left.createdAt.getTime()
+                    : left.createdAt.getTime() - right.createdAt.getTime())
+                .slice(0, args.take));
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([
+                expect.objectContaining({ id: waitingClientId, reason: "발송 필요" }),
+            ]);
+        });
+
         it("sorts by priority and honours the limit", async () => {
             prismaService.client.findMany.mockResolvedValue([
                 alertClient({ id: 1, eDocId: null, startDate: new Date("2026-03-20T00:00:00.000Z") }),
@@ -4171,6 +5191,7 @@ describe("ClientService", () => {
             // so each is "waiting" on the Korean calendar of both instants.
             const waitingStartingOn = (id: number, startDate: string) => ({
                 id,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 serviceStatus: "waiting",
                 startDate: new Date(`${startDate}T00:00:00.000Z`),
                 endDate: new Date("2027-03-01T00:00:00.000Z"),
@@ -4203,6 +5224,7 @@ describe("ClientService", () => {
         const stored = (id: number, serviceStatus: string | null, startDate: string, endDate: string) => ({
             id,
             serviceStatus,
+            bookingConfirmedAt: serviceStatus === "pre_booking" ? null : new Date("2026-01-01"),
             startDate: new Date(`${startDate}T00:00:00.000Z`),
             endDate: new Date(`${endDate}T00:00:00.000Z`),
         });
@@ -4270,8 +5292,8 @@ describe("ClientService", () => {
 
         it("getStats skips the out-of-range client from contractsNotSent and logs its id only", async () => {
             prismaService.client.findMany.mockResolvedValue([
-                { id: 1, serviceStatus: "waiting", startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z"), name: "Kim Minji" },
-                { id: 77, serviceStatus: "waiting", ...OUT_OF_RANGE, name: "Park Soyoung" },
+                { id: 1, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z"), name: "Kim Minji" },
+                { id: 77, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), ...OUT_OF_RANGE, name: "Park Soyoung" },
             ]);
 
             const stats = await service.getStats(branchId);
@@ -4303,8 +5325,8 @@ describe("ClientService", () => {
 
         it("getActionRequiredAlerts keeps serving the other clients", async () => {
             prismaService.client.findMany.mockResolvedValue([
-                { id: 1, name: "A", createdAt: null, serviceStatus: "waiting", startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z") },
-                { id: 77, name: "B", createdAt: null, serviceStatus: "waiting", ...OUT_OF_RANGE },
+                { id: 1, name: "A", createdAt: null, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z") },
+                { id: 77, name: "B", createdAt: null, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), ...OUT_OF_RANGE },
             ]);
 
             const alerts = await service.getActionRequiredAlerts(branchId);
@@ -4387,6 +5409,7 @@ describe("ClientService", () => {
             serviceStatus: "waiting",
             startDate: new Date("2026-03-20T00:00:00.000Z"),
             endDate: new Date("2026-04-04T00:00:00.000Z"),
+            bookingConfirmedAt: new Date("2026-01-01"),
             ...overrides,
         });
 
@@ -4487,7 +5510,7 @@ describe("ClientService", () => {
                 const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
                 try {
                     prismaService.client.findMany.mockResolvedValue([
-                        { id: 1, name: "A", createdAt: null, serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") },
+                        { id: 1, name: "A", createdAt: null, serviceStatus: "active", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") },
                     ]);
 
                     const alerts = await service.getActionRequiredAlerts(branchId);
@@ -4806,6 +5829,452 @@ describe("ClientService", () => {
         });
     });
 
+    describe("booking confirmation writes", () => {
+        const confirmation = new Date("2026-01-01");
+        const confirmedClient = (): ClientEntity => Object.assign(createClientEntity(), {
+            bookingConfirmedAt: confirmation,
+            startDate: new Date("2026-11-02"), endDate: new Date("2026-11-13"), duration: 10,
+        });
+        const realEntityUpdate = (client: ClientEntity) => {
+            findClientByIdUsecase.execute.mockResolvedValue(client);
+            clientRepository.findById.mockResolvedValue(client);
+            clientRepository.findByIdForUpdate.mockResolvedValue(client);
+            clientRepository.update.mockImplementation(async (_branch, updated) => {
+                expect(ClientMapper.toPrismaUpdate(updated)).not.toHaveProperty("bookingConfirmedAt");
+                return updated;
+            });
+            const realUpdate = new UpdateClientUsecase(clientRepository, holidayCalendar);
+            updateClientUsecase.execute.mockImplementation(realUpdate.execute.bind(realUpdate));
+            return realUpdate;
+        };
+
+        it.each(["add", "change", "remove"])("%s service dates leaves an unconfirmed client in 예약 전 without link scheduling", async (operation) => {
+            const client = Object.assign(confirmedClient(), { bookingConfirmedAt: null, serviceStatus: "pre_booking" });
+            if (operation === "add") { client.startDate = null; client.endDate = null; }
+            findClientByIdUsecase.execute.mockResolvedValue(client);
+            prismaService.client.updateMany.mockImplementation(async ({ data }) => {
+                if (data.startDate !== undefined) client.startDate = data.startDate as Date | null;
+                if (data.endDate !== undefined) client.endDate = data.endDate as Date | null;
+                return { count: 1 };
+            });
+            const result = await service.update(branchId, client.id, operation === "remove"
+                ? { endDate: null }
+                : { startDate: "2026-11-02", endDate: operation === "change" ? "2026-11-30" : "2026-11-13" });
+            expect(result.computeCurrentStatus()).toBe("pre_booking");
+            expect(result.bookingConfirmedAt).toBeNull();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it("service create stores dated waiting input as unconfirmed 예약 전 in the shared create layer", async () => {
+            clientRepository.create.mockImplementation(async (_branch, client) => client);
+            const realCreate = new CreateClientUsecase(clientRepository, holidayCalendar);
+            createClientUsecase.execute.mockImplementation(realCreate.execute.bind(realCreate));
+            const result = await service.create(branchId, {
+                name: "상담 고객", phone: null, careCenter: false, voucherClient: false, breastPump: false,
+                startDate: "2026-11-02", endDate: "2026-11-13", serviceStatus: "waiting",
+            });
+            expect(ClientMapper.toPrismaCreate(result)).toMatchObject({ serviceStatus: "pre_booking", bookingConfirmedAt: null });
+            expect(clientRepository.create).toHaveBeenCalled();
+        });
+
+        it("client.service.update never writes the confirmation column", async () => {
+            const client = confirmedClient();
+            findClientByIdUsecase.execute.mockResolvedValue(client);
+            await service.update(branchId, client.id, { address: "변경 주소" });
+            expect(prismaService.client.updateMany).toHaveBeenCalled();
+            for (const [args] of prismaService.client.updateMany.mock.calls) {
+                expect(args.data).not.toHaveProperty("bookingConfirmedAt");
+            }
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+
+        it("UpdateClientUsecase leaves confirmation out of the whole-entity update payload", async () => {
+            const client = confirmedClient();
+            await realEntityUpdate(client).execute(branchId, client.id, { address: "변경 주소" });
+            expect(clientRepository.update).toHaveBeenCalled();
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+
+        it("terminateService leaves confirmation out of the whole-entity update payload", async () => {
+            const client = confirmedClient();
+            realEntityUpdate(client);
+            await service.terminateService(branchId, client.id);
+            expect(clientRepository.update).toHaveBeenCalled();
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+
+        it("completeReplacement leaves confirmation out of the whole-entity update payload", async () => {
+            const client = confirmedClient();
+            client.serviceStatus = "replacement_requested";
+            realEntityUpdate(client);
+            await service.completeReplacement(branchId, client.id);
+            expect(clientRepository.update).toHaveBeenCalled();
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+    });
+    // ============================================
+    // confirmBooking (rule 고객-04)
+    // ============================================
+    describe("confirmBooking", () => {
+        const futureDates = { startDate: new Date("2099-01-05T00:00:00.000Z"), endDate: new Date("2099-01-20T00:00:00.000Z") };
+        const unconfirmedRow = (overrides: Partial<ClientEntity> = {}): ClientEntity => Object.assign(createClientEntity(), {
+            bookingConfirmedAt: null,
+            serviceStatus: "pre_booking",
+            ...futureDates,
+            ...overrides,
+        });
+        const confirmedRow = (overrides: Partial<ClientEntity> = {}): ClientEntity =>
+            unconfirmedRow({ bookingConfirmedAt: new Date("2026-01-01"), serviceStatus: "waiting", ...overrides });
+
+        let tx: Record<string, unknown> & { client: { updateMany: jest.Mock } };
+        let committed: boolean;
+        let followUpSawCommit: boolean[];
+
+        /** `locked` is what the FOR UPDATE re-read returns; `after` what the post-commit read returns. */
+        const arrange = (locked: ClientEntity | null, after: ClientEntity | null = locked) => {
+            committed = false;
+            followUpSawCommit = [];
+            tx = { ...prismaService, client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+            prismaService.$transaction.mockImplementation(async (callback: (transaction: unknown) => unknown) => {
+                const result = await callback(tx);
+                committed = true;
+                return result;
+            });
+            findClientByIdUsecase.execute.mockResolvedValue(after ?? unconfirmedRow());
+            clientRepository.findByIdForUpdate.mockResolvedValue(locked);
+            triggerService.syncClientRulesForClient.mockImplementation(async () => { followUpSawCommit.push(committed); });
+            prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                where["terminatedAt"] === null ? [{ id: 7 }] : []);
+            serviceRecordLinkService.scheduleForServiceStart.mockImplementation(async () => { followUpSawCommit.push(committed); });
+        };
+        const expectRefusal = async (detail: string) => {
+            const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
+            expect(error).toBeInstanceOf(BadRequestException);
+            expect((error as BadRequestException).getResponse()).toMatchObject({
+                code: "VALIDATION_FAILED",
+                errors: [{ pointer: "/id", code: "INVALID_VALUE", detail, location: "path" }],
+            });
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        };
+
+        it("answers a missing client with not-found before opening a transaction", async () => {
+            arrange(null);
+            findClientByIdUsecase.execute.mockResolvedValue(null);
+
+            const error = await service.confirmBooking(branchId, 999).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+            expect(prismaService.$transaction).not.toHaveBeenCalled();
+        });
+
+        it("answers a client missing from the locked re-read with not-found and writes nothing", async () => {
+            arrange(null, unconfirmedRow());
+
+            await expect(service.confirmBooking(branchId, 1)).rejects.toBeInstanceOf(NotFoundException);
+
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+        });
+
+        it("answers a client deleted before the lock with not-found, not the write-set conflict, and writes nothing", async () => {
+            // The real write-set helper finds no client row to lock (the delete committed after the preflight read).
+            arrange(null, unconfirmedRow());
+            prismaService.$queryRaw.mockResolvedValue([]);
+
+            const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it("keeps a genuine write-set conflict with the client present as 409 and writes nothing", async () => {
+            arrange(unconfirmedRow());
+            // The client exists, but a schedule appeared between the snapshot and the lock.
+            prismaService.employee_schedule.findMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([{ id: 7, primaryEmployeeId: null, secondaryEmployeeId: null }]);
+            prismaService.$queryRaw.mockResolvedValue([{ id: 1 }]);
+
+            const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getResponse()).toMatchObject({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it.each(["terminated", "replacement_requested"])("refuses a client stored as %s", async (stored) => {
+            arrange(unconfirmedRow({ serviceStatus: stored }));
+
+            await expectRefusal("종료되었거나 교체 요청 중인 고객은 예약을 확정할 수 없습니다.");
+        });
+
+        it("judges the stored terminated / replacement_requested refusal before the already-confirmed check", async () => {
+            arrange(confirmedRow({ serviceStatus: "terminated" }));
+
+            await expectRefusal("종료되었거나 교체 요청 중인 고객은 예약을 확정할 수 없습니다.");
+        });
+
+        it("judges the already-confirmed check before the missing-dates check", async () => {
+            const row = confirmedRow({ startDate: null, endDate: null });
+            arrange(row);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
+
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["start", { startDate: null }],
+            ["end", { endDate: null }],
+            ["both", { startDate: null, endDate: null }],
+        ])("refuses an unconfirmed client with the %s date missing", async (_which, missing) => {
+            arrange(unconfirmedRow(missing));
+
+            await expectRefusal("서비스 시작일과 종료일을 먼저 입력해 주세요.");
+        });
+
+        it.each([
+            ["a future period", futureDates, "waiting"],
+            ["a running period", { startDate: new Date("2000-01-03T00:00:00.000Z"), endDate: new Date("2999-12-31T00:00:00.000Z") }, "active"],
+            ["a finished period", { startDate: new Date("2020-01-06T00:00:00.000Z"), endDate: new Date("2020-01-17T00:00:00.000Z") }, "completed"],
+        ])("confirms with exactly the confirmation instant and the date-derived status for %s", async (_label, dates, derived) => {
+            const calendar = branchCalendar2026([]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            arrange(unconfirmedRow(dates), confirmedRow({ ...dates, serviceStatus: derived }));
+
+            const before = Date.now();
+            await service.confirmBooking(branchId, 1);
+            const after = Date.now();
+
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 1, branchId },
+                data: { bookingConfirmedAt: expect.any(Date), serviceStatus: derived },
+            });
+            const [{ data }] = tx.client.updateMany.mock.calls[0] as [{ data: { bookingConfirmedAt: Date } }];
+            expect(Object.keys(data).sort()).toEqual(["bookingConfirmedAt", "serviceStatus"]);
+            expect(data.bookingConfirmedAt.getTime()).toBeGreaterThanOrEqual(before);
+            expect(data.bookingConfirmedAt.getTime()).toBeLessThanOrEqual(after);
+            // The direct write is the only writer: it goes through the transaction client, never the root one.
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            expect(clientRepository.findByIdForUpdate).toHaveBeenCalledWith(branchId, 1, tx);
+        });
+
+        it("reads the calendar fresh before the transaction and repairs the lifecycle with the same transaction client and calendar", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            arrange(unconfirmedRow(), confirmedRow());
+
+            await service.confirmBooking(branchId, 1);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(1);
+            const [clientId, transactionArg, calendarArg] = serviceRecordLifecycleService.ensureForClient.mock.calls[0]!;
+            expect(clientId).toBe(1);
+            expect(transactionArg).toBe(tx);
+            expect(calendarArg).toBe(calendar);
+            expect(tx.client.updateMany.mock.invocationCallOrder[0]!)
+                .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+        });
+
+        it("runs both follow-ups after commit and returns the post-commit client", async () => {
+            const confirmed = confirmedRow();
+            arrange(unconfirmedRow(), confirmed);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(confirmed);
+
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 1, false);
+            // The client left 예약 전, so the provider link SMS is scheduled for the active schedule.
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+            expect(followUpSawCommit).toEqual([true, true]);
+        });
+
+        it("does not fail the confirm when a post-commit follow-up throws", async () => {
+            const confirmed = confirmedRow();
+            arrange(unconfirmedRow(), confirmed);
+            triggerService.syncClientRulesForClient.mockRejectedValue(new Error("trigger sync down"));
+            serviceRecordLinkService.scheduleForServiceStart.mockRejectedValue(new Error("sms down"));
+            const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                .mockImplementation(() => undefined);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(confirmed);
+
+            expect(logError).toHaveBeenCalledWith(expect.stringContaining("trigger sync down"));
+            expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms down"));
+        });
+
+        it("rejects the confirm and runs neither follow-up when the lifecycle repair rejects", async () => {
+            arrange(unconfirmedRow(), confirmedRow());
+            serviceRecordLifecycleService.ensureForClient.mockRejectedValue(new Error("lifecycle repair failed"));
+
+            await expect(service.confirmBooking(branchId, 1)).rejects.toThrow("lifecycle repair failed");
+
+            expect(committed).toBe(false);
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it("answers a zero-row write with not-found and does not repair the lifecycle", async () => {
+            arrange(unconfirmedRow(), confirmedRow());
+            tx.client.updateMany.mockResolvedValue({ count: 0 });
+
+            await expect(service.confirmBooking(branchId, 1)).rejects.toBeInstanceOf(NotFoundException);
+
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        it("is idempotent: an already confirmed client is returned with no write and no follow-up", async () => {
+            const row = confirmedRow();
+            arrange(row);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
+
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
+    // update: serviceStatus may not change 예약 전 (rule 고객-04)
+    // ============================================
+    describe("update: a save may not change 예약 전", () => {
+        const confirmedAt = new Date("2026-01-01");
+        // Pinned clock inside a running period, so a confirmed client's date-derived status is "active".
+        const running = { startDate: new Date("2026-11-02T00:00:00.000Z"), endDate: new Date("2026-11-13T00:00:00.000Z") };
+        beforeEach(() => { jest.useFakeTimers().setSystemTime(new Date("2026-11-05T03:00:00.000Z")); });
+        afterEach(() => { jest.useRealTimers(); });
+        const unconfirmedClient = (overrides: Partial<ClientEntity> = {}): ClientEntity => Object.assign(createClientEntity(), {
+            bookingConfirmedAt: null,
+            serviceStatus: "pre_booking",
+            ...running,
+            ...overrides,
+        });
+        const confirmedClient = (overrides: Partial<ClientEntity> = {}): ClientEntity =>
+            unconfirmedClient({ bookingConfirmedAt: confirmedAt, serviceStatus: "active", ...overrides });
+        const BODY_REFUSAL = "예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
+        const PRE_BOOKING_REPLACEMENT = "예약 전 고객은 제공인력 교체를 요청할 수 없습니다";
+
+        const lastUpdateData = () => {
+            const calls = prismaService.client.updateMany.mock.calls;
+            return calls[calls.length - 1]![0].data as Record<string, unknown>;
+        };
+
+        it.each([
+            ["row 5: unconfirmed -> waiting", () => unconfirmedClient(), "waiting", BODY_REFUSAL],
+            ["row 5: unconfirmed -> active", () => unconfirmedClient(), "active", BODY_REFUSAL],
+            ["row 5: unconfirmed -> completed", () => unconfirmedClient(), "completed", BODY_REFUSAL],
+            ["row 4: unconfirmed -> replacement_requested", () => unconfirmedClient(), "replacement_requested", PRE_BOOKING_REPLACEMENT],
+            ["row 8: confirmed with dates -> pre_booking", () => confirmedClient(), "pre_booking", BODY_REFUSAL],
+        ])("%s is refused and writes nothing", async (_label, build, supplied, detail) => {
+            findClientByIdUsecase.execute.mockResolvedValue(build());
+
+            const error = await service.update(branchId, 1, { address: "변경 주소", serviceStatus: supplied }).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(BadRequestException);
+            expect((error as BadRequestException).getResponse()).toMatchObject({
+                code: "VALIDATION_FAILED",
+                errors: [{ pointer: "/serviceStatus", code: "INVALID_VALUE", detail, location: "body" }],
+            });
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+        });
+
+        it("judges the locked row, not the preflight snapshot", async () => {
+            // The preflight read says confirmed, but the row under the lock is unconfirmed.
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            prismaService.client.findUnique.mockResolvedValue(unconfirmedClient());
+
+            await expect(service.update(branchId, 1, { serviceStatus: "waiting" }))
+                .rejects.toBeInstanceOf(BadRequestException);
+
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("row 9: a confirmed client's supplied date-derived status is replaced by the derived one", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient({ serviceStatus: "waiting" }));
+
+            await service.update(branchId, 1, { serviceStatus: "completed" });
+
+            expect(lastUpdateData()["serviceStatus"]).toBe("active");
+        });
+
+        it("row 2: null on a confirmed stored-terminated client stores the derived status, never NULL", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient({ serviceStatus: "terminated" }));
+
+            await service.update(branchId, 1, { serviceStatus: null });
+
+            expect(lastUpdateData()["serviceStatus"]).toBe("active");
+        });
+
+        it("row 2: null on an unconfirmed client stores nothing for the status", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient());
+
+            await service.update(branchId, 1, { address: "변경 주소", serviceStatus: null });
+
+            expect(lastUpdateData()).toMatchObject({ address: "변경 주소" });
+            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+        });
+
+        it("row 3: a status equal to the effective one stores nothing for the status", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient({ serviceStatus: "waiting" }));
+
+            await service.update(branchId, 1, { address: "변경 주소", serviceStatus: "active" });
+
+            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+        });
+
+        it("rows 6 and 10 keep today's behaviour: terminated / replacement_requested are stored as sent", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient());
+            await service.update(branchId, 1, { serviceStatus: "terminated" });
+            expect(lastUpdateData()["serviceStatus"]).toBe("terminated");
+
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            await service.update(branchId, 1, { serviceStatus: "replacement_requested" });
+            expect(lastUpdateData()["serviceStatus"]).toBe("replacement_requested");
+        });
+
+        it("row 7 keeps today's behaviour: pre_booking over a stored terminated unconfirmed client is stored", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient({ serviceStatus: "terminated" }));
+
+            await service.update(branchId, 1, { serviceStatus: "pre_booking" });
+
+            expect(lastUpdateData()["serviceStatus"]).toBe("pre_booking");
+        });
+
+        it("judges E on the after-save dates: clearing the dates makes pre_booking acceptable, keeping them does not", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            await expect(service.update(branchId, 1, { startDate: null, endDate: null, serviceStatus: "pre_booking" }))
+                .resolves.toBeDefined();
+            expect(lastUpdateData()).toMatchObject({ startDate: null, endDate: null });
+            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+
+            prismaService.client.updateMany.mockClear();
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            await expect(service.update(branchId, 1, { serviceStatus: "pre_booking" }))
+                .rejects.toBeInstanceOf(BadRequestException);
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+        });
+    });
+
+
     // ============================================
     // terminateService
     // ============================================
@@ -5090,6 +6559,81 @@ describe("ClientService", () => {
             });
         });
 
+        describe("rule 기록-09: a 예약 전 client cannot request a replacement", () => {
+            const expectRefusedWithoutWrites = async (): Promise<void> => {
+                await expect(service.requestReplacement(branchId, 1, 7)).rejects.toMatchObject({
+                    status: 400,
+                    response: {
+                        code: "VALIDATION_FAILED",
+                        errors: [{
+                            pointer: "/id",
+                            code: "INVALID_VALUE",
+                            detail: "예약 전 고객은 제공인력 교체를 요청할 수 없습니다",
+                        }],
+                    },
+                });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            };
+
+            it("refuses a stored pre_booking client that has both dates", async () => {
+                const client = createClientEntity();
+                Object.assign(client, { bookingConfirmedAt: null });
+                client.serviceStatus = "pre_booking";
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+
+                await expectRefusedWithoutWrites();
+            });
+
+            it("refuses an unconfirmed stored waiting client with both dates", async () => {
+                const client = Object.assign(createClientEntity(), { bookingConfirmedAt: null, serviceStatus: "waiting" });
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                await expectRefusedWithoutWrites();
+            });
+
+            it("refuses a client without an end date (stored status null)", async () => {
+                const client = createClientEntity();
+                client.serviceStatus = null;
+                client.endDate = null;
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+
+                await expectRefusedWithoutWrites();
+            });
+
+            it("decides on the locked re-read, not the preflight snapshot", async () => {
+                const preflight = createClientEntity();
+                preflight.serviceStatus = "waiting";
+                const locked = createClientEntity();
+                locked.serviceStatus = "pre_booking";
+                Object.assign(locked, { bookingConfirmedAt: null });
+                findClientByIdUsecase.execute.mockResolvedValue(preflight);
+                prismaService.client.findUnique.mockResolvedValue(locked);
+
+                await expectRefusedWithoutWrites();
+            });
+
+            it("still proceeds for a stored waiting client with both dates", async () => {
+                const client = createClientEntity();
+                client.serviceStatus = "waiting";
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+
+                await service.requestReplacement(branchId, 1, 7);
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 1, branchId },
+                    data: { serviceStatus: "replacement_requested" },
+                });
+                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+            });
+        });
+
         it("rejects employees outside the client branch", async () => {
             findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
             prismaService.employee.findMany.mockResolvedValue([]);
@@ -5145,7 +6689,8 @@ describe("ClientService", () => {
                 const updatedClient = new ClientEntity(
                     1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
                     "100000", "50000", "50000", new Date(), new Date("2024-06-01"),
-                    false, true, "900101", "replacement_requested", false, null
+                    false, true, "900101", "replacement_requested", false, null,
+                    null, null, null, null, false, null, undefined, new Date("2024-01-01")
                 );
                 findClientByIdUsecase.execute
                     .mockResolvedValueOnce(mockClient)
@@ -5592,7 +7137,8 @@ describe("ClientService", () => {
                     "100000", "50000", "50000",
                     new Date("2024-01-01"), // start date in the past
                     new Date("2025-12-31"), // end date in the future
-                    false, true, "900101", "replacement_requested", false, null
+                    false, true, "900101", "replacement_requested", false, null,
+                    null, null, null, null, false, null, undefined, new Date("2024-01-01")
                 );
                 const completedClient = new ClientEntity(
                     1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
@@ -5635,6 +7181,78 @@ describe("ClientService", () => {
                 // Assert
                 // Should still update status
                 expect(updateClientUsecase.execute).toHaveBeenCalled();
+            });
+        });
+
+        describe("given a confirmed client whose stored 예약 전 is stale during completeReplacement", () => {
+            const futureStart = new Date("2026-11-02T00:00:00.000Z");
+            const futureEnd = new Date("2026-11-30T00:00:00.000Z");
+
+            const arrange = (beforeStatus: string) => {
+                const beforeClient = Object.assign(createClientEntity(), {
+                    serviceStatus: beforeStatus,
+                    startDate: futureStart,
+                    endDate: futureEnd,
+                });
+                const afterClient = Object.assign(createClientEntity(), {
+                    serviceStatus: "waiting",
+                    startDate: futureStart,
+                    endDate: futureEnd,
+                });
+                findClientByIdUsecase.execute.mockResolvedValue(beforeClient);
+                clientRepository.findByIdForUpdate.mockResolvedValue(beforeClient);
+                updateClientUsecase.execute.mockResolvedValue(afterClient);
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                    where["terminatedAt"] === null ? [{ id: 7 }] : []);
+                return { afterClient };
+            };
+
+            it("does not schedule a link merely because the stored status was 예약 전", async () => {
+                arrange("pre_booking");
+                let release!: () => void;
+                const held = new Promise<void>((resolve) => { release = resolve; });
+                let transactionBodyDone = false;
+                prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
+                    const result = await callback(prismaService);
+                    transactionBodyDone = true;
+                    await held;
+                    return result;
+                });
+
+                const running = service.completeReplacement(branchId, 1);
+                for (let turn = 0; turn < 50 && !transactionBodyDone; turn += 1) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+                await new Promise((resolve) => setImmediate(resolve));
+                expect(transactionBodyDone).toBe(true);
+                expect(prismaService.employee_schedule.findMany).not.toHaveBeenCalledWith(
+                    expect.objectContaining({ where: expect.objectContaining({ terminatedAt: null }) }),
+                );
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+
+                release();
+                await running;
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("does not schedule when the client was not stored as 예약 전 (replacement_requested)", async () => {
+                arrange("replacement_requested");
+
+                await service.completeReplacement(branchId, 1);
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("still resolves without attempting a link for the already-confirmed dated client", async () => {
+                const { afterClient } = arrange("pre_booking");
+                serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.completeReplacement(branchId, 1)).resolves.toBe(afterClient);
+
+                expect(logError).not.toHaveBeenCalled();
             });
         });
 
@@ -5768,11 +7386,71 @@ describe("ClientService", () => {
             expect(result.contractsPendingSignature).toBe(1);
         });
 
+        describe("voided (계약 파기) newest contract in the dashboard counts", () => {
+            const doc = (overrides: Record<string, unknown> = {}) => ({
+                clientId: 1,
+                documentId: "doc-1",
+                statusType: "070",
+                stepType: "06",
+                stepName: "제공기관 확인",
+                detailPayload: null,
+                permanentPurgeRequestedAt: null,
+                voidedAt: null,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: null,
+                ...overrides,
+            });
+            const seedStats = (docs: Record<string, unknown>[]) => {
+                prismaService.client.count.mockResolvedValue(0);
+                prismaService.client.findMany.mockResolvedValue([{
+                    id: 1,
+                    bookingConfirmedAt: new Date("2026-01-01"),
+                    eDocId: "doc-1",
+                    serviceStatus: "waiting",
+                    startDate: new Date("2026-03-20T00:00:00.000Z"),
+                    endDate: new Date("2026-04-04T00:00:00.000Z"),
+                }]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue(docs);
+            };
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-03-17T09:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            it("counts a voided newest document as not sent and never as awaiting review, even with an older signed one", async () => {
+                seedStats([
+                    doc({ documentId: "newest-voided", voidedAt: new Date("2026-03-10T00:00:00.000Z") }),
+                    doc({ documentId: "older-signed", statusType: "003" }),
+                ]);
+
+                const stats = await service.getStats(branchId);
+
+                expect(stats.contractsNotSent).toBe(1);
+                expect(stats.contractsPendingSignature).toBe(0);
+            });
+
+            it("control: the same newest document without a void is sent and counts as awaiting review", async () => {
+                seedStats([doc({ documentId: "newest" })]);
+
+                const stats = await service.getStats(branchId);
+
+                expect(stats.contractsNotSent).toBe(0);
+                expect(stats.contractsPendingSignature).toBe(1);
+            });
+        });
+
         // contractsNotSent must equal the number of clients whose list row carries the
         // "발송 필요" badge: effective service status, latest-contract lookup, send window.
         describe("contractsNotSent (계약서 발송 필요)", () => {
             type StoredClient = {
                 id: number;
+                bookingConfirmedAt: Date | null;
                 eDocId: string | null;
                 serviceStatus: string | null;
                 startDate: Date;
@@ -5780,6 +7458,7 @@ describe("ClientService", () => {
             };
             const storedClient = (overrides: Partial<StoredClient> = {}): StoredClient => ({
                 id: 1,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 eDocId: null,
                 serviceStatus: "waiting",
                 startDate: new Date("2026-03-20T00:00:00.000Z"),
@@ -5935,6 +7614,7 @@ describe("ClientService", () => {
         ): ClientEntity => {
             const client = createClientEntity();
             client.serviceStatus = storedStatus;
+            if (storedStatus === "pre_booking") Object.assign(client, { bookingConfirmedAt: null });
             client.startDate = startDate ? new Date(`${startDate}T00:00:00.000Z`) : null;
             client.endDate = endDate ? new Date(`${endDate}T00:00:00.000Z`) : null;
             return client;
@@ -6035,7 +7715,8 @@ describe("ClientService", () => {
                 "100000", "50000", "50000",
                 pastStartDate, futureEndDate,
                 false, true, "900101", "waiting", // Stored as waiting
-                false, null
+                false, null,
+                null, null, null, null, false, null, undefined, new Date("2024-01-01")
             );
             listClientsUsecase.execute.mockResolvedValue([mockClient]);
             // Mock the prismaService.client.update for background update

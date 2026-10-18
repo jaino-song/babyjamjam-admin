@@ -188,7 +188,7 @@ export default function DashboardPage() {
   // their invalidations cascade into) on every mount.
   const {
     data: analytics, isLoading: analyticsLoading, isError: analyticsError,
-    isFetching: analyticsFetching, refetch: refetchAnalytics,
+    isPaused: analyticsPaused, isFetching: analyticsFetching, refetch: refetchAnalytics,
   } = useDashboardAnalytics({
     staleTime: 60_000,
   });
@@ -196,11 +196,17 @@ export default function DashboardPage() {
     allClients,
     isLoading: clientsLoading,
     isError: clientsError,
+    isPaused: clientsPaused,
+    hasData: clientsHasData,
     isFetching: clientsFetching,
     refetch: refetchClients,
   } = useInfiniteClients({
     staleTime: 60_000,
   });
+  // A query started offline is paused with no data: not loading, not failed, and not yet known.
+  // It reads as loading; a disabled query is neither paused nor loading and is unaffected.
+  const clientsPending = clientsLoading || (clientsPaused && !clientsHasData);
+  const analyticsPending = analyticsLoading || (analyticsPaused && analytics === undefined);
   const user = useInitialUser();
   // Display-only due labels: the built-in list is fine until the branch calendar loads.
   const { calendar } = useBusinessDayCalendar();
@@ -227,6 +233,7 @@ export default function DashboardPage() {
     hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
+    isFetching: isNotificationLogsFetching,
     refetch: refetchNotificationLogs,
   } = useClientMessageHistory(selectedClient);
 
@@ -314,7 +321,7 @@ export default function DashboardPage() {
       },
     ];
 
-    if (clientsLoading) {
+    if (clientsPending) {
       const filters: DashboardRedesignFilter[] = [
         { label: ALL_FILTER, count: "", skeleton: true },
         { label: "조치 필요", count: "", skeleton: true },
@@ -442,7 +449,7 @@ export default function DashboardPage() {
     ];
 
     return { analytics: dashboardAnalytics, sections: allSections, filters, allRows, loading: false };
-  }, [allClients, analytics, calendar, clientsLoading, openClient]);
+  }, [allClients, analytics, calendar, clientsPending, openClient]);
 
   const sectionsFull = useMemo(() => {
     if (activeFilter === ALL_FILTER) {
@@ -489,10 +496,12 @@ export default function DashboardPage() {
             filters={dashboardData.filters}
             activeFilter={activeFilter}
             onFilterChange={setActiveFilter}
-            analyticsLoading={(analyticsLoading || clientsLoading) && !analytics}
+            analyticsLoading={(analyticsPending || clientsPending) && !analytics}
             loading={dashboardData.loading}
-            isError={clientsError}
-            isAnalyticsError={analyticsError}
+            isError={clientsError && !clientsHasData}
+            isStale={clientsError && clientsHasData}
+            isAnalyticsError={analyticsError && !analytics}
+            isAnalyticsStale={analyticsError && Boolean(analytics)}
             isRetrying={clientsFetching}
             isRetryingAnalytics={analyticsFetching}
             onRetry={() => { void refetchClients(); }}
@@ -520,6 +529,7 @@ export default function DashboardPage() {
               hasMoreNotificationLogs={hasMoreNotificationLogs}
               isNotificationLogsLoading={isNotificationLogsLoading}
               isNotificationLogsError={isNotificationLogsError}
+              isNotificationLogsRetrying={isNotificationLogsFetching}
               onRetryNotificationLogs={() => {
                 void refetchNotificationLogs();
               }}

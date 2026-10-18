@@ -60,6 +60,7 @@ describe("ClientController (Integration)", () => {
 
     const createClientWithEmployeeInfo = (client: ClientEntity) => ({
         ...client,
+        bookingConfirmedAt: client.bookingConfirmedAt?.toISOString() ?? null,
         primaryEmployee: null,
         secondaryEmployee: null,
         hasSigned: false,
@@ -80,6 +81,7 @@ describe("ClientController (Integration)", () => {
             getStats: jest.fn(),
             checkPhoneExists: jest.fn(),
             update: jest.fn(),
+            confirmBooking: jest.fn(),
             delete: jest.fn(),
         };
 
@@ -217,6 +219,60 @@ describe("ClientController (Integration)", () => {
             }).expect(400);
             await request(app.getHttpServer()).patch("/clients/1")
                 .send({ allowBusinessDayMismatch: confirmed }).expect(400);
+            expect(clientService.create).not.toHaveBeenCalled();
+            expect(clientService.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("smsAutomationEnabled", () => {
+        const createBody = {
+            name: "Automation client", careCenter: false, voucherClient: false, breastPump: false,
+        };
+
+        it.each([false, true])("forwards an explicit %s from both create routes", async (enabled) => {
+            clientService.create.mockResolvedValue(createMockClient());
+            await request(app.getHttpServer()).post("/clients")
+                .send({ ...createBody, smsAutomationEnabled: enabled }).expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ smsAutomationEnabled: enabled }),
+            );
+            await request(app.getHttpServer()).post("/clients/with-employee-activation")
+                .send({ ...createBody, primaryEmployeeId: 10, confirmedUnavailableEmployeeIds: [10], smsAutomationEnabled: enabled })
+                .expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ smsAutomationEnabled: enabled }),
+            );
+        });
+
+        it("keeps forwarding applyMessageAutomation alongside the new field", async () => {
+            clientService.create.mockResolvedValue(createMockClient());
+            await request(app.getHttpServer()).post("/clients")
+                .send({ ...createBody, applyMessageAutomation: false }).expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ applyMessageAutomation: false, smsAutomationEnabled: undefined }),
+            );
+        });
+
+        it("forwards the flag on update", async () => {
+            clientService.update.mockResolvedValue(createMockClient());
+            await request(app.getHttpServer()).patch("/clients/1").send({ smsAutomationEnabled: false }).expect(200);
+            expect(clientService.update).toHaveBeenCalledWith(
+                "org-1",
+                1,
+                expect.objectContaining({ smsAutomationEnabled: false }),
+            );
+        });
+
+        it.each(["true", "false", 1, null])("rejects non-boolean %p on create and update", async (value) => {
+            await request(app.getHttpServer()).post("/clients")
+                .send({ ...createBody, smsAutomationEnabled: value }).expect(400);
+            await request(app.getHttpServer()).post("/clients/with-employee-activation")
+                .send({ ...createBody, primaryEmployeeId: 10, confirmedUnavailableEmployeeIds: [10], smsAutomationEnabled: value })
+                .expect(400);
+            await request(app.getHttpServer()).patch("/clients/1").send({ smsAutomationEnabled: value }).expect(400);
             expect(clientService.create).not.toHaveBeenCalled();
             expect(clientService.update).not.toHaveBeenCalled();
         });
@@ -605,6 +661,30 @@ describe("ClientController (Integration)", () => {
                 expect(response.status).toBe(400);
                 expect(clientService.findById).not.toHaveBeenCalled();
             });
+        });
+    });
+
+    // ============================================
+    // PATCH /clients/:id/confirm-booking
+    // ============================================
+    describe("PATCH /clients/:id/confirm-booking", () => {
+        it("confirms the booking for the tenant's client and returns 200", async () => {
+            const confirmed = createMockClient({ id: 7 });
+            clientService.confirmBooking.mockResolvedValue(confirmed);
+
+            const response = await request(app.getHttpServer()).patch("/clients/7/confirm-booking");
+
+            expect(response.status).toBe(200);
+            expect(clientService.confirmBooking).toHaveBeenCalledTimes(1);
+            expect(clientService.confirmBooking).toHaveBeenCalledWith("org-1", 7);
+            expect(response.body).toMatchObject({ id: 7 });
+        });
+
+        it("rejects a non-numeric id with 400 without calling the service", async () => {
+            const response = await request(app.getHttpServer()).patch("/clients/not-a-number/confirm-booking");
+
+            expect(response.status).toBe(400);
+            expect(clientService.confirmBooking).not.toHaveBeenCalled();
         });
     });
 
