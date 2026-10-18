@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps, ReactNode } from "react";
+import type { MessageHistoryDetailPanel } from "@/components/app/messages/MessageHistoryDetailPanel";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
 import type { Client } from "@/lib/client/types";
@@ -11,6 +12,15 @@ import type {
 import { eformsignApi } from "@/services/api";
 
 const mockUseClientMessageHistory = jest.fn();
+const mockRetryHistory = jest.fn();
+const mockResendJob = jest.fn();
+const mockToast = jest.fn();
+let mockMessageBranchRole = "manager";
+let mockMessageRole = "user";
+let mockDetailRetry: (() => void) | undefined;
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => ({ data: { role: mockMessageRole, branchRole: mockMessageBranchRole } }),
+}));
 const mockUseClientUpcomingMessageTriggerJobs = jest.fn();
 const mockUseClientServiceRecords = jest.fn();
 const mockUseClientServiceRecordRevisionHistory = jest.fn();
@@ -27,6 +37,8 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+    useRetryMessageHistory: () => ({ mutateAsync: mockRetryHistory, isPending: false }),
+    useResendMessageTriggerJob: () => ({ mutateAsync: mockResendJob, isPending: false }),
     useClientMessageHistory: (...args: unknown[]) => mockUseClientMessageHistory(...args),
     useClientUpcomingMessageTriggerJobs: (...args: unknown[]) => mockUseClientUpcomingMessageTriggerJobs(...args),
 }));
@@ -42,7 +54,7 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
-    useToast: () => ({ toast: jest.fn() }),
+    useToast: () => ({ toast: mockToast }),
 }));
 
 jest.mock("@/services/api", () => ({
@@ -53,6 +65,7 @@ jest.mock("@/services/api", () => ({
 }));
 
 jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
+    ...jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel"),
     getMessageHistoryTimestamp: (record: MessageLogRecord) => record.lastAttemptAt ?? record.updatedAt,
     formatMessageHistoryDate: (value: string) => `날짜 ${value}`,
     MESSAGE_HISTORY_STATUS_META: {
@@ -60,6 +73,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         failed: { avatarClass: "status-avatar-failed" },
         pending: { avatarClass: "status-avatar-pending" },
         canceled: { avatarClass: "status-avatar-canceled" },
+        needs_setup: { avatarClass: "status-avatar-needs-setup" },
     },
     normalizeMessageHistoryRecord: (record: MessageLogRecord, options: { recipientNameFallback?: string; recipientListLabelFallback?: string }) => ({
         id: record.id,
@@ -75,11 +89,14 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         failureReason: record.status === "failed" ? record.errorMessage ?? undefined : undefined,
         cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
         recipientType: record.recipientType,
+        resendBlock: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).resendBlock,
         icon: () => <span aria-hidden="true">아이콘</span>,
     }),
-    MessageHistoryDetailPanel: ({ selectedRecord }: { selectedRecord: { messagePreview: string } | null }) => selectedRecord ? (
-        <div data-testid="message-history-detail-body">{selectedRecord.messagePreview}</div>
-    ) : null,
+    MessageHistoryDetailPanel: (props: ComponentProps<typeof MessageHistoryDetailPanel>) => {
+        mockDetailRetry = props.onRetry;
+        const ActualPanel = jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").MessageHistoryDetailPanel;
+        return <div data-testid="message-history-detail-body"><ActualPanel {...props} /></div>;
+    },
 }));
 
 jest.mock("@/components/app/clients/ClientServiceRecordsTab", () => ({
@@ -141,7 +158,7 @@ jest.mock("@/components/app/v3", () => ({
         </article>
     ),
     DetailEmptyState: ({ message }: { message: string }) => <p>{message}</p>,
-    DetailPanel: ({ children, tabs }: { children: ReactNode; tabs?: ReactNode }) => <main>{tabs}{children}</main>,
+    DetailPanel: ({ children, tabs, trailing }: { children: ReactNode; tabs?: ReactNode; trailing?: ReactNode }) => <main>{tabs}{trailing}{children}</main>,
     DetailTabPanels: ({ activeTab, panels }: { activeTab: string; panels: Array<{ key: string; children: ReactNode }> }) => (
         <>{panels.find((panel) => panel.key === activeTab)?.children}</>
     ),
@@ -322,8 +339,28 @@ function renderPanel(layout: "desktop" | "mobile" = "desktop") {
 }
 
 describe("ClientDetailPanel messages tab", () => {
+    const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    beforeAll(() => {
+        Object.defineProperty(globalThis, "ResizeObserver", {
+            configurable: true,
+            value: jest.fn(() => ({ observe: jest.fn(), unobserve: jest.fn(), disconnect: jest.fn() })),
+        });
+    });
+    afterAll(() => {
+        if (resizeObserverDescriptor) {
+            Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
+        } else {
+            Reflect.deleteProperty(globalThis, "ResizeObserver");
+        }
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
+        mockMessageBranchRole = "manager";
+        mockMessageRole = "user";
+        mockDetailRetry = undefined;
+        mockRetryHistory.mockResolvedValue({ status: "sent" });
+        mockResendJob.mockResolvedValue({ status: "sent" });
         (eformsignApi.getDocumentsByClientId as jest.Mock).mockResolvedValue([]);
         mockServiceRecordsTabProps.length = 0;
         mockUseClientServiceRecords.mockReturnValue({ data: undefined, isError: false, isLoading: false, isPaused: false });
@@ -370,6 +407,66 @@ describe("ClientDetailPanel messages tab", () => {
             expect(zone.getAttribute("data-source-component")).not.toBe("InfoCard");
             expect(zone.querySelector('[data-source-component="InfoCard"]')).toBeNull();
         });
+    });
+
+    function openRecord(record: MessageLogRecord) {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([record]));
+        openMessagesTab();
+        fireEvent.click(screen.getByRole("heading", { name: record.ruleName! }).closest('[role="button"]')!);
+    }
+
+    it("retries a failed client log using its log id, not its trigger job id", async () => {
+        openRecord(failedHistoryRecord);
+        fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+        await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(11));
+        expect(mockResendJob).not.toHaveBeenCalled();
+        await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" }));
+    });
+
+    it("resends a needs_setup job with its trigger job id", async () => {
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", triggerJobId: "job-setup" });
+        fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+        await waitFor(() => expect(mockResendJob).toHaveBeenCalledWith("job-setup"));
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+    });
+
+    it("disables a branch-blocked job, explains the safeguard, and guards the callback", async () => {
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", resendBlockedBy: "branch" });
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.click(retry);
+        fireEvent.focus(retry.closest('[data-slot="hover-card-trigger"]')!);
+        expect(await screen.findByText("지점 자동 전송이 꺼져 있어요")).toBeInTheDocument();
+        expect(screen.getByText("이 지점의 ‘자동 전송 실행’이 꺼져 있어 재발송할 수 없어요.")).toBeInTheDocument();
+        expect(mockDetailRetry).toEqual(expect.any(Function));
+        mockDetailRetry?.();
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+        expect(mockResendJob).not.toHaveBeenCalled();
+    });
+
+    it.each(["owner", "user"])("only links account safeguards for an owner (%s)", async role => {
+        mockMessageRole = role;
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", resendBlockedBy: "recipient", resendBlockedRecipient: { kind: "user", id: "9" } });
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.focus(retry.closest('[data-slot="hover-card-trigger"]')!);
+        await screen.findByText("자동 문자가 꺼져 있어요");
+        if (role === "owner") {
+            expect(screen.getByRole("link")).toHaveAttribute("href", expect.stringContaining("accounts"));
+        } else {
+            expect(screen.queryByRole("link")).not.toBeInTheDocument();
+        }
+    });
+
+    it.each(["sent", "pending", "canceled", "needs_setup"] as const)("does not retry an ineligible %s log", status => {
+        openRecord({ ...historyRecord, status });
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+    });
+
+    it("does not offer retry without branch management permission", () => {
+        mockMessageBranchRole = "staff";
+        openRecord(failedHistoryRecord);
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
     });
 
     it("keeps the body out of list rows while preserving the selected detail view", () => {

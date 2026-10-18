@@ -32,6 +32,8 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => {
         refetch: jest.fn(),
     };
     return {
+        useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }),
+        useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }),
         useClientMessageHistory: () => emptyList,
         useClientUpcomingMessageTriggerJobs: () => emptyList,
     };

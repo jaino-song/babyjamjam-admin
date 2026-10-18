@@ -9,12 +9,14 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { agentAutomationConcreteJobDigest } from "application/services/agent-automation-job-binding";
 import { buildAutomationRetrySealVariables, readAutomationRetrySeal } from "application/services/automation-retry-seal";
-import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
 
 describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
         startRetryAttempt: jest.fn(),
         findByIdInBranch: jest.fn(),
+        findRetryFamilyInBranch: jest.fn().mockResolvedValue([]),
+        hasNewerServiceRecordSmsInBranch: jest.fn().mockResolvedValue(false),
         update: jest.fn(),
         findServiceRecordLinkClientState: jest.fn().mockResolvedValue(null),
     });
@@ -24,9 +26,9 @@ describe("SmsRetryService", () => {
     const createMockMessageSenderApprovalService = () => ({
         ensureApproved: jest.fn().mockResolvedValue(undefined),
     });
-    const createSmsRetryLog = (templateKey = "client_greeting_sms") =>
+    const createSmsRetryLog = (templateKey = "client_greeting_sms", id = 77) =>
         MessageLogEntity.reconstitute(
-            77,
+            id,
             "11111111-1111-1111-1111-111111111111",
             "aligo_sms",
             templateKey,
@@ -101,6 +103,111 @@ describe("SmsRetryService", () => {
     afterEach(() => {
         nowSpy.mockRestore();
         jest.clearAllMocks();
+    });
+
+    describe("manual retry duplicate guards", () => {
+        it("returns 409 without sending when transactional family admission loses after the fast-path read", async () => {
+            const source = createSmsRetryLog();
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            logRepository.findRetryFamilyInBranch.mockResolvedValue([source]);
+            logRepository.startRetryAttempt.mockResolvedValueOnce({ kind: "lost" });
+
+            await expect(service.retryById(source.branchId!, source.id)).rejects.toMatchObject({ status: 409 });
+            expect(logRepository.startRetryAttempt).toHaveBeenCalledTimes(1);
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        });
+
+        const expectConflict = async (source: MessageLogEntity) => {
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            await expect(service.retryById(source.branchId!, source.id)).rejects.toMatchObject({
+                status: 409, response: { code: "REQUEST_CONFLICT" },
+            });
+            expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        };
+
+        it.each([SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON])("refuses a superseded source: %s", async (reason) => {
+            const source = createSmsRetryLog();
+            source.markRetrySuperseded(reason);
+            await expectConflict(source);
+        });
+
+        it.each([
+            ["sent child", "sent", {}, null],
+            ["pending child", "pending", {}, null],
+            ["partial child", "failed", { retrySafety: "partial" }, null],
+            ["uncertain child", "failed", { retrySafety: "uncertain" }, null],
+            ["started child", "failed", {}, "started"],
+            ["provider-uncertain child", "failed", {}, "uncertain"],
+            ["reconciled child", "failed", {}, "reconciled_delivered"],
+        ] as const)("refuses a family with a %s", async (_name, status, variables, acceptance) => {
+            const source = createSmsRetryLog();
+            const child = createSmsRetryLog(undefined, 78);
+            child.status = status;
+            child.variables = { ...child.variables, ...variables, retryOfLogId: String(source.id) };
+            if (acceptance) child.providerAcceptanceState = acceptance;
+            logRepository.findRetryFamilyInBranch.mockResolvedValue([child]);
+            await expectConflict(source);
+            expect(logRepository.findRetryFamilyInBranch).toHaveBeenCalledWith(source.branchId, source.id);
+        });
+
+        it.each(["sent grandchild", "sent sibling"])("refuses a %s even when the immediate child failed", async (kind) => {
+            const source = createSmsRetryLog();
+            if (kind === "sent sibling") source.variables["retryOfLogId"] = "76";
+            const failed = createSmsRetryLog(undefined, 78);
+            failed.variables["retryOfLogId"] = String(source.id);
+            const sent = createSmsRetryLog(undefined, 79);
+            sent.variables["retryOfLogId"] = kind === "sent sibling" ? "76" : "78";
+            sent.markSent();
+            logRepository.findRetryFamilyInBranch.mockResolvedValue([failed, sent]);
+            await expectConflict(source);
+        });
+
+        it("refuses an exhausted link log with a newer non-failed link send", async () => {
+            const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+            source.nextRetryAt = null;
+            logRepository.hasNewerServiceRecordSmsInBranch.mockResolvedValue(true);
+            await expectConflict(source);
+            expect(logRepository.hasNewerServiceRecordSmsInBranch).toHaveBeenCalledWith(source.branchId, source);
+        });
+
+        it.each(["no children", "failed children", "reconciled failure child", "later failed link", "reset without resend", "non-link"])("allows %s", async (kind) => {
+            const source = createSmsRetryLog(kind === "later failed link" ? SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY : undefined);
+            source.nextRetryAt = null;
+            if (kind === "reset without resend") source.errorMessage = "Service record link reset without resend";
+            if (kind === "failed children" || kind === "reconciled failure child") {
+                const child = createSmsRetryLog(undefined, 78);
+                child.variables["retryOfLogId"] = String(source.id);
+                if (kind === "reconciled failure child") child.providerAcceptanceState = "reconciled_not_delivered";
+                logRepository.findRetryFamilyInBranch.mockResolvedValue([source, child]);
+            }
+            if (kind === "non-link") logRepository.hasNewerServiceRecordSmsInBranch.mockResolvedValue(true);
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            });
+            await expect(service.retryById(source.branchId!, source.id)).resolves.toMatchObject({ status: "sent" });
+            expect(logRepository.startRetryAttempt).toHaveBeenCalledTimes(1);
+            expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+            expect(source.status).toBe("failed");
+            if (kind === "non-link") expect(logRepository.hasNewerServiceRecordSmsInBranch).not.toHaveBeenCalled();
+        });
+
+        it("does not apply the manual duplicate lookups to automatic retry", async () => {
+            const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+            const sent = createSmsRetryLog(undefined, 79);
+            sent.markSent();
+            logRepository.findRetryFamilyInBranch.mockResolvedValue([sent]);
+            logRepository.hasNewerServiceRecordSmsInBranch.mockResolvedValue(true);
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            });
+            await expect(service.retry(source, "automatic")).resolves.toMatchObject({ status: "sent" });
+            expect(logRepository.findRetryFamilyInBranch).not.toHaveBeenCalled();
+            expect(logRepository.hasNewerServiceRecordSmsInBranch).not.toHaveBeenCalled();
+        });
     });
 
     describe("service-record link client status", () => {

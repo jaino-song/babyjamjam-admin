@@ -2053,6 +2053,10 @@ body.mobile-all-route .menu-row {
   border: 1px solid hsl(var(--v3-primary));
   color: hsl(var(--v3-primary));
 }
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ===== Detail tabs (pill row + sliding underline indicator) ===== */
 .detail-tabs {

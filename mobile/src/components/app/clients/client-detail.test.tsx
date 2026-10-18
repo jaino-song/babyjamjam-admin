@@ -6,6 +6,7 @@ import type { Client } from "@/lib/client/types";
 import type { EformsignLinkConfirmation } from "@/services/api";
 
 jest.mock("next/navigation", () => ({ usePathname: () => "/clients", useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({ useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }), useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
 jest.mock("@/hooks/useEmployees", () => ({ useEmployees: () => ({ data: [] }) }));
 jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: () => ({ data: { role: "user", branchRole: "manager" } }) }));
 jest.mock("@/hooks/useServiceRecords", () => ({ useClientServiceRecords: () => ({ data: undefined }), applyServiceScheduleChange: jest.fn(), fetchClientServiceRecords: jest.fn(), previewServiceScheduleChange: jest.fn(), resetServiceRecordLink: jest.fn() }));

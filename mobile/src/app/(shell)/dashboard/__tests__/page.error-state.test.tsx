@@ -205,6 +205,17 @@ describe("client detail message history", () => {
   };
   const lastDetailProps = () => detailContent.mock.calls[detailContent.mock.calls.length - 1][0];
 
+  it.each([
+    { isPaused: true, hasData: false, isLoading: false, expected: true },
+    { isPaused: true, hasData: true, isLoading: false, expected: false },
+    { isPaused: false, hasData: false, isLoading: false, expected: false },
+    { isPaused: false, hasData: false, isLoading: true, expected: true },
+  ])("passes the notification loading state for %j", ({ expected, ...state }) => {
+    historyQuery.mockReturnValue({ notificationLogs: [], hasMore: false, isError: false, isFetching: false, refetch: jest.fn(), ...state } as unknown as ReturnType<typeof useClientMessageHistory>);
+    openDetail();
+    expect(lastDetailProps().isNotificationLogsLoading).toBe(expected);
+  });
+
   it("tells the detail its retry is in flight while the history query is fetching", () => {
     historyQuery.mockReturnValue({ notificationLogs: [], hasMore: false, isLoading: false, isError: true, isFetching: true, refetch: jest.fn() } as unknown as ReturnType<typeof useClientMessageHistory>);
     openDetail();

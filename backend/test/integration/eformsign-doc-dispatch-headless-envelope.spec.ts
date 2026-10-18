@@ -82,7 +82,7 @@ describe("POST /eformsign-docs/dispatch-headless (additive envelope)", () => {
             whitelist: true,
             forbidNonWhitelisted: true,
         }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
     });
 
     afterEach(async () => {

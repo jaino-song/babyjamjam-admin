@@ -1,29 +1,34 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES } from "@babyjamjam/shared/file-storage";
 import { DocumentDropzone } from "./document-dropzone";
+import { useDocumentCategories } from "@/hooks/use-document-categories";
 
 jest.mock("@/hooks/use-document-categories", () => ({
-  useDocumentCategories: () => ({ data: [{ id: "contract", label: "계약서" }] }),
+  useDocumentCategories: jest.fn(),
 }));
 jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
 jest.mock("@/components/ui/title-select-molecule", () => ({
-  TitleSelectMolecule: ({ onValueChange, value }: { onValueChange: (value: string) => void; value: string }) => (
-    <select aria-label="카테고리" value={value} onChange={(event) => onValueChange(event.target.value)}>
+  TitleSelectMolecule: ({ onValueChange, value, disabled }: { onValueChange: (value: string) => void; value: string; disabled?: boolean }) => (
+    <select aria-label="카테고리" value={value} disabled={disabled} onChange={(event) => onValueChange(event.target.value)}>
       <option value="">선택</option><option value="contract">계약서</option>
     </select>
   ),
 }));
 
 const ownerCapabilities = { ...DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES, canChooseVisibilityScope: true };
+const mockCategories = useDocumentCategories as jest.Mock;
 
-function selectFile(container: HTMLElement) {
+function selectFile(container: HTMLElement, chooseCategory = true) {
   fireEvent.change(container.querySelector('input[type="file"]')!, {
     target: { files: [new File(["%PDF-1.4"], "contract.pdf", { type: "application/pdf" })] },
   });
-  fireEvent.change(screen.getByLabelText("카테고리"), { target: { value: "contract" } });
+  if (chooseCategory) fireEvent.change(screen.getByLabelText("카테고리"), { target: { value: "contract" } });
 }
 
 describe("DocumentDropzone visibility", () => {
+  beforeEach(() => {
+    mockCategories.mockReturnValue({ data: [{ id: "contract", label: "계약서" }], isSuccess: true });
+  });
   it("blocks loading without guessing a branch notice", () => {
     const { container } = render(<DocumentDropzone onUpload={jest.fn()} />);
     expect(container.querySelector('input[type="file"]')).toBeDisabled();
@@ -41,18 +46,47 @@ describe("DocumentDropzone visibility", () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["branch", "all_branches"] as const)("requires a choice, sends %s and resets after success", async (scope) => {
+  it.each(["branch", "all_branches"] as const)("defaults to branch, sends %s and resets after success", async (scope) => {
     const upload = jest.fn().mockResolvedValue(undefined);
     const { container } = render(<DocumentDropzone onUpload={upload} capabilities={ownerCapabilities} />);
-    expect(screen.getAllByRole("radio").every((radio) => radio.getAttribute("aria-checked") === "false")).toBe(true);
+    expect(screen.getByRole("radio", { name: "현재 지점" })).toHaveAttribute("aria-checked", "true");
     selectFile(container);
-    expect(screen.getByRole("button", { name: "문서 업로드" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("radio", { name: scope === "branch" ? "현재 지점" : "전 지점" }));
+    expect(screen.getByRole("button", { name: "문서 업로드" })).toBeEnabled();
+    if (scope === "all_branches") fireEvent.click(screen.getByRole("radio", { name: "전 지점" }));
     expect(screen.getByText(scope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "문서 업로드" }));
     await waitFor(() => expect(upload).toHaveBeenCalledWith(expect.objectContaining({ visibilityScope: scope })));
-    await waitFor(() => expect(screen.getAllByRole("radio").every((radio) => radio.getAttribute("aria-checked") === "false")).toBe(true));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "현재 지점" })).toHaveAttribute("aria-checked", "true"));
+    expect(screen.getByRole("button", { name: "문서 업로드" })).toBeEnabled();
+  });
+
+  it.each([{ isLoading: true }, { isLoading: false, isPaused: true }])("shows loading rather than a category placeholder: %j", (state) => {
+    mockCategories.mockReturnValue({ data: undefined, ...state });
+    const { container } = render(<DocumentDropzone onUpload={jest.fn()} capabilities={ownerCapabilities} />);
+    selectFile(container, false);
+    expect(screen.getByRole("status", { name: "카테고리 불러오는 중" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("카테고리")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "문서 업로드" })).toBeDisabled();
+  });
+
+  it("shows a successful empty category load", () => {
+    mockCategories.mockReturnValue({ data: [], isSuccess: true });
+    const { container } = render(<DocumentDropzone onUpload={jest.fn()} capabilities={ownerCapabilities} />);
+    selectFile(container, false);
+    expect(screen.getByText("업로드하려면 먼저 파일 카테고리를 등록해 주세요.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "문서 업로드" })).toBeDisabled();
+  });
+
+  it("blocks stale-category submission after a failed load and retries", () => {
+    const refetch = jest.fn();
+    const { container, rerender } = render(<DocumentDropzone onUpload={jest.fn()} capabilities={ownerCapabilities} />);
+    selectFile(container);
+    mockCategories.mockReturnValue({ data: [{ id: "contract", label: "계약서" }], isError: true, refetch });
+    rerender(<DocumentDropzone onUpload={jest.fn()} capabilities={ownerCapabilities} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("불러오지 못했습니다");
+    expect(screen.getByRole("button", { name: "문서 업로드" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it("shows branch-only notice and sends branch for non-owners", async () => {

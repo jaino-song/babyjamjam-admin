@@ -138,7 +138,7 @@ describe("DocumentController (Integration)", () => {
         app.useGlobalFilters(
             new ServiceRecordSentryExceptionFilter(app.get(HttpAdapterHost)),
         );
-        await app.init();
+        await app.listen(0, "127.0.0.1");
 
         documentService = moduleFixture.get(DocumentService);
         documentCategoryService = moduleFixture.get(DocumentCategoryService);

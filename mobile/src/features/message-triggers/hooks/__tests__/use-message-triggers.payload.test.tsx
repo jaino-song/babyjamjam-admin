@@ -117,7 +117,7 @@ describe("useResendMessageTriggerJob", () => {
     jest.clearAllMocks();
   });
 
-  it("sends the bare job id, returns the response data and refetches upcoming and history", async () => {
+  it.each([undefined, 7])("sends the bare job id and refetches upcoming, history and optional client %s", async clientId => {
     const response = { id: JOB_UUID, status: "needs_setup", reason: "연락처가 연결되지 않았어요." };
     messageTriggersApi.resendJob.mockResolvedValue({ data: response });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -126,7 +126,7 @@ describe("useResendMessageTriggerJob", () => {
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
 
-    const { result } = renderHook(() => useResendMessageTriggerJob(), { wrapper });
+    const { result } = renderHook(() => useResendMessageTriggerJob(clientId), { wrapper });
 
     let returned: unknown;
     await act(async () => {
@@ -138,6 +138,10 @@ describe("useResendMessageTriggerJob", () => {
     expect(returned).toEqual(response);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.history() });
+    expect(invalidate).toHaveBeenCalledTimes(clientId === undefined ? 2 : 3);
+    if (clientId !== undefined) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["messages", "logs", "client", clientId] });
+    }
   });
 
   it("does not refetch when the request is rejected", async () => {

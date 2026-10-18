@@ -14,6 +14,8 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
   useRejectScheduleChange: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+    useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }),
+    useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useClientMessageHistory: () => ({ items: [], refetch: jest.fn() }),
   useClientUpcomingMessageTriggerJobs: () => ({ items: [], refetch: jest.fn() }),
 }));
