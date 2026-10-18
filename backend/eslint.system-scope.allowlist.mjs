@@ -64,4 +64,13 @@ export const systemScopeImportAllowlist = [
     // replacement, snapshot) therefore runs in system scope on every trigger; it
     // touches no branch-owned data.
     "infrastructure/database/repositories/sb.holiday-sync.repository.ts",
+    // SbEformsignBackupExportRepository serves the machine backup export (BJJ-454). A snapshot is
+    // company-wide by definition: it must see every eformsign_doc row, including inactive-branch
+    // and unassigned (branch NULL) documents, and the caller is a machine principal with no
+    // branch, so a branch-scoped read would silently drop rows from the backup inventory. Only the
+    // snapshot read and the exact-artifact read use system scope; both are read-only on
+    // eformsign_doc / eformsign_doc_file, never select detail_payload or customer name/phone
+    // columns, and select `content` only for the single artifact being served. The only writes in
+    // the file go to the export's own snapshot/candidate tables, which are not tenant models.
+    "infrastructure/database/repositories/sb.eformsign-backup-export.repository.ts",
 ];
