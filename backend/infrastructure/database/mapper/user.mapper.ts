@@ -12,7 +12,6 @@ type UserRow = {
     emailVerified: boolean;
     emailVerifiedAt: Date | null;
     authProvider: string;
-    smsAutomationEnabled?: boolean;
 };
 
 export class UserMapper {
@@ -29,7 +28,6 @@ export class UserMapper {
             row.emailVerified,
             row.emailVerifiedAt,
             (row.authProvider || 'kakao') as AuthProvider,
-            row.smsAutomationEnabled ?? true,
         );
     }
 

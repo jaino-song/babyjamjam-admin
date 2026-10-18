@@ -75,7 +75,6 @@ export class ClientController {
             areaId: dto.areaId ?? null,
             suppressGreetingSms: dto.suppressGreetingSms,
             applyMessageAutomation: dto.applyMessageAutomation,
-            smsAutomationEnabled: dto.smsAutomationEnabled,
             reuseExistingClient: dto.reuseExistingClient,
             source: dto.source,
         });
@@ -186,7 +185,6 @@ export class ClientController {
             breastPump: dto.breastPump,
             areaId: dto.areaId,
             expectedEndDate: dto.expectedEndDate,
-            smsAutomationEnabled: dto.smsAutomationEnabled,
         });
     }
 

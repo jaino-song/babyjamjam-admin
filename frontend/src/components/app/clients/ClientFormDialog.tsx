@@ -502,7 +502,6 @@ function ClientFormContent({
         breastPump: false,
         serviceStatus: "pre_booking",
         applyMessageAutomation: true,
-        smsAutomationEnabled: true,
         areaId: null,
     });
 
@@ -928,7 +927,6 @@ function ClientFormContent({
                     breastPump: client.breastPump,
                     serviceStatus: client.serviceStatus || "pre_booking",
                     applyMessageAutomation: true,
-                    smsAutomationEnabled: client.smsAutomationEnabled ?? true,
                     areaId: client.areaId ?? null,
                 };
                 nextPricesManuallyEdited = Boolean(client.fullPrice || client.grant || client.actualPrice);
@@ -956,7 +954,6 @@ function ClientFormContent({
                     breastPump: false,
                     serviceStatus: "pre_booking",
                     applyMessageAutomation: true,
-                    smsAutomationEnabled: true,
                     areaId: null,
                     ...Object.fromEntries(
                         Object.entries(prefillRef.current ?? {}).filter(([, value]) => value !== undefined),
@@ -1055,15 +1052,6 @@ function ClientFormContent({
         && initializedEditClientId === client.id
         && !hasUserEditedSinceOpen,
     );
-
-    // Create persists the switch as `applyMessageAutomation`; edit changes the stored `smsAutomationEnabled` flag.
-    const smsAutomationChecked = isEditMode
-        ? formData.smsAutomationEnabled !== false
-        : formData.applyMessageAutomation !== false;
-    const toggleSmsAutomation = () => {
-        if (isEditMode) handleChange("smsAutomationEnabled", formData.smsAutomationEnabled === false);
-        else handleChange("applyMessageAutomation", formData.applyMessageAutomation === false);
-    };
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setHasUserEditedSinceOpen(true);
@@ -1453,7 +1441,6 @@ function ClientFormContent({
                     breastPump: formData.breastPump,
                     serviceStatus: "pre_booking",
                     applyMessageAutomation: formData.applyMessageAutomation,
-                    smsAutomationEnabled: formData.applyMessageAutomation,
                     areaId: formData.areaId || null,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
@@ -2038,7 +2025,7 @@ function ClientFormContent({
             >
                 <div className={cn(
                     "grid gap-[calc(12px*var(--glint-ui-scale,1))]",
-                    "lg:grid-cols-3",
+                    isEditMode ? "lg:grid-cols-2" : "lg:grid-cols-3",
                 )}>
                     <FormSwitchRow
                         data-component={`${base}_field-care-center`}
@@ -2054,14 +2041,15 @@ function ClientFormContent({
                         onToggle={() => handleChange("breastPump", !formData.breastPump)}
                         buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                     />
-                    <FormSwitchRow
-                        data-component={`${base}_field-message-automation`}
-                        title={t(locale, "clients.form.message-automation")}
-                        description={t(locale, "clients.form.message-automation-helper")}
-                        checked={smsAutomationChecked}
-                        onToggle={toggleSmsAutomation}
-                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
-                    />
+                    {!isEditMode ? (
+                        <FormSwitchRow
+                            data-component={`${base}_field-message-automation`}
+                            title={t(locale, "clients.form.message-automation")}
+                            checked={formData.applyMessageAutomation !== false}
+                            onToggle={() => handleChange("applyMessageAutomation", formData.applyMessageAutomation === false)}
+                            buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                        />
+                    ) : null}
                 </div>
             </ClientDialogSection>
         </>
@@ -2449,14 +2437,16 @@ function ClientFormContent({
                     onToggle={() => handleChange("breastPump", !formData.breastPump)}
                     buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                 />
-                <FormSwitchRow
-                    data-component={`${base}_message-automation-field`}
-                    size="control"
-                    title={t(locale, "clients.form.message-automation")}
-                    checked={smsAutomationChecked}
-                    onToggle={toggleSmsAutomation}
-                    buttonAriaLabel={t(locale, "clients.form.message-automation")}
-                />
+                {!isEditMode ? (
+                    <FormSwitchRow
+                        data-component={`${base}_message-automation-field`}
+                        size="control"
+                        title={t(locale, "clients.form.message-automation")}
+                        checked={formData.applyMessageAutomation !== false}
+                        onToggle={() => handleChange("applyMessageAutomation", formData.applyMessageAutomation === false)}
+                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                    />
+                ) : null}
             </div>
         </>
     );
