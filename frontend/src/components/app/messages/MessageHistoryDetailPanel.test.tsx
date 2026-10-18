@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { MessageResendBlock } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
 
 import {
@@ -59,12 +60,12 @@ describe("MessageHistoryDetailPanel needs_setup status", () => {
     employeeName: null,
   };
 
-  it("has list-badge metadata so a 설정 필요 row cannot render an empty badge", () => {
-    expect(MESSAGE_HISTORY_STATUS_META.needs_setup.label).toBe("설정 필요");
+  it("has list-badge metadata so a 추가 정보 필요 row cannot render an empty badge", () => {
+    expect(MESSAGE_HISTORY_STATUS_META.needs_setup.label).toBe("추가 정보 필요");
     expect(MESSAGE_HISTORY_STATUS_META.needs_setup.icon).toBeDefined();
   });
 
-  it("renders 설정 필요 in the detail panel instead of throwing", () => {
+  it("renders 추가 정보 필요 in the detail panel instead of throwing", () => {
     const selectedRecord = normalizeMessageHistoryRecord(needsSetupRecord);
 
     render(
@@ -74,11 +75,11 @@ describe("MessageHistoryDetailPanel needs_setup status", () => {
       />,
     );
 
-    expect(screen.getAllByText("설정 필요").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("추가 정보 필요").length).toBeGreaterThan(0);
   });
 });
 
-describe("MessageHistoryDetailPanel 설정 필요 reason and 재발송 (BJJ-444)", () => {
+describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (BJJ-444)", () => {
   const baseLog: MessageLogRecord = {
     id: 7,
     provider: "aligo_sms",
@@ -130,7 +131,7 @@ describe("MessageHistoryDetailPanel 설정 필요 reason and 재발송 (BJJ-444)
     expect(log.isTriggerJobRow).toBe(false);
   });
 
-  it("shows the amber 설정 필요 사유 row and the 재발송 button for a needs_setup job", () => {
+  it("shows the amber 추가 필요 정보 row and the 재발송 button for a needs_setup job", () => {
     const onRetry = jest.fn();
     const { container } = render(
       <MessageHistoryDetailPanel
@@ -142,7 +143,7 @@ describe("MessageHistoryDetailPanel 설정 필요 reason and 재발송 (BJJ-444)
       />,
     );
 
-    expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     const reason = screen.getByText(normalizeMessageHistoryRecord(needsSetupJobRow).setupReason as string);
     expect(reason).toHaveClass("text-amber-700");
     expect(reason).not.toHaveClass("text-red-700");
@@ -172,7 +173,102 @@ describe("MessageHistoryDetailPanel 설정 필요 reason and 재발송 (BJJ-444)
     expect(screen.queryByRole("button", { name: "재시도 중" })).not.toBeInTheDocument();
   });
 
-  it("shows no 설정 필요 사유 row for a failed log and keeps the old retry labels", () => {
+  it("carries resendBlock through normalization for a needs_setup job only", () => {
+    const blocked = normalizeMessageHistoryRecord({
+      ...needsSetupJobRow,
+      resendBlockedBy: "recipient",
+      resendBlockedRecipient: { kind: "client", id: 10 },
+    });
+    expect(blocked.resendBlock).toMatchObject({
+      level: "recipient",
+      recipient: { kind: "client", id: 10 },
+      recipientName: "김고객",
+      ruleName: "제공기록지 링크",
+    });
+    expect(normalizeMessageHistoryRecord(needsSetupJobRow).resendBlock).toBeUndefined();
+    expect(
+      normalizeMessageHistoryRecord({ ...baseLog, resendBlockedBy: "branch" }).resendBlock,
+    ).toBeUndefined();
+  });
+
+  describe("blocked 재발송", () => {
+    const recipientBlock: MessageResendBlock = {
+      level: "recipient",
+      recipient: { kind: "employee", id: 7 },
+      recipientName: "송진호",
+      ruleId: "rule-1",
+      ruleName: "제공기록지 링크",
+    };
+
+    beforeAll(() => {
+      if (!("ResizeObserver" in globalThis)) {
+        globalThis.ResizeObserver = class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        } as unknown as typeof ResizeObserver;
+      }
+    });
+
+    it("keeps the button disabled, never retries on click, and shows no always-visible hint", () => {
+      const onRetry = jest.fn();
+      render(
+        <MessageHistoryDetailPanel
+          selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+          dataComponentPrefix={prefix}
+          canRetry
+          onRetry={onRetry}
+          retryBlock={recipientBlock}
+        />,
+      );
+
+      const button = screen.getByRole("button", { name: "재발송" });
+      expect(button).toBeDisabled();
+      expect(button).not.toHaveAttribute("data-disabled-reason");
+      fireEvent.click(button);
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(screen.queryByText("자동 문자가 꺼져 있어요")).not.toBeInTheDocument();
+    });
+
+    it("explains the block and links to where it is turned on once the wrapper is focused", async () => {
+      render(
+        <MessageHistoryDetailPanel
+          selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+          dataComponentPrefix={prefix}
+          canRetry
+          onRetry={jest.fn()}
+          retryBlock={recipientBlock}
+        />,
+      );
+
+      const wrapper = screen.getByRole("button", { name: "재발송" }).closest('[data-slot="hover-card-trigger"]');
+      expect(wrapper).not.toBeNull();
+      fireEvent.focus(wrapper as HTMLElement);
+
+      expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+      const card = document.querySelector(`[data-component="${prefix}_detail-retry_blocked-hover-card"]`);
+      expect(card).not.toBeNull();
+      expect(card).toHaveTextContent("송진호 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.");
+      expect(screen.getByRole("link", { name: "관리사 정보에서 켜기 →" })).toHaveAttribute("href", "/employees");
+    });
+
+    it("renders a plain enabled button, with no hover card wrapper, when nothing blocks the resend", () => {
+      render(
+        <MessageHistoryDetailPanel
+          selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+          dataComponentPrefix={prefix}
+          canRetry
+          onRetry={jest.fn()}
+        />,
+      );
+
+      const button = screen.getByRole("button", { name: "재발송" });
+      expect(button).toBeEnabled();
+      expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
+    });
+  });
+
+  it("shows no 추가 필요 정보 row for a failed log and keeps the old retry labels", () => {
     const failed = normalizeMessageHistoryRecord(baseLog);
     const { rerender } = render(
       <MessageHistoryDetailPanel
@@ -183,7 +279,7 @@ describe("MessageHistoryDetailPanel 설정 필요 reason and 재발송 (BJJ-444)
       />,
     );
 
-    expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
     expect(screen.getByText("실패 사유")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
 
@@ -208,7 +304,7 @@ describe("MessageHistoryDetailPanel 설정 필요 reason and 재발송 (BJJ-444)
       />,
     );
 
-    expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
   });
 });

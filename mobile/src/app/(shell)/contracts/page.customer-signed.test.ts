@@ -418,10 +418,10 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
   });
 });
 
-describe("contract message-history status helpers (설정 필요)", () => {
-  it("labels and tones a needs_setup message as 설정 필요 in the warning tone, never as 완료", () => {
+describe("contract message-history status helpers (추가 정보 필요)", () => {
+  it("labels and tones a needs_setup message as 추가 정보 필요 in the warning tone, never as 완료", () => {
     expect(helpers.notificationStatusLabel("needs_setup")).toBe(MESSAGE_HISTORY_STATUS_LABELS.needs_setup);
-    expect(helpers.notificationStatusLabel("needs_setup")).toBe("설정 필요");
+    expect(helpers.notificationStatusLabel("needs_setup")).toBe("추가 정보 필요");
     expect(helpers.notificationStatusTone("needs_setup")).toBe("orange");
   });
 
