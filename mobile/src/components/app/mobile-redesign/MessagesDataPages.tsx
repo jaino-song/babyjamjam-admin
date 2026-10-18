@@ -18,7 +18,6 @@ import {
   MESSAGE_HISTORY_STATUS_LABELS,
   getMessageHistoryDetailStatusLabel,
   MESSAGE_JOB_CANCEL_COPY,
-  MESSAGE_JOB_RESEND_BLOCKED_COPY,
   MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
@@ -925,9 +924,7 @@ export function MessagesHistoryPage() {
   const canResendSelectedJob = canManageBranchMessages && getResendableJobId(selectedRecord) !== null;
   // The server refuses a resend while a safeguard level is off; say so up front
   // instead of letting the admin hit the 409.
-  const resendDisabledReason = canResendSelectedJob && normalizedSelectedRecord?.resendBlockedBy
-    ? MESSAGE_JOB_RESEND_BLOCKED_COPY[normalizedSelectedRecord.resendBlockedBy]
-    : undefined;
+  const resendBlock = canResendSelectedJob ? normalizedSelectedRecord?.resendBlock : undefined;
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
   const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
 
@@ -1153,7 +1150,7 @@ export function MessagesHistoryPage() {
                       canRetry={canRetrySelectedRecord || canResendSelectedJob}
                       isRetrying={retryMutation.isPending || resendMutation.isPending}
                       retryPendingLabel={canResendSelectedJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
-                      retryDisabledReason={resendDisabledReason}
+                      retryBlock={resendBlock}
                       onRetry={handleRequestRetry}
                     />
                     {selectedCancelReason ? (

@@ -18,6 +18,27 @@ const baseView: ClientMessageHistoryDetailView = {
   failureReason: null,
 };
 
+// jsdom lacks PointerEvent (the touch tap needs pointerType) and ResizeObserver (Radix Popper).
+beforeAll(() => {
+  if (!("PointerEvent" in window)) {
+    class PointerEventPolyfill extends MouseEvent {
+      pointerType: string;
+      constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+        super(type, init);
+        this.pointerType = init.pointerType ?? "";
+      }
+    }
+    Object.defineProperty(window, "PointerEvent", { value: PointerEventPolyfill, configurable: true });
+  }
+  if (!("ResizeObserver" in globalThis)) {
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
+});
+
 function renderDetail(
   view: Partial<ClientMessageHistoryDetailView>,
   props: Partial<Parameters<typeof ClientMessageHistoryDetail>[0]> = {},
@@ -62,16 +83,36 @@ describe("ClientMessageHistoryDetail", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("disables the button and carries the reason when retryDisabledReason is set", () => {
+  it("disables the button and wraps it in a tap-to-open card when retryBlock is set", () => {
     const onRetry = jest.fn();
-    renderDetail({}, { canRetry: true, onRetry, retryDisabledReason: "사유" });
+    renderDetail({}, {
+      canRetry: true,
+      onRetry,
+      retryBlock: {
+        level: "branch",
+        recipient: null,
+        recipientName: null,
+        ruleId: null,
+        ruleName: null,
+      },
+    });
 
     const button = screen.getByRole("button", { name: "재발송" });
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("data-disabled-reason", "사유");
+    expect(button).not.toHaveAttribute("data-disabled-reason");
     fireEvent.click(button);
     expect(onRetry).not.toHaveBeenCalled();
-    expect(screen.queryByText("사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("지점 자동 전송이 꺼져 있어요")).not.toBeInTheDocument();
+
+    const trigger = button.closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+    expect(trigger).not.toBeNull();
+    fireEvent.pointerDown(trigger, { pointerType: "touch" });
+    fireEvent.pointerUp(trigger, { pointerType: "touch" });
+
+    expect(screen.getByText("지점 자동 전송이 꺼져 있어요")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "자동화 설정 열기 →" }))
+      .toHaveAttribute("href", "/messages/settings?item=trigger-dispatch");
+    expect(document.querySelector('[data-component="test_detail_retry-blocked-hover-card"]')).not.toBeNull();
   });
 
   it("hides the button when the caller does not allow a retry, even with a handler", () => {

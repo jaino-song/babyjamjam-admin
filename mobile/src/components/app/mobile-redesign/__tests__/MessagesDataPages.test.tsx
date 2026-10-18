@@ -1,8 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   MESSAGE_JOB_CANCEL_COPY,
-  MESSAGE_JOB_RESEND_BLOCKED_COPY,
   MESSAGE_JOB_RESEND_COPY,
   createProblemDetails,
 } from "@babyjamjam/shared";
@@ -16,6 +15,27 @@ import {
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import { toast } from "@/hooks/use-toast";
 import { MessagesHistoryPage } from "../MessagesDataPages";
+
+// jsdom lacks PointerEvent (the touch tap needs pointerType) and ResizeObserver (Radix Popper).
+beforeAll(() => {
+  if (!("PointerEvent" in window)) {
+    class PointerEventPolyfill extends MouseEvent {
+      pointerType: string;
+      constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+        super(type, init);
+        this.pointerType = init.pointerType ?? "";
+      }
+    }
+    Object.defineProperty(window, "PointerEvent", { value: PointerEventPolyfill, configurable: true });
+  }
+  if (!("ResizeObserver" in globalThis)) {
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
+});
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageHistory: jest.fn(),
@@ -1026,29 +1046,53 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
     });
 
-    it.each(["rule", "recipient", "branch"] as const)(
-      "disables the 재발송 button with the %s reason and never resends when the safeguard blocks it",
-      async (level) => {
+    it.each([
+      { level: "rule", extra: {}, title: "자동화 규칙이 꺼져 있어요", linkName: "규칙 보기 →", href: "/messages/automation?item=rule-1" },
+      {
+        level: "recipient",
+        extra: { resendBlockedRecipient: { kind: "client", id: 10 } },
+        title: "자동 문자가 꺼져 있어요",
+        linkName: "고객 정보에서 켜기 →",
+        href: "/clients?id=10",
+      },
+      {
+        level: "recipient",
+        extra: { resendBlockedRecipient: { kind: "user", id: "user-9" } },
+        title: "자동 문자가 꺼져 있어요",
+        linkName: "계정 관리에서 켜기 →",
+        href: "/system-admin?section=accounts&item=user-9",
+      },
+      { level: "branch", extra: {}, title: "지점 자동 전송이 꺼져 있어요", linkName: "자동화 설정 열기 →", href: "/messages/settings?item=trigger-dispatch" },
+    ] as const)(
+      "disables the 재발송 button, opens a card with a link on tap, and never resends for a $level block ($linkName)",
+      async ({ level, extra, title, linkName, href }) => {
         const user = userEvent.setup();
         const mutateAsync = jest.fn();
         mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
-        mockJobHistory({ ...needsSetupJobRecord, resendBlockedBy: level });
+        mockJobHistory({ ...needsSetupJobRecord, ruleId: "rule-1", ruleName: "서비스 안내 규칙", resendBlockedBy: level, ...extra });
         render(<MessagesHistoryPage />);
 
         await openJobDetail(user);
 
         const button = screen.getByRole("button", { name: "재발송" });
         expect(button).toBeDisabled();
-        expect(button).toHaveAttribute("data-disabled-reason", MESSAGE_JOB_RESEND_BLOCKED_COPY[level]);
-        expect(screen.queryByText(MESSAGE_JOB_RESEND_BLOCKED_COPY[level])).not.toBeInTheDocument();
+        expect(screen.queryByText(title)).not.toBeInTheDocument();
 
         await user.click(button);
         expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
         expect(mutateAsync).not.toHaveBeenCalled();
+
+        // A touch tap on the wrapper around the disabled button opens the card.
+        const trigger = button.closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+        fireEvent.pointerDown(trigger, { pointerType: "touch" });
+        fireEvent.pointerUp(trigger, { pointerType: "touch" });
+
+        expect(await screen.findByText(title)).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
       },
     );
 
-    it("keeps the 재발송 button enabled with no reason when the safeguard would pass", async () => {
+    it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", async () => {
       const user = userEvent.setup();
       mockJobHistory({ ...needsSetupJobRecord, resendBlockedBy: null });
       render(<MessagesHistoryPage />);
@@ -1057,7 +1101,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
       const button = screen.getByRole("button", { name: "재발송" });
       expect(button).toBeEnabled();
-      expect(button).not.toHaveAttribute("data-disabled-reason");
+      expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
     });
 
     it("shows no 재발송 button to a plain branch user", async () => {
