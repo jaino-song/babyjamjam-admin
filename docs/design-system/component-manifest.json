@@ -1688,6 +1688,14 @@
     ],
     "mobile": [
       {
+        "name": "OfflineNotice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/OfflineNotice",
+        "file": "mobile/src/components/app/ui/OfflineNotice.tsx",
+        "exports": ["OfflineNotice"],
+        "requiredFor": ["mobile shell offline connection status"]
+      },
+      {
         "name": "Alert",
         "layer": "atom",
         "import": "@/components/ui/alert",

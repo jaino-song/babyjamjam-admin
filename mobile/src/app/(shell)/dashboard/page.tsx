@@ -232,6 +232,8 @@ export default function DashboardPage() {
     notificationLogs: detailNotificationLogs,
     hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
+    isPaused: isNotificationLogsPaused,
+    hasData: notificationLogsHasData,
     isError: isNotificationLogsError,
     isFetching: isNotificationLogsFetching,
     refetch: refetchNotificationLogs,
@@ -527,7 +529,7 @@ export default function DashboardPage() {
               activeTab={detailTab}
               notificationLogs={detailNotificationLogs}
               hasMoreNotificationLogs={hasMoreNotificationLogs}
-              isNotificationLogsLoading={isNotificationLogsLoading}
+          isNotificationLogsLoading={isNotificationLogsLoading || (isNotificationLogsPaused && !notificationLogsHasData)}
               isNotificationLogsError={isNotificationLogsError}
               isNotificationLogsRetrying={isNotificationLogsFetching}
               onRetryNotificationLogs={() => {
