@@ -96,7 +96,7 @@ export class SmsRetryService {
         @Optional()
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
         private readonly jobRepository?: IMessageTriggerJobRepository,
-        @Optional()
+        // Required in production (no @Optional): the safeguard must never fail open.
         private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
     ) {}
 

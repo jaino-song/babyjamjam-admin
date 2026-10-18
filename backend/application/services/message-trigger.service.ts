@@ -622,7 +622,9 @@ export class MessageTriggerService {
         @Optional()
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository?: IClientRepository,
-        @Optional() private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
+        // Required in production: Nest must refuse to boot without it so the SMS
+        // safeguard can never fail open. Optional only for constructor-built tests.
+        private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
