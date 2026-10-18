@@ -22,6 +22,7 @@ const mockResendJob = jest.fn();
 const mockUseResendJob = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockResendJob, isPending: false }));
 const mockUseRetryHistory = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockRetryHistory, isPending: false }));
 let mockMessageBranchRole = "manager";
+let mockMessageRole = "user";
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useRetryMessageHistory: (...args: unknown[]) => mockUseRetryHistory(...args),
   useResendMessageTriggerJob: (...args: unknown[]) => mockUseResendJob(...args),
@@ -46,6 +47,15 @@ describe("client message lookup detail labels", () => {
 });
 
 describe("customer message retry", () => {
+  const originalResizeObserver = global.ResizeObserver;
+  beforeAll(() => {
+    global.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  });
+  afterAll(() => { global.ResizeObserver = originalResizeObserver; });
   const row: ClientNotificationLogRecord = {
     id: 901, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "failed",
     receiver: "01012345678", messageBody: "내용", recipientName: "고객", clientId: 7,
@@ -53,10 +63,11 @@ describe("customer message retry", () => {
   };
   beforeEach(() => {
     mockMessageBranchRole = "manager";
+    mockMessageRole = "user";
     mockRetryHistory.mockReset().mockResolvedValue({ status: "sent" });
     mockResendJob.mockReset().mockResolvedValue({ status: "sent" });
   });
-  afterEach(() => { mockMessageBranchRole = "manager"; });
+  afterEach(() => { mockMessageBranchRole = "manager"; mockMessageRole = "user"; });
   async function openRecord(status = "failed", overrides: Partial<ClientNotificationLogRecord> = {}) {
     render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
       client={client} activeTab="message" notificationLogs={[{ ...row, status, ...overrides }]}
@@ -84,6 +95,21 @@ describe("customer message retry", () => {
     expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
   });
   const jobRow = { id: "job:job-123", provider: "message_job", triggerJobId: "job-123" };
+  it("disables a branch-blocked resend and explains why without opening confirmation", async () => {
+    await openRecord("needs_setup", { ...jobRow, resendBlockedBy: "branch" });
+    const user = userEvent.setup();
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const trigger = retry.closest('[data-slot="hover-card-trigger"]');
+    expect(trigger).not.toBeNull();
+    await user.hover(trigger!);
+    expect(await screen.findByText("지점 자동 전송이 꺼져 있어요")).toBeInTheDocument();
+    expect(screen.getByText("이 지점의 ‘자동 전송 실행’이 꺼져 있어 재발송할 수 없어요.")).toBeInTheDocument();
+    expect(mockResendJob).not.toHaveBeenCalled();
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+  });
   it("confirms a needs_setup job resend with its bare job id and client context", async () => {
     await openRecord("needs_setup", jobRow);
     await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
@@ -95,6 +121,21 @@ describe("customer message retry", () => {
     expect(mockRetryHistory).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "재발송", variant: "success" }));
+  });
+  it.each(["user", "owner"])("shows the blocked account link only to an owner (%s)", async role => {
+    mockMessageRole = role;
+    await openRecord("needs_setup", {
+      ...jobRow,
+      resendBlockedBy: "recipient",
+      resendBlockedRecipient: { kind: "user", id: "account-123" },
+    });
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await userEvent.setup().hover(retry.closest('[data-slot="hover-card-trigger"]')!);
+    expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+    expect(Boolean(screen.queryByRole("link"))).toBe(role === "owner");
+    expect(mockResendJob).not.toHaveBeenCalled();
+    expect(mockRetryHistory).not.toHaveBeenCalled();
   });
   it.each([null, "", "   "])("hides job resend without a usable triggerJobId (%s)", async triggerJobId => {
     await openRecord("needs_setup", { ...jobRow, triggerJobId });
@@ -155,7 +196,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "user", branchRole: mockMessageBranchRole },
+    data: { role: mockMessageRole, branchRole: mockMessageBranchRole },
     isPending: false,
     isLoading: false,
     isFetching: false,

@@ -48,6 +48,9 @@ import {
   getMessageChannelLabel,
   getMessageHistoryTitle,
   getMessageHistoryTimestamp,
+  type MessageResendBlock,
+  type MessageResendBlockedBy,
+  type MessageResendBlockedRecipient,
 } from "@babyjamjam/shared";
 import {
   DropdownMenu,
@@ -509,6 +512,9 @@ export interface ClientNotificationLogRecord {
   lastAttemptAt?: string | null;
   updatedAt?: string | null;
   ruleName: string | null;
+  ruleId?: string | null;
+  resendBlockedBy?: MessageResendBlockedBy | null;
+  resendBlockedRecipient?: MessageResendBlockedRecipient | null;
   variables?: Record<string, unknown> | null;
 }
 
@@ -751,6 +757,7 @@ export function ClientDetailContent({
     serviceRecordsQuery.isLoading || (serviceRecordsQuery.isPaused && serviceRecordsQuery.data === undefined);
   const authUserQuery = useGetAuthUser();
   const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
+  const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
   const retryMessageMutation = useRetryMessageHistory(client.id);
   const resendMessageMutation = useResendMessageTriggerJob(client.id);
   const isRetryingMessage = retryMessageMutation.isPending || resendMessageMutation.isPending;
@@ -759,10 +766,22 @@ export function ClientDetailContent({
   const canRetryMessage = canManageBranchFeatures && (
     canRetryFailedHistory(selectedLog, true) || getResendableJobId(selectedLog) !== null
   );
+  // Mirror normalizeMessageHistoryPresentation's block for resendable jobs.
+  const retryBlock: MessageResendBlock | undefined = getResendableJobId(selectedLog) !== null
+    && selectedLog?.resendBlockedBy
+    ? {
+      level: selectedLog.resendBlockedBy,
+      recipient: selectedLog.resendBlockedRecipient ?? null,
+      recipientName: selectedLog.recipientName?.trim() || null,
+      ruleId: selectedLog.ruleId ?? null,
+      ruleName: selectedLog.ruleName,
+    }
+    : undefined;
   const handleConfirmMessageRetry = async () => {
     if (!retryLog || !canManageBranchFeatures || isRetryingMessage) return;
     const jobId = getResendableJobId(retryLog);
     if (jobId !== null) {
+      if (retryLog.resendBlockedBy) return;
       try {
         const response = await resendMessageMutation.mutateAsync(jobId);
         toast({
@@ -1692,7 +1711,9 @@ export function ClientDetailContent({
             onBack={() => setSelectedEntry(null)}
             canRetry={canRetryMessage}
             isRetrying={isRetryingMessage}
-            onRetry={() => { if (selectedLog && canRetryMessage) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
+            retryBlock={retryBlock}
+            canOpenOwnerAdmin={canOpenOwnerAdmin}
+            onRetry={() => { if (selectedLog && canRetryMessage && !retryBlock) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
           />
           </>
         ) : (
