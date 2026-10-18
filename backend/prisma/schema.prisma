@@ -1760,3 +1760,63 @@ model eformsign_backup_collection_page {
 
   @@unique([runId, documentType, pass, ordinal], map: "uq_eformsign_backup_collection_page_run_scan_ordinal")
 }
+
+// BJJ-454 machine export. Credentials, fixed snapshots and their candidate rows
+// are export-owned evidence; they carry no branchId and are not tenant models.
+model eformsign_backup_export_credential {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  principalId String    @map("principal_id") @db.VarChar(64)
+  label       String    @db.VarChar(80)
+  tokenHash   String    @map("token_hash") @db.Char(64)
+  companyIds  String[]  @map("company_ids")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  @@unique([tokenHash], map: "uq_eformsign_backup_export_credential_token_hash")
+  @@index([principalId], map: "idx_eformsign_backup_export_credential_principal")
+}
+
+model eformsign_backup_export_snapshot {
+  id             String                              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  principalId    String                              @map("principal_id") @db.VarChar(64)
+  companyId      String                              @map("company_id") @db.VarChar(256)
+  scopeRevision  String                              @map("scope_revision") @db.VarChar(64)
+  policyRevision String                              @map("policy_revision") @db.VarChar(64)
+  idempotencyKey String                              @map("idempotency_key") @db.VarChar(128)
+  requestHash    String                              @map("request_hash") @db.Char(64)
+  status         String                              @db.VarChar(16)
+  counts         Json?                               @db.JsonB
+  failureCode    String?                             @map("failure_code") @db.VarChar(40)
+  createdAt      DateTime                            @default(now()) @map("created_at") @db.Timestamptz(6)
+  readyAt        DateTime?                           @map("ready_at") @db.Timestamptz(6)
+  expiresAt      DateTime?                           @map("expires_at") @db.Timestamptz(6)
+  candidates     eformsign_backup_export_candidate[]
+
+  @@unique([principalId, idempotencyKey], map: "uq_eformsign_backup_export_snapshot_principal_idempotency")
+}
+
+// No relation to eformsign_doc: a snapshot stays immutable after the document is
+// deleted or purged, and that absence is what the artifact route reports as 410.
+model eformsign_backup_export_candidate {
+  snapshotId                 String                           @map("snapshot_id") @db.Uuid
+  ordinal                    Int
+  documentId                 String                           @map("document_id")
+  classification             String                           @db.VarChar(24)
+  reasons                    String[]
+  statusType                 String                           @map("status_type")
+  documentKind               String?                          @map("document_kind") @db.VarChar(32)
+  metadataRevision           String                           @map("metadata_revision") @db.Char(64)
+  documentSha256             String?                          @map("document_sha256") @db.Char(64)
+  documentByteSize           Int?                             @map("document_byte_size")
+  documentArtifactIdentity   String?                          @map("document_artifact_identity") @db.Char(64)
+  auditTrailSha256           String?                          @map("audit_trail_sha256") @db.Char(64)
+  auditTrailByteSize         Int?                             @map("audit_trail_byte_size")
+  auditTrailArtifactIdentity String?                          @map("audit_trail_artifact_identity") @db.Char(64)
+  snapshot                   eformsign_backup_export_snapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade, map: "eformsign_backup_export_candidate_snapshot_id_fkey")
+
+  @@id([snapshotId, ordinal], map: "eformsign_backup_export_candidate_pkey")
+  @@unique([snapshotId, documentId], map: "uq_eformsign_backup_export_candidate_snapshot_document")
+  @@index([snapshotId, documentArtifactIdentity], map: "idx_eformsign_backup_export_candidate_document_artifact")
+  @@index([snapshotId, auditTrailArtifactIdentity], map: "idx_eformsign_backup_export_candidate_audit_trail_artifact")
+}
