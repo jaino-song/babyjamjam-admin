@@ -93,6 +93,7 @@ interface FormData {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    smsAutomationEnabled: boolean;
     birthday: string;
 }
 
@@ -102,6 +103,7 @@ const initialFormData: FormData = {
     phone: "",
     grade: DEFAULT_EMPLOYEE_GRADE,
     openToNextWork: true,
+    smsAutomationEnabled: true,
     birthday: "",
 };
 
@@ -110,6 +112,7 @@ function areFormDataEqual(left: FormData, right: FormData): boolean {
         && left.phone === right.phone
         && left.grade === right.grade
         && left.openToNextWork === right.openToNextWork
+        && left.smsAutomationEnabled === right.smsAutomationEnabled
         && left.birthday === right.birthday
         && left.workArea.length === right.workArea.length
         && left.workArea.every((area, index) => area === right.workArea[index]);
@@ -533,6 +536,7 @@ function EmployeeFormContent({
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
+                smsAutomationEnabled: employee.smsAutomationEnabled ?? true,
                 birthday: normalizeBirthdayIsoDate(employee.birthday) ?? employee.birthday ?? "",
             }
             : {
@@ -700,6 +704,7 @@ function EmployeeFormContent({
                     phone: normalizeKoreanPhoneDigits(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    smsAutomationEnabled: formData.smsAutomationEnabled,
                     birthday: formData.birthday,
                 };
 
@@ -719,6 +724,7 @@ function EmployeeFormContent({
                     phone: normalizeKoreanPhoneDigits(formData.phone),
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    smsAutomationEnabled: formData.smsAutomationEnabled,
                     birthday: formData.birthday,
                 };
 
@@ -1005,6 +1011,14 @@ function EmployeeFormContent({
                     />
                 </FormField>
 
+                <FormSwitchRow
+                    data-component="desktop_employees_form-dialog_section-work_field-sms-automation"
+                    title={t(locale, "employees.form.message-automation")}
+                    description={t(locale, "employees.form.message-automation-helper")}
+                    checked={formData.smsAutomationEnabled}
+                    onToggle={() => handleChange("smsAutomationEnabled", !formData.smsAutomationEnabled)}
+                    buttonAriaLabel={t(locale, "employees.form.message-automation")}
+                />
             </FormSection>
         </>
     );
@@ -1157,6 +1171,16 @@ function EmployeeFormContent({
                     thumbDataComponent="desktop_employees_form-panel_open-status-switch-thumb"
                 />
             </FormField>
+
+            <FormSwitchRow
+                data-component="desktop_employees_form-panel_sms-automation-field"
+                className="min-h-[calc(38px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))]"
+                title={t(locale, "employees.form.message-automation")}
+                description={t(locale, "employees.form.message-automation-helper")}
+                checked={formData.smsAutomationEnabled}
+                onToggle={() => handleChange("smsAutomationEnabled", !formData.smsAutomationEnabled)}
+                buttonAriaLabel={t(locale, "employees.form.message-automation")}
+            />
         </>
     );
 

@@ -1,5 +1,10 @@
 import { ClientAutomationSourceReader, type ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
 import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
+import {
+    SmsAutomationSafeguardService,
+    smsAutomationSafeguardReason,
+    type SmsAutomationSafeguardDecision,
+} from "./sms-automation-safeguard.service";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
 import {
@@ -140,6 +145,11 @@ interface DispatchClaimedJobOptions {
      * leave the job `pending`.
      */
     resendFromNeedsSetup?: boolean;
+    /**
+     * An admin pressed resend for this one dispatch: the SMS automation
+     * safeguard is skipped. Never set by agent or scheduler paths.
+     */
+    adminInitiated?: boolean;
 }
 
 export interface ResendNeedsSetupJobResult {
@@ -612,6 +622,9 @@ export class MessageTriggerService {
         @Optional()
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository?: IClientRepository,
+        // Required in production: Nest must refuse to boot without it so the SMS
+        // safeguard can never fail open. Optional only for constructor-built tests.
+        private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
@@ -1801,7 +1814,7 @@ export class MessageTriggerService {
             job.branchId ? [job.branchId] : [],
         );
         const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope([job.id]);
-        const claimed = await this.dispatchClaimedJob(job, sentIds, approvedBranchIds, { resendFromNeedsSetup: true });
+        const claimed = await this.dispatchClaimedJob(job, sentIds, approvedBranchIds, { resendFromNeedsSetup: true, adminInitiated: true });
         if (!claimed) {
             throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESEND_JOB_CONFLICT_MESSAGE });
         }
@@ -2950,7 +2963,26 @@ export class MessageTriggerService {
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
+        // Admin 즉시 발송 and an admin pressing resend are the only sends that
+        // bypass the safeguard; rule jobs, retries and AI-agent SMS never do.
+        const skipSafeguard = options.adminInitiated === true
+            || !this.smsAutomationSafeguard
+            || this.smsAutomationSafeguard.isAdminDirectSend(job);
+        let safeguardBlock: Extract<SmsAutomationSafeguardDecision, { allowed: false }> | null = null;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
+            if (!skipSafeguard) {
+                const decision = await this.smsAutomationSafeguard!.check(job, transaction);
+                if (!decision.allowed) {
+                    // An ordinary job held only by the branch switch stays
+                    // pending (normalizeBranchOff owns it). Every other block
+                    // cancels the job so it cannot starve the due-job window.
+                    if (automaticJob && decision.level === "branch") return null;
+                    if (await this.cancelPendingForSafeguard(job.id, decision, transaction)) {
+                        safeguardBlock = decision;
+                    }
+                    return null;
+                }
+            }
             if (automaticJob && job.branchId) {
                 if (!(await this.messageAutomationActivationService!.getTriggerDispatchEnabled(job.branchId, transaction))) {
                     return null;
@@ -2969,6 +3001,12 @@ export class MessageTriggerService {
             ? await this.messageAutomationBranchLockService!.runExclusive(job.branchId!, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
+            if (safeguardBlock) {
+                const block: Extract<SmsAutomationSafeguardDecision, { allowed: false }> = safeguardBlock;
+                job.cancel(smsAutomationSafeguardReason(block.level));
+                this.smsAutomationSafeguard!.warnBlocked(`trigger job ${job.id}`, block);
+                return true;
+            }
             return false;
         }
 
@@ -3073,7 +3111,7 @@ export class MessageTriggerService {
                 sendPreparedJob?: unknown;
             }).sendPreparedJob === "function";
         if (!supportsPreparedDelivery) {
-            const authorization = await this.authorizeClaimedJobForDispatch(job);
+            const authorization = await this.authorizeClaimedJobForDispatch(job, undefined, skipSafeguard);
             if (authorization.kind === "lost") {
                 return true;
             }
@@ -3123,7 +3161,7 @@ export class MessageTriggerService {
             return true;
         }
 
-        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation);
+        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation, skipSafeguard);
         if (authorization.kind === "lost") {
             return true;
         }
@@ -3338,6 +3376,7 @@ export class MessageTriggerService {
     private async authorizeClaimedJobForDispatch(
         job: MessageTriggerJobEntity,
         preparation?: SmsTriggerDeliveryPreparation,
+        skipSafeguard = false,
     ): Promise<PreProviderSendFenceResult> {
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
             if (
@@ -3389,6 +3428,12 @@ export class MessageTriggerService {
             if (tokenFence.kind === "lost") {
                 return tokenFence;
             }
+            // Last gate before the irreversible `dispatching` marker, under the
+            // job row lock: a rule, recipient flag or branch switch that flipped
+            // off since the claim cancels the job instead of sending it.
+            const safeguardFence = skipSafeguard || !this.smsAutomationSafeguard
+                ? { kind: "allow" as const }
+                : await this.fenceSmsAutomationSafeguard(job, transaction);
             // Read after the job row lock above: a revoke locks the schedule's
             // jobs and only then writes the token rows, so either it committed
             // first (the revoked token is seen here) or it waits for this
@@ -3397,7 +3442,9 @@ export class MessageTriggerService {
                 job,
                 transaction,
             );
-            const staleFence = sourceFence.kind === "stale"
+            const staleFence = safeguardFence.kind === "stale"
+                ? safeguardFence
+                : sourceFence.kind === "stale"
                 ? sourceFence
                 : revisionFence.kind === "stale"
                     ? revisionFence
@@ -3444,6 +3491,40 @@ export class MessageTriggerService {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
             timeout: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
         });
+    }
+
+    private async fenceSmsAutomationSafeguard(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+    ): Promise<PreProviderSendFenceResult> {
+        const decision = await this.smsAutomationSafeguard!.check(job, transaction);
+        if (decision.allowed) return { kind: "allow" };
+        this.smsAutomationSafeguard!.warnBlocked(`trigger job ${job.id} at dispatch authorization`, decision);
+        return { kind: "stale", reason: smsAutomationSafeguardReason(decision.level) };
+    }
+
+    /**
+     * Cancel a still-pending job the safeguard refuses. The compare-and-set on
+     * `pending` loses harmlessly to a concurrent claim, whose own authorize
+     * transaction re-runs the safeguard. Not a user cancellation.
+     */
+    private async cancelPendingForSafeguard(
+        jobId: string,
+        decision: Extract<SmsAutomationSafeguardDecision, { allowed: false }>,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<boolean> {
+        const result = await (transaction ?? this.prisma).message_trigger_job.updateMany({
+            where: { id: jobId, status: "pending" },
+            data: {
+                status: "canceled",
+                canceledAt: new Date(),
+                cancelReason: smsAutomationSafeguardReason(decision.level),
+                canceledByUser: false,
+                nextAttemptAt: null,
+                claimToken: null,
+            },
+        });
+        return result.count === 1;
     }
 
     private async fenceMessageAutomationParent(

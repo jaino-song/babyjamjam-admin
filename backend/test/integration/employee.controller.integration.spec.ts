@@ -618,6 +618,44 @@ describe("EmployeeController (Integration)", () => {
     // ============================================
     // PATCH /employees - Update
     // ============================================
+    describe("smsAutomationEnabled", () => {
+        const createDto = {
+            name: "Flag Employee",
+            workArea: ["Seoul"],
+            phone: "010-9999-8888",
+            grade: "베스트",
+            openToNextWork: true,
+        };
+
+        it("forwards an explicit flag on create and update", async () => {
+            employeeService.create.mockResolvedValue(createMockEmployee());
+            employeeService.update.mockResolvedValue(createMockEmployee());
+
+            await request(app.getHttpServer()).post("/employees")
+                .send({ ...createDto, smsAutomationEnabled: false }).expect(201);
+            expect(employeeService.create).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.objectContaining({ smsAutomationEnabled: false }),
+            );
+            await request(app.getHttpServer()).patch("/employees").query({ id: "3" })
+                .send({ smsAutomationEnabled: false }).expect(200);
+            expect(employeeService.update).toHaveBeenCalledWith(
+                expect.any(String),
+                3,
+                expect.objectContaining({ smsAutomationEnabled: false }),
+            );
+        });
+
+        it.each(["true", "false", 0, null])("rejects non-boolean %p on create and update", async (value) => {
+            await request(app.getHttpServer()).post("/employees")
+                .send({ ...createDto, smsAutomationEnabled: value }).expect(400);
+            await request(app.getHttpServer()).patch("/employees").query({ id: "3" })
+                .send({ smsAutomationEnabled: value }).expect(400);
+            expect(employeeService.create).not.toHaveBeenCalled();
+            expect(employeeService.update).not.toHaveBeenCalled();
+        });
+    });
+
     describe("PATCH /employees", () => {
         describe("given valid update data", () => {
             it("should update the employee", async () => {

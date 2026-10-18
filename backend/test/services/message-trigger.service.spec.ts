@@ -1,7 +1,7 @@
 import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildClientTemplateVariables, buildMessageRecipeDedupeKey } from "../../application/services/message-trigger-recipes";
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import {
@@ -41,6 +41,7 @@ import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
 
 jest.mock("infrastructure/database/schema-capabilities", () => ({
     hasColumn: jest.fn().mockResolvedValue(true),
@@ -2767,6 +2768,247 @@ describe("MessageTriggerService", () => {
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
     });
 
+    // Send-time SMS automation safeguard: rule + recipient flag + branch switch.
+    interface SafeguardWorld {
+        ruleActive: boolean;
+        /** Per client id; an id absent from the map answers `clientDefault`. */
+        clientFlags: Map<number, boolean>;
+        clientDefault: boolean;
+        employeeEnabled: boolean;
+        phoneClientDisabled: boolean;
+        branchOn: boolean;
+    }
+    const attachSafeguard = (
+        fx: ReturnType<typeof createDispatchService>,
+        overrides: Partial<SafeguardWorld> = {},
+    ) => {
+        const world: SafeguardWorld = {
+            ruleActive: true, clientFlags: new Map(), clientDefault: true, employeeEnabled: true,
+            phoneClientDisabled: false, branchOn: true, ...overrides,
+        };
+        const models = {
+            message_trigger_rule: { findFirst: jest.fn(async () => ({ isActive: world.ruleActive, branchId })) },
+            message_trigger_rule_branch_override: { findFirst: jest.fn(async () => null) },
+            client: {
+                findFirst: jest.fn(async ({ where }: { where: { id?: number; smsAutomationEnabled?: boolean } }) => {
+                    if (where.smsAutomationEnabled === false) return world.phoneClientDisabled ? { id: 1 } : null;
+                    return { smsAutomationEnabled: world.clientFlags.get(where.id ?? -1) ?? world.clientDefault };
+                }),
+            },
+            employee: { findFirst: jest.fn(async () => null) },
+            user: { findMany: jest.fn(async () => []) },
+        };
+        const updateMany = jest.fn(async () => ({ count: 1 }));
+        jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        for (const db of [fx.prisma, fx.transaction] as Array<Record<string, unknown>>) {
+            Object.assign(db, models);
+            db["message_trigger_job"] = { ...(db["message_trigger_job"] as object), updateMany };
+        }
+        fx.messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async () => world.branchOn);
+        const safeguard = new SmsAutomationSafeguardService(
+            fx.prisma as never,
+            fx.messageAutomationActivationService as never,
+        );
+        Object.assign(fx.service, { smsAutomationSafeguard: safeguard });
+        return { world, models, updateMany };
+    };
+    const safeguardCancel = (level: string) => expect.objectContaining({
+        where: { id: expect.any(String), status: "pending" },
+        data: expect.objectContaining({ status: "canceled", cancelReason: `sms_automation_safeguard:${level}`, canceledByUser: false }),
+    });
+
+    describe("SMS automation safeguard at dispatch", () => {
+        const agentJob = (overrides: Parameters<typeof createJob>[0] = {}) => createJob({
+            id: "agent-job", ruleId: `agent-sms:${branchId}`, dedupeKey: "agent-sms:action-1",
+            clientId: null, templateKey: MessageTriggerTemplateKey.INFO, ...overrides,
+        });
+        const adminDirectJob = () => createJob({
+            id: "admin-direct", ruleId: "system:service_end_notice", clientId: 7,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+            dedupeKey: "system:service_end_notice:client:7:manual:3f2b1c9e-0a4d-4b6e-9d11-5c7a8e2f4b10",
+        });
+
+        it("cancels a CLIENT rule job whose client flag is off, before any claim or provider call", async () => {
+            const fx = createDispatchService();
+            const { updateMany } = attachSafeguard(fx, { clientFlags: new Map([[1, false]]) });
+            const job = createJob({ clientId: 1 });
+            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("recipient"));
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toBe("sms_automation_safeguard:recipient");
+        });
+
+        it("cancels the automatic service-record-link job of an employee whose flag is off (incident case)", async () => {
+            const fx = createDispatchService();
+            const { updateMany } = attachSafeguard(fx);
+            fx.prisma.employee_schedule.findFirst.mockResolvedValue({
+                primaryEmployee: { smsAutomationEnabled: false }, secondaryEmployee: null,
+            });
+            const job = createJob({
+                id: "link-auto", ruleId: "system:service_record_link", employeeScheduleId: 10,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey: "system:service_record_link:schedule:10:primary",
+            });
+            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("recipient"));
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("canceled");
+        });
+
+        it("cancels a rule job whose rule was deactivated after the job was created", async () => {
+            const fx = createDispatchService();
+            const { updateMany } = attachSafeguard(fx, { ruleActive: false });
+            const job = createJob();
+            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("rule"));
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("canceled");
+        });
+
+        it("keeps an ordinary job blocked only by the branch switch pending", async () => {
+            const fx = createDispatchService();
+            const { updateMany } = attachSafeguard(fx, { branchOn: false });
+            const job = createJob();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+
+            await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("pending");
+        });
+
+        it("does not send an agent-sms job dispatched now while the branch switch is off, and cancels it", async () => {
+            const fx = createDispatchService();
+            const { updateMany } = attachSafeguard(fx, { branchOn: false });
+            const job = agentJob();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+
+            const result = await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+
+            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("branch"));
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(result.status).toBe("canceled");
+            expect(result.cancelReason).toBe("sms_automation_safeguard:branch");
+        });
+
+        it("blocks an agent-sms job to a phone matching a client whose automation is off", async () => {
+            const fx = createDispatchService();
+            const { updateMany } = attachSafeguard(fx, { phoneClientDisabled: true });
+            const job = agentJob();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+
+            await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+
+            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("recipient"));
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("sends an agent-sms job when branch and recipient allow, without reading its intentionally inactive rule", async () => {
+            const fx = createDispatchService();
+            const { models } = attachSafeguard(fx, { ruleActive: false });
+            const job = agentJob();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+
+            const result = await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+
+            expect(models.message_trigger_rule.findFirst).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledWith(job);
+            expect(result.status).toBe("sent");
+        });
+
+        it("sends an admin direct manual job with every level off, without consulting the safeguard", async () => {
+            const fx = createDispatchService();
+            const { models, updateMany } = attachSafeguard(fx, {
+                ruleActive: false, clientDefault: false, phoneClientDisabled: true, branchOn: false,
+            });
+            const job = adminDirectJob();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+
+            const result = await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+
+            expect(models.message_trigger_rule.findFirst).not.toHaveBeenCalled();
+            expect(models.client.findFirst).not.toHaveBeenCalled();
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledWith(job);
+            expect(result.status).toBe("sent");
+        });
+
+        it("cancels in the authorize transaction when a flag flips off between claim and authorize: no send, no message_log", async () => {
+            const fx = createDispatchService();
+            const { world, updateMany } = attachSafeguard(fx);
+            const job = createJob({ clientId: 1 });
+            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            fx.deliveryService.prepareJob.mockImplementation(async (prepared: MessageTriggerJobEntity) => {
+                prepared.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "synthetic-trigger-prepared";
+                world.clientFlags.set(1, false); // admin turns the client off while the message is prepared
+                return { serializedSnapshot: "synthetic-trigger-prepared", snapshot: { snapshotHash: "synthetic" } };
+            });
+            const statements: string[] = [];
+            fx.transaction.$queryRaw.mockImplementation(async (query: unknown) => {
+                const text = (query as { strings?: readonly string[] }).strings?.join("?") ?? "";
+                if (text.includes("SET status = 'canceled'")) {
+                    statements.push(`cancel:${(query as { values: unknown[] }).values[0]}`);
+                    return [{ id: job.id }];
+                }
+                if (text.includes("SET status = 'dispatching'")) { statements.push("dispatching"); return [{ id: job.id }]; }
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
+            });
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalled();
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(statements).toEqual(["cancel:sms_automation_safeguard:recipient"]);
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toBe("sms_automation_safeguard:recipient");
+        });
+
+        it("does not let recipient-blocked jobs starve an eligible job: blocked ones are canceled, the next tick sends it", async () => {
+            const fx = createDispatchService();
+            const flags = new Map<number, boolean>();
+            const blocked = Array.from({ length: 100 }, (_, index) => {
+                flags.set(index + 1, false);
+                return createJob({
+                    id: `blocked-${index}`, clientId: index + 1,
+                    scheduledFor: new Date(Date.now() - 60_000 - (100 - index) * 1000),
+                });
+            });
+            flags.set(500, true);
+            const eligible = createJob({ id: "eligible", clientId: 500, scheduledFor: new Date(Date.now() - 1000) });
+            attachSafeguard(fx, { clientFlags: flags });
+            const all = [...blocked, eligible];
+            fx.jobRepository.findDuePendingSystemScope.mockImplementation(async (limit: number) =>
+                all.filter((job) => job.status === "pending").slice(0, limit));
+
+            await fx.service.dispatchDueJobs();
+            expect(blocked.every((job) => job.status === "canceled")).toBe(true);
+            expect(eligible.status).toBe("pending");
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+
+            await fx.service.dispatchDueJobs();
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledWith(eligible);
+            expect(eligible.status).toBe("sent");
+        });
+    });
+
     // 규칙 메시지-04 / BJJ-444: manual, one-at-a-time resend of a '설정 필요' job.
     describe("resendNeedsSetupJob", () => {
         const SETUP_REASON = "필수 정보 누락 (name)";
@@ -3412,6 +3654,25 @@ describe("MessageTriggerService", () => {
                 expect(result).toEqual({ id: stuck.id, status: "sent", reason: null });
                 expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
             });
+        });
+
+        it("sends an admin resend although the recipient flag is off, while the scheduler blocks the same kind of job", async () => {
+            const fx = resendFixture();
+            const { updateMany } = attachSafeguard(fx, { clientDefault: false });
+
+            const result = await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
+
+            expect(result).toEqual({ id: fx.job.id, status: "sent", reason: null });
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            expect(updateMany).not.toHaveBeenCalled();
+
+            const scheduled = createJob({ id: "scheduled-same-kind", clientId: 1 });
+            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([scheduled]);
+            await fx.service.dispatchDueJobs();
+
+            expect(updateMany).toHaveBeenCalledWith(safeguardCancel("recipient"));
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            expect(scheduled.status).toBe("canceled");
         });
     });
 
