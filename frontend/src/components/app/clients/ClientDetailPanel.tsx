@@ -1038,6 +1038,8 @@ function ClientMessageDetailSlide({
     dataComponentPrefix,
     messageHistoryDataComponentPrefix,
     canRetry,
+    retryBlock,
+    canOpenOwnerAdmin,
     isRetrying,
     onRetry,
     retryPendingLabel,
@@ -1049,6 +1051,8 @@ function ClientMessageDetailSlide({
     dataComponentPrefix: string;
     messageHistoryDataComponentPrefix: string;
     canRetry: boolean;
+    retryBlock?: MessageHistoryRecord["resendBlock"];
+    canOpenOwnerAdmin: boolean;
     isRetrying: boolean;
     onRetry: () => void;
     retryPendingLabel?: string;
@@ -1093,6 +1097,8 @@ function ClientMessageDetailSlide({
                         <MessageHistoryDetailPanel
                             selectedRecord={selectedRecord}
                             canRetry={canRetry}
+                            retryBlock={retryBlock}
+                            canOpenOwnerAdmin={canOpenOwnerAdmin}
                             isRetrying={isRetrying}
                             onRetry={onRetry}
                             retryPendingLabel={retryPendingLabel}
@@ -1365,12 +1371,16 @@ function ClientDetailPanelBody({
         });
     }, [activeDetailTab, client.name, selectedClientMessageRecord]);
 
-    const canManageMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+    const authUserQuery = useGetAuthUser();
+    const canManageMessages = canManageBranchFromAuthQuery(authUserQuery);
+    const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
     const retryMessageMutation = useRetryMessageHistory(client.id);
     const resendMessageMutation = useResendMessageTriggerJob(client.id);
     const canResendMessage = canResendSetupJob(selectedClientMessageRecord, canManageMessages);
     const canRetryMessage = canRetryFailedHistory(selectedClientMessageRecord, canManageMessages) || canResendMessage;
+    const retryBlock = canResendMessage ? selectedClientMessageDetailRecord?.resendBlock : undefined;
     const handleRetryMessage = async () => {
+        if (retryBlock) return;
         if (!selectedClientMessageRecord || !canRetryMessage || retryMessageMutation.isPending || resendMessageMutation.isPending) return;
         if (canResendMessage && selectedClientMessageRecord.triggerJobId) {
             toast(await resendMessageTriggerJob(resendMessageMutation.mutateAsync, selectedClientMessageRecord.triggerJobId));
@@ -1540,6 +1550,8 @@ function ClientDetailPanelBody({
             dataComponentPrefix={dataComponentPrefix}
             messageHistoryDataComponentPrefix={messageHistoryDataComponentPrefix}
             canRetry={canRetryMessage}
+            retryBlock={retryBlock}
+            canOpenOwnerAdmin={canOpenOwnerAdmin}
             isRetrying={retryMessageMutation.isPending || resendMessageMutation.isPending}
             onRetry={() => void handleRetryMessage()}
             retryPendingLabel={canResendMessage ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
