@@ -26,6 +26,24 @@ const baseline: ClientFormData = {
   areaId: null,
 };
 
+describe("buildClientUpdatePayload sms automation flag", () => {
+  it("treats a missing flag as on and sends nothing when it stays on", () => {
+    expect(
+      buildClientUpdatePayload({ baseline, current: { ...baseline, smsAutomationEnabled: true } }),
+    ).toEqual({});
+  });
+
+  it("sends only smsAutomationEnabled when it is switched off, never applyMessageAutomation", () => {
+    const payload = buildClientUpdatePayload({
+      baseline: { ...baseline, smsAutomationEnabled: true },
+      current: { ...baseline, smsAutomationEnabled: false },
+    });
+
+    expect(payload).toEqual({ smsAutomationEnabled: false });
+    expect(payload).not.toHaveProperty("applyMessageAutomation");
+  });
+});
+
 describe("buildClientUpdatePayload", () => {
   it("sends nothing for an unchanged form", () => {
     expect(buildClientUpdatePayload({ baseline, current: { ...baseline } })).toEqual({});

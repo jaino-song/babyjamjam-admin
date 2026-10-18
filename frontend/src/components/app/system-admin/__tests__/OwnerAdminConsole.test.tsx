@@ -11,6 +11,11 @@ jest.mock("@/components/app/settings/NotificationTestSection", () => ({
   NotificationTestSection: () => <div>알림 테스트 실행 도구</div>,
 }));
 
+const mockToast = jest.fn();
+jest.mock("@/hooks/use-toast", () => ({
+  useToast: () => ({ toast: mockToast }),
+}));
+
 jest.mock("@tanstack/react-query", () => ({
   useMutation: jest.fn(),
   useQuery: jest.fn(),
@@ -386,8 +391,87 @@ describe("OwnerAdminConsole", () => {
       role: "admin",
       branchId: "branch-real-gangnam",
       ownerBranchId: "branch-songdo-ownerless",
+      smsAutomationEnabled: true,
     });
     expect(screen.getByRole("button", { name: "거절" })).toBeInTheDocument();
+  });
+
+  it("sends the 메시지 자동 전송 choice made at approval, on by default", () => {
+    render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "가입 대기" }));
+    fireEvent.click(screen.getByRole("button", { name: /가입 대기 계정/ }));
+
+    const automationSwitch = screen.getByRole("switch", {
+      name: "가입 대기 계정 메시지 자동 전송",
+    });
+    expect(automationSwitch).toBeChecked();
+    fireEvent.click(automationSwitch);
+    expect(automationSwitch).not.toBeChecked();
+
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "가입 대기 계정 승인 지점 선택" }),
+      { target: { value: "branch-real-gangnam" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "승인" }));
+
+    expect(approveMutate).toHaveBeenCalledWith({
+      id: "pending-user",
+      role: "user",
+      branchId: "branch-real-gangnam",
+      smsAutomationEnabled: false,
+    });
+  });
+
+  it("toggles 메시지 자동 전송 for an approved account through the sms-automation mutation", () => {
+    render(<OwnerAdminConsole />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /승인된 계정/ }));
+
+    const automationSwitch = screen.getByRole("switch", {
+      name: "승인된 계정 메시지 자동 전송",
+    });
+    expect(automationSwitch).toBeChecked();
+    fireEvent.click(automationSwitch);
+
+    expect(approveMutate).toHaveBeenCalledWith({ id: "approved-user", enabled: false });
+  });
+
+  it("optimistically flips the account flag and rolls it back with a toast when the PATCH fails", async () => {
+    const setQueryData = jest.fn();
+    const previousUsers = [{ id: "approved-user", smsAutomationEnabled: true }];
+    mockedUseQueryClient.mockReturnValue({
+      invalidateQueries,
+      cancelQueries: jest.fn().mockResolvedValue(undefined),
+      getQueryData: jest.fn().mockReturnValue(previousUsers),
+      setQueryData,
+    } as unknown as ReturnType<typeof useQueryClient>);
+
+    render(<OwnerAdminConsole />);
+
+    const options = mockedUseMutation.mock.calls
+      .map(([config]) => config as {
+        mutationFn?: (variables: { id: string; enabled: boolean }) => unknown;
+        onMutate?: (variables: { id: string; enabled: boolean }) => Promise<unknown>;
+        onError?: (error: Error, variables: unknown, context: unknown) => void;
+        onSettled?: () => unknown;
+      })
+      .find((config) => config.onMutate && config.onError && config.onSettled);
+    expect(options).toBeDefined();
+
+    const context = await options!.onMutate!({ id: "approved-user", enabled: false });
+    const updater = setQueryData.mock.calls[0][1] as (
+      current: typeof previousUsers | undefined,
+    ) => unknown;
+    expect(updater(previousUsers)).toEqual([{ id: "approved-user", smsAutomationEnabled: false }]);
+
+    options!.onError!(new Error("boom"), { id: "approved-user", enabled: false }, context);
+    expect(setQueryData).toHaveBeenLastCalledWith(["systemAdminUsers"], previousUsers);
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "destructive", description: "자동 문자 설정을 바꾸지 못했어요" }),
+    );
   });
 
   it("limits the 임명 지점 select to ownerless active branches when 지점장 is selected", () => {
