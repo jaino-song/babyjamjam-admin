@@ -3,6 +3,7 @@ import {
     EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
     getEformsignStatusCategory,
     isDeletedEformsignStatusCode,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
 } from "./eformsign-status-codes";
 
@@ -66,6 +67,11 @@ export function getSignatureStatusMeta(doc: SignatureStatusInput): SignatureStat
     const hasType = (doc.statusType ?? "").toString().trim() !== "";
     if (hasType && isRevokeRequestedEformsignStatus(doc.statusType)) {
         return { label: "철회 요청됨", variant: "warning" };
+    }
+    // 계약-04(071 = 비종결 '반려됨')는 계약서에만 적용된다. 정본 분류가 진행 중으로 바뀌었어도
+    // 제공기록지 서명 문서의 071은 종전처럼 danger "거부·만료"로 보인다.
+    if (hasType && isReviewerRejectedEformsignStatus(doc.statusType)) {
+        return { label: detail || "거부·만료", variant: "danger" };
     }
     const category = hasType ? getEformsignStatusCategory(doc.statusType) : "unknown";
 

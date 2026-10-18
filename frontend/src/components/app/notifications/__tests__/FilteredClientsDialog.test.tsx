@@ -20,6 +20,7 @@ const mockClient: Client = {
     voucherClient: true,
     birthday: '900101',
     serviceStatus: 'waiting',
+    bookingConfirmedAt: null,
     breastPump: false,
     eDocId: null,
     documentStatus: null,

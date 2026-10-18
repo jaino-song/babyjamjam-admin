@@ -8,8 +8,10 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
+const mockFilteredClientsDialog = jest.fn<null, [{ open: boolean; clientId?: number }]>(() => null);
+
 jest.mock('../FilteredClientsDialog', () => ({
-  FilteredClientsDialog: () => null,
+  FilteredClientsDialog: (props: { open: boolean; clientId?: number }) => mockFilteredClientsDialog(props),
 }));
 
 const mockMarkAsReadMutate = jest.fn();
@@ -244,6 +246,60 @@ describe('NotificationBell', () => {
 
     fireEvent.click(screen.getByTestId('notification-item-unread'));
 
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('navigates to the clients page, without opening the dialog, for a contract-link confirmation notification', async () => {
+    mockNotifications = [{
+      id: 7,
+      title: '계약서 연결 확인 필요',
+      body: '전화번호가 같은 고객이 있지만 이름 또는 생년월일이 달라 계약서를 자동으로 연결하지 않았습니다.',
+      data: { type: 'eformsign_link_confirmation_required', documentId: 'doc-1', clientId: 42, url: '/clients?id=42' },
+      sentAt: new Date().toISOString(),
+      readAt: null,
+      isRead: false,
+    }];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId('notification-item-unread'));
+
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith('/clients?id=42');
+    expect(mockFilteredClientsDialog).not.toHaveBeenCalledWith(expect.objectContaining({ open: true }));
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(7);
+  });
+
+  it('still opens the client dialog, not the page, for another notification type pointing at /clients?id=', async () => {
+    mockNotifications = [{
+      id: 8,
+      title: '제공인력 지정 필요',
+      body: '제공인력 지정이 필요합니다.',
+      data: { type: 'eformsign_assignment_required', documentId: 'doc-2', clientId: 42, url: '/clients?id=42' },
+      sentAt: new Date().toISOString(),
+      readAt: null,
+      isRead: false,
+    }];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId('notification-item-unread'));
+
+    expect(mockFilteredClientsDialog).toHaveBeenLastCalledWith(
+      expect.objectContaining({ open: true, clientId: 42 }),
+    );
     expect(mockPush).not.toHaveBeenCalled();
   });
 

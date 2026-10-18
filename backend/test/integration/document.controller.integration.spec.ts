@@ -15,6 +15,8 @@ import {
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { DocumentController } from "interface/controllers/document.controller";
+import { DocumentRepository } from "infrastructure/database/repositories/sb.document.repository";
+import type { document as DocumentRow } from "@prisma/client";
 import request from "supertest";
 
 describe("DocumentController (Integration)", () => {
@@ -78,7 +80,9 @@ describe("DocumentController (Integration)", () => {
     };
 
     beforeEach(async () => {
-        tenantGlobalRole = "owner";
+        // Existing scope-agnostic uploads exercise the non-owner branch default;
+        // owner-specific cases below explicitly supply (or omit) their choice.
+        tenantGlobalRole = "admin";
         tenantContext = { userId: "user-1", branchId: "branch-1" };
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [DocumentController],
@@ -148,6 +152,82 @@ describe("DocumentController (Integration)", () => {
     // Upload rejections are registered problem bodies: the HTTP filter
     // replaces every detail text with catalog copy, so tests pin the
     // code/status/pointer instead of the legacy message strings.
+    it.each([
+        ["owner", "all_branches", 201, "all_branches"],
+        ["owner", "branch", 201, "branch"],
+        ["owner", undefined, 400, undefined],
+        ["owner", "garbage", 400, undefined],
+        ["admin", undefined, 201, "branch"],
+        ["admin", "branch", 201, "branch"],
+        ["admin", "all_branches", 403, undefined],
+    ])("enforces %s upload scope %s (%s)", async (role, scope, status, storedScope) => {
+        tenantGlobalRole = role as string;
+        tenantContext = { userId: "user-1", branchId: "selected-branch" };
+        fileStorage.upload.mockResolvedValue("https://example.test/signed.pdf");
+        documentService.create.mockResolvedValue(createDocumentEntity("selected-branch", null));
+        const upload = request(app.getHttpServer()).post("/documents/upload")
+            .field("categoryId", "contract");
+        if (scope !== undefined) upload.field("visibilityScope", scope as string);
+        const response = await upload.attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
+        expect(response.status).toBe(status);
+        if (status === 201) {
+            expect(documentService.create).toHaveBeenCalledWith("selected-branch", expect.objectContaining({
+                branchid: "selected-branch", visibilityScope: storedScope, uploadedby: "user-1",
+            }));
+        } else {
+            expect(response.body.code).toBe(status === 403 ? "ACCESS_DENIED" : "VALIDATION_FAILED");
+            if (status === 400) expect(response.body.errors).toEqual(expect.arrayContaining([
+                expect.objectContaining({ pointer: "/visibilityScope", location: "body" }),
+            ]));
+            expect(fileStorage.upload).not.toHaveBeenCalled();
+            expect(documentService.create).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(["owner", "admin", "staff"])("exposes scope choice only to owners (%s)", async (role) => {
+        tenantGlobalRole = role;
+        const response = await request(app.getHttpServer()).get("/documents/capabilities");
+        expect(response.status).toBe(200);
+        expect(response.body.canChooseVisibilityScope).toBe(role === "owner");
+        if (role !== "owner") expect(response.body.uploadVisibilityScope).toBe("branch");
+    });
+
+    it.each(["branch", "all_branches"])("lists an owner's %s upload using the existing repository visibility filter", async (scope) => {
+        tenantGlobalRole = "owner";
+        tenantContext = { userId: "user-1", branchId: "selected-branch" };
+        const rows: DocumentRow[] = [];
+        const prisma = {
+            document: {
+                findFirst: jest.fn().mockResolvedValue(null),
+                create: jest.fn(async ({ data }: { data: DocumentRow }) => {
+                    const row = { ...data, id: "uploaded-document", createdAt: new Date() };
+                    rows.push(row);
+                    return row;
+                }),
+                findMany: jest.fn(async ({ where }: { where: { OR: Partial<DocumentRow>[] } }) => (
+                    rows.filter((row) => where.OR.some((condition) => (
+                        Object.entries(condition).every(([key, value]) => row[key as keyof DocumentRow] === value)
+                    )))
+                )),
+            },
+        };
+        const service = new DocumentService(new DocumentRepository(prisma as never));
+        documentService.create.mockImplementation((branchId, params) => service.create(branchId, params));
+        documentService.findAll.mockImplementation((branchId) => service.findAll(branchId));
+        fileStorage.upload.mockResolvedValue("https://example.test/uploaded.pdf");
+
+        const uploaded = await request(app.getHttpServer()).post("/documents/upload")
+            .field("categoryId", "contract").field("visibilityScope", scope)
+            .attach("file", Buffer.from("%PDF-1.4"), "contract.pdf");
+        expect(uploaded.status).toBe(201);
+        expect(rows[0]).toMatchObject({ branchId: "selected-branch", orgId: "selected-branch", visibilityScope: scope });
+        const ownList = await request(app.getHttpServer()).get("/documents");
+        expect(ownList.body).toEqual([expect.objectContaining({ id: "uploaded-document", visibilityScope: scope })]);
+        tenantContext = { userId: "user-2", branchId: "other-branch" };
+        const otherList = await request(app.getHttpServer()).get("/documents");
+        expect(otherList.body).toEqual(scope === "branch" ? [] : [expect.objectContaining({ id: "uploaded-document" })]);
+    });
+
     it("should reject malformed upload tags before storage or persistence", async () => {
         const response = await request(app.getHttpServer())
             .post("/documents/upload")
@@ -326,11 +406,13 @@ describe("DocumentController (Integration)", () => {
     });
 
     it("should stamp the uploader from the tenant on a clean upload", async () => {
+        tenantGlobalRole = "owner";
         fileStorage.upload.mockResolvedValue("https://example.test/signed-contract.pdf");
         documentService.create.mockResolvedValue(createDocumentEntity("branch-1", null));
 
         const response = await request(app.getHttpServer())
             .post("/documents/upload")
+            .field("visibilityScope", "all_branches")
             .field("name", "Contract")
             .field("categoryId", "contract")
             .field("tags", JSON.stringify(["signed"]))
@@ -365,6 +447,7 @@ describe("DocumentController (Integration)", () => {
     });
 
     it("should expose the authoritative storage capabilities", async () => {
+        tenantGlobalRole = "owner";
         const response = await request(app.getHttpServer()).get("/documents/capabilities");
 
         expect(response.status).toBe(200);

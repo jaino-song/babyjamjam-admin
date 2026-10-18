@@ -1,6 +1,7 @@
 "use client";
 
 import { MobileDetailHeader, MobileDetailPage } from "@/components/app/mobile-redesign/detail-sheet";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useCallRecord } from "@/hooks/useCallInbox";
 import { formatCallTime, formatPhoneNumber } from "@/lib/call-inbox/format";
 import type { CallCategory } from "@/lib/call-inbox/types";
@@ -21,16 +22,32 @@ const DRAFT_STATUS_LABEL: Record<string, string> = {
 };
 
 export function CallLogSheet({ recordId }: { recordId: string | null }) {
-  const { data: record, isLoading } = useCallRecord(recordId);
+  const { data: record, isLoading, isError, refetch, isFetching } = useCallRecord(recordId);
 
   if (recordId === null) return null;
 
   return (
     <MobileDetailPage name="call-inbox" data-component={LOG_BASE}>
-      {isLoading || !record ? (
+      {isError && record && (
+        <QueryErrorState
+          dataComponent={`${LOG_BASE}_error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
+      )}
+      {isLoading || (!record && !isError) ? (
         <div className="p-4 text-[0.82rem] text-v3-text-muted" data-component={`${LOG_BASE}_loading`}>
           불러오는 중...
         </div>
+      ) : !record ? (
+        <QueryErrorState
+          dataComponent={`${LOG_BASE}_error`}
+          size="inline"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
       ) : (
         <div className="flex flex-col gap-4 px-1 pb-6" data-component={`${LOG_BASE}_detail`}>
           <MobileDetailHeader

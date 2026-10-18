@@ -1,5 +1,16 @@
 export const SMS_DELIVERY_MAX_ATTEMPTS = 3;
 export const SMS_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
+export const ALIGO_HISTORY_MIN_AGE_MS = 5 * 60 * 1000;
+export const ALIGO_HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const ALIGO_HISTORY_BOOKKEEPING_KEYS = [
+    "historyLookup", "historyLookupAt", "historyLookupFailures", "historyLookupAbsentAt",
+] as const;
+
+export function withoutAligoHistoryBookkeeping(variables: Record<string, string>): Record<string, string> {
+    const result = { ...variables };
+    for (const key of ALIGO_HISTORY_BOOKKEEPING_KEYS) delete result[key];
+    return result;
+}
 
 export interface MessageDeliveryRetryPolicy {
     maxAttempts: number;
@@ -19,6 +30,12 @@ export function getMessageDeliveryRetryPolicy(provider: string): MessageDelivery
         retryDelayMs: SMS_DELIVERY_RETRY_DELAY_MS,
     };
 }
+
+/** Delay between Aligo accepting an SMS and the one-shot carrier delivery check. */
+export const CARRIER_CHECK_DELAY_MS = 30 * 60 * 1000;
+
+/** Outcome of the one-shot carrier delivery check. */
+export type CarrierResultState = "delivered" | "failed" | "unconfirmed" | "lookup_error";
 
 export type MessageLogStatus = "pending" | "sent" | "failed";
 
@@ -68,7 +85,40 @@ export class MessageLogEntity {
         public providerReconciledAt: Date | null = null,
         public providerReconciledBy: string | null = null,
         public providerReconciliationReason: string | null = null,
+        public carrierCheckDueAt: Date | null = null,
+        public carrierCheckedAt: Date | null = null,
+        public carrierResultState: CarrierResultState | null = null,
+        public carrierResults: unknown[] | null = null,
     ) {}
+
+    /**
+     * True only after scheduleCarrierCheck() ran on this instance. The mapper
+     * writes carrier columns on update only when set, so a stale entity can
+     * never overwrite a carrier result saved by the one-shot check.
+     */
+    private carrierCheckScheduled = false;
+
+    hasPendingCarrierCheckSchedule(): boolean {
+        return this.carrierCheckScheduled;
+    }
+
+    /**
+     * Call once the scheduled carrier columns are durably written. Without it
+     * every later update() of this instance would rewrite them and could
+     * overwrite a result the one-shot check saved in the meantime.
+     */
+    markCarrierCheckPersisted(): void {
+        this.carrierCheckScheduled = false;
+    }
+
+    /** Schedule (or re-schedule, resetting any earlier result) the one-shot carrier check. */
+    scheduleCarrierCheck(baseTime: Date): void {
+        this.carrierCheckDueAt = new Date(baseTime.getTime() + CARRIER_CHECK_DELAY_MS);
+        this.carrierCheckedAt = null;
+        this.carrierResultState = null;
+        this.carrierResults = null;
+        this.carrierCheckScheduled = true;
+    }
 
     markSent(aligoMid?: string): void {
         this.status = "sent";
@@ -177,6 +227,10 @@ export class MessageLogEntity {
         providerReconciledAt: Date | null = null,
         providerReconciledBy: string | null = null,
         providerReconciliationReason: string | null = null,
+        carrierCheckDueAt: Date | null = null,
+        carrierCheckedAt: Date | null = null,
+        carrierResultState: CarrierResultState | null = null,
+        carrierResults: unknown[] | null = null,
     ): MessageLogEntity {
         return new MessageLogEntity(
             id, branchId, provider, templateKey, triggerJobId, receiver, clientId,
@@ -190,6 +244,10 @@ export class MessageLogEntity {
             providerReconciledAt,
             providerReconciledBy,
             providerReconciliationReason,
+            carrierCheckDueAt,
+            carrierCheckedAt,
+            carrierResultState,
+            carrierResults,
         );
     }
 
@@ -246,12 +304,22 @@ export class MessageLogEntity {
         this.updatedAt = now;
     }
 
-    /** Apply one authoritative operator reconciliation. */
+    markStaleStartedAsUncertain(now = new Date()): void {
+        const age = this.providerCallStartedAt ? now.getTime() - this.providerCallStartedAt.getTime() : NaN;
+        if (this.providerAcceptanceState !== "started" || !Number.isFinite(age)
+            || age < ALIGO_HISTORY_MIN_AGE_MS || age > ALIGO_HISTORY_MAX_AGE_MS) {
+            throw new Error("SMS provider started attempt is not eligible for history reconciliation");
+        }
+        this.markProviderOutcomeUncertain("발송 결과 확인 중", now);
+    }
+
+    /** Apply one authoritative operator or history reconciliation. */
     reconcileProviderOutcome(params: {
         outcome: "delivered" | "not-delivered";
         actor: string;
         reason: string;
         providerMessageId?: string | null;
+        retry?: "schedule" | "none";
         now?: Date;
     }): void {
         const actor = params.actor.trim();
@@ -284,18 +352,25 @@ export class MessageLogEntity {
         this.updatedAt = now;
         this.lastAttemptAt = now;
 
+        this.variables = withoutAligoHistoryBookkeeping(this.variables);
         if (params.outcome === "delivered") {
             this.status = "sent";
             this.errorMessage = null;
             this.nextRetryAt = null;
             this.providerAcceptedAt = this.providerAcceptedAt ?? now;
             this.variables = { ...this.variables, retrySafety: "delivered" };
+            // A reconciled send has a provider message id just like a directly accepted one,
+            // so it gets the same one-shot carrier check unless one is already scheduled or done.
+            if (this.aligoMid && this.carrierCheckDueAt === null
+                && this.carrierCheckedAt === null && this.carrierResultState === null) {
+                this.scheduleCarrierCheck(this.providerAcceptedAt);
+            }
             return;
         }
 
         this.status = "failed";
         this.errorMessage = reason;
-        this.nextRetryAt = now;
+        this.nextRetryAt = params.retry === "none" ? null : now;
         this.variables = { ...this.variables, retrySafety: "reconciled-not-delivered" };
     }
 

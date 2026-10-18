@@ -166,8 +166,8 @@ test.describe('Contracts Page Skeleton Loading', () => {
 
       await page.goto('/contracts');
 
-      await expect(page.locator('[data-component="desktop_contracts_error_banner"]')).toContainText(
-        '문서를 불러오는데 실패했어요.',
+      await expect(page.locator(`${LIST} [role="alert"]`)).toContainText(
+        '불러오지 못했습니다',
         { timeout: 20_000 },
       );
     });

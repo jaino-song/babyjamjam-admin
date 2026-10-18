@@ -429,7 +429,7 @@ describe("OwnerAdminConsole", () => {
       .getAllByRole("option")
       .map((option) => option.textContent);
 
-    expect(optionLabels).toEqual(["매니저", "직원"]);
+    expect(optionLabels).toEqual(["매니저", "회원"]);
     expect(roleSelect).toHaveValue("manager");
     expect(screen.getByRole("button", { name: "강남점 지점 선택 해제" })).toHaveAttribute(
       "aria-pressed",
@@ -561,7 +561,7 @@ describe("OwnerAdminConsole", () => {
       within(roleSelect)
         .getAllByRole("option")
         .map((option) => option.textContent),
-    ).toEqual(["지점장", "매니저", "직원"]);
+    ).toEqual(["지점장", "매니저", "회원"]);
 
     const lockedOwnedBranch = screen.getByRole("button", {
       name: "마포점 지점: 지점장 임명으로 선택 고정",

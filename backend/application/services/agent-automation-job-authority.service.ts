@@ -34,7 +34,7 @@ type CatchUpMetadata = z.infer<typeof catchUpSchema>;
 
 const MAX_CATCH_UP_PREDECESSOR_CHAIN = 500;
 const CATCH_UP_PREDECESSOR_STATUSES = new Set([
-    "pending", "processing", "dispatching", "sent", "failed", "canceled",
+    "pending", "processing", "dispatching", "sent", "failed", "canceled", "needs_setup",
 ]);
 
 export type CanonicalAutomationRenderer = (job: MessageTriggerJobEntity, transaction: Prisma.TransactionClient) => Promise<Readonly<SmsTriggerDeliverySnapshot>>;

@@ -160,6 +160,7 @@ function editingClient(): Client {
     voucherClient: false,
     breastPump: false,
     serviceStatus: "pre_booking",
+    bookingConfirmedAt: null,
     eDocId: null,
     areaId: null,
     hasSigned: false,

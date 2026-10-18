@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { holidaySettingsApi } from "@/services/holiday-settings";
@@ -76,8 +76,13 @@ function renderSection() {
       <HolidaySettingsSection branchId="branch-1" branchName="인천 남동지점" />
     </QueryClientProvider>,
   );
-  return { invalidate };
+  return { invalidate, queryClient };
 }
+
+const SKELETON = '[data-component="desktop_settings_sections_holidays_content_skeleton"]';
+const NOT_SYNCED = "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)";
+const EMPTY_TEXT = "표시할 공휴일이 없어요.";
+const UNSUPPORTED_TEXT = "이 연도의 공휴일 정보가 아직 없어요.";
 
 function rowFor(name: string): HTMLElement {
   const row = screen.getByText(name).closest("tr");
@@ -321,5 +326,160 @@ describe("HolidaySettingsSection", () => {
     renderSection();
 
     expect(await screen.findByText("공휴일 목록을 불러오지 못했어요.")).toBeInTheDocument();
+  });
+
+  describe("unknown load states (rule S5)", () => {
+    it("failed with no data: titled failure with retry, no empty text, no sync sentence; retry refetches", async () => {
+      api.getYear.mockRejectedValueOnce(new Error("boom"));
+      renderSection();
+
+      expect(await screen.findByText("공휴일 목록을 불러오지 못했어요.")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByText(UNSUPPORTED_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByText(/아직 동기화되지 않았어요/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "지금 동기화" })).toBeInTheDocument();
+      expect(api.getYear).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+      expect(await screen.findByText("한글날")).toBeInTheDocument();
+      expect(api.getYear).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("paused with no data: skeleton, no empty text, no alert, no sync sentence", async () => {
+      onlineManager.setOnline(false);
+      try {
+        renderSection();
+
+        await waitFor(() => {
+          expect(document.querySelector(SKELETON)).not.toBeNull();
+        });
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByText(UNSUPPORTED_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByText(/아직 동기화되지 않았어요/)).not.toBeInTheDocument();
+        expect(api.getYear).not.toHaveBeenCalled();
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
+    it("paused refetch over a cached year: the list stays, no skeleton, no alert", async () => {
+      const { queryClient } = renderSection();
+      await screen.findByText("한글날");
+      const yearKey = ["holiday-settings", "branch-1", 2026];
+
+      onlineManager.setOnline(false);
+      try {
+        act(() => {
+          void queryClient.invalidateQueries({ queryKey: yearKey });
+        });
+        await waitFor(() => {
+          expect(queryClient.getQueryState(yearKey)?.fetchStatus).toBe("paused");
+        });
+
+        expect(screen.getByText("한글날")).toBeInTheDocument();
+        expect(document.querySelector(SKELETON)).toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(api.getYear).toHaveBeenCalledTimes(1);
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
+    it("loaded year, go offline, switch year: skeleton, neither empty text, no stale sync sentence", async () => {
+      renderSection();
+      await screen.findByText("한글날");
+
+      onlineManager.setOnline(false);
+      try {
+        fireEvent.mouseDown(screen.getByRole("tab", { name: "2027" }));
+
+        await waitFor(() => {
+          expect(document.querySelector(SKELETON)).not.toBeNull();
+        });
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByText(UNSUPPORTED_TEXT)).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByText(NOT_SYNCED)).not.toBeInTheDocument();
+        expect(screen.queryByText(/마지막 동기화/)).not.toBeInTheDocument();
+        expect(api.getYear).not.toHaveBeenCalledWith("branch-1", 2027);
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
+    it("successful empty year: the existing empty text, no alert; unsupported year keeps its own text", async () => {
+      api.getYear.mockResolvedValue({ ...YEAR_2026, holidays: [], inactiveOverrides: [] });
+      renderSection();
+
+      expect(await screen.findByText(EMPTY_TEXT)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(document.querySelector(SKELETON)).toBeNull();
+    });
+
+    it("successful unsupported year: the unsupported text and the not-synced sentence", async () => {
+      api.getYear.mockResolvedValue({
+        ...YEAR_2026,
+        supported: false,
+        synced: false,
+        lastSyncedAt: null,
+        holidays: [],
+        inactiveOverrides: [],
+      });
+      renderSection();
+
+      expect(await screen.findByText(UNSUPPORTED_TEXT)).toBeInTheDocument();
+      expect(screen.getByText(NOT_SYNCED)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("cached list + failed refetch: list stays usable with exactly one notice whose retry refetches", async () => {
+      const { queryClient } = renderSection();
+      await screen.findByText("한글날");
+
+      api.getYear.mockRejectedValue(new Error("boom"));
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: ["holiday-settings", "branch-1", 2026] });
+      });
+
+      expect(await screen.findByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.queryByText("공휴일 목록을 불러오지 못했어요.")).not.toBeInTheDocument();
+      expect(screen.getByText("마지막 동기화 10월 1일 04:00")).toBeInTheDocument();
+
+      // The list is still there and still actionable.
+      fireEvent.click(within(rowFor("대체공휴일(개천절)")).getByRole("button", { name: "제외" }));
+      await waitFor(() => {
+        expect(api.createOverride).toHaveBeenCalledWith("branch-1", { date: "2026-10-05", kind: "exclude" });
+      });
+
+      // The refetch after the exclude failed too: still exactly one notice, list still there.
+      await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
+      expect(screen.getByText("한글날")).toBeInTheDocument();
+
+      api.getYear.mockResolvedValue(YEAR_2026);
+      const callsBefore = api.getYear.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+      await waitFor(() => expect(api.getYear.mock.calls.length).toBeGreaterThan(callsBefore));
+      await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    });
+
+    it("cached empty year + failed refetch: empty text plus the notice, not the no-data failure", async () => {
+      api.getYear.mockResolvedValueOnce({ ...YEAR_2026, holidays: [], inactiveOverrides: [] });
+      const { queryClient } = renderSection();
+      await screen.findByText(EMPTY_TEXT);
+
+      api.getYear.mockRejectedValueOnce(new Error("boom"));
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: ["holiday-settings", "branch-1", 2026] });
+      });
+
+      expect(await screen.findByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.getByText(EMPTY_TEXT)).toBeInTheDocument();
+    });
   });
 });

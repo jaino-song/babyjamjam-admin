@@ -63,6 +63,11 @@ function isContractCandidate(
 export interface LatestContractSignal {
     statusType: string;
     permanentPurgeRequestedAt: Date | null;
+    /**
+     * When the contract was voided (계약 파기), else `null`. Read straight from the row: this select
+     * has no deploy-window fallback, so the `voided_at` column must exist before the app that reads it.
+     */
+    voidedAt: Date | null;
     documentId: string;
     stepType: string | null;
     stepName: string | null;
@@ -107,6 +112,7 @@ export async function findLatestContractSignalsByClientId(
             stepName: true,
             detailPayload: true,
             permanentPurgeRequestedAt: true,
+            voidedAt: true,
             documentKind: true,
             serviceRecordCaseId: true,
             templateId: true,
@@ -127,6 +133,7 @@ export async function findLatestContractSignalsByClientId(
         latestContractMap.set(clientId, {
             statusType: doc.statusType,
             permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
+            voidedAt: doc.voidedAt,
             documentId: doc.documentId,
             stepType: doc.stepType,
             stepName: doc.stepName,
@@ -137,17 +144,28 @@ export async function findLatestContractSignalsByClientId(
     return latestContractMap;
 }
 
-type ContractStatusSignal = Pick<LatestContractSignal, "statusType" | "permanentPurgeRequestedAt">;
+type ContractStatusSignal = Pick<LatestContractSignal, "statusType" | "permanentPurgeRequestedAt"> & {
+    voidedAt?: Date | null;
+};
+
+/**
+ * A voided (파기) newest contract is no live contract: like a withdrawn newest document it never
+ * falls back to an older signed one (`selectCurrentContractDocument` keeps returning the newest row).
+ */
+export function isVoidedContractSignal(contract: { voidedAt?: Date | null } | null | undefined): boolean {
+    return contract?.voidedAt != null;
+}
 
 /**
  * Whether the current contract document is still "alive": created / requested (060, 041) /
  * opened / completed, or a pending cancellation (040/045 revoke_requested). Rejected, expired,
- * revoked, deleted, purge-requested or absent documents are dead and fall back to "발송 필요".
+ * revoked, deleted, purge-requested, voided or absent documents are dead and fall back to "발송 필요".
  * Mirrors `ClientService`'s `ACTIVE_DOCUMENT_STATUSES` over `mapStatusTypeToDocumentStatus`.
  */
 export function isActiveContractSignal(contract: ContractStatusSignal | null | undefined): boolean {
     if (!contract) return false;
     if (contract.permanentPurgeRequestedAt != null) return false;
+    if (isVoidedContractSignal(contract)) return false;
     const code = normalizeEformsignStatusCode(contract.statusType);
     return COMPLETED_DOCUMENT_STATUS_TYPES.has(code)
         || isRevokeRequestedStatus(code)
@@ -159,6 +177,7 @@ export function isActiveContractSignal(contract: ContractStatusSignal | null | u
 /** The current contract is signed off (completed), so the 계약서 미완료 list does not hold it. */
 export function isCompletedContractSignal(contract: ContractStatusSignal | null | undefined): boolean {
     if (!contract || contract.permanentPurgeRequestedAt != null) return false;
+    if (isVoidedContractSignal(contract)) return false;
     return COMPLETED_DOCUMENT_STATUS_TYPES.has(normalizeEformsignStatusCode(contract.statusType));
 }
 

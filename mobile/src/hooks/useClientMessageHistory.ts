@@ -17,7 +17,6 @@ export function useClientMessageHistory(client: Client | null) {
     queryFn: () => fetchClientMessageLogs<ClientNotificationLogRecord>(clientId as number),
     enabled: clientId !== null,
     staleTime: 0,
-    retry: false,
   });
 
   const notificationLogs = useMemo(() => {
@@ -33,7 +32,14 @@ export function useClientMessageHistory(client: Client | null) {
     /** The server holds older records than the ones in `notificationLogs`. */
     hasMore: query.data?.hasMore === true,
     isLoading: query.isLoading,
+    /**
+     * Offline, a first load is paused rather than failed: not `isLoading`, not `isError`, and no
+     * data. Callers must not read that as an empty history (BJJ-434).
+     */
+    isPaused: query.isPaused,
+    hasData: query.data !== undefined,
     isError: query.isError,
+    isFetching: query.isFetching,
     refetch: query.refetch,
   };
 }

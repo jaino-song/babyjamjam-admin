@@ -8,6 +8,7 @@ describe("document upload capabilities", () => {
         expect(DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES).toEqual(expect.objectContaining({
             maxFileSizeBytes: 25 * 1024 * 1024,
             multiple: false,
+            canChooseVisibilityScope: false,
             acceptedExtensions: expect.arrayContaining([
                 ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
                 ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",

@@ -182,6 +182,7 @@ describeE2E("BJJ-275 full connected flow", () => {
         label: string,
         applyMessageAutomation: boolean,
         suppressGreetingSms: boolean,
+        bookingConfirmed = true,
     ): Promise<ScheduleFixture> => {
         const uniqueDigits = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-7);
         const employee = await prisma.employee.create({
@@ -213,6 +214,17 @@ describeE2E("BJJ-275 full connected flow", () => {
                 applyMessageAutomation,
             });
             clientId = client.id;
+            if (bookingConfirmed) {
+                // Rule 고객-04/기록-09: a new client starts 예약 전 and a 예약 전 client
+                // gets no service-record link. Store the confirmation directly (the
+                // state [예약 확정] leaves behind) instead of calling confirmBooking,
+                // which would itself schedule the link and defeat the
+                // automation-disabled and post-commit-failure fixtures.
+                await prisma.client.update({
+                    where: { id: client.id },
+                    data: { bookingConfirmedAt: new Date(), serviceStatus: "waiting" },
+                });
+            }
             const schedule = await prisma.employee_schedule.findFirstOrThrow({
                 where: {
                     clientId,
@@ -233,6 +245,9 @@ describeE2E("BJJ-275 full connected flow", () => {
 
     const createAutomationDisabledSchedule = (label: string): Promise<ScheduleFixture> =>
         createScheduleFixture(label, false, true);
+
+    const createPreBookingSchedule = (label: string): Promise<ScheduleFixture> =>
+        createScheduleFixture(label, true, false, false);
 
     const createAutomationEnabledSchedule = (label: string): Promise<ScheduleFixture> =>
         createScheduleFixture(label, true, false);
@@ -740,6 +755,29 @@ describeE2E("BJJ-275 full connected flow", () => {
         }
     }, 30_000);
 
+    it("does not schedule a service-record link for a 예약 전 client, and schedules it once the booking is confirmed", async () => {
+        const fixture = await createPreBookingSchedule("서비스기록-예약전");
+        try {
+            const linkJobWhere = {
+                employeeScheduleId: fixture.scheduleId,
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
+            };
+            await expect(serviceRecordLinkService.scheduleForServiceStart(fixture.scheduleId)).resolves.toBe(false);
+            expect(await prisma.message_trigger_job.count({ where: linkJobWhere })).toBe(0);
+            expect(await prisma.service_record_token.count({ where: { scheduleId: fixture.scheduleId } })).toBe(0);
+
+            await clientService.confirmBooking(BRANCH_ID, fixture.clientId);
+            expect(await prisma.message_trigger_job.count({
+                where: { ...linkJobWhere, status: "pending" },
+            })).toBe(1);
+            expect(await prisma.service_record_token.count({
+                where: { scheduleId: fixture.scheduleId, active: true, revokedAt: null },
+            })).toBe(1);
+        } finally {
+            await cleanupScheduleFixture(fixture);
+        }
+    }, 30_000);
+
     it("converges concurrent service-start scheduling to one automatic job and active token", async () => {
         const fixture = await createAutomationDisabledSchedule("서비스기록-동시-예약");
         try {
@@ -895,6 +933,12 @@ describeE2E("BJJ-275 full connected flow", () => {
         const clientId = clientRes.body.id as number;
         expect((await prisma.client.findUniqueOrThrow({ where: { id: clientId } })).suppressGreetingSms).toBe(true);
 
+        // Rule 고객-04: a new client is 예약 전 and gets no service-record link
+        // (기록-09). [예약 확정] is the step that lets the schedule below issue it.
+        const confirmRes = await request(app.getHttpServer()).patch(`/clients/${clientId}/confirm-booking`);
+        expect(confirmRes.status).toBe(200);
+        expect((await prisma.client.findUniqueOrThrow({ where: { id: clientId } })).bookingConfirmedAt).not.toBeNull();
+
         const employeeRes = await request(app.getHttpServer()).post("/employees").send({
             name: `전체흐름직원-${runId}`,
             workArea: ["남동구"],
@@ -923,8 +967,13 @@ describeE2E("BJJ-275 full connected flow", () => {
             },
         });
         expect(["pending", "processing", "sent"]).toContain(automaticLinkJob.status);
+        // Rule 기록-08: the link goes out at 12:00 KST on the calendar day before
+        // service starts (even when that day is a holiday).
+        const dayBeforeStart = new Date(new Date(`${startDate}T00:00:00Z`).getTime() - 86_400_000)
+            .toISOString()
+            .slice(0, 10);
         expect(automaticLinkJob.scheduledFor).toEqual(
-            new Date(`${startDate}T15:00:00+09:00`),
+            new Date(`${dayBeforeStart}T12:00:00+09:00`),
         );
         expect(automaticLinkJob.payload).toEqual(expect.objectContaining({
             templateVariables: expect.objectContaining({

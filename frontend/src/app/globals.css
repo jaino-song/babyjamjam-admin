@@ -138,6 +138,11 @@
   --status-danger: 355 40% 94%;
   --status-danger-line: 355 36% 45%;
   --status-danger-fg: 355 36% 45%;
+
+  /* Solid danger: a filled burgundy with white text, visibly stronger than the soft danger
+     surface above. Used by 반려됨 (eformsign 071, rejected_by_reviewer). */
+  --status-danger-solid: 355 36% 45%;
+  --status-danger-solid-fg: 0 0% 100%;
 }
 
 /* Dark Mode */
@@ -315,6 +320,8 @@
   --color-status-danger: hsl(var(--status-danger));
   --color-status-danger-line: hsl(var(--status-danger-line) / 0.2);
   --color-status-danger-fg: hsl(var(--status-danger-fg));
+  --color-status-danger-solid: hsl(var(--status-danger-solid));
+  --color-status-danger-solid-fg: hsl(var(--status-danger-solid-fg));
 
   /* Border Radius */
   --radius-lg: var(--radius);

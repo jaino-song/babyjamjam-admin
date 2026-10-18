@@ -1,5 +1,5 @@
 "use client";
-import { normalizeApiError, resolveProblemPresentation } from "@babyjamjam/shared";
+import { MESSAGE_HISTORY_STATUS_LABELS, normalizeApiError, resolveProblemPresentation } from "@babyjamjam/shared";
 
 
 import type { ComponentType, ReactNode } from "react";
@@ -55,12 +55,14 @@ import {
   isProviderReviewWorkflowStep,
   isDeletedStatusCode,
   isReceiptSendableOnCalendar,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
   isRevokedEformsignStatus,
   mapDocStatusLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
   isContractDocDisplayStatus,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import {
@@ -83,9 +85,11 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
+import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/contract-link-confirmations-notice";
 import { ContractPdfViewerPlaceholder } from "@/components/app/contracts/contract-pdf-viewer-placeholder";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { StatusPill } from "@/components/app/ui/status-badge";
 
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import {
@@ -144,6 +148,7 @@ import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   beginContractOperation,
   cancelContractOperation,
@@ -191,9 +196,15 @@ const ContractPdfViewer = dynamic(
 // server still files it under the "기간 만료" filter, so FILTER_BY_CATEGORY maps it there and the
 // pill counts keep matching the server's expired filter. "revoked" is eformsign 042/090 (the
 // document was revoked): terminal, shown 철회됨 in the danger tone, and filed the same way.
-type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "expired" | "unknown";
+// "rejected-by-reviewer" is eformsign 071 (the provider's reviewer rejected the document, 계약-04): NOT
+// terminal and not expired. The customer's signature stays valid; a later 070 or 072 moves it on. It has
+// its own 반려됨 pill: the server's displayStatus filter accepts rejected_by_reviewer, so the pill count
+// and the filtered list both come from the same resolved display status.
+// "voided" is 계약 파기 (the branch voided the document in the app): shown 파기됨 in the muted tone and
+// filed under the "기간 만료" filter like the expired and revoked categories — no pill of its own.
+type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "voided" | "unknown";
 type ContractSectionId = "maternal-contracts" | "service-records" | "automations";
-type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "기간 만료" | "알 수 없음";
+type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "반려됨" | "계약 완료" | "기간 만료" | "알 수 없음";
 type DetailTabId = "basic" | "signers" | "messages";
 type NotificationStatus = "pending" | "sent" | "failed";
 type NotificationLogRecord = {
@@ -227,7 +238,10 @@ const CONTRACT_MUTATION_OPERATION_LABELS: Record<ContractMutationOperation, stri
   finalize: "최종 확인",
   receipt: "영수증 문자",
 };
-const FILTER_LABELS: FilterKey[] = ["전체", "서명 대기", "서명 완료", "검토 필요", "계약 완료", "기간 만료", "알 수 없음"];
+const FILTER_LABELS: FilterKey[] = ["전체", "서명 대기", "서명 완료", "검토 필요", "반려됨", "계약 완료", "기간 만료", "알 수 없음"];
+// 071 on a 제공기록지 keeps its danger "거부·만료" reading (계약-04 scopes 반려됨 to contracts). The list
+// row and the detail header read this one constant so the two never drift.
+const SERVICE_RECORD_REVIEWER_REJECTED_LABEL = "거부·만료";
 const CONTRACT_SECTIONS = [
   { id: "maternal-contracts", label: "산모 계약서", icon: FileSignature },
   { id: "service-records", label: "제공기록지", icon: ClipboardList },
@@ -304,7 +318,9 @@ const CATEGORY_BY_DISPLAY_STATUS: Record<string, ContractCategory> = {
   completed: "completed",
   revoke_requested: "revoke-requested",
   revoked: "revoked",
+  rejected_by_reviewer: "rejected-by-reviewer",
   expired: "expired",
+  voided: "voided",
   unknown: "unknown",
 };
 
@@ -334,6 +350,8 @@ function categorize(doc: EformsignDocument, calendar: KrBusinessDayCalendar): Co
   if (isRevokeRequestedEformsignStatus(doc.current_status?.status_type)) return "revoke-requested";
   // 042/090 are in the "expired" bucket too, but the document was revoked, not timed out.
   if (isRevokedEformsignStatus(doc.current_status?.status_type)) return "revoked";
+  // 071 is in-progress, not expired, and not the review stage: its own category (계약-04).
+  if (isReviewerRejectedEformsignStatus(doc.current_status?.status_type)) return "rejected-by-reviewer";
   const cat = getStatusCategory(doc.current_status?.status_type);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewStep(doc)) return "drafting";
@@ -346,6 +364,9 @@ const FILTER_TO_STATUS_CATEGORY: Record<FilterKey, EformsignStatusCategoryParam 
   "서명 대기": "drafting",
   "서명 완료": "in-progress",
   "검토 필요": "in-progress",
+  // 071 is selected by displayStatus alone: the status-code sets list it under both in-progress and
+  // rejected, so a statusCategory would only narrow what the resolved display status already decides.
+  반려됨: null,
   "계약 완료": "completed",
   "기간 만료": "expired",
   "알 수 없음": "unknown",
@@ -354,9 +375,10 @@ const FILTER_TO_STATUS_CATEGORY: Record<FilterKey, EformsignStatusCategoryParam 
 const FILTER_TO_DISPLAY_STATUS = {
   "서명 완료": "signed",
   "검토 필요": "review",
+  반려됨: "rejected_by_reviewer",
 } as const;
 
-const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
+const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey | null> = {
   drafting: "서명 대기",
   signed: "서명 완료",
   "in-progress": "검토 필요",
@@ -364,7 +386,11 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
   // Filed under the server's expired filter, so the pill counts match it.
   "revoke-requested": "기간 만료",
   revoked: "기간 만료",
+  // 반려됨 (071) has its own pill, selected server-side by displayStatus=rejected_by_reviewer.
+  "rejected-by-reviewer": "반려됨",
   expired: "기간 만료",
+  // 파기됨 has no pill of its own: it files under the server's expired filter, like revoked.
+  voided: "기간 만료",
   unknown: "알 수 없음",
 };
 
@@ -375,10 +401,33 @@ function categorizeSignal(signal: EformsignStatusSignal, calendar: KrBusinessDay
   }
   if (isRevokeRequestedEformsignStatus(signal.status_type)) return "revoke-requested";
   if (isRevokedEformsignStatus(signal.status_type)) return "revoked";
+  if (isReviewerRejectedEformsignStatus(signal.status_type)) return "rejected-by-reviewer";
   const cat = getStatusCategory(signal.status_type ?? undefined);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewWorkflowStep(signal)) return "drafting";
   return isReviewWindowOpen(signal.contract_end_date, calendar) ? "in-progress" : "signed";
+}
+
+/** pill 카운터: 상태 신호를 문서와 같은 규칙(categorizeSignal → FILTER_BY_CATEGORY)으로 접는다. */
+function countSignalsByFilter(
+  signals: readonly EformsignStatusSignal[],
+  calendar: KrBusinessDayCalendar,
+): Record<FilterKey, number> {
+  const counts: Record<FilterKey, number> = {
+    전체: signals.length,
+    "서명 대기": 0,
+    "서명 완료": 0,
+    "검토 필요": 0,
+    반려됨: 0,
+    "계약 완료": 0,
+    "기간 만료": 0,
+    "알 수 없음": 0,
+  };
+  for (const signal of signals) {
+    const pill = FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)];
+    if (pill) counts[pill] += 1;
+  }
+  return counts;
 }
 
 /** 서버 검색 요청을 타이핑당 1회로 묶기 위한 로컬 디바운스. */
@@ -414,7 +463,7 @@ function yymmddPrefillToIso(value: string | undefined): string | undefined {
 function categoryTones(category: ContractCategory): {
   badge: string;
   badgeTone: "primary" | "green" | "muted" | "orange" | "burgundy";
-  badgeMini: "primary" | "green" | "muted" | "orange" | "burgundy";
+  badgeMini: BadgeTone;
   infoTone: "primary" | "green" | "muted" | "orange" | "burgundy";
 } {
   switch (category) {
@@ -439,9 +488,25 @@ function categoryTones(category: ContractCategory): {
         badgeMini: "burgundy",
         infoTone: "burgundy",
       };
+    case "rejected-by-reviewer":
+      // The list row renders this one as the solid StatusPill and the detail header as the solid
+      // badge-mini; the avatar, service-record Badge and info row only take the soft tones.
+      return {
+        badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer,
+        badgeTone: "burgundy",
+        badgeMini: "burgundy-solid",
+        infoTone: "burgundy",
+      };
     case "expired":
       return {
         badge: "만료",
+        badgeTone: "muted",
+        badgeMini: "muted",
+        infoTone: "muted",
+      };
+    case "voided":
+      return {
+        badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided,
         badgeTone: "muted",
         badgeMini: "muted",
         infoTone: "muted",
@@ -584,6 +649,21 @@ function hasOpenedDocument(doc: EformsignDocument): boolean {
 }
 
 /**
+ * The detail header's status chip. A contract at 071 reads 반려됨 in the solid burgundy tone; a
+ * 제공기록지 at 071 reads exactly what its list row reads (거부·만료, same soft tone), never 반려됨.
+ */
+function detailHeaderStatusBadge(
+  category: ContractCategory,
+  isServiceRecord: boolean,
+): { label: string; tone: BadgeTone } {
+  const tones = categoryTones(category);
+  if (category === "rejected-by-reviewer" && isServiceRecord) {
+    return { label: SERVICE_RECORD_REVIEWER_REJECTED_LABEL, tone: tones.badgeTone };
+  }
+  return { label: tones.badge, tone: tones.badgeMini };
+}
+
+/**
  * "The customer has signed" is decided only by the document's current
  * categorisation (backend display_status first). Event history is never
  * scanned: a signature that was rejected and re-requested leaves signature
@@ -592,7 +672,10 @@ function hasOpenedDocument(doc: EformsignDocument): boolean {
  * document under it solely at the review step or for display_status "review".
  */
 function isCustomerSignedCategory(category: ContractCategory): boolean {
-  return category === "completed" || category === "signed" || category === "in-progress";
+  return category === "completed"
+    || category === "signed"
+    || category === "in-progress"
+    || category === "rejected-by-reviewer";
 }
 
 function hasSendFailureEventRecord(record: UnknownRecord): boolean {
@@ -641,7 +724,9 @@ function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar):
   if (category === "completed") return "6/6 - 계약서 완료";
   if (category === "revoke-requested") return "철회 요청됨";
   if (category === "revoked") return "철회됨";
+  if (category === "rejected-by-reviewer") return "반려됨 - 제공기관 재검토 대기";
   if (category === "expired") return "기간 만료";
+  if (category === "voided") return "파기됨";
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
   if (isReviewNeeded(doc, calendar)) return "5/6 - 제공기관 검토 필요";
@@ -1116,12 +1201,13 @@ function notificationTitle(log: NotificationLogRecord): string {
 function notificationStatusLabel(status: string): string {
   if (status === "failed") return "실패";
   if (status === "pending") return "대기";
+  if (status === "needs_setup") return MESSAGE_HISTORY_STATUS_LABELS.needs_setup;
   return "완료";
 }
 
 function notificationStatusTone(status: string): "green" | "orange" | "burgundy" {
   if (status === "failed") return "burgundy";
-  if (status === "pending") return "orange";
+  if (status === "pending" || status === "needs_setup") return "orange";
   return "green";
 }
 
@@ -1174,7 +1260,11 @@ function contractStageItems(
   const sendFailed = hasDocumentSendFailure(doc);
   const hasOpened = hasOpenedDocument(doc);
   const reviewNeeded = isReviewNeeded(doc, calendar);
-  const hasCustomerSigned = isCustomerSignedCategory(category);
+  const isVoided = category === "voided";
+  // A void overrides every provider code (plan D2), but it does not erase what happened before it: draw the
+  // history the document would show if it were not voided, ignoring display_status, then close it with the void.
+  const historyCategory = isVoided ? categorize({ ...doc, display_status: null }, calendar) : category;
+  const hasCustomerSigned = isCustomerSignedCategory(historyCategory);
   const items: ContractStageItem[] = [
     {
       icon: FileText,
@@ -1192,7 +1282,19 @@ function contractStageItems(
     },
   ];
 
-  if (sendFailed) return items;
+  // 계약 파기: filed under the "expired" filter, but it was voided in the app — neutral, not danger.
+  // A void overrides every other state (plan D2), so it also ends a list that stopped at a send failure.
+  const voidedStage: ContractStageItem = {
+    icon: AlertTriangle,
+    iconVariant: "info",
+    text: "계약이 파기됐어요",
+    time: formatDateTime(doc.voided_at),
+  };
+
+  if (sendFailed) {
+    if (isVoided) items.push(voidedStage);
+    return items;
+  }
 
   if (hasOpened || hasCustomerSigned) {
     items.push({
@@ -1212,7 +1314,7 @@ function contractStageItems(
     });
   }
 
-  if (category === "completed") {
+  if (historyCategory === "completed") {
     items.push(
       {
         icon: FileSignature,
@@ -1227,6 +1329,13 @@ function contractStageItems(
         time: updatedAt,
       },
     );
+    if (isVoided) items.push(voidedStage);
+    return items;
+  }
+
+  // Whatever else the pre-void state was, its terminal or live entry is dropped: the void is the last, closed entry.
+  if (isVoided) {
+    items.push(voidedStage);
     return items;
   }
 
@@ -1247,6 +1356,17 @@ function contractStageItems(
       icon: AlertTriangle,
       iconVariant: "danger",
       text: "문서가 철회됐어요",
+      time: updatedAt,
+    });
+    return items;
+  }
+
+  if (category === "rejected-by-reviewer") {
+    // 071 is not terminal: a later 070 returns it to 서명 완료 and a 072 completes it.
+    items.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요",
       time: updatedAt,
     });
     return items;
@@ -1526,7 +1646,7 @@ function ContractDetailContent({
         avatarTone="primary"
         title={isServiceRecord ? "제공기록지" : name}
         badges={[
-          { label: tones.badge, tone: tones.badgeMini as BadgeTone },
+          detailHeaderStatusBadge(category, isServiceRecord),
           metadata?.clientId
             ? { label: "고객 등록 완료", tone: "green" }
             : { label: "고객 등록 필요", tone: "burgundy" },
@@ -2367,13 +2487,22 @@ export default function ContractsPage() {
 
   const {
     data: serviceRecordTemplateData,
-    isError: isServiceRecordTemplateError,
+    isError: isServiceRecordTemplateQueryError,
+    isFetching: isServiceRecordTemplateFetching,
+    errorUpdateCount: serviceRecordTemplateErrorCount,
+    refetch: refetchServiceRecordTemplate,
   } = useQuery({
     queryKey: ["eformsign-docs", "service-record-template-id"],
     queryFn: eformsignApi.getServiceRecordTemplateId,
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
+  // react-query는 데이터가 없는 쿼리를 재조회하면 isError를 즉시 false(pending)로 되돌린다.
+  // 재시도 중에도 실패 표시와 비활성 재시도 버튼이 유지되도록, 이미 실패한 적이 있는 조회가
+  // 다시 진행 중인 동안은 실패로 본다.
+  const isServiceRecordTemplateError =
+    isServiceRecordTemplateQueryError
+    || (isServiceRecordTemplateFetching && serviceRecordTemplateErrorCount > 0);
 
   // 제공기록지 template id는 문서 분류(제공기록지 배지·완료 플로우)와 미설정 설치에서의
   // 제공기록지 섹션 비활성 판단에 쓴다. 목록 필터 자체는 section 파라미터로 서버가
@@ -2404,12 +2533,15 @@ export default function ContractsPage() {
     : null;
 
   const {
+    data: documentsData,
     documents: paginatedDocuments,
     totalRows,
     branchId,
     isLoading: isDocumentsLoading,
     isSuccess: isDocumentsSuccess,
     isError: isDocumentsError,
+    isRefetching: isDocumentsRefetching,
+    refetch: refetchDocuments,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
@@ -2427,6 +2559,8 @@ export default function ContractsPage() {
     data: statusCountsData,
     isSuccess: isStatusCountsSuccess,
     isError: isStatusCountsError,
+    isRefetching: isStatusCountsRefetching,
+    refetch: refetchStatusCounts,
   } = useQuery({
     // "eformsign-documents" 아래에 중첩 — 문서 변이가 광역 prefix 무효화만 해도
     // (삭제 훅, 생성 플로우, 지점 전환 removeQueries) 카운터가 함께 갱신된다.
@@ -2447,22 +2581,54 @@ export default function ContractsPage() {
     staleTime: 1000 * 60 * 5,
   });
 
+  // 이전에 성공한 목록 데이터가 남아 있으면 템플릿 조회가 끝나지 않았거나 실패해도 행을 지우지 않는다.
+  const hasListData = documentsData !== undefined || paginatedDocuments.length > 0;
+  const isSectionQueryPending =
+    isAuthenticated
+    && sectionFilterReady
+    && (
+      isDocumentsLoading
+      || (!isDocumentsSuccess && !isDocumentsError)
+    );
   const isContractsLoading =
     isAuthLoading ||
+    (isAuthenticated && !isServiceRecordTemplateResolved && !hasListData) ||
+    isSectionQueryPending;
+  // 건수 알약의 로딩 표시는 캐시된 행 유무와 무관하다. 행이 남아 있어도 건수는 아직 모르므로
+  // 템플릿 조회가 끝나기 전에는 "0"이 아니라 스켈레톤을 보여준다(규칙 S5).
+  const isStatusCountsPending =
+    isAuthLoading ||
     (isAuthenticated && !isServiceRecordTemplateResolved) ||
-    (
-      isAuthenticated
-      && sectionFilterReady
-      && (
-        isDocumentsLoading
-        || (!isDocumentsSuccess && !isDocumentsError)
-        || (
-          Boolean(branchId)
-          && !isStatusCountsSuccess
-          && !isStatusCountsError
-        )
-      )
-    );
+    isSectionQueryPending ||
+    (isAuthenticated && sectionFilterReady && Boolean(branchId) && !isStatusCountsSuccess && !isStatusCountsError);
+  // 불러오기 실패는 "없음"이 아니다(규칙 S5). 이전에 성공한 데이터가 없는 실패는 목록 영역을
+  // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지·템플릿 조회)는 행을
+  // 그대로 두고 목록 위에 안내만 얹는다.
+  const isTemplateIdLoadFailed =
+    activeSection === "service-records"
+    && isServiceRecordTemplateError
+    && serviceRecordTemplateData === undefined;
+  const isTemplateIdRefreshFailed =
+    activeSection === "service-records"
+    && isServiceRecordTemplateQueryError
+    && serviceRecordTemplateData !== undefined;
+  const isListLoadFailed =
+    activeSection !== "automations"
+    && !hasListData
+    && (isTemplateIdLoadFailed || isDocumentsError);
+  const isListStale =
+    activeSection !== "automations"
+    && hasListData
+    && (isTemplateIdLoadFailed || isTemplateIdRefreshFailed || isDocumentsError);
+  const isListStaleRetrying =
+    ((isTemplateIdLoadFailed || isTemplateIdRefreshFailed) && isServiceRecordTemplateFetching)
+    || (isDocumentsError && (isLoadMoreError ? isFetchingNextPage : isDocumentsRefetching));
+  const retryStaleList = () => {
+    if (isTemplateIdLoadFailed || isTemplateIdRefreshFailed) void refetchServiceRecordTemplate();
+    if (isDocumentsError) void (isLoadMoreError ? fetchNextPage() : refetchDocuments());
+  };
+  const isStatusCountsUnavailable = (isStatusCountsError || isTemplateIdLoadFailed) && statusCountsData === undefined;
+  const isStatusCountsStale = isStatusCountsError && statusCountsData !== undefined;
   const { data: documentClientSummaries = [] } = useQuery({
     queryKey: ["eformsign-doc-client-names"],
     queryFn: eformsignApi.getDocumentClientNames,
@@ -2623,25 +2789,26 @@ export default function ContractsPage() {
   const filteredDocuments = displayDocuments;
 
   const filterItems = useMemo(() => {
-    if (isContractsLoading && !isStatusCountsSuccess && !isStatusCountsError) {
+    if (isStatusCountsPending && !isStatusCountsSuccess && !isStatusCountsError) {
       return FILTER_LABELS.map((label) => ({ label, count: "00", skeleton: true }));
     }
 
     // 목록과 동일한 선(先)필터가 적용된 신호를 문서와 같은 규칙으로 접는다.
-    const counts: Record<FilterKey, number> = {
-      전체: statusCountsData?.documents.length ?? 0,
-      "서명 대기": 0,
-      "서명 완료": 0,
-      "검토 필요": 0,
-      "계약 완료": 0,
-      "기간 만료": 0,
-      "알 수 없음": 0,
-    };
-    for (const signal of statusCountsData?.documents ?? []) {
-      counts[FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)]] += 1;
+    // 건수 조회가 실패했고 보여줄 이전 값이 없으면 "0"이 아니라 알 수 없는 값으로 표시한다.
+    if (isStatusCountsUnavailable) {
+      return FILTER_LABELS.map((label) => ({ label, count: "—" }));
     }
+
+    const counts = countSignalsByFilter(statusCountsData?.documents ?? [], calendar);
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [calendar, isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
+  }, [
+    calendar,
+    isStatusCountsPending,
+    isStatusCountsError,
+    isStatusCountsSuccess,
+    isStatusCountsUnavailable,
+    statusCountsData,
+  ]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -2668,6 +2835,7 @@ export default function ContractsPage() {
     const SECTION_META: Record<Exclude<FilterKey, "전체">, { key: string; title: string; category: ContractCategory }> = {
       "서명 완료": { key: "signed", title: "서명 완료", category: "signed" },
       "검토 필요": { key: "in-progress", title: "검토 필요", category: "in-progress" },
+      반려됨: { key: "rejected-by-reviewer", title: "반려됨", category: "rejected-by-reviewer" },
       "서명 대기": { key: "drafting", title: "서명 대기", category: "drafting" },
       "계약 완료": { key: "completed", title: "계약 완료 · 최근", category: "completed" },
       "기간 만료": { key: "expired", title: "기간 만료/반려", category: "expired" },
@@ -2709,6 +2877,8 @@ export default function ContractsPage() {
   const activeSectionLabel = activeSection === "maternal-contracts" ? "산모 계약서" : activeSection === "service-records" ? "제공기록지" : "자동화";
   const listCount = activeSection === "automations" ? undefined : isContractsLoading ? (
     <span className="contracts-count-placeholder skeleton-base" aria-label="계약서 불러오는 중" />
+  ) : isListLoadFailed ? (
+    "—"
   ) : (
     `${totalDocs}건`
   );
@@ -2740,6 +2910,9 @@ export default function ContractsPage() {
               setSelectedDoc(null);
             }}
           />
+          {activeSection === "maternal-contracts" && (
+            <ContractLinkConfirmationsNotice data-component="mobile_contracts_detail-sheet_stack_list-page_content_link-confirmations" branchId={branchId} />
+          )}
           <ListCard
             data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card"
             title={activeSectionLabel}
@@ -2763,6 +2936,30 @@ export default function ContractsPage() {
             }
             onLoadMore={loadMore}
             isLoadingMore={isFetchingNextPage}
+            beforeScroll={activeSection === "automations" ? undefined : (
+              <>
+                {isStatusCountsError && (isStatusCountsUnavailable || isStatusCountsStale) && !isTemplateIdLoadFailed ? (
+                  <QueryErrorState
+                    dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_counts-error"
+                    size="inline"
+                    title={isStatusCountsUnavailable
+                      ? "상태별 건수 정보를 불러오지 못했습니다"
+                      : "최신 건수 정보를 불러오지 못했습니다"}
+                    isRetrying={isStatusCountsRefetching}
+                    onRetry={() => void refetchStatusCounts()}
+                  />
+                ) : null}
+                {isListStale ? (
+                  <QueryErrorState
+                    dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_stale-error"
+                    size="inline"
+                    title="최신 정보를 불러오지 못했습니다"
+                    isRetrying={isListStaleRetrying}
+                    onRetry={retryStaleList}
+                  />
+                ) : null}
+              </>
+            )}
             beforeFilters={activeSection === "automations" ? undefined : (
               <MobileSearchBar
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"
@@ -2780,6 +2977,14 @@ export default function ContractsPage() {
               />
             ) : isContractsLoading ? (
               <ContractListLoadingRows />
+            ) : isListLoadFailed ? (
+              <QueryErrorState
+                dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_load-error"
+                size="panel"
+                title={`${activeSectionLabel} 정보를 불러오지 못했습니다`}
+                isRetrying={isTemplateIdLoadFailed ? isServiceRecordTemplateFetching : isDocumentsRefetching}
+                onRetry={() => void (isTemplateIdLoadFailed ? refetchServiceRecordTemplate() : refetchDocuments())}
+              />
             ) : visibleSections.length === 0 ? (
               <div
                 style={{
@@ -2810,8 +3015,13 @@ export default function ContractsPage() {
                     const name = isServiceRecordRow
                       ? serviceRecordCustomerName === "-" ? "이름 없음" : serviceRecordCustomerName
                       : contractDisplayName(doc);
+                    // 071 on a 제공기록지 keeps today's danger reading (계약-04 scopes 반려됨 to
+                    // contracts); on a contract it is the solid 반려됨 pill.
+                    const isRejectedByReviewer = cat === "rejected-by-reviewer";
                     const badgeLabel = isServiceRecordRow
-                      ? mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar)
+                      ? isRejectedByReviewer
+                        ? SERVICE_RECORD_REVIEWER_REJECTED_LABEL
+                        : mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar)
                       : tones.badge;
 
                     return (
@@ -2874,11 +3084,22 @@ export default function ContractsPage() {
                         }
                         metaClassName={isServiceRecordRow ? "list-meta flex flex-col items-start gap-0.5" : undefined}
                         right={
-                          <Badge
-                            data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row_right_status"
-                            label={badgeLabel}
-                            tone={tones.badgeTone}
-                          />
+                          isRejectedByReviewer && !isServiceRecordRow ? (
+                            <StatusPill
+                              data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row_right_status"
+                              data-slot="status-badge"
+                              variant="rejected_by_reviewer"
+                              size="sm"
+                            >
+                              {badgeLabel}
+                            </StatusPill>
+                          ) : (
+                            <Badge
+                              data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row_right_status"
+                              label={badgeLabel}
+                              tone={tones.badgeTone}
+                            />
+                          )
                         }
                         onClick={() => {
                           setSelectedDoc(doc);

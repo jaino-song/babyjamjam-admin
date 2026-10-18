@@ -1,8 +1,12 @@
 import {
   CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
+  DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+  DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
   MESSAGE_TRIGGER_EVENT_TYPES,
   MESSAGE_TRIGGER_OFFSET_TYPES,
   MESSAGE_TRIGGER_RECIPIENT_TYPES,
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS,
   MESSAGE_TRIGGER_TEMPLATE_KEYS,
   createMessageTriggerRuleSchema,
   updateMessageTriggerRuleSchema,
@@ -68,5 +72,46 @@ describe("rule send time", () => {
   });
   it("does not invent a time for legacy partial updates", () => {
     expect(updateMessageTriggerRuleSchema.parse({ name: "renamed" })).not.toHaveProperty("sendTime");
+  });
+
+  it("exposes the rule target statuses, labels and defaults", () => {
+    expect(MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES).toEqual([
+      "all", "pre_booking", "waiting", "active",
+    ]);
+    expect(MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS).toEqual({
+      all: "전체",
+      pre_booking: "예약 전",
+      waiting: "대기",
+      active: "진행",
+    });
+    expect(DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS).toBe("all");
+    expect(DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE).toBe(true);
+  });
+
+  it.each(MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES)(
+    "accepts targetClientStatus %s and a boolean retryOnFailure",
+    targetClientStatus => {
+      expect(
+        createMessageTriggerRuleSchema.parse({ ...validRule, targetClientStatus, retryOnFailure: false }),
+      ).toEqual({ ...validRule, targetClientStatus, retryOnFailure: false });
+      expect(updateMessageTriggerRuleSchema.parse({ targetClientStatus, retryOnFailure: true })).toEqual({
+        targetClientStatus,
+        retryOnFailure: true,
+      });
+    },
+  );
+
+  it("still accepts payloads without the two rule fields", () => {
+    expect(createMessageTriggerRuleSchema.parse(validRule)).toEqual(validRule);
+    expect(updateMessageTriggerRuleSchema.parse({})).toEqual({});
+  });
+
+  it.each([
+    ["unknown targetClientStatus", { targetClientStatus: "ended" }],
+    ["non-boolean retryOnFailure", { retryOnFailure: "true" }],
+    ["numeric retryOnFailure", { retryOnFailure: 1 }],
+  ])("rejects %s", (_label, override) => {
+    expect(createMessageTriggerRuleSchema.safeParse({ ...validRule, ...override }).success).toBe(false);
+    expect(updateMessageTriggerRuleSchema.safeParse(override).success).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/servi
 
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
+import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
 import {
     validateServiceRecordAnswers,
     validateServiceRecordEditText,
@@ -1361,6 +1362,24 @@ export class AdminServiceRecordEditService {
                     serviceRecordCaseId: source.caseId,
                     actorUserId,
                     payload: revisionPayload,
+                    beforeSnapshot: jsonValue({
+                        snapshotVersion: 1,
+                        startDate: source.startDate,
+                        endDate: source.endDate,
+                        header: source.header,
+                        plannedSessions: provisional.before.sessions,
+                        sessions: source.sessions.map((session) => ({
+                            sessionIndex: session.sessionIndex,
+                            serviceDate: session.serviceDate,
+                            answers: session.answers,
+                            etcService: session.etcService,
+                            notes: session.notes,
+                            paymentConfirmed: session.paymentConfirmed,
+                            employeeId: session.employeeId,
+                            employeeNameSnapshot: session.employeeNameSnapshot,
+                            clientSignatureFingerprint: serviceRecordSignatureFingerprint(session.clientSignature),
+                        })),
+                    }),
                     plannedSessions,
                     provenance: jsonValue(provisional.provenance),
                     formVersionAtConfirm: source.formVersion,

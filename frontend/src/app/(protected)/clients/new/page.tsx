@@ -41,6 +41,7 @@ import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { FieldMessageText } from "@/components/app/ui/field-message";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { FormField as AppFormField, FormNativeSelect, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
@@ -171,12 +172,33 @@ export default function NewClientPage() {
     [voucherYears]
   );
 
-  const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(store.type || "", resolvedVoucherYear);
+  const voucherPriceQuery = useVoucherPriceInfos(store.type || "", resolvedVoucherYear);
+  const {
+    data: voucherPriceInfos,
+    isLoading: isVoucherPriceQueryLoading,
+    isPaused: isVoucherPriceQueryPaused,
+    isError: isVoucherPriceQueryError,
+  } = voucherPriceQuery;
+  const outOfPocketPriceQuery = useOutOfPocketPriceInfos();
   const {
     data: outOfPocketPriceInfos,
-    isLoading: isOutOfPocketPriceLoading,
-    isError: isOutOfPocketPriceError,
-  } = useOutOfPocketPriceInfos();
+    isLoading: isOutOfPocketPriceQueryLoading,
+    isPaused: isOutOfPocketPriceQueryPaused,
+    isError: isOutOfPocketPriceQueryError,
+  } = outOfPocketPriceQuery;
+  // A price that is still loading or paused (offline) is unknown, exactly like
+  // a failed one: the inputs stay locked instead of reading as "no price".
+  // A disabled voucher query (no type selected) is neither, and stays as it was.
+  const isPriceLoading = isVoucherPriceQueryLoading
+    || (isVoucherPriceQueryPaused && voucherPriceInfos === undefined);
+  const isOutOfPocketPriceLoading = isOutOfPocketPriceQueryLoading
+    || (isOutOfPocketPriceQueryPaused && outOfPocketPriceInfos === undefined);
+  const isVoucherPriceError = isVoucherPriceQueryError && voucherPriceInfos === undefined;
+  const isOutOfPocketPriceError = isOutOfPocketPriceQueryError && outOfPocketPriceInfos === undefined;
+  const activePriceQuery = store.voucherClient ? voucherPriceQuery : outOfPocketPriceQuery;
+  const isActivePriceFailed = store.voucherClient ? isVoucherPriceError : isOutOfPocketPriceError;
+  // A failed refetch behind data that did load: keep the data, say it may be out of date.
+  const isActivePriceStale = activePriceQuery.isError && activePriceQuery.data !== undefined;
 
   const availableDurations = useMemo(() => {
     if (!voucherPriceInfos) return [];
@@ -203,8 +225,11 @@ export default function NewClientPage() {
     return availableDurations.map((duration) => ({ value: String(duration), label: `${duration}일` }));
   }, [availableDurations, outOfPocketPriceInfos, store.voucherClient]);
 
+  const isDurationSelectLocked = store.voucherClient
+    ? !store.type || isPriceLoading || isVoucherPriceError
+    : isOutOfPocketPriceLoading || isOutOfPocketPriceError;
   const arePriceInputsLocked = store.voucherClient
-    ? !store.type || !store.duration || isPriceLoading
+    ? !store.type || !store.duration || isPriceLoading || isVoucherPriceError
     : !store.duration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
   useEffect(() => {
@@ -604,31 +629,27 @@ export default function NewClientPage() {
               data-component="desktop_clients-new_service_step_grid_duration-field"
               htmlFor="clients-new-duration"
               label={t(locale, "clients.form.duration")}
-              labelAccessory={!store.voucherClient && isOutOfPocketPriceError ? (
+              labelAccessory={isActivePriceFailed ? (
                 <FieldMessageText
                   id="clients-new-duration-message"
                   tone="error"
                   data-component="desktop_clients-new_service_step_grid_duration-field_message"
                 >
-                  자부담 요금을 불러오지 못했어요
+                  {store.voucherClient ? "바우처 요금을 불러오지 못했어요" : "자부담 요금을 불러오지 못했어요"}
                 </FieldMessageText>
               ) : null}
             >
               <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap" className="relative">
                 <FormNativeSelect
                   id="clients-new-duration"
-                  className={cn(SELECT_CLS, (store.voucherClient
-                    ? !store.type || isPriceLoading
-                    : isOutOfPocketPriceLoading || isOutOfPocketPriceError) && "opacity-50")}
+                  className={cn(SELECT_CLS, isDurationSelectLocked && "opacity-50")}
                   value={store.duration?.toString() || ""}
                   onValueChange={(value) => {
                     setField("duration", value ? Number(value) : null);
                     setPricesManuallyEdited(false);
                   }}
-                  disabled={store.voucherClient
-                    ? !store.type || isPriceLoading
-                    : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
-                  aria-describedby={!store.voucherClient && isOutOfPocketPriceError ? "clients-new-duration-message" : undefined}
+                  disabled={isDurationSelectLocked}
+                  aria-describedby={isActivePriceFailed ? "clients-new-duration-message" : undefined}
                   options={[
                     { value: "", label: "선택하세요" },
                     ...durationOptions,
@@ -642,6 +663,16 @@ export default function NewClientPage() {
               </div>
             </AppFormField>
           </div>
+
+          {isActivePriceFailed || isActivePriceStale ? (
+            <QueryErrorState
+              dataComponent="desktop_clients-new_service_step_price-load-error"
+              size="inline"
+              title={isActivePriceFailed ? "요금 정보를 불러오지 못했습니다" : "최신 정보를 불러오지 못했습니다"}
+              onRetry={() => void activePriceQuery.refetch()}
+              isRetrying={activePriceQuery.isFetching}
+            />
+          ) : null}
 
           <div data-component="desktop_clients-new_service_step_employee-grid" className={GRID_CLS}>
             <div data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field">

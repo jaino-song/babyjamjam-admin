@@ -9,6 +9,7 @@ import {
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
     EformsignDocCompletionClaimParams,
+    EformsignLinkConfirmationCandidate,
     EformsignDocCompletionClaimResult,
     EformsignDocClientSummary,
     EformsignDocDisplayFields,
@@ -18,6 +19,7 @@ import {
     EformsignDocUnscopedResult,
     EformsignDocStepWriteOptions,
     EformsignContractCandidateRow,
+    EformsignVoidCandidate,
     IEformsignDocRepository,
     RecentEformsignDocRow,
     ReviewStageContract,
@@ -37,6 +39,7 @@ import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc
 import { extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
 import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.service";
 import type { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
+import { EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES } from "domain/constants/eformsign-auto-link-status";
 
 const isUniqueConstraintError = (error: unknown): boolean =>
     typeof error === "object"
@@ -48,6 +51,8 @@ const DELETED_EFORMSIGN_STATUS_TYPES = ["047", "049", "099"];
 /** Sentinel: the document's owner moved between the unlocked read and its row lock in a link. */
 const LINK_OWNERSHIP_CHANGED = Symbol("LINK_OWNERSHIP_CHANGED");
 const LINK_OWNERSHIP_RETRY_LIMIT = 3;
+/** Thrown inside a void transaction so it rolls back (its client write included) and starts over. */
+class VoidOwnerChanged extends Error {}
 const COMPLETED_EFORMSIGN_STATUS_TYPES = [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES];
 const MIRROR_LIST_NON_COMPLETED_WHERE: Prisma.eformsign_docWhereInput = {
     statusType: { notIn: COMPLETED_EFORMSIGN_STATUS_TYPES },
@@ -121,6 +126,35 @@ const toUnscopedResult = (
 @Injectable()
 export class SbEformsignDocRepository implements IEformsignDocRepository {
     constructor(private readonly prismaService: PrismaService) {}
+
+    async findLinkConfirmationCandidates(
+        branchId: string,
+        normalizedPhone?: string,
+    ): Promise<EformsignLinkConfirmationCandidate[]> {
+        return this.prismaService.eformsign_doc.findMany({
+            where: {
+                // 무지점 문서는 system scope 전사 고객 조회가 필요하므로 소유자 승인 전까지 제외한다 (BJJ-432).
+                branchId,
+                clientId: null,
+                permanentPurgeRequestedAt: null,
+                statusType: { in: [...EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES] },
+                AND: [
+                    { OR: [{ documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT }, { documentKind: null }] },
+                    ...(normalizedPhone === undefined ? [] : [{ OR: [
+                        { customerPhone: normalizedPhone },
+                        { customerPhone: null, stepRecipientSms: { contains: normalizedPhone.slice(-4) } },
+                    ] }]),
+                ],
+            },
+            orderBy: [{ createdDate: "desc" }, { id: "desc" }],
+            select: {
+                documentId: true, documentName: true, statusType: true, statusDetail: true,
+                createdDate: true, branchId: true, clientId: true, permanentPurgeRequestedAt: true,
+                documentKind: true, serviceRecordCaseId: true, templateId: true,
+                customerName: true, customerPhone: true, stepRecipientSms: true, detailPayload: true,
+            },
+        });
+    }
 
     async findById(branchid: string, id: number): Promise<EformsignDocEntity | null> {
         return this.findFirstDomain({
@@ -333,6 +367,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 stepType: true,
                 stepName: true,
                 permanentPurgeRequestedAt: true,
+                voidedAt: true,
             },
         });
     }
@@ -361,6 +396,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 updatedDate: true,
                 expired: true,
                 client: { select: { name: true } },
+                voidedAt: true,
             },
         });
         return docs.map((doc) => ({
@@ -374,6 +410,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             stepName: doc.stepName,
             updatedDate: doc.updatedDate,
             expired: doc.expired,
+            isVoided: doc.voidedAt !== null,
         }));
     }
 
@@ -457,6 +494,16 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         });
     }
 
+    async findVoidedByNames(userIds: string[]): Promise<Map<string, string | null>> {
+        if (userIds.length === 0) return new Map();
+
+        const users = await this.prismaService.user.findMany({
+            where: { id: { in: [...new Set(userIds)] } },
+            select: { id: true, name: true },
+        });
+        return new Map(users.map((user) => [user.id, user.name]));
+    }
+
     async findContractEndDatesByDocumentIds(documentIds: string[]): Promise<Map<string, string>> {
         if (documentIds.length === 0) return new Map();
 
@@ -492,6 +539,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT,
                 statusType: { in: SbEformsignDocRepository.REVIEW_STAGE_STATUS_STORAGE_VALUES },
                 permanentPurgeRequestedAt: null,
+                voidedAt: null,
             },
             select: {
                 documentId: true,
@@ -628,6 +676,113 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         }
     }
 
+    findVoidCandidate(branchid: string, documentId: string): Promise<EformsignVoidCandidate | null> {
+        // voided_at is required: no deploy-window fallback for this mutation read.
+        return this.prismaService.eformsign_doc.findFirst({
+            where: { documentId, branchId: branchid },
+            select: {
+                documentId: true, clientId: true, documentKind: true, serviceRecordCaseId: true,
+                statusType: true, stepType: true, stepName: true, voidedAt: true, permanentPurgeRequestedAt: true,
+            },
+        });
+    }
+
+    /**
+     * Voids a contract document, serialised with every phone-link pointer writer through the
+     * owning client's row lock (BJJ-439 D3).
+     *
+     * Those writers take the client row `FOR UPDATE` and only then read "is there a newer voided
+     * contract" before pointing `client.e_doc_id` at an older document. A void that did not hold
+     * the same lock could commit between that read and the pointer write. Lock order is the
+     * project-wide one: client row -> document row.
+     *
+     * 1. read the document's owner WITHOUT a lock (it only chooses which client row to lock);
+     * 2. lock that client row, then WRITE it (no value change): a lock alone does not
+     *    invalidate the snapshot of a Serializable link transaction that started earlier and is
+     *    waiting on this row, while a concurrent UPDATE makes it fail with 40001 and retry
+     *    against a fresh snapshot that sees the void;
+     * 3. lock the document row and re-check owner / void / purge state under it;
+     * 4. write the audit columns.
+     *
+     * The caller has already cancelled the document at the vendor, so an owner that moved between
+     * (1) and (3) is not a refusal: the transaction rolls back and starts over with the new owner.
+     * No compatibility retry: a void must never succeed without its durable audit values.
+     */
+    async markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean> {
+        for (let attempt = 0; attempt < LINK_OWNERSHIP_RETRY_LIMIT; attempt += 1) {
+            try {
+                return await this.prismaService.$transaction((tx) =>
+                    this.markVoidedOnce(tx, branchid, documentId, voidedAt, voidedBy));
+            } catch (error) {
+                if (!(error instanceof VoidOwnerChanged)) throw error;
+            }
+        }
+        return false;
+    }
+
+    private async markVoidedOnce(
+        tx: Prisma.TransactionClient,
+        branchid: string,
+        documentId: string,
+        voidedAt: Date,
+        voidedBy: string,
+    ): Promise<boolean> {
+        const peeked = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND voided_at IS NULL
+              AND permanent_purge_requested_at IS NULL
+        `);
+        const ownerId = peeked?.[0]?.clientId ?? null;
+        if (ownerId === null) {
+            return false;
+        }
+
+        const lockedClients = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE id = ${ownerId}
+            FOR UPDATE
+        `);
+        if (lockedClients?.length !== 1) {
+            // The observed owner is gone (the document was reassigned and the old owner deleted
+            // after the unlocked read). The vendor cancel already happened, so this is the same
+            // owner-changed case as below: start over and re-read the owner, never refuse here.
+            throw new VoidOwnerChanged();
+        }
+        await tx.$executeRaw(Prisma.sql`
+            UPDATE client
+            SET e_doc_id = e_doc_id
+            WHERE id = ${ownerId}
+        `);
+
+        const documents = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND voided_at IS NULL
+              AND permanent_purge_requested_at IS NULL
+            FOR UPDATE
+        `);
+        const document = documents?.[0];
+        if (!document) {
+            return false;
+        }
+        if ((document.clientId ?? null) !== ownerId) {
+            // The owner moved after the unlocked read: the locked client is not the owner.
+            throw new VoidOwnerChanged();
+        }
+
+        const result = await tx.eformsign_doc.updateMany({
+            where: { documentId, branchId: branchid, voidedAt: null, permanentPurgeRequestedAt: null },
+            data: { voidedAt, voidedBy },
+        });
+        return result.count > 0;
+    }
+
     async update(
         branchid: string,
         doc: EformsignDocEntity,
@@ -762,6 +917,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             WHERE document_id = ${documentId}
               AND branch_id = ${branchid}::uuid
               AND permanent_purge_requested_at IS NULL
+              AND voided_at IS NULL
               AND status_type NOT IN ('047', '049', '099')
             FOR UPDATE
         `);
@@ -920,6 +1076,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             WHERE document_id = ${documentId}
               AND branch_id = ${branchid}::uuid
               AND permanent_purge_requested_at IS NULL
+              AND voided_at IS NULL
               AND status_type NOT IN ('047', '049', '099')
             FOR UPDATE
         `);
@@ -1050,6 +1207,10 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             stepRecipientTypes,
             statusDetail,
             expired,
+            clientId,
+            documentKind,
+            employeeScheduleId,
+            templateId,
             ...rest
         } = EformsignDocMapper.toPrismaUpdate(doc);
         // A column the caller did not supply holds the value it read earlier; leaving it out
@@ -1057,6 +1218,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         // `data` feeds both the primary write and the pending-column retry below.
         const data = {
             ...rest,
+            ...(options?.updateOwnershipIdentity === false
+                ? {}
+                : { clientId, documentKind, employeeScheduleId, templateId }),
             ...(options?.updateStepType === false ? {} : { stepType }),
             ...(options?.updateStepIndex === false ? {} : { stepIndex }),
             ...(options?.updateStepName === false ? {} : { stepName }),
@@ -1152,6 +1316,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                     { branchId: null },
                     { branchId: branchid },
                 ],
+                ...(options?.expectedOwnerClientId === undefined
+                    ? {}
+                    : { AND: [{ OR: [{ clientId: null }, { clientId: options.expectedOwnerClientId }] }] }),
             },
         });
     }

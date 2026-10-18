@@ -88,4 +88,20 @@ describe("ClientDetailModal document status badge", () => {
 
         expect(screen.getByText("철회됨")).toHaveClass("text-[hsl(355,36%,45%)]");
     });
+
+    it("shows a voided contract (계약 파기) as 파기됨 in the neutral tone, never 미발급", () => {
+        renderModal(buildClient({ documentStatus: "voided", hasSigned: true }));
+
+        const badge = screen.getByText("파기됨");
+        expect(badge).toBeInTheDocument();
+        expect(badge).toHaveClass("text-foreground");
+        expect(screen.queryByText("미발급")).not.toBeInTheDocument();
+        expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("localizes the voided contract for non-Korean locales", () => {
+        renderModal(buildClient({ documentStatus: "voided" }), "en");
+
+        expect(screen.getByText("Voided")).toBeInTheDocument();
+    });
 });

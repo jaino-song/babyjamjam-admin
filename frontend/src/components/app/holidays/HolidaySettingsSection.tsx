@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays } from "lucide-react";
 
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -129,6 +130,9 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
     addMutation.isPending || excludeMutation.isPending || deleteMutation.isPending || syncMutation.isPending;
 
   const data = yearQuery.data;
+  // A paused first load (device offline, e.g. after a year switch) has no data and is not "loading" to react-query.
+  const isYearLoading = yearQuery.isLoading || (yearQuery.isPaused && data === undefined);
+  const retryYear = () => void yearQuery.refetch();
   const holidays = data?.holidays ?? [];
   // A past inactive override can no longer be deleted (HOLIDAY_DATE_IN_PAST), so it is not offered at all.
   const inactiveOverrides: InactiveHolidayOverride[] = (data?.inactiveOverrides ?? []).filter(
@@ -168,7 +172,7 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
 
         <div data-component={`${DATA_COMPONENT}_content`} className="grid gap-4">
           <HolidaySyncStrip
-            synced={data?.synced ?? false}
+            synced={data?.synced}
             lastSyncedAt={data?.lastSyncedAt ?? null}
             pending={syncMutation.isPending}
             disabled={busy}
@@ -207,47 +211,60 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
             {branchName ? <b>{branchName}에만</b> : "이 지점에만"} 적용돼요.
           </p>
 
-          {yearQuery.isLoading ? (
+          {isYearLoading ? (
             <div data-component={`${DATA_COMPONENT}_content_skeleton`} className="space-y-2">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
             </div>
-          ) : yearQuery.isError ? (
-            <p
-              role="alert"
-              data-component={`${DATA_COMPONENT}_content_error`}
-              className="text-sm font-medium text-red-700"
-            >
-              공휴일 목록을 불러오지 못했어요.
-            </p>
-          ) : holidays.length === 0 ? (
-            <p data-component={`${DATA_COMPONENT}_content_empty`} className="py-8 text-center text-sm text-v3-text-muted">
-              {data?.supported === false
-                ? "이 연도의 공휴일 정보가 아직 없어요."
-                : "표시할 공휴일이 없어요."}
-            </p>
-          ) : (
-            <HolidayList
-              holidays={holidays}
-              today={today}
-              disabled={busy}
-              onExclude={(holiday) => excludeMutation.mutate(holiday)}
-              onRestore={(holiday) =>
-                holiday.overrideId &&
-                deleteMutation.mutate({
-                  overrideId: holiday.overrideId,
-                  message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 다시 공휴일로 포함했어요.`,
-                })
-              }
-              onDelete={(holiday) =>
-                holiday.overrideId &&
-                deleteMutation.mutate({
-                  overrideId: holiday.overrideId,
-                  message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 삭제했어요.`,
-                })
-              }
+          ) : yearQuery.isError && data === undefined ? (
+            <QueryErrorState
+              dataComponent={`${DATA_COMPONENT}_content_error`}
+              size="inline"
+              title="공휴일 목록을 불러오지 못했어요."
+              onRetry={retryYear}
+              isRetrying={yearQuery.isFetching}
             />
+          ) : (
+            <>
+              {yearQuery.isError ? (
+                <QueryErrorState
+                  dataComponent={`${DATA_COMPONENT}_content_error`}
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={retryYear}
+                  isRetrying={yearQuery.isFetching}
+                />
+              ) : null}
+              {holidays.length === 0 ? (
+                <p data-component={`${DATA_COMPONENT}_content_empty`} className="py-8 text-center text-sm text-v3-text-muted">
+                  {data?.supported === false
+                    ? "이 연도의 공휴일 정보가 아직 없어요."
+                    : "표시할 공휴일이 없어요."}
+                </p>
+              ) : (
+                <HolidayList
+                  holidays={holidays}
+                  today={today}
+                  disabled={busy}
+                  onExclude={(holiday) => excludeMutation.mutate(holiday)}
+                  onRestore={(holiday) =>
+                    holiday.overrideId &&
+                    deleteMutation.mutate({
+                      overrideId: holiday.overrideId,
+                      message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 다시 공휴일로 포함했어요.`,
+                    })
+                  }
+                  onDelete={(holiday) =>
+                    holiday.overrideId &&
+                    deleteMutation.mutate({
+                      overrideId: holiday.overrideId,
+                      message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 삭제했어요.`,
+                    })
+                  }
+                />
+              )}
+            </>
           )}
 
           <HolidayInactiveOverrides

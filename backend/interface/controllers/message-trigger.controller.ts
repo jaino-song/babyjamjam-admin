@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
@@ -63,6 +63,20 @@ export class MessageTriggerController {
         @Param("id") id: string,
     ) {
         return this.triggerService.cancelJobByUser(tenant.branchId ?? "", id);
+    }
+
+    /**
+     * Manual resend of one '설정 필요' (needs_setup) message job, one item at a
+     * time (BJJ-444). Branch managers only; no body, no bulk form.
+     */
+    @Post("message-trigger-jobs/:id/resend")
+    @HttpCode(200)
+    @UseGuards(BranchManagerGuard)
+    resendJob(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.triggerService.resendNeedsSetupJob(tenant.branchId ?? "", id);
     }
 
     @Get("message-logs/page")

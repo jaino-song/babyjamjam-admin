@@ -35,7 +35,6 @@ const DISPATCH_CONFIRMED_IN_PROGRESS_STATUS_CODES = new Set([
 ]);
 const ContractApprovalSnapshotSchema = z.object({
     clientId: z.number().int().positive(),
-    phoneLast4: z.string().min(1).max(20),
     areaId: z.string().min(1).max(200),
     templateId: z.string().min(1).max(200),
     templateName: z.string().max(200).nullable(),
@@ -109,7 +108,7 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
                         targetVersion: clientAgentTargetVersion(client),
                         targetSnapshot: this.toContractApprovalSnapshot(client, template, effectiveDate),
                         title: "계약서 생성 및 발송",
-                        summary: `${client.name} 고객에게 ${template.templateName ?? template.templateId} 계약서를 발송합니다. 수신번호 ${maskPhone(client.phone)}로 민감 필드를 포함해 전송합니다.`,
+                        summary: `${client.name} 고객에게 ${template.templateName ?? template.templateId} 계약서를 발송합니다. 민감 필드를 포함해 전송합니다.`,
                         provider: "eformsign",
                         estimatedCost: "eformsign 계약 요금제 기준",
                     };
@@ -356,7 +355,6 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
     ): ContractApprovalSnapshot {
         return ContractApprovalSnapshotSchema.parse({
             clientId: client.id,
-            phoneLast4: maskPhone(client.phone),
             areaId: template.areaId,
             templateId: template.templateId,
             templateName: template.templateName,
@@ -370,9 +368,4 @@ export class ContractExternalAgentCapabilitiesProvider implements AgentCapabilit
             includesSensitiveFields: true,
         });
     }
-}
-
-function maskPhone(value: string | null): string {
-    const digits = (value ?? "").replace(/\D/g, "");
-    return digits.length >= 4 ? `••••${digits.slice(-4)}` : "[masked]";
 }

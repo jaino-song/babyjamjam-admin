@@ -91,10 +91,10 @@ describe("useClientUpcomingMessageTriggerJobs", () => {
         ]);
     });
 
-    it("does not retain the previous client's rows after an error", () => {
+    it("keeps the loaded jobs when a refetch fails", () => {
         mockedUseInfiniteQuery.mockReturnValue({
             data: {
-                pages: [{ items: [job()], nextCursor: null }],
+                pages: [{ items: [job(), job({ id: "job-2", status: "sent" })], nextCursor: null }],
             },
             isError: true,
             isLoading: false,
@@ -104,7 +104,27 @@ describe("useClientUpcomingMessageTriggerJobs", () => {
             refetch: jest.fn(),
         } as never);
 
-        expect(useClientUpcomingMessageTriggerJobs(43).items).toEqual([]);
+        const result = useClientUpcomingMessageTriggerJobs(43);
+
+        expect(result.isError).toBe(true);
+        expect(result.items).toEqual([expect.objectContaining({ id: "job-1" })]);
+    });
+
+    it("returns no jobs when the first load fails", () => {
+        mockedUseInfiniteQuery.mockReturnValue({
+            data: undefined,
+            isError: true,
+            isLoading: false,
+            isFetchingNextPage: false,
+            hasNextPage: false,
+            fetchNextPage: jest.fn(),
+            refetch: jest.fn(),
+        } as never);
+
+        const result = useClientUpcomingMessageTriggerJobs(43);
+
+        expect(result.isError).toBe(true);
+        expect(result.items).toEqual([]);
     });
 
     it("forwards the opaque cursor from the infinite query to the API", async () => {

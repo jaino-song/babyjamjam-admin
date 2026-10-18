@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clientsApi } from "../api/clients.api";
 import type { Client, PaginatedResponse } from "../types";
 import { clientKeys } from "./keys";
-import { useClient, useUpdateClient } from "./use-clients";
+import { useClient, useConfirmBooking, useUpdateClient } from "./use-clients";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 
 let mockActiveBranchId: string | null = "branch-a";
 let mockCookieBranchId: string | null = "branch-a";
@@ -30,6 +31,7 @@ jest.mock("../api/clients.api", () => ({
     terminateService: jest.fn(),
     requestReplacement: jest.fn(),
     completeReplacement: jest.fn(),
+    confirmBooking: jest.fn(),
     approveScheduleChange: jest.fn(),
     rejectScheduleChange: jest.fn(),
   },
@@ -71,6 +73,34 @@ describe("useClient branch-scoped detail", () => {
     jest.clearAllMocks();
     mockActiveBranchId = "branch-a";
     mockCookieBranchId = "branch-a";
+  });
+
+  it("confirms booking and invalidates the same three keys as complete replacement", async () => {
+    const confirmed = { id: 42, bookingConfirmedAt: "2026-10-13T00:00:00.000Z", serviceStatus: "waiting" };
+    jest.mocked(clientsApi.confirmBooking).mockResolvedValue({ data: confirmed } as never);
+    const queryClient = createQueryClient();
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useConfirmBooking(), { wrapper: wrapperFor(queryClient) });
+    await act(async () => {
+      await expect(result.current.mutateAsync(42)).resolves.toEqual(confirmed);
+    });
+    expect(clientsApi.confirmBooking).toHaveBeenCalledWith(42);
+    expect(invalidate.mock.calls).toEqual([
+      [{ queryKey: clientKeys.all }],
+      [{ queryKey: clientKeys.detail(42) }],
+      [{ queryKey: messageTriggerKeys.upcoming() }],
+    ]);
+  });
+
+  it("does not invalidate confirmation caches after refusal", async () => {
+    jest.mocked(clientsApi.confirmBooking).mockRejectedValue(new Error("refused"));
+    const queryClient = createQueryClient();
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useConfirmBooking(), { wrapper: wrapperFor(queryClient) });
+    await act(async () => {
+      await expect(result.current.mutateAsync(42)).rejects.toThrow("refused");
+    });
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it("keeps the legacy detail key as a prefix for branch-scoped cache entries", () => {

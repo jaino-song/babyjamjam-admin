@@ -46,4 +46,17 @@ describe("getClientDocumentStatusMeta", () => {
         expect(resolveClientDocumentDisplayStatus("revoke_requested", { hasSigned: true })).toBe("revoke_requested");
         expect(getClientDocumentStatusMeta("revoke_requested", { hasSigned: true }).label).toBe("철회 요청됨");
     });
+
+    it("reads a voided contract (계약 파기) as 파기됨 in the neutral tone, never 미발급", () => {
+        expect(CLIENT_DOCUMENT_STATUS_META.voided).toEqual({ label: "파기됨", variant: "neutral" });
+        expect(resolveClientDocumentDisplayStatus("voided", { hasSigned: false })).toBe("voided");
+        expect(getClientDocumentStatusMeta("voided", { hasSigned: false })).toEqual({ label: "파기됨", variant: "neutral" });
+        // Control: an unknown stored value still falls to 미발급.
+        expect(getClientDocumentStatusMeta("not-a-status", { hasSigned: false }).label).toBe("미발급");
+    });
+
+    it("keeps a voided contract 파기됨 even when the customer had signed", () => {
+        expect(resolveClientDocumentDisplayStatus("voided", { hasSigned: true })).toBe("voided");
+        expect(getClientDocumentStatusMeta("voided", { hasSigned: true }).label).toBe("파기됨");
+    });
 });

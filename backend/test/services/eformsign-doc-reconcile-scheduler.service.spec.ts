@@ -118,7 +118,7 @@ describe("EformsignDocReconcileSchedulerService", () => {
 
             expect(lockService.runExclusive).toHaveBeenCalledTimes(1);
             expect(backfill.execute).toHaveBeenCalledWith(
-                expect.objectContaining({ shouldContinue: expect.any(Function) }),
+                expect.objectContaining({ shouldContinue: expect.any(Function), receiptContext: expect.objectContaining({ trigger: "reconciliation", lockMode: "valkey" }) }),
                 reconciliationPrincipal,
             );
         });
@@ -163,7 +163,7 @@ describe("EformsignDocReconcileSchedulerService", () => {
             expect(lockService.runExclusive).not.toHaveBeenCalled();
             expect(backfill.execute).toHaveBeenCalledTimes(2);
             expect(backfill.execute).toHaveBeenCalledWith(
-                expect.objectContaining({ shouldContinue: expect.any(Function) }),
+                expect.objectContaining({ shouldContinue: expect.any(Function), receiptContext: expect.objectContaining({ trigger: "reconciliation", lockMode: "approved-unlocked" }) }),
                 reconciliationPrincipal,
             );
             expect(warn.mock.calls.filter(([message]) =>
@@ -318,6 +318,128 @@ describe("EformsignDocReconcileSchedulerService", () => {
             expect(shouldContinue?.()).toBe(true);
             schedulerLease.holdsLease.mockReturnValue(false);
             expect(shouldContinue?.()).toBe(false);
+        });
+    });
+
+    /**
+     * The scheduler binds no collection writer. Apart from the added `receiptContext`
+     * argument (intended, covered above), lock, lease, deadline and failure handling
+     * must be exactly what base did.
+     */
+    describe("without a collection writer it behaves as base", () => {
+        const START = 1_000_000;
+        const RUNTIME_BOUND_MS = 31 * 60 * 1000;
+
+        function captureOptions() {
+            const captured: Array<Record<string, unknown>> = [];
+            backfill.execute.mockImplementation((options: Record<string, unknown>) => {
+                captured.push(options);
+                return Promise.resolve(createSummary());
+            });
+            return captured;
+        }
+
+        it("passes the usecase nothing beyond shouldContinue and the intended receiptContext", async () => {
+            const captured = captureOptions();
+            await createService("true").reconcileDocuments();
+            lockService.isAvailable.mockReturnValue(false);
+            await createService("true", false, true).reconcileDocuments();
+
+            expect(captured).toHaveLength(2);
+            for (const options of captured) {
+                const baseOptions = { ...options };
+                delete baseOptions["receiptContext"];
+                expect(baseOptions).toEqual({ shouldContinue: expect.any(Function) });
+            }
+            expect(backfill.execute.mock.calls.map(([, principal]) => principal))
+                .toEqual([reconciliationPrincipal, reconciliationPrincipal]);
+        });
+
+        it("under the distributed lock shouldContinue needs the deadline, the lock lease and the scheduler lease", async () => {
+            const captured = captureOptions();
+            const held = { value: true };
+            lockService.runExclusive.mockImplementation(
+                (work: (lease: { isHeld: () => boolean }) => Promise<unknown>) =>
+                    work({ isHeld: () => held.value }));
+            const schedulerLease = createSchedulerLeaseMock(true);
+            const now = jest.spyOn(Date, "now").mockReturnValue(START);
+            await createService("true", false, false, schedulerLease).reconcileDocuments();
+            const shouldContinue = captured[0]!["shouldContinue"] as () => boolean;
+
+            expect(shouldContinue()).toBe(true);
+            held.value = false;
+            expect(shouldContinue()).toBe(false);
+            held.value = true;
+            expect(shouldContinue()).toBe(true);
+            schedulerLease.holdsLease.mockReturnValue(false);
+            expect(shouldContinue()).toBe(false);
+            schedulerLease.holdsLease.mockReturnValue(true);
+            expect(shouldContinue()).toBe(true);
+            now.mockReturnValue(START + RUNTIME_BOUND_MS);
+            expect(shouldContinue()).toBe(false);
+        });
+
+        it("without a lock shouldContinue needs only the deadline and the scheduler lease", async () => {
+            lockService.isAvailable.mockReturnValue(false);
+            const captured = captureOptions();
+            const schedulerLease = createSchedulerLeaseMock(true);
+            const now = jest.spyOn(Date, "now").mockReturnValue(START);
+            await createService("true", false, true, schedulerLease).reconcileDocuments();
+            const shouldContinue = captured[0]!["shouldContinue"] as () => boolean;
+
+            expect(lockService.runExclusive).not.toHaveBeenCalled();
+            expect(shouldContinue()).toBe(true);
+            schedulerLease.holdsLease.mockReturnValue(false);
+            expect(shouldContinue()).toBe(false);
+            schedulerLease.holdsLease.mockReturnValue(true);
+            now.mockReturnValue(START + RUNTIME_BOUND_MS);
+            expect(shouldContinue()).toBe(false);
+        });
+
+        it("never starts a sweep without the scheduler lease and does not touch the lock then", async () => {
+            const service = createService("true", false, false, createSchedulerLeaseMock(false));
+
+            await service.reconcileDocuments();
+
+            expect(lockService.isAvailable).not.toHaveBeenCalled();
+            expect(lockService.runExclusive).not.toHaveBeenCalled();
+            expect(backfill.execute).not.toHaveBeenCalled();
+        });
+
+        it("logs the completed sweep from the returned summary exactly as before", async () => {
+            backfill.execute.mockResolvedValue(createSummary({ fetched: 7, created: 3, updated: 2, skipped: 1, duplicates: 1 }));
+            const service = createService("true");
+            const log = jest.spyOn(
+                (service as unknown as { logger: { log: (message: string) => void } }).logger,
+                "log",
+            ).mockImplementation(() => undefined);
+
+            await service.reconcileDocuments();
+
+            expect(log).toHaveBeenCalledWith(
+                "[Eformsign Reconcile] Sweep completed fetched=7 created=3 updated=2 skipped=1 duplicates=1",
+            );
+        });
+
+        it("treats a lost-lease failure from the sweep as an ordinary incomplete run that feeds the streak", async () => {
+            backfill.execute.mockRejectedValue(new Error("Eformsign document backfill lost its execution lease"));
+            const service = createService("true");
+            const logger = (service as unknown as {
+                logger: { warn: (message: string) => void; error: (message: string) => void };
+            }).logger;
+            const warn = jest.spyOn(logger, "warn").mockImplementation(() => undefined);
+            const error = jest.spyOn(logger, "error").mockImplementation(() => undefined);
+
+            await expect(service.reconcileDocuments()).resolves.toBeUndefined();
+            await service.reconcileDocuments();
+            expect(warn).toHaveBeenCalledTimes(2);
+            expect(warn.mock.calls[0]?.[0]).toContain("(1 in a row)");
+            expect(warn.mock.calls[0]?.[0]).toContain("lost its execution lease");
+            expect(error).not.toHaveBeenCalled();
+
+            await service.reconcileDocuments();
+            expect(error).toHaveBeenCalledTimes(1);
+            expect(error.mock.calls[0]?.[0]).toContain("3 in a row");
         });
     });
 });

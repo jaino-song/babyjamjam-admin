@@ -63,6 +63,16 @@ export class SyncClientEndDateUsecase {
         options: SyncClientEndDateOptions = {},
     ): Promise<SyncedClientEndDate | undefined> {
         try {
+            // A voided (파기) contract is dead: its end date must not reach the client's
+            // period. Decide that from the local row BEFORE the end-date fields are
+            // interpreted, so missing or malformed dates on a voided document never
+            // throw in strict reconciliation. `execute` reaches this through here too.
+            const doc = await this.eformsignDocRepository.findByDocumentId(branchId, documentId);
+            if (doc?.isVoided) {
+                this.logger.log(`Document ${documentId} is voided; skipping endDate sync.`);
+                return;
+            }
+
             const fields = document.fields ?? [];
 
             const findValue = (fieldId: string) => fields.find((field) => field.id === fieldId)?.value;
@@ -107,7 +117,6 @@ export class SyncClientEndDateUsecase {
                 return;
             }
 
-            const doc = await this.eformsignDocRepository.findByDocumentId(branchId, documentId);
             if (!doc) {
                 const message = `eformsign_doc not found for ${documentId}; cannot sync client.endDate.`;
                 this.logger.warn(message);

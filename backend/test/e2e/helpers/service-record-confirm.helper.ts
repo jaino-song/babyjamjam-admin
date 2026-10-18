@@ -64,6 +64,7 @@ export async function createServiceRecordConfirmFixture(prisma: PrismaClient) {
         data: {
             branchId: branch.id,
             name: "Task 4 Test Client",
+            bookingConfirmedAt: new Date("2026-01-01"),
             voucherClient: true,
             duration: 15,
             fullPrice: "1500000",

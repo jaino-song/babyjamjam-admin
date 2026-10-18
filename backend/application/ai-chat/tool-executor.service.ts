@@ -1007,13 +1007,13 @@ export class ToolExecutorService {
             if (!doc) {
                 return { success: false, error: "문서를 찾을 수 없습니다" };
             }
-            return { success: true, data: doc };
+            return { success: true, data: doc.isVoided ? { ...doc.toJSON(), statusType: "voided", statusDetail: "파기됨" } : doc };
         }
 
         if (!this.isMissingArg(args['clientId'])) {
             const clientId = this.parseRequiredIntegerArg(args, "clientId", { min: 1 });
             const docs = await this.eformsignDocService.findByClientId(branchid, clientId);
-            return { success: true, data: docs };
+            return { success: true, data: docs.map((doc) => doc.isVoided ? { ...doc.toJSON(), statusType: "voided", statusDetail: "파기됨" } : doc) };
         }
 
         return { success: false, error: "documentId 또는 clientId가 필요합니다" };
@@ -1281,8 +1281,8 @@ export class ToolExecutorService {
                 id: c.id,
                 documentId: c.documentId,
                 clientId: c.clientId,
-                statusType: c.statusType,
-                statusDetail: c.statusDetail,
+                statusType: c.isVoided ? "voided" : c.statusType,
+                statusDetail: c.isVoided ? "파기됨" : c.statusDetail,
                 stepName: c.stepName,
                 createdDate: c.createdDate,
                 updatedDate: c.updatedDate,

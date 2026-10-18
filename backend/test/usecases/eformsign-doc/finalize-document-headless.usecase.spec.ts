@@ -684,6 +684,50 @@ describe("FinalizeDocumentHeadlessUsecase revoke-requested documents", () => {
         );
     });
 
+    // 계약-04: 071 left the terminal set, but a finalize must still refuse to start on it and
+    // must settle a running one as failed instead of waiting as pending until the timeout.
+    it.each(["071", "doc_reject_reviewer"])(
+        "refuses up front when the local row is a reviewer rejection (%s)",
+        async (localStatusType) => {
+            const { usecase, headlessService, dispatchBoundary } = build({
+                workflowStates: [STEP_070],
+                localStatusType,
+            });
+
+            await expect(run(usecase)).resolves.toEqual(expect.objectContaining({
+                ok: false,
+                reason: "authorization_denied",
+                fallbackHint: "manual_check",
+            }));
+            expect(headlessService.dispatchFinalize).not.toHaveBeenCalled();
+            expect(dispatchBoundary.claim).not.toHaveBeenCalled();
+        },
+    );
+
+    it("settles a send followed by vendor 071 as a terminal failure when only the status code can be read", async () => {
+        const { usecase } = build({
+            statusCodes: ["071"],
+        });
+
+        await expect(run(usecase)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "eformsign_terminal_failure",
+            code: "EFORMSIGN_TERMINAL_FAILURE",
+        }));
+    });
+
+    it("settles a send followed by vendor 071 as a terminal failure when the workflow state can be read", async () => {
+        const { usecase } = build({
+            workflowStates: [STEP_070, { ...STEP_070, statusCode: "071" }],
+        });
+
+        await expect(run(usecase)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "eformsign_terminal_failure",
+            code: "EFORMSIGN_TERMINAL_FAILURE",
+        }));
+    });
+
     it.each(["040", "doc_request_revoke"])(
         "refuses up front when the local row is already revoke-requested (%s)",
         async (localStatusType) => {

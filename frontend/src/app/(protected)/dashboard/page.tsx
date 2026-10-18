@@ -19,6 +19,7 @@ import {
   RecentActivitiesPanel,
 } from "@/components/app/v3";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   Users,
   Calendar,
@@ -55,10 +56,13 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const {
     data: overview,
-    isLoading: overviewLoading,
+    isLoading: isOverviewLoading,
+    isPaused: overviewPaused,
     isError: overviewError,
+    isFetching: overviewFetching,
     refetch: refetchOverview,
   } = useDashboardOverview(50);
+  const overviewLoading = isOverviewLoading || (overviewPaused && overview === undefined);
   const user = useInitialUser();
   // Display-only: the built-in calendar stands in until the branch calendar loads.
   const { calendar } = useBusinessDayCalendar();
@@ -211,7 +215,11 @@ export default function DashboardPage() {
 
   const selectedClientData = useMemo(() => {
     if (!selectedClient) return null;
-    return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
+    const listedClient = clients.find((client) => client.id === selectedClient.id);
+    if (listedClient && listedClient.bookingConfirmedAt == null && selectedClient.bookingConfirmedAt != null) {
+      return { ...listedClient, bookingConfirmedAt: selectedClient.bookingConfirmedAt, serviceStatus: selectedClient.serviceStatus };
+    }
+    return listedClient ?? selectedClient;
   }, [clients, selectedClient]);
 
   const handleScheduleChangeDecided = useCallback((clientId: number) => {
@@ -222,6 +230,12 @@ export default function DashboardPage() {
 
       return { ...currentClient, pendingScheduleChange: null };
     });
+  }, []);
+
+  const handleBookingConfirmed = useCallback((booking: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => {
+    setSelectedClient((currentClient) => currentClient?.id === booking.id
+      ? { ...currentClient, bookingConfirmedAt: booking.bookingConfirmedAt, serviceStatus: booking.serviceStatus }
+      : currentClient);
   }, []);
 
   if (!user) {
@@ -241,7 +255,7 @@ export default function DashboardPage() {
           density="responsive-square"
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
-            value: dashboardStats[s.valueKey],
+            value: overviewError && overview === undefined ? "—" : dashboardStats[s.valueKey],
             label: s.label,
             counter: s.counter,
             colorIndex: s.colorIndex,
@@ -260,13 +274,22 @@ export default function DashboardPage() {
           <Block
             name="desktop_dashboard_split_activities-panel"
             data-slot="activities-panel"
-            className="h-full min-h-0"
+            className="h-full min-h-0 flex flex-col"
           >
+            {overviewError && overview !== undefined ? (
+              <QueryErrorState
+                dataComponent="desktop_dashboard_split_activities-panel_load-error"
+                size="inline"
+                title="최신 정보를 불러오지 못했습니다"
+                onRetry={() => void refetchOverview()}
+                isRetrying={overviewFetching}
+              />
+            ) : null}
             <RecentActivitiesPanel
               items={endingNextBusinessDayClients}
               calendar={calendar}
               isLoading={overviewLoading}
-              isError={overviewError}
+              isError={overviewError && overview === undefined}
               onRetry={() => refetchClients()}
               selectedId={selectedClientData?.id}
               onSelect={handleSelectClient}
@@ -284,6 +307,7 @@ export default function DashboardPage() {
               idPrefix="dashboard-client-detail"
               tabsAriaLabel="고객 상세 정보"
               onScheduleChangeDecided={handleScheduleChangeDecided}
+              onBookingConfirmed={handleBookingConfirmed}
               trailing={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

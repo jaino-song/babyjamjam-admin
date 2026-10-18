@@ -25,6 +25,7 @@ const BASE_CLIENT: Client = {
   voucherClient: false,
   breastPump: true,
   serviceStatus: "active",
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,

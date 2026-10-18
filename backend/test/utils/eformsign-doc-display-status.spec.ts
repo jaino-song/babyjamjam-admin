@@ -139,6 +139,16 @@ describe("isContractReviewWindowOpen with an explicit calendar (backend copy)", 
 });
 
 describe("resolveEformsignDocDisplayStatus", () => {
+    it.each([
+        ["072", "completed"], ["060", "pending"], ["042", "revoked"], ["080", "expired"],
+    ])("voided wins over %s; a non-voided row remains %s", (code, expected) => {
+        const doc = { id: "d", current_status: { status_type: code, step_type: "05" } };
+        expect(resolveEformsignDocDisplayStatus({ ...doc, isVoided: true }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("voided");
+        expect(resolveEformsignDocDisplayStatus({ ...doc, isVoided: false }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe(expected);
+    });
+    it("voided wins over review and unassigned without consulting the end-date calendar", () => {
+        expect(resolveEformsignDocDisplayStatus({ ...reviewStepDoc("2028-01-01"), isVoided: true, [MIRROR_UNASSIGNED_KEY]: true }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("voided");
+    });
     it("maps terminal categories regardless of dates", () => {
         expect(resolveEformsignDocDisplayStatus(
             { id: "d", current_status: { status_type: "003" } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
@@ -217,6 +227,33 @@ describe("resolveEformsignDocDisplayStatus", () => {
                 { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
             )).toBe("unknown");
         }
+    });
+
+    // Parity with packages/shared/src/constants/eformsign-doc-status.test.ts "rejected_by_reviewer (eformsign 071)".
+    it.each(["071", 71, "doc_reject_reviewer"])(
+        "shows %s (reviewer rejection, 계약-04) as rejected_by_reviewer whatever the step, end date or unassigned flag",
+        (code) => {
+            const at = (current_status: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+                resolveEformsignDocDisplayStatus(
+                    { id: "d", current_status, ...extra }, kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
+                );
+            expect(at({ status_type: code })).toBe("rejected_by_reviewer");
+            expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-07" })).toBe("rejected_by_reviewer");
+            expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-20" })).toBe("rejected_by_reviewer");
+            expect(at({ status_type: code, step_type: "05", step_name: "이용자 서명" })).toBe("rejected_by_reviewer");
+            expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { [MIRROR_UNASSIGNED_KEY]: true })).toBe("rejected_by_reviewer");
+        },
+    );
+
+    it("does not move 080 (expired), 061 (expired) or 070 (signed) when 071 becomes rejected_by_reviewer", () => {
+        for (const code of ["080", "061"]) {
+            expect(resolveEformsignDocDisplayStatus(
+                { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
+            )).toBe("expired");
+        }
+        expect(resolveEformsignDocDisplayStatus(
+            reviewStepDoc("2026-08-20"), kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
+        )).toBe("signed");
     });
 
     it("splits provider-review docs on the review window", () => {

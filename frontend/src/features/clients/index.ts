@@ -26,6 +26,7 @@ export {
     useTerminateService,
     useRequestReplacement,
     useCompleteReplacement,
+    useConfirmBooking,
     useApproveScheduleChange,
     useRejectScheduleChange,
 } from './hooks/use-clients';

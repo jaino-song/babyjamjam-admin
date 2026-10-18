@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +22,7 @@ export interface AgentActionApprovalCardProps {
     capability: string;
     title: string;
     summary: string;
+    contact?: ReactNode;
     expiresAt: string;
     expectedRevision: string;
     risk?: string;
@@ -42,6 +43,7 @@ export function AgentActionApprovalCard({
     capability,
     title,
     summary,
+    contact,
     expiresAt,
     expectedRevision,
     risk,
@@ -95,12 +97,13 @@ export function AgentActionApprovalCard({
                     <span data-slot="expiry" className="text-xs">{expired ? "만료됨" : `만료 ${new Date(expiresAt).toLocaleString()}`}</span>
                 </div>
                 <p data-slot="summary" className="whitespace-pre-wrap text-sm">{summary}</p>
+                {contact}
                 <dl data-slot="details" className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                     {risk && <><dt className="text-amber-800/70">위험도</dt><dd>{risk}</dd></>}
                     {branchId && <><dt className="text-amber-800/70">지점</dt><dd className="truncate">{branchId}</dd></>}
-                    {target && <><dt className="text-amber-800/70">대상 변경</dt><dd className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(target)}</dd></>}
+                    {target && <><dt className="text-amber-800/70">대상 변경</dt><dd className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(omitMaskedContactKeys(target))}</dd></>}
                     <dt className="text-amber-800/70">실제 변경값</dt>
-                    <dd className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(changes, null, 2)}</dd>
+                    <dd className="col-span-2 whitespace-pre-wrap break-words">{JSON.stringify(omitMaskedContactKeys(changes), null, 2)}</dd>
                     {provider && <><dt className="text-amber-800/70">외부 제공자</dt><dd>{provider}</dd></>}
                     {estimatedCost && <><dt className="text-amber-800/70">예상 비용</dt><dd>{estimatedCost}</dd></>}
                 </dl>
@@ -147,4 +150,10 @@ export function AgentActionApprovalCard({
             </CardContent>
         </Card>
     );
+}
+
+export function omitMaskedContactKeys(value: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(value).filter(([key]) =>
+        !["phonelast4", "maskedcontact", "maskedreceiver", "receiver"].includes(key.toLowerCase()),
+    ));
 }

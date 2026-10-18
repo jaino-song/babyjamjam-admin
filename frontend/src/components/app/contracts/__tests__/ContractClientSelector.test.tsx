@@ -29,6 +29,7 @@ const mockExistingClient: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: "document-55",
   hasSigned: false,
   documentStatus: "created",

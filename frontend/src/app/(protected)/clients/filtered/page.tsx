@@ -12,6 +12,7 @@ import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -97,7 +98,7 @@ export default function FilteredClientsPage() {
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
 
-    const { data: clients, isLoading, error } = useFilteredClients(filter || "");
+    const { data: clients, isLoading, isPaused, isError, isFetching, refetch } = useFilteredClients(filter || "");
     const deleteClient = useDeleteClient();
 
     const filterConfig = filter ? FILTER_CONFIG[filter] : null;
@@ -160,14 +161,29 @@ export default function FilteredClientsPage() {
 
             {/* Content */}
             <div data-component="desktop_clients-filtered_page_content" className="px-4 sm:px-6 py-4">
-                {isLoading ? (
+                {isError && clients !== undefined ? (
+                    <QueryErrorState
+                        dataComponent="desktop_clients-filtered_page_content_load-error"
+                        size="inline"
+                        title="최신 정보를 불러오지 못했습니다"
+                        onRetry={() => void refetch()}
+                        isRetrying={isFetching}
+                    />
+                ) : null}
+                {isLoading || (isPaused && clients === undefined) ? (
                     <div data-component="desktop_clients-filtered_page_content_loading">
                         <FilteredClientsTableSkeleton />
                     </div>
-                ) : error ? (
-                    <Alert variant="destructive">데이터를 불러오는데 실패했습니다</Alert>
+                ) : isError && clients === undefined ? (
+                    <QueryErrorState
+                        dataComponent="desktop_clients-filtered_page_content_load-error"
+                        size="panel"
+                        title="고객 목록을 불러오지 못했습니다"
+                        onRetry={() => void refetch()}
+                        isRetrying={isFetching}
+                    />
                 ) : !clients?.length ? (
-                    <Alert variant="info">해당하는 클라이언트가 없습니다</Alert>
+                    <Alert variant="info" role="status">해당하는 클라이언트가 없습니다</Alert>
                 ) : (
                     <Table>
                         <TableHeader>

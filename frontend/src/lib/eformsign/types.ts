@@ -41,5 +41,10 @@ export interface EformsignStatusCountsResponse {
     contract_end_date?: string | null;
     /** Authoritative display status stamped by the backend at serve time. */
     display_status?: string | null;
+    /**
+     * True when no client has claimed the document. Sent apart from display_status because
+     * 071 (rejected_by_reviewer) reports that status whether or not it is claimed.
+     */
+    unassigned?: boolean;
   }>;
 }

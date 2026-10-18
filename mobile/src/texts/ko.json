@@ -3,8 +3,8 @@
     "owner": "오너",
     "admin": "지점장",
     "manager": "매니저",
-    "member": "스태프",
-    "user": "유저",
+    "member": "회원",
+    "user": "회원",
     "unknown": "사용자"
   },
   "common": {
@@ -345,6 +345,7 @@
       "doc-revoked": "철회됨",
       "doc-revoke-requested": "철회 요청됨",
       "doc-deleted": "삭제됨",
+      "doc-voided": "파기됨",
       "add-description": "새로운 고객을 등록하기 위해 양식을 작성하세요",
       "edit-description": "고객 정보를 수정합니다",
       "error-phone-duplicate": "이미 등록된 연락처예요"

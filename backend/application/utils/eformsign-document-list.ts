@@ -20,6 +20,8 @@ export type EformsignListDoc = {
     createdDate?: unknown;
     fields?: unknown;
     detail_template_info?: unknown;
+    /** Local-only liveness flag, retained by list snapshots. */
+    isVoided?: boolean;
 } & Record<string, unknown>;
 
 export type TemplateMatch = "include" | "exclude";
@@ -31,7 +33,7 @@ export type DocumentStatusCategory =
     | "unknown";
 
 export const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
-export const EXPIRED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080", "090"]);
+export const EXPIRED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "080", "090"]);
 export const DELETED_STATUS_CODES = new Set(["047", "049", "099"]);
 export const IN_PROGRESS_STATUS_CODES: ReadonlySet<string> = EFORMSIGN_IN_PROGRESS_STATUS_CODES;
 export const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
@@ -96,6 +98,7 @@ export function isProviderReviewStep(document: EformsignListDoc): boolean {
 }
 
 export function getDocumentStatusCategory(document: EformsignListDoc): DocumentStatusCategory {
+    if (document.isVoided === true) return "expired";
     const statusType = stringFromUnknown(getCurrentStatus(document)?.["status_type"]);
     const normalized = normalizeEformsignStatusCode(statusType);
     if (COMPLETED_STATUS_CODES.has(normalized)) {

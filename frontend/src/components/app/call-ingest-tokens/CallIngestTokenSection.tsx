@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus } from "lucide-react";
 
 import { ContentPaper } from "@/components/app/root/content-paper";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,7 +60,12 @@ export function CallIngestTokenSection({ branchId }: CallIngestTokenSectionProps
     },
   });
 
-  const tokens = tokensQuery.data ?? [];
+  const tokensData = tokensQuery.data;
+  const tokens = tokensData ?? [];
+  // A paused first load (device offline) has no data and is not "loading" to react-query; treat it as loading.
+  const isTokensLoading = tokensQuery.isLoading || (tokensQuery.isPaused && tokensData === undefined);
+  const hasTokensData = tokensData !== undefined;
+  const retryTokens = () => void tokensQuery.refetch();
 
   return (
     <section data-component={DATA_COMPONENT} data-source-component={SOURCE_COMPONENT}>
@@ -88,12 +94,30 @@ export function CallIngestTokenSection({ branchId }: CallIngestTokenSectionProps
         <Separator className="mb-6" />
 
         <div data-component={`${DATA_COMPONENT}_content`}>
-          {tokensQuery.isLoading ? (
+          {tokensQuery.isError && hasTokensData ? (
+            <QueryErrorState
+              dataComponent={`${DATA_COMPONENT}_content_load-error`}
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              className="mb-2"
+              onRetry={retryTokens}
+              isRetrying={tokensQuery.isFetching}
+            />
+          ) : null}
+          {isTokensLoading ? (
             <div data-component={`${DATA_COMPONENT}_content_skeleton`} className="space-y-2">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
             </div>
+          ) : tokensQuery.isError && !hasTokensData ? (
+            <QueryErrorState
+              dataComponent={`${DATA_COMPONENT}_content_load-error`}
+              size="inline"
+              title="토큰 목록을 불러오지 못했습니다."
+              onRetry={retryTokens}
+              isRetrying={tokensQuery.isFetching}
+            />
           ) : tokens.length === 0 ? (
             <div data-component={`${DATA_COMPONENT}_content_empty`} className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <KeyRound size={40} className="mb-3 opacity-30" />
@@ -140,16 +164,6 @@ export function CallIngestTokenSection({ branchId }: CallIngestTokenSectionProps
               </TableBody>
             </Table>
           )}
-
-          {tokensQuery.isError ? (
-            <p
-              role="alert"
-              data-component={`${DATA_COMPONENT}_content_error`}
-              className="mt-4 text-sm font-medium text-red-700"
-            >
-              토큰 목록을 불러오지 못했습니다.
-            </p>
-          ) : null}
         </div>
       </ContentPaper>
 

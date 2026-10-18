@@ -12,6 +12,7 @@ import {
   useUpdateMessageTemplate,
 } from "@/hooks/use-message-templates";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   AnimatedSlotList,
   AnimatedSlotListItemContent,
@@ -78,7 +79,7 @@ function BranchTemplateDetail({
   templateId: string;
   onDeleted: () => void;
 }) {
-  const { data: template, isLoading } = useMessageTemplate(templateId);
+  const { data: template, isLoading, isPaused, isError, refetch, isFetching } = useMessageTemplate(templateId);
   const updateMutation = useUpdateMessageTemplate();
   const deleteMutation = useDeleteMessageTemplate();
   const { toast } = useToast();
@@ -95,11 +96,21 @@ function BranchTemplateDetail({
     setInitialized(template.id);
   }
 
-  if (isLoading) {
+  if (isLoading || (isPaused && template === undefined)) {
     return <TemplateEditorLoadingSkeleton name="desktop_messages_sections_templates_user-loading" />;
   }
 
   if (!template) {
+    if (isError && template === undefined) {
+      return (
+        <QueryErrorState
+          dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_load-error"
+          title="지점 템플릿을 불러오지 못했습니다"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
+      );
+    }
     return (
       <DetailEmptyState
         message="지점 템플릿을 불러올 수 없어요."
@@ -152,6 +163,15 @@ function BranchTemplateDetail({
 
   return (
     <div data-component="desktop_messages_sections_templates-user-detail" className="flex flex-col gap-6">
+      {isError && template !== undefined ? (
+        <QueryErrorState
+          dataComponent="desktop_messages_sections_templates-user-detail_load-error"
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
+      ) : null}
       <FormField
         data-component="desktop_messages_sections_templates-user-detail_templates-user-name-field"
         label="지점 템플릿 이름"
@@ -269,7 +289,15 @@ function BranchTemplateDetail({
 export default function TemplatesPage() {
   const [selectedValue, setSelectedValue] = useState<string | null>(null);
 
-  const { data: branchTemplatesData, isLoading: isLoadingBranchTemplates } = useMessageTemplates(1, 100);
+  const {
+    data: branchTemplatesData,
+    isLoading: isLoadingBranchTemplates,
+    isPaused: isBranchTemplatesPaused,
+    isError: isBranchTemplatesError,
+    refetch: refetchBranchTemplates,
+    isFetching: isFetchingBranchTemplates,
+  } = useMessageTemplates(1, 100);
+  const isTemplateListLoading = isLoadingBranchTemplates || (isBranchTemplatesPaused && branchTemplatesData === undefined);
   const branchTemplates = useMemo(() => branchTemplatesData ?? [], [branchTemplatesData]);
 
   const branchItems = useMemo<TemplateListItem[]>(
@@ -316,14 +344,30 @@ export default function TemplatesPage() {
               <HeaderActionButton icon={ArrowLeft} label="돌아가기" href="/messages" variant="muted" />
             </div>
           }
-          emptyState={!(isLoadingBranchTemplates || branchItems.length > 0) ? (
+          emptyState={isBranchTemplatesError && branchTemplatesData === undefined ? (
+            <QueryErrorState
+              dataComponent="desktop_messages_sections_templates_split-layout_list-panel_load-error"
+              onRetry={() => void refetchBranchTemplates()}
+              isRetrying={isFetchingBranchTemplates}
+              className="pointer-events-auto"
+            />
+          ) : !(isTemplateListLoading || branchItems.length > 0) ? (
             <ListEmptyState message="등록된 지점 템플릿이 없습니다." />
           ) : undefined}
         >
+          {isBranchTemplatesError && branchTemplatesData !== undefined ? (
+            <QueryErrorState
+              dataComponent="desktop_messages_sections_templates_split-layout_list-panel_load-error"
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              onRetry={() => void refetchBranchTemplates()}
+              isRetrying={isFetchingBranchTemplates}
+            />
+          ) : null}
           <div data-component="desktop_messages_sections_templates_split-layout_list-panel_templates-list" className="space-y-2 pb-2">
             <AnimatedSlotList<TemplateListItem>
                 items={branchItems}
-                isLoading={isLoadingBranchTemplates}
+                isLoading={isTemplateListLoading}
                 className="space-y-2"
                 getSlotState={({ item, isLoading }) => ({
                   isActive: !isLoading && item?.id === activeTemplateId,

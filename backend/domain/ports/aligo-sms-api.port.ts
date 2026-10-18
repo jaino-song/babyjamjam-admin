@@ -19,8 +19,31 @@ export interface AligoSendSmsParams {
     testModeYn?: "Y" | "N";
 }
 
+export interface AligoSmsDeliveryDetailRow {
+    mdid: string | null;
+    /** Digits only (non-digits stripped). */
+    receiver: string;
+    /** Trimmed raw Aligo sms_state ("" if missing). */
+    smsState: string;
+    /** Raw Aligo send_date string or null. */
+    sendDate: string | null;
+}
+
+export interface AligoSmsDeliveryDetailsResult {
+    /** Aligo result_code (1 = ok). Non-1 is RETURNED, not thrown. */
+    resultCode: number;
+    message: string;
+    /** All pages concatenated. */
+    rows: AligoSmsDeliveryDetailRow[];
+}
+
 export interface IAligoSmsApiPort {
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse>;
+    /** Legacy send-only adapters fail closed when history is unavailable. */
+    listHistory?(params: { page: number; page_size: number; start_date: string; limit_day: number }): Promise<unknown>;
+    listSmsHistory?(params: { mid: string; page: number; page_size: number }): Promise<unknown>;
+    /** HTTP non-OK / network / timeout throws; a non-1 result_code is returned. */
+    getSmsDeliveryDetails?(mid: string): Promise<AligoSmsDeliveryDetailsResult>;
     /** Read-only identity of the default-sender path used by automation, never explicit-sender requests. */
     getDefaultSenderPolicy?(): AligoDefaultSenderPolicy;
 }

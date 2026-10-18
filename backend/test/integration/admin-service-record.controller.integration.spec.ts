@@ -7,7 +7,8 @@ import { ServiceRecordCaseEventBus } from "application/services/service-record-c
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
-import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
+import { AdminServiceRecordController, AdminServiceRecordNoQueryPipe } from "interface/controllers/admin-service-record.controller";
+import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
 
 describe("AdminServiceRecordController (Integration)", () => {
     const tenant = {
@@ -22,6 +23,7 @@ describe("AdminServiceRecordController (Integration)", () => {
     let adminServiceRecordService: {
         getClientEditor: jest.Mock;
         getRevisionHistory: jest.Mock;
+        getRevisionChanges: jest.Mock;
         retryRevisionDocument: jest.Mock;
     };
     let adminServiceRecordEditService: {
@@ -36,6 +38,7 @@ describe("AdminServiceRecordController (Integration)", () => {
         adminServiceRecordService = {
             getClientEditor: jest.fn(),
             getRevisionHistory: jest.fn(),
+            getRevisionChanges: jest.fn(),
             retryRevisionDocument: jest.fn(),
         };
         adminServiceRecordEditService = {
@@ -95,6 +98,29 @@ describe("AdminServiceRecordController (Integration)", () => {
 
         await expect(controller.getClientEditor(tenant, 42)).resolves.toBe(overview);
         expect(adminServiceRecordService.getClientEditor).toHaveBeenCalledWith("branch-1", 42);
+    });
+
+    it("protects and scopes revision changes with branch-manager authority", async () => {
+        const handler = AdminServiceRecordController.prototype.getRevisionChanges;
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(BranchManagerGuard);
+        expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
+        expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe("clients/:clientId/revisions/:revisionId/changes");
+        const result = { beforeAvailable: false, basicInfo: [], sessions: [] };
+        adminServiceRecordService.getRevisionChanges.mockResolvedValue(result);
+        await expect(controller.getRevisionChanges(tenant, 42, "revision-1")).resolves.toBe(result);
+        expect(adminServiceRecordService.getRevisionChanges).toHaveBeenCalledWith("branch-1", 42, "revision-1");
+    });
+
+    it("rejects query authority and does not expose a history/changes route to provider links", () => {
+        const pipe = new AdminServiceRecordNoQueryPipe();
+        expect(pipe.transform({})).toEqual({});
+        expect(() => pipe.transform({ branchId: "other" })).toThrow();
+        for (const name of Object.getOwnPropertyNames(ServiceRecordEntryController.prototype)) {
+            const handler = Object.getOwnPropertyDescriptor(ServiceRecordEntryController.prototype, name)?.value;
+            if (typeof handler !== "function") continue;
+            expect(Reflect.getMetadata(PATH_METADATA, handler) ?? "").not.toMatch(/revisions|changes|history/);
+            expect(handler).not.toBe(AdminServiceRecordController.prototype.getRevisionChanges);
+        }
     });
 
     it("protects and scopes revision history and retry routes", async () => {

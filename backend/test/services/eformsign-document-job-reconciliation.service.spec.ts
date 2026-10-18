@@ -173,4 +173,36 @@ describe("EformsignDocumentJobReconciliationService", () => {
             "doc-finalize",
         );
     });
+    // 계약-04: 071 (reviewer rejection) left the terminal set, so a finalization job that finds it is
+    // "provider state unfinished" (070/072 may still follow), not a terminal failure; 080 stays terminal.
+    it.each([
+        ["071", "PROVIDER_STATE_UNFINISHED"],
+        ["070", "PROVIDER_STATE_UNFINISHED"],
+        ["080", "PROVIDER_TERMINAL_FAILURE"],
+        ["061", "PROVIDER_TERMINAL_FAILURE"],
+    ])("requires attention for a finalization job whose provider status is %s (%s)", async (statusType, reason) => {
+        const repository = {
+            markCompleted: jest.fn(),
+            markRequiresAttention: jest.fn().mockResolvedValue(null),
+        };
+        const finalizationJob = job({
+            jobType: "finalize_document",
+            documentId: "doc-finalize",
+            payload: { documentId: "doc-finalize" },
+        });
+        const service = new EformsignDocumentJobReconciliationService(
+            repository as never,
+            createCredentialBoundary() as never,
+            { execute: jest.fn() } as never,
+            {
+                execute: jest.fn().mockResolvedValue({ current_status: { status_type: statusType } }),
+            } as never,
+            { execute: jest.fn() } as never,
+        );
+
+        await expect(service.reconcile(finalizationJob, TEST_PRINCIPAL)).resolves.toEqual(
+            expect.objectContaining({ status: "requires_attention", reason }),
+        );
+        expect(repository.markCompleted).not.toHaveBeenCalled();
+    });
 });

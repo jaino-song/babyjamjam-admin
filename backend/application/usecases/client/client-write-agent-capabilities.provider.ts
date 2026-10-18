@@ -27,13 +27,16 @@ import {
     assertAllowedServiceStatus,
     assertPhoneAvailable,
     assertClientPhoneInput,
+    mergeAndValidateClientServicePeriod,
     parseClientDate,
+    resolveSavedServiceStatus,
 } from "./client-write-validation";
-import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository, getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
-import { SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     isVoucherServiceLabel,
     ResolveVoucherServiceSelectionUsecase,
@@ -202,11 +205,51 @@ async function validateClientServicePeriod(
     }
 }
 
+/**
+ * The status a reconcile should expect the stored client to carry for an
+ * approved `serviceStatus`: what the save rule would have stored, or
+ * `undefined` where it stores nothing (the stored status already is the
+ * approved effective one). A refusal means the write never applied, so the
+ * raw approved value is compared and a mismatch stays "uncertain".
+ */
+function approvedServiceStatusAfterSave(
+    existing: ClientStatusInputs,
+    approved: string | null,
+): string | null | undefined {
+    try {
+        return resolveSavedServiceStatus({
+            currentServiceStatus: existing.serviceStatus ?? null,
+            bookingConfirmedAt: existing.bookingConfirmedAt,
+            startDate: existing.startDate ?? null,
+            endDate: existing.endDate ?? null,
+            suppliedServiceStatus: approved,
+        });
+    } catch (error) {
+        if (error instanceof BadRequestException) return approved;
+        throw error;
+    }
+}
+
+/**
+ * Validates an agent client write. For an UPDATE it also applies the save rule
+ * for `serviceStatus` (rule 고객-04): it either refuses, or rewrites `updates`
+ * in place — deleting `serviceStatus` where nothing is to be stored, replacing
+ * it where the rule decides the value — so every caller (`inspect`, `execute`,
+ * `executeApprovedTarget`) hands the usecase the same status. The check runs on
+ * the unlocked `existing` snapshot, which is this path's design; only the
+ * service's own `update` re-checks under the row lock.
+ */
 async function validateClientWrite(
     prisma: PrismaService,
     repository: Pick<IClientRepository, "findByPhone">,
     branchId: string,
-    existing: { id: number; startDate: Date | null; endDate: Date | null } | null,
+    existing: {
+        id: number;
+        startDate: Date | null;
+        endDate: Date | null;
+        serviceStatus?: string | null;
+        bookingConfirmedAt?: Date | null;
+    } | null,
     updates: {
         areaId?: string | null;
         phone?: string | null;
@@ -220,6 +263,21 @@ async function validateClientWrite(
         assertAllowedServiceStatus(updates.serviceStatus);
         await assertAllowedClientArea(prisma, branchId, updates.areaId);
         await assertPhoneAvailable(repository, branchId, updates.phone, existing?.id);
+        if (existing && updates.serviceStatus !== undefined) {
+            const mergedPeriod = mergeAndValidateClientServicePeriod(existing, updates);
+            const savedServiceStatus = resolveSavedServiceStatus({
+                currentServiceStatus: existing.serviceStatus ?? null,
+                bookingConfirmedAt: existing.bookingConfirmedAt ?? null,
+                startDate: mergedPeriod.startDate,
+                endDate: mergedPeriod.endDate,
+                suppliedServiceStatus: updates.serviceStatus,
+            });
+            if (savedServiceStatus === undefined) {
+                delete updates.serviceStatus;
+            } else {
+                updates.serviceStatus = savedServiceStatus;
+            }
+        }
     } catch (error) {
         if (error instanceof BadRequestException || error instanceof ConflictException) {
             throw new AgentActionCertainFailureError(validationErrorMessage(error));
@@ -227,6 +285,14 @@ async function validateClientWrite(
         throw error;
     }
 }
+
+type ClientStatusInputs = {
+    bookingConfirmedAt: Date | null;
+    id: number;
+    serviceStatus?: string | null;
+    startDate?: Date | null;
+    endDate?: Date | null;
+};
 
 @Injectable()
 @AgentCapabilityProvider()
@@ -247,6 +313,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,
         @Optional() @Inject(CLIENT_AUTOMATION_IMPACT) private readonly automationImpact?: ClientAutomationImpactPort,
         @Optional() private readonly automationRecords?: AgentAutomationRecordStoreService,
+        @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -438,6 +505,11 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             client.id,
                             input.name !== undefined,
                         );
+                        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                            context.principal.branchId,
+                            existing,
+                            client,
+                        );
                         return { id: client.id, name: client.name, status: "updated" };
                     } catch (error) {
                         if (isClientBranchPhoneUniqueViolation(error)) throw clientPhoneConflictError();
@@ -455,6 +527,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
+                        let updatedClient = null as ClientStatusInputs | null;
                         const result = context.taskAutomation
                             ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion, calendar)
                             : await this.prisma.$transaction(async (transaction) => {
@@ -473,6 +546,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                     calendar,
                                 );
                                 await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                                updatedClient = client;
                                 const result = { id: client.id, name: client.name, status: "updated" };
                                 await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
                                 return result;
@@ -487,6 +561,15 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                 existing.id,
                                 input.name !== undefined,
                             );
+                            // The task-automation path stages its link intents
+                            // through the reviewed artifact and never schedules here.
+                            if (updatedClient) {
+                                await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                                    context.principal.branchId,
+                                    existing,
+                                    updatedClient,
+                                );
+                            }
                         }
                         return result;
                     } catch (error) {
@@ -509,13 +592,68 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         ...updates,
                         ...normalizeMergedClientPricing(existing, updates),
                     }).filter(([, value]) => value !== undefined);
-                    if (desired.every(([key, value]) => sameClientValue(existing[key as keyof typeof existing], value))) {
+                    if (desired.every(([key, value]) => {
+                        if (key !== "serviceStatus") return sameClientValue(existing[key as keyof typeof existing], value);
+                        // The save rule may store a different status than the approved
+                        // one (or none); compare against what it would have stored.
+                        const expected = approvedServiceStatusAfterSave(existing, value as string | null);
+                        return expected === undefined || sameClientValue(existing.serviceStatus, expected);
+                    })) {
                         return { status: "succeeded", result: { id: existing.id, name: existing.name, status: "updated" } };
                     }
                     return { status: "uncertain", reason: "Client does not match the approved update" };
                 },
             },
         ];
+    }
+
+    /**
+     * A provider assigned while the client was 예약 전 never got the service-record
+     * link SMS (the gates skip a pre-booking client). When this write takes the
+     * client out of 예약 전, schedule the link for each active schedule.
+     * `scheduleForServiceStart` owns the timing, dedupe and refusals. A failure
+     * here never fails the write.
+     */
+    private async scheduleServiceRecordLinksAfterLeavingPreBooking(
+        branchId: string,
+        before: ClientStatusInputs,
+        after: ClientStatusInputs,
+    ): Promise<void> {
+        if (!this.serviceRecordLinkService) return;
+        const wasPreBooking = getEffectiveClientServiceStatus(
+            before.serviceStatus ?? null,
+            before.startDate ?? null,
+            before.endDate ?? null,
+            before.bookingConfirmedAt,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (!wasPreBooking) return;
+        const isPreBooking = getEffectiveClientServiceStatus(
+            after.serviceStatus ?? null,
+            after.startDate ?? null,
+            after.endDate ?? null,
+            after.bookingConfirmedAt,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (isPreBooking) return;
+
+        try {
+            const activeSchedules = await this.prisma.employee_schedule.findMany({
+                where: { branchId, clientId: after.id, replaced: false, terminatedAt: null },
+                select: { id: true },
+                orderBy: { id: "asc" },
+            });
+            const scheduleIds = [...new Set(activeSchedules.map(({ id }) => id))]
+                .sort((left, right) => left - right);
+            for (const scheduleId of scheduleIds) {
+                await this.serviceRecordLinkService.scheduleForServiceStart(scheduleId).catch((error) => {
+                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
+                });
+            }
+        } catch (error) {
+            this.logger.error(
+                `Failed to schedule service-record link SMS after client ${after.id} left pre-booking: ` +
+                `${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
     }
 
     private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {

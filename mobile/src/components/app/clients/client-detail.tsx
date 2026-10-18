@@ -1,12 +1,22 @@
 "use client";
 
 
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
+import { isAxiosError } from "axios";
 
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
+import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  CONTRACT_VOID_COPY,
+  CONTRACT_VOID_ROW_LABEL,
+  CONTRACT_VOIDED_BY_UNKNOWN_LABEL,
+  isContractVoidable,
+  isContractDocDisplayStatus,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { isReviewerRejectedEformsignStatus } from "@babyjamjam/shared/constants/eformsign-status-codes";
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import {
@@ -17,15 +27,20 @@ import {
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
-import { eformsignApi } from "@/services/api";
+import { useConfirmBooking } from "@/features/clients";
+import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  getMessageHistoryDetailStatusLabel,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
   getMessageChannelLabel,
@@ -62,6 +77,8 @@ import {
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+
+import { ContractLinkConfirmSheet } from "./contract-link-confirm-sheet";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -357,6 +374,48 @@ function documentStatusTone(client: Pick<Client, "documentStatus" | "hasSigned">
   return DOCUMENT_STATUS_TONES[getClientDocumentStatusMeta(client.documentStatus, { hasSigned: client.hasSigned }).variant];
 }
 
+/**
+ * What the contract card and the "현재 단계" row show. The loaded document's own display status
+ * decides, for the latest contract and for a linked older one alike, so the card reads the same
+ * as the contracts list and the desktop card (desktop ClientDetailPanel: the client summary must
+ * never override the document). The coarse client summary is a liveness summary — it reads 서명
+ * 완료 for a contract still at the provider-review step and for a rejected (071) one — so it is
+ * only the fallback when the document is not loaded yet (loading, paused) or carries no display
+ * status. A linked older document without a display status shows 알 수 없음 rather than inheriting
+ * the latest contract's coarse status.
+ */
+function contractCardStatus(
+  client: Pick<Client, "documentStatus" | "hasSigned" | "latestContractDocumentId" | "eDocId">,
+  contractDocument: EformsignDocument | null | undefined,
+): { label: string; tone: DetailDocRowTone; rowTone: "green" | "primary" | "orange" | "muted" | "burgundy" } {
+  const displayStatus = contractDocument?.display_status;
+  if (displayStatus === "voided" || contractDocument?.voided_at) {
+    return { label: CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided, tone: "muted", rowTone: "muted" };
+  }
+  const isRejectedByReviewer = isContractDocDisplayStatus(displayStatus)
+    ? displayStatus === "rejected_by_reviewer"
+    : isReviewerRejectedEformsignStatus(contractDocument?.current_status?.status_type);
+  if (isRejectedByReviewer) {
+    return {
+      label: CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer,
+      tone: "burgundy-solid",
+      rowTone: "burgundy",
+    };
+  }
+  const isLinkedOlderDocument = Boolean(contractDocument)
+    && contractDocument?.id !== (client.latestContractDocumentId ?? client.eDocId);
+  if (contractDocument && (client.documentStatus === "voided" || isLinkedOlderDocument || isContractDocDisplayStatus(displayStatus))) {
+    const ownStatus = isContractDocDisplayStatus(displayStatus) ? displayStatus : "unknown";
+    const tone = ownStatus === "completed" || ownStatus === "signed" ? "green"
+      : ownStatus === "revoked" ? "burgundy"
+      : ownStatus === "expired" || ownStatus === "unknown" ? "muted"
+      : ownStatus === "pending" ? "primary" : "orange";
+    return { label: CONTRACT_DOC_DISPLAY_STATUS_LABELS[ownStatus], tone, rowTone: tone };
+  }
+  const tone = documentStatusTone(client);
+  return { label: documentStatusLabel(client), tone, rowTone: tone };
+}
+
 export interface ClientGroup {
   key: string;
   title: string;
@@ -449,6 +508,8 @@ export interface ClientNotificationLogRecord {
 }
 
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
+/** The document row's badge also has a solid burgundy variant (반려됨); the icon and text rows do not. */
+type DetailDocRowTone = DetailRowTone | "burgundy-solid";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 
 function DetailDocRow({
@@ -465,7 +526,7 @@ function DetailDocRow({
   title: string;
   meta: ReactNode;
   badge: string;
-  tone: DetailRowTone;
+  tone: DetailDocRowTone;
   onClick?: () => void;
 }) {
   const interactive = Boolean(onClick);
@@ -487,7 +548,7 @@ function DetailDocRow({
           }
         : {})}
     >
-      <div className={`doc-icon doc-icon-${tone}`} data-component={`${dataComponent}_icon`}>
+      <div className={`doc-icon doc-icon-${tone === "burgundy-solid" ? "burgundy" : tone}`} data-component={`${dataComponent}_icon`}>
         {icon}
       </div>
       <div className="doc-info" data-component={`${dataComponent}_info`}>
@@ -565,6 +626,8 @@ function notificationStatusLabel(status: string): string {
       return MESSAGE_HISTORY_STATUS_LABELS.sent;
     case "canceled":
       return MESSAGE_HISTORY_STATUS_LABELS.canceled;
+    case "needs_setup":
+      return MESSAGE_HISTORY_STATUS_LABELS.needs_setup;
     default:
       return status || "-";
   }
@@ -575,6 +638,7 @@ function notificationStatusTone(status: string): DetailRowTone {
     case "failed":
       return "burgundy";
     case "pending":
+    case "needs_setup":
       return "orange";
     case "sent":
       return "green";
@@ -593,11 +657,18 @@ export function ClientDetailContent({
   "data-component": dataComponent,
   client,
   contractDocument,
+  linkConfirmations,
+  isLinkConfirmationsError = false,
+  isLinkConfirmationsFetching = false,
+  refetchLinkConfirmations,
+  onContractLinked,
+  onContractVoided,
   activeTab,
   notificationLogs = [],
   hasMoreNotificationLogs = false,
   isNotificationLogsLoading = false,
   isNotificationLogsError = false,
+  isNotificationLogsRetrying = false,
   onRetryNotificationLogs,
   isIssuingContract = false,
   onTabChange,
@@ -610,12 +681,20 @@ export function ClientDetailContent({
   "data-component": string;
   client: Client;
   contractDocument?: EformsignDocument | null;
+  linkConfirmations?: EformsignLinkConfirmation[];
+  isLinkConfirmationsError?: boolean;
+  isLinkConfirmationsFetching?: boolean;
+  refetchLinkConfirmations?: () => Promise<{ data?: EformsignLinkConfirmation[]; isError?: boolean }>;
+  onContractLinked?: () => void;
+  onContractVoided?: () => void;
   activeTab: DetailTabId;
   notificationLogs?: ClientNotificationLogRecord[];
   /** The server holds older records than `notificationLogs`; say so instead of presenting a complete history. */
   hasMoreNotificationLogs?: boolean;
   isNotificationLogsLoading?: boolean;
   isNotificationLogsError?: boolean;
+  /** A refetch of the history is in flight (disables the retry of the cached-logs notice). */
+  isNotificationLogsRetrying?: boolean;
   onRetryNotificationLogs?: () => void;
   isIssuingContract?: boolean;
   onTabChange: (id: DetailTabId) => void;
@@ -628,11 +707,43 @@ export function ClientDetailContent({
   // Keyed selection so the open message-detail auto-resets when the tab or client changes
   // (derive-during-render — avoids a setState-in-effect).
   const detailKey = `${activeTab}:${client.id}`;
+  const [voidModalDocumentId, setVoidModalDocumentId] = useState<string | null>(null);
+  const [isVoidingContract, setIsVoidingContract] = useState(false);
+  const voidInFlightRef = useRef(false);
+  const canVoidContract = Boolean(contractDocument
+    && contractDocument.id === (client.latestContractDocumentId ?? client.eDocId)
+    && isContractVoidable({ displayStatus: contractDocument.display_status ?? "unknown", voidedAt: contractDocument.voided_at }));
+  const isContractVoided = Boolean(contractDocument?.display_status === "voided" || contractDocument?.voided_at
+    || (!contractDocument && client.documentStatus === "voided"));
+  const handleVoidContract = async () => {
+    if (!voidModalDocumentId || !canVoidContract || voidModalDocumentId !== contractDocument?.id || voidInFlightRef.current) return;
+    voidInFlightRef.current = true;
+    setIsVoidingContract(true);
+    try {
+      await eformsignApi.voidDocument(voidModalDocumentId);
+      toast({ title: CONTRACT_VOID_COPY.success });
+      setVoidModalDocumentId(null);
+    } catch (error) {
+      const conflict = isAxiosError(error) && error.response?.status === 409;
+      toast({ title: conflict ? CONTRACT_VOID_COPY.conflict : CONTRACT_VOID_COPY.failure, variant: "destructive" });
+      if (conflict) setVoidModalDocumentId(null);
+    } finally {
+      voidInFlightRef.current = false;
+      setIsVoidingContract(false);
+      onContractVoided?.();
+    }
+  };
+  const [selectedConfirmation, setSelectedConfirmation] = useState<{ key: string; entry: EformsignLinkConfirmation } | null>(null);
+  const confirmationEntry = selectedConfirmation?.key === detailKey ? selectedConfirmation.entry : null;
   const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
   const selectedLog = selectedEntry && selectedEntry.key === detailKey ? selectedEntry.log : null;
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
     enabled: activeTab === "serviceRecords",
   });
+  // Offline, a first load is paused: not loading, not failed, and no data. It must not fall through
+  // to "제공기록지 배정 정보가 없습니다." (BJJ-434) — hold the skeleton until the load can succeed or fail.
+  const isServiceRecordsLoading =
+    serviceRecordsQuery.isLoading || (serviceRecordsQuery.isPaused && serviceRecordsQuery.data === undefined);
   const authUserQuery = useGetAuthUser();
   const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
@@ -672,6 +783,9 @@ export function ClientDetailContent({
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
   const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
   const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
+  const confirmBookingMutation = useConfirmBooking();
+  const confirmBookingInFlightRef = useRef(false);
+  const [confirmBookingOpen, setConfirmBookingOpen] = useState(false);
 
   const handleResetServiceRecordLink = async () => {
     setIsResettingLink(true);
@@ -784,6 +898,32 @@ export function ClientDetailContent({
     setReceiptSendConfirmOpen(false);
   };
 
+  // 고객-04: the client stays 예약 전 until an admin presses [예약 확정]. The open detail renders from
+  // a locally held snapshot, so the confirm response is merged into it (only the two fields that
+  // changed — the response is the raw client entity without employees or badges).
+  const handleConfirmBooking = async () => {
+    if (confirmBookingInFlightRef.current) return;
+    confirmBookingInFlightRef.current = true;
+    try {
+      const confirmed = await confirmBookingMutation.mutateAsync(client.id);
+      onClientUpdated({
+        ...client,
+        bookingConfirmedAt: confirmed.bookingConfirmedAt,
+        serviceStatus: confirmed.serviceStatus,
+      });
+      setConfirmBookingOpen(false);
+      toast({ variant: "success", description: "예약을 확정했습니다." });
+    } catch {
+      setConfirmBookingOpen(false);
+      toast({
+        description: "예약을 확정하지 못했습니다. 시작일·종료일과 고객 상태를 확인한 뒤 다시 시도해 주세요.",
+        variant: "destructive",
+      });
+    } finally {
+      confirmBookingInFlightRef.current = false;
+    }
+  };
+
   const handleScheduleChangeDecision = async (decision: "approve" | "reject") => {
     const pendingScheduleChange = client.pendingScheduleChange;
     if (!pendingScheduleChange) return;
@@ -817,10 +957,14 @@ export function ClientDetailContent({
     }
   };
 
+  const canConfirmBooking = client.bookingConfirmedAt == null
+    && client.serviceStatus !== "terminated"
+    && client.serviceStatus !== "replacement_requested";
+  const isBookingDateMissing = !client.startDate || !client.endDate;
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const clientBadges = getMobileClientBadges(client);
   const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
-  const docTone = documentStatusTone(client);
+  const contractCard = contractCardStatus(client, contractDocument);
   const hasContractDocument = Boolean(client.eDocId);
   const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
@@ -1140,6 +1284,15 @@ export function ClientDetailContent({
         }
       />
 
+      {canConfirmBooking && isBookingDateMissing ? (
+        <p
+          className="px-1 pb-2 text-[0.75rem] leading-snug text-v3-text-muted"
+          data-component={`${dataComponent}_actions_confirm-booking-helper`}
+        >
+          서비스 시작일과 종료일을 먼저 입력해 주세요.
+        </p>
+      ) : null}
+
       <MobileDetailActions data-component={`${dataComponent}_actions`}
         name="clients"
         actions={[
@@ -1149,6 +1302,16 @@ export function ClientDetailContent({
             onClick: onMessage,
             dataComponent: `${dataComponent}_actions_message`,
           },
+          ...(canConfirmBooking
+            ? [{
+                label: confirmBookingMutation.isPending ? "확정 중..." : "예약 확정",
+                variant: "secondary" as const,
+                onClick: () => setConfirmBookingOpen(true),
+                disabled: isBookingDateMissing || confirmBookingMutation.isPending,
+                busy: confirmBookingMutation.isPending,
+                dataComponent: `${dataComponent}_actions_confirm-booking`,
+              }]
+            : []),
           {
             label: isIssuingContract ? "발급 중..." : "계약서 발급",
             variant: "primary",
@@ -1158,6 +1321,23 @@ export function ClientDetailContent({
             dataComponent: `${dataComponent}_actions_contract-create`,
           },
         ]}
+      />
+
+      <ApprovalTwoButtonModal
+        open={confirmBookingOpen}
+        onOpenChange={(open) => {
+          if (!open && !confirmBookingMutation.isPending) {
+            setConfirmBookingOpen(false);
+          }
+        }}
+        data-component={`${dataComponent}_confirm-booking-approval-modal`}
+        title="예약을 확정할까요?"
+        description="확정하면 서비스 일정에 따라 상태가 대기·진행·완료로 바뀌고, 제공기록지와 안내 문자가 일정대로 준비됩니다. 확정은 되돌릴 수 없습니다."
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="예약 확정"
+        pendingLabel="확정 중..."
+        isPending={confirmBookingMutation.isPending}
+        onApprove={() => void handleConfirmBooking()}
       />
 
       <ApprovalTwoButtonModal
@@ -1315,6 +1495,41 @@ export function ClientDetailContent({
       </MobileDetailTabPanel>
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_contracts`} name="clients" tabId="contracts" activeTab={activeTab}>
+        {isLinkConfirmationsError ? (
+          <QueryErrorState
+            dataComponent={`${dataComponent}_tab-panel_contracts_link-confirmations-error`}
+            size="inline"
+            title={linkConfirmations === undefined ? "연결 확인이 필요한 계약서를 불러오지 못했습니다" : "최신 정보를 불러오지 못했습니다"}
+            isRetrying={isLinkConfirmationsFetching}
+            onRetry={() => { void refetchLinkConfirmations?.(); }}
+          />
+        ) : null}
+        {linkConfirmations && linkConfirmations.length > 0 ? (
+          <InfoCard data-component={`${dataComponent}_tab-panel_contracts_link-confirmations`} title={`확인 필요 계약서 ${linkConfirmations.length}건`}>
+            {linkConfirmations.map((entry, index) => (
+              <DetailDocRow
+                key={entry.documentId}
+                data-component={`${dataComponent}_tab-panel_contracts_link-confirmations_doc-${index}`}
+                icon={<FileCheck2 size={16} strokeWidth={2.5} />}
+                title={entry.documentName || "계약서"}
+                badge="연결 확인 필요"
+                tone="orange"
+                meta={<>
+                  <span>{entry.differences.map(field => field === "name" ? "이름이 다릅니다" : "생년월일이 다릅니다").join(" · ")}</span>
+                  {entry.canConfirm ? <Button size="sm" variant="v3-outline" data-component={`${dataComponent}_tab-panel_contracts_link-confirmations_doc-${index}_info_meta_confirm`}
+                    onClick={() => setSelectedConfirmation({ key: detailKey, entry })}>확인</Button>
+                    : <span>지점 관리자만 연결을 확정할 수 있습니다</span>}
+                </>}
+              />
+            ))}
+          </InfoCard>
+        ) : null}
+        {confirmationEntry && refetchLinkConfirmations ? (
+          <ContractLinkConfirmSheet key={`${client.id}:${confirmationEntry.documentId}`}
+            data-component={`${dataComponent}_tab-panel_contracts_link-confirm-sheet`}
+            entry={confirmationEntry} refetchConfirmations={refetchLinkConfirmations}
+            onClose={() => setSelectedConfirmation(null)} onConfirmed={onContractLinked} />
+        ) : null}
         {hasContractDocument ? (
           <>
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_contract-card`} title="계약서">
@@ -1328,18 +1543,29 @@ export function ClientDetailContent({
                     <span className="doc-meta-line doc-meta-id">문서 ID {client.eDocId}</span>
                   </>
                 }
-                badge={documentStatusLabel(client)}
-                tone={docTone}
+                badge={contractCard.label}
+                tone={contractCard.tone}
               />
+              {canVoidContract ? (
+                <Button data-component={`${dataComponent}_tab-panel_contracts_contract-card_void-button`}
+                  variant="destructive" size="sm" onClick={() => setVoidModalDocumentId(contractDocument?.id ?? null)}>
+                  {CONTRACT_VOID_COPY.action}
+                </Button>
+              ) : null}
             </InfoCard>
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
-              <InfoRow label="현재 단계" value={documentStatusLabel(client)} tone={docTone as never} />
-              <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
+              <InfoRow label="현재 단계" value={contractCard.label} tone={contractCard.rowTone} />
+              <InfoRow label="서명 대기자" value={isContractVoided || client.hasSigned ? "-" : `고객 (${client.name})`} />
+              {contractDocument && isContractVoided ? (
+                <InfoRow data-component={`${dataComponent}_tab-panel_contracts_activity-card_void-row`}
+                  label={CONTRACT_VOID_ROW_LABEL}
+                  value={`${formatMessageDateTimeCompact(contractDocument.voided_at ?? null)} · ${contractDocument.voided_by_name ?? CONTRACT_VOIDED_BY_UNKNOWN_LABEL}`} />
+              ) : null}
               <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}
             </InfoCard>
           </>
-        ) : (
+        ) : linkConfirmations?.length ? null : (
           <InfoCard data-component={`${dataComponent}_tab-panel_contracts_contract-card`} title="계약서">
             <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_contracts_contract-card_empty`} data-slot="detail-empty-state">
               계약서 정보가 없습니다.
@@ -1348,15 +1574,38 @@ export function ClientDetailContent({
         )}
       </MobileDetailTabPanel>
 
+      <MobileTwoButtonModal
+        data-component={`${dataComponent}_tab-panel_contracts_contract-card_void-modal`}
+        open={voidModalDocumentId !== null && voidModalDocumentId === contractDocument?.id && activeTab === "contracts"}
+        title={CONTRACT_VOID_COPY.confirmTitle}
+        description={CONTRACT_VOID_COPY.confirmDescription}
+        cancelLabel={CONTRACT_VOID_COPY.cancel}
+        confirmLabel={isVoidingContract ? CONTRACT_VOID_COPY.pending : CONTRACT_VOID_COPY.confirm}
+        loading={isVoidingContract}
+        onOpenChange={(open) => { if (!open && !voidInFlightRef.current) setVoidModalDocumentId(null); }}
+        onCancel={() => { if (!voidInFlightRef.current) setVoidModalDocumentId(null); }}
+        onConfirm={handleVoidContract}
+      />
+
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_message`} name="clients" tabId="message" activeTab={activeTab}>
         {selectedLog ? (
+          <>
+          {isNotificationLogsError && displayNotificationLogs.length > 0 ? (
+            <QueryErrorState
+              dataComponent={`${dataComponent}_tab-panel_message_history-detail_stale-error`}
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              onRetry={() => onRetryNotificationLogs?.()}
+              isRetrying={isNotificationLogsRetrying}
+            />
+          ) : null}
           <ClientMessageHistoryDetail
             data-component={`${dataComponent}_tab-panel_message_history-detail`}
             view={{
               title: notificationTitle(selectedLog),
               templateLabel: notificationTitle(selectedLog),
               channelLabel: notificationChannelLabel(selectedLog),
-              statusLabel: notificationStatusLabel(selectedLog.status),
+              statusLabel: getMessageHistoryDetailStatusLabel(selectedLog),
               statusTone: notificationStatusTone(selectedLog.status),
               sentAtLabel: formatNotificationTime(selectedLog),
               recipientName: selectedLog.recipientName?.trim() || client.name,
@@ -1370,16 +1619,20 @@ export function ClientDetailContent({
               cancelReason: selectedLog.status === "canceled"
                 ? formatMessageFailureReason(selectedLog.errorMessage) || null
                 : null,
+              setupReason: selectedLog.status === "needs_setup"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
+          </>
         ) : (
           <InfoCard data-component={`${dataComponent}_tab-panel_message_history-card`} title="발송 내역">
             {isNotificationLogsLoading ? (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_loading`} data-slot="detail-empty-state">
                 발송 내역을 불러오는 중입니다.
               </div>
-            ) : isNotificationLogsError ? (
+            ) : isNotificationLogsError && displayNotificationLogs.length === 0 ? (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_error`} data-slot="detail-empty-state">
                 <p>발송 내역을 불러오지 못했습니다.</p>
                 {onRetryNotificationLogs ? (
@@ -1394,34 +1647,45 @@ export function ClientDetailContent({
                 ) : null}
               </div>
             ) : displayNotificationLogs.length > 0 ? (
-              displayNotificationLogs.map((log) => {
-                const tone = notificationStatusTone(log.status);
-                const channel = notificationChannelLabel(log);
-                return (
-                  <DetailDocRow
-                    data-component={`${dataComponent}_tab-panel_message_history-card_log-row`}
-                    key={`${channel}-${log.id}`}
-                    icon={
-                      tone === "burgundy" ? (
-                        <CircleAlert size={16} strokeWidth={2.5} />
-                      ) : (
-                        <MessageCircle size={16} strokeWidth={2.5} />
-                      )
-                    }
-                    title={`${channel} · ${notificationTitle(log)}`}
-                    meta={formatNotificationTime(log)}
-                    badge={notificationStatusLabel(log.status)}
-                    tone={tone}
-                    onClick={() => setSelectedEntry({ key: detailKey, log })}
+              <>
+                {isNotificationLogsError ? (
+                  <QueryErrorState
+                    dataComponent={`${dataComponent}_tab-panel_message_history-card_stale-error`}
+                    size="inline"
+                    title="최신 정보를 불러오지 못했습니다"
+                    onRetry={() => onRetryNotificationLogs?.()}
+                    isRetrying={isNotificationLogsRetrying}
                   />
-                );
-              })
+                ) : null}
+                {displayNotificationLogs.map((log) => {
+                  const tone = notificationStatusTone(log.status);
+                  const channel = notificationChannelLabel(log);
+                  return (
+                    <DetailDocRow
+                      data-component={`${dataComponent}_tab-panel_message_history-card_log-row`}
+                      key={`${channel}-${log.id}`}
+                      icon={
+                        tone === "burgundy" ? (
+                          <CircleAlert size={16} strokeWidth={2.5} />
+                        ) : (
+                          <MessageCircle size={16} strokeWidth={2.5} />
+                        )
+                      }
+                      title={`${channel} · ${notificationTitle(log)}`}
+                      meta={formatNotificationTime(log)}
+                      badge={notificationStatusLabel(log.status)}
+                      tone={tone}
+                      onClick={() => setSelectedEntry({ key: detailKey, log })}
+                    />
+                  );
+                })}
+              </>
             ) : (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_empty`} data-slot="detail-empty-state">
                 발송 내역이 없습니다.
               </div>
             )}
-            {hasMoreNotificationLogs && !isNotificationLogsLoading && !isNotificationLogsError ? (
+            {hasMoreNotificationLogs && !isNotificationLogsLoading && (!isNotificationLogsError || displayNotificationLogs.length > 0) ? (
               <p
                 className="detail-empty-state"
                 data-component={`${dataComponent}_tab-panel_message_history-card_truncated-notice`}
@@ -1445,7 +1709,7 @@ export function ClientDetailContent({
           client={client}
           activeTab={activeTab}
           overview={serviceRecordsQuery.data}
-          isLoading={serviceRecordsQuery.isLoading}
+          isLoading={isServiceRecordsLoading}
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}

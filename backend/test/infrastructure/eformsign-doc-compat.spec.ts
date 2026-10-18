@@ -1,5 +1,7 @@
 import {
     EFORMSIGN_DOC_COMPAT_READ_SELECT,
+    EFORMSIGN_DOC_DOMAIN_READ_SELECT,
+    PENDING_EFORMSIGN_DOC_COLUMN_NAMES,
     eformsignDocCompatReadSelect,
     omitPendingEformsignDocColumns,
     readWithEformsignDocCompat,
@@ -16,6 +18,20 @@ function missingColumnError(column: string): unknown {
 }
 
 describe("eformsignDocCompatReadSelect", () => {
+    it.each(["voided_at", "voided_by", "voidedAt", "voidedBy"])("treats %s as the last group without changing the read floor", (column) => {
+        expect(PENDING_EFORMSIGN_DOC_COLUMN_NAMES.slice(-4)).toEqual(["voided_at", "voidedAt", "voided_by", "voidedBy"]);
+        expect(EFORMSIGN_DOC_DOMAIN_READ_SELECT).toMatchObject({ voidedAt: true, voidedBy: true });
+        expect(EFORMSIGN_DOC_COMPAT_READ_SELECT).not.toHaveProperty("voidedAt");
+        expect(EFORMSIGN_DOC_COMPAT_READ_SELECT).not.toHaveProperty("voidedBy");
+        const error = missingColumnError(column);
+        const select = eformsignDocCompatReadSelect(error);
+        expect(select).toMatchObject({ templateId: true, documentName: true, customerName: true });
+        expect(select).not.toHaveProperty("voidedAt");
+        expect(select).not.toHaveProperty("voidedBy");
+        expect(eformsignDocCompatReadSelect(error, { permanentPurgeRequestedAt: true })).toHaveProperty("permanentPurgeRequestedAt", true);
+        expect(omitPendingEformsignDocColumns({ voidedAt: new Date(), voidedBy: "actor", documentName: "kept", permanentPurgeRequestedAt: null }, error))
+            .toEqual({ documentName: "kept", permanentPurgeRequestedAt: null });
+    });
     it("keeps the columns from migrations that did ship", () => {
         // The defect this exists for: a deploy that runs ahead of the newest patch used to
         // drop every pending column, templateId included — and templateId shipped three
@@ -51,7 +67,7 @@ describe("eformsignDocCompatReadSelect", () => {
     });
 
     it("keeps everything up to the newest migration when only it is missing", () => {
-        // The purge-intent migration is the newest group; a database missing only it must
+        // The purge-intent migration precedes void columns; a database missing it must
         // still return every column the four earlier migrations added.
         const select = eformsignDocCompatReadSelect(
             missingColumnError("permanent_purge_requested_at"),
@@ -396,6 +412,8 @@ describe("toCompatDomainRow", () => {
             syncStatus: null,
             syncError: null,
             syncErrorAt: null,
+            voidedAt: null,
+            voidedBy: null,
         });
     });
 });

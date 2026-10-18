@@ -139,6 +139,7 @@ describe("client duration confirmation", () => {
     const client: Client = {
       ...prefill, id: 2, createdAt: "2026-08-01", breastPump: false, careCenter: false,
       primaryEmployee: null, secondaryEmployee: null, serviceStatus: "completed",
+      bookingConfirmedAt: null,
       hasSigned: false, documentStatus: null, eDocId: null,
       birthDate: null, type: null, fullPrice: null, grant: null, actualPrice: null,
     };

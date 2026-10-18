@@ -77022,6 +77022,184 @@
       "review_task": "holiday-sync-error-inventory",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "own-branch and id-shape guards for the holiday calendar and override endpoints"
+    },
+    {
+      "id": "owner-2c7555cb25cc",
+      "path": "backend/application/usecases/eformsign-doc/void-contract-document.usecase.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by BJJ-439 (계약 파기, POST /api/documents/:documentId/void); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a registered problem body. Missing or out-of-scope document -> NotFoundException(codeOnlyProblemBody RESOURCE_NOT_FOUND) 404; already voided, purge requested, withdrawn/expired/rejected/deleted, service-record snapshot, no client, definitive vendor cancel refusal, lost conditional write -> ConflictException(codeOnlyProblemBody REQUEST_CONFLICT) 409; credentials unavailable before the vendor call -> ServiceUnavailableException(codeOnlyProblemBody DEPENDENCY_UNAVAILABLE) 503, a credential-boundary ForbiddenException rethrown unchanged; uncertain vendor outcome or write failure after the vendor call -> InternalServerErrorException(uncertainProblemBody INTERNAL_ERROR) 500 carrying the uncertainty marker. No new codes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 32,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 33,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 34,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 36,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 38,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 40,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 49,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 60,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 62,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 63,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 67,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 69,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 72,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 74,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 78,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 84,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 86,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 90,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 94,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 96,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 99,
+          "kinds": [
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "raw-error-intake-gate",
+      "spec_ids": [
+        "EM-ARCH-01",
+        "EM-MAP-04"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND",
+        "REQUEST_CONFLICT",
+        "DEPENDENCY_UNAVAILABLE",
+        "INTERNAL_ERROR"
+      ],
+      "outcome_evidence": "Each refusal reaches the client as its registered catalog code; verified end to end against a disposable database (200 void, 409 repeat).",
+      "consumer_paths": [
+        "HTTP void route (desktop/mobile proxies /api/eformsign/documents/[documentId]/void)"
+      ],
+      "test_evidence": [
+        "backend/test/usecases/eformsign-doc/void-contract-document.usecase.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "bjj-439-p439c",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "problem-contract bodies only; uncertain vendor outcome keeps the uncertainty marker"
     }
   ]
 }

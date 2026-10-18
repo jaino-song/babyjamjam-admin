@@ -2,7 +2,15 @@
 
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
+import dynamic from "next/dynamic";
+import {
+    CONTRACT_VOID_COPY,
+    CONTRACT_VOID_ROW_LABEL,
+    CONTRACT_VOIDED_BY_UNKNOWN_LABEL,
+    isContractVoidable,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
 import {
     MESSAGE_LOG_STATUS_BADGE_VARIANT,
     MESSAGE_HISTORY_STATUS_LABELS,
@@ -14,10 +22,13 @@ import {
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
     useApproveScheduleChange,
     useRejectScheduleChange,
+    useConfirmBooking,
 } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
@@ -67,11 +78,27 @@ import {
 } from "@/components/app/v3";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
+import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
-import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
+import { eformsignApi, type EformsignLinkConfirmation, type LocalEformsignDocRecord } from "@/services/api";
+import { ContractLinkConfirmDialog } from "@/components/app/clients/ContractLinkConfirmDialog";
+import {
+    clientContractDocsQueryKey,
+    describeLinkConfirmDifferences,
+    linkConfirmationsQueryKey,
+} from "@/components/app/clients/contract-link-confirm";
 import { CalendarClock, Users } from "lucide-react";
 
 const SOURCE_COMPONENT = "ClientDetailPanel";
+
+// Loaded on demand (client only) like the e-documents page does.
+const ContractDocumentPreviewModal = dynamic(
+    () =>
+        import("@/components/app/contracts/ContractDocumentPreviewModal").then(
+            (module) => module.ContractDocumentPreviewModal,
+        ),
+    { ssr: false },
+);
 
 const CLIENT_DETAIL_TABS = [
     { key: "basic", label: "기본 정보" },
@@ -121,8 +148,27 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     "철회 요청됨": "review",
     // eformsign 042/090: revoked, terminal — danger tone (the expired token), distinct label.
     "철회됨": "expired",
+    // eformsign 071: rejected by the provider's reviewer, not terminal — the solid burgundy badge.
+    "반려됨": "rejected_by_reviewer",
     "기간 만료": "expired",
+    // 계약 파기 (BJJ-439): inactive, not an error — the pending badge status is the neutral tone.
+    "파기됨": "pending",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
+
+/**
+ * The preview modal reads only id, name, number, created date and template name of the
+ * snake_case document; the panel's camelCase record carries all five.
+ */
+const toPreviewDocument = (doc: LocalEformsignDocRecord): EformsignDocument => {
+    const createdAt = Date.parse(doc.createdDate);
+    return {
+        id: doc.documentId,
+        document_name: doc.documentName || doc.stepRecipientName || "계약서",
+        document_number: doc.documentNumber ?? "",
+        created_date: Number.isNaN(createdAt) ? 0 : createdAt,
+        template: doc.templateName ? { name: doc.templateName } : undefined,
+    } as EformsignDocument;
+};
 
 const formatScheduleChangeMonthDay = (dateStr: string): string => {
     return formatDateForDisplay(dateStr, dateStr);
@@ -187,6 +233,15 @@ function getClientMessageHistoryTime(record: MessageLogRecord) {
     return Number.isNaN(time) ? 0 : time;
 }
 
+/**
+ * A query with no data that cannot run yet (React Query v5 pauses it while the browser is
+ * offline: `isLoading` stays false, `isError` stays false) has not loaded. It must read as
+ * loading, never fall through to an empty text for data that was never received (BJJ-434).
+ */
+function isQueryLoadPending(query: { isLoading: boolean; isPaused?: boolean; data: unknown }): boolean {
+    return query.isLoading || (Boolean(query.isPaused) && query.data === undefined);
+}
+
 function ClientMessageHistoryList({
     records,
     canLookupMessages,
@@ -195,6 +250,8 @@ function ClientMessageHistoryList({
     isFetchingNextPage,
     hasNextPage,
     onLoadMore,
+    onRetry,
+    isRetrying,
     clientName,
     selectedRecordId,
     onSelectRecord,
@@ -209,6 +266,9 @@ function ClientMessageHistoryList({
     /** The server still holds older records than the ones loaded; the list shows only recent ones. */
     hasNextPage: boolean;
     onLoadMore: () => void;
+    /** Retries the failed read: the older page when that is what failed, otherwise the whole history. */
+    onRetry: () => void;
+    isRetrying: boolean;
     clientName: string;
     selectedRecordId: number | string | null;
     onSelectRecord: (record: MessageLogRecord) => void;
@@ -276,14 +336,14 @@ function ClientMessageHistoryList({
         );
     }
 
-    if (isError) {
+    if (isError && records.length === 0) {
         return (
-            <div
-                data-component={`${dataComponentPrefix}_history-list_error`}
-                className="w-full min-w-0 max-w-full py-12 text-center text-[0.85rem] text-v3-text-muted"
-            >
-                메시지 발송 내역을 불러오지 못했습니다
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponentPrefix}_history-list_error`}
+                title="메시지 발송 내역을 불러오지 못했습니다"
+                onRetry={onRetry}
+                isRetrying={isRetrying}
+            />
         );
     }
 
@@ -300,6 +360,15 @@ function ClientMessageHistoryList({
             data-component={`${dataComponentPrefix}_history-list`}
             className="w-full min-w-0 max-w-full"
         >
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${dataComponentPrefix}_history-list_refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
             <AnimatedSlotList<MessageLogRecord>
                 items={records}
                 isLoading={false}
@@ -478,6 +547,7 @@ function ClientUpcomingMessageList({
     hasNextPage,
     onLoadMore,
     onRetry,
+    isRetrying,
     dataComponentPrefix,
 }: {
     jobs: ClientUpcomingMessageTriggerJob[];
@@ -487,11 +557,12 @@ function ClientUpcomingMessageList({
     hasNextPage: boolean;
     onLoadMore: () => void;
     onRetry: () => void;
+    isRetrying: boolean;
     dataComponentPrefix: string;
 }) {
     const sectionPrefix = `${dataComponentPrefix}_upcoming`;
 
-    if (isError) {
+    if (isError && jobs.length === 0) {
         return (
             <div
                 data-component={`${sectionPrefix}_error`}
@@ -533,6 +604,15 @@ function ClientUpcomingMessageList({
             data-slot="upcoming-messages"
             className="w-full min-w-0 max-w-full"
         >
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${sectionPrefix}_refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
             <AnimatedSlotList<ClientUpcomingMessageTriggerJob>
                 data-component={`${sectionPrefix}_list`}
                 items={jobs}
@@ -605,21 +685,168 @@ function ClientUpcomingMessageList({
     );
 }
 
+// Contracts that match this client's phone but differ in name or birthday are not linked on
+// their own (S3 / 계약-05); they wait here for a person to confirm them.
+function ClientContractLinkConfirmations({
+    entries,
+    hasData,
+    isError,
+    onRetry,
+    isRetrying,
+    onConfirm,
+    dataComponentPrefix,
+}: {
+    entries: EformsignLinkConfirmation[];
+    hasData: boolean;
+    isError: boolean;
+    onRetry: () => void;
+    isRetrying: boolean;
+    onConfirm: (entry: EformsignLinkConfirmation) => void;
+    dataComponentPrefix: string;
+}) {
+    const base = `${dataComponentPrefix}-contracts-link-confirmation`;
+
+    if (isError && !hasData) {
+        return (
+            <QueryErrorState
+                dataComponent={`${base}-error`}
+                title="연결 확인이 필요한 계약서를 불러오지 못했습니다"
+                size="inline"
+                onRetry={onRetry}
+                isRetrying={isRetrying}
+            />
+        );
+    }
+
+    if (entries.length === 0 && !isError) {
+        return null;
+    }
+
+    return (
+        <div data-component={`${base}-list`} className="mb-3 space-y-3">
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${base}-refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
+            {entries.length > 0 ? (
+                <p
+                    data-component={`${base}-count`}
+                    className="px-1 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                >
+                    확인 필요 계약서 {entries.length}건
+                </p>
+            ) : null}
+            {entries.map((entry) => (
+                <div
+                    key={entry.documentId}
+                    data-component={`${base}-entry`}
+                    data-slot="link-confirmation-entry"
+                    className="space-y-2 rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                >
+                    <div className="flex items-center justify-between gap-3">
+                        <span
+                            data-component={`${base}-entry_name`}
+                            className="min-w-0 break-words text-sm font-semibold text-v3-dark"
+                        >
+                            {entry.documentName || "계약서"}
+                        </span>
+                        <MessageStatusBadge
+                            data-component={`${base}-entry_badge`}
+                            variant="warning"
+                            size="sm"
+                        >
+                            연결 확인 필요
+                        </MessageStatusBadge>
+                    </div>
+                    <p data-component={`${base}-entry_differences`} className="text-sm text-v3-text-muted">
+                        {describeLinkConfirmDifferences(entry.differences)}
+                    </p>
+                    {entry.canConfirm ? (
+                        <Button
+                            type="button"
+                            size="sm"
+                            data-component={`${base}-entry_confirm`}
+                            onClick={() => onConfirm(entry)}
+                        >
+                            확인
+                        </Button>
+                    ) : (
+                        <p data-component={`${base}-entry_manager-only`} className="text-sm text-v3-text-muted">
+                            지점 관리자만 연결을 확정할 수 있습니다
+                        </p>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function ClientContractsList({
+    clientId,
+    clientName,
     docs,
     isError,
     isLoading,
+    onRetry,
+    isRetrying,
     dataComponentPrefix,
     onCreateContract,
+    hasPendingLinkConfirmations = false,
 }: {
+    clientId: number;
+    clientName: string;
     docs: LocalEformsignDocRecord[];
     isError: boolean;
     isLoading: boolean;
+    onRetry: () => void;
+    isRetrying: boolean;
     dataComponentPrefix: string;
     onCreateContract?: () => void;
+    /** A contract waits for link confirmation above this list, so "no contracts" would be untrue. */
+    hasPendingLinkConfirmations?: boolean;
 }) {
     // Display-only: the built-in calendar stands in until the branch calendar loads.
     const { calendar } = useBusinessDayCalendar();
+    const queryClient = useQueryClient();
+    const { toast } = useToast();
+    const [voidTargetId, setVoidTargetId] = useState<string | null>(null);
+    const [previewDoc, setPreviewDoc] = useState<LocalEformsignDocRecord | null>(null);
+
+    const invalidateAfterVoidAttempt = () => {
+        void queryClient.invalidateQueries({ queryKey: clientContractDocsQueryKey(clientId) });
+        void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+        void queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+        void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
+    };
+
+    // No optimistic update: the card changes only once the refetched server data says voided.
+    const voidMutation = useMutation({
+        mutationFn: (documentId: string) => eformsignApi.voidContractDocument(documentId),
+        onSuccess: () => {
+            toast({ variant: "success", description: CONTRACT_VOID_COPY.success });
+            setVoidTargetId(null);
+            invalidateAfterVoidAttempt();
+        },
+        onError: (error: unknown) => {
+            const status = isAxiosError(error) ? error.response?.status : undefined;
+            if (status === 409) {
+                // Already voided or no longer voidable: the card is stale, not the request.
+                toast({ variant: "destructive", description: CONTRACT_VOID_COPY.conflict });
+                setVoidTargetId(null);
+            } else {
+                // Any other failure, including no response or a timeout, leaves the outcome
+                // uncertain (the cancel may have happened): keep the modal for a retry or cancel.
+                toast({ variant: "destructive", description: CONTRACT_VOID_COPY.failure });
+            }
+            invalidateAfterVoidAttempt();
+        },
+    });
+
     if (isLoading) {
         return (
             <div data-component={`${dataComponentPrefix}-contracts-skeleton-list`} className="space-y-3">
@@ -645,13 +872,19 @@ function ClientContractsList({
 
     if (isError && docs.length === 0) {
         return (
-            <div data-component={`${dataComponentPrefix}-contracts-error`} className="py-12 text-center text-[0.85rem] text-v3-text-muted">
-                계약서 정보를 불러오지 못했습니다
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponentPrefix}-contracts-error`}
+                title="계약서 정보를 불러오지 못했습니다"
+                onRetry={onRetry}
+                isRetrying={isRetrying}
+            />
         );
     }
 
     if (docs.length === 0) {
+        if (hasPendingLinkConfirmations) {
+            return null;
+        }
         return (
             <DetailEmptyState
                 message="계약서 정보가 없습니다"
@@ -671,6 +904,15 @@ function ClientContractsList({
 
     return (
         <div data-component={`${dataComponentPrefix}-contracts-list`} className="space-y-3">
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${dataComponentPrefix}-contracts-refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
             {docs.map((doc) => {
                 // The backend stamps displayStatus at serve time; the local derivation
                 // only backstops payloads that predate the field.
@@ -684,6 +926,14 @@ function ClientContractsList({
                     doc.displayStatus,
                     calendar,
                 );
+                const isVoided = Boolean(doc.voidedAt) || doc.displayStatus === "voided";
+                // The shared rule decides on the stamped status; the visible label is checked too so a
+                // payload without displayStatus never offers the button on a 철회됨 / 기간 만료 card.
+                const isVoidable =
+                    isContractVoidable({ displayStatus: doc.displayStatus ?? "", voidedAt: doc.voidedAt }) &&
+                    statusLabel !== "철회됨" &&
+                    statusLabel !== "기간 만료" &&
+                    statusLabel !== "파기됨";
                 return (
                     <InfoCard
                         key={doc.documentId}
@@ -706,9 +956,70 @@ function ClientContractsList({
                             label="수신 연락처"
                             value={doc.stepRecipientSms ? formatKoreanPhoneNumber(doc.stepRecipientSms) : "-"}
                         />
+                        {isVoided ? (
+                            <InfoRow
+                                label={CONTRACT_VOID_ROW_LABEL}
+                                value={`${formatDateTime(doc.voidedAt ?? null)} · ${doc.voidedByName?.trim() || CONTRACT_VOIDED_BY_UNKNOWN_LABEL}`}
+                            />
+                        ) : null}
+                        <div
+                            data-component={`${dataComponentPrefix}-contracts-card_actions`}
+                            className="mt-3 flex gap-2"
+                        >
+                            {isVoidable ? (
+                                <Button
+                                    type="button"
+                                    variant="negative-outline"
+                                    size="sm"
+                                    className="w-1/4"
+                                    data-component={`${dataComponentPrefix}-contracts-card_void`}
+                                    onClick={() => setVoidTargetId(doc.documentId)}
+                                >
+                                    {CONTRACT_VOID_COPY.action}
+                                </Button>
+                            ) : null}
+                            <Button
+                                type="button"
+                                variant="positive"
+                                size="sm"
+                                className={isVoidable ? "w-3/4" : "w-full"}
+                                data-component={`${dataComponentPrefix}-contracts-card_preview`}
+                                onClick={() => setPreviewDoc(doc)}
+                            >
+                                문서 보기
+                            </Button>
+                        </div>
                     </InfoCard>
                 );
             })}
+            <TwoButtonModal
+                data-component={`${dataComponentPrefix}-contracts-void-modal`}
+                open={voidTargetId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setVoidTargetId(null);
+                }}
+                size="detail"
+                title={CONTRACT_VOID_COPY.confirmTitle}
+                description={CONTRACT_VOID_COPY.confirmDescription}
+                isDescriptionVisuallyHidden={false}
+                cancelLabel={CONTRACT_VOID_COPY.cancel}
+                approvalLabel={CONTRACT_VOID_COPY.confirm}
+                approvalVariant="destructive"
+                pendingLabel={CONTRACT_VOID_COPY.pending}
+                isPending={voidMutation.isPending}
+                onApprove={() => {
+                    if (voidTargetId !== null && !voidMutation.isPending) {
+                        voidMutation.mutate(voidTargetId);
+                    }
+                }}
+            />
+            <ContractDocumentPreviewModal
+                data-component={`${dataComponentPrefix}-contracts-document-preview`}
+                open={previewDoc !== null}
+                onClose={() => setPreviewDoc(null)}
+                document={previewDoc ? toPreviewDocument(previewDoc) : null}
+                customerName={clientName}
+            />
         </div>
     );
 }
@@ -791,6 +1102,8 @@ export interface ClientDetailPanelProps {
     layout?: "desktop" | "mobile";
     /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
     onScheduleChangeDecided?: (clientId: number) => void;
+    /** Patch only booking fields into the caller's locally held client snapshot. */
+    onBookingConfirmed?: (client: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => void;
     /** When set, the empty contracts tab offers a button that runs this (same action as the menu's contract item). */
     onCreateContract?: () => void;
     /** Prefix applied to every `data-component` attribute rendered by this panel. */
@@ -812,11 +1125,12 @@ export interface ClientDetailPanelProps {
 }
 
 function ClientDetailPanelBody({
-    client,
+    client: selectedClient,
     trailing,
     layout = "desktop",
     basicInfoColumns = layout === "mobile" ? 1 : 2,
     onScheduleChangeDecided,
+    onBookingConfirmed,
     onCreateContract,
     dataComponentPrefix = "desktop_clients-detail_panel",
     messageHistoryDataComponentPrefix = "desktop_clients-detail_panel_message-history",
@@ -834,6 +1148,19 @@ function ClientDetailPanelBody({
     const { toast } = useToast();
     const approveScheduleChange = useApproveScheduleChange();
     const rejectScheduleChange = useRejectScheduleChange();
+    const confirmBooking = useConfirmBooking();
+    const [confirmedBooking, setConfirmedBooking] = useState<Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus"> | null>(null);
+    const client = useMemo(() => confirmedBooking && selectedClient.bookingConfirmedAt == null
+        ? { ...selectedClient, bookingConfirmedAt: confirmedBooking.bookingConfirmedAt, serviceStatus: confirmedBooking.serviceStatus }
+        : selectedClient, [selectedClient, confirmedBooking]);
+    const [isBookingConfirmationOpen, setIsBookingConfirmationOpen] = useState(false);
+    const [isConfirmingBooking, setIsConfirmingBooking] = useState(false);
+    const bookingConfirmationInFlightRef = useRef(false);
+    const hasBookingDates = Boolean(client.startDate && client.endDate);
+    const canConfirmBooking = client.bookingConfirmedAt == null
+        && client.serviceStatus !== "terminated"
+        && client.serviceStatus !== "replacement_requested";
+    const bookingDatesHelpId = `${dataComponentPrefix}_header_confirm-booking_help`;
 
     const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
         key: "basic",
@@ -938,12 +1265,15 @@ function ClientDetailPanelBody({
 
     const {
         data: clientContracts,
-        isLoading: isClientContractsLoading,
+        isLoading: isClientContractsFetchingFirst,
+        isPaused: isClientContractsPaused,
         isError: isClientContractsError,
         isSuccess: isClientContractsSuccess,
         dataUpdatedAt: clientContractsUpdatedAt,
+        refetch: refetchClientContracts,
+        isRefetching: isClientContractsRefetching,
     } = useQuery({
-        queryKey: ["eformsign-docs", "client", clientId],
+        queryKey: clientContractDocsQueryKey(clientId),
         // Show each document exactly as eformsign reports it. client.documentStatus is a
         // lossy summary of the same row and must never override it (it once turned an
         // unsigned, customer-opened contract into "검토 필요").
@@ -954,10 +1284,32 @@ function ClientDetailPanelBody({
         refetchOnWindowFocus: true,
     });
 
+    const isClientContractsLoading = isQueryLoadPending({
+        isLoading: isClientContractsFetchingFirst,
+        isPaused: isClientContractsPaused,
+        data: clientContracts,
+    });
+
     const clientContractDocs = useMemo(
         () => (clientContracts ?? []).filter((doc) => doc.documentKind !== "service_record_snapshot"),
         [clientContracts],
     );
+
+    // Contracts waiting for a person to confirm the link (phone matches, name or birthday differs).
+    const {
+        data: linkConfirmations,
+        isError: isLinkConfirmationsError,
+        refetch: refetchLinkConfirmations,
+        isRefetching: isLinkConfirmationsRefetching,
+    } = useQuery({
+        queryKey: linkConfirmationsQueryKey(clientId),
+        queryFn: () => eformsignApi.getLinkConfirmations(clientId),
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnReconnect: true,
+        refetchOnWindowFocus: true,
+    });
+    const [linkConfirmEntry, setLinkConfirmEntry] = useState<EformsignLinkConfirmation | null>(null);
 
     useEffect(() => {
         if (!isClientContractsSuccess) {
@@ -1100,6 +1452,53 @@ function ClientDetailPanelBody({
         }
     };
 
+    const handleConfirmBooking = async () => {
+        if (bookingConfirmationInFlightRef.current || !canConfirmBooking || !hasBookingDates) return;
+        bookingConfirmationInFlightRef.current = true;
+        setIsConfirmingBooking(true);
+        try {
+            const response = await confirmBooking.mutateAsync(client.id);
+            const booking = {
+                id: client.id,
+                bookingConfirmedAt: response.bookingConfirmedAt,
+                serviceStatus: response.serviceStatus,
+            };
+            // 확정 응답은 직원·배지가 없는 엔티티이므로 예약 필드만 병합한다.
+            setConfirmedBooking(booking);
+            onBookingConfirmed?.(booking);
+            void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
+            toast({ variant: "success", description: "예약을 확정했습니다." });
+        } catch {
+            toast({ variant: "destructive", description: "예약을 확정하지 못했습니다. 시작일·종료일과 고객 상태를 확인한 뒤 다시 시도해 주세요." });
+        } finally {
+            setIsBookingConfirmationOpen(false);
+            setIsConfirmingBooking(false);
+            bookingConfirmationInFlightRef.current = false;
+        }
+    };
+
+    const confirmButton = canConfirmBooking ? (
+        <>
+            <Button
+                data-component={`${dataComponentPrefix}_header_confirm-booking`}
+                type="button"
+                variant="positive"
+                size="sm"
+                disabled={!hasBookingDates || isConfirmingBooking}
+                title={!hasBookingDates ? "서비스 시작일과 종료일을 먼저 입력해 주세요." : undefined}
+                aria-describedby={!hasBookingDates ? bookingDatesHelpId : undefined}
+                onClick={() => setIsBookingConfirmationOpen(true)}
+            >
+                예약 확정
+            </Button>
+            {!hasBookingDates ? (
+                <span data-component={`${dataComponentPrefix}_header_confirm-booking_help`} id={bookingDatesHelpId} className="sr-only">
+                    서비스 시작일과 종료일을 먼저 입력해 주세요.
+                </span>
+            ) : null}
+        </>
+    ) : null;
+
     return (
         <ClientMessageDetailSlide
             isMessageDetailActive={isMessageHistoryDetailVisible && selectedClientMessageDetailRecord !== null}
@@ -1151,7 +1550,7 @@ function ClientDetailPanelBody({
                     </>
                 }
                 subtitle={getClientDetailSubtitle(client)}
-                trailing={trailing}
+                trailing={<>{confirmButton}{trailing}</>}
                 tabs={
                     <DetailTabs
                         tabs={activeClientDetailTabs}
@@ -1338,13 +1737,38 @@ function ClientDetailPanelBody({
                             key: "contracts",
                             className: "flex flex-col",
                             children: (
-                                <ClientContractsList
-                                    docs={clientContractDocs}
-                                    isLoading={isClientContractsLoading}
-                                    isError={isClientContractsError}
-                                    dataComponentPrefix={dataComponentPrefix}
-                                    onCreateContract={onCreateContract}
-                                />
+                                <>
+                                    <ClientContractLinkConfirmations
+                                        entries={linkConfirmations ?? []}
+                                        hasData={linkConfirmations !== undefined}
+                                        isError={isLinkConfirmationsError}
+                                        onRetry={() => void refetchLinkConfirmations()}
+                                        isRetrying={isLinkConfirmationsRefetching}
+                                        onConfirm={setLinkConfirmEntry}
+                                        dataComponentPrefix={dataComponentPrefix}
+                                    />
+                                    <ClientContractsList
+                                        clientId={clientId}
+                                        clientName={client.name}
+                                        docs={clientContractDocs}
+                                        isLoading={isClientContractsLoading}
+                                        isError={isClientContractsError}
+                                        onRetry={() => void refetchClientContracts()}
+                                        isRetrying={isClientContractsRefetching}
+                                        dataComponentPrefix={dataComponentPrefix}
+                                        onCreateContract={onCreateContract}
+                                        hasPendingLinkConfirmations={(linkConfirmations?.length ?? 0) > 0}
+                                    />
+                                    {linkConfirmEntry && linkConfirmEntry.client.id === clientId ? (
+                                        <ContractLinkConfirmDialog
+                                            key={linkConfirmEntry.documentId}
+                                            entry={linkConfirmEntry}
+                                            clientId={clientId}
+                                            dataComponentPrefix={dataComponentPrefix}
+                                            onClose={() => setLinkConfirmEntry(null)}
+                                        />
+                                    ) : null}
+                                </>
                             ),
                         },
                         {
@@ -1369,12 +1793,17 @@ function ClientDetailPanelBody({
                                         </div>
                                         <ClientUpcomingMessageList
                                             jobs={clientUpcomingMessageQuery.items}
-                                            isLoading={clientUpcomingMessageQuery.isLoading}
+                                            isLoading={isQueryLoadPending(clientUpcomingMessageQuery)}
                                             isError={clientUpcomingMessageQuery.isError}
                                             isFetchingNextPage={clientUpcomingMessageQuery.isFetchingNextPage}
                                             hasNextPage={Boolean(clientUpcomingMessageQuery.hasNextPage)}
                                             onLoadMore={() => void clientUpcomingMessageQuery.fetchNextPage()}
-                                            onRetry={() => void clientUpcomingMessageQuery.refetch()}
+                                            onRetry={() => void (
+                                                clientUpcomingMessageQuery.isFetchNextPageError
+                                                    ? clientUpcomingMessageQuery.fetchNextPage()
+                                                    : clientUpcomingMessageQuery.refetch()
+                                            )}
+                                            isRetrying={Boolean(clientUpcomingMessageQuery.isRefetching || clientUpcomingMessageQuery.isFetchingNextPage)}
                                             dataComponentPrefix={dataComponentPrefix}
                                         />
                                     </div>
@@ -1393,11 +1822,17 @@ function ClientDetailPanelBody({
                                         <ClientMessageHistoryList
                                             records={clientMessageHistory}
                                             canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
-                                            isLoading={clientMessageHistoryQuery.isLoading}
+                                            isLoading={isQueryLoadPending(clientMessageHistoryQuery)}
                                             isError={clientMessageHistoryQuery.isError}
                                             isFetchingNextPage={clientMessageHistoryQuery.isFetchingNextPage}
                                             hasNextPage={Boolean(clientMessageHistoryQuery.hasNextPage)}
                                             onLoadMore={() => void clientMessageHistoryQuery.fetchNextPage()}
+                                            onRetry={() => void (
+                                                clientMessageHistoryQuery.isFetchNextPageError
+                                                    ? clientMessageHistoryQuery.fetchNextPage()
+                                                    : clientMessageHistoryQuery.refetch()
+                                            )}
+                                            isRetrying={Boolean(clientMessageHistoryQuery.isRefetching || clientMessageHistoryQuery.isFetchingNextPage)}
                                             clientName={client.name}
                                             selectedRecordId={selectedMessageHistoryId}
                                             onSelectRecord={handleSelectClientMessageHistoryRecord}
@@ -1415,19 +1850,19 @@ function ClientDetailPanelBody({
                                     layout={layout}
                                     overview={serviceRecordsQuery.data}
                                     clientId={clientId}
-                                    isLoading={serviceRecordsQuery.isLoading}
+                                    isLoading={isQueryLoadPending(serviceRecordsQuery)}
                                     isError={serviceRecordsQuery.isError}
                                     isRefreshing={
                                         serviceRecordsQuery.isFetching
-                                        && !serviceRecordsQuery.isLoading
+                                        && !isQueryLoadPending(serviceRecordsQuery)
                                     }
                                     isTextRefreshing={serviceRecordsQuery.isRefetching}
                                     onRefresh={() => void serviceRecordsQuery.refetch()}
                                     revisionHistory={revisionHistoryQuery.data}
-                                    isRevisionHistoryLoading={revisionHistoryQuery.isLoading}
+                                    isRevisionHistoryLoading={isQueryLoadPending(revisionHistoryQuery)}
                                     isRevisionHistoryError={revisionHistoryQuery.isError}
                                     revisionHistoryErrorStatus={getErrorResponseStatus(revisionHistoryQuery.error)}
-                                    isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !revisionHistoryQuery.isLoading}
+                                    isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !isQueryLoadPending(revisionHistoryQuery)}
                                     onRefreshRevisionHistory={() => void revisionHistoryQuery.refetch()}
                                     onRetryRevisionDocument={(revisionId, documentStateId, expectedGeneration) =>
                                         retryRevisionDocumentMutation.mutateAsync({
@@ -1444,6 +1879,20 @@ function ClientDetailPanelBody({
                     ]}
                 />
             </DetailPanel>
+            <TwoButtonModal
+                data-component={`${dataComponentPrefix}_confirm-booking-modal`}
+                open={isBookingConfirmationOpen}
+                onOpenChange={setIsBookingConfirmationOpen}
+                title="예약을 확정할까요?"
+                description="확정하면 서비스 일정에 따라 상태가 대기·진행·완료로 바뀌고, 제공기록지와 안내 문자가 일정대로 준비됩니다. 확정은 되돌릴 수 없습니다."
+                isDescriptionVisuallyHidden={false}
+                size="detail"
+                cancelLabel="취소"
+                approvalLabel="예약 확정"
+                pendingLabel="확정 중…"
+                isPending={isConfirmingBooking || confirmBooking.isPending}
+                onApprove={() => void handleConfirmBooking()}
+            />
         </ClientMessageDetailSlide>
     );
 }

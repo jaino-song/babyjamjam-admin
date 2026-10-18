@@ -2,7 +2,13 @@ import { PROBLEM_CATALOG } from "@babyjamjam/shared";
 
 import type { HolidayReviewEvent } from "@/services/holiday-review";
 
-import { describeReviewEvent, describeSkipCode, formatMonthDay, reviewSourceLabel } from "./review-format";
+import {
+  describeReviewEvent,
+  describeSkipCode,
+  formatMonthDay,
+  REVIEW_REASON_LABEL,
+  reviewSourceLabel,
+} from "./review-format";
 
 const BASE: HolidayReviewEvent = {
   id: "evt-1",
@@ -52,6 +58,11 @@ describe("review-format", () => {
     "RECALCULATED_CHANGED",
   ])("maps skip code %s to a specific Korean reason", (code) => {
     expect(describeSkipCode(code)).not.toBe("수정하지 못했어요");
+  });
+
+  it("words a finished service day after the new end date as 마무리된 서비스 제공일 rather than a locked-record wording", () => {
+    expect(REVIEW_REASON_LABEL.locked_session_after_new_end).toBe("새 종료일 뒤에 마무리된 서비스 제공일 있음");
+    expect(REVIEW_REASON_LABEL.locked_session_after_new_end).not.toContain("잠긴");
   });
 
   it("tells the user a finished-service client was left alone", () => {

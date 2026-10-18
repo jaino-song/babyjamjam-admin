@@ -30,6 +30,8 @@ type EformsignDocRow = {
     documentKind: string | null;
     employeeScheduleId: number | null;
     templateId: string | null;
+    voidedAt: Date | null;
+    voidedBy: string | null;
 };
 
 export class EformsignDocMapper {
@@ -60,6 +62,8 @@ export class EformsignDocMapper {
             documentKind: row.documentKind as EformsignDocumentKind | null,
             employeeScheduleId: row.employeeScheduleId,
             templateId: row.templateId,
+            voidedAt: row.voidedAt,
+            voidedBy: row.voidedBy,
         });
     }
 

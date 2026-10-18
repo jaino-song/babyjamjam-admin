@@ -60,6 +60,7 @@ describe("ClientController (Integration)", () => {
 
     const createClientWithEmployeeInfo = (client: ClientEntity) => ({
         ...client,
+        bookingConfirmedAt: client.bookingConfirmedAt?.toISOString() ?? null,
         primaryEmployee: null,
         secondaryEmployee: null,
         hasSigned: false,
@@ -80,6 +81,7 @@ describe("ClientController (Integration)", () => {
             getStats: jest.fn(),
             checkPhoneExists: jest.fn(),
             update: jest.fn(),
+            confirmBooking: jest.fn(),
             delete: jest.fn(),
         };
 
@@ -605,6 +607,30 @@ describe("ClientController (Integration)", () => {
                 expect(response.status).toBe(400);
                 expect(clientService.findById).not.toHaveBeenCalled();
             });
+        });
+    });
+
+    // ============================================
+    // PATCH /clients/:id/confirm-booking
+    // ============================================
+    describe("PATCH /clients/:id/confirm-booking", () => {
+        it("confirms the booking for the tenant's client and returns 200", async () => {
+            const confirmed = createMockClient({ id: 7 });
+            clientService.confirmBooking.mockResolvedValue(confirmed);
+
+            const response = await request(app.getHttpServer()).patch("/clients/7/confirm-booking");
+
+            expect(response.status).toBe(200);
+            expect(clientService.confirmBooking).toHaveBeenCalledTimes(1);
+            expect(clientService.confirmBooking).toHaveBeenCalledWith("org-1", 7);
+            expect(response.body).toMatchObject({ id: 7 });
+        });
+
+        it("rejects a non-numeric id with 400 without calling the service", async () => {
+            const response = await request(app.getHttpServer()).patch("/clients/not-a-number/confirm-booking");
+
+            expect(response.status).toBe(400);
+            expect(clientService.confirmBooking).not.toHaveBeenCalled();
         });
     });
 

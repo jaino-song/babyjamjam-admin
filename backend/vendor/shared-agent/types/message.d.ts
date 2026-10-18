@@ -9,6 +9,15 @@ export declare const MESSAGE_TRIGGER_RECIPIENT_TYPES: readonly ["CLIENT", "PRIMA
 export type MessageTriggerRecipientType = (typeof MESSAGE_TRIGGER_RECIPIENT_TYPES)[number];
 export declare const MESSAGE_TRIGGER_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_INFO", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO", "SERVICE_END_NOTICE"];
 export type MessageTriggerTemplateKey = (typeof MESSAGE_TRIGGER_TEMPLATE_KEYS)[number];
+/**
+ * Which clients a trigger rule applies to, by their service stage at send time.
+ * Backend parity: backend/domain/constants/message-trigger-catalog.ts.
+ */
+export declare const MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES: readonly ["all", "pre_booking", "waiting", "active"];
+export type MessageTriggerTargetClientStatus = (typeof MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES)[number];
+export declare const DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS: MessageTriggerTargetClientStatus;
+export declare const DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = true;
+export declare const MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS: Readonly<Record<MessageTriggerTargetClientStatus, string>>;
 export declare const messageTriggerEventTypeSchema: z.ZodEnum<{
     EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
     CLIENT_CREATED: "CLIENT_CREATED";
@@ -40,6 +49,12 @@ export declare const messageTriggerTemplateKeySchema: z.ZodEnum<{
     CLIENT_WELCOME: "CLIENT_WELCOME";
     SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
     SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
+}>;
+export declare const messageTriggerTargetClientStatusSchema: z.ZodEnum<{
+    pre_booking: "pre_booking";
+    waiting: "waiting";
+    active: "active";
+    all: "all";
 }>;
 /**
  * Variables each scheduler can derive without operator input.
@@ -92,6 +107,10 @@ export interface MessageTriggerRule {
     sendTime?: string;
     recipientType: MessageTriggerRecipientType;
     templateKey: MessageTriggerTemplateKey;
+    /** Which clients the rule applies to; the server always returns it (default `all`). */
+    targetClientStatus: MessageTriggerTargetClientStatus;
+    /** Whether a failed send is retried automatically; the server always returns it (default `true`). */
+    retryOnFailure: boolean;
     createdAt: string;
     updatedAt: string;
 }
@@ -139,6 +158,13 @@ export declare const createMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
     }>;
+    targetClientStatus: z.ZodOptional<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        active: "active";
+        all: "all";
+    }>>;
+    retryOnFailure: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$loose>;
 /** Runtime validation for `PATCH/PUT /message-trigger-rules/:id`. */
 export declare const updateMessageTriggerRuleSchema: z.ZodObject<{
@@ -178,6 +204,13 @@ export declare const updateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
     }>>;
+    targetClientStatus: z.ZodOptional<z.ZodOptional<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        active: "active";
+        all: "all";
+    }>>>;
+    retryOnFailure: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
 }, z.core.$loose>;
 export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
     name: z.ZodString;
@@ -216,6 +249,13 @@ export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
     }>;
+    targetClientStatus: z.ZodOptional<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        active: "active";
+        all: "all";
+    }>>;
+    retryOnFailure: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$loose>;
 export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
@@ -254,6 +294,13 @@ export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
     }>>;
+    targetClientStatus: z.ZodOptional<z.ZodOptional<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        active: "active";
+        all: "all";
+    }>>>;
+    retryOnFailure: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
 }, z.core.$loose>;
 export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
     name: z.ZodString;
@@ -292,6 +339,13 @@ export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
     }>;
+    targetClientStatus: z.ZodOptional<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        active: "active";
+        all: "all";
+    }>>;
+    retryOnFailure: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$loose>;
 export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
@@ -330,6 +384,13 @@ export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
     }>>;
+    targetClientStatus: z.ZodOptional<z.ZodOptional<z.ZodEnum<{
+        pre_booking: "pre_booking";
+        waiting: "waiting";
+        active: "active";
+        all: "all";
+    }>>>;
+    retryOnFailure: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
 }, z.core.$loose>;
 export type CreateMessageTriggerRuleDto = z.infer<typeof createMessageTriggerRuleSchema>;
 export type UpdateMessageTriggerRuleDto = z.infer<typeof updateMessageTriggerRuleSchema>;
@@ -346,7 +407,20 @@ export type MessageTriggerJobStatus = "pending" | "processing"
  * no return after `processing`. It is not cancelable and to the user it reads
  * the same as `processing` ("발송 중").
  */
- | "dispatching" | "sent" | "failed" | "canceled";
+ | "dispatching" | "sent" | "failed" | "canceled"
+/**
+ * The job cannot be sent until something is configured (a missing template
+ * value, an unlinked contact, ...). The reason is in the history row's
+ * `errorMessage`; `POST /message-trigger-jobs/:id/resend` retries it.
+ */
+ | "needs_setup";
+/** Response of `POST /message-trigger-jobs/:id/resend`. */
+export interface ResendMessageTriggerJobResponse {
+    id: string;
+    /** Full job status after the resend attempt. */
+    status: MessageTriggerJobStatus;
+    reason: string | null;
+}
 export interface UpcomingMessageTriggerJobPayload {
     clientId?: number | null;
     clientName?: string | null;
@@ -379,7 +453,7 @@ export interface UpcomingMessageTriggerJob {
     createdAt: string;
     updatedAt: string;
 }
-export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled";
+export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled" | "needs_setup";
 export interface MessageLogRecord {
     id: number | string;
     provider: string;

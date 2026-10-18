@@ -12,6 +12,7 @@ import {
   FileText,
   Image as ImageIcon,
   UploadCloud,
+  Loader2,
   X,
 } from "lucide-react";
 
@@ -19,6 +20,8 @@ import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { useDocumentUploadCapabilities, useUploadDocument } from "@/hooks/use-documents";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
   documentUploadAcceptValue,
@@ -99,7 +102,14 @@ export function FileUploadScreen() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadMutation = useUploadDocument();
-  const { data: capabilities = DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES } = useDocumentUploadCapabilities();
+  const capabilitiesQuery = useDocumentUploadCapabilities();
+  const { data: capabilities } = capabilitiesQuery;
+  // Use format defaults only, never placeholder permission information.
+  const filePolicy = capabilities ?? DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES;
+  const capabilitiesReady = Boolean(capabilities && !capabilitiesQuery.isPending && !capabilitiesQuery.isError
+    && typeof capabilities.canChooseVisibilityScope === "boolean");
+  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches" | "">("");
+  const visibilityScope = capabilities?.canChooseVisibilityScope ? chosenScope : "branch";
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -126,6 +136,8 @@ export function FileUploadScreen() {
     [categories, selectedCategoryId]
   );
   const isUploading = uploadMutation.isPending || isNavigationPending;
+  const selectionDisabled = isUploading || !capabilitiesReady;
+  const canSubmit = Boolean(selectedFile && name.trim() && selectedCategory && !selectionDisabled && visibilityScope);
   const progress = isUploading ? Math.round(uploadProgress) : 0;
   const uploadedBytes = selectedFile ? Math.round((selectedFile.size * progress) / 100) : 0;
   const handleExit = () => {
@@ -134,11 +146,12 @@ export function FileUploadScreen() {
   };
 
   const validateFile = useCallback((file: File): string | null => {
-    return validateDocumentUploadCandidate(file, capabilities);
-  }, [capabilities]);
+    return validateDocumentUploadCandidate(file, filePolicy);
+  }, [filePolicy]);
 
   const handleFile = useCallback(
     (file: File) => {
+      if (selectionDisabled) return;
       const error = validateFile(file);
       if (error) {
         setValidationError(error);
@@ -157,7 +170,7 @@ export function FileUploadScreen() {
       setDescription("");
       setTags(nextCategory ? inferTags(file.name, nextCategory.label) : []);
     },
-    [categories, selectedCategory, validateFile]
+    [categories, selectedCategory, validateFile, selectionDisabled]
   );
 
   const handleFileInputChange = useCallback(
@@ -192,7 +205,7 @@ export function FileUploadScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!selectedFile || !name.trim() || !selectedCategory) return;
+    if (!canSubmit || !selectedFile || !selectedCategory || !visibilityScope) return;
 
     try {
       setUploadProgress(0);
@@ -203,7 +216,9 @@ export function FileUploadScreen() {
         categoryId: selectedCategory.id,
         tags: Array.from(new Set([...tags, relatedCustomer.trim()].filter(Boolean))).slice(0, MAX_DOCUMENT_TAGS),
         onProgress: setUploadProgress,
+        visibilityScope,
       });
+      setChosenScope("");
       toast({ description: "문서를 업로드했어요", variant: "success" });
       startNavigation();
       router.push("/files");
@@ -248,33 +263,59 @@ export function FileUploadScreen() {
 
         <div
           data-component="mobile_files-upload_screen_root_scroll_visibility-notice"
+          data-slot="visibility-notice"
           className={styles.visibilityNotice}
         >
-          {capabilities.uploadVisibilityScope === "all_branches"
-            ? "오너가 올리는 파일은 모든 지점에서 볼 수 있습니다."
-            : "이 파일은 현재 지점에서만 볼 수 있습니다."}
+          {capabilitiesQuery.isError ? (
+            <>
+              <span data-component="mobile_files-upload_screen_root_scroll_visibility-notice_error">불러오지 못했습니다</span>
+              <Button type="button" variant="outline" onClick={() => { void capabilitiesQuery.refetch(); }}
+                data-component="mobile_files-upload_screen_root_scroll_visibility-notice_retry">다시 시도</Button>
+            </>
+          ) : !capabilitiesReady ? (
+            <span role="status" aria-label="공개 범위 불러오는 중" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_loading">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </span>
+          ) : capabilities?.canChooseVisibilityScope ? (
+            <>
+              <RadioGroup aria-label="파일 공개 범위" value={chosenScope} disabled={isUploading}
+                onValueChange={(value) => setChosenScope(value as "branch" | "all_branches")}
+                data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice">
+                <label className="flex items-center gap-2" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_branch">
+                  <RadioGroupItem value="branch" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_branch_radio" />현재 지점
+                </label>
+                <label className="flex items-center gap-2" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_all-branches">
+                  <RadioGroupItem value="all_branches" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_all-branches_radio" />전 지점
+                </label>
+              </RadioGroup>
+              {chosenScope && <p data-component="mobile_files-upload_screen_root_scroll_visibility-notice_helper">
+                {chosenScope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다."}
+              </p>}
+            </>
+          ) : "이 파일은 현재 지점에서만 볼 수 있습니다."}
         </div>
 
         <div
           data-component="mobile_files-upload_screen_root_scroll_dropzone"
           role="button"
-          tabIndex={0}
+          tabIndex={selectionDisabled ? -1 : 0}
+          aria-disabled={selectionDisabled}
           className={`${styles.dropzone} ${selectedFile ? styles.hasFile : ""}`}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => { if (!selectionDisabled) fileInputRef.current?.click(); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              fileInputRef.current?.click();
+              if (!selectionDisabled) fileInputRef.current?.click();
             }
           }}
         >
           <input
             ref={fileInputRef}
             type="file"
-            accept={documentUploadAcceptValue(capabilities)}
+            accept={documentUploadAcceptValue(filePolicy)}
             className={styles.fileInput}
             onChange={handleFileInputChange}
-            disabled={isUploading}
+            disabled={selectionDisabled}
           />
 
           {selectedFile ? (
@@ -333,9 +374,9 @@ export function FileUploadScreen() {
               </div>
               <div data-component="mobile_files-upload_screen_root_scroll_dropzone_empty-title" className={styles.dropzoneTitle}>파일을 선택하거나 끌어다 놓으세요</div>
               <div data-component="mobile_files-upload_screen_root_scroll_dropzone_empty-subtitle" className={styles.dropzoneSub}>
-                <b>탭하여 파일 선택</b> · 최대 {formatFileSizeLimit(capabilities.maxFileSizeBytes)} · 파일 1개
+                <b>탭하여 파일 선택</b> · 최대 {formatFileSizeLimit(filePolicy.maxFileSizeBytes)} · 파일 1개
                 <br />
-                {capabilities.formatGroups.map((group) => `${group.label}: ${group.formats.join("·")}`).join(" / ")}
+                {filePolicy.formatGroups.map((group) => `${group.label}: ${group.formats.join("·")}`).join(" / ")}
               </div>
             </>
           )}
@@ -470,7 +511,7 @@ export function FileUploadScreen() {
         <button
           type="button"
           className={`${styles.uploadBtn} ${styles.primary}`}
-          disabled={!selectedFile || !name.trim() || !selectedCategory || isUploading}
+          disabled={!canSubmit}
           onClick={handleSubmit}
         >
           {isUploading ? "업로드 중..." : "업로드 완료"}
