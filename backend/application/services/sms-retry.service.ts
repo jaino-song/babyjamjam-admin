@@ -9,6 +9,7 @@ import {
     TARGET_CLIENT_STATUS_MISMATCH_REASON,
     targetClientStatusAllowsSend,
 } from "application/policies/message-trigger-target-client-status.policy";
+import { SmsAutomationSafeguardService, smsAutomationSafeguardReason } from "application/services/sms-automation-safeguard.service";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "application/services/sms-trigger-delivery.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
@@ -95,6 +96,8 @@ export class SmsRetryService {
         @Optional()
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
         private readonly jobRepository?: IMessageTriggerJobRepository,
+        @Optional()
+        private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
     ) {}
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
@@ -182,6 +185,12 @@ export class SmsRetryService {
                     const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);
                     if (policySkip) return { kind: "terminal", log: policySkip };
 
+                    // Send-time safeguard: an automatic retry is as automatic as
+                    // the first send. Superseding (no retry row) leaves nothing
+                    // to reschedule, so a blocked log cannot hot-loop.
+                    const safeguardSkip = await this.supersedeForSmsSafeguard(sourceLog, transaction);
+                    if (safeguardSkip) return { kind: "terminal", log: safeguardSkip };
+
                     if (sourceLog.isPartialProviderOutcome()) {
                         sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
                         await this.logRepository.update(sourceLog, transaction);
@@ -260,6 +269,13 @@ export class SmsRetryService {
                     boundary.value.authorizedSnapshot,
                 );
             }
+        }
+
+        // Automatic retries of jobs the activation boundary does not own
+        // (AI-agent SMS) reach here; admin-direct jobs pass inside the check.
+        if (invocation === "automatic") {
+            const safeguardSkip = await this.supersedeForSmsSafeguard(sourceLog);
+            if (safeguardSkip) return safeguardSkip;
         }
 
         if (sourceLog.isPartialProviderOutcome()) {
@@ -346,6 +362,24 @@ export class SmsRetryService {
         if (targetClientStatusAllowsSend(rulePolicy.targetClientStatus, client)) return null;
         sourceLog.markRetrySuperseded(TARGET_CLIENT_STATUS_MISMATCH_REASON);
         await this.logRepository.update(sourceLog, transaction);
+        return sourceLog;
+    }
+
+    /**
+     * Gate an automatic retry of a job-bound log on the SMS automation
+     * safeguard (rule, recipient flag, branch switch). Job-less logs are never
+     * automatically retried and are left to their existing handling.
+     */
+    private async supersedeForSmsSafeguard(
+        sourceLog: MessageLogEntity,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity | null> {
+        if (!this.smsAutomationSafeguard || !sourceLog.branchId || !sourceLog.triggerJobId) return null;
+        const decision = await this.smsAutomationSafeguard.checkJobById(sourceLog.branchId, sourceLog.triggerJobId, transaction);
+        if (decision.allowed) return null;
+        this.smsAutomationSafeguard.warnBlocked(`retry of message log ${sourceLog.id} (job ${sourceLog.triggerJobId})`, decision);
+        sourceLog.markRetrySuperseded(smsAutomationSafeguardReason(decision.level));
+        await (transaction ? this.logRepository.update(sourceLog, transaction) : this.logRepository.update(sourceLog));
         return sourceLog;
     }
 
