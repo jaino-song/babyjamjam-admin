@@ -1,6 +1,7 @@
 import { generateExportToken, hashExportToken } from "domain/eformsign-backup/export";
 import {
     CredentialUsageError,
+    formatCredentialCliTarget,
     parseCredentialCommand,
     runCredentialCommand,
 } from "../../scripts/eformsign-backup-export-credential";
@@ -112,5 +113,35 @@ describe("eformsign backup export credential CLI: execution", () => {
             createdAt: "2026-10-19T00:00:00.000Z", revokedAt: null, lastUsedAt: null,
         });
         expect(lines[0]).not.toMatch(/token/i);
+    });
+});
+
+describe("eformsign backup export credential CLI: target line", () => {
+    it("names environment, host, port and database", () => {
+        expect(formatCredentialCliTarget({
+            NODE_ENV: "development",
+            DATABASE_URL: "postgresql://postgres@localhost:55441/throwaway_u33a",
+        })).toMatch(/^target environment=development databaseTarget=localhost:55441\/throwaway_u33a\?/);
+    });
+
+    it("prefers the Railway environment name", () => {
+        expect(formatCredentialCliTarget({ RAILWAY_ENVIRONMENT_NAME: "dev", NODE_ENV: "production", DATABASE_URL: "postgresql://u@h:5432/d" }))
+            .toContain("environment=dev ");
+    });
+
+    it("never prints the password, the user name or the URL", () => {
+        const password = "p4ss/w0rd:SECRET@x";
+        const line = formatCredentialCliTarget({
+            DATABASE_URL: `postgresql://operator_user:${encodeURIComponent(password)}@db.example.test:6543/appdb?schema=public&pgbouncer=true`,
+        });
+        expect(line).toContain("db.example.test:6543/appdb");
+        for (const secret of [password, encodeURIComponent(password), "SECRET", "operator_user", "postgresql://"]) {
+            expect(line).not.toContain(secret);
+        }
+    });
+
+    it("reports unknown when DATABASE_URL is unset or unparsable", () => {
+        expect(formatCredentialCliTarget({})).toBe("target environment=unknown databaseTarget=unknown");
+        expect(formatCredentialCliTarget({ DATABASE_URL: "not a url" })).toContain("databaseTarget=unknown");
     });
 });

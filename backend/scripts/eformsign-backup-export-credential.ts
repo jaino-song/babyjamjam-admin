@@ -19,6 +19,7 @@ import { ConfigModule } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { resolve } from "node:path";
 
+import { resolveEformsignBackfillTarget } from "application/utils/eformsign-backfill-safety";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbEformsignBackupExportCredentialRepository } from "infrastructure/database/repositories/sb.eformsign-backup-export-credential.repository";
 
@@ -105,6 +106,20 @@ export function parseCredentialCommand(argv: string[]): CredentialCommand {
     }
 }
 
+/**
+ * The one stderr line naming the database this run will write to. It reuses the
+ * backfill resolver, which keeps host, port, database and schema and replaces the
+ * user with a fingerprint: neither the password nor the URL is ever printed.
+ */
+export function formatCredentialCliTarget(env: NodeJS.ProcessEnv): string {
+    const target = resolveEformsignBackfillTarget({
+        railwayEnvironmentName: env["RAILWAY_ENVIRONMENT_NAME"],
+        nodeEnv: env["NODE_ENV"],
+        databaseUrl: env["DATABASE_URL"],
+    });
+    return `target environment=${target.environment} databaseTarget=${target.databaseTarget}`;
+}
+
 /** Returns the process exit code. `print` is the only place output leaves this function. */
 export async function runCredentialCommand(
     command: CredentialCommand,
@@ -166,6 +181,9 @@ async function main(): Promise<number> {
         throw error;
     }
 
+    // ConfigModule.forRoot loaded the env files when this module was evaluated, so
+    // process.env already holds the DATABASE_URL Prisma is about to use.
+    process.stderr.write(`${formatCredentialCliTarget(process.env)}\n`);
     const app = await NestFactory.createApplicationContext(EformsignBackupExportCredentialCliModule, { logger: ["error", "warn"] });
     try {
         return await runCredentialCommand(command, app.get(SbEformsignBackupExportCredentialRepository), line => {
