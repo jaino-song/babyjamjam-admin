@@ -473,7 +473,7 @@ export default function NewClientPage() {
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
-        applyMessageAutomation: store.applyMessageAutomation,
+        applyMessageAutomation: store.applyMessageAutomation, smsAutomationEnabled: store.applyMessageAutomation,
       };
       const newClient = await createClient.mutateAsync(dto);
       reset();

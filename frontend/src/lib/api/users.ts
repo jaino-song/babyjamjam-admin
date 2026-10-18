@@ -21,6 +21,8 @@ export interface SystemAdminUser {
   branches: SystemAdminUserBranch[];
   approvalStatus: string;
   requestedRole: string | null;
+  /** false이면 이 계정에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요. */
+  smsAutomationEnabled?: boolean;
 }
 
 export async function getSystemAdminUsers(): Promise<SystemAdminUser[]> {
@@ -38,12 +40,18 @@ export async function approveUser(
   role: string,
   branchId: string,
   ownerBranchId?: string,
+  smsAutomationEnabled?: boolean,
 ): Promise<void> {
   await api.post(`/users/${id}/approve`, {
     role,
     branchId,
     ...(ownerBranchId ? { ownerBranchId } : {}),
+    ...(smsAutomationEnabled !== undefined ? { smsAutomationEnabled } : {}),
   });
+}
+
+export async function updateUserSmsAutomation(id: string, enabled: boolean): Promise<void> {
+  await api.patch(`/users/${encodeURIComponent(id)}/sms-automation`, { enabled });
 }
 
 export async function rejectUser(id: string): Promise<void> {

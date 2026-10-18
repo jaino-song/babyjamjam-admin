@@ -69,6 +69,7 @@ describe("UserController (Integration)", () => {
             delete: jest.fn(),
             approve: jest.fn(),
             reject: jest.fn(),
+            setSmsAutomationEnabled: jest.fn(),
         };
 
         const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -118,6 +119,7 @@ describe("UserController (Integration)", () => {
                     authProvider: "both",
                     approvalStatus: "approved",
                     requestedRole: null,
+                    smsAutomationEnabled: true,
                     branches: [{ id: "org-1", name: "본사", role: "owner" }],
                 },
             ];
@@ -890,6 +892,65 @@ describe("UserController (Integration)", () => {
     });
 
     // ============================================
+    // PATCH /users/:id/sms-automation
+    // ============================================
+    describe("PATCH /users/:id/sms-automation", () => {
+        const userId = "11111111-1111-4111-8111-111111111111";
+
+        it("uses the same guards as approve", () => {
+            const patchGuards = Reflect.getMetadata("__guards__", UserController.prototype.updateSmsAutomation) ?? [];
+            const approveGuards = Reflect.getMetadata("__guards__", UserController.prototype.approve) ?? [];
+
+            expect(patchGuards).toEqual(approveGuards);
+            expect(patchGuards).toContain(OwnerOnlyGuard);
+        });
+
+        it.each([false, true])("sets the flag to %s and returns the updated user", async (enabled) => {
+            userService.setSmsAutomationEnabled.mockResolvedValue(
+                Object.assign(createMockUser({ id: userId }), { smsAutomationEnabled: enabled }),
+            );
+
+            const response = await request(app.getHttpServer())
+                .patch(`/users/${userId}/sms-automation`)
+                .send({ enabled });
+
+            expect(response.status).toBe(200);
+            expect(userService.setSmsAutomationEnabled).toHaveBeenCalledWith(userId, enabled, "owner-user-id");
+            expect(response.body).toMatchObject({ id: userId, smsAutomationEnabled: enabled });
+            expect(response.body).not.toHaveProperty("passwordHash");
+        });
+
+        it.each([{}, { enabled: "true" }, { enabled: 0 }, { enabled: null }])("rejects body %j", async (body) => {
+            const response = await request(app.getHttpServer())
+                .patch(`/users/${userId}/sms-automation`)
+                .send(body);
+
+            expect(response.status).toBe(400);
+            expect(userService.setSmsAutomationEnabled).not.toHaveBeenCalled();
+        });
+
+        it("rejects a non-UUID id", async () => {
+            await request(app.getHttpServer())
+                .patch("/users/not-a-uuid/sms-automation")
+                .send({ enabled: false })
+                .expect(400);
+
+            expect(userService.setSmsAutomationEnabled).not.toHaveBeenCalled();
+        });
+
+        it("is refused for a caller the approve guard refuses", async () => {
+            mockOwnerOnlyGuard.canActivate.mockReturnValueOnce(false);
+
+            const response = await request(app.getHttpServer())
+                .patch(`/users/${userId}/sms-automation`)
+                .send({ enabled: false });
+
+            expect(response.status).toBe(403);
+            expect(userService.setSmsAutomationEnabled).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
     // POST /users/:id/approve
     // ============================================
     describe("POST /users/:id/approve", () => {
@@ -954,6 +1015,45 @@ describe("UserController (Integration)", () => {
                     branchId,
                     approvedBy: "owner-user-id",
                 });
+            });
+        });
+
+        describe("smsAutomationEnabled", () => {
+            const branchId = "22222222-2222-4222-8222-222222222222";
+
+            it.each([false, true])("forwards an explicit %s to the service", async (enabled) => {
+                userService.approve.mockResolvedValue({
+                    id: "pending-user-1",
+                    name: "Pending User",
+                    email: "pending@example.com",
+                    role: "user",
+                    approvalStatus: "approved",
+                    approvedAt: new Date("2026-07-13"),
+                    approvedBy: "owner-user-id",
+                    requestedRole: "user",
+                    tokenVersion: 1,
+                });
+
+                await request(app.getHttpServer())
+                    .post("/users/pending-user-1/approve")
+                    .send({ role: "user", branchId, smsAutomationEnabled: enabled })
+                    .expect(201);
+
+                expect(userService.approve).toHaveBeenCalledWith("pending-user-1", {
+                    role: "user",
+                    branchId,
+                    approvedBy: "owner-user-id",
+                    smsAutomationEnabled: enabled,
+                });
+            });
+
+            it.each(["true", "false", 1, null])("rejects non-boolean %p", async (value) => {
+                await request(app.getHttpServer())
+                    .post("/users/pending-user-1/approve")
+                    .send({ role: "user", branchId, smsAutomationEnabled: value })
+                    .expect(400);
+
+                expect(userService.approve).not.toHaveBeenCalled();
             });
         });
 
