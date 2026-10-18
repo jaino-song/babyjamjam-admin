@@ -48,6 +48,68 @@ describe("SbMessageLogRepository", () => {
         jest.clearAllMocks();
     });
 
+    describe("manual retry duplicate lookups", () => {
+        const branchId = "11111111-1111-1111-1111-111111111111";
+        const source = () => MessageLogEntity.reconstitute(
+            77, branchId, "aligo_sms", "service_record_link_sms", "job-1", "01012345678", 7,
+            "link", { scheduleId: "10" }, "failed", null, "rejected", 3, null, null,
+            new Date("2026-10-01"), new Date("2026-10-01"),
+        );
+
+        it("walks ancestors then all descendants using branch-pinned JSON edges and cycle-safe UNION", async () => {
+            queryRaw.mockResolvedValue([{ id: 76 }, { id: 77 }, { id: 78 }, { id: 79 }]);
+            messageLogModel.findMany.mockResolvedValue([{ ...source(), id: 79, status: "sent" }]);
+            const family = await repository.findRetryFamilyInBranch(branchId, 77);
+            expect(family.map((log) => log.id)).toEqual([79]);
+            const sql = queryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
+            expect(sql.sql).toContain("WITH RECURSIVE ancestors AS");
+            expect(sql.sql).toContain("parent.id::text = ancestors.variables->>'retryOfLogId'");
+            expect(sql.sql).toContain("child.variables->>'retryOfLogId' = family.id::text");
+            expect(sql.sql).not.toContain("UNION ALL");
+            expect(sql.values).toEqual([branchId, 77, branchId, branchId]);
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({
+                where: { branchId, id: { in: [76, 77, 78, 79] } },
+            });
+        });
+
+        it("does not fetch unrelated logs when the source is absent in the branch", async () => {
+            queryRaw.mockResolvedValue([]);
+            await expect(repository.findRetryFamilyInBranch(branchId, 77)).resolves.toEqual([]);
+            expect(messageLogModel.findMany).not.toHaveBeenCalled();
+        });
+
+        it.each([true, false])("finds a newer same-schedule send without requiring a retry schedule: %s", async (exists) => {
+            const log = source();
+            queryRaw.mockResolvedValue([{ exists }]);
+            await expect(repository.hasNewerServiceRecordSmsInBranch(branchId, log)).resolves.toBe(exists);
+            const sql = queryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
+            expect(sql.sql).toContain("newer.created_at > source.created_at");
+            expect(sql.sql).toContain("newer.id <> source.id");
+            expect(sql.sql).toContain("newer.provider = 'aligo_sms'");
+            expect(sql.sql).toContain("newer.status <> 'failed'");
+            expect(sql.sql).not.toContain("next_retry_at");
+            expect(sql.values).toEqual([branchId, log.id, branchId, branchId, "service_record_link_sms", branchId, "system:service_record_link"]);
+        });
+
+        it("matches schedule variables or trigger jobs and falls back to the source's branch-pinned job", async () => {
+            const log = source();
+            log.variables = {};
+            queryRaw.mockResolvedValue([{ exists: true }]);
+            await expect(repository.hasNewerServiceRecordSmsInBranch(branchId, log)).resolves.toBe(true);
+            const sql = queryRaw.mock.calls[0][0] as { sql: string };
+            expect(sql.sql).toContain("COALESCE(NULLIF(log.variables->>'scheduleId', ''), job.employee_schedule_id::text)");
+            expect(sql.sql).toContain("job.id = log.trigger_job_id AND job.branch_id =");
+            expect(sql.sql).toContain("newer.variables->>'scheduleId' = source.schedule_id");
+            expect(sql.sql).toContain("job.id = newer.trigger_job_id");
+            expect(sql.sql).toContain("job.employee_schedule_id::text = source.schedule_id");
+        });
+
+        it("returns false when no source or schedule matches", async () => {
+            queryRaw.mockResolvedValue([{ exists: false }]);
+            await expect(repository.hasNewerServiceRecordSmsInBranch(branchId, source())).resolves.toBe(false);
+        });
+    });
+
     describe("findServiceRecordLinkClientState", () => {
         const state = { serviceStatus: "waiting", bookingConfirmedAt: new Date("2099-05-01"), startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") };
         const select = { serviceStatus: true, bookingConfirmedAt: true, startDate: true, endDate: true };

@@ -499,6 +499,66 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return result.count === 1;
     }
 
+    async findRetryFamilyInBranch(branchId: string, id: number): Promise<MessageLogEntity[]> {
+        // UNION (not UNION ALL) also terminates malformed cyclic retry chains.
+        // Compare JSON text to id text: a malformed retryOfLogId must not cause a cast failure.
+        const ids = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            WITH RECURSIVE ancestors AS (
+                SELECT id, variables FROM message_log
+                WHERE branch_id = ${branchId}::uuid AND id = ${id}
+                UNION
+                SELECT parent.id, parent.variables FROM message_log AS parent
+                JOIN ancestors ON parent.id::text = ancestors.variables->>'retryOfLogId'
+                WHERE parent.branch_id = ${branchId}::uuid
+            ), family AS (
+                SELECT id FROM ancestors
+                UNION
+                SELECT child.id FROM message_log AS child
+                JOIN family ON child.variables->>'retryOfLogId' = family.id::text
+                WHERE child.branch_id = ${branchId}::uuid
+            )
+            SELECT id FROM family
+        `);
+        if (ids.length === 0) return [];
+        const rows = await this.prisma.message_log.findMany({
+            where: { branchId, id: { in: ids.map((row) => row.id) } },
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async hasNewerServiceRecordSmsInBranch(branchId: string, source: MessageLogEntity): Promise<boolean> {
+        // Compare stored timestamps, not JS Dates which truncate sub-millisecond precision.
+        const [result] = await this.prisma.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
+            WITH source AS (
+                SELECT log.id, log.created_at,
+                    COALESCE(NULLIF(log.variables->>'scheduleId', ''), job.employee_schedule_id::text) AS schedule_id
+                FROM message_log AS log
+                LEFT JOIN message_trigger_job AS job
+                    ON job.id = log.trigger_job_id AND job.branch_id = ${branchId}::uuid
+                WHERE log.id = ${source.id} AND log.branch_id = ${branchId}::uuid
+            )
+            SELECT EXISTS (
+                SELECT 1 FROM message_log AS newer
+                JOIN source ON newer.created_at > source.created_at AND newer.id <> source.id
+                WHERE newer.branch_id = ${branchId}::uuid
+                  AND newer.provider = 'aligo_sms'
+                  AND newer.template_key = ${SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY}
+                  AND newer.status <> 'failed'
+                  AND (
+                      newer.variables->>'scheduleId' = source.schedule_id
+                      OR EXISTS (
+                          SELECT 1 FROM message_trigger_job AS job
+                          WHERE job.id = newer.trigger_job_id
+                            AND job.branch_id = ${branchId}::uuid
+                            AND job.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
+                            AND job.employee_schedule_id::text = source.schedule_id
+                      )
+                  )
+            ) AS exists
+        `);
+        return result?.exists === true;
+    }
+
     async findRetryableServiceRecordSmsByScheduleId(
         scheduleId: number,
         transaction?: Prisma.TransactionClient,
