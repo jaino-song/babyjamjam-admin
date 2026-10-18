@@ -509,8 +509,73 @@ describe("EformsignBackupExportService", () => {
                 expect(third.retryAfterSeconds).toBe(5);
                 expect(repository.readArtifactForDownload.mock.calls.length).toBe(readsBefore);
                 g.open();
-                await Promise.all([first, second]);
-                await expect(service.readArtifact(principal, SNAPSHOT_ID, IDENTITY)).resolves.toMatchObject({ artifactIdentity: IDENTITY });
+                const [a, b] = await Promise.all([first, second]);
+                a.release();
+                b.release();
+                const next = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                expect(next).toMatchObject({ artifactIdentity: IDENTITY });
+                next.release();
+            });
+
+            it("a successful read keeps its slot until release() is called, not until the read returns", async () => {
+                const { service, repository } = setup();
+                arrangeServe(repository);
+                const first = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                const second = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                const blocked = await expectCode(service.readArtifact(principal, SNAPSHOT_ID, IDENTITY), "RATE_LIMITED");
+                expect(blocked.retryAfterSeconds).toBe(5);
+
+                first.release();
+                const third = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                await expectCode(service.readArtifact(principal, SNAPSHOT_ID, IDENTITY), "RATE_LIMITED");
+
+                second.release();
+                third.release();
+                const fourth = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                fourth.release();
+            });
+
+            it("release() is idempotent: a repeated call never frees a slot that belongs to another read", async () => {
+                const { service, repository } = setup();
+                arrangeServe(repository);
+                const first = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                const second = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                first.release();
+                first.release();
+                first.release();
+                const third = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                // second and third are still held: a double release must not have freed a third slot
+                await expectCode(service.readArtifact(principal, SNAPSHOT_ID, IDENTITY), "RATE_LIMITED");
+                second.release();
+                third.release();
+            });
+
+            it("every post-acquire error path leaves the in-flight count unchanged (no slot leak)", async () => {
+                const { service, repository } = setup();
+                arrangeServe(repository);
+                const held = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY); // one slot legitimately held
+
+                const failures: Array<[string, () => void, ExportErrorCode | null]> = [
+                    ["decision error", () => repository.readArtifactForDownload.mockResolvedValue({ doc: null, file: null }), "SOURCE_REMOVED"],
+                    ["metadata read throws", () => repository.readArtifactForDownload.mockRejectedValue(new Error("db down")), null],
+                    ["bytes mismatch", () => repository.readArtifactForDownload.mockImplementation(async (_d: string, _t: string, opts: { withContent: boolean }) => ({
+                        doc: docRow, file: opts.withContent ? { ...fileRow, content: Buffer.from("tampered") } : fileRow })), "CONSISTENCY_CONFLICT"],
+                ];
+                for (const [, arrange, code] of failures) {
+                    arrange();
+                    for (let i = 0; i < 4; i++) {
+                        const error = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY).then(() => null, (e: unknown) => e as Error);
+                        if (code) expect((error as ExportError).code).toBe(code);
+                        else expect(error?.message).toBe("db down");
+                    }
+                }
+
+                // Only `held` occupies a slot: one more read fits, a further one does not.
+                arrangeServe(repository);
+                const other = await service.readArtifact(principal, SNAPSHOT_ID, IDENTITY);
+                await expectCode(service.readArtifact(principal, SNAPSHOT_ID, IDENTITY), "RATE_LIMITED");
+                held.release();
+                other.release();
             });
 
             it("the slot is released when the read throws", async () => {

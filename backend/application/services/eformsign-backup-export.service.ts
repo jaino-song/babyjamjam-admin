@@ -44,6 +44,14 @@ export interface ExportArtifactView {
     artifactIdentity: string;
 }
 
+/**
+ * An artifact read that still holds its concurrency slot (contract 3.5 #3b). The caller must call
+ * `release` when the response ends; it is idempotent, so a second call can never free another read's slot.
+ */
+export interface ExportArtifactLease extends ExportArtifactView {
+    release(): void;
+}
+
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ARTIFACT_IDENTITY_SHAPE = /^[0-9a-f]{64}$/;
 const RATE_LIMIT_RETRY_SECONDS = 5;
@@ -134,7 +142,7 @@ export class EformsignBackupExportService {
         };
     }
 
-    async readArtifact(principal: ExportPrincipal, snapshotId: string, artifactIdentity: string): Promise<ExportArtifactView> {
+    async readArtifact(principal: ExportPrincipal, snapshotId: string, artifactIdentity: string): Promise<ExportArtifactLease> {
         const companyId = this.resolveCompany();
         if (!UUID_SHAPE.test(snapshotId) || !ARTIFACT_IDENTITY_SHAPE.test(artifactIdentity)) throw new ExportError("NOT_FOUND");
 
@@ -143,11 +151,18 @@ export class EformsignBackupExportService {
         if (!expected) throw new ExportError("NOT_FOUND");
         this.assertNotExpired(snapshot);
 
-        // The slot is taken after the cheap checks and before any file row or byte is read (contract 3.5 #3b).
+        // The slot is taken after the cheap checks and before any file row or byte is read (contract 3.5 #3b),
+        // and on success it stays held: the controller releases it when the response ends.
         if (this.artifactReadsInFlight >= EXPORT_ARTIFACT_MAX_CONCURRENCY) {
             throw new ExportError("RATE_LIMITED", { retryAfterSeconds: RATE_LIMIT_RETRY_SECONDS });
         }
         this.artifactReadsInFlight++;
+        let released = false;
+        const release = (): void => {
+            if (released) return;
+            released = true;
+            this.artifactReadsInFlight--;
+        };
         try {
             const expectation = { sha256: expected.sha256, byteSize: expected.byteSize };
             // Pass 1 decides from metadata alone, so a missing, moved or oversized file never loads bytes.
@@ -164,9 +179,12 @@ export class EformsignBackupExportService {
                 byteSize: bytes.length,
                 sha256: expected.sha256,
                 artifactIdentity,
+                release,
             };
-        } finally {
-            this.artifactReadsInFlight--;
+        } catch (error) {
+            // Not served: nobody else will release this slot. A served read hands it to the caller instead.
+            release();
+            throw error;
         }
     }
 
