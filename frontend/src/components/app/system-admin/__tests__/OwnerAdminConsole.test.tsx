@@ -3,12 +3,22 @@ import fs from "node:fs";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { approveUser, updateUserSmsAutomation } from "@/lib/api/users";
+
 import { OwnerAdminConsole } from "../OwnerAdminConsole";
 
 const source = fs.readFileSync(require.resolve("../OwnerAdminConsole"), "utf8");
 
 jest.mock("@/components/app/settings/NotificationTestSection", () => ({
   NotificationTestSection: () => <div>알림 테스트 실행 도구</div>,
+}));
+
+jest.mock("@/lib/api/users", () => ({
+  approveUser: jest.fn(),
+  getSystemAdminUsers: jest.fn(),
+  rejectUser: jest.fn(),
+  updateSystemAdminUserAccount: jest.fn(),
+  updateUserSmsAutomation: jest.fn(),
 }));
 
 const mockToast = jest.fn();
@@ -437,6 +447,37 @@ describe("OwnerAdminConsole", () => {
     fireEvent.click(automationSwitch);
 
     expect(approveMutate).toHaveBeenCalledWith({ id: "approved-user", enabled: false });
+  });
+
+  it("runs the real mutationFns: approve forwards the flag and the toggle calls updateUserSmsAutomation", async () => {
+    render(<OwnerAdminConsole />);
+
+    type MutationConfig = {
+      mutationFn?: (variables: Record<string, unknown>) => unknown;
+      onSettled?: unknown;
+    };
+    const configs = mockedUseMutation.mock.calls.map(([config]) => config as unknown as MutationConfig);
+
+    const smsConfig = configs.find((config) => config.onSettled);
+    expect(smsConfig?.mutationFn).toBeDefined();
+    await smsConfig!.mutationFn!({ id: "approved-user", enabled: false });
+    expect(updateUserSmsAutomation).toHaveBeenCalledWith("approved-user", false);
+    expect(approveUser).not.toHaveBeenCalled();
+
+    // The approve mutation is the fourth useMutation call, the same position the 409 tests rely on.
+    await configs[3].mutationFn!({
+      id: "pending-user",
+      role: "user",
+      branchId: "branch-real-gangnam",
+      smsAutomationEnabled: false,
+    });
+    expect(approveUser).toHaveBeenCalledWith(
+      "pending-user",
+      "user",
+      "branch-real-gangnam",
+      undefined,
+      false,
+    );
   });
 
   it("optimistically flips the account flag and rolls it back with a toast when the PATCH fails", async () => {
