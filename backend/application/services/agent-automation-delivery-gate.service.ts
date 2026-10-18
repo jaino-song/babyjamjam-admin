@@ -12,7 +12,7 @@ import { agentAutomationConcreteJobDigest } from "./agent-automation-job-binding
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import type { SmsTriggerDeliveryPreparation } from "./sms-trigger-delivery.service";
 
-export type AutomationDeliveryFence = { kind: "allow" } | { kind: "lost" } | { kind: "stale"; reason: string };
+export type AutomationDeliveryFence = { kind: "allow" } | { kind: "lost" } | { kind: "stale"; reason: string; returnedToNeedsSetup?: true };
 type Fence = (transaction: Prisma.TransactionClient) => Promise<AutomationDeliveryFence>;
 type Binding = { id: string; branchId: string; claimToken: string; concreteDigest: string; sealDigest: string };
 type Admission = { binding: Binding; authority: "allowed" | "legacy" };

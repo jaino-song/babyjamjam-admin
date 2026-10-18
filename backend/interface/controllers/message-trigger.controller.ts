@@ -66,7 +66,7 @@ export class MessageTriggerController {
     }
 
     /**
-     * Manual resend of one '설정 필요' (needs_setup) message job, one item at a
+     * Manual resend of one '추가 정보 필요' (needs_setup) message job, one item at a
      * time (BJJ-444). Branch managers only; no body, no bulk form.
      */
     @Post("message-trigger-jobs/:id/resend")

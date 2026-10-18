@@ -1,10 +1,15 @@
 "use client";
 
-import { MESSAGE_SETUP_REASON_LABEL } from "@babyjamjam/shared";
+import {
+  MESSAGE_SETUP_REASON_LABEL,
+  getMessageResendBlockCard,
+  type MessageResendBlock,
+} from "@babyjamjam/shared";
 import { ChevronLeft, CircleAlert, MessageCircle } from "lucide-react";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { Button } from "@/components/ui/button";
+import { HoverCard } from "@/components/ui/hover-card";
 
 export type MessageHistoryDetailTone =
   | "green"
@@ -54,6 +59,8 @@ export function ClientMessageHistoryDetail({
   isRetrying = false,
   onRetry,
   retryPendingLabel = "재발송 중...",
+  retryBlock,
+  canOpenOwnerAdmin = false,
 }: {
   "data-component": string;
   view: ClientMessageHistoryDetailView;
@@ -66,10 +73,29 @@ export function ClientMessageHistoryDetail({
   onRetry?: () => void;
   /** Label while the retry request is in flight; the caller decides what is being retried. */
   retryPendingLabel?: string;
+  /** When set, the retry button is disabled and a tap-to-open card says why and where to turn it back on. */
+  retryBlock?: MessageResendBlock;
+  /** Whether the viewer is an owner, who alone can open the accounts screen the card may link to. */
+  canOpenOwnerAdmin?: boolean;
 }) {
   const isFailed = view.statusTone === "burgundy";
   const showRetry = canRetry && Boolean(onRetry);
+  const retryBlockCard = retryBlock ? getMessageResendBlockCard(retryBlock, "mobile", { canOpenOwnerAdmin }) : null;
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
+  const retryButton = (
+    <Button
+      type="button"
+      variant="v3-outline"
+      size="md"
+      className="w-full"
+      data-component={sub("retry-trigger")}
+      disabled={isRetrying || Boolean(retryBlock)}
+      aria-busy={isRetrying || undefined}
+      onClick={onRetry}
+    >
+      {isRetrying ? retryPendingLabel : "재발송"}
+    </Button>
+  );
 
   return (
     <div className="message-detail pop-up" data-component={dataComponent}>
@@ -152,18 +178,28 @@ export function ClientMessageHistoryDetail({
 
       {showRetry ? (
         <div className="detail-actions card-actions" data-component={sub("retry-actions")}>
-          <Button
-            type="button"
-            variant="v3-outline"
-            size="md"
-            className="w-full"
-            data-component={sub("retry-trigger")}
-            disabled={isRetrying}
-            aria-busy={isRetrying || undefined}
-            onClick={onRetry}
-          >
-            {isRetrying ? retryPendingLabel : "재발송"}
-          </Button>
+          {retryBlockCard ? (
+            <HoverCard
+              data-component={sub("retry-blocked-hover-card")}
+              triggerClassName="w-full rounded-2xl"
+              side="top"
+              align="center"
+              tone="warning"
+              title={retryBlockCard.title}
+              description={
+                <>
+                  {retryBlockCard.emphasis ? <b>{retryBlockCard.emphasis}</b> : null}
+                  {retryBlockCard.emphasis ? " " : null}
+                  {retryBlockCard.description}
+                </>
+              }
+              action={retryBlockCard.action ?? undefined}
+            >
+              {retryButton}
+            </HoverCard>
+          ) : (
+            retryButton
+          )}
         </div>
       ) : null}
 

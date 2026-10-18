@@ -454,6 +454,19 @@ export interface UpcomingMessageTriggerJob {
     updatedAt: string;
 }
 export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled" | "needs_setup";
+/** Which SMS automation safeguard level would refuse a resend of a `needs_setup` job. */
+export type MessageResendBlockedBy = "rule" | "recipient" | "branch";
+/** The entity whose automatic-SMS flag is off, when a resend is blocked at the `recipient` level. */
+export type MessageResendBlockedRecipient = {
+    kind: "client";
+    id: number;
+} | {
+    kind: "employee";
+    id: number;
+} | {
+    kind: "user";
+    id: string;
+};
 export interface MessageLogRecord {
     id: number | string;
     provider: string;
@@ -482,6 +495,10 @@ export interface MessageLogRecord {
     recipientName: string | null;
     clientName: string | null;
     employeeName: string | null;
+    /** Set only on `needs_setup` rows: the safeguard level that would refuse a resend, or null when it would pass. */
+    resendBlockedBy?: MessageResendBlockedBy | null;
+    /** With a `recipient` block: who has the flag off, when the server could tell. */
+    resendBlockedRecipient?: MessageResendBlockedRecipient | null;
 }
 export type MessageTemplateVariableType = "text" | "phone" | "select" | "date" | "number" | "textarea";
 export type MessageTemplateVariableOptionType = "custom" | "dataSource";
