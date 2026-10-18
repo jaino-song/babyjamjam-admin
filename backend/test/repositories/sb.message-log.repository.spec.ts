@@ -571,6 +571,7 @@ describe("SbMessageLogRepository", () => {
                 },
             });
             expect(messageLogModel.create).toHaveBeenCalled();
+            expect(queryRaw).not.toHaveBeenCalled();
             expect(result).toEqual({
                 kind: "started",
                 log: expect.objectContaining({ id: 78, status: "pending" }),
@@ -648,6 +649,8 @@ describe("SbMessageLogRepository", () => {
 
         it("keeps explicit manual service-end retries available", async () => {
             source.templateKey = "service_end_notice_sms";
+            queryRaw.mockResolvedValueOnce([{ id: source.id }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: source.id }]);
+            messageLogModel.findMany.mockResolvedValue([{ ...source }]);
             messageLogModel.updateMany.mockResolvedValue({ count: 1 });
             messageLogModel.create.mockResolvedValue({
                 id: 78,
@@ -673,12 +676,69 @@ describe("SbMessageLogRepository", () => {
 
             const result = await repository.startRetryAttempt(source, retryDraft, "manual");
 
-            expect(queryRaw).not.toHaveBeenCalled();
+            expect(queryRaw).toHaveBeenCalledTimes(3);
             expect(messageLogModel.create).toHaveBeenCalledTimes(1);
             expect(result).toEqual({
                 kind: "started",
                 log: expect.objectContaining({ id: 78 }),
             });
+        });
+
+        it.each([
+            ["pending", {}, null],
+            ["sent", {}, null],
+            ["failed", { retrySafety: "partial" }, null],
+            ["failed", { retrySafety: "uncertain" }, null],
+            ["failed", {}, "started"],
+            ["failed", {}, "uncertain"],
+            ["failed", {}, "reconciled_delivered"],
+        ])("refuses unsafe family state inside the manual admission transaction: %s %j %s", async (status, variables, acceptance) => {
+            queryRaw.mockResolvedValueOnce([{ id: 76 }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 78 }]);
+            messageLogModel.findMany.mockResolvedValue([{
+                ...source, id: 78, status, variables, providerAcceptanceState: acceptance,
+            }]);
+
+            await expect(repository.startRetryAttempt(source, retryDraft, "manual")).resolves.toEqual({ kind: "lost" });
+
+            const queries = queryRaw.mock.calls.map(([sql]) => sql);
+            expect(queries[0].sql).toContain("WITH RECURSIVE ancestors");
+            expect(queries[0].values).toContain(source.branchId);
+            expect(queries[1].sql).toContain("pg_advisory_xact_lock");
+            expect(queries[1].values).toContain(`sms_retry_family:${source.branchId}:76`);
+            expect(queries[2].sql).toContain("SELECT id FROM family");
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({ where: { branchId: source.branchId, id: { in: [78] } } });
+            expect(messageLogModel.updateMany).not.toHaveBeenCalled();
+            expect(messageLogModel.create).not.toHaveBeenCalled();
+        });
+
+        it("refuses manual admission when the branch-scoped ancestry has no root", async () => {
+            queryRaw.mockResolvedValueOnce([]);
+
+            await expect(repository.startRetryAttempt(source, retryDraft, "manual")).resolves.toEqual({ kind: "lost" });
+
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            expect(messageLogModel.updateMany).not.toHaveBeenCalled();
+            expect(messageLogModel.create).not.toHaveBeenCalled();
+        });
+
+        it.each([false, true])("rechecks newer link sends in the supplied transaction (newer=%s)", async (newer) => {
+            const txModel = createMockPrismaMessageLog();
+            const txQuery = jest.fn().mockResolvedValueOnce([{ id: 77 }]).mockResolvedValueOnce([])
+                .mockResolvedValueOnce([{ id: 77 }, { id: 78 }]).mockResolvedValueOnce([{ exists: newer }]);
+            txModel.findMany.mockResolvedValue([{ ...source }, {
+                ...source, id: 78, providerAcceptanceState: "reconciled_not_delivered",
+            }]);
+            txModel.updateMany.mockResolvedValue({ count: 1 });
+            txModel.create.mockResolvedValue({ ...retryDraft, id: 79 });
+            const transaction = { message_log: txModel, $queryRaw: txQuery } as unknown as import("@prisma/client").Prisma.TransactionClient;
+
+            const result = await repository.startRetryAttempt(source, retryDraft, "manual", transaction);
+
+            expect(result.kind).toBe(newer ? "lost" : "started");
+            expect(txQuery.mock.calls[3][0].sql).toContain("newer.created_at > source.created_at");
+            expect(txModel.create).toHaveBeenCalledTimes(newer ? 0 : 1);
+            expect(queryRaw).not.toHaveBeenCalled();
+            expect(prisma.$transaction).not.toHaveBeenCalled();
         });
     });
 

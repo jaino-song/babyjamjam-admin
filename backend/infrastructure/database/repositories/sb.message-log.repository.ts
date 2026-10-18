@@ -306,6 +306,45 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageRetryStartResult> {
         const run = async (transaction: Prisma.TransactionClient): Promise<MessageRetryStartResult> => {
+            if (invocation === "manual") {
+                const branchId = sourceLog.branchId;
+                if (!branchId) return { kind: "lost" };
+                const [root] = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+                    WITH RECURSIVE ancestors AS (
+                        SELECT id, variables FROM message_log
+                        WHERE branch_id = ${branchId}::uuid AND id = ${sourceLog.id}
+                        UNION
+                        SELECT parent.id, parent.variables FROM message_log AS parent
+                        JOIN ancestors ON parent.id::text = ancestors.variables->>'retryOfLogId'
+                        WHERE parent.branch_id = ${branchId}::uuid
+                    )
+                    SELECT ancestor.id FROM ancestors AS ancestor
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM ancestors AS parent
+                        WHERE parent.id::text = ancestor.variables->>'retryOfLogId'
+                    )
+                `);
+                // Missing sources and malformed cyclic ancestry fail closed.
+                if (!root) return { kind: "lost" };
+                const lockKey = `sms_retry_family:${branchId}:${root.id}`;
+                // Separate statements ensure the post-lock read sees the winner's commit.
+                // Cast void to text so Prisma can deserialize the advisory-lock result.
+                await transaction.$queryRaw(Prisma.sql`
+                    SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))::text
+                `);
+                const family = await this.findRetryFamilyInBranch(branchId, sourceLog.id, transaction);
+                if (family.some((log) => (
+                    log.status !== "failed"
+                    || log.isPartialProviderOutcome()
+                    || log.isProviderOutcomeUncertain()
+                    || log.variables["retrySafety"] === "uncertain"
+                    || log.providerAcceptanceState === "reconciled_delivered"
+                ))) return { kind: "lost" };
+                if (
+                    sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY
+                    && await this.hasNewerServiceRecordSmsInBranch(branchId, sourceLog, transaction)
+                ) return { kind: "lost" };
+            }
             const claimedAt = new Date(Date.now());
             if (
                 invocation === "automatic"
@@ -499,10 +538,11 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return result.count === 1;
     }
 
-    async findRetryFamilyInBranch(branchId: string, id: number): Promise<MessageLogEntity[]> {
+    async findRetryFamilyInBranch(branchId: string, id: number, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity[]> {
+        const client = transaction ?? this.prisma;
         // UNION (not UNION ALL) also terminates malformed cyclic retry chains.
         // Compare JSON text to id text: a malformed retryOfLogId must not cause a cast failure.
-        const ids = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+        const ids = await client.$queryRaw<Array<{ id: number }>>(Prisma.sql`
             WITH RECURSIVE ancestors AS (
                 SELECT id, variables FROM message_log
                 WHERE branch_id = ${branchId}::uuid AND id = ${id}
@@ -520,15 +560,16 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             SELECT id FROM family
         `);
         if (ids.length === 0) return [];
-        const rows = await this.prisma.message_log.findMany({
+        const rows = await client.message_log.findMany({
             where: { branchId, id: { in: ids.map((row) => row.id) } },
         });
         return rows.map(MessageLogMapper.toDomain);
     }
 
-    async hasNewerServiceRecordSmsInBranch(branchId: string, source: MessageLogEntity): Promise<boolean> {
+    async hasNewerServiceRecordSmsInBranch(branchId: string, source: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<boolean> {
+        const client = transaction ?? this.prisma;
         // Compare stored timestamps, not JS Dates which truncate sub-millisecond precision.
-        const [result] = await this.prisma.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
+        const [result] = await client.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
             WITH source AS (
                 SELECT log.id, log.created_at,
                     COALESCE(NULLIF(log.variables->>'scheduleId', ''), job.employee_schedule_id::text) AS schedule_id
