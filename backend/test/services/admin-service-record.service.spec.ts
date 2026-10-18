@@ -424,7 +424,10 @@ describe("AdminServiceRecordService", () => {
         expect(overview.record?.sessions).toHaveLength(1);
         expect(overview.scheduleProjection?.entries).toEqual([]);
         expect(overview.scheduleProjection?.blockingReasons).toEqual(expect.arrayContaining([
-            expect.objectContaining({ code: "INVALID_SESSION_COUNT" }),
+            expect.objectContaining({
+                code: "INVALID_SESSION_COUNT",
+                message: "서비스 제공 회차 수가 설정되지 않았습니다.",
+            }),
         ]));
     });
 
