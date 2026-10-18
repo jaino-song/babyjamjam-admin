@@ -203,7 +203,7 @@ describe("BranchUserController guards (BJJ-435)", () => {
             .compile();
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
     });
 
     afterEach(async () => {
