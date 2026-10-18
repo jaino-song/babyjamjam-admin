@@ -19,6 +19,8 @@ import {
   getMessageHistoryDetailStatusLabel,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_RECIPIENT_LABELS,
+  type MessageResendBlock,
+  getMessageResendBlockCard,
   MESSAGE_SETUP_REASON_LABEL,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
@@ -35,11 +37,12 @@ import type {
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { DetailPanel, InfoCard, InfoRow, ListEmptyState } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
+import { HoverCard } from "@/components/ui/hover-card";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
 export type MessageHistoryStatus = "sent" | "failed" | "pending" | "canceled" | "needs_setup";
-// 설정 필요 rows appear under 전체 only; they get no filter tab of their own yet.
+// 추가 정보 필요 rows appear under 전체 only; they get no filter tab of their own yet.
 export type MessageHistoryFilter = "all" | Exclude<MessageHistoryStatus, "needs_setup">;
 
 export interface MessageHistoryRecord {
@@ -57,6 +60,9 @@ export interface MessageHistoryRecord {
   failureReason?: string;
   cancelReason?: string;
   setupReason?: string;
+  // Only for needs_setup rows the server would refuse to resend: which SMS
+  // automation switch is off, so the 재발송 button can explain itself up front.
+  resendBlock?: MessageResendBlock;
   // Id of the trigger job behind this row. A job row (`provider === "message_job"`)
   // carries it as its identity; a log row may also carry one.
   triggerJobId: string | null;
@@ -76,6 +82,10 @@ interface MessageHistoryDetailPanelProps {
   isRetrying?: boolean;
   onRetry?: () => void;
   retryPendingLabel?: string;
+  // When set, the retry button is disabled and a hover card says why and where to turn it back on.
+  retryBlock?: MessageResendBlock;
+  /** Whether the viewer is an owner, who alone can open the accounts screen the card may link to. */
+  canOpenOwnerAdmin?: boolean;
   backAction?: {
     label: ReactNode;
     onClick: () => void;
@@ -287,6 +297,8 @@ export function MessageHistoryDetailPanel({
   isRetrying = false,
   onRetry,
   retryPendingLabel = "재시도 중",
+  retryBlock,
+  canOpenOwnerAdmin = false,
   backAction,
   emptyMessage = "발송 기록을 선택하면 상세 정보가 표시됩니다.",
   emptyIcon = Users,
@@ -296,6 +308,21 @@ export function MessageHistoryDetailPanel({
   const displayFailureReason = formatMessageHistoryFailureReason(selectedRecord?.failureReason);
   const displayCancelReason = selectedRecord?.cancelReason;
   const displaySetupReason = selectedRecord?.status === "needs_setup" ? selectedRecord.setupReason : undefined;
+  const retryBlockCard = retryBlock ? getMessageResendBlockCard(retryBlock, "desktop", { canOpenOwnerAdmin }) : null;
+  const retryButton = (
+    <Button
+      data-component={`${dataComponentPrefix}_detail-retry`}
+      type="button"
+      size="sm"
+      variant="outline"
+      onClick={onRetry}
+      disabled={isRetrying || !!retryBlock}
+      className="rounded-full"
+    >
+      <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
+      {isRetrying ? retryPendingLabel : "재발송"}
+    </Button>
+  );
 
   return (
     <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel"
@@ -339,18 +366,26 @@ export function MessageHistoryDetailPanel({
       }
       trailing={
         showRetry ? (
-          <Button
-            data-component={`${dataComponentPrefix}_detail-retry`}
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={onRetry}
-            disabled={isRetrying}
-            className="rounded-full"
-          >
-            <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-            {isRetrying ? retryPendingLabel : "재발송"}
-          </Button>
+          retryBlockCard ? (
+            <HoverCard
+              data-component={`${dataComponentPrefix}_detail-retry_blocked-hover-card`}
+              triggerClassName="rounded-full"
+              tone="warning"
+              title={retryBlockCard.title}
+              description={
+                <>
+                  {retryBlockCard.emphasis ? <b>{retryBlockCard.emphasis}</b> : null}
+                  {retryBlockCard.emphasis ? " " : null}
+                  {retryBlockCard.description}
+                </>
+              }
+              action={retryBlockCard.action ?? undefined}
+            >
+              {retryButton}
+            </HoverCard>
+          ) : (
+            retryButton
+          )
         ) : null
       }
     >

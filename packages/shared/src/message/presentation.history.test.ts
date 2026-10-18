@@ -11,8 +11,8 @@ describe("provider-history detail labels", () => {
   it.each(["sent", "failed", "pending", "canceled"] as const)("unchanged %s label", status => {
     expect(getMessageHistoryDetailStatusLabel({ status })).toBe(MESSAGE_HISTORY_STATUS_LABELS[status]);
   });
-  it("labels needs_setup as 설정 필요 instead of the raw status", () => {
-    expect(getMessageHistoryDetailStatusLabel({ status: "needs_setup" })).toBe("설정 필요");
+  it("labels needs_setup as 추가 정보 필요 instead of the raw status", () => {
+    expect(getMessageHistoryDetailStatusLabel({ status: "needs_setup" })).toBe("추가 정보 필요");
     expect(getMessageHistoryDetailStatusLabel({ status: "needs_setup" })).toBe(
       MESSAGE_HISTORY_STATUS_LABELS.needs_setup,
     );

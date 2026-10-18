@@ -30,9 +30,19 @@ describe("SystemAdminPage deep links", () => {
     expect(screen.getByTestId("owner-admin-console")).toHaveAttribute("data-template", "FUTURE_TEMPLATE");
   });
 
-  it("defaults an unrelated section to branch management", async () => {
+  it("opens the accounts section when the 재발송 hover card links there", async () => {
     const page = await SystemAdminPage({
       searchParams: Promise.resolve({ section: "accounts" }),
+    });
+
+    render(page);
+
+    expect(screen.getByTestId("owner-admin-console")).toHaveAttribute("data-section", "accounts");
+  });
+
+  it("defaults an unrelated section to branch management", async () => {
+    const page = await SystemAdminPage({
+      searchParams: Promise.resolve({ section: "nope" }),
     });
 
     render(page);
