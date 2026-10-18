@@ -37,6 +37,16 @@ describe("EmployeeMapper", () => {
         );
     });
 
+    it("round-trips smsAutomationEnabled and defaults a row without the column to true", () => {
+        expect(EmployeeMapper.toDomain(employeeRow).smsAutomationEnabled).toBe(true);
+
+        const optedOut = EmployeeMapper.toDomain({ ...employeeRow, smsAutomationEnabled: false });
+
+        expect(optedOut.smsAutomationEnabled).toBe(false);
+        expect(EmployeeMapper.toPrismaCreate(optedOut)).toEqual(expect.objectContaining({ smsAutomationEnabled: false }));
+        expect(EmployeeMapper.toPrismaUpdate(optedOut)).toEqual(expect.objectContaining({ smsAutomationEnabled: false }));
+    });
+
     it("maps an omitted registeredDate to today's Korean calendar date for persistence", () => {
         jest.useFakeTimers().setSystemTime(new Date("2026-08-27T23:30:00.000Z"));
         try {

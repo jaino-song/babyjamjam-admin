@@ -224,6 +224,60 @@ describe("ClientController (Integration)", () => {
         });
     });
 
+    describe("smsAutomationEnabled", () => {
+        const createBody = {
+            name: "Automation client", careCenter: false, voucherClient: false, breastPump: false,
+        };
+
+        it.each([false, true])("forwards an explicit %s from both create routes", async (enabled) => {
+            clientService.create.mockResolvedValue(createMockClient());
+            await request(app.getHttpServer()).post("/clients")
+                .send({ ...createBody, smsAutomationEnabled: enabled }).expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ smsAutomationEnabled: enabled }),
+            );
+            await request(app.getHttpServer()).post("/clients/with-employee-activation")
+                .send({ ...createBody, primaryEmployeeId: 10, confirmedUnavailableEmployeeIds: [10], smsAutomationEnabled: enabled })
+                .expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ smsAutomationEnabled: enabled }),
+            );
+        });
+
+        it("keeps forwarding applyMessageAutomation alongside the new field", async () => {
+            clientService.create.mockResolvedValue(createMockClient());
+            await request(app.getHttpServer()).post("/clients")
+                .send({ ...createBody, applyMessageAutomation: false }).expect(201);
+            expect(clientService.create).toHaveBeenLastCalledWith(
+                "org-1",
+                expect.objectContaining({ applyMessageAutomation: false, smsAutomationEnabled: undefined }),
+            );
+        });
+
+        it("forwards the flag on update", async () => {
+            clientService.update.mockResolvedValue(createMockClient());
+            await request(app.getHttpServer()).patch("/clients/1").send({ smsAutomationEnabled: false }).expect(200);
+            expect(clientService.update).toHaveBeenCalledWith(
+                "org-1",
+                1,
+                expect.objectContaining({ smsAutomationEnabled: false }),
+            );
+        });
+
+        it.each(["true", "false", 1, null])("rejects non-boolean %p on create and update", async (value) => {
+            await request(app.getHttpServer()).post("/clients")
+                .send({ ...createBody, smsAutomationEnabled: value }).expect(400);
+            await request(app.getHttpServer()).post("/clients/with-employee-activation")
+                .send({ ...createBody, primaryEmployeeId: 10, confirmedUnavailableEmployeeIds: [10], smsAutomationEnabled: value })
+                .expect(400);
+            await request(app.getHttpServer()).patch("/clients/1").send({ smsAutomationEnabled: value }).expect(400);
+            expect(clientService.create).not.toHaveBeenCalled();
+            expect(clientService.update).not.toHaveBeenCalled();
+        });
+    });
+
     // ============================================
     // POST /clients - Create
     // ============================================

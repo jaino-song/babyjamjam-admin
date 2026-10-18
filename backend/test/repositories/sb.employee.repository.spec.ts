@@ -609,6 +609,7 @@ describe("SbEmployeeRepository", () => {
                         openToNextWork: false,
                         companyRegisteredDate: new Date("2024-02-01T00:00:00.000Z"),
                         birthday: null,
+                        smsAutomationEnabled: true,
                         branchId: branchId,
                     },
                 });
@@ -675,6 +676,7 @@ describe("SbEmployeeRepository", () => {
                         grade: "스탠다드",
                         openToNextWork: true,
                         birthday: null,
+                        smsAutomationEnabled: true,
                     },
                 });
                 expect(result).toMatchObject({ id: 7, workArea: ["Busan"] });

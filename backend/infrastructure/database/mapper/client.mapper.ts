@@ -25,6 +25,7 @@ type ClientRow = {
     areaId?: string | null;
     branchId?: string | null;
     suppressGreetingSms?: boolean;
+    smsAutomationEnabled?: boolean;
     phoneNormalized?: string | null;
 };
 
@@ -56,6 +57,7 @@ export class ClientMapper {
             row.birthDate ?? null,
             row.phoneNormalized,
             row.bookingConfirmedAt,
+            row.smsAutomationEnabled ?? true,
         );
     }
 
@@ -84,6 +86,7 @@ export class ClientMapper {
             eDocId: entity.eDocId,
             areaId: entity.areaId,
             suppressGreetingSms: entity.suppressGreetingSms,
+            smsAutomationEnabled: entity.smsAutomationEnabled,
         };
     }
 
