@@ -220,6 +220,19 @@
         ]
       },
       {
+        "name": "HoverCard",
+        "layer": "atom",
+        "import": "@/components/ui/hover-card",
+        "file": "frontend/src/components/ui/hover-card.tsx",
+        "exports": [
+          "HoverCard"
+        ],
+        "replaces": [
+          "always-visible disabled-reason hint text next to a disabled button",
+          "hand-rolled hover/tap explanation popover"
+        ]
+      },
+      {
         "name": "Input",
         "layer": "atom",
         "import": "@/components/ui/input",
@@ -1724,6 +1737,19 @@
         ],
         "requiredFor": [
           "chat route agent flag state"
+        ]
+      },
+      {
+        "name": "HoverCard",
+        "layer": "atom",
+        "import": "@/components/ui/hover-card",
+        "file": "mobile/src/components/ui/hover-card.tsx",
+        "exports": [
+          "HoverCard"
+        ],
+        "replaces": [
+          "always-visible disabled-reason hint text next to a disabled button",
+          "hand-rolled hover/tap explanation popover"
         ]
       },
       {

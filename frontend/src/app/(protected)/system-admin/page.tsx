@@ -12,7 +12,7 @@ export default async function SystemAdminPage({ searchParams }: SystemAdminPageP
   const params = await searchParams;
   const section = firstSearchParam(params.section);
   const templateKey = firstSearchParam(params.template) ?? null;
-  const initialSectionId = section === "templates" ? "templates" : "branches";
+  const initialSectionId = section === "templates" || section === "accounts" ? section : "branches";
 
   return (
     <OwnerAdminConsole

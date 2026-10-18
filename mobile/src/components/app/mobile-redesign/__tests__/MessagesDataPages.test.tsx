@@ -1,6 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MESSAGE_JOB_CANCEL_COPY, MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
+import {
+  MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_COPY,
+  createProblemDetails,
+} from "@babyjamjam/shared";
 
 import {
   useCancelMessageTriggerJob,
@@ -11,6 +15,27 @@ import {
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import { toast } from "@/hooks/use-toast";
 import { MessagesHistoryPage } from "../MessagesDataPages";
+
+// jsdom lacks PointerEvent (the touch tap needs pointerType) and ResizeObserver (Radix Popper).
+beforeAll(() => {
+  if (!("PointerEvent" in window)) {
+    class PointerEventPolyfill extends MouseEvent {
+      pointerType: string;
+      constructor(type: string, init: MouseEventInit & { pointerType?: string } = {}) {
+        super(type, init);
+        this.pointerType = init.pointerType ?? "";
+      }
+    }
+    Object.defineProperty(window, "PointerEvent", { value: PointerEventPolyfill, configurable: true });
+  }
+  if (!("ResizeObserver" in globalThis)) {
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
+});
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageHistory: jest.fn(),
@@ -37,10 +62,11 @@ jest.mock("next/navigation", () => ({
 }));
 
 let mockAuthBranchRole = "manager";
+let mockAuthRole = "user";
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "user", branchRole: mockAuthBranchRole },
+    data: { role: mockAuthRole, branchRole: mockAuthBranchRole },
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -160,7 +186,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(container.querySelector('[data-component$="_body_item_status"]')).toHaveTextContent("발송 실패");
   });
 
-  it("renders a needs_setup history row as 설정 필요 with the warning tone instead of throwing", async () => {
+  it("renders a needs_setup history row as 추가 정보 필요 with the warning tone instead of throwing", async () => {
     mockUseMessageHistory.mockReturnValue({
       data: [{ ...sentRecord, status: "needs_setup", triggerJobId: "job-9", messageBody: "", errorMessage: "수신자 연락처가 필요합니다." }],
       isLoading: false,
@@ -168,12 +194,12 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     });
     const { container } = render(<MessagesHistoryPage />);
     const rowBadge = container.querySelector('[data-component$="_body_item_status"]');
-    expect(rowBadge).toHaveTextContent("설정 필요");
+    expect(rowBadge).toHaveTextContent("추가 정보 필요");
     expect(rowBadge).toHaveClass("bg-status-warning");
 
     await userEvent.setup().click(screen.getByRole("button", { name: /김문자/ }));
     const header = container.querySelector('[data-component$="_detail-pane_header_status"]');
-    expect(header).toHaveTextContent("설정 필요");
+    expect(header).toHaveTextContent("추가 정보 필요");
   });
 
   it.each(["processing", "dispatching"] as const)(
@@ -975,7 +1001,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
-  describe("설정 필요 trigger-job resend (BJJ-444)", () => {
+  describe("추가 정보 필요 trigger-job resend (BJJ-444)", () => {
     const JOB_UUID = "8f14e45f-ceea-467a-9575-7b1a6f2f6c11";
     const SETUP_REASON = "수신자 연락처가 필요합니다.";
     const needsSetupJobRecord = {
@@ -1007,18 +1033,101 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await user.click(approveButton as HTMLElement);
     }
 
-    it("shows the 설정 필요 label, the reason row and a 재발송 button for a manager", async () => {
+    it("shows the 추가 정보 필요 label, the reason row and a 재발송 button for a manager", async () => {
       const user = userEvent.setup();
       mockJobHistory();
       const { container } = render(<MessagesHistoryPage />);
 
       await openJobDetail(user);
 
-      expect(container.querySelector('[data-component$="_detail-pane_header_status"]')).toHaveTextContent("설정 필요");
-      expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+      expect(container.querySelector('[data-component$="_detail-pane_header_status"]')).toHaveTextContent("추가 정보 필요");
+      expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
       expect(screen.getByText(SETUP_REASON)).toBeInTheDocument();
       expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
+    });
+
+    it.each([
+      { level: "rule", extra: {}, title: "자동화 규칙이 꺼져 있어요", linkName: "규칙 보기 →", href: "/messages/automation?item=rule-1" },
+      {
+        level: "recipient",
+        extra: { resendBlockedRecipient: { kind: "client", id: 10 } },
+        title: "자동 문자가 꺼져 있어요",
+        linkName: "고객 정보에서 켜기 →",
+        href: "/clients?id=10",
+      },
+      { level: "branch", extra: {}, title: "지점 자동 전송이 꺼져 있어요", linkName: "자동화 설정 열기 →", href: "/messages/settings?item=trigger-dispatch" },
+    ] as const)(
+      "disables the 재발송 button, opens a card with a link on tap, and never resends for a $level block ($linkName)",
+      async ({ level, extra, title, linkName, href }) => {
+        const user = userEvent.setup();
+        const mutateAsync = jest.fn();
+        mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+        mockJobHistory({ ...needsSetupJobRecord, ruleId: "rule-1", ruleName: "서비스 안내 규칙", resendBlockedBy: level, ...extra });
+        render(<MessagesHistoryPage />);
+
+        await openJobDetail(user);
+
+        const button = screen.getByRole("button", { name: "재발송" });
+        expect(button).toBeDisabled();
+        expect(screen.queryByText(title)).not.toBeInTheDocument();
+
+        await user.click(button);
+        expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
+        expect(mutateAsync).not.toHaveBeenCalled();
+
+        // A touch tap on the wrapper around the disabled button opens the card.
+        const trigger = button.closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+        fireEvent.pointerDown(trigger, { pointerType: "touch" });
+        fireEvent.pointerUp(trigger, { pointerType: "touch" });
+
+        expect(await screen.findByText(title)).toBeInTheDocument();
+        expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
+      },
+    );
+
+    it.each([
+      { role: "owner", hasLink: true },
+      { role: "user", hasLink: false },
+    ] as const)("links a blocked user recipient to the accounts screen only for an owner (role $role)", async ({ role, hasLink }) => {
+      const user = userEvent.setup();
+      mockAuthRole = role;
+      try {
+        mockJobHistory({
+          ...needsSetupJobRecord,
+          resendBlockedBy: "recipient",
+          resendBlockedRecipient: { kind: "user", id: "user-9" },
+        });
+        render(<MessagesHistoryPage />);
+
+        await openJobDetail(user);
+
+        const trigger = screen.getByRole("button", { name: "재발송" }).closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+        fireEvent.pointerDown(trigger, { pointerType: "touch" });
+        fireEvent.pointerUp(trigger, { pointerType: "touch" });
+
+        expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+        const link = screen.queryByRole("link", { name: "계정 관리에서 켜기 →" });
+        if (hasLink) {
+          expect(link).toHaveAttribute("href", "/system-admin?section=accounts&item=user-9");
+        } else {
+          expect(link).toBeNull();
+        }
+      } finally {
+        mockAuthRole = "user";
+      }
+    });
+
+    it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", async () => {
+      const user = userEvent.setup();
+      mockJobHistory({ ...needsSetupJobRecord, resendBlockedBy: null });
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+
+      const button = screen.getByRole("button", { name: "재발송" });
+      expect(button).toBeEnabled();
+      expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
     });
 
     it("shows no 재발송 button to a plain branch user", async () => {
@@ -1030,7 +1139,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
         await openJobDetail(user);
 
-        expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+        expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
       } finally {
         mockAuthBranchRole = "manager";
@@ -1068,7 +1177,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         description: MESSAGE_JOB_RESEND_COPY.success,
         variant: "success",
       }));
-      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
       expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
     });
 
@@ -1086,7 +1195,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
         description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup,
       })));
-      expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
       expect(screen.getByText(newReason)).toBeInTheDocument();
       expect(screen.queryByText(SETUP_REASON)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
@@ -1110,7 +1219,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
         description: `${MESSAGE_JOB_RESEND_COPY.notSent} 대상 고객 상태가 아니어서 보내지 않았습니다.`,
       })));
-      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
     });
 
     it("shows only the not-sent copy on canceled without a reason", async () => {
@@ -1144,7 +1253,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
           description: MESSAGE_JOB_RESEND_COPY.failure,
           variant: "destructive",
         })));
-        await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
       },
     );
 
@@ -1164,7 +1273,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         description: MESSAGE_JOB_RESEND_COPY.conflict,
         variant: "destructive",
       })));
-      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
     });
 
     it("shows the failure copy for a rejection with no problem body and closes the detail", async () => {
@@ -1181,7 +1290,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         description: MESSAGE_JOB_RESEND_COPY.failure,
         variant: "destructive",
       })));
-      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
     });
 
     it("never sends the job resend request when the confirm dialog is dismissed", async () => {
@@ -1196,7 +1305,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await user.keyboard("{Escape}");
 
       expect(mutateAsync).not.toHaveBeenCalled();
-      expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     });
 
     it("labels the button with the resend pending copy while the request is in flight", async () => {
@@ -1223,7 +1332,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
       await user.click(screen.getByRole("button", { name: /김문자/ }));
       expect(screen.getByText("실패 사유")).toBeInTheDocument();
-      expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument();
+      expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
       await confirmResend(user);
 
       await waitFor(() => expect(retryMutateAsync).toHaveBeenCalledWith(91));

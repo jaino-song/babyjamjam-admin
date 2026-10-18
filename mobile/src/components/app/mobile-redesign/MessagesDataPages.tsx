@@ -649,7 +649,9 @@ export function MessagesHistoryPage() {
   const resendMutation = useResendMessageTriggerJob();
   // Cancel and retry require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
-  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
+  const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
 
   const upcomingJobs = useMemo(
     () => (rawUpcomingData ?? [])
@@ -769,6 +771,9 @@ export function MessagesHistoryPage() {
   };
 
   const handleRequestRetry = () => {
+    // A resend the server would refuse is disabled in the detail; never open
+    // the confirm dialog for it.
+    if (getResendableJobId(selectedRecord) !== null && selectedRecord?.resendBlockedBy) return;
     if (
       selectedRecord
       && (
@@ -919,6 +924,9 @@ export function MessagesHistoryPage() {
     && selectedRecord.status === "failed",
   );
   const canResendSelectedJob = canManageBranchMessages && getResendableJobId(selectedRecord) !== null;
+  // The server refuses a resend while a safeguard level is off; say so up front
+  // instead of letting the admin hit the 409.
+  const resendBlock = canResendSelectedJob ? normalizedSelectedRecord?.resendBlock : undefined;
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
   const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
 
@@ -1144,6 +1152,8 @@ export function MessagesHistoryPage() {
                       canRetry={canRetrySelectedRecord || canResendSelectedJob}
                       isRetrying={retryMutation.isPending || resendMutation.isPending}
                       retryPendingLabel={canResendSelectedJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
+                      retryBlock={resendBlock}
+                      canOpenOwnerAdmin={canOpenOwnerAdmin}
                       onRetry={handleRequestRetry}
                     />
                     {selectedCancelReason ? (

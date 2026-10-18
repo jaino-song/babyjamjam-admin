@@ -4,6 +4,8 @@ import {
     SmsAutomationSafeguardService,
     smsAutomationSafeguardReason,
     type SmsAutomationSafeguardDecision,
+    type SmsAutomationSafeguardLevel,
+    type SmsAutomationSafeguardRecipient,
 } from "./sms-automation-safeguard.service";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
@@ -140,16 +142,11 @@ export type { ClientAutomationSettingsSnapshot } from "./client-automation-sourc
 
 interface DispatchClaimedJobOptions {
     /**
-     * Manual resend of a '설정 필요' job (BJJ-444): claim from `needs_setup`
+     * Manual resend of a '추가 정보 필요' job (BJJ-444): claim from `needs_setup`
      * instead of `pending`, skip only the 24-hour expiry cancel, and never
      * leave the job `pending`.
      */
     resendFromNeedsSetup?: boolean;
-    /**
-     * An admin pressed resend for this one dispatch: the SMS automation
-     * safeguard is skipped. Never set by agent or scheduler paths.
-     */
-    adminInitiated?: boolean;
 }
 
 export interface ResendNeedsSetupJobResult {
@@ -163,7 +160,7 @@ const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과"
 const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
 const USER_REQUESTED_CANCEL_REASON = "사용자가 발송을 취소함";
 const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없는 상태입니다";
-const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정을 확인해 주세요.";
+const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.";
 const RESEND_TARGET_CHANGED_REASON = "발송 대상 일정이 변경되어 재전송하지 않았습니다";
 const RESEND_NEWER_SIBLING_REASON = "새 예약 메시지가 있어 재전송하지 않았습니다";
 const CATCH_UP_PREDECESSOR_PENDING_REASON = "보충 발송 이전 순위 job이 아직 끝나지 않음";
@@ -359,6 +356,13 @@ export interface MessageLogRecordView {
     recipientName: string | null;
     clientName: string | null;
     employeeName: string | null;
+    /**
+     * Only on `needs_setup` job rows: the safeguard level that would refuse a
+     * resend (null when it would pass or could not be checked).
+     */
+    resendBlockedBy?: SmsAutomationSafeguardLevel | null;
+    /** With a recipient-level `resendBlockedBy`: the entity whose automation flag is off, when known. */
+    resendBlockedRecipient?: SmsAutomationSafeguardRecipient | null;
 }
 
 export interface MessageHistoryPageView {
@@ -381,6 +385,8 @@ const MESSAGE_HISTORY_MAX_LIMIT = 500;
 const MESSAGE_HISTORY_JOB_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLIENT_HISTORY_MAX_LIMIT = 100;
 const CLIENT_HISTORY_DEFAULT_LIMIT = 50;
+/** Safeguard checks run per history page: at most this many jobs at a time. */
+const RESEND_BLOCK_CHECK_CONCURRENCY = 5;
 const CLIENT_UPCOMING_CURSOR_VERSION = 1;
 const CLIENT_UPCOMING_MAX_LIMIT = 100;
 const CLIENT_UPCOMING_DEFAULT_LIMIT = 50;
@@ -511,7 +517,9 @@ type ClientRuleJobCandidate = {
 
 type PreProviderSendFenceResult =
     | { kind: "allow" }
-    | { kind: "stale"; reason: string }
+    // returnedToNeedsSetup: a resend refused at the final gate went back to
+    // '추가 정보 필요' instead of being canceled.
+    | { kind: "stale"; reason: string; returnedToNeedsSetup?: true }
     | { kind: "lost" };
 
 const SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON = "제공기록지 링크가 철회되어 발송하지 않았습니다";
@@ -900,9 +908,10 @@ export class MessageTriggerService {
                 };
             });
 
-        return [...logRecords, ...terminalJobRecords]
+        const page = [...logRecords, ...terminalJobRecords]
             .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
             .slice(skip, skip + limit);
+        return this.attachResendBlock(page, terminalJobs);
     }
 
     /**
@@ -1079,7 +1088,10 @@ export class MessageTriggerService {
         // boundary.
         const candidates = [...logCandidates, ...jobCandidates];
         const hasMore = logLookahead || jobCandidates.length > remainingSlots;
-        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const items = await this.attachResendBlock(
+            candidates.slice(0, limit).map((candidate) => candidate.record),
+            terminalJobs,
+        );
         const lastCandidate = candidates[limit - 1];
         const nextCursor = hasMore && lastCandidate
             ? encodeMessageHistoryCursor({
@@ -1281,7 +1293,10 @@ export class MessageTriggerService {
 
         const candidates = [...logCandidates, ...jobCandidates];
         const hasMore = logLookahead || jobCandidates.length > remainingSlots;
-        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const items = await this.attachResendBlock(
+            candidates.slice(0, limit).map((candidate) => candidate.record),
+            terminalJobs,
+        );
         const lastCandidate = candidates[limit - 1];
         const nextCursor = hasMore && lastCandidate
             ? encodeMessageHistoryCursor({
@@ -1794,7 +1809,73 @@ export class MessageTriggerService {
     }
 
     /**
-     * Manual, one-at-a-time resend of a '설정 필요' (needs_setup) job after the
+     * Stamps the SMS automation safeguard outcome onto the '추가 정보 필요' job
+     * rows of one already-sliced history page, so the UI can disable 재발송
+     * instead of letting the admin hit a 409. Runs after paging on purpose:
+     * only the rows actually returned are checked, never the over-read window
+     * or a lookahead row.
+     */
+    private async attachResendBlock(
+        items: MessageLogRecordView[],
+        terminalJobs: readonly MessageTriggerJobEntity[],
+    ): Promise<MessageLogRecordView[]> {
+        const pageJobIds = new Set(
+            items
+                .filter((item) => item.provider === "message_job" && item.status === "needs_setup" && item.triggerJobId)
+                .map((item) => item.triggerJobId as string),
+        );
+        if (pageJobIds.size === 0) return items;
+
+        const blockByJobId = await this.resolveResendBlock(
+            terminalJobs.filter((job) => pageJobIds.has(job.id)),
+        );
+        return items.map((item) => {
+            if (item.provider !== "message_job" || item.status !== "needs_setup" || !item.triggerJobId) return item;
+            const block = blockByJobId.get(item.triggerJobId);
+            return {
+                ...item,
+                resendBlockedBy: block?.level ?? null,
+                ...(block?.recipient ? { resendBlockedRecipient: block.recipient } : {}),
+            };
+        });
+    }
+
+    /**
+     * The safeguard level (and, for a recipient block, the entity) that would
+     * refuse a resend of each job: the same decision `resendNeedsSetupJob`
+     * enforces (admin-direct sends bypass it). A failed check yields no block —
+     * it must never fail the history list. Checked in small chunks so a page
+     * never fans out one query burst per row.
+     */
+    private async resolveResendBlock(
+        jobs: readonly MessageTriggerJobEntity[],
+    ): Promise<Map<string, { level: SmsAutomationSafeguardLevel; recipient: SmsAutomationSafeguardRecipient | null }>> {
+        const result = new Map<string, { level: SmsAutomationSafeguardLevel; recipient: SmsAutomationSafeguardRecipient | null }>();
+        const safeguard = this.smsAutomationSafeguard;
+        const needsSetupJobs = jobs.filter((job) => job.status === "needs_setup");
+        if (!safeguard || needsSetupJobs.length === 0) return result;
+
+        for (let offset = 0; offset < needsSetupJobs.length; offset += RESEND_BLOCK_CHECK_CONCURRENCY) {
+            const chunk = needsSetupJobs.slice(offset, offset + RESEND_BLOCK_CHECK_CONCURRENCY);
+            await Promise.all(chunk.map(async (job) => {
+                if (safeguard.isAdminDirectSend(job)) return;
+                try {
+                    const decision = await safeguard.check(job);
+                    if (!decision.allowed) {
+                        result.set(job.id, { level: decision.level, recipient: decision.recipient ?? null });
+                    }
+                } catch (error) {
+                    this.logger.warn(
+                        `Could not check the resend safeguard for trigger job ${job.id}: ${error instanceof Error ? error.message : String(error)}`,
+                    );
+                }
+            }));
+        }
+        return result;
+    }
+
+    /**
+     * Manual, one-at-a-time resend of a '추가 정보 필요' (needs_setup) job after the
      * admin fixed the cause (BJJ-444, 메시지-04). The stored payload is sent as
      * is. A lost claim — concurrent resend, inactive rule or branch override,
      * stale rule, trigger dispatch off — leaves the row untouched and is a 409.
@@ -1814,7 +1895,7 @@ export class MessageTriggerService {
             job.branchId ? [job.branchId] : [],
         );
         const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope([job.id]);
-        const claimed = await this.dispatchClaimedJob(job, sentIds, approvedBranchIds, { resendFromNeedsSetup: true, adminInitiated: true });
+        const claimed = await this.dispatchClaimedJob(job, sentIds, approvedBranchIds, { resendFromNeedsSetup: true });
         if (!claimed) {
             throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESEND_JOB_CONFLICT_MESSAGE });
         }
@@ -2502,10 +2583,10 @@ export class MessageTriggerService {
                 ...(job.status === "needs_setup" && job.payload.taskAutomationReference ? { taskAutomationReference: job.payload.taskAutomationReference } : {}),
             };
 
-            // 고객 정보 수정은 설정 필요 작업도 새 payload로 재생성한다.
+            // 고객 정보 수정은 추가 정보 필요 작업도 새 payload로 재생성한다.
             // 일반 resync/upsert는 이 상태를 복구하지 않는다.
             if (job.status === "needs_setup") {
-                // 오래된 설정 필요 작업은 재생성해도 dispatch에서 만료되므로 보존한다.
+                // 오래된 추가 정보 필요 작업은 재생성해도 dispatch에서 만료되므로 보존한다.
                 if (job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) continue;
                 if (job.recipientPhone === refreshedJob.recipientPhone
                     && agentBindingHash(agentAutomationSourcePayload(job.payload, job.templateKey))
@@ -2963,19 +3044,24 @@ export class MessageTriggerService {
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        // Admin 즉시 발송 and an admin pressing resend are the only sends that
-        // bypass the safeguard; rule jobs, retries and AI-agent SMS never do.
-        const skipSafeguard = options.adminInitiated === true
-            || !this.smsAutomationSafeguard
+        // Admin 즉시 발송 is the only send that bypasses the safeguard. Rule jobs,
+        // retries, AI-agent SMS and an admin resend of a '추가 정보 필요' job never
+        // do: a resent job was automatic, and a blocked resend stays needs_setup.
+        const skipSafeguard = !this.smsAutomationSafeguard
             || this.smsAutomationSafeguard.isAdminDirectSend(job);
         let safeguardBlock: Extract<SmsAutomationSafeguardDecision, { allowed: false }> | null = null;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
                 if (!decision.allowed) {
-                    // An ordinary job held only by the branch switch stays
-                    // pending (normalizeBranchOff owns it). Every other block
+                    // A refused resend leaves the row '추가 정보 필요' (the caller
+                    // answers 409). An ordinary job held only by the branch switch
+                    // stays pending (normalizeBranchOff owns it). Every other block
                     // cancels the job so it cannot starve the due-job window.
+                    if (resend) {
+                        this.smsAutomationSafeguard!.warnBlocked(`resend of trigger job ${job.id}`, decision);
+                        return null;
+                    }
                     if (automaticJob && decision.level === "branch") return null;
                     if (await this.cancelPendingForSafeguard(job.id, decision, transaction)) {
                         safeguardBlock = decision;
@@ -3111,9 +3197,13 @@ export class MessageTriggerService {
                 sendPreparedJob?: unknown;
             }).sendPreparedJob === "function";
         if (!supportsPreparedDelivery) {
-            const authorization = await this.authorizeClaimedJobForDispatch(job, undefined, skipSafeguard);
+            const authorization = await this.authorizeClaimedJobForDispatch(job, undefined, skipSafeguard, resend);
             if (authorization.kind === "lost") {
                 return true;
+            }
+            if (authorization.kind === "stale" && authorization.returnedToNeedsSetup) {
+                job.markNeedsSetup(job.cancelReason ?? authorization.reason);
+                return false;
             }
             if (authorization.kind === "stale") {
                 job.cancel(authorization.reason);
@@ -3161,9 +3251,13 @@ export class MessageTriggerService {
             return true;
         }
 
-        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation, skipSafeguard);
+        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation, skipSafeguard, resend);
         if (authorization.kind === "lost") {
             return true;
+        }
+        if (authorization.kind === "stale" && authorization.returnedToNeedsSetup) {
+            job.markNeedsSetup(job.cancelReason ?? authorization.reason);
+            return false;
         }
         if (authorization.kind === "stale") {
             // The authorization transaction already invalidated this claim
@@ -3377,6 +3471,7 @@ export class MessageTriggerService {
         job: MessageTriggerJobEntity,
         preparation?: SmsTriggerDeliveryPreparation,
         skipSafeguard = false,
+        resend = false,
     ): Promise<PreProviderSendFenceResult> {
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
             if (
@@ -3453,6 +3548,25 @@ export class MessageTriggerService {
                         : linkTokenFence.kind === "stale"
                             ? linkTokenFence
                             : null;
+            if (resend && safeguardFence.kind === "stale") {
+                // A resend refused by the safeguard after its claim goes back to
+                // '추가 정보 필요' with its setup reason kept, exactly like a
+                // refusal at claim time, so the admin can resend it later.
+                const returned = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                    UPDATE "message_trigger_job"
+                    SET status = 'needs_setup',
+                        claim_token = NULL,
+                        next_attempt_at = NULL,
+                        updated_at = date_trunc('milliseconds', clock_timestamp())
+                    WHERE id = ${job.id}
+                      AND status = 'processing'
+                      AND claim_token = ${job.claimToken}
+                    RETURNING id
+                `);
+                return returned.length === 1
+                    ? { kind: "stale" as const, reason: safeguardFence.reason, returnedToNeedsSetup: true as const }
+                    : { kind: "lost" as const };
+            }
             if (staleFence) {
                 const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     UPDATE "message_trigger_job"
@@ -3821,7 +3935,7 @@ export class MessageTriggerService {
 
     /**
      * A transient deferral normally re-queues the job as `pending` with one more
-     * attempt. A manual resend of a '설정 필요' job must never become `pending`:
+     * attempt. A manual resend of a '추가 정보 필요' job must never become `pending`:
      * the ordinary dispatcher would expire an old job on its next tick. It goes
      * back to `needs_setup` with the transient reason, attempts untouched.
      */
@@ -4368,7 +4482,7 @@ export class MessageTriggerService {
             } else if (job.status === "processing" && job.cancelReason !== null) {
                 // A manual-resend claim (BJJ-444): the claim left the setup
                 // reason on the row. Never `pending`: the ordinary dispatcher
-                // would expire an old job. Back to '설정 필요', reason kept,
+                // would expire an old job. Back to '추가 정보 필요', reason kept,
                 // attempts and scheduledFor untouched; the write is fenced by
                 // the claim token so a newer owner is never overwritten.
                 job.markNeedsSetup(job.cancelReason);

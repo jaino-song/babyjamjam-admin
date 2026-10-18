@@ -13,6 +13,7 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_HISTORY_STATUS_LABELS,
@@ -772,7 +773,9 @@ function MessageHistorySection() {
   const resendMutation = useResendMessageTriggerJob();
   // Retry and cancel require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
-  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
+  const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
   const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
   const smsHistoryData = useMemo(
@@ -950,6 +953,9 @@ function MessageHistorySection() {
     && !!selectedRecord.triggerJobId
     && selectedRecord.status === "needs_setup";
   const canRetry = failedLog || needsSetupJob;
+  // The server refuses a resend while a safeguard level is off; say so up front
+  // instead of letting the admin hit the 409.
+  const retryBlock = needsSetupJob ? selectedRecord?.resendBlock : undefined;
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord || typeof selectedRecord.id !== "number") return;
@@ -1013,11 +1019,12 @@ function MessageHistorySection() {
 
   const handleRetryOrResend = useCallback(() => {
     if (needsSetupJob) {
+      if (retryBlock) return;
       void handleResendJob();
       return;
     }
     void handleRetry();
-  }, [handleResendJob, handleRetry, needsSetupJob]);
+  }, [handleResendJob, handleRetry, needsSetupJob, retryBlock]);
 
   // Only a pending trigger job can be canceled (POST /message-trigger-jobs/:id/cancel
   // refuses processing/sent/canceled/missing jobs), and manual scheduled entries
@@ -1531,6 +1538,8 @@ function MessageHistorySection() {
           isRetrying={isRetrying || resendMutation.isPending}
           onRetry={handleRetryOrResend}
           retryPendingLabel={needsSetupJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
+          retryBlock={retryBlock}
+          canOpenOwnerAdmin={canOpenOwnerAdmin}
         />
       )}
     </SplitLayout>
@@ -1554,7 +1563,17 @@ function MessageHistorySection() {
 
 export default function MessagesPage() {
   const locale = useLocale();
-  const [activeSection, setActiveSection] = useState<MessageSectionId>("send");
+  // The section the viewer picked in the nav; until then the `?section=` deep
+  // link (e.g. the "자동화 설정 열기" link of a disabled 재발송 button) or 전송하기.
+  const [pickedSectionId, setPickedSectionId] = useState<MessageSectionId | null>(null);
+  const requestedSectionId = useSearchParams()?.get("section") ?? null;
+  // A link to another `?section=` (the disabled 재발송 card sits in 발송 기록) must win
+  // over the nav pick, so a changed request drops the pick (adjust-state-during-render).
+  const [seenRequestedSectionId, setSeenRequestedSectionId] = useState(requestedSectionId);
+  if (seenRequestedSectionId !== requestedSectionId) {
+    setSeenRequestedSectionId(requestedSectionId);
+    setPickedSectionId(null);
+  }
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
@@ -1577,6 +1596,11 @@ export default function MessagesPage() {
     })),
     [canManageBranchMessages, isSenderApprovalRequired],
   );
+
+  // A locked section (auth and approval load after mount) is not opened by the link.
+  const requestedSection = messageSections.find((section) => section.id === requestedSectionId);
+  const activeSection: MessageSectionId =
+    pickedSectionId ?? (requestedSection && !requestedSection.disabled ? requestedSection.id : "send");
 
   const {
     data: userTemplatesData,
@@ -2020,7 +2044,16 @@ export default function MessagesPage() {
           ariaLabel="메시지 기능"
           items={messageSections}
           activeId={activeSection}
-          onSelect={(id) => setActiveSection(id as MessageSectionId)}
+          onSelect={(id) => {
+            setPickedSectionId(id as MessageSectionId);
+            // Keep the address in step with the pick so a later card link to the
+            // section the viewer last left via the nav still changes `?section=`.
+            // A null state lets Next's patched replaceState sync useSearchParams;
+            // passing history.state (which carries Next's own marker) would not.
+            const url = new URL(window.location.href);
+            url.searchParams.set("section", id);
+            window.history.replaceState(null, "", url);
+          }}
         />
 
         <div data-component="desktop_messages_sections_section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">

@@ -94,7 +94,7 @@ describe("POST /api/message-trigger-jobs/[id]/resend", () => {
       response: {
         status: 409,
         data: {
-          message: "설정 필요 상태가 아니에요.",
+          message: "추가 정보 필요 상태가 아니에요.",
           diagnostics: { authorization: "Bearer upstream-secret" },
         },
       },
