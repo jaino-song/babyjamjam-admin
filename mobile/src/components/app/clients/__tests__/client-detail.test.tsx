@@ -16,6 +16,13 @@ import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useIssueContract } from "@/hooks/useIssueContract";
 import { useFormStore } from "@/stores/form-store";
 
+const mockRetryHistory = jest.fn();
+const mockUseRetryHistory = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockRetryHistory, isPending: false }));
+let mockMessageBranchRole = "manager";
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useRetryMessageHistory: (...args: unknown[]) => mockUseRetryHistory(...args),
+}));
+
 describe("client message lookup detail labels", () => {
   it.each(["checking", "exhausted"])("renders %s in detail without changing the list label", async historyLookup => {
     const row: ClientNotificationLogRecord = {
@@ -34,6 +41,45 @@ describe("client message lookup detail labels", () => {
   });
 });
 
+describe("customer message retry", () => {
+  const row: ClientNotificationLogRecord = {
+    id: 901, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "failed",
+    receiver: "01012345678", messageBody: "내용", recipientName: "고객", clientId: 7,
+    errorMessage: null, ruleName: null, createdAt: "2026-10-12T00:00:00Z",
+  };
+  beforeEach(() => {
+    mockMessageBranchRole = "manager";
+    mockRetryHistory.mockReset().mockResolvedValue({ status: "sent" });
+  });
+  afterEach(() => { mockMessageBranchRole = "manager"; });
+  async function openRecord(status = "failed") {
+    render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
+      client={client} activeTab="message" notificationLogs={[{ ...row, status }]}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+  }
+  it("confirms before retrying the numeric log id and closes the snapshot", async () => {
+    await openRecord();
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("메시지를 다시 보낼까요?");
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(901));
+    expect(mockUseRetryHistory).toHaveBeenCalledWith(client.id);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" });
+  });
+  it.each(["sent", "pending", "canceled", "needs_setup"])("does not retry %s logs", async status => {
+    await openRecord(status);
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it("does not offer retry to a staff member", async () => {
+    mockMessageBranchRole = "staff";
+    await openRecord();
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+});
+
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({ data: [] }),
 }));
@@ -45,7 +91,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "user", branchRole: "manager" },
+    data: { role: "user", branchRole: mockMessageBranchRole },
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -305,6 +351,7 @@ describe("contract void workflow", () => {
     await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
     expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmTitle);
     expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmDescription);
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel }));
     expect(eformsignApi.voidDocument).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -961,8 +1008,8 @@ describe("ClientDetailContent", () => {
     for (const otherLabel of ["실패 사유", "취소 사유", "설정 필요 사유"]) {
       if (otherLabel !== reasonLabel) expect(screen.queryByText(otherLabel)).not.toBeInTheDocument();
     }
-    // The client detail passes no retry handler, so no row offers a resend.
-    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+    // The same numeric failed-log rule as the global messages page applies.
+    expect(Boolean(screen.queryByRole("button", { name: "재발송" }))).toBe(status === "failed");
     view.unmount();
   });
 

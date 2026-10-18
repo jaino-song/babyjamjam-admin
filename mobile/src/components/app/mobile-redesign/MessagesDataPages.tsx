@@ -1,4 +1,5 @@
 "use client";
+import { canRetryFailedHistory, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 import { useMemo, useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -848,20 +849,7 @@ export function MessagesHistoryPage() {
     if (typeof retryTarget.id !== "number") return;
 
     try {
-      const retriedRecord = await retryMutation.mutateAsync(retryTarget.id);
-      if (retriedRecord.status === "failed") {
-        throw new Error(retriedRecord.errorMessage || "메시지를 재발송하지 못했어요");
-      }
-
-      toast({ variant: "success", description: "재발송 요청을 접수했어요" });
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        description: getUserErrorMessage(
-          error,
-          error instanceof Error ? error.message : "재발송을 요청하지 못했어요",
-        ),
-      });
+      toast(await retryMessageHistory(retryMutation.mutateAsync, retryTarget.id));
     } finally {
       setRetryTarget(null);
     }
@@ -913,11 +901,7 @@ export function MessagesHistoryPage() {
   const selectedCancelReason = selectedRecord && normalizedSelectedRecord?.status === "canceled"
     ? getRecordReasonText(selectedRecord)
     : "";
-  const canRetrySelectedRecord = canManageBranchMessages && Boolean(
-    selectedRecord
-    && typeof selectedRecord.id === "number"
-    && selectedRecord.status === "failed",
-  );
+  const canRetrySelectedRecord = canRetryFailedHistory(selectedRecord, canManageBranchMessages);
   const canResendSelectedJob = canManageBranchMessages && getResendableJobId(selectedRecord) !== null;
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
   const historyErrorMessage = getMessageHistoryErrorMessage(historyError);

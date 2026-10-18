@@ -42,4 +42,11 @@ describe("useRetryMessageHistory", () => {
       queryKey: messageTriggerKeys.history(),
     });
   });
+
+  it("also invalidates this customer's history after a successful retry", async () => {
+    const mutation = useRetryMessageHistory(7) as unknown as { onSuccess: () => Promise<void> };
+    await mutation.onSuccess();
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.history() });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.clientHistory(7) });
+  });
 });

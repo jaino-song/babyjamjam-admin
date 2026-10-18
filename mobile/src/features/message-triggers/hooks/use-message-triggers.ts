@@ -322,7 +322,7 @@ export function useMessageHistory(limit = 500) {
     });
 }
 
-export function useRetryMessageHistory() {
+export function useRetryMessageHistory(clientId?: number) {
     const queryClient = useQueryClient();
 
     return useMutation({
@@ -330,6 +330,9 @@ export function useRetryMessageHistory() {
             messageTriggersApi.retryHistory(id).then((response) => response.data),
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+            if (clientId !== undefined) {
+                await queryClient.invalidateQueries({ queryKey: ["messages", "logs", "client", clientId] });
+            }
         },
     });
 }

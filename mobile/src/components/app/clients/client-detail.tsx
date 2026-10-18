@@ -77,6 +77,8 @@ import {
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
+import { canRetryFailedHistory, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 import { ContractLinkConfirmSheet } from "./contract-link-confirm-sheet";
 
@@ -746,6 +748,16 @@ export function ClientDetailContent({
     serviceRecordsQuery.isLoading || (serviceRecordsQuery.isPaused && serviceRecordsQuery.data === undefined);
   const authUserQuery = useGetAuthUser();
   const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
+  const retryMessageMutation = useRetryMessageHistory(client.id);
+  const [messageRetryTarget, setMessageRetryTarget] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
+  const retryLog = messageRetryTarget?.key === detailKey ? messageRetryTarget.log : null;
+  const canRetryMessage = canRetryFailedHistory(selectedLog, canManageBranchFeatures);
+  const handleConfirmMessageRetry = async () => {
+    if (!retryLog || !canRetryFailedHistory(retryLog, canManageBranchFeatures) || retryMessageMutation.isPending) return;
+    toast(await retryMessageHistory(retryMessageMutation.mutateAsync, retryLog.id));
+    setMessageRetryTarget(null);
+    setSelectedEntry(null);
+  };
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);
@@ -1580,11 +1592,25 @@ export function ClientDetailContent({
         title={CONTRACT_VOID_COPY.confirmTitle}
         description={CONTRACT_VOID_COPY.confirmDescription}
         cancelLabel={CONTRACT_VOID_COPY.cancel}
+        actionOrder="cancel-confirm"
         confirmLabel={isVoidingContract ? CONTRACT_VOID_COPY.pending : CONTRACT_VOID_COPY.confirm}
         loading={isVoidingContract}
         onOpenChange={(open) => { if (!open && !voidInFlightRef.current) setVoidModalDocumentId(null); }}
         onCancel={() => { if (!voidInFlightRef.current) setVoidModalDocumentId(null); }}
         onConfirm={handleVoidContract}
+      />
+
+      <ApprovalTwoButtonModal
+        data-component={`${dataComponent}_tab-panel_message_retry-modal`}
+        open={retryLog !== null && activeTab === "message"}
+        onOpenChange={(open) => { if (!open && !retryMessageMutation.isPending) setMessageRetryTarget(null); }}
+        title="메시지를 다시 보낼까요?"
+        description={`${retryLog?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="재발송"
+        pendingLabel="재발송 중..."
+        isPending={retryMessageMutation.isPending}
+        onApprove={handleConfirmMessageRetry}
       />
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_message`} name="clients" tabId="message" activeTab={activeTab}>
@@ -1624,6 +1650,9 @@ export function ClientDetailContent({
                 : null,
             }}
             onBack={() => setSelectedEntry(null)}
+            canRetry={canRetryMessage}
+            isRetrying={retryMessageMutation.isPending}
+            onRetry={() => { if (selectedLog && canRetryMessage) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
           />
           </>
         ) : (
