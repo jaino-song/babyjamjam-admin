@@ -41,7 +41,7 @@ import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTri
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
-import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
 import { MESSAGE_TRIGGER_JOB_REPOSITORY, IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 
 const INVALID_RETRY_SCHEDULE_REASON =
@@ -125,6 +125,31 @@ export class SmsRetryService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (sourceLog.providerAcceptanceState === "reconciled_delivered") {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+
+        if (
+            sourceLog.errorMessage === SERVICE_RECORD_LINK_RESCHEDULED_REASON
+            || sourceLog.errorMessage === SERVICE_RECORD_LINK_PRE_BOOKING_REASON
+        ) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+
+        const family = await this.logRepository.findRetryFamilyInBranch(branchId, sourceLog.id);
+        if (family.some((log) => log.id !== sourceLog.id && (
+            log.status !== "failed"
+            || log.isPartialProviderOutcome()
+            || log.isProviderOutcomeUncertain()
+            || log.variables["retrySafety"] === "uncertain"
+            || log.providerAcceptanceState === "reconciled_delivered"
+        ))) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+
+        if (
+            sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY
+            && await this.logRepository.hasNewerServiceRecordSmsInBranch(branchId, sourceLog)
+        ) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
