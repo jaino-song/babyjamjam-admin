@@ -1,4 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   InfoCard,
@@ -128,6 +130,79 @@ function renderOpenDetailSheet() {
 }
 
 describe("MobileDetailSheet", () => {
+  it("dims disabled detail actions and preserves enabled actions", () => {
+    const css = readFileSync(join(__dirname, "../redesign.css"), "utf8");
+    const disabledRule = css.match(/\.btn:disabled\s*\{[^}]+\}/)?.[0];
+    expect(disabledRule).toBeDefined();
+    const style = document.createElement("style");
+    style.textContent = disabledRule!;
+    document.head.append(style);
+    try {
+      const onClick = jest.fn();
+      const { rerender } = render(
+        <MobileDetailActions data-component="mobile_tests_actions" name="clients"
+          actions={[{ label: "예약 확정", disabled: true, onClick }]} />,
+      );
+      const button = screen.getByRole("button", { name: "예약 확정" });
+      expect(getComputedStyle(button).opacity).toBe("0.5");
+      expect(getComputedStyle(button).cursor).toBe("not-allowed");
+      fireEvent.click(button);
+      expect(onClick).not.toHaveBeenCalled();
+      rerender(
+        <MobileDetailActions data-component="mobile_tests_actions" name="clients"
+          actions={[{ label: "예약 확정", disabled: false, onClick }]} />,
+      );
+      expect(button).not.toBeDisabled();
+      expect(getComputedStyle(button).opacity).not.toBe("0.5");
+      fireEvent.click(button);
+      expect(onClick).toHaveBeenCalledTimes(1);
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("restores the opener before hiding the focused detail subtree", () => {
+    const props = {
+      "data-component": "mobile_tests_detail-sheet",
+      name: "clients",
+      onClose: jest.fn(),
+      list: <button>고객 열기</button>,
+      detail: <button>상세 액션</button>,
+    };
+    const { rerender, container } = render(<MobileDetailSheet {...props} isOpen={false} />);
+    const opener = screen.getByRole("button", { name: "고객 열기" });
+    opener.focus();
+    rerender(<MobileDetailSheet {...props} isOpen />);
+    const close = container.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')!;
+    close.focus();
+    expect(close).toHaveFocus();
+    rerender(<MobileDetailSheet {...props} isOpen={false} />);
+    expect(opener).toHaveFocus();
+    expect(container.querySelector(DETAIL_PAGE_SELECTOR)).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector(DETAIL_PAGE_SELECTOR)).toHaveAttribute("inert");
+    rerender(<MobileDetailSheet {...props} isOpen />);
+    expect(container.querySelector(DETAIL_PAGE_SELECTOR)).not.toHaveAttribute("inert");
+    expect(screen.getByRole("button", { name: "상세 액션" })).toBeInTheDocument();
+  });
+
+  it("blurs detail focus when the opener has unmounted", () => {
+    const props = {
+      "data-component": "mobile_tests_detail-sheet",
+      name: "clients",
+      onClose: jest.fn(),
+      list: null,
+      detail: <button>상세 액션</button>,
+    };
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    const { rerender, container } = render(<MobileDetailSheet {...props} isOpen />);
+    opener.remove();
+    screen.getByRole("button", { name: "상세 액션" }).focus();
+    rerender(<MobileDetailSheet {...props} isOpen={false} />);
+    expect(container.querySelector(DETAIL_PAGE_SELECTOR)).not.toContainElement(document.activeElement as HTMLElement);
+  });
+
   it("keeps the selected item title in the sheet header", () => {
     render(
       <MobileDetailSheet

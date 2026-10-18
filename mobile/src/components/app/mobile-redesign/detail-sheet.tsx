@@ -133,6 +133,33 @@ export function MobileDetailStack({
   closeDisabled?: boolean;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+
+    const active = document.activeElement;
+    if (isOpen && !wasOpenRef.current) {
+      openerRef.current = active instanceof HTMLElement && !sheet.contains(active)
+        ? active
+        : null;
+    }
+    if (!isOpen && active instanceof HTMLElement && sheet.contains(active)) {
+      const opener = openerRef.current;
+      if (opener?.isConnected && !sheet.contains(opener)) {
+        opener.focus({ preventScroll: true });
+      }
+      // The opener may have unmounted or become unfocusable.
+      if (sheet.contains(document.activeElement)) active.blur();
+    }
+    // Apply isolation only after focus has left, including prop-driven closes.
+    sheet.setAttribute("aria-hidden", String(!isOpen));
+    sheet.toggleAttribute("inert", !isOpen);
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
+
   const [isSheetDragging, setIsSheetDragging] = useState(false);
   const dragRef = useRef<SheetDragState>({
     pointerId: null,
@@ -314,7 +341,6 @@ export function MobileDetailStack({
           aria-modal={detailAriaModal}
           aria-labelledby={detailAriaLabelledBy}
           aria-describedby={detailAriaDescribedBy}
-          aria-hidden={!isOpen}
         >
           <div
             data-component={`${detailDataComponent ?? `${dataComponent}_stack_detail-page`}_handle`}
