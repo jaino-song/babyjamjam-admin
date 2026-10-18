@@ -130,7 +130,7 @@ describe("EformsignWebhookController (Integration)", () => {
         // metatype-based exemption keeps webhooks permissive under the strict
         // forbidNonWhitelisted policy that applies everywhere else.
         app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
 
         controller = moduleFixture.get(EformsignWebhookController);
         webhookService = moduleFixture.get(EformsignWebhookService);

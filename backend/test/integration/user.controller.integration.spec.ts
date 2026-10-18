@@ -91,13 +91,23 @@ describe("UserController (Integration)", () => {
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
 
         userService = moduleFixture.get(UserService);
     });
 
     afterEach(async () => {
         await app.close();
+    });
+
+    it("binds the test server to Supertest's IPv4 loopback destination", () => {
+        // Supertest otherwise binds :: but connects to 127.0.0.1. On macOS a
+        // separate IPv4 listener can share that port and receive the request.
+        expect(app.getHttpServer().address()).toEqual({
+            address: "127.0.0.1",
+            family: "IPv4",
+            port: expect.any(Number),
+        });
     });
 
     // ============================================
