@@ -128,6 +128,7 @@ describe("ClientFormPanel optional service information", () => {
         voucherClient: false,
         serviceStatus: "pre_booking",
         applyMessageAutomation: false,
+        smsAutomationEnabled: false,
       }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);

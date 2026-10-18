@@ -24,7 +24,7 @@ import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { SystemAdminAccountEditDialog } from "@/components/app/ui/SystemAdminAccountEditDialog";
 import { SystemAdminBranchForm } from "@/components/app/system-admin/SystemAdminBranchForm";
 import { SystemTemplatesManager } from "@/components/app/system-admin/SystemTemplatesManager";
-import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { FormNativeSelect, FormSwitchRow } from "@/components/app/ui/form-section";
 import { TagPill } from "@/components/app/ui/tag-pill";
 import {
   AnimatedSlotList,
@@ -46,6 +46,7 @@ import {
 } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import {
   approveSystemAdminMessageSenderApproval,
   createSystemAdminBranch,
@@ -59,6 +60,7 @@ import {
   getSystemAdminUsers,
   rejectUser,
   updateSystemAdminUserAccount,
+  updateUserSmsAutomation,
   type SystemAdminUser,
 } from "@/lib/api/users";
 import { REGISTERABLE_ROLE_OPTIONS, ROLE_LABELS, ROLES, type Role } from "@/lib/constants/roles";
@@ -88,6 +90,8 @@ interface AdminRequest {
   action?: AdminRequestAction;
 }
 
+const SMS_AUTOMATION_HELPER = "끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요.";
+
 interface PendingAccountApproval {
   userId: string;
   branchId?: string;
@@ -113,6 +117,7 @@ interface AdminRecord {
   pendingAccountApproval?: PendingAccountApproval;
   accountApprovalStatus?: SystemAdminUser["approvalStatus"];
   accountRole?: string | null;
+  accountSmsAutomationEnabled?: boolean;
 }
 
 interface AdminSection {
@@ -509,6 +514,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
       pendingAccountApproval,
       accountApprovalStatus: user.approvalStatus,
       accountRole: user.role,
+      accountSmsAutomationEnabled: user.smsAutomationEnabled !== false,
     };
   });
 }
@@ -793,18 +799,24 @@ export function OwnerAdminConsole({
   const [pendingOwnerBranchSelections, setPendingOwnerBranchSelections] = useState<
     Record<string, string>
   >({});
+  const [pendingSmsAutomationSelections, setPendingSmsAutomationSelections] = useState<
+    Record<string, boolean>
+  >({});
+  const { toast } = useToast();
   const approveUserMutation = useMutation({
     mutationFn: ({
       id,
       role,
       branchId,
       ownerBranchId,
+      smsAutomationEnabled,
     }: {
       id: string;
       role: string;
       branchId: string;
       ownerBranchId?: string;
-    }) => approveUser(id, role, branchId, ownerBranchId),
+      smsAutomationEnabled?: boolean;
+    }) => approveUser(id, role, branchId, ownerBranchId, smsAutomationEnabled),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
@@ -877,6 +889,27 @@ export function OwnerAdminConsole({
           "다른 곳에서 계정 정보가 변경되었습니다. 창을 닫고 목록을 새로고침한 뒤 다시 시도해 주세요.",
         );
       }
+    },
+  });
+  const updateUserSmsAutomationMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      updateUserSmsAutomation(id, enabled),
+    onMutate: async ({ id, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: ["systemAdminUsers"] });
+      const previousUsers = queryClient.getQueryData<SystemAdminUser[]>(["systemAdminUsers"]);
+      queryClient.setQueryData<SystemAdminUser[]>(["systemAdminUsers"], (current) =>
+        current?.map((user) => (user.id === id ? { ...user, smsAutomationEnabled: enabled } : user)),
+      );
+      return { previousUsers };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousUsers) {
+        queryClient.setQueryData(["systemAdminUsers"], context.previousUsers);
+      }
+      toast({ variant: "destructive", description: "자동 문자 설정을 바꾸지 못했어요" });
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
   });
 
@@ -1354,6 +1387,9 @@ export function OwnerAdminConsole({
                         ? (pendingOwnerBranchSelections[pendingAccountApproval.userId] ?? "")
                         : "";
                       const isPendingRoleAdmin = selectedPendingRole === ROLES.admin;
+                      const selectedPendingSmsAutomation = pendingAccountApproval
+                        ? (pendingSmsAutomationSelections[pendingAccountApproval.userId] ?? true)
+                        : true;
                       const isApprovedAccount =
                         activeSection.id === "accounts" &&
                         selectedRecord.accountApprovalStatus === "approved";
@@ -1417,6 +1453,21 @@ export function OwnerAdminConsole({
                               <InfoRow key={row.label} label={row.label} value={row.value} />
                             ))}
                           </InfoCard>
+                          {isApprovedAccount ? (
+                            <FormSwitchRow
+                              data-component="desktop_system-admin_sections_account-detail_sms-automation-field"
+                              title="메시지 자동 전송"
+                              description={SMS_AUTOMATION_HELPER}
+                              checked={selectedRecord.accountSmsAutomationEnabled !== false}
+                              onToggle={() =>
+                                updateUserSmsAutomationMutation.mutate({
+                                  id: selectedRecord.id,
+                                  enabled: selectedRecord.accountSmsAutomationEnabled === false,
+                                })
+                              }
+                              buttonAriaLabel={`${selectedRecord.listTitle} 메시지 자동 전송`}
+                            />
+                          ) : null}
                           {pendingAccountApproval && selectedPendingRole ? (
                             <div className="space-y-2">
                               <div
@@ -1482,6 +1533,21 @@ export function OwnerAdminConsole({
                                   />
                                 ) : null}
 
+                                <FormSwitchRow
+                                  data-component="desktop_system-admin_sections_pending-approval_sms-automation-field"
+                                  title="메시지 자동 전송"
+                                  description={SMS_AUTOMATION_HELPER}
+                                  checked={selectedPendingSmsAutomation}
+                                  onToggle={() =>
+                                    setPendingSmsAutomationSelections((previousSelections) => ({
+                                      ...previousSelections,
+                                      [pendingAccountApproval.userId]: !selectedPendingSmsAutomation,
+                                    }))
+                                  }
+                                  disabled={isPendingApprovalActionRunning}
+                                  buttonAriaLabel={`${selectedRecord.listTitle} 메시지 자동 전송`}
+                                />
+
                                 <Button
                                   type="button"
                                   size="sm"
@@ -1496,6 +1562,7 @@ export function OwnerAdminConsole({
                                       id: pendingAccountApproval.userId,
                                       role: selectedPendingRole,
                                       branchId: selectedPendingBranchId,
+                                      smsAutomationEnabled: selectedPendingSmsAutomation,
                                       ...(isPendingRoleAdmin
                                         ? { ownerBranchId: selectedPendingOwnerBranchId }
                                         : {}),
