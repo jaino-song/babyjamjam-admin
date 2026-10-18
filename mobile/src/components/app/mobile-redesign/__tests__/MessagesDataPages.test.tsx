@@ -62,10 +62,11 @@ jest.mock("next/navigation", () => ({
 }));
 
 let mockAuthBranchRole = "manager";
+let mockAuthRole = "user";
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "user", branchRole: mockAuthBranchRole },
+    data: { role: mockAuthRole, branchRole: mockAuthBranchRole },
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -1055,13 +1056,6 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         linkName: "고객 정보에서 켜기 →",
         href: "/clients?id=10",
       },
-      {
-        level: "recipient",
-        extra: { resendBlockedRecipient: { kind: "user", id: "user-9" } },
-        title: "자동 문자가 꺼져 있어요",
-        linkName: "계정 관리에서 켜기 →",
-        href: "/system-admin?section=accounts&item=user-9",
-      },
       { level: "branch", extra: {}, title: "지점 자동 전송이 꺼져 있어요", linkName: "자동화 설정 열기 →", href: "/messages/settings?item=trigger-dispatch" },
     ] as const)(
       "disables the 재발송 button, opens a card with a link on tap, and never resends for a $level block ($linkName)",
@@ -1091,6 +1085,38 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
       },
     );
+
+    it.each([
+      { role: "owner", hasLink: true },
+      { role: "user", hasLink: false },
+    ] as const)("links a blocked user recipient to the accounts screen only for an owner (role $role)", async ({ role, hasLink }) => {
+      const user = userEvent.setup();
+      mockAuthRole = role;
+      try {
+        mockJobHistory({
+          ...needsSetupJobRecord,
+          resendBlockedBy: "recipient",
+          resendBlockedRecipient: { kind: "user", id: "user-9" },
+        });
+        render(<MessagesHistoryPage />);
+
+        await openJobDetail(user);
+
+        const trigger = screen.getByRole("button", { name: "재발송" }).closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+        fireEvent.pointerDown(trigger, { pointerType: "touch" });
+        fireEvent.pointerUp(trigger, { pointerType: "touch" });
+
+        expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+        const link = screen.queryByRole("link", { name: "계정 관리에서 켜기 →" });
+        if (hasLink) {
+          expect(link).toHaveAttribute("href", "/system-admin?section=accounts&item=user-9");
+        } else {
+          expect(link).toBeNull();
+        }
+      } finally {
+        mockAuthRole = "user";
+      }
+    });
 
     it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", async () => {
       const user = userEvent.setup();

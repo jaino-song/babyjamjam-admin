@@ -139,6 +139,15 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
+// The deep-link tests only need to know which section rendered; their own
+// data hooks are not part of this page's fixtures.
+jest.mock("@/components/app/messages/MessageTenantApplicationSettings", () => ({
+  MessageTenantApplicationSettings: () => null,
+}));
+jest.mock("@/components/app/messages/TriggerRulesManager", () => ({
+  TriggerRulesManager: () => null,
+}));
+
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
   // Mirrors the real component's branching (children when approved/loading,
   // otherwise a stand-in for MessageApprovalRequiredNotice) instead of always
@@ -1215,6 +1224,24 @@ describe("messages page — ?section= deep link", () => {
     });
   });
 
+  it.each(["settings", "triggers"] as const)(
+    "follows a link to ?section=%s from the history section the viewer reached via the nav",
+    async (value) => {
+      mockData({ history: [] });
+      const { rerender } = render(<MessagesPage />);
+      goToHistorySection();
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).not.toBeNull();
+
+      mockSearchParams = new URLSearchParams(`section=${value}`);
+      rerender(<MessagesPage />);
+
+      await waitFor(() => {
+        expect(document.querySelector(`[data-component="desktop_messages_sections_section-content_${value}-section"]`)).not.toBeNull();
+      });
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).toBeNull();
+    },
+  );
+
   it("stays on the default section for a section the viewer cannot open or that does not exist", async () => {
     mockAuthUser({ id: "user-2", role: "user", branchRole: "user" });
     for (const value of ["triggers", "nope", "scheduled"]) {
@@ -1323,6 +1350,32 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
       expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
     },
   );
+
+  it.each([
+    { role: "user", label: "a non-owner", hasLink: false },
+    { role: "owner", label: "an owner", hasLink: true },
+  ] as const)("links a blocked user recipient to the accounts screen for $label only", async ({ role, hasLink }) => {
+    mockAuthUser({ id: "viewer-1", role, branchRole: "manager" });
+    mockData({
+      history: [buildNeedsSetupJobRow({
+        resendBlockedBy: "recipient",
+        resendBlockedRecipient: { kind: "user", id: "u-1" },
+      })],
+    });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+
+    const trigger = getRetryButton()?.closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+    fireEvent.focus(trigger);
+    expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+    const link = screen.queryByRole("link", { name: "계정 관리에서 켜기 →" });
+    if (hasLink) {
+      expect(link).toHaveAttribute("href", "/system-admin?section=accounts");
+    } else {
+      expect(link).toBeNull();
+    }
+  });
 
   it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", () => {
     mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: null })] });

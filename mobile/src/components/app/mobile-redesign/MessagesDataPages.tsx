@@ -649,7 +649,9 @@ export function MessagesHistoryPage() {
   const resendMutation = useResendMessageTriggerJob();
   // Cancel and retry require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
-  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
+  const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
 
   const upcomingJobs = useMemo(
     () => (rawUpcomingData ?? [])
@@ -1151,6 +1153,7 @@ export function MessagesHistoryPage() {
                       isRetrying={retryMutation.isPending || resendMutation.isPending}
                       retryPendingLabel={canResendSelectedJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
                       retryBlock={resendBlock}
+                      canOpenOwnerAdmin={canOpenOwnerAdmin}
                       onRetry={handleRequestRetry}
                     />
                     {selectedCancelReason ? (

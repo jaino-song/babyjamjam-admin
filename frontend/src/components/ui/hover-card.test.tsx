@@ -155,6 +155,26 @@ describe("HoverCard", () => {
     expect(card()).toBeNull();
   });
 
+  it("is not reopened by the focus that follows a quick second tap (touch settle window)", () => {
+    renderCard();
+    fireEvent.pointerDown(trigger(), { pointerType: "touch" });
+    fireEvent.pointerUp(trigger(), { pointerType: "touch" });
+    expect(card()).not.toBeNull();
+
+    // A second tap ~100ms later closes the card...
+    advance(100);
+    fireEvent.pointerDown(trigger(), { pointerType: "touch" });
+    fireEvent.pointerUp(trigger(), { pointerType: "touch" });
+    expect(card()).toBeNull();
+
+    // ...and the focus the browser dispatches after that tap asks Radix to open
+    // it again once its open delay passes; that request lands inside the settle
+    // window and must be ignored.
+    fireEvent.focus(trigger());
+    advance(400);
+    expect(card()).toBeNull();
+  });
+
   it("closes an open touch card on an outside tap", () => {
     renderCard();
     fireEvent.pointerDown(trigger(), { pointerType: "touch" });

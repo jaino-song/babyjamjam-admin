@@ -115,6 +115,37 @@ describe("ClientMessageHistoryDetail", () => {
     expect(document.querySelector('[data-component="test_detail_retry-blocked-hover-card"]')).not.toBeNull();
   });
 
+  it.each([
+    { canOpenOwnerAdmin: true, hasLink: true },
+    { canOpenOwnerAdmin: false, hasLink: false },
+    { canOpenOwnerAdmin: undefined, hasLink: false },
+  ])("links a blocked user recipient to the accounts screen only when canOpenOwnerAdmin is $canOpenOwnerAdmin", ({ canOpenOwnerAdmin, hasLink }) => {
+    renderDetail({}, {
+      canRetry: true,
+      onRetry: jest.fn(),
+      canOpenOwnerAdmin,
+      retryBlock: {
+        level: "recipient",
+        recipient: { kind: "user", id: "user-9" },
+        recipientName: "박관리",
+        ruleId: null,
+        ruleName: null,
+      },
+    });
+
+    const trigger = screen.getByRole("button", { name: "재발송" }).closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+    fireEvent.pointerDown(trigger, { pointerType: "touch" });
+    fireEvent.pointerUp(trigger, { pointerType: "touch" });
+
+    expect(screen.getByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+    const link = screen.queryByRole("link", { name: "계정 관리에서 켜기 →" });
+    if (hasLink) {
+      expect(link).toHaveAttribute("href", "/system-admin?section=accounts&item=user-9");
+    } else {
+      expect(link).toBeNull();
+    }
+  });
+
   it("hides the button when the caller does not allow a retry, even with a handler", () => {
     renderDetail({}, { canRetry: false, onRetry: jest.fn() });
 

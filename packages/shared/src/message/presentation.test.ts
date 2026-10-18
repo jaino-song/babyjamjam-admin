@@ -122,14 +122,29 @@ describe("needs_setup presentation", () => {
         "/system-admin?section=accounts&item=u-1",
       ],
     ] as const)("names the %j recipient and links to where the switch lives", (recipient, noun, label, desktopHref, mobileHref) => {
-      const desktop = getMessageResendBlockCard(block({ recipient }), "desktop");
+      const desktop = getMessageResendBlockCard(block({ recipient }), "desktop", { canOpenOwnerAdmin: true });
       expect(desktop).toEqual({
         title: "자동 문자가 꺼져 있어요",
         emphasis: "송진호",
         description: `${noun}의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`,
         action: { label, href: desktopHref },
       });
-      expect(getMessageResendBlockCard(block({ recipient }), "mobile").action).toEqual({ label, href: mobileHref });
+      expect(getMessageResendBlockCard(block({ recipient }), "mobile", { canOpenOwnerAdmin: true }).action).toEqual({ label, href: mobileHref });
+    });
+
+    it("links a user recipient to the owner admin screen only when the viewer can open it", () => {
+      const recipient = { kind: "user", id: "u-1" } as const;
+      expect(getMessageResendBlockCard(block({ recipient }), "desktop", { canOpenOwnerAdmin: true }).action).toEqual({
+        label: "계정 관리에서 켜기 →",
+        href: "/system-admin?section=accounts",
+      });
+      expect(getMessageResendBlockCard(block({ recipient }), "mobile", { canOpenOwnerAdmin: true }).action?.href)
+        .toBe("/system-admin?section=accounts&item=u-1");
+      expect(getMessageResendBlockCard(block({ recipient }), "desktop", { canOpenOwnerAdmin: false }).action).toBeNull();
+      expect(getMessageResendBlockCard(block({ recipient }), "mobile").action).toBeNull();
+      // Other recipients and levels are unaffected by the option.
+      expect(getMessageResendBlockCard(block({ recipient: { kind: "client", id: 10 } }), "desktop", { canOpenOwnerAdmin: false }).action?.href)
+        .toBe("/clients?id=10");
     });
 
     it("drops the name and the link when the recipient is unknown", () => {

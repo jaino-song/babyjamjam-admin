@@ -84,6 +84,8 @@ interface MessageHistoryDetailPanelProps {
   retryPendingLabel?: string;
   // When set, the retry button is disabled and a hover card says why and where to turn it back on.
   retryBlock?: MessageResendBlock;
+  /** Whether the viewer is an owner, who alone can open the accounts screen the card may link to. */
+  canOpenOwnerAdmin?: boolean;
   backAction?: {
     label: ReactNode;
     onClick: () => void;
@@ -296,6 +298,7 @@ export function MessageHistoryDetailPanel({
   onRetry,
   retryPendingLabel = "재시도 중",
   retryBlock,
+  canOpenOwnerAdmin = false,
   backAction,
   emptyMessage = "발송 기록을 선택하면 상세 정보가 표시됩니다.",
   emptyIcon = Users,
@@ -305,7 +308,7 @@ export function MessageHistoryDetailPanel({
   const displayFailureReason = formatMessageHistoryFailureReason(selectedRecord?.failureReason);
   const displayCancelReason = selectedRecord?.cancelReason;
   const displaySetupReason = selectedRecord?.status === "needs_setup" ? selectedRecord.setupReason : undefined;
-  const retryBlockCard = retryBlock ? getMessageResendBlockCard(retryBlock, "desktop") : null;
+  const retryBlockCard = retryBlock ? getMessageResendBlockCard(retryBlock, "desktop", { canOpenOwnerAdmin }) : null;
   const retryButton = (
     <Button
       data-component={`${dataComponentPrefix}_detail-retry`}

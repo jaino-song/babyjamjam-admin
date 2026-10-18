@@ -60,6 +60,7 @@ export function ClientMessageHistoryDetail({
   onRetry,
   retryPendingLabel = "재발송 중...",
   retryBlock,
+  canOpenOwnerAdmin = false,
 }: {
   "data-component": string;
   view: ClientMessageHistoryDetailView;
@@ -74,10 +75,12 @@ export function ClientMessageHistoryDetail({
   retryPendingLabel?: string;
   /** When set, the retry button is disabled and a tap-to-open card says why and where to turn it back on. */
   retryBlock?: MessageResendBlock;
+  /** Whether the viewer is an owner, who alone can open the accounts screen the card may link to. */
+  canOpenOwnerAdmin?: boolean;
 }) {
   const isFailed = view.statusTone === "burgundy";
   const showRetry = canRetry && Boolean(onRetry);
-  const retryBlockCard = retryBlock ? getMessageResendBlockCard(retryBlock, "mobile") : null;
+  const retryBlockCard = retryBlock ? getMessageResendBlockCard(retryBlock, "mobile", { canOpenOwnerAdmin }) : null;
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const retryButton = (
     <Button

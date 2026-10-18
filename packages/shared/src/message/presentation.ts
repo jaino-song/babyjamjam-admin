@@ -210,6 +210,11 @@ const MESSAGE_RESEND_BLOCK_RECIPIENT_ACTION_LABEL = {
   user: "계정 관리에서 켜기 →",
 } as const satisfies Record<MessageResendBlockedRecipient["kind"], string>;
 
+export interface MessageResendBlockCardOptions {
+  /** Only an owner can open /system-admin; for anyone else a user recipient gets no link. */
+  canOpenOwnerAdmin: boolean;
+}
+
 function messageResendBlockRecipientHref(
   recipient: MessageResendBlockedRecipient,
   platform: MessageResendBlockPlatform,
@@ -231,6 +236,7 @@ function messageResendBlockRecipientHref(
 export function getMessageResendBlockCard(
   block: MessageResendBlock,
   platform: MessageResendBlockPlatform,
+  options: MessageResendBlockCardOptions = { canOpenOwnerAdmin: false },
 ): MessageResendBlockCard {
   if (block.level === "branch") {
     return {
@@ -268,7 +274,7 @@ export function getMessageResendBlockCard(
     description: name
       ? `${noun ? `${noun}의` : "님의"} ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`
       : `받는 ${noun ?? "사람"}의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`,
-    action: block.recipient && kind
+    action: block.recipient && kind && (kind !== "user" || options.canOpenOwnerAdmin)
       ? {
         label: MESSAGE_RESEND_BLOCK_RECIPIENT_ACTION_LABEL[kind],
         href: messageResendBlockRecipientHref(block.recipient, platform),
