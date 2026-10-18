@@ -1015,7 +1015,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await openJobDetail(user);
 
       expect(container.querySelector('[data-component$="_detail-pane_header_status"]')).toHaveTextContent("추가 정보 필요");
-      expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
       expect(screen.getByText(SETUP_REASON)).toBeInTheDocument();
       expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
@@ -1030,7 +1030,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
         await openJobDetail(user);
 
-        expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+        expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
       } finally {
         mockAuthBranchRole = "manager";
@@ -1068,7 +1068,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         description: MESSAGE_JOB_RESEND_COPY.success,
         variant: "success",
       }));
-      await waitFor(() => expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
       expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
     });
 
@@ -1086,7 +1086,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
         description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup,
       })));
-      expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
       expect(screen.getByText(newReason)).toBeInTheDocument();
       expect(screen.queryByText(SETUP_REASON)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
@@ -1110,7 +1110,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
         description: `${MESSAGE_JOB_RESEND_COPY.notSent} 대상 고객 상태가 아니어서 보내지 않았습니다.`,
       })));
-      await waitFor(() => expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
     });
 
     it("shows only the not-sent copy on canceled without a reason", async () => {
@@ -1144,7 +1144,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
           description: MESSAGE_JOB_RESEND_COPY.failure,
           variant: "destructive",
         })));
-        await waitFor(() => expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
       },
     );
 
@@ -1164,7 +1164,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         description: MESSAGE_JOB_RESEND_COPY.conflict,
         variant: "destructive",
       })));
-      await waitFor(() => expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
     });
 
     it("shows the failure copy for a rejection with no problem body and closes the detail", async () => {
@@ -1181,7 +1181,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
         description: MESSAGE_JOB_RESEND_COPY.failure,
         variant: "destructive",
       })));
-      await waitFor(() => expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument());
     });
 
     it("never sends the job resend request when the confirm dialog is dismissed", async () => {
@@ -1196,7 +1196,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       await user.keyboard("{Escape}");
 
       expect(mutateAsync).not.toHaveBeenCalled();
-      expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     });
 
     it("labels the button with the resend pending copy while the request is in flight", async () => {
@@ -1223,7 +1223,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
       await user.click(screen.getByRole("button", { name: /김문자/ }));
       expect(screen.getByText("실패 사유")).toBeInTheDocument();
-      expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument();
+      expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
       await confirmResend(user);
 
       await waitFor(() => expect(retryMutateAsync).toHaveBeenCalledWith(91));

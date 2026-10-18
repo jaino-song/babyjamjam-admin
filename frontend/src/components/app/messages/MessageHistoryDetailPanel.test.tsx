@@ -130,7 +130,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     expect(log.isTriggerJobRow).toBe(false);
   });
 
-  it("shows the amber 추가 정보 필요 사유 row and the 재발송 button for a needs_setup job", () => {
+  it("shows the amber 추가 필요 정보 row and the 재발송 button for a needs_setup job", () => {
     const onRetry = jest.fn();
     const { container } = render(
       <MessageHistoryDetailPanel
@@ -142,7 +142,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
       />,
     );
 
-    expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     const reason = screen.getByText(normalizeMessageHistoryRecord(needsSetupJobRow).setupReason as string);
     expect(reason).toHaveClass("text-amber-700");
     expect(reason).not.toHaveClass("text-red-700");
@@ -172,7 +172,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     expect(screen.queryByRole("button", { name: "재시도 중" })).not.toBeInTheDocument();
   });
 
-  it("shows no 추가 정보 필요 사유 row for a failed log and keeps the old retry labels", () => {
+  it("shows no 추가 필요 정보 row for a failed log and keeps the old retry labels", () => {
     const failed = normalizeMessageHistoryRecord(baseLog);
     const { rerender } = render(
       <MessageHistoryDetailPanel
@@ -183,7 +183,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
       />,
     );
 
-    expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
     expect(screen.getByText("실패 사유")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
 
@@ -208,7 +208,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
       />,
     );
 
-    expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
   });
 });

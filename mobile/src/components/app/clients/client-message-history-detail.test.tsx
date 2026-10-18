@@ -33,18 +33,18 @@ function renderDetail(
 }
 
 describe("ClientMessageHistoryDetail", () => {
-  it("shows the 추가 정보 필요 사유 row for a needs_setup message and no 실패 사유", () => {
+  it("shows the 추가 필요 정보 row for a needs_setup message and no 실패 사유", () => {
     renderDetail({ setupReason: "연락처가 연결되지 않았습니다." });
 
-    expect(screen.getByText("추가 정보 필요 사유")).toBeInTheDocument();
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
     expect(screen.getByText("연락처가 연결되지 않았습니다.")).toBeInTheDocument();
     expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
   });
 
-  it("hides the 추가 정보 필요 사유 row when there is no setup reason", () => {
+  it("hides the 추가 필요 정보 row when there is no setup reason", () => {
     renderDetail({ setupReason: null });
 
-    expect(screen.queryByText("추가 정보 필요 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
   });
 
   it("shows no 재발송 button for a needs_setup message when the caller passes no handler", () => {

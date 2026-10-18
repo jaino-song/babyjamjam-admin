@@ -74,7 +74,7 @@ describe("needs_setup presentation", () => {
   });
 
   it("exposes the reason label and the resend copy", () => {
-    expect(MESSAGE_SETUP_REASON_LABEL).toBe("추가 정보 필요 사유");
+    expect(MESSAGE_SETUP_REASON_LABEL).toBe("추가 필요 정보");
     expect(Object.keys(MESSAGE_JOB_RESEND_COPY).sort()).toEqual(
       ["action", "conflict", "failure", "notSent", "pending", "stillNeedsSetup", "success"],
     );

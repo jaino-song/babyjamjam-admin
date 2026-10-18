@@ -156,7 +156,7 @@ export const MESSAGE_JOB_CANCEL_COPY = {
 export const MESSAGE_RECORD_REASON_LABEL = "사유";
 
 /** Reason label for a `needs_setup` row, where "사유" alone reads as a failure. */
-export const MESSAGE_SETUP_REASON_LABEL = "추가 정보 필요 사유";
+export const MESSAGE_SETUP_REASON_LABEL = "추가 필요 정보";
 
 // Copy for re-sending a `needs_setup` job after the operator fixed the setup.
 export const MESSAGE_JOB_RESEND_COPY = {
