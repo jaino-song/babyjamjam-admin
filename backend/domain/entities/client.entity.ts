@@ -53,7 +53,6 @@ interface CreateClientProps {
     areaId?: string | null;
     createdAt?: Date | null;
     suppressGreetingSms?: boolean;
-    smsAutomationEnabled?: boolean;
 }
 
 /**
@@ -151,12 +150,6 @@ export class ClientEntity {
         /** Canonical identity key; display formatting remains in `phone`. */
         public phoneNormalized: string | null = normalizePhone(phone),
         public readonly bookingConfirmedAt: Date | null = null,
-        /**
-         * Per-client switch for automatic SMS. Written by the create and the
-         * dedicated update path only; the entity-wide persistence update
-         * deliberately leaves the column alone.
-         */
-        public smsAutomationEnabled: boolean = true,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -221,8 +214,6 @@ export class ClientEntity {
             props.suppressGreetingSms ?? false,
             props.birthDate,
             phoneNormalized,
-            null,
-            props.smsAutomationEnabled ?? true,
         );
     }
 
@@ -325,7 +316,6 @@ export class ClientEntity {
         birthDate: Date | null = null,
         phoneNormalized?: string | null,
         bookingConfirmedAt: Date | null = null,
-        smsAutomationEnabled: boolean = true,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -357,7 +347,6 @@ export class ClientEntity {
             birthDate,
             phoneNormalized,
             bookingConfirmedAt,
-            smsAutomationEnabled,
         );
     }
 }

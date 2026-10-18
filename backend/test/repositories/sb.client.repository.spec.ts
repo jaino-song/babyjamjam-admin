@@ -139,18 +139,6 @@ describe("SbClientRepository", () => {
             });
         });
 
-        describe("given a client whose smsAutomationEnabled is false", () => {
-            it("selects the column and maps the stored false onto the entity", async () => {
-                clientModel.findFirst.mockResolvedValue(createClientRow({ smsAutomationEnabled: false }));
-
-                const result = await repository.findById(branchId, 1);
-
-                const { select } = clientModel.findFirst.mock.calls[0][0];
-                expect(select).toMatchObject({ smsAutomationEnabled: true });
-                expect(result?.smsAutomationEnabled).toBe(false);
-            });
-        });
-
         describe("given a client id does not exist", () => {
             it("should return null", async () => {
                 // Arrange

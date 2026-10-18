@@ -2,7 +2,6 @@ import {
     ArrayNotEmpty,
     ArrayUnique,
     IsArray,
-    IsBoolean,
     IsIn,
     IsOptional,
     IsString,
@@ -79,13 +78,4 @@ export class ApproveUserDto {
     @ValidateIf((dto: ApproveUserDto) => dto.role === "admin")
     @IsUUID("4")
     ownerBranchId?: string;
-
-    @ValidateIf((_, value) => value !== undefined)
-    @IsBoolean()
-    smsAutomationEnabled?: boolean;
-}
-
-export class UpdateUserSmsAutomationDto {
-    @IsBoolean()
-    enabled!: boolean;
 }

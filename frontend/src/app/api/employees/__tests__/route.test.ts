@@ -119,50 +119,6 @@ describe("POST /api/employees", () => {
         });
 });
 
-describe("employee sms automation flag passthrough", () => {
-    beforeEach(() => {
-        mockPost.mockReset();
-        mockPatch.mockReset();
-    });
-
-    it("forwards smsAutomationEnabled unchanged on create", async () => {
-        mockPost.mockResolvedValue({ status: 201, data: { id: 9, smsAutomationEnabled: false } });
-        const body = { name: "Kim", smsAutomationEnabled: false };
-
-        const response = await createEmployee(
-            createRequest("/api/employees", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            }),
-        );
-
-        expect(response.status).toBe(201);
-        await expect(response.json()).resolves.toEqual({ id: 9, smsAutomationEnabled: false });
-        expect(mockPost).toHaveBeenCalledWith("/employees", body, expect.anything());
-    });
-
-    it("forwards smsAutomationEnabled unchanged on update", async () => {
-        mockPatch.mockResolvedValue({ status: 200, data: { id: 9, smsAutomationEnabled: true } });
-        const body = { smsAutomationEnabled: true };
-
-        const response = await updateEmployeeProxy(
-            createRequest("/api/employees?id=9", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-            }),
-        );
-
-        expect(response.status).toBe(200);
-        expect(mockPatch).toHaveBeenCalledWith(
-            "/employees",
-            body,
-            expect.objectContaining({ params: { id: "9" } }),
-        );
-    });
-});
-
 describe("GET /api/employees/check-phone", () => {
     beforeEach(() => {
         mockGet.mockReset();

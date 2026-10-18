@@ -248,7 +248,6 @@ model client {
   phone                  String?
   phoneNormalized        String?                   @map("phone_normalized")
   suppressGreetingSms    Boolean                   @default(false) @map("suppress_greeting_sms")
-  smsAutomationEnabled   Boolean                   @default(true) @map("sms_automation_enabled")
   type                   String?
   duration               Int?                      @db.SmallInt
   fullPrice              String?                   @map("full_price")
@@ -514,7 +513,6 @@ model employee {
   phoneNormalized            String?                     @map("phone_normalized")
   grade                      String
   openToNextWork             Boolean                     @default(true) @map("open_to_next_work")
-  smsAutomationEnabled       Boolean                     @default(true) @map("sms_automation_enabled")
   companyRegisteredDate      DateTime?                   @map("company_registered_date") @db.Date
   birthday                   String?                     @db.VarChar(10)
   deletedAt                  DateTime?                   @map("deleted_at") @db.Timestamptz(6)
@@ -830,7 +828,6 @@ model user {
   approvedBy                    String?                           @map("approved_by") @db.Uuid
   requestedRole                 String?                           @map("requested_role") @db.VarChar
   tokenVersion                  Int                               @default(0) @map("token_version")
-  smsAutomationEnabled          Boolean                           @default(true) @map("sms_automation_enabled")
   chatFeedback                  chat_feedback[]
   chatSessions                  chat_session[]
   legacyChatConfirmationIntents legacy_chat_confirmation_intent[]

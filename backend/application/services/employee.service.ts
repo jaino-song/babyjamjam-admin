@@ -54,7 +54,6 @@ export type EmployeeUpdateParams = {
     grade?: string;
     openToNextWork?: boolean;
     birthday?: string;
-    smsAutomationEnabled?: boolean;
 };
 
 @Injectable()
@@ -84,7 +83,7 @@ export class EmployeeService {
 
     async create(
         branchid: string,
-        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean }
+        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string }
     ): Promise<EmployeeEntity> {
         assertEmployeePhoneInput(params.phone);
         try {
@@ -97,8 +96,6 @@ export class EmployeeService {
                 params.openToNextWork,
                 params.registeredDate ? new Date(params.registeredDate) : undefined,
                 params.birthday,
-                undefined,
-                params.smsAutomationEnabled,
             );
         } catch (error) {
             this.rethrowPhoneConflict(error);
