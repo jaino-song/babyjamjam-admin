@@ -1,6 +1,11 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MESSAGE_JOB_CANCEL_COPY, MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
+import {
+  MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_BLOCKED_COPY,
+  MESSAGE_JOB_RESEND_COPY,
+  createProblemDetails,
+} from "@babyjamjam/shared";
 
 import {
   useCancelMessageTriggerJob,
@@ -1019,6 +1024,40 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       expect(screen.getByText(SETUP_REASON)).toBeInTheDocument();
       expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
+    });
+
+    it.each(["rule", "recipient", "branch"] as const)(
+      "disables the 재발송 button with the %s reason and never resends when the safeguard blocks it",
+      async (level) => {
+        const user = userEvent.setup();
+        const mutateAsync = jest.fn();
+        mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+        mockJobHistory({ ...needsSetupJobRecord, resendBlockedBy: level });
+        render(<MessagesHistoryPage />);
+
+        await openJobDetail(user);
+
+        const button = screen.getByRole("button", { name: "재발송" });
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute("data-disabled-reason", MESSAGE_JOB_RESEND_BLOCKED_COPY[level]);
+        expect(screen.queryByText(MESSAGE_JOB_RESEND_BLOCKED_COPY[level])).not.toBeInTheDocument();
+
+        await user.click(button);
+        expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
+        expect(mutateAsync).not.toHaveBeenCalled();
+      },
+    );
+
+    it("keeps the 재발송 button enabled with no reason when the safeguard would pass", async () => {
+      const user = userEvent.setup();
+      mockJobHistory({ ...needsSetupJobRecord, resendBlockedBy: null });
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+
+      const button = screen.getByRole("button", { name: "재발송" });
+      expect(button).toBeEnabled();
+      expect(button).not.toHaveAttribute("data-disabled-reason");
     });
 
     it("shows no 재발송 button to a plain branch user", async () => {

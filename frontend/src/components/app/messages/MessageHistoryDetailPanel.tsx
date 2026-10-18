@@ -80,7 +80,7 @@ interface MessageHistoryDetailPanelProps {
   isRetrying?: boolean;
   onRetry?: () => void;
   retryPendingLabel?: string;
-  // When set, the retry button is disabled and this muted hint explains why.
+  // When set, the retry button is disabled; the text is the reason (a hover card will present it later).
   retryDisabledReason?: string;
   backAction?: {
     label: ReactNode;
@@ -346,32 +346,19 @@ export function MessageHistoryDetailPanel({
       }
       trailing={
         showRetry ? (
-          <div
-            data-component={`${dataComponentPrefix}_detail-retry-group`}
-            className="flex flex-col items-end gap-1"
+          <Button
+            data-component={`${dataComponentPrefix}_detail-retry`}
+            data-disabled-reason={retryDisabledReason || undefined}
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onRetry}
+            disabled={isRetrying || !!retryDisabledReason}
+            className="rounded-full"
           >
-            <Button
-              data-component={`${dataComponentPrefix}_detail-retry`}
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={onRetry}
-              disabled={isRetrying || !!retryDisabledReason}
-              className="rounded-full"
-            >
-              <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-              {isRetrying ? retryPendingLabel : "재발송"}
-            </Button>
-            {retryDisabledReason ? (
-              <p
-                data-component={`${dataComponentPrefix}_detail-retry-hint`}
-                data-slot="detail-retry-hint"
-                className="max-w-[16rem] text-right text-xs text-v3-text-muted"
-              >
-                {retryDisabledReason}
-              </p>
-            ) : null}
-          </div>
+            <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
+            {isRetrying ? retryPendingLabel : "재발송"}
+          </Button>
         ) : null
       }
     >

@@ -182,9 +182,9 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     ).toBeUndefined();
   });
 
-  it("disables the 재발송 button and shows the hint when a reason is given; click does not retry", () => {
+  it("disables the 재발송 button and carries the reason when one is given; click does not retry", () => {
     const onRetry = jest.fn();
-    const { container } = render(
+    render(
       <MessageHistoryDetailPanel
         selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
         dataComponentPrefix={prefix}
@@ -196,17 +196,14 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
 
     const button = screen.getByRole("button", { name: "재발송" });
     expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("data-disabled-reason", MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient);
     fireEvent.click(button);
     expect(onRetry).not.toHaveBeenCalled();
-
-    const hint = screen.getByText(MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient);
-    expect(hint).toHaveClass("text-v3-text-muted");
-    expect(
-      container.querySelector(`[data-component="${prefix}_detail-retry-hint"]`),
-    ).toBe(hint);
+    // No always-visible hint line; a hover card will present the reason later.
+    expect(screen.queryByText(MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient)).not.toBeInTheDocument();
   });
 
-  it("shows an enabled 재발송 button and no hint without a disabled reason", () => {
+  it("shows an enabled 재발송 button and no reason without a disabled reason", () => {
     render(
       <MessageHistoryDetailPanel
         selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
@@ -216,8 +213,9 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
       />,
     );
 
-    expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
-    expect(screen.queryByText(/재발송할 수 없어요/)).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeEnabled();
+    expect(button).not.toHaveAttribute("data-disabled-reason");
   });
 
   it("shows no 추가 필요 정보 row for a failed log and keeps the old retry labels", () => {

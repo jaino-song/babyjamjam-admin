@@ -54,6 +54,7 @@ export function ClientMessageHistoryDetail({
   isRetrying = false,
   onRetry,
   retryPendingLabel = "재발송 중...",
+  retryDisabledReason,
 }: {
   "data-component": string;
   view: ClientMessageHistoryDetailView;
@@ -66,6 +67,8 @@ export function ClientMessageHistoryDetail({
   onRetry?: () => void;
   /** Label while the retry request is in flight; the caller decides what is being retried. */
   retryPendingLabel?: string;
+  /** When set, the retry button is disabled; the text is the reason (a hover card will present it later). */
+  retryDisabledReason?: string;
 }) {
   const isFailed = view.statusTone === "burgundy";
   const showRetry = canRetry && Boolean(onRetry);
@@ -158,7 +161,8 @@ export function ClientMessageHistoryDetail({
             size="md"
             className="w-full"
             data-component={sub("retry-trigger")}
-            disabled={isRetrying}
+            data-disabled-reason={retryDisabledReason || undefined}
+            disabled={isRetrying || Boolean(retryDisabledReason)}
             aria-busy={isRetrying || undefined}
             onClick={onRetry}
           >

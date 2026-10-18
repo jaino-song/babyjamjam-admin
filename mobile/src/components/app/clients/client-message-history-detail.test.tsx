@@ -62,6 +62,18 @@ describe("ClientMessageHistoryDetail", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it("disables the button and carries the reason when retryDisabledReason is set", () => {
+    const onRetry = jest.fn();
+    renderDetail({}, { canRetry: true, onRetry, retryDisabledReason: "사유" });
+
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("data-disabled-reason", "사유");
+    fireEvent.click(button);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(screen.queryByText("사유")).not.toBeInTheDocument();
+  });
+
   it("hides the button when the caller does not allow a retry, even with a handler", () => {
     renderDetail({}, { canRetry: false, onRetry: jest.fn() });
 

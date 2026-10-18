@@ -1255,7 +1255,7 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
   });
 
   it.each(["rule", "recipient", "branch"] as const)(
-    "disables the 재발송 button with the %s hint and never resends when the safeguard blocks it",
+    "disables the 재발송 button with the %s reason and never resends when the safeguard blocks it",
     (level) => {
       mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: level })] });
       render(<MessagesPage />);
@@ -1264,8 +1264,8 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
 
       const button = getRetryButton();
       expect(button).toBeDisabled();
-      const panel = getDetailPanel() as HTMLElement;
-      expect(within(panel).getByText(MESSAGE_JOB_RESEND_BLOCKED_COPY[level])).toBeInTheDocument();
+      expect(button).toHaveAttribute("data-disabled-reason", MESSAGE_JOB_RESEND_BLOCKED_COPY[level]);
+      expect(screen.queryByText(MESSAGE_JOB_RESEND_BLOCKED_COPY[level])).not.toBeInTheDocument();
 
       fireEvent.click(button as HTMLButtonElement);
       expect(mockResendMutateAsync).not.toHaveBeenCalled();
@@ -1273,14 +1273,14 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
     },
   );
 
-  it("keeps the 재발송 button enabled with no hint when the safeguard would pass", () => {
+  it("keeps the 재발송 button enabled with no reason when the safeguard would pass", () => {
     mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: null })] });
     render(<MessagesPage />);
     goToHistorySection();
     fireEvent.click(screen.getByText("설정고객"));
 
     expect(getRetryButton()).toBeEnabled();
-    expect(screen.queryByText(/재발송할 수 없어요/)).not.toBeInTheDocument();
+    expect(getRetryButton()).not.toHaveAttribute("data-disabled-reason");
   });
 
   it.each([
