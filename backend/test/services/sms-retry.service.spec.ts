@@ -106,6 +106,17 @@ describe("SmsRetryService", () => {
     });
 
     describe("manual retry duplicate guards", () => {
+        it("returns 409 without sending when transactional family admission loses after the fast-path read", async () => {
+            const source = createSmsRetryLog();
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            logRepository.findRetryFamilyInBranch.mockResolvedValue([source]);
+            logRepository.startRetryAttempt.mockResolvedValueOnce({ kind: "lost" });
+
+            await expect(service.retryById(source.branchId!, source.id)).rejects.toMatchObject({ status: 409 });
+            expect(logRepository.startRetryAttempt).toHaveBeenCalledTimes(1);
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        });
+
         const expectConflict = async (source: MessageLogEntity) => {
             logRepository.findByIdInBranch.mockResolvedValue(source);
             await expect(service.retryById(source.branchId!, source.id)).rejects.toMatchObject({
