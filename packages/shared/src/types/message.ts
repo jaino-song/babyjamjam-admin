@@ -356,6 +356,9 @@ export interface UpcomingMessageTriggerJob {
 
 export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled" | "needs_setup";
 
+/** Which SMS automation safeguard level would refuse a resend of a `needs_setup` job. */
+export type MessageResendBlockedBy = "rule" | "recipient" | "branch";
+
 export interface MessageLogRecord {
   id: number | string;
   provider: string;
@@ -384,6 +387,8 @@ export interface MessageLogRecord {
   recipientName: string | null;
   clientName: string | null;
   employeeName: string | null;
+  /** Set only on `needs_setup` rows: the safeguard level that would refuse a resend, or null when it would pass. */
+  resendBlockedBy?: MessageResendBlockedBy | null;
 }
 
 export type MessageTemplateVariableType =

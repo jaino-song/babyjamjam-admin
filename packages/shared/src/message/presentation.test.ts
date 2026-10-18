@@ -1,5 +1,6 @@
 import type { MessageLogRecord } from "../types/message";
 import {
+  MESSAGE_JOB_RESEND_BLOCKED_COPY,
   MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
@@ -71,6 +72,29 @@ describe("needs_setup presentation", () => {
 
   it("leaves setupReason unset when a needs_setup row has no error message", () => {
     expect(normalizeMessageHistoryPresentation(historyRecord()).setupReason).toBeUndefined();
+  });
+
+  it("passes resendBlockedBy through for needs_setup rows only", () => {
+    expect(
+      normalizeMessageHistoryPresentation(historyRecord({ resendBlockedBy: "recipient" })).resendBlockedBy,
+    ).toBe("recipient");
+    expect(
+      normalizeMessageHistoryPresentation(historyRecord({ resendBlockedBy: null })).resendBlockedBy,
+    ).toBeUndefined();
+    expect(normalizeMessageHistoryPresentation(historyRecord()).resendBlockedBy).toBeUndefined();
+    expect(
+      normalizeMessageHistoryPresentation(
+        historyRecord({ status: "failed", resendBlockedBy: "branch" }),
+      ).resendBlockedBy,
+    ).toBeUndefined();
+  });
+
+  it("has one hint per safeguard level", () => {
+    expect(MESSAGE_JOB_RESEND_BLOCKED_COPY).toEqual({
+      rule: "자동화 규칙이 꺼져 있어 재발송할 수 없어요",
+      recipient: "받는 사람의 자동 문자가 꺼져 있어 재발송할 수 없어요",
+      branch: "지점 자동 전송이 꺼져 있어 재발송할 수 없어요",
+    });
   });
 
   it("exposes the reason label and the resend copy", () => {

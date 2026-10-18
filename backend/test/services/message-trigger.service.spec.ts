@@ -3010,6 +3010,82 @@ describe("MessageTriggerService", () => {
     });
 
     // 규칙 메시지-04 / BJJ-444: manual, one-at-a-time resend of a '추가 정보 필요' job.
+    describe("history resendBlockedBy", () => {
+        const historyFixture = (
+            safeguardOverrides: Parameters<typeof attachSafeguard>[1] = {},
+            jobOverrides: Parameters<typeof createJob>[0] = {},
+        ) => {
+            const fx = createDispatchService();
+            const { world } = attachSafeguard(fx, safeguardOverrides);
+            const job = createJob({ id: "waiting-job", status: "needs_setup", cancelReason: "필수 정보 누락 (name)", clientId: 1, ...jobOverrides });
+            Object.assign(fx.jobRepository, {
+                findTerminalByBranch: jest.fn().mockResolvedValue([job]),
+                findHistoryPageByBranch: jest.fn().mockResolvedValue([job]),
+                findClientHistoryPageByBranch: jest.fn().mockResolvedValue([job]),
+            });
+            Object.assign(fx.ruleRepository, { findAll: jest.fn().mockResolvedValue([]) });
+            (fx.prisma.client.findFirst as jest.Mock).mockImplementation(async ({ where }: { where: { id?: number; smsAutomationEnabled?: boolean } }) => {
+                if (where.smsAutomationEnabled === false) return null;
+                return { id: 1, phone: "010-1234-5678", smsAutomationEnabled: world.clientFlags.get(where.id ?? -1) ?? world.clientDefault };
+            });
+            return { ...fx, job };
+        };
+        const allRows = async (fx: ReturnType<typeof historyFixture>) => [
+            ...(await fx.service.listHistory(branchId)),
+            ...(await fx.service.listHistoryPage(branchId)).items,
+            ...(await fx.service.listClientHistoryPage(branchId, 1)).items,
+        ];
+
+        it("is null on every history mapper when no safeguard level blocks a resend", async () => {
+            const rows = await allRows(historyFixture());
+            expect(rows).toHaveLength(3);
+            for (const row of rows) expect(row).toMatchObject({ status: "needs_setup", resendBlockedBy: null });
+        });
+
+        it("names the recipient level when the client's automatic-SMS flag is off", async () => {
+            const rows = await allRows(historyFixture({ clientFlags: new Map([[1, false]]) }));
+            expect(rows).toHaveLength(3);
+            for (const row of rows) expect(row.resendBlockedBy).toBe("recipient");
+        });
+
+        it("names the branch level when the branch trigger-dispatch switch is off", async () => {
+            const rows = await allRows(historyFixture({ branchOn: false }));
+            for (const row of rows) expect(row.resendBlockedBy).toBe("branch");
+        });
+
+        it("names the rule level when the automation rule is off", async () => {
+            const rows = await allRows(historyFixture({ ruleActive: false }));
+            for (const row of rows) expect(row.resendBlockedBy).toBe("rule");
+        });
+
+        it("gives non-needs_setup job rows no resendBlockedBy and never runs the safeguard for them", async () => {
+            const fx = historyFixture({ branchOn: false }, { status: "failed" });
+            const rows = await allRows(fx);
+            expect(rows).toHaveLength(3);
+            for (const row of rows) {
+                expect(row.status).toBe("failed");
+                expect(row).not.toHaveProperty("resendBlockedBy");
+            }
+            expect(fx.messageAutomationActivationService.getTriggerDispatchEnabled).not.toHaveBeenCalled();
+        });
+
+        it("is null for an admin-direct job, which bypasses the safeguard", async () => {
+            const fx = historyFixture({ branchOn: false }, {
+                ruleId: "system:service_end_notice", templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+                dedupeKey: "system:service_end_notice:client:7:manual:3f2b1c9e-0a4d-4b6e-9d11-5c7a8e2f4b10",
+            });
+            for (const row of await allRows(fx)) expect(row.resendBlockedBy).toBeNull();
+        });
+
+        it("falls back to null and still returns the list when the safeguard check throws", async () => {
+            const fx = historyFixture();
+            fx.messageAutomationActivationService.getTriggerDispatchEnabled.mockRejectedValue(new Error("db down"));
+            const rows = await allRows(fx);
+            expect(rows).toHaveLength(3);
+            for (const row of rows) expect(row.resendBlockedBy).toBeNull();
+        });
+    });
+
     describe("resendNeedsSetupJob", () => {
         const SETUP_REASON = "필수 정보 누락 (name)";
         const DAY_MS = 24 * 60 * 60 * 1000;

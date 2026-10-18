@@ -4,6 +4,7 @@ import {
     SmsAutomationSafeguardService,
     smsAutomationSafeguardReason,
     type SmsAutomationSafeguardDecision,
+    type SmsAutomationSafeguardLevel,
 } from "./sms-automation-safeguard.service";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { DEFAULT_SERVICE_INFO_TRIGGER, DEFAULT_CLIENT_GREETING_TRIGGER, matchesTriggerDefaults, type MessageTriggerRuleDefaults as UpsertRuleParams } from "./message-trigger-defaults";
@@ -354,6 +355,11 @@ export interface MessageLogRecordView {
     recipientName: string | null;
     clientName: string | null;
     employeeName: string | null;
+    /**
+     * Only on `needs_setup` job rows: the safeguard level that would refuse a
+     * resend (null when it would pass or could not be checked).
+     */
+    resendBlockedBy?: SmsAutomationSafeguardLevel | null;
 }
 
 export interface MessageHistoryPageView {
@@ -814,6 +820,7 @@ export class MessageTriggerService {
         const jobsById = new Map(jobs.map((job) => [job.id, job]));
         const rules = await this.ruleRepository.findAll(branchId);
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+        const resendBlockedByJobId = await this.resolveResendBlockedBy(terminalJobs);
 
         const logRecords = logs.map((log): MessageLogRecordView => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
@@ -894,6 +901,7 @@ export class MessageTriggerService {
                     recipientName: job.payload.recipientName,
                     clientName: job.payload.clientName ?? null,
                     employeeName: job.payload.employeeName ?? null,
+                    ...(job.status === "needs_setup" ? { resendBlockedBy: resendBlockedByJobId.get(job.id) ?? null } : {}),
                 };
             });
 
@@ -976,6 +984,7 @@ export class MessageTriggerService {
             ? await this.ruleRepository.findAll(branchId)
             : [];
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+        const resendBlockedByJobId = await this.resolveResendBlockedBy(terminalJobs);
 
         const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
@@ -1062,6 +1071,7 @@ export class MessageTriggerService {
                     recipientName: job.payload.recipientName,
                     clientName: job.payload.clientName ?? null,
                     employeeName: job.payload.employeeName ?? null,
+                    ...(job.status === "needs_setup" ? { resendBlockedBy: resendBlockedByJobId.get(job.id) ?? null } : {}),
                 };
                 return {
                     record,
@@ -1187,6 +1197,7 @@ export class MessageTriggerService {
             ? await this.ruleRepository.findAll(branchId)
             : [];
         const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+        const resendBlockedByJobId = await this.resolveResendBlockedBy(terminalJobs);
 
         const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
             const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
@@ -1270,6 +1281,7 @@ export class MessageTriggerService {
                         recipientName: job.payload.recipientName,
                         clientName: job.payload.clientName ?? null,
                         employeeName: job.payload.employeeName ?? null,
+                        ...(job.status === "needs_setup" ? { resendBlockedBy: resendBlockedByJobId.get(job.id) ?? null } : {}),
                     },
                     source: "job",
                     nativeId: job.id,
@@ -1788,6 +1800,39 @@ export class MessageTriggerService {
         await this.dispatchClaimedJob(job, sentIds, approvedBranchIds);
 
         return await fetchJob() ?? job;
+    }
+
+    /**
+     * For the history rows of '추가 정보 필요' jobs: the SMS automation safeguard
+     * level that would refuse a resend, so the UI can disable 재발송 instead of
+     * letting the admin hit a 409. Same decision `resendNeedsSetupJob` enforces
+     * (admin-direct sends bypass it). A failed check yields null — it must never
+     * fail the history list.
+     */
+    private async resolveResendBlockedBy(
+        jobs: readonly MessageTriggerJobEntity[],
+    ): Promise<Map<string, SmsAutomationSafeguardLevel | null>> {
+        const result = new Map<string, SmsAutomationSafeguardLevel | null>();
+        const safeguard = this.smsAutomationSafeguard;
+        const needsSetupJobs = jobs.filter((job) => job.status === "needs_setup");
+        if (!safeguard || needsSetupJobs.length === 0) return result;
+
+        await Promise.all(needsSetupJobs.map(async (job) => {
+            if (safeguard.isAdminDirectSend(job)) {
+                result.set(job.id, null);
+                return;
+            }
+            try {
+                const decision = await safeguard.check(job);
+                result.set(job.id, decision.allowed ? null : decision.level);
+            } catch (error) {
+                this.logger.warn(
+                    `Could not check the resend safeguard for trigger job ${job.id}: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                result.set(job.id, null);
+            }
+        }));
+        return result;
     }
 
     /**

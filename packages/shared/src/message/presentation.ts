@@ -1,6 +1,7 @@
 import {
   SMS_TRIGGER_TEMPLATE_KEYS,
   type MessageLogRecord,
+  type MessageResendBlockedBy,
   type MessageLogStatus,
   type MessageTriggerEventType,
   type MessageTriggerJobStatus,
@@ -168,6 +169,14 @@ export const MESSAGE_JOB_RESEND_COPY = {
   conflict: "지금은 재발송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.",
   failure: "재발송하지 못했습니다. 잠시 후 다시 시도해 주세요.",
 } as const;
+
+// Why the 재발송 button is disabled on a `needs_setup` job: the server would
+// refuse the resend at this SMS automation safeguard level.
+export const MESSAGE_JOB_RESEND_BLOCKED_COPY = {
+  rule: "자동화 규칙이 꺼져 있어 재발송할 수 없어요",
+  recipient: "받는 사람의 자동 문자가 꺼져 있어 재발송할 수 없어요",
+  branch: "지점 자동 전송이 꺼져 있어 재발송할 수 없어요",
+} as const satisfies Record<MessageResendBlockedBy, string>;
 
 export const MESSAGE_EVENT_LABELS: Readonly<Record<MessageTriggerEventType, string>> = {
   CLIENT_CREATED: "고객 등록",
@@ -350,6 +359,8 @@ export interface NormalizedMessageHistoryPresentation {
   failureReason?: string;
   /** Why a `needs_setup` row cannot be sent; `failureReason` stays unset for it. */
   setupReason?: string;
+  /** Only for `needs_setup` rows: the safeguard level that would refuse a resend. */
+  resendBlockedBy?: MessageResendBlockedBy;
 }
 
 export function normalizeMessageHistoryPresentation(
@@ -393,5 +404,6 @@ export function normalizeMessageHistoryPresentation(
     messagePreview: record.messageBody,
     failureReason: failureReason || undefined,
     setupReason: setupReason || undefined,
+    resendBlockedBy: record.status === "needs_setup" ? record.resendBlockedBy ?? undefined : undefined,
   };
 }
