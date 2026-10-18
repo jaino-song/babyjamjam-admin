@@ -3771,6 +3771,36 @@ describe("ClientService", () => {
                 }
             });
 
+            it("dates an assignment-edit handover by the KST day across the KST midnight boundary", async () => {
+                jest.useFakeTimers().setSystemTime(new Date("2026-10-17T16:33:00.000Z"));
+                try {
+                    arrangeReplacement(new Date("2026-01-01T00:00:00.000Z"));
+
+                    await service.update(branchId, 1, { primaryEmployeeId: 7 });
+
+                    const { outgoingEndDate, incoming } = writtenPeriods();
+                    expect(outgoingEndDate).toEqual(new Date("2026-10-18T00:00:00.000Z"));
+                    expect(incoming.startDate).toEqual(new Date("2026-10-18T00:00:00.000Z"));
+                } finally {
+                    jest.useRealTimers();
+                }
+            });
+
+            it("keeps the same KST day one minute before KST midnight on an assignment edit", async () => {
+                jest.useFakeTimers().setSystemTime(new Date("2026-10-17T14:59:00.000Z"));
+                try {
+                    arrangeReplacement(new Date("2026-01-01T00:00:00.000Z"));
+
+                    await service.update(branchId, 1, { primaryEmployeeId: 7 });
+
+                    const { outgoingEndDate, incoming } = writtenPeriods();
+                    expect(outgoingEndDate).toEqual(new Date("2026-10-17T00:00:00.000Z"));
+                    expect(incoming.startDate).toEqual(new Date("2026-10-17T00:00:00.000Z"));
+                } finally {
+                    jest.useRealTimers();
+                }
+            });
+
             it("does not write an inverted range when the contract has already ended", async () => {
                 jest.useFakeTimers().setSystemTime(new Date("2026-09-02T01:00:00.000Z"));
                 try {
@@ -6428,7 +6458,8 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).toHaveBeenCalledWith({
                     data: expect.objectContaining({
                         workAddress: "locked address",
-                        startDate: new Date("2024-03-15T01:00:00.000Z"),
+                        // Date-only: the KST calendar day of the instant, midnight UTC.
+                        startDate: new Date("2024-03-15T00:00:00.000Z"),
                         endDate: new Date("2024-06-01T00:00:00.000Z"),
                     }),
                 });
@@ -6509,6 +6540,97 @@ describe("ClientService", () => {
                 });
                 expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
+            });
+        });
+
+        // Incident: a replacement completed at 2026-10-17T16:33Z (KST 2026-10-18 01:33)
+        // was stored as 2026-10-17 because the UTC date of the instant was used.
+        describe("handover date follows the Korean calendar day", () => {
+            const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
+            const arrange = (currentScheduleStartDate: Date) => {
+                const client = createClientEntity();
+                client.endDate = new Date("2027-06-01T00:00:00.000Z");
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                prismaService.client.findUnique.mockResolvedValue(client);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                    startDate: currentScheduleStartDate,
+                });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+            };
+            const written = () => ({
+                outgoingEndDate: prismaService.employee_schedule.update.mock.calls[0][0].data.endDate as Date,
+                incomingStartDate: prismaService.employee_schedule.create.mock.calls[0][0].data.startDate as Date,
+                incomingEndDate: prismaService.employee_schedule.create.mock.calls[0][0].data.endDate as Date,
+            });
+
+            it("dates a replacement made after KST midnight by the KST day, not the UTC day", async () => {
+                jest.useFakeTimers().setSystemTime(new Date("2026-10-17T16:33:00.000Z"));
+                try {
+                    arrange(new Date("2026-01-01T00:00:00.000Z"));
+
+                    await service.requestReplacement(branchId, 1, 7);
+
+                    const { outgoingEndDate, incomingStartDate, incomingEndDate } = written();
+                    expect(outgoingEndDate).toEqual(new Date("2026-10-18T00:00:00.000Z"));
+                    expect(incomingStartDate).toEqual(new Date("2026-10-18T00:00:00.000Z"));
+                    expect(incomingEndDate.getTime()).toBeGreaterThanOrEqual(incomingStartDate.getTime());
+                } finally {
+                    jest.useRealTimers();
+                }
+            });
+
+            it("keeps the same KST day one minute before KST midnight", async () => {
+                jest.useFakeTimers().setSystemTime(new Date("2026-10-17T14:59:00.000Z"));
+                try {
+                    arrange(new Date("2026-01-01T00:00:00.000Z"));
+
+                    await service.requestReplacement(branchId, 1, 7);
+
+                    const { outgoingEndDate, incomingStartDate } = written();
+                    expect(outgoingEndDate).toEqual(new Date("2026-10-17T00:00:00.000Z"));
+                    expect(incomingStartDate).toEqual(new Date("2026-10-17T00:00:00.000Z"));
+                } finally {
+                    jest.useRealTimers();
+                }
+            });
+
+            it("does not clamp the incoming start when the outgoing schedule has not started yet", async () => {
+                jest.useFakeTimers().setSystemTime(new Date("2026-10-17T16:33:00.000Z"));
+                try {
+                    arrange(new Date("2026-10-20T00:00:00.000Z"));
+
+                    await service.requestReplacement(branchId, 1, 7);
+
+                    const { outgoingEndDate, incomingStartDate } = written();
+                    // Outgoing keeps its own start as its end; incoming starts on the handover day.
+                    expect(outgoingEndDate).toEqual(new Date("2026-10-20T00:00:00.000Z"));
+                    expect(incomingStartDate).toEqual(new Date("2026-10-18T00:00:00.000Z"));
+                } finally {
+                    jest.useRealTimers();
+                }
+            });
+
+            it("derives the default replacement end from the KST day when the contract has ended", async () => {
+                jest.useFakeTimers().setSystemTime(new Date("2026-10-17T16:33:00.000Z"));
+                try {
+                    arrange(new Date("2026-01-01T00:00:00.000Z"));
+                    const ended = createClientEntity();
+                    ended.endDate = new Date("2026-10-17T00:00:00.000Z");
+                    prismaService.client.findUnique.mockResolvedValue(ended);
+
+                    await service.requestReplacement(branchId, 1, 7);
+
+                    const { incomingStartDate, incomingEndDate } = written();
+                    expect(incomingStartDate).toEqual(new Date("2026-10-18T00:00:00.000Z"));
+                    expect(incomingEndDate.getTime()).toBe(incomingStartDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
+                } finally {
+                    jest.useRealTimers();
+                }
             });
         });
 
