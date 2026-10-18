@@ -274,6 +274,16 @@ export class ClientService {
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
     ) {}
 
+    /**
+     * The Korean calendar day of an instant, as the date-only value (midnight UTC)
+     * that `@db.Date` columns store and read back. A handover is dated by the day
+     * it happens in Korea, not by the UTC date of the instant, which lags KST by
+     * up to nine hours.
+     */
+    private kstCalendarDay(instant: Date): Date {
+        return new Date(getKstCalendarDate(instant, 0));
+    }
+
     private async transactionNow(transaction: Prisma.TransactionClient): Promise<Date> {
         if (typeof transaction.$queryRaw === "function") {
             const rows = await transaction.$queryRaw<Array<{ now?: Date }>>(Prisma.sql`
@@ -1148,7 +1158,7 @@ export class ClientService {
             const handover = currentSchedule
                 ? ((): { outgoingEndDate: Date; startDate: Date; endDate: Date } => {
                     const outgoingEndDate = employeeScheduleReplacementEndDate(
-                        new Date(),
+                        this.kstCalendarDay(new Date()),
                         currentSchedule.startDate,
                     );
                     return {
@@ -2295,7 +2305,7 @@ export class ClientService {
                     const handover = currentSchedule
                         ? ((): { outgoingEndDate: Date; startDate: Date; endDate: Date } => {
                             const outgoingEndDate = employeeScheduleReplacementEndDate(
-                                new Date(),
+                                this.kstCalendarDay(new Date()),
                                 currentSchedule.startDate,
                             );
                             return {
@@ -2732,7 +2742,8 @@ export class ClientService {
             // Use the owning transaction's timestamp so a client edit that
             // waited on this lock cannot derive a replacement from a stale
             // preflight clock or an invented value.
-            const replacementStartDate = await this.transactionNow(transaction);
+            // The handover is dated by the Korean calendar day of that instant.
+            const replacementStartDate = this.kstCalendarDay(await this.transactionNow(transaction));
             const replacementEndDate = currentClient.endDate
                 && currentClient.endDate.getTime() >= replacementStartDate.getTime()
                 ? currentClient.endDate
