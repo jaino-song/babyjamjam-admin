@@ -2048,11 +2048,11 @@ export default function MessagesPage() {
             setPickedSectionId(id as MessageSectionId);
             // Keep the address in step with the pick so a later card link to the
             // section the viewer last left via the nav still changes `?section=`.
-            if (typeof window !== "undefined") {
-              const url = new URL(window.location.href);
-              url.searchParams.set("section", id);
-              window.history.replaceState(window.history.state, "", url);
-            }
+            // A null state lets Next's patched replaceState sync useSearchParams;
+            // passing history.state (which carries Next's own marker) would not.
+            const url = new URL(window.location.href);
+            url.searchParams.set("section", id);
+            window.history.replaceState(null, "", url);
           }}
         />
 

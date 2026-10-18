@@ -1242,6 +1242,22 @@ describe("messages page — ?section= deep link", () => {
     },
   );
 
+  it("writes the nav pick into ?section= with a null history state so Next's router syncs useSearchParams", () => {
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    try {
+      mockData({ history: [] });
+      render(<MessagesPage />);
+      goToHistorySection();
+
+      expect(replaceState).toHaveBeenCalled();
+      const [state, , url] = replaceState.mock.calls[replaceState.mock.calls.length - 1];
+      expect(state).toBeNull();
+      expect(new URL(String(url)).searchParams.get("section")).toBe("history");
+    } finally {
+      replaceState.mockRestore();
+    }
+  });
+
   it("stays on the default section for a section the viewer cannot open or that does not exist", async () => {
     mockAuthUser({ id: "user-2", role: "user", branchRole: "user" });
     for (const value of ["triggers", "nope", "scheduled"]) {
