@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { ArgumentsHost, BadRequestException, Catch, ExceptionFilter, INestApplication, Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
@@ -53,6 +54,20 @@ const binaryParser = (res: request.Response, done: (err: Error | null, body: Buf
     res.on("data", (chunk: Buffer) => chunks.push(chunk));
     res.on("end", () => done(null, Buffer.concat(chunks)));
 };
+
+/** The response `close` event fires just after the client has the last byte, so poll briefly. */
+async function waitFor(assertion: () => void, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        try {
+            assertion();
+            return;
+        } catch (error) {
+            if (Date.now() >= deadline) throw error;
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+    }
+}
 
 describe("EformsignBackupExportController (HTTP)", () => {
     let app: INestApplication;
@@ -165,7 +180,7 @@ describe("EformsignBackupExportController (HTTP)", () => {
             // Not valid UTF-8 and containing every byte value: a text round trip would corrupt it.
             const bytes = Buffer.from(Array.from({ length: 1024 }, (_, i) => i % 256));
             service.readArtifact.mockResolvedValue({
-                bytes, contentType: "application/pdf", byteSize: bytes.length, sha256: "b".repeat(64), artifactIdentity: IDENTITY,
+                bytes, contentType: "application/pdf", byteSize: bytes.length, sha256: "b".repeat(64), artifactIdentity: IDENTITY, release: jest.fn(),
             });
 
             const res = await authed(api().get(`${BASE}/snapshots/${SNAPSHOT_ID}/artifacts/${IDENTITY}`)).buffer(true).parse(binaryParser);
@@ -186,7 +201,7 @@ describe("EformsignBackupExportController (HTTP)", () => {
         it("an unsafe stored content type falls back to application/pdf instead of failing the response", async () => {
             const bytes = Buffer.from("%PDF-1.4\n");
             service.readArtifact.mockResolvedValue({
-                bytes, contentType: "text/plain\r\nX-Injected: 1", byteSize: bytes.length, sha256: "c".repeat(64), artifactIdentity: IDENTITY,
+                bytes, contentType: "text/plain\r\nX-Injected: 1", byteSize: bytes.length, sha256: "c".repeat(64), artifactIdentity: IDENTITY, release: jest.fn(),
             });
 
             const res = await authed(api().get(`${BASE}/snapshots/${SNAPSHOT_ID}/artifacts/${IDENTITY}`)).buffer(true).parse(binaryParser);
@@ -194,6 +209,34 @@ describe("EformsignBackupExportController (HTTP)", () => {
             expect(res.status).toBe(200);
             expect(res.headers["content-type"]).toBe("application/pdf");
             expect(res.headers["x-injected"]).toBeUndefined();
+        });
+
+        it("the artifact slot is released once the response has ended, and only then", async () => {
+            const bytes = Buffer.from("%PDF-1.4\n");
+            const release = jest.fn();
+            service.readArtifact.mockResolvedValue({
+                bytes, contentType: "application/pdf", byteSize: bytes.length, sha256: "d".repeat(64), artifactIdentity: IDENTITY, release,
+            });
+
+            const res = await authed(api().get(`${BASE}/snapshots/${SNAPSHOT_ID}/artifacts/${IDENTITY}`)).buffer(true).parse(binaryParser);
+
+            expect(res.status).toBe(200);
+            await waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+        });
+
+        it("the artifact slot is released when writing the response throws, with a contract error body", async () => {
+            const release = jest.fn();
+            service.readArtifact.mockResolvedValue({
+                // A control character in the identity makes setHeader throw before any byte is written.
+                bytes: Buffer.from("x"), contentType: "application/pdf", byteSize: 1, sha256: "e".repeat(64), artifactIdentity: "bad\nidentity", release,
+            });
+
+            // Content-Type was already set when the throw happened, so the JSON body is not auto-parsed.
+            const res = await authed(api().get(`${BASE}/snapshots/${SNAPSHOT_ID}/artifacts/${IDENTITY}`)).buffer(true).parse(binaryParser);
+
+            expect(res.status).toBe(EXPORT_ERRORS["INTERNAL"].status);
+            expect(JSON.parse((res.body as Buffer).toString("utf8"))).toMatchObject({ code: "INTERNAL" });
+            await waitFor(() => expect(release).toHaveBeenCalledTimes(1));
         });
 
         it("an error raised by the service on the artifact route is a contract error body, not bytes", async () => {
@@ -421,5 +464,79 @@ describe("EformsignBackupExportModule", () => {
         expect(Reflect.getMetadata("__guards__", EformsignBackupExportController)).toEqual([EformsignBackupExportGuard]);
         expect(Reflect.getMetadata("__exceptionFilters__", EformsignBackupExportController)).toEqual([EformsignBackupExportExceptionFilter]);
         expect(Reflect.getMetadata("path", EformsignBackupExportController)).toBe("internal/eformsign-backup/v1");
+    });
+});
+
+describe("EformsignBackupExportController artifact slot lifetime (direct)", () => {
+    class FakeResponse extends EventEmitter {
+        destroyed = false;
+        writableFinished = false;
+        readonly calls: string[] = [];
+        constructor(private readonly failOnHeader: string | null = null) { super(); }
+        setHeader(name: string): void {
+            this.calls.push(`setHeader:${name}`);
+            if (name === this.failOnHeader) throw new Error("header rejected");
+        }
+        status(): this { this.calls.push("status"); return this; }
+        end(): void { this.calls.push("end"); }
+    }
+
+    const viewWith = (release: () => void) => ({
+        bytes: Buffer.from("x"), contentType: "application/pdf", byteSize: 1, sha256: "f".repeat(64), artifactIdentity: IDENTITY, release,
+    });
+
+    function arrange(response: FakeResponse, release: jest.Mock) {
+        const service = { readArtifact: jest.fn().mockResolvedValue(viewWith(release)) };
+        const controller = new EformsignBackupExportController(service as unknown as EformsignBackupExportService);
+        const req = { eformsignBackupExportPrincipal: PRINCIPAL, eformsignBackupExportRequestId: "req-1" };
+        const call = () => controller.readArtifact(req as never, response as never, SNAPSHOT_ID, IDENTITY);
+        return { call, service };
+    }
+
+    it("registers the close listener before any header or body, and releases only on close", async () => {
+        const response = new FakeResponse();
+        const release = jest.fn();
+        const registered: string[] = [];
+        const original = response.once.bind(response);
+        response.once = ((event: string, listener: () => void) => {
+            registered.push(`once:${event}@${response.calls.length}`);
+            return original(event, listener);
+        }) as typeof response.once;
+        const { call } = arrange(response, release);
+
+        await call();
+
+        expect(response.calls).toContain("end");
+        // the listener is registered after the two stamp headers but before the status, the artifact headers and `end`
+        expect(registered).toEqual(["once:close@2"]);
+        expect(release).not.toHaveBeenCalled(); // `end` alone does not free the slot
+        response.emit("close");
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases exactly once even if close fires twice", async () => {
+        const response = new FakeResponse();
+        const release = jest.fn();
+        await arrange(response, release).call();
+        response.emit("close");
+        response.emit("close");
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases when the write path throws, and not a second time on the later close", async () => {
+        const response = new FakeResponse("X-Content-Sha256");
+        const release = jest.fn();
+        await expect(arrange(response, release).call()).rejects.toThrow("header rejected");
+        expect(release).toHaveBeenCalledTimes(1);
+        response.emit("close");
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases immediately when the client was already gone before the artifact arrived", async () => {
+        const response = new FakeResponse();
+        response.destroyed = true; // `close` already fired while the service was reading; it never fires again
+        const release = jest.fn();
+        await arrange(response, release).call();
+        expect(release).toHaveBeenCalledTimes(1);
     });
 });

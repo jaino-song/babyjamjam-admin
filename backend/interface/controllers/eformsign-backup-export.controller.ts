@@ -174,15 +174,31 @@ export class EformsignBackupExportController {
     ): Promise<void> {
         this.stamp(request, response);
         const artifact = await this.service.readArtifact(principalOf(request), snapshotId, artifactIdentity);
-        const contentType = SAFE_CONTENT_TYPE.test(artifact.contentType) ? artifact.contentType : "application/pdf";
-        response.status(HttpStatus.OK);
-        response.setHeader("Content-Type", contentType);
-        response.setHeader("Content-Length", String(artifact.bytes.length));
-        response.setHeader("X-Artifact-Identity", artifact.artifactIdentity);
-        response.setHeader("X-Content-Sha256", artifact.sha256);
-        // The file name is the identity: a document title or customer name never reaches a header.
-        response.setHeader("Content-Disposition", `attachment; filename="${artifact.artifactIdentity}.pdf"`);
-        response.end(artifact.bytes);
+        // The slot is held until the response is over, not until the bytes are in memory (contract 3.5 #3b).
+        // `close` fires after `finish` and also when the client aborts; the guard makes a second call harmless.
+        let released = false;
+        const release = (): void => {
+            if (released) return;
+            released = true;
+            artifact.release();
+        };
+        try {
+            response.once("close", release);
+            // A client that left while the service was reading has already had its `close`; it will not come again.
+            if (response.destroyed) release();
+            const contentType = SAFE_CONTENT_TYPE.test(artifact.contentType) ? artifact.contentType : "application/pdf";
+            response.status(HttpStatus.OK);
+            response.setHeader("Content-Type", contentType);
+            response.setHeader("Content-Length", String(artifact.bytes.length));
+            response.setHeader("X-Artifact-Identity", artifact.artifactIdentity);
+            response.setHeader("X-Content-Sha256", artifact.sha256);
+            // The file name is the identity: a document title or customer name never reaches a header.
+            response.setHeader("Content-Disposition", `attachment; filename="${artifact.artifactIdentity}.pdf"`);
+            response.end(artifact.bytes);
+        } catch (error) {
+            release();
+            throw error;
+        }
     }
 
     private stamp(request: EformsignBackupExportRequest, response: Response): void {

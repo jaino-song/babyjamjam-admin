@@ -268,6 +268,7 @@ describeReal("EformsignBackupExportService (real PostgreSQL)", () => {
                     expect(view.sha256).toBe(artifact.sha256);
                     expect(view.byteSize).toBe(artifact.byteSize);
                     expect(view.artifactIdentity).toBe(artifact.artifactIdentity);
+                    view.release(); // the slot is held until the response ends
                     served++;
                 }
             }
@@ -421,6 +422,7 @@ describeReal("EformsignBackupExportService (real PostgreSQL)", () => {
             const served = await service.readArtifact(PRINCIPAL, snapshotId, identityOf("D002", "document"));
             expect(served.bytes.equals(D002.document)).toBe(true);
             expect(served.sha256).toBe(sha(D002.document));
+            served.release();
 
             // #9 CONSISTENCY_CONFLICT: stored sha/size still match the snapshot, the bytes do not
             // (equal length, so the byte_size = octet_length(content) CHECK is satisfied).
