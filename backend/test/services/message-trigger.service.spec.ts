@@ -3686,6 +3686,34 @@ describe("MessageTriggerService", () => {
             expect(updateMany).not.toHaveBeenCalled();
         });
 
+        it("returns a resend to needs_setup with a 409 when the recipient flag flips off after the claim", async () => {
+            const fx = resendFixture();
+            const { world } = attachSafeguard(fx, { clientDefault: true });
+            const claim = fx.jobRepository.claimNeedsSetupWithRuleFence.getMockImplementation();
+            fx.jobRepository.claimNeedsSetupWithRuleFence.mockImplementation(async (...args: unknown[]) => {
+                const token = claim ? await (claim as (...a: unknown[]) => Promise<unknown>)(...args) : "claim-a";
+                world.clientDefault = false;
+                return token;
+            });
+            const sql: string[] = [];
+            const queryRaw = fx.transaction.$queryRaw.getMockImplementation();
+            fx.transaction.$queryRaw.mockImplementation(async (query: { strings?: readonly string[] }, ...rest: unknown[]) => {
+                sql.push((query.strings ?? []).join("?"));
+                return queryRaw ? queryRaw(query, ...rest) : [{ id: fx.job.id, status: "processing", claim_token: "claim-a" }];
+            });
+
+            const failure = await fx.service.resendNeedsSetupJob(branchId, fx.job.id).catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+            expect(fx.job.status).toBe("needs_setup");
+            expect(fx.job.cancelReason).toBe(SETUP_REASON);
+            expect(sql.some((text) => text.includes("SET status = 'needs_setup'"))).toBe(true);
+            expect(sql.some((text) => text.includes("SET status = 'canceled'"))).toBe(false);
+            expect(fx.writtenStatuses).not.toContain("canceled");
+        });
+
         it("still sends an admin resend when rule, recipient and branch all allow it", async () => {
             const fx = resendFixture();
             attachSafeguard(fx, { clientDefault: true });

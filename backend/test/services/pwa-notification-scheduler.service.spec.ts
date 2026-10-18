@@ -241,6 +241,7 @@ describe("PwaNotificationSchedulerService", () => {
         expect(section?.details?.[0]).toContain("필수 정보 누락 (name)");
         expect(section?.notificationItems?.[0]).toMatchObject({
             title: "메시지 추가 정보 필요", data: { jobId: "job-setup" },
+            body: expect.stringContaining("메시지에 추가 정보가 필요합니다."),
         });
     });
 

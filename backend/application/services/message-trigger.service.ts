@@ -506,7 +506,9 @@ type ClientRuleJobCandidate = {
 
 type PreProviderSendFenceResult =
     | { kind: "allow" }
-    | { kind: "stale"; reason: string }
+    // returnedToNeedsSetup: a resend refused at the final gate went back to
+    // '추가 정보 필요' instead of being canceled.
+    | { kind: "stale"; reason: string; returnedToNeedsSetup?: true }
     | { kind: "lost" };
 
 const SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON = "제공기록지 링크가 철회되어 발송하지 않았습니다";
@@ -3111,9 +3113,13 @@ export class MessageTriggerService {
                 sendPreparedJob?: unknown;
             }).sendPreparedJob === "function";
         if (!supportsPreparedDelivery) {
-            const authorization = await this.authorizeClaimedJobForDispatch(job, undefined, skipSafeguard);
+            const authorization = await this.authorizeClaimedJobForDispatch(job, undefined, skipSafeguard, resend);
             if (authorization.kind === "lost") {
                 return true;
+            }
+            if (authorization.kind === "stale" && authorization.returnedToNeedsSetup) {
+                job.markNeedsSetup(job.cancelReason ?? authorization.reason);
+                return false;
             }
             if (authorization.kind === "stale") {
                 job.cancel(authorization.reason);
@@ -3161,9 +3167,13 @@ export class MessageTriggerService {
             return true;
         }
 
-        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation, skipSafeguard);
+        const authorization = await this.authorizeClaimedJobForDispatch(job, preparation, skipSafeguard, resend);
         if (authorization.kind === "lost") {
             return true;
+        }
+        if (authorization.kind === "stale" && authorization.returnedToNeedsSetup) {
+            job.markNeedsSetup(job.cancelReason ?? authorization.reason);
+            return false;
         }
         if (authorization.kind === "stale") {
             // The authorization transaction already invalidated this claim
@@ -3377,6 +3387,7 @@ export class MessageTriggerService {
         job: MessageTriggerJobEntity,
         preparation?: SmsTriggerDeliveryPreparation,
         skipSafeguard = false,
+        resend = false,
     ): Promise<PreProviderSendFenceResult> {
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
             if (
@@ -3453,6 +3464,25 @@ export class MessageTriggerService {
                         : linkTokenFence.kind === "stale"
                             ? linkTokenFence
                             : null;
+            if (resend && safeguardFence.kind === "stale") {
+                // A resend refused by the safeguard after its claim goes back to
+                // '추가 정보 필요' with its setup reason kept, exactly like a
+                // refusal at claim time, so the admin can resend it later.
+                const returned = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                    UPDATE "message_trigger_job"
+                    SET status = 'needs_setup',
+                        claim_token = NULL,
+                        next_attempt_at = NULL,
+                        updated_at = date_trunc('milliseconds', clock_timestamp())
+                    WHERE id = ${job.id}
+                      AND status = 'processing'
+                      AND claim_token = ${job.claimToken}
+                    RETURNING id
+                `);
+                return returned.length === 1
+                    ? { kind: "stale" as const, reason: safeguardFence.reason, returnedToNeedsSetup: true as const }
+                    : { kind: "lost" as const };
+            }
             if (staleFence) {
                 const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     UPDATE "message_trigger_job"
