@@ -13,6 +13,7 @@ import {
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import {
     MESSAGE_LOG_STATUS_BADGE_VARIANT,
+    MESSAGE_JOB_RESEND_COPY,
     MESSAGE_HISTORY_STATUS_LABELS,
     MESSAGE_RECORD_REASON_LABEL,
     MESSAGE_RECIPIENT_LABELS,
@@ -33,9 +34,14 @@ import {
 import type { Client } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { canRetryFailedHistory, canResendSetupJob, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
 import {
     useClientMessageHistory,
     useClientUpcomingMessageTriggerJobs,
+    useRetryMessageHistory,
+    useResendMessageTriggerJob,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import type {
     ClientUpcomingMessageTriggerJob,
@@ -1031,6 +1037,10 @@ function ClientMessageDetailSlide({
     children,
     dataComponentPrefix,
     messageHistoryDataComponentPrefix,
+    canRetry,
+    isRetrying,
+    onRetry,
+    retryPendingLabel,
 }: {
     isMessageDetailActive: boolean;
     selectedRecord: MessageHistoryRecord | null;
@@ -1038,6 +1048,10 @@ function ClientMessageDetailSlide({
     children: ReactNode;
     dataComponentPrefix: string;
     messageHistoryDataComponentPrefix: string;
+    canRetry: boolean;
+    isRetrying: boolean;
+    onRetry: () => void;
+    retryPendingLabel?: string;
 }) {
     const shouldRenderMessageDetail = selectedRecord !== null;
 
@@ -1078,6 +1092,10 @@ function ClientMessageDetailSlide({
                     {shouldRenderMessageDetail ? (
                         <MessageHistoryDetailPanel
                             selectedRecord={selectedRecord}
+                            canRetry={canRetry}
+                            isRetrying={isRetrying}
+                            onRetry={onRetry}
+                            retryPendingLabel={retryPendingLabel}
                             backAction={{
                                 label: "고객 상세로 돌아가기",
                                 onClick: onBack,
@@ -1347,6 +1365,21 @@ function ClientDetailPanelBody({
         });
     }, [activeDetailTab, client.name, selectedClientMessageRecord]);
 
+    const canManageMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+    const retryMessageMutation = useRetryMessageHistory(client.id);
+    const resendMessageMutation = useResendMessageTriggerJob(client.id);
+    const canResendMessage = canResendSetupJob(selectedClientMessageRecord, canManageMessages);
+    const canRetryMessage = canRetryFailedHistory(selectedClientMessageRecord, canManageMessages) || canResendMessage;
+    const handleRetryMessage = async () => {
+        if (!selectedClientMessageRecord || !canRetryMessage || retryMessageMutation.isPending || resendMessageMutation.isPending) return;
+        if (canResendMessage && selectedClientMessageRecord.triggerJobId) {
+            toast(await resendMessageTriggerJob(resendMessageMutation.mutateAsync, selectedClientMessageRecord.triggerJobId));
+            return;
+        }
+        if (typeof selectedClientMessageRecord.id !== "number") return;
+        toast(await retryMessageHistory(retryMessageMutation.mutateAsync, selectedClientMessageRecord.id));
+    };
+
     useEffect(() => {
         return () => {
             if (clearMessageHistorySelectionTimeoutRef.current) {
@@ -1506,6 +1539,10 @@ function ClientDetailPanelBody({
             onBack={handleClientMessageHistoryDetailBack}
             dataComponentPrefix={dataComponentPrefix}
             messageHistoryDataComponentPrefix={messageHistoryDataComponentPrefix}
+            canRetry={canRetryMessage}
+            isRetrying={retryMessageMutation.isPending || resendMessageMutation.isPending}
+            onRetry={() => void handleRetryMessage()}
+            retryPendingLabel={canResendMessage ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
         >
             <DetailPanel
                 data-component={dataComponentPrefix}

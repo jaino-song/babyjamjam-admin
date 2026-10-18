@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
@@ -11,6 +11,13 @@ import type {
 import { eformsignApi } from "@/services/api";
 
 const mockUseClientMessageHistory = jest.fn();
+const mockRetryHistory = jest.fn();
+const mockResendJob = jest.fn();
+const mockToast = jest.fn();
+let mockMessageBranchRole = "manager";
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => ({ data: { role: "user", branchRole: mockMessageBranchRole } }),
+}));
 const mockUseClientUpcomingMessageTriggerJobs = jest.fn();
 const mockUseClientServiceRecords = jest.fn();
 const mockUseClientServiceRecordRevisionHistory = jest.fn();
@@ -27,6 +34,8 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+    useRetryMessageHistory: () => ({ mutateAsync: mockRetryHistory, isPending: false }),
+    useResendMessageTriggerJob: () => ({ mutateAsync: mockResendJob, isPending: false }),
     useClientMessageHistory: (...args: unknown[]) => mockUseClientMessageHistory(...args),
     useClientUpcomingMessageTriggerJobs: (...args: unknown[]) => mockUseClientUpcomingMessageTriggerJobs(...args),
 }));
@@ -42,7 +51,7 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
-    useToast: () => ({ toast: jest.fn() }),
+    useToast: () => ({ toast: mockToast }),
 }));
 
 jest.mock("@/services/api", () => ({
@@ -60,6 +69,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         failed: { avatarClass: "status-avatar-failed" },
         pending: { avatarClass: "status-avatar-pending" },
         canceled: { avatarClass: "status-avatar-canceled" },
+        needs_setup: { avatarClass: "status-avatar-needs-setup" },
     },
     normalizeMessageHistoryRecord: (record: MessageLogRecord, options: { recipientNameFallback?: string; recipientListLabelFallback?: string }) => ({
         id: record.id,
@@ -77,8 +87,8 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         recipientType: record.recipientType,
         icon: () => <span aria-hidden="true">아이콘</span>,
     }),
-    MessageHistoryDetailPanel: ({ selectedRecord }: { selectedRecord: { messagePreview: string } | null }) => selectedRecord ? (
-        <div data-testid="message-history-detail-body">{selectedRecord.messagePreview}</div>
+    MessageHistoryDetailPanel: ({ selectedRecord, canRetry, onRetry }: { selectedRecord: { messagePreview: string } | null; canRetry?: boolean; onRetry?: () => void }) => selectedRecord ? (
+        <div data-testid="message-history-detail-body">{selectedRecord.messagePreview}{canRetry ? <button onClick={onRetry}>재발송</button> : null}</div>
     ) : null,
 }));
 
@@ -324,6 +334,9 @@ function renderPanel(layout: "desktop" | "mobile" = "desktop") {
 describe("ClientDetailPanel messages tab", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockMessageBranchRole = "manager";
+        mockRetryHistory.mockResolvedValue({ status: "sent" });
+        mockResendJob.mockResolvedValue({ status: "sent" });
         (eformsignApi.getDocumentsByClientId as jest.Mock).mockResolvedValue([]);
         mockServiceRecordsTabProps.length = 0;
         mockUseClientServiceRecords.mockReturnValue({ data: undefined, isError: false, isLoading: false, isPaused: false });
@@ -370,6 +383,38 @@ describe("ClientDetailPanel messages tab", () => {
             expect(zone.getAttribute("data-source-component")).not.toBe("InfoCard");
             expect(zone.querySelector('[data-source-component="InfoCard"]')).toBeNull();
         });
+    });
+
+    function openRecord(record: MessageLogRecord) {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([record]));
+        openMessagesTab();
+        fireEvent.click(screen.getByRole("heading", { name: record.ruleName! }).closest('[role="button"]')!);
+    }
+
+    it("retries a failed client log using its log id, not its trigger job id", async () => {
+        openRecord(failedHistoryRecord);
+        fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+        await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(11));
+        expect(mockResendJob).not.toHaveBeenCalled();
+        await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" }));
+    });
+
+    it("resends a needs_setup job with its trigger job id", async () => {
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", triggerJobId: "job-setup" });
+        fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+        await waitFor(() => expect(mockResendJob).toHaveBeenCalledWith("job-setup"));
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+    });
+
+    it.each(["sent", "pending", "canceled", "needs_setup"] as const)("does not retry an ineligible %s log", status => {
+        openRecord({ ...historyRecord, status });
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+    });
+
+    it("does not offer retry without branch management permission", () => {
+        mockMessageBranchRole = "staff";
+        openRecord(failedHistoryRecord);
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
     });
 
     it("keeps the body out of list rows while preserving the selected detail view", () => {

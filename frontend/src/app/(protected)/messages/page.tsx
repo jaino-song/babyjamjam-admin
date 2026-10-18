@@ -1,5 +1,5 @@
 "use client";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { canRetryFailedHistory, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 
 import {
@@ -938,10 +938,7 @@ function MessageHistorySection() {
     }
   }, []);
 
-  const failedLog = canManageBranchMessages
-    && !!selectedRecord
-    && typeof selectedRecord.id === "number"
-    && selectedRecord.status === "failed";
+  const failedLog = canRetryFailedHistory(selectedRecord, canManageBranchMessages);
   // A needs_setup job is re-sent by hand once its cause is fixed (resend endpoint);
   // it is a job row, never a numeric log id.
   const needsSetupJob = canManageBranchMessages
@@ -953,62 +950,13 @@ function MessageHistorySection() {
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord || typeof selectedRecord.id !== "number") return;
-
-    try {
-      const retriedRecord = await retryHistory(selectedRecord.id);
-
-      if (retriedRecord.status === "failed") {
-        // Upstream status detail is never forwarded; locally authored copy
-        // covers the failed retry outcome.
-        toast({ variant: "destructive", description: "메시지를 재발송하지 못했어요" });
-        return;
-      }
-
-      toast({ variant: "success", description: "재발송 요청을 접수했어요" });
-    } catch (error) {
-      // Registered problem message (verified) or locally authored copy —
-      // upstream internals are never rendered.
-      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-      toast({
-        variant: "destructive",
-        description: normalized.verified ? normalized.message : "재발송을 요청하지 못했어요",
-      });
-    }
+    toast(await retryMessageHistory(retryHistory, selectedRecord.id));
   }, [retryHistory, selectedRecord, toast]);
 
   const handleResendJob = useCallback(async () => {
     if (!selectedRecord?.triggerJobId) return;
 
-    try {
-      const result = await resendMutation.mutateAsync(selectedRecord.triggerJobId);
-
-      if (result.status === "sent") {
-        toast({ variant: "success", description: MESSAGE_JOB_RESEND_COPY.success });
-      } else if (result.status === "needs_setup") {
-        toast({ variant: "destructive", description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup });
-      } else if (result.status === "canceled") {
-        toast({
-          variant: "destructive",
-          description: result.reason
-            ? `${MESSAGE_JOB_RESEND_COPY.notSent} ${result.reason}`
-            : MESSAGE_JOB_RESEND_COPY.notSent,
-        });
-      } else {
-        toast({ variant: "destructive", description: MESSAGE_JOB_RESEND_COPY.failure });
-      }
-    } catch (error) {
-      // The backend's own conflict sentence never reaches the client; a 409 is the
-      // only signal that the job is no longer resendable.
-      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-      toast({
-        variant: "destructive",
-        description: normalized.status === 409
-          ? MESSAGE_JOB_RESEND_COPY.conflict
-          : normalized.verified
-            ? normalized.message
-            : MESSAGE_JOB_RESEND_COPY.failure,
-      });
-    }
+    toast(await resendMessageTriggerJob(resendMutation.mutateAsync, selectedRecord.triggerJobId));
   }, [resendMutation, selectedRecord, toast]);
 
   const handleRetryOrResend = useCallback(() => {

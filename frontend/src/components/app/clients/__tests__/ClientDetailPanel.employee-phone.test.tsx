@@ -20,6 +20,8 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+    useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }),
+    useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }),
     useClientMessageHistory: () => ({
         items: [],
         isError: false,

@@ -1,4 +1,5 @@
 "use client";
+import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 import { useMemo, useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -31,7 +32,6 @@ import {
   isSmsHistoryRecord,
   isSmsTriggerTemplate,
   normalizeMessageHistoryPresentation,
-  getUserErrorMessage,
   type MessageRecordStatusFilter,
   type MessageSectionId,
 } from "@babyjamjam/shared";
@@ -357,20 +357,6 @@ function getJobReasonText(job: UpcomingMessageTriggerJob): string {
 function getRecordReasonText(record: MessageLogRecord): string {
   if (record.status !== "failed" && record.status !== "canceled") return "";
   return formatMessageFailureReason(record.errorMessage);
-}
-
-// A trigger-job history row (`id: "job:<uuid>"`, `provider: "message_job"`) that
-// stopped on a settings reason can be re-sent by hand. The resend endpoint takes
-// the bare job uuid, never the prefixed row id.
-function getResendableJobId(record: MessageLogRecord | null): string | null {
-  if (
-    !record
-    || record.provider !== "message_job"
-    || record.status !== "needs_setup"
-  ) {
-    return null;
-  }
-  return record.triggerJobId?.trim() ? record.triggerJobId : null;
 }
 
 const MANUAL_SCHEDULED_RULE_ID_PREFIX = "manual-sms:";
@@ -848,20 +834,7 @@ export function MessagesHistoryPage() {
     if (typeof retryTarget.id !== "number") return;
 
     try {
-      const retriedRecord = await retryMutation.mutateAsync(retryTarget.id);
-      if (retriedRecord.status === "failed") {
-        throw new Error(retriedRecord.errorMessage || "메시지를 재발송하지 못했어요");
-      }
-
-      toast({ variant: "success", description: "재발송 요청을 접수했어요" });
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        description: getUserErrorMessage(
-          error,
-          error instanceof Error ? error.message : "재발송을 요청하지 못했어요",
-        ),
-      });
+      toast(await retryMessageHistory(retryMutation.mutateAsync, retryTarget.id));
     } finally {
       setRetryTarget(null);
     }
@@ -913,11 +886,7 @@ export function MessagesHistoryPage() {
   const selectedCancelReason = selectedRecord && normalizedSelectedRecord?.status === "canceled"
     ? getRecordReasonText(selectedRecord)
     : "";
-  const canRetrySelectedRecord = canManageBranchMessages && Boolean(
-    selectedRecord
-    && typeof selectedRecord.id === "number"
-    && selectedRecord.status === "failed",
-  );
+  const canRetrySelectedRecord = canRetryFailedHistory(selectedRecord, canManageBranchMessages);
   const canResendSelectedJob = canManageBranchMessages && getResendableJobId(selectedRecord) !== null;
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
   const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
