@@ -13,7 +13,7 @@ export class UserEntity {
         public emailVerified: boolean,
         public emailVerifiedAt: Date | null,
         public authProvider: AuthProvider,
-        /** Per-user switch for automatic SMS; written only through the dedicated service method. */
+        /** Per-user switch for automatic SMS; written by approve and the dedicated service method, never by the entity-wide update. */
         public smsAutomationEnabled: boolean = true,
     ) {}
 

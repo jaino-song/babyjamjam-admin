@@ -112,6 +112,19 @@ describe("UserService", () => {
             expect(prismaService.auth_session.updateMany.mock.invocationCallOrder[0])
                 .toBeGreaterThan(prismaService.user_branch.deleteMany.mock.invocationCallOrder[0] ?? Infinity);
         });
+        it("selects smsAutomationEnabled and reports a stored false in the directory item", async () => {
+            prismaService.user.findMany.mockResolvedValue([{
+                id: "u1", email: null, name: "Opted Out", phone: null, birthDate: null, profileImage: null,
+                role: "user", createdAt: new Date("2026-01-01"), emailVerified: true, authProvider: "email",
+                approvalStatus: "approved", requestedRole: null, smsAutomationEnabled: false, userBranches: [],
+            }]);
+
+            const result = await service.findDirectory({ callerRole: "owner" });
+
+            expect(prismaService.user.findMany.mock.calls[0][0].select).toMatchObject({ smsAutomationEnabled: true });
+            expect(result[0]?.smsAutomationEnabled).toBe(false);
+        });
+
         it("should query without a where clause when no filters are provided (owner caller)", async () => {
             await service.findDirectory({ callerRole: "owner" });
 

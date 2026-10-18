@@ -2230,6 +2230,22 @@ describe("ClientService", () => {
     // ============================================
     // update
     // ============================================
+    describe("smsAutomationEnabled in responses", () => {
+        it("reports a stored false in the list and detail outputs", async () => {
+            const optedOut = createClientEntity();
+            optedOut.smsAutomationEnabled = false;
+            prismaService.eformsign_doc.findMany.mockResolvedValue([]);
+            listClientsUsecase.execute.mockResolvedValue([optedOut]);
+            findClientByIdUsecase.execute.mockResolvedValue(optedOut);
+
+            const [listed] = await service.findAll(branchId);
+            const detail = await service.findById(branchId, optedOut.id);
+
+            expect(listed?.smsAutomationEnabled).toBe(false);
+            expect(detail?.smsAutomationEnabled).toBe(false);
+        });
+    });
+
     describe("update", () => {
         it("rejects malformed phone before reading or mutating the client", async () => {
             await expect(service.update(branchId, 1, { phone: "not-a-phone" }))
