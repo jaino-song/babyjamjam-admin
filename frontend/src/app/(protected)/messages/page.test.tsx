@@ -4,7 +4,7 @@ import { fireEvent, render as renderView, screen, waitFor, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createContext, useContext, type ReactElement, type ReactNode } from "react";
 import { AxiosError, AxiosHeaders } from "axios";
-import { MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
+import { MESSAGE_JOB_RESEND_BLOCKED_COPY, MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
 
 import MessagesPage from "./page";
 
@@ -1252,6 +1252,35 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
     await waitFor(() => expect(mockResendMutateAsync).toHaveBeenCalledTimes(1));
     expect(mockResendMutateAsync).toHaveBeenCalledWith(jobUuid);
     expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it.each(["rule", "recipient", "branch"] as const)(
+    "disables the 재발송 button with the %s hint and never resends when the safeguard blocks it",
+    (level) => {
+      mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: level })] });
+      render(<MessagesPage />);
+      goToHistorySection();
+      fireEvent.click(screen.getByText("설정고객"));
+
+      const button = getRetryButton();
+      expect(button).toBeDisabled();
+      const panel = getDetailPanel() as HTMLElement;
+      expect(within(panel).getByText(MESSAGE_JOB_RESEND_BLOCKED_COPY[level])).toBeInTheDocument();
+
+      fireEvent.click(button as HTMLButtonElement);
+      expect(mockResendMutateAsync).not.toHaveBeenCalled();
+      expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the 재발송 button enabled with no hint when the safeguard would pass", () => {
+    mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: null })] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+
+    expect(getRetryButton()).toBeEnabled();
+    expect(screen.queryByText(/재발송할 수 없어요/)).not.toBeInTheDocument();
   });
 
   it.each([

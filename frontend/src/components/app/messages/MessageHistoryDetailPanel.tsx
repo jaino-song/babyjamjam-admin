@@ -19,6 +19,7 @@ import {
   getMessageHistoryDetailStatusLabel,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_RECIPIENT_LABELS,
+  type MessageResendBlockedBy,
   MESSAGE_SETUP_REASON_LABEL,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
@@ -57,6 +58,9 @@ export interface MessageHistoryRecord {
   failureReason?: string;
   cancelReason?: string;
   setupReason?: string;
+  // Only for needs_setup rows: the SMS automation safeguard level that would
+  // refuse a resend, so the 재발송 button can be disabled up front.
+  resendBlockedBy?: MessageResendBlockedBy;
   // Id of the trigger job behind this row. A job row (`provider === "message_job"`)
   // carries it as its identity; a log row may also carry one.
   triggerJobId: string | null;
@@ -76,6 +80,8 @@ interface MessageHistoryDetailPanelProps {
   isRetrying?: boolean;
   onRetry?: () => void;
   retryPendingLabel?: string;
+  // When set, the retry button is disabled and this muted hint explains why.
+  retryDisabledReason?: string;
   backAction?: {
     label: ReactNode;
     onClick: () => void;
@@ -287,6 +293,7 @@ export function MessageHistoryDetailPanel({
   isRetrying = false,
   onRetry,
   retryPendingLabel = "재시도 중",
+  retryDisabledReason,
   backAction,
   emptyMessage = "발송 기록을 선택하면 상세 정보가 표시됩니다.",
   emptyIcon = Users,
@@ -339,18 +346,32 @@ export function MessageHistoryDetailPanel({
       }
       trailing={
         showRetry ? (
-          <Button
-            data-component={`${dataComponentPrefix}_detail-retry`}
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={onRetry}
-            disabled={isRetrying}
-            className="rounded-full"
+          <div
+            data-component={`${dataComponentPrefix}_detail-retry-group`}
+            className="flex flex-col items-end gap-1"
           >
-            <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-            {isRetrying ? retryPendingLabel : "재발송"}
-          </Button>
+            <Button
+              data-component={`${dataComponentPrefix}_detail-retry`}
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onRetry}
+              disabled={isRetrying || !!retryDisabledReason}
+              className="rounded-full"
+            >
+              <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
+              {isRetrying ? retryPendingLabel : "재발송"}
+            </Button>
+            {retryDisabledReason ? (
+              <p
+                data-component={`${dataComponentPrefix}_detail-retry-hint`}
+                data-slot="detail-retry-hint"
+                className="max-w-[16rem] text-right text-xs text-v3-text-muted"
+              >
+                {retryDisabledReason}
+              </p>
+            ) : null}
+          </div>
         ) : null
       }
     >

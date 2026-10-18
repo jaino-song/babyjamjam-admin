@@ -17,6 +17,7 @@ import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_HISTORY_STATUS_LABELS,
   MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_BLOCKED_COPY,
   MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
@@ -950,6 +951,11 @@ function MessageHistorySection() {
     && !!selectedRecord.triggerJobId
     && selectedRecord.status === "needs_setup";
   const canRetry = failedLog || needsSetupJob;
+  // The server refuses a resend while a safeguard level is off; say so up front
+  // instead of letting the admin hit the 409.
+  const retryDisabledReason = needsSetupJob && selectedRecord?.resendBlockedBy
+    ? MESSAGE_JOB_RESEND_BLOCKED_COPY[selectedRecord.resendBlockedBy]
+    : undefined;
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord || typeof selectedRecord.id !== "number") return;
@@ -1013,11 +1019,12 @@ function MessageHistorySection() {
 
   const handleRetryOrResend = useCallback(() => {
     if (needsSetupJob) {
+      if (retryDisabledReason) return;
       void handleResendJob();
       return;
     }
     void handleRetry();
-  }, [handleResendJob, handleRetry, needsSetupJob]);
+  }, [handleResendJob, handleRetry, needsSetupJob, retryDisabledReason]);
 
   // Only a pending trigger job can be canceled (POST /message-trigger-jobs/:id/cancel
   // refuses processing/sent/canceled/missing jobs), and manual scheduled entries
@@ -1531,6 +1538,7 @@ function MessageHistorySection() {
           isRetrying={isRetrying || resendMutation.isPending}
           onRetry={handleRetryOrResend}
           retryPendingLabel={needsSetupJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
+          retryDisabledReason={retryDisabledReason}
         />
       )}
     </SplitLayout>

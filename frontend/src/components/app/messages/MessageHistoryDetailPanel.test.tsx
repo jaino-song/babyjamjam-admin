@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { MESSAGE_JOB_RESEND_BLOCKED_COPY } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
 
 import {
@@ -170,6 +171,53 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     const button = screen.getByRole("button", { name: "재발송 중" });
     expect(button).toBeDisabled();
     expect(screen.queryByRole("button", { name: "재시도 중" })).not.toBeInTheDocument();
+  });
+
+  it("carries resendBlockedBy through normalization for a needs_setup job only", () => {
+    const blocked = normalizeMessageHistoryRecord({ ...needsSetupJobRow, resendBlockedBy: "branch" });
+    expect(blocked.resendBlockedBy).toBe("branch");
+    expect(normalizeMessageHistoryRecord(needsSetupJobRow).resendBlockedBy).toBeUndefined();
+    expect(
+      normalizeMessageHistoryRecord({ ...baseLog, resendBlockedBy: "branch" }).resendBlockedBy,
+    ).toBeUndefined();
+  });
+
+  it("disables the 재발송 button and shows the hint when a reason is given; click does not retry", () => {
+    const onRetry = jest.fn();
+    const { container } = render(
+      <MessageHistoryDetailPanel
+        selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+        dataComponentPrefix={prefix}
+        canRetry
+        onRetry={onRetry}
+        retryDisabledReason={MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onRetry).not.toHaveBeenCalled();
+
+    const hint = screen.getByText(MESSAGE_JOB_RESEND_BLOCKED_COPY.recipient);
+    expect(hint).toHaveClass("text-v3-text-muted");
+    expect(
+      container.querySelector(`[data-component="${prefix}_detail-retry-hint"]`),
+    ).toBe(hint);
+  });
+
+  it("shows an enabled 재발송 button and no hint without a disabled reason", () => {
+    render(
+      <MessageHistoryDetailPanel
+        selectedRecord={normalizeMessageHistoryRecord(needsSetupJobRow)}
+        dataComponentPrefix={prefix}
+        canRetry
+        onRetry={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
+    expect(screen.queryByText(/재발송할 수 없어요/)).not.toBeInTheDocument();
   });
 
   it("shows no 추가 필요 정보 row for a failed log and keeps the old retry labels", () => {
