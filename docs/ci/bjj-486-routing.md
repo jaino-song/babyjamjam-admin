@@ -56,6 +56,8 @@ aggregate evaluator/workflow remains unchanged and disabled; this adds no cross-
 | `frontend/src/components/app/clients/client-update-payload.ts` | Frontend and mobile (payload parity test) | Interaction, visual and responsive QA required |
 | `frontend/src/components/app/chat/parts/AgentPartRegistry.tsx` | Frontend and backend (agent manifest check) | Interaction, visual and responsive QA required |
 | `mobile/src/components/app/chat/MobileAgentPartRegistry.tsx` | Mobile and backend (agent manifest check) | Interaction, visual and responsive QA required |
+| `frontend/src/app/api/ai/chat/stream/route.ts` | Frontend and backend (legacy cutover sentinel) | Interaction, visual and responsive QA required |
+| `mobile/src/app/api/ai/chat/stream/route.ts` | Mobile and backend (legacy cutover sentinel) | Interaction, visual and responsive QA required |
 | `packages/shared` | Backend (including vendored runtime), frontend, mobile | Assessment required |
 | `packages/service-record-ui` | Frontend and mobile | Interaction, visual and responsive QA required |
 | Dependency/config/tooling/policy, unknown, native, executable, symlink or submodule changes | All three apps conservatively | Assessment required, or UI QA when UI also changed |
@@ -73,10 +75,13 @@ These inputs require QA assessment rather than an exemption. Ordinary `docs/guid
 
 Frontend imports backend DTOs through its `@/backend/*` alias. All non-exempt backend paths
 therefore also select frontend, conservatively paying for extra frontend checks on backend-only
-maintenance instead of claiming a complete transitive DTO dependency map. The payload and renderer
-edges are keyed to actual changed paths. Selecting backend because a mobile registry changed does
-not imply backend source changed, so that case does not also select frontend. Unrelated paths such
-as `frontend/src/components/app/clients/unrelated.ts` and
+maintenance instead of claiming a complete transitive DTO dependency map. Backend
+`agent:cutover:guard` reads `backend/agent-cutover-gate.json` and checks the two legacy chat stream
+route sentinels above; while legacy removal is unauthorized, deleting either must run backend
+checks. These exact paths select backend for any change, including deletion. The payload, renderer
+and sentinel edges are keyed to actual changed paths. Selecting backend because a mobile registry
+or sentinel changed does not imply backend source changed, so those cases do not also select
+frontend. Unrelated paths such as `frontend/src/components/app/clients/unrelated.ts` and
 `mobile/src/components/app/clients/unrelated.ts` retain single-app selection. New cross-app
 consumers must be added to this routing contract when introduced.
 

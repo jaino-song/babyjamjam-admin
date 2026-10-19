@@ -58,6 +58,11 @@ export function classifyPaths(paths, fullReason = null) {
         selected.backend = true;
         reasons.push('Backend agent manifest check reads the changed renderer registry');
       }
+      if (['frontend/src/app/api/ai/chat/stream/route.ts',
+        'mobile/src/app/api/ai/chat/stream/route.ts'].includes(path)) {
+        selected.backend = true;
+        reasons.push('Backend cutover guard checks the changed legacy chat stream sentinel');
+      }
       // Do not expand selected jobs as if their source files had changed.
 
       reasons.push(`${app} change requires its complete existing checks`);

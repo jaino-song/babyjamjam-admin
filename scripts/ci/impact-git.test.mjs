@@ -124,3 +124,20 @@ for (const path of ['backend/deploy/cloudrun/excluded-keys.txt', 'README.md', 'r
     assert.deepEqual(compareEvent(f.cwd,'pull_request',f.event(removedDocs,deleted),removedDocs).selected, {backend:false,frontend:false,mobile:false});
   });
 }
+
+for (const [path, expected] of [
+  ['frontend/src/app/api/ai/chat/stream/route.ts', {backend:true,frontend:true,mobile:false}],
+  ['mobile/src/app/api/ai/chat/stream/route.ts', {backend:true,frontend:false,mobile:true}],
+]) test(`real legacy chat stream sentinel deletion selects backend and owner: ${path}`, t => {
+  const f = fixture(t);
+  f.put(path, 'legacy stream sentinel\n'); const base = f.save();
+  f.git('rm', path); const head = f.save();
+  const r = compareEvent(f.cwd, 'pull_request', f.event(head, base), head);
+  assert.deepEqual(r.paths, [path]);
+  assert.deepEqual(r.selected, expected);
+  assert.equal(r.qa.status, 'interaction-visual-responsive-required');
+  // Exercise the protected-base loader as well as direct comparison.
+  const loaded = f.run(f.event(head, base));
+  assert.equal(loaded.status, 0, loaded.stderr);
+  assert.deepEqual(loaded.routing.selected, expected);
+});

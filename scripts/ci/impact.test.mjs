@@ -30,6 +30,8 @@ for (const [paths, expected, qa] of [
 // Independent expectations pin real consumers, not a closure over selected app jobs.
 for (const [path, expected, qa] of [
   ['backend/application/dto/contract.dto.ts', ['backend','frontend'], 'assessment-required'],
+  ['frontend/src/app/api/ai/chat/stream/route.ts', ['backend','frontend'], 'interaction-visual-responsive-required'],
+  ['mobile/src/app/api/ai/chat/stream/route.ts', ['backend','mobile'], 'interaction-visual-responsive-required'],
   ['frontend/src/components/app/clients/client-update-payload.ts', ['frontend','mobile'], 'interaction-visual-responsive-required'],
   ['frontend/src/components/app/chat/parts/AgentPartRegistry.tsx', ['backend','frontend'], 'interaction-visual-responsive-required'],
   ['mobile/src/components/app/chat/MobileAgentPartRegistry.tsx', ['backend','mobile'], 'interaction-visual-responsive-required'],
