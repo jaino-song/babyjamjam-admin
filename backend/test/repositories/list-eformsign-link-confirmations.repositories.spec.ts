@@ -57,7 +57,7 @@ describe("link confirmation repository reads", () => {
         const repository = new SbClientRepository(prisma);
         await repository.findPhoneMatches("B", ["5678", "9999", "5678"]);
         expect(findClients).toHaveBeenCalledWith({
-            where: { branchId: "B", OR: [{ phone: { endsWith: "5678" } }, { phone: { endsWith: "9999" } }] },
+            where: { branchId: "B", deletedAt: null, OR: [{ phone: { endsWith: "5678" } }, { phone: { endsWith: "9999" } }] },
             select: { id: true, branchId: true, name: true, phone: true, birthday: true },
         });
     });

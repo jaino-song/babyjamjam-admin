@@ -2912,6 +2912,14 @@ describe("MessageTriggerService", () => {
         for (const db of [fx.prisma, fx.transaction] as Array<Record<string, unknown>>) {
             Object.assign(db, models);
             db["message_trigger_job"] = { ...(db["message_trigger_job"] as object), updateMany };
+            // The deleted-client raw-phone lookup finds no tombstone; every other raw query (the claim) keeps its fixture.
+            const fixtureQueryRaw = db["$queryRaw"] as ((...args: unknown[]) => unknown) | undefined;
+            db["$queryRaw"] = jest.fn(async (...args: unknown[]) => {
+                const sql = (args[0] as { strings?: string[]; sql?: string } | undefined);
+                const text = sql?.sql ?? sql?.strings?.join("?") ?? "";
+                if (text.includes("deleted_at IS NOT NULL")) return [];
+                return fixtureQueryRaw?.(...args);
+            });
         }
         fx.messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async () => world.branchOn);
         const safeguard = new SmsAutomationSafeguardService(
