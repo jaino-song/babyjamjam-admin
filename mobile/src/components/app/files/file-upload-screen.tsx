@@ -21,6 +21,8 @@ import { useDocumentUploadCapabilities, useUploadDocument } from "@/hooks/use-do
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
@@ -108,7 +110,7 @@ export function FileUploadScreen() {
   const filePolicy = capabilities ?? DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES;
   const capabilitiesReady = Boolean(capabilities && !capabilitiesQuery.isPending && !capabilitiesQuery.isError
     && typeof capabilities.canChooseVisibilityScope === "boolean");
-  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches" | "">("");
+  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches">("branch");
   const visibilityScope = capabilities?.canChooseVisibilityScope ? chosenScope : "branch";
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -120,7 +122,9 @@ export function FileUploadScreen() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
 
-  const { data: fetchedCategories = [] } = useDocumentCategories();
+  const categoriesQuery = useDocumentCategories();
+  const { data: fetchedCategories = [] } = categoriesQuery;
+  const categoriesLoading = categoriesQuery.isLoading || (categoriesQuery.isPaused && categoriesQuery.data === undefined);
 
   const categories = useMemo<UploadCategory[]>(() => {
     return fetchedCategories.map((category) => ({
@@ -137,7 +141,7 @@ export function FileUploadScreen() {
   );
   const isUploading = uploadMutation.isPending || isNavigationPending;
   const selectionDisabled = isUploading || !capabilitiesReady;
-  const canSubmit = Boolean(selectedFile && name.trim() && selectedCategory && !selectionDisabled && visibilityScope);
+  const canSubmit = Boolean(selectedFile && name.trim() && selectedCategory && !selectionDisabled && categoriesQuery.isSuccess);
   const progress = isUploading ? Math.round(uploadProgress) : 0;
   const uploadedBytes = selectedFile ? Math.round((selectedFile.size * progress) / 100) : 0;
   const handleExit = () => {
@@ -205,7 +209,7 @@ export function FileUploadScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!canSubmit || !selectedFile || !selectedCategory || !visibilityScope) return;
+    if (!canSubmit || !selectedFile || !selectedCategory) return;
 
     try {
       setUploadProgress(0);
@@ -218,7 +222,7 @@ export function FileUploadScreen() {
         onProgress: setUploadProgress,
         visibilityScope,
       });
-      setChosenScope("");
+      setChosenScope("branch");
       toast({ description: "문서를 업로드했어요", variant: "success" });
       startNavigation();
       router.push("/files");
@@ -288,9 +292,9 @@ export function FileUploadScreen() {
                   <RadioGroupItem value="all_branches" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_all-branches_radio" />전 지점
                 </label>
               </RadioGroup>
-              {chosenScope && <p data-component="mobile_files-upload_screen_root_scroll_visibility-notice_helper">
+              <p data-component="mobile_files-upload_screen_root_scroll_visibility-notice_helper">
                 {chosenScope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다."}
-              </p>}
+              </p>
             </>
           ) : "이 파일은 현재 지점에서만 볼 수 있습니다."}
         </div>
@@ -388,7 +392,15 @@ export function FileUploadScreen() {
               카테고리 <span className={styles.required}>*</span>
             </label>
             <div data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid" className={styles.categoryGrid}>
-              {categories.map((category) => (
+              {categoriesLoading ? (
+                <Spinner role="status" aria-label="카테고리 불러오는 중"
+                  data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid_loading" />
+              ) : categoriesQuery.isError ? (
+                <QueryErrorState size="inline"
+                  dataComponent="mobile_files-upload_screen_root_scroll_category-card_row_grid_error"
+                  onRetry={() => { void categoriesQuery.refetch(); }}
+                  isRetrying={categoriesQuery.isFetching} />
+              ) : categories.map((category) => (
                 <button
                   key={category.id}
                   type="button"
@@ -406,7 +418,7 @@ export function FileUploadScreen() {
                   {category.label}
                 </button>
               ))}
-              {categories.length === 0 && (
+              {categoriesQuery.isSuccess && categories.length === 0 && (
                 <div
                   data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid_empty"
                   className={styles.formHelper}

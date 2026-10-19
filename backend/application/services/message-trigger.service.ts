@@ -78,6 +78,7 @@ import {
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
+import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
@@ -160,6 +161,13 @@ const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과"
 const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
 const USER_REQUESTED_CANCEL_REASON = "사용자가 발송을 취소함";
 const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없는 상태입니다";
+// A reschedule needs more than this much lead both before (current send time)
+// and after (new send time). The dispatcher's claim does not fence on
+// `scheduled_for`; the repository enforces the same minute in SQL.
+const RESCHEDULE_MIN_LEAD_MS = 60_000;
+const RESCHEDULE_JOB_CONFLICT_MESSAGE = "1분 넘게 남은 대기 중인 문자만 바꿀 수 있어요.";
+const RESCHEDULE_JOB_NOT_AUTOMATIC_MESSAGE = "자동 발송 규칙으로 만든 대기 문자만 시간을 바꿀 수 있어요.";
+const RESCHEDULE_JOB_TOO_SOON_MESSAGE = "곧 발송될 예정이라 시간을 바꿀 수 없어요. 1분 넘게 남은 대기 중인 문자만 바꿀 수 있어요.";
 const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.";
 const RESEND_TARGET_CHANGED_REASON = "발송 대상 일정이 변경되어 재전송하지 않았습니다";
 const RESEND_NEWER_SIBLING_REASON = "새 예약 메시지가 있어 재전송하지 않았습니다";
@@ -1926,6 +1934,62 @@ export class MessageTriggerService {
         return { id, status: "canceled" };
     }
 
+    /**
+     * Debug/testing tool (owner-only at the controller): move one pending
+     * trigger job to a new send time so automatic SMS behaviour can be
+     * exercised without waiting. The branch-scoped read tells 404 from 409 and
+     * supplies the old time for the log; the update itself is conditional on
+     * `pending` and on the current send time being over a minute away, so a
+     * claim that wins the race turns this into a 409.
+     */
+    async rescheduleJobForDebug(
+        branchId: string,
+        id: string,
+        scheduledFor: Date,
+        actorUserId: string,
+    ): Promise<{ id: string; status: "pending"; scheduledFor: string }> {
+        await this.ensureTriggerSchemaReady();
+        if (Number.isNaN(scheduledFor.getTime()) || scheduledFor.getTime() <= Date.now() + RESCHEDULE_MIN_LEAD_MS) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/scheduledFor",
+                code: "INVALID_VALUE",
+                detail: "발송 시각은 지금부터 1분 넘게 이후여야 합니다.",
+                location: "body",
+            }));
+        }
+        const job = await this.jobRepository.findByIdInBranch(branchId, id);
+        if (!job) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        if (job.status !== "pending") {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_CONFLICT_MESSAGE });
+        }
+        // Fail closed: a sealed agent-automation job (its send time is part of
+        // the authority digest, so moving it would make dispatch cancel it) or a
+        // manual job is never moved. The key's presence is enough, even if null.
+        // The repository enforces the same exclusions in the UPDATE itself.
+        const payload = job.payload as unknown;
+        const sealed = !!payload && typeof payload === "object"
+            && Object.prototype.hasOwnProperty.call(payload, AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY);
+        if (sealed || isReservedAutomationJob(job) || isManualMessageTriggerJob(job)) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_NOT_AUTOMATIC_MESSAGE });
+        }
+        if (job.scheduledFor.getTime() <= Date.now() + RESCHEDULE_MIN_LEAD_MS) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_TOO_SOON_MESSAGE });
+        }
+        // The repository re-checks this against the database clock in the same
+        // statement; this read only gives a clearer error.
+        const moved = await this.jobRepository.rescheduleDebugPending(id, branchId, scheduledFor);
+        if (!moved) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_CONFLICT_MESSAGE });
+        }
+        const newIso = scheduledFor.toISOString();
+        this.logger.warn(
+            `[debug] message trigger job ${id} rescheduled ${job.scheduledFor.toISOString()} -> ${newIso} by ${actorUserId}`,
+        );
+        return { id, status: "pending", scheduledFor: newIso };
+    }
+
     async readClientAutomationSource(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
         return this.automationSources.readClientAutomationSource(branchId, clientId, transaction);
     }
@@ -2054,7 +2118,7 @@ export class MessageTriggerService {
         }
 
         const clients = await this.prisma.client.findMany({
-            where: { branchId, phone: { not: null } },
+            where: { branchId, phone: { not: null }, deletedAt: null },
             select: { id: true, phone: true, createdAt: true, suppressGreetingSms: true },
         });
         const clientsByPhone = new Map<string, typeof clients>();
@@ -2352,7 +2416,7 @@ export class MessageTriggerService {
         // Prisma's type inference does not correctly narrow the `area` relation type when
         // the select key is inside a conditional spread; cast to ClientTriggerSource[] explicitly.
         const clients = await (transaction ?? this.prisma).client.findMany({
-            where: { branchId },
+            where: { branchId, deletedAt: null },
             select: {
                 id: true,
                 name: true,

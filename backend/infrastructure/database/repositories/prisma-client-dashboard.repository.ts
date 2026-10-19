@@ -10,8 +10,8 @@ export class PrismaClientDashboardRepository implements IClientDashboardReposito
 
     async getSummary(branchId: string): Promise<ClientDashboardSummary> {
         const [totalClients, activeClients] = await Promise.all([
-            this.prisma.client.count({ where: { branchId } }),
-            this.prisma.client.count({ where: { branchId, serviceStatus: SERVICE_STATUS.ACTIVE } }),
+            this.prisma.client.count({ where: { branchId, deletedAt: null } }),
+            this.prisma.client.count({ where: { branchId, deletedAt: null, serviceStatus: SERVICE_STATUS.ACTIVE } }),
         ]);
         return { totalClients, activeClients };
     }

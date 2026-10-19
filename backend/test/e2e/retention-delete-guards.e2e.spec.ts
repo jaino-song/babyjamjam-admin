@@ -4,7 +4,6 @@ import { PrismaClient } from "@prisma/client";
 import { DeleteClientUsecase } from "application/usecases/client/delete-client.usecase";
 import { DeleteEmployeeScheduleUsecase } from "application/usecases/employee-schedule/delete-employee-schedule.usecase";
 import {
-    CLIENT_RETENTION_BLOCKED,
     SCHEDULE_RETENTION_BLOCKED,
     RetentionDeleteBlockedError,
     ScopedDeleteNotFoundError,
@@ -116,7 +115,12 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
         });
     };
 
+    // The tombstone cases below need CLIENT_TOMBSTONE_DELETE_ENABLED=true; it is read per
+    // delete, so setting it before the first delete and restoring it afterwards is enough.
+    const originalTombstoneSwitch = process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+
     beforeAll(async () => {
+        process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "true";
         await prisma.$connect();
         const created = await prisma.branch.create({
             data: { name: "Retention delete E2E", slug: unique("retention-branch") },
@@ -159,6 +163,8 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
     });
 
     afterAll(async () => {
+        if (originalTombstoneSwitch === undefined) delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+        else process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = originalTombstoneSwitch;
         await prisma.employee.deleteMany({ where: { branchId: branch.id } });
         await prisma.branch.delete({ where: { id: branch.id } });
         await prisma.$disconnect();
@@ -243,20 +249,20 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
                     clientId,
                 },
             })],
-        ])("returns CLIENT_RETENTION_BLOCKED for a retained %s", async (_label, createDependency) => {
+        ])("tombstones a client with a retained %s instead of deleting it", async (_label, createDependency) => {
             const client = await createClient();
             await createDependency(client.id);
 
-            await expect(deleteClient.execute(branch.id, client.id)).rejects.toMatchObject({
-                response: {
-                    code: CLIENT_RETENTION_BLOCKED,
-                },
-                status: 409,
-            });
-            await expect(prisma.client.findUnique({ where: { id: client.id } })).resolves.not.toBeNull();
+            await expect(deleteClient.execute(branch.id, client.id)).resolves.toBe("tombstoned");
+            const row = await prisma.client.findUnique({ where: { id: client.id } });
+            expect(row).not.toBeNull();
+            expect(row?.deletedAt).toBeInstanceOf(Date);
+            expect(row?.phoneNormalized).toBeNull();
+            await expect(clientRepository.findById(branch.id, client.id)).resolves.toBeNull();
+            await expect(deleteClient.execute(branch.id, client.id)).rejects.toBeInstanceOf(NotFoundException);
         });
 
-        it("blocks a client whose canonical e_doc_id still points at a retained document", async () => {
+        it("tombstones a client whose canonical e_doc_id still points at a retained document", async () => {
             const document = await createEformsignDoc();
             const client = await prisma.client.create({
                 data: {
@@ -268,13 +274,9 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
                 },
             });
 
-            await expect(deleteClient.execute(branch.id, client.id)).rejects.toMatchObject({
-                response: {
-                    code: CLIENT_RETENTION_BLOCKED,
-                },
-                status: 409,
-            });
-            await expect(prisma.client.findUnique({ where: { id: client.id } })).resolves.not.toBeNull();
+            await expect(deleteClient.execute(branch.id, client.id)).resolves.toBe("tombstoned");
+            const row = await prisma.client.findUnique({ where: { id: client.id } });
+            expect(row?.deletedAt).toBeInstanceOf(Date);
         });
 
         it("does not delete a client or mutate dependencies when the branch is wrong", async () => {
@@ -314,10 +316,11 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
                 && insertResult?.status === "rejected"
                 && remainingClient === null
                 && schedules.length === 0;
+            // The insert committed first: the client has history, so the delete tombstones it.
             const insertWon = insertResult?.status === "fulfilled"
-                && deleteResult?.status === "rejected"
-                && isRetentionBlocked(deleteResult.reason, CLIENT_RETENTION_BLOCKED)
-                && remainingClient !== null
+                && deleteResult?.status === "fulfilled"
+                && deleteResult.value === "tombstoned"
+                && remainingClient?.deletedAt != null
                 && schedules.length === 1;
             expect(deleteWon || insertWon).toBe(true);
         });
@@ -462,6 +465,20 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
         });
     });
 
+    it("refuses a client with history and writes nothing while the switch is off", async () => {
+        const client = await createClient();
+        await createSchedule(client.id);
+        process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "false";
+        try {
+            await expect(clientRepository.delete(branch.id, client.id)).rejects.toBeInstanceOf(RetentionDeleteBlockedError);
+        } finally {
+            process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "true";
+        }
+
+        const row = await prisma.client.findUnique({ where: { id: client.id } });
+        expect(row?.deletedAt).toBeNull();
+    });
+
     it("maps a branch-scoped missing client from the repository to 404", async () => {
         await expect(deleteClient.execute(branch.id, 999_999_999)).rejects.toBeInstanceOf(NotFoundException);
     });
@@ -470,9 +487,8 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
         const client = await createClient();
         await createSchedule(client.id);
 
-        await expect(clientRepository.delete(branch.id, client.id)).rejects.toMatchObject({
-            code: CLIENT_RETENTION_BLOCKED,
-        });
+        await expect(clientRepository.delete(branch.id, client.id)).resolves.toBe("tombstoned");
+        await expect(clientRepository.delete(branch.id, client.id)).rejects.toBeInstanceOf(ScopedDeleteNotFoundError);
         await expect(scheduleRepository.delete(branch.id, 999_999_999)).rejects.toBeInstanceOf(ScopedDeleteNotFoundError);
     });
 });

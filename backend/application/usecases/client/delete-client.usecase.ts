@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { clientCodeOnlyProblemBody } from "application/usecases/client/client-write-validation";
-import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, ClientDeleteOutcome, IClientRepository } from "domain/repositories/client.repository.interface";
 import {
     CLIENT_RETENTION_BLOCKED,
     CLIENT_RETENTION_BLOCKED_MESSAGE,
@@ -25,14 +25,14 @@ export class DeleteClientUsecase {
         private readonly clientRepository: IClientRepository,
     ) {}
 
-    async execute(branchid: string, id: number): Promise<void> {
+    async execute(branchid: string, id: number): Promise<ClientDeleteOutcome> {
         const client = await this.clientRepository.findById(branchid, id);
         if (!client) {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
         try {
-            await this.clientRepository.delete(branchid, id);
+            return await this.clientRepository.delete(branchid, id);
         } catch (error) {
             if (error instanceof ScopedDeleteNotFoundError) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));

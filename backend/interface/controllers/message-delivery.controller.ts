@@ -481,7 +481,7 @@ export class MessageDeliveryController {
                 throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
             const client = await this.prisma.client.findFirst({
-                where: { id: dto.clientId, branchId },
+                where: { id: dto.clientId, branchId, deletedAt: null },
                 select: { id: true, name: true, phone: true },
             });
             if (!client) {
@@ -541,17 +541,17 @@ export class MessageDeliveryController {
 
     private async findClientByPhone(branchId: string, phone: string): Promise<{ id: number; name: string | null } | null> {
         const client = await this.prisma.client.findFirst({
-            where: { branchId, phone },
+            where: { branchId, phone, deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         if (client && normalizePhone(client.phone) === phone) {
             return { id: client.id, name: client.name };
         }
         const clientModel = this.prisma.client as typeof this.prisma.client & {
-            findMany?: (args: { where: { branchId: string }; select: { id: true; name: true; phone: true } }) => Promise<Array<{ id: number; name: string | null; phone: string | null }>>;
+            findMany?: (args: { where: { branchId: string; deletedAt: null }; select: { id: true; name: true; phone: true } }) => Promise<Array<{ id: number; name: string | null; phone: string | null }>>;
         };
         if (typeof clientModel.findMany !== "function") return null;
-        const matches = await clientModel.findMany({ where: { branchId }, select: { id: true, name: true, phone: true } });
+        const matches = await clientModel.findMany({ where: { branchId, deletedAt: null }, select: { id: true, name: true, phone: true } });
         const match = matches.find((candidate) => normalizePhone(candidate.phone) === phone);
         return match ? { id: match.id, name: match.name } : null;
     }

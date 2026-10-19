@@ -40,7 +40,7 @@ import {
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
-import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { ordinaryAutomationJobSql, ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 
 type MessageTriggerJobPrismaRow = {
@@ -1648,6 +1648,50 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             if (isLockNotAvailable(error)) return { kind: "lock_timeout" };
             throw error;
         }
+    }
+
+    async rescheduleDebugPending(id: string, branchId: string, scheduledFor: Date): Promise<boolean> {
+        // Conditional on `pending` so it cannot race a claim (a claimed row is
+        // `processing`), and on the CURRENT `scheduled_for` being more than one
+        // minute away by the database clock. The dispatcher's claim fences only
+        // on status, not on `scheduled_for`: it selects due jobs, and if we moved
+        // a selected job before its claim ran, the claim would still succeed and
+        // preparation would then see the schedule mismatch as `lost`, leaving the
+        // job `processing`. The one-minute lead keeps this endpoint out of the
+        // dispatcher's way in practice, but it is not a fence: a row lock held
+        // past the lead, or a dispatcher clock more than a minute ahead, can
+        // still let a selected job be moved before its claim. That job then sits
+        // `processing` until the stale-processing reclaim (10 minutes) defers it
+        // back to `pending`, and its next claim runs the safeguard again — a late
+        // send, never a wrong one. Accepted for this owner-only debug tool
+        // (2026-10-19) instead of changing the claim every send goes through.
+        // Sealed agent-automation jobs and manual jobs are never moved: a sealed
+        // job's `scheduled_for` is part of its authority digest, so moving one
+        // makes dispatch cancel it (`automation-authority-unavailable`), and a
+        // manual job was scheduled by a person, not by an automation rule.
+        // `updateMany` cannot express `clock_timestamp()`, hence raw SQL. Keep
+        // the one-minute lead in step with RESCHEDULE_MIN_LEAD_MS in the service.
+        //
+        // `next_attempt_at` is cleared: due selection treats `null` as "no retry
+        // delay" and otherwise requires `next_attempt_at <= now`, so a stale retry
+        // delay would keep the moved job from being picked up at the new time.
+        const moved = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job"
+            SET scheduled_for = ${scheduledFor}::timestamptz,
+                next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${id}
+              AND branch_id = ${branchId}::uuid
+              AND status = 'pending'
+              AND scheduled_for > clock_timestamp() + interval '1 minute'
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+              AND NOT (payload ? ${AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY})
+              AND NOT ${manualMessageTriggerJobPredicate({
+                  templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
+              })}
+            RETURNING id
+        `);
+        return moved.length === 1;
     }
 
     private toCreate(job: MessageTriggerJobEntity) {

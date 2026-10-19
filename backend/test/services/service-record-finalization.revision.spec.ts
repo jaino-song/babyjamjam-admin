@@ -114,12 +114,16 @@ function buildService(jobService: Record<string, jest.Mock>) {
 describe("ServiceRecordFinalizationService revised claim and the branch calendar", () => {
     const referenceDate = new Date("2026-09-30T00:00:00.000Z");
 
-    function claimHarness(holidayCalendar: ReturnType<typeof createHolidayCalendarStub>, record = source()) {
+    function claimHarness(
+        holidayCalendar: ReturnType<typeof createHolidayCalendarStub>,
+        record = source(),
+        currentExtra: Record<string, unknown> = {},
+    ) {
         const tx = {
             service_record_case: {
                 findUnique: jest.fn(async (args: { where: Record<string, unknown>; select?: Record<string, unknown> }) => {
                     if (args.select && "branch" in args.select) return { ...record, branch: { name: record.branchName } };
-                    return { id: caseId, branchId, clientId, status: "READY_TO_FINALIZE", nextAttemptAt: null, finalizationAttempts: 0 };
+                    return { id: caseId, branchId, clientId, status: "READY_TO_FINALIZE", nextAttemptAt: null, finalizationAttempts: 0, ...currentExtra };
                 }),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
@@ -152,6 +156,27 @@ describe("ServiceRecordFinalizationService revised claim and the branch calendar
         expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0])
             .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
         expect(lifecycle.recompute).toHaveBeenCalledWith(caseId, tx, calendar);
+    });
+
+    it("claims nothing and changes nothing for a tombstoned client, before any recompute or provider job", async () => {
+        const { claim, lifecycle, tx } = claimHarness(
+            createHolidayCalendarStub(),
+            source(),
+            { client: { deletedAt: new Date("2026-09-29T00:00:00.000Z") } },
+        );
+
+        await expect(claim()).resolves.toEqual({ claimed: false, attempts: 0 });
+
+        expect(tx.service_record_case.updateMany).not.toHaveBeenCalled();
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
+    });
+
+    it("still reaches freezing for a live client", async () => {
+        const { claim } = claimHarness(createHolidayCalendarStub(), source(), { client: { deletedAt: null } });
+
+        await expect(claim()).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" },
+        });
     });
 
     it("treats a revised source as eligible under the built-in calendar", async () => {

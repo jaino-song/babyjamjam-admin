@@ -8,6 +8,8 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -91,7 +93,7 @@ export function DocumentDropzone({
   const filePolicy = capabilities ?? DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES;
   const capabilitiesReady = Boolean(capabilities && !capabilitiesLoading && !capabilitiesError
     && typeof capabilities.canChooseVisibilityScope === "boolean");
-  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches" | "">("");
+  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches">("branch");
   const visibilityScope = capabilities?.canChooseVisibilityScope ? chosenScope : "branch";
   const selectionDisabled = isLoading || !capabilitiesReady;
   const [isDragOver, setIsDragOver] = useState(false);
@@ -106,7 +108,9 @@ export function DocumentDropzone({
   const [tagInput, setTagInput] = useState("");
 
   const locale = useLocale();
-  const { data: categories = [] } = useDocumentCategories();
+  const categoriesQuery = useDocumentCategories();
+  const { data: categories = [] } = categoriesQuery;
+  const categoriesLoading = categoriesQuery.isLoading || (categoriesQuery.isPaused && categoriesQuery.data === undefined);
 
   useEffect(() => {
     return () => {
@@ -219,7 +223,8 @@ export function DocumentDropzone({
   };
 
   const hasSelectedFile = selectedFile !== null;
-  const canSubmit = Boolean(selectedFile && name && category && !selectionDisabled && visibilityScope);
+  const canSubmit = Boolean(selectedFile && name && category && !selectionDisabled && categoriesQuery.isSuccess
+    && categories.some((option) => option.id === category));
 
   useEffect(() => {
     onUploadStateChange?.({
@@ -230,7 +235,7 @@ export function DocumentDropzone({
 
   const handleSubmit = async (event?: React.FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
-    if (!canSubmit || !selectedFile || !visibilityScope) return;
+    if (!canSubmit || !selectedFile) return;
 
     try {
       await onUpload({
@@ -241,7 +246,7 @@ export function DocumentDropzone({
         tags,
         visibilityScope,
       });
-      setChosenScope("");
+      setChosenScope("branch");
     } catch {
       setValidationError("문서를 업로드하지 못했어요");
     }
@@ -351,9 +356,9 @@ export function DocumentDropzone({
                 <RadioGroupItem value="all_branches" data-component={`${dataComponent}_visibility-notice_choice_all-branches_radio`} />전 지점
               </label>
             </RadioGroup>
-            {chosenScope && <p data-component={`${dataComponent}_visibility-notice_helper`}>
+            <p data-component={`${dataComponent}_visibility-notice_helper`}>
               {chosenScope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다."}
-            </p>}
+            </p>
           </>
         ) : "이 파일은 현재 지점에서만 볼 수 있습니다."}
       </div>
@@ -527,6 +532,19 @@ export function DocumentDropzone({
                 </TemplateFieldGridItem>
 
                 <TemplateFieldGridItem dataComponent={`${dataComponent}_upload-form_details_category-field`}>
+                  {categoriesLoading ? (
+                    <Spinner role="status" aria-label="카테고리 불러오는 중"
+                      data-component={`${dataComponent}_upload-form_details_category-field_loading`} />
+                  ) : categoriesQuery.isError ? (
+                    <QueryErrorState size="inline"
+                      dataComponent={`${dataComponent}_upload-form_details_category-field_error`}
+                      onRetry={() => { void categoriesQuery.refetch(); }}
+                      isRetrying={categoriesQuery.isFetching} />
+                  ) : categoriesQuery.isSuccess && categories.length === 0 ? (
+                    <p data-component={`${dataComponent}_upload-form_details_category-field_empty`}>
+                      업로드하려면 먼저 파일 카테고리를 등록해 주세요.
+                    </p>
+                  ) : (
                   <TitleSelectMolecule
                     id="doc-category"
                     label="카테고리"
@@ -537,7 +555,7 @@ export function DocumentDropzone({
                       value: option.id,
                       label: option.label,
                     }))}
-                    disabled={isLoading}
+                    disabled={isLoading || !categoriesQuery.isSuccess}
                     required
                     labelClassName={DOCUMENT_FIELD_LABEL_CLASS_NAME}
                     dataComponent={`${dataComponent}_upload-form_details_category-molecule`}
@@ -545,6 +563,7 @@ export function DocumentDropzone({
                     contentDataComponent={`${dataComponent}_upload-form_details_category-options`}
                     optionDataComponent={`${dataComponent}_upload-form_details_category-option`}
                   />
+                  )}
                 </TemplateFieldGridItem>
 
                 <TemplateFieldGridItem

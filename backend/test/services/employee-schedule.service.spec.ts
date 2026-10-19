@@ -567,7 +567,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
         });
 
         expect(clientRepository.findFirst).toHaveBeenCalledWith({
-            where: { id: 100, branchId },
+            where: { id: 100, branchId, deletedAt: null },
             select: { id: true },
         });
         expect(scheduleRepository.create).not.toHaveBeenCalled();

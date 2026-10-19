@@ -282,7 +282,7 @@ export function useMessageHistory(limit = 200, options: UseMessageHistoryOptions
     });
 }
 
-export function useRetryMessageHistory() {
+export function useRetryMessageHistory(clientId?: number) {
     const queryClient = useQueryClient();
 
     return useMutation({
@@ -290,6 +290,9 @@ export function useRetryMessageHistory() {
             messageTriggersApi.retryHistory(id).then((response) => response.data),
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+            if (clientId !== undefined) {
+                await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.clientHistory(clientId) });
+            }
         },
     });
 }
@@ -313,7 +316,7 @@ export function useCancelUpcomingMessageTriggerJob() {
 // Re-sends a `needs_setup` trigger job by hand (POST /message-trigger-jobs/:id/resend).
 // The job may move to sent, back to needs_setup, canceled or failed, so refresh both
 // upcoming and history; the caller reads the returned status for its toast.
-export function useResendMessageTriggerJob() {
+export function useResendMessageTriggerJob(clientId?: number) {
     const queryClient = useQueryClient();
 
     return useMutation({
@@ -322,6 +325,9 @@ export function useResendMessageTriggerJob() {
         onSuccess: async () => {
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+            if (clientId !== undefined) {
+                await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.clientHistory(clientId) });
+            }
         },
     });
 }

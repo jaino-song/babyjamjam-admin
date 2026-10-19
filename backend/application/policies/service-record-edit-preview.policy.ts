@@ -459,7 +459,7 @@ function projectPersisted(
         return {
             entries: [],
             source: "planned",
-            blockingReasons: [reason("INVALID_SESSION_COUNT", "서비스 제공 회차 수 N이 초기화되지 않았습니다.")],
+            blockingReasons: [reason("INVALID_SESSION_COUNT", "서비스 제공 회차 수가 설정되지 않았습니다.")],
         };
     }
     const blockingReasons: ServiceRecordEditPreviewBlockingReason[] = [];
@@ -529,7 +529,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
         return {
             entries: [],
             source: "legacy",
-            blockingReasons: [reason("INVALID_SESSION_COUNT", "서비스 제공 회차 수 N이 초기화되지 않았습니다.")],
+            blockingReasons: [reason("INVALID_SESSION_COUNT", "서비스 제공 회차 수가 설정되지 않았습니다.")],
         };
     }
     const blockingReasons: ServiceRecordEditPreviewBlockingReason[] = [];

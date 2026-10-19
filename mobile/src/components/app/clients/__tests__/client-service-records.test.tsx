@@ -158,6 +158,44 @@ describe("ClientServiceRecords", () => {
         });
     });
 
+    it("shows just the latest case header, not stale assignment headers", () => {
+        const record = createRecord("COMPLETED");
+        record.header = { momName: "최신 산모" } as NonNullable<ServiceRecordCase["header"]>;
+        const assignment = createAssignment(1, "sent");
+        assignment.header = { momName: "이전 산모" } as NonNullable<ServiceRecordAssignment["header"]>;
+        renderComponent({ record, assignments: [assignment, { ...assignment, scheduleId: 2 }] });
+        expect(screen.getByText("최신 산모")).toBeInTheDocument();
+        expect(screen.queryByText("이전 산모")).not.toBeInTheDocument();
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(1);
+    });
+
+    it("keeps a null case header empty rather than falling back to assignments", () => {
+        const assignment = createAssignment(1, "sent");
+        assignment.header = { momName: "이전 산모" } as NonNullable<ServiceRecordAssignment["header"]>;
+        renderComponent({ record: createRecord("COMPLETED"), assignments: [assignment] });
+        expect(screen.queryByText("이전 산모")).not.toBeInTheDocument();
+        expect(screen.getByText(/아직 작성된 기본정보가 없습니다/)).toBeInTheDocument();
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(1);
+    });
+
+    it("shows a case header even without assignments", () => {
+        const record = createRecord("COMPLETED");
+        record.header = { momName: "최신 산모" } as NonNullable<ServiceRecordCase["header"]>;
+        renderComponent({ record, assignments: [] });
+        expect(screen.getByText("최신 산모")).toBeInTheDocument();
+    });
+
+    it("keeps per-assignment headers when there is no case", () => {
+        const first = createAssignment(1, "sent");
+        first.header = { momName: "첫 배정" } as NonNullable<ServiceRecordAssignment["header"]>;
+        const second = createAssignment(2, "sent");
+        second.header = { momName: "다음 배정" } as NonNullable<ServiceRecordAssignment["header"]>;
+        renderComponent({ record: null, assignments: [first, second] });
+        expect(screen.getByText("첫 배정")).toBeInTheDocument();
+        expect(screen.getByText("다음 배정")).toBeInTheDocument();
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(2);
+    });
+
     it("renders the main link states", () => {
         renderComponent({
             assignments: [

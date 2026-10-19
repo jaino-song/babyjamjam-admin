@@ -18,6 +18,7 @@ import {
 import type {
     ServiceRecordAssignment,
     ServiceRecordCase,
+    ServiceRecordHeader,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordSession,
@@ -217,6 +218,7 @@ function ClientServiceRecordsContent({
         >
             {staleNotice}
             {record ? <RecordStatusCard record={record} /> : null}
+            {record ? <ServiceHeaderCard header={record.header} delay={60} /> : null}
             {assignments.map((assignment, assignmentIndex) => (
                 <div
                     key={assignment.scheduleId}
@@ -230,7 +232,7 @@ function ClientServiceRecordsContent({
                         delay={assignmentIndex * 180}
                         showStatus={!record}
                     />
-                    <ServiceHeaderCard assignment={assignment} delay={assignmentIndex * 180 + 60} />
+                    {!record ? <ServiceHeaderCard header={assignment.header} delay={assignmentIndex * 180 + 60} /> : null}
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
@@ -508,14 +510,13 @@ function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocSta
 }
 
 function ServiceHeaderCard({
-    assignment,
+    header,
     delay,
 }: {
-    assignment: ServiceRecordAssignment;
+    header: ServiceRecordHeader | null;
     delay: number;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("header-card");
-    const header = assignment.header;
 
     return (
         <InfoCard data-component={dataComponent} title="서비스 기본정보" delay={delay}>

@@ -9,6 +9,7 @@ import {
     InitialClientSchedule,
     buildClientListWhere,
     ClientListSummary,
+    ClientDeleteOutcome,
     ClientListTab,
     CLIENT_LIST_TAB_VALUES,
     clientListTabWhere,
@@ -46,7 +47,10 @@ import {
     RetentionDeleteBlockedError,
     ScopedDeleteNotFoundError,
 } from "domain/errors/retention-delete-blocked.error";
+import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 import type { Prisma } from "@prisma/client";
+
+const CLIENT_DELETED_CANCEL_REASON = "고객 삭제";
 
 const CHOSUNG_LIST = [
     "ㄱ", "ㄲ", "ㄴ", "ㄷ", "ㄸ", "ㄹ", "ㅁ", "ㅂ", "ㅃ",
@@ -201,7 +205,7 @@ export class SbClientRepository implements IClientRepository {
     async findById(branchid: string, id: number): Promise<ClientEntity | null> {
         const select = await this.getClientSelect();
         const client = await this.prismaService.client.findFirst({
-            where: { id, branchId: branchid },
+            where: { id, branchId: branchid, deletedAt: null },
             select,
         });
         return client ? ClientMapper.toDomain(client) : null;
@@ -219,12 +223,12 @@ export class SbClientRepository implements IClientRepository {
         await transaction.$queryRaw`
             SELECT "id"
             FROM "client"
-            WHERE "id" = ${id} AND "branch_id" = ${branchid}::uuid
+            WHERE "id" = ${id} AND "branch_id" = ${branchid}::uuid AND "deleted_at" IS NULL
             FOR UPDATE
         `;
         const select = await this.getClientSelect(transaction);
         const client = await transaction.client.findFirst({
-            where: { id, branchId: branchid },
+            where: { id, branchId: branchid, deletedAt: null },
             select,
         });
         return client ? ClientMapper.toDomain(client as any) : null;
@@ -233,7 +237,7 @@ export class SbClientRepository implements IClientRepository {
     async findAll(branchid: string): Promise<ClientEntity[]> {
         const select = await this.getClientSelect();
         const clients = await this.prismaService.client.findMany({
-            where: { branchId: branchid },
+            where: { branchId: branchid, deletedAt: null },
             select,
         });
         return clients.map((client) => ClientMapper.toDomain(client as any));
@@ -251,7 +255,7 @@ export class SbClientRepository implements IClientRepository {
         // This candidate scan is intentionally complete for the authorized
         // branch so pagination cannot hide a later Korean/phone match.
         const candidates = await this.prismaService.client.findMany({
-            where: { branchId: branchid },
+            where: { branchId: branchid, deletedAt: null },
             select: {
                 id: true,
                 name: true,
@@ -493,7 +497,7 @@ export class SbClientRepository implements IClientRepository {
         const select = await this.getClientSelect(db);
         const data = await this.getClientUpdateData(client, db);
         const result = await db.client.updateMany({
-            where: { id: client.id, branchId: branchid },
+            where: { id: client.id, branchId: branchid, deletedAt: null },
             data,
         });
         if (result.count === 0) {
@@ -548,7 +552,7 @@ export class SbClientRepository implements IClientRepository {
             current.update(updates, calendar);
             const data = await this.getClientUpdateData(current, tx);
             const updated = await tx.client.updateMany({
-                where: { id, branchId: branchid },
+                where: { id, branchId: branchid, deletedAt: null },
                 data,
             });
             if (updated.count !== 1) return null;
@@ -564,15 +568,15 @@ export class SbClientRepository implements IClientRepository {
         return transaction ? apply(transaction) : this.prismaService.$transaction(apply);
     }
 
-    async delete(branchid: string, id: number): Promise<void> {
-        await this.prismaService.$transaction(async (transaction) => {
+    async delete(branchid: string, id: number): Promise<ClientDeleteOutcome> {
+        return this.prismaService.$transaction(async (transaction): Promise<ClientDeleteOutcome> => {
             // The lock is the linearization point for this destructive action.
             // Every dependency check and the delete itself must use this same
             // transaction so a concurrent child insert cannot race the guard.
             const lockedRows = await transaction.$queryRaw<Array<{ id: number }>>`
                 SELECT "id"
                 FROM "client"
-                WHERE "id" = ${id} AND "branch_id" = ${branchid}::uuid
+                WHERE "id" = ${id} AND "branch_id" = ${branchid}::uuid AND "deleted_at" IS NULL
                 FOR UPDATE
             `;
             if (lockedRows.length === 0) {
@@ -619,10 +623,14 @@ export class SbClientRepository implements IClientRepository {
             `;
 
             if (Number(dependencyRows[0]?.count ?? 0) > 0) {
-                throw new RetentionDeleteBlockedError(
-                    CLIENT_RETENTION_BLOCKED,
-                    CLIENT_RETENTION_BLOCKED_MESSAGE,
-                );
+                // Fail closed: the tombstone is written only when the switch is exactly
+                // "true". Otherwise the row is left untouched and the delete is refused
+                // before any assignment is ended or any job is canceled.
+                if (!this.isTombstoneDeleteEnabled()) {
+                    throw new RetentionDeleteBlockedError(CLIENT_RETENTION_BLOCKED, CLIENT_RETENTION_BLOCKED_MESSAGE);
+                }
+                await this.tombstoneLockedClient(transaction, branchid, id);
+                return "tombstoned";
             }
 
             const result = await transaction.client.deleteMany({
@@ -631,6 +639,69 @@ export class SbClientRepository implements IClientRepository {
             if (result.count !== 1) {
                 throw new ScopedDeleteNotFoundError("client", id);
             }
+            return "deleted";
+        });
+    }
+
+    /**
+     * CLIENT_TOMBSTONE_DELETE_ENABLED stays off until production main runs a build that
+     * reads `client.deleted_at`; an older build would revive the canceled jobs of a
+     * tombstoned client. Only the exact string "true" enables it. Read per call.
+     */
+    private isTombstoneDeleteEnabled(): boolean {
+        const raw = this.configService
+            ? this.configService.get<string>("CLIENT_TOMBSTONE_DELETE_ENABLED")
+            : process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+        return raw === "true";
+    }
+
+    /**
+     * 고객-06: a client with retained history keeps its row as a tombstone instead of
+     * being refused. Runs inside the delete transaction, after the row lock.
+     *  - `deletedAt` hides the row from every list, search and lookup;
+     *  - `phoneNormalized` is cleared so the branch-unique phone key is free for a new
+     *    client and the tombstone drops out of phone matching (the raw `phone` stays);
+     *  - open assignments end exactly as `terminateService` ends them, so the employees
+     *    are no longer held by a client nobody can see;
+     *  - pending automatic messages are canceled with the same predicate as
+     *    `cancelPendingByClientContext`, which cannot join this transaction.
+     */
+    private async tombstoneLockedClient(
+        transaction: Prisma.TransactionClient,
+        branchid: string,
+        id: number,
+    ): Promise<void> {
+        const now = new Date();
+        const tombstoned = await transaction.client.updateMany({
+            where: { id, branchId: branchid, deletedAt: null },
+            data: { deletedAt: now, phoneNormalized: null },
+        });
+        if (tombstoned.count !== 1) {
+            throw new ScopedDeleteNotFoundError("client", id);
+        }
+
+        await transaction.employee_schedule.updateMany({
+            where: { clientId: id, branchId: branchid, replaced: false, terminatedAt: null },
+            data: { terminatedAt: now },
+        });
+
+        // Source: SbMessageTriggerJobRepository.cancelPendingByClientContext.
+        await transaction.message_trigger_job.updateMany({
+            where: {
+                ...ordinaryAutomationJobWhere(),
+                branchId: branchid,
+                status: { in: ["pending", "processing", "needs_setup"] },
+                OR: [
+                    { clientId: id },
+                    { employeeSchedule: { is: { clientId: id } } },
+                ],
+            },
+            data: {
+                status: "canceled",
+                canceledAt: now,
+                cancelReason: CLIENT_DELETED_CANCEL_REASON,
+                claimToken: null,
+            },
         });
     }
 
@@ -642,6 +713,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 startDate: {
                     gte: dayStart,
                     lt: nextDayStart,
@@ -659,6 +731,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 endDate: {
                     gte: dayStart,
                     lt: nextDayStart,
@@ -682,6 +755,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 createdAt: {
                     gte: start,
                     lt: endExclusive,
@@ -703,6 +777,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 startDate: {
                     gte: start,
                     lt: endExclusive,
@@ -724,6 +799,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 endDate: {
                     gte: start,
                     lt: endExclusive,
@@ -751,6 +827,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 startDate: {
                     gte: start,
                     lt: endExclusive,
@@ -809,6 +886,7 @@ export class SbClientRepository implements IClientRepository {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 startDate: startDateBound,
                 OR: [
                     { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
@@ -877,6 +955,7 @@ export class SbClientRepository implements IClientRepository {
         return this.prismaService.client.findMany({
             where: {
                 branchId,
+                deletedAt: null,
                 OR: [...new Set(phoneSuffixes)].map(suffix => ({ phone: { endsWith: suffix } })),
             },
             select: { id: true, branchId: true, name: true, phone: true, birthday: true },
@@ -885,7 +964,7 @@ export class SbClientRepository implements IClientRepository {
 
     async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {
         const client = await this.prismaService.client.findFirst({
-            where: { branchId: branchid, phoneNormalized: normalizedPhone },
+            where: { branchId: branchid, phoneNormalized: normalizedPhone, deletedAt: null },
         });
         return client ? ClientMapper.toDomain(client as any) : null;
     }
