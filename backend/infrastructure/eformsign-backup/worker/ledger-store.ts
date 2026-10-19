@@ -161,7 +161,7 @@ export class LedgerStore {
                 await this.ensureLedgerDirectory();
                 await this.createJournal(1);
             } catch {
-                throw this.poison();
+                throw await this.poison();
             }
             this.journalBase = 1;
             this.journalRecords = 0;
@@ -193,7 +193,7 @@ export class LedgerStore {
                 this.journalRecords = 0;
                 await this.createJournal(this.journalBase);
             } catch {
-                throw this.poison();
+                throw await this.poison();
             }
             return true;
         });
@@ -219,7 +219,7 @@ export class LedgerStore {
                 await this.ensureLedgerDirectory();
                 await this.createJournal(1, true);
             } catch {
-                throw this.poison();
+                throw await this.poison();
             }
             this._state = emptyLedgerState();
             this.journalBase = 1;
@@ -252,9 +252,10 @@ export class LedgerStore {
         throw new WorkerError("ledger-duplicate-install");
     }
 
-    /** Any I/O failure ends this store's writing for good; the caller restarts and replays. */
-    private poison(): WorkerError {
+    /** Any I/O failure ends this store's writing for good (the journal handle is released); the caller restarts and replays. */
+    private async poison(): Promise<WorkerError> {
         this.poisoned = true;
+        await this.closeHandle();
         return unavailable();
     }
 
@@ -279,7 +280,7 @@ export class LedgerStore {
             await handle.sync();
             fault?.("after-fsync");
         } catch {
-            throw this.poison();
+            throw await this.poison();
         }
         this._state = next;
         this.journalRecords += 1;
@@ -381,19 +382,23 @@ export class LedgerStore {
      */
     private async repairTornTail(tail: Buffer, validLength: number): Promise<void> {
         const seq = this._state.lastSeq + 1;
+        const at = (this.options.now ?? (() => new Date().toISOString()))();
         try {
+            // Reject an unrecordable `tail_discarded` before anything is quarantined or truncated. The name is only
+            // known after quarantining, but every name `quarantineTail` can pick has this shape.
+            const probe: LedgerRecord = {
+                v: 1, seq, type: "tail_discarded", at, body: { byteLength: tail.length, quarantineName: `tail-${seq}.quarantine` },
+            };
+            encodeLedgerLine(probe);
+            applyLedgerRecord(this._state, probe);
             const quarantineName = await this.quarantineTail(seq, tail);
             const handle = await this.journalHandle();
             await handle.truncate(validLength);
             await handle.sync();
-            await this.commit({
-                v: 1, seq, type: "tail_discarded", at: (this.options.now ?? (() => new Date().toISOString()))(),
-                body: { byteLength: tail.length, quarantineName },
-            });
+            await this.commit({ ...probe, body: { byteLength: tail.length, quarantineName } });
         } catch (error) {
-            this.poison();
-            await this.closeHandle();
-            throw error instanceof WorkerError ? error : unavailable();
+            const poisoned = await this.poison();
+            throw error instanceof WorkerError ? error : poisoned;
         }
     }
 
@@ -407,7 +412,12 @@ export class LedgerStore {
             } catch (error) {
                 if (errorCode(error) !== "EEXIST") throw error;
                 const existing = await readRegularFile(this.fs, file);
-                if (existing.kind === "file" && existing.bytes.equals(tail)) return name;
+                if (existing.kind === "file" && existing.bytes.equals(tail)) {
+                    // Identical bytes from an earlier crash: make sure they are durable before the journal is cut.
+                    await this.syncExisting(file);
+                    await syncDirectory(this.fs, this.ledgerDir);
+                    return name;
+                }
                 continue;
             }
             try {
@@ -420,5 +430,14 @@ export class LedgerStore {
             return name;
         }
         throw unavailable();
+    }
+
+    private async syncExisting(file: string): Promise<void> {
+        const handle = await this.fs.open(file, FLAGS.readFile);
+        try {
+            await handle.sync();
+        } finally {
+            await handle.close();
+        }
     }
 }

@@ -519,23 +519,28 @@ describe("compaction", () => {
 });
 
 describe("I/O failure", () => {
-    interface Spy { calls: string[]; failWrite: boolean; fs: LedgerFs }
-    function spyFs(): Spy {
-        const spy: Spy = { calls: [], failWrite: false, fs: undefined as unknown as LedgerFs };
+    interface Spy { calls: string[]; events: string[]; openHandles: number; failWrite: boolean; fs: LedgerFs }
+    /** `events` is the ordered I/O trace as `<op>:<path relative to the control dir>` ("." is the control dir itself). */
+    function spyFs(control: string): Spy {
+        const spy: Spy = { calls: [], events: [], openHandles: 0, failWrite: false, fs: undefined as unknown as LedgerFs };
+        const label = (target: string) => path.relative(control, target) || ".";
         const real = async (target: string, flags: number, mode?: number): Promise<LedgerFileHandle> => {
             spy.calls.push("open");
+            spy.events.push(`open:${label(target)}`);
             const handle = await fsp.open(target, flags, mode);
+            spy.openHandles++;
             const wrapped: LedgerFileHandle = {
                 read: (buffer, offset, length, position) => { spy.calls.push("read"); return handle.read(buffer, offset, length, position); },
                 write: async (buffer, offset, length) => {
                     spy.calls.push("write");
+                    spy.events.push(`write:${label(target)}`);
                     if (spy.failWrite) throw Object.assign(new Error("EIO: i/o error, write"), { code: "EIO" });
                     return handle.write(buffer, offset, length);
                 },
                 stat: () => { spy.calls.push("stat"); return handle.stat(); },
-                truncate: (length) => { spy.calls.push("truncate"); return handle.truncate(length); },
-                sync: () => { spy.calls.push("sync"); return handle.sync(); },
-                close: () => { spy.calls.push("close"); return handle.close(); },
+                truncate: (length) => { spy.calls.push("truncate"); spy.events.push(`truncate:${label(target)}`); return handle.truncate(length); },
+                sync: () => { spy.calls.push("sync"); spy.events.push(`sync:${label(target)}`); return handle.sync(); },
+                close: () => { spy.calls.push("close"); spy.openHandles--; return handle.close(); },
             };
             return wrapped;
         };
@@ -543,24 +548,27 @@ describe("I/O failure", () => {
             open: real,
             lstat: (target) => { spy.calls.push("lstat"); return fsp.lstat(target); },
             readdir: (target) => { spy.calls.push("readdir"); return fsp.readdir(target); },
-            mkdir: async (target, mode) => { spy.calls.push("mkdir"); await fsp.mkdir(target, { mode }); },
-            rename: (from, to) => { spy.calls.push("rename"); return fsp.rename(from, to); },
+            mkdir: async (target, mode) => { spy.calls.push("mkdir"); spy.events.push(`mkdir:${label(target)}`); await fsp.mkdir(target, { mode }); },
+            rename: (from, to) => { spy.calls.push("rename"); spy.events.push(`rename:${label(from)}->${label(to)}`); return fsp.rename(from, to); },
         };
         return spy;
     }
 
     it("EIO on write poisons the store: the next append throws control-unavailable with zero seam calls", async () => {
         const control = await seeded(3);
-        const spy = spyFs();
+        const spy = spyFs(control);
         const store = await openWritable(control, { fs: spy.fs });
         await store.append("run_started", runStartedBody(4), fixedAt(4));
         spy.failWrite = true;
         await expect(store.append("run_started", runStartedBody(5), fixedAt(5))).rejects.toMatchObject({ reasonCode: "control-unavailable" });
         expect(store.lastSeq).toBe(4);
+        expect(spy.openHandles).toBe(0);
         const used = spy.calls.length;
         spy.failWrite = false;
         await expect(store.append("run_started", runStartedBody(5), fixedAt(5))).rejects.toMatchObject({ reasonCode: "control-unavailable" });
         await expect(store.compactIfNeeded(1)).rejects.toMatchObject({ reasonCode: "control-unavailable" });
+        expect(spy.calls).toHaveLength(used);
+        await store.close();
         expect(spy.calls).toHaveLength(used);
         const reopened = await LedgerStore.open(control, { readOnly: true });
         expect(reopened.status).toBe("ok");
@@ -569,13 +577,92 @@ describe("I/O failure", () => {
 
     it("fsync follows every write and happens before the append resolves", async () => {
         const control = await seeded(2);
-        const spy = spyFs();
+        const spy = spyFs(control);
         const store = await openWritable(control, { fs: spy.fs });
         spy.calls.length = 0;
         for (const n of [3, 4, 5]) await store.append("run_started", runStartedBody(n), fixedAt(n));
         const io = spy.calls.filter((call) => call === "write" || call === "sync");
         expect(io).toEqual(["write", "sync", "write", "sync", "write", "sync"]);
         await store.close();
+    });
+
+    const IO = /^(open|sync|write|truncate|rename|mkdir):/;
+    const J1 = "ledger/journal-000000000001.jsonl";
+
+    it("initialize: marker port, then ledger dir (+control dir sync), then journal create (+ledger dir sync), then write and sync", async () => {
+        const control = await newControl();
+        const spy = spyFs(control);
+        const store = await openWritable(control, { fs: spy.fs });
+        spy.events.length = 0;
+        await store.initialize(INSTALL_PARAMS);
+        expect(spy.events.filter((event) => IO.test(event))).toEqual([
+            "mkdir:ledger", "open:.", "sync:.",
+            `open:${J1}`, "open:ledger", "sync:ledger",
+            `write:${J1}`, `sync:${J1}`,
+        ]);
+        await store.close();
+    });
+
+    it("compaction: temp write and sync, rename, ledger dir sync, then the new journal and another ledger dir sync", async () => {
+        const control = await seeded(5);
+        const spy = spyFs(control);
+        const store = await openWritable(control, { fs: spy.fs });
+        spy.events.length = 0;
+        expect(await store.compactIfNeeded(3)).toBe(true);
+        expect(spy.events.filter((event) => IO.test(event))).toEqual([
+            "open:ledger/checkpoint-5.tmp", "write:ledger/checkpoint-5.tmp", "sync:ledger/checkpoint-5.tmp",
+            "rename:ledger/checkpoint-5.tmp->ledger/checkpoint.json",
+            "open:ledger", "sync:ledger",
+            "open:ledger/journal-000000000006.jsonl", "open:ledger", "sync:ledger",
+        ]);
+        await store.close();
+    });
+
+    it("torn-tail repair: quarantine write, file sync, dir sync, then truncate, sync, and only then the tail_discarded append", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), "{\"half\":");
+        const spy = spyFs(control);
+        const store = await openWritable(control, { fs: spy.fs });
+        const trace = spy.events.filter((event) => IO.test(event));
+        const q = "ledger/tail-4.quarantine";
+        expect(trace.slice(trace.indexOf(`open:${q}`))).toEqual([
+            `open:${q}`, `write:${q}`, `sync:${q}`,
+            "open:ledger", "sync:ledger",
+            `open:${J1}`, `truncate:${J1}`, `sync:${J1}`,
+            `write:${J1}`, `sync:${J1}`,
+        ]);
+        await store.close();
+    });
+
+    it("torn-tail repair with an identical quarantine already present: fsyncs that file and the ledger dir before truncating", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), "{\"half\":");
+        await fsp.writeFile(path.join(control, "ledger", "tail-4.quarantine"), "{\"half\":", { mode: 0o600 });
+        const spy = spyFs(control);
+        const store = await openWritable(control, { fs: spy.fs });
+        const trace = spy.events.filter((event) => IO.test(event));
+        const q = "ledger/tail-4.quarantine";
+        expect(trace.slice(trace.indexOf(`open:${q}`))).toEqual([
+            // exclusive create fails with EEXIST, the content comparison reads it, then it is opened again to be fsynced
+            `open:${q}`, `open:${q}`, `open:${q}`, `sync:${q}`,
+            "open:ledger", "sync:ledger",
+            `open:${J1}`, `truncate:${J1}`, `sync:${J1}`,
+            `write:${J1}`, `sync:${J1}`,
+        ]);
+        await store.close();
+    });
+
+    it("a tail_discarded record that cannot be encoded poisons the open and leaves journal and quarantine untouched", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), "{\"half\":");
+        const before = await fsp.readFile(journalPath(control));
+        const names = await listLedger(control);
+        const spy = spyFs(control);
+        await expect(openWritable(control, { fs: spy.fs, now: () => "not-a-time" })).rejects.toBeInstanceOf(WorkerError);
+        expect(await fsp.readFile(journalPath(control))).toEqual(before);
+        expect(await listLedger(control)).toEqual(names);
+        expect(spy.events.some((event) => /^(write|truncate|rename|mkdir):/.test(event))).toBe(false);
+        expect(spy.openHandles).toBe(0);
     });
 
     it.each<LedgerFaultPoint>(["before-write", "mid-write", "before-fsync", "after-fsync"])("a hook that throws at %s is an I/O failure", async (point) => {
