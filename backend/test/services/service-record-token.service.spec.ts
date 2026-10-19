@@ -168,6 +168,49 @@ describe("ServiceRecordTokenService", () => {
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
     });
 
+    describe("client tombstone (deletedAt)", () => {
+        const params = () => ({ branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() });
+
+        it("stops every token entry point from resolving once the client is tombstoned, without any revocation", async () => {
+            const { prisma, svc } = setup();
+            const p = params();
+            const { linkToken } = await svc.issueLink(p);
+            const auth = await svc.verifyPhoneAndMintAccess(linkToken, p.expectedPhone);
+            if (!auth.ok) throw new Error("fixture verification failed");
+            expect(await svc.resolveAccess(auth.accessToken)).not.toBeNull();
+
+            // Tombstone only; the token row stays active (revocation "failed").
+            (prisma.__schedules[0]!.client as any).deletedAt = new Date();
+            expect(prisma.__rows[0].active).toBe(true);
+
+            expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
+            expect(await svc.resolveLink(linkToken)).toBeNull();
+            expect(await svc.verifyPhoneAndMintAccess(linkToken, p.expectedPhone)).toMatchObject({ ok: false });
+            expect(await svc.activatePreparedLink({ ...p, linkToken })).toBe(false);
+            expect(await svc.reuseActiveLink(p)).toBeNull();
+        });
+
+        it("refuses to issue or prepare a link for a tombstoned client", async () => {
+            const { prisma, svc } = setup();
+            (prisma.__schedules[0]!.client as any).deletedAt = new Date();
+            await expect(svc.issueLink(params())).rejects.toThrow();
+            await expect(svc.prepareLink(params())).rejects.toThrow();
+            expect(prisma.__rows).toHaveLength(0);
+        });
+
+        it("leaves a live client unaffected", async () => {
+            const { prisma, svc } = setup();
+            (prisma.__schedules[0]!.client as any).deletedAt = null;
+            const p = params();
+            const { linkToken } = await svc.issueLink(p);
+            const auth = await svc.verifyPhoneAndMintAccess(linkToken, p.expectedPhone);
+            if (!auth.ok) throw new Error("fixture verification failed");
+            expect(await svc.resolveLink(linkToken)).not.toBeNull();
+            expect(await svc.resolveAccess(auth.accessToken)).not.toBeNull();
+        });
+    });
+
     it("does not reactivate finalized tokens when preparing the composer", async () => {
         const { prisma, svc } = setup();
         const params = { branchId: "b1", scheduleId: 10, employeeId: 7,

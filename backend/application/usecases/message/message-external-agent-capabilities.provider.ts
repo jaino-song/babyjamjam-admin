@@ -620,7 +620,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
 
         const clientModel = (this.prisma as PrismaService & { client?: PrismaService["client"] }).client;
         const client = clientModel && await clientModel.findFirst({
-            where: { branchId, phone },
+            where: { branchId, phone, deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         if (client && normalizePhone(client.phone) === phone) {

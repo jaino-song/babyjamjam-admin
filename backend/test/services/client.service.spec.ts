@@ -5678,7 +5678,7 @@ describe("ClientService", () => {
     describe("delete", () => {
         it("should only run legacy pending-job cleanup after a successful guarded delete", async () => {
             // Arrange
-            deleteClientUsecase.execute.mockResolvedValue(undefined);
+            deleteClientUsecase.execute.mockResolvedValue("deleted");
 
             // Act
             await service.delete(branchId, 1);
@@ -5689,6 +5689,40 @@ describe("ClientService", () => {
             expect(
                 triggerService.cancelPendingJobsForClientDeletion.mock.invocationCallOrder[0],
             ).toBeGreaterThan(deleteClientUsecase.execute.mock.invocationCallOrder[0] ?? 0);
+        });
+
+        it("revokes no service-record link when the client was hard deleted", async () => {
+            deleteClientUsecase.execute.mockResolvedValue("deleted");
+
+            await service.delete(branchId, 1);
+
+            expect(prismaService.employee_schedule.findMany).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
+        });
+
+        it("revokes the service-record links of every open assignment after a tombstone", async () => {
+            deleteClientUsecase.execute.mockResolvedValue("tombstoned");
+            prismaService.employee_schedule.findMany.mockResolvedValue([{ id: 10 }, { id: 11 }]);
+
+            await service.delete(branchId, 1);
+
+            expect(prismaService.employee_schedule.findMany).toHaveBeenCalledWith({
+                where: { clientId: 1, branchId, replaced: false },
+                select: { id: true },
+            });
+            expect(serviceRecordLinkService.revoke.mock.calls).toEqual([[10], [11]]);
+            expect(
+                serviceRecordLinkService.revoke.mock.invocationCallOrder[0],
+            ).toBeGreaterThan(deleteClientUsecase.execute.mock.invocationCallOrder[0] ?? 0);
+            expect(triggerService.cancelPendingJobsForClientDeletion).toHaveBeenCalledWith(branchId, 1);
+        });
+
+        it("keeps a failed link revoke from failing the delete", async () => {
+            deleteClientUsecase.execute.mockResolvedValue("tombstoned");
+            prismaService.employee_schedule.findMany.mockResolvedValue([{ id: 10 }]);
+            serviceRecordLinkService.revoke.mockRejectedValueOnce(new Error("link store down"));
+
+            await expect(service.delete(branchId, 1)).resolves.toBeUndefined();
         });
 
         it("must not cancel pending jobs when the guarded delete is rejected", async () => {

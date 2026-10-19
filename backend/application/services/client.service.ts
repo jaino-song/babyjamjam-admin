@@ -437,6 +437,7 @@ export class ClientService {
             if (matchingDocs.some((doc) => doc.branchId === null)) {
                 const samePhoneClients = await this.prismaService.client.findMany({
                     where: {
+                        deletedAt: null,
                         phone: { not: null },
                         branchId: { not: null },
                         OR: [{ phone: { endsWith: phoneLookupSuffix } }],
@@ -3055,11 +3056,20 @@ export class ClientService {
     }
 
     async delete(branchid: string, id: number): Promise<void> {
-        await this.deleteClientUsecase.execute(branchid, id);
-        // The delete use case holds the client row lock and rejects any
-        // retained message-trigger job before the physical delete. Keep this
-        // legacy cleanup hook after a successful delete so a blocked request
-        // cannot partially mutate pending jobs.
+        const outcome = await this.deleteClientUsecase.execute(branchid, id);
+        // A client with history is tombstoned in the delete transaction, which also ends
+        // its open assignments and cancels its pending messages. Outstanding service-record
+        // links die with those assignments, as in terminateService.
+        if (outcome === "tombstoned") {
+            const schedules = await this.prismaService.employee_schedule.findMany({
+                where: { clientId: id, branchId: branchid, replaced: false },
+                select: { id: true },
+            });
+            for (const schedule of schedules) {
+                await this.revokeServiceRecordLinkAfterCommit(id, schedule.id);
+            }
+        }
+        // Keep this legacy cleanup hook after a successful delete.
         await this.triggerService?.cancelPendingJobsForClientDeletion(branchid, id);
     }
 
@@ -3077,7 +3087,7 @@ export class ClientService {
             getClientListDateRanges(now);
 
         const branchClients = await this.prismaService.client.findMany({
-            where: { branchId: branchid },
+            where: { branchId: branchid, deletedAt: null },
             select: { id: true, startDate: true, endDate: true, serviceStatus: true, bookingConfirmedAt: true },
         });
 
@@ -3208,6 +3218,7 @@ export class ClientService {
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 OR: [
                     { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
                     {

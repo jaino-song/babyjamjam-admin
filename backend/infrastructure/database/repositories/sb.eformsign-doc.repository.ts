@@ -540,6 +540,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 statusType: { in: SbEformsignDocRepository.REVIEW_STAGE_STATUS_STORAGE_VALUES },
                 permanentPurgeRequestedAt: null,
                 voidedAt: null,
+                // A deleted (tombstoned) client's contract must never reach the
+                // provider auto-finalize path; unlinked contracts stay eligible.
+                OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }],
             },
             select: {
                 documentId: true,

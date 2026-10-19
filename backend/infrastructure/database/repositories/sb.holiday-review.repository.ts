@@ -119,6 +119,8 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
         const rows = await this.prisma.client.findMany({
             where: {
                 branchId,
+                // A tombstoned (deleted) client never files or keeps a review item.
+                deletedAt: null,
                 duration: { not: null },
                 startDate: { lte: day },
                 AND: [
@@ -180,7 +182,8 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
     async listOpenEventSummaries(branchId: string): Promise<ReviewEventSummary[]> {
         const groups = await this.prisma.end_date_review_item.groupBy({
             by: ["changeEventId", "category"],
-            where: { branchId, status: "open" },
+            // Only items of live clients: a tombstoned client's open item is neither listed nor counted.
+            where: { branchId, status: "open", client: { deletedAt: null } },
             _count: { _all: true },
         });
         if (groups.length === 0) return [];
@@ -213,7 +216,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
 
     async branchHasEventItems(branchId: string, eventId: string): Promise<boolean> {
         const row = await this.prisma.end_date_review_item.findFirst({
-            where: { branchId, changeEventId: eventId },
+            where: { branchId, changeEventId: eventId, client: { deletedAt: null } },
             select: { id: true },
         });
         return row !== null;
@@ -226,7 +229,10 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 changeEventId: eventId,
                 ...(filters.category ? { category: filters.category } : {}),
                 ...(filters.status ? { status: filters.status } : {}),
-                ...(filters.q ? { client: { name: { contains: filters.q, mode: "insensitive" } } } : {}),
+                client: {
+                    deletedAt: null,
+                    ...(filters.q ? { name: { contains: filters.q, mode: "insensitive" } } : {}),
+                },
             },
             include: { client: { select: { name: true } } },
             orderBy: [{ client: { name: "asc" } }, { id: "asc" }],
@@ -237,7 +243,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
     async findEventItemsByIds(branchId: string, eventId: string, itemIds: string[]): Promise<ReviewItemRecord[]> {
         if (itemIds.length === 0) return [];
         const rows = await this.prisma.end_date_review_item.findMany({
-            where: { branchId, changeEventId: eventId, id: { in: itemIds } },
+            where: { branchId, changeEventId: eventId, id: { in: itemIds }, client: { deletedAt: null } },
             include: { client: { select: { name: true } } },
         });
         return rows.map(toItemRecord);
@@ -260,6 +266,8 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 branchId,
                 changeEventId: eventId,
                 clientId: item.clientId,
+                // A tombstoned client is not fixed: the claim fails closed and no end date moves.
+                client: { deletedAt: null },
                 status: "open",
                 storedEnd: toDbDate(item.storedEnd),
                 recalculatedEnd: toDbDate(item.recalculatedEnd),
@@ -304,7 +312,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
 
     async findFixSnapshot(branchId: string, clientId: number): Promise<ReviewFixSnapshot | null> {
         const row = await this.prisma.client.findFirst({
-            where: { id: clientId, branchId },
+            where: { id: clientId, branchId, deletedAt: null },
             select: {
                 startDate: true,
                 endDate: true,
@@ -365,9 +373,10 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             // commits before this recheck, or waits and sees our item in its open-item lookup.
             await tx.$queryRaw(Prisma.sql`
                 SELECT "id" FROM "client"
-                WHERE ${Prisma.join(drafts.map((draft) => Prisma.sql`
+                WHERE "deleted_at" IS NULL
+                AND (${Prisma.join(drafts.map((draft) => Prisma.sql`
                     ("id" = ${draft.clientId} AND "branch_id" = ${draft.branchId}::uuid)
-                `), " OR ")}
+                `), " OR ")})
                 ORDER BY "id" ASC
                 FOR UPDATE
             `);
@@ -398,6 +407,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 where: {
                     id: { in: drafts.map((draft) => draft.clientId) },
                     branchId: { in: [...new Set(drafts.map((draft) => draft.branchId))] },
+                    // A client tombstoned since the candidates were read is missing here, so the
+                    // end-date comparison below fails closed (`items_changed`) and no item is filed.
+                    deletedAt: null,
                 },
                 select: { id: true, endDate: true },
             });

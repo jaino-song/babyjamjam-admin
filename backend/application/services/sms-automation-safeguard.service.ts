@@ -1,9 +1,10 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
 import {
     koreanPhoneStoredDigitCandidates,
     normalizeKoreanPhoneLookupKey,
+    storedPhoneMatchesSql,
 } from "infrastructure/database/repositories/stored-phone-lookup";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import {
@@ -186,9 +187,11 @@ export class SmsAutomationSafeguardService {
         if (job.recipientType === MessageTriggerRecipientType.CLIENT && job.clientId !== null) {
             const client = await db.client.findFirst({
                 where: { id: job.clientId, ...branchScope },
-                select: { smsAutomationEnabled: true },
+                select: { smsAutomationEnabled: true, deletedAt: true },
             });
             if (!client) return { allowed: false, level: "recipient", reason: "recipient client is missing" };
+            // A tombstoned client (고객-06) is gone from every list; nothing may be sent to it.
+            if (client.deletedAt) return { allowed: false, level: "recipient", reason: "recipient client is deleted" };
             if (!client.smsAutomationEnabled) {
                 return recipientBlock("client SMS automation is off", { kind: "client", id: job.clientId });
             }
@@ -201,14 +204,15 @@ export class SmsAutomationSafeguardService {
             const schedule = await db.employee_schedule.findFirst({
                 where: { id: job.employeeScheduleId, ...branchScope },
                 select: {
-                    primaryEmployee: { select: { id: true, smsAutomationEnabled: true } },
-                    secondaryEmployee: { select: { id: true, smsAutomationEnabled: true } },
+                    primaryEmployee: { select: { id: true, smsAutomationEnabled: true, deletedAt: true } },
+                    secondaryEmployee: { select: { id: true, smsAutomationEnabled: true, deletedAt: true } },
                 },
             });
             const employee = job.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
                 ? schedule?.primaryEmployee
                 : schedule?.secondaryEmployee;
             if (!employee) return { allowed: false, level: "recipient", reason: "recipient employee is missing" };
+            if (employee.deletedAt) return { allowed: false, level: "recipient", reason: "recipient employee is deleted" };
             if (!employee.smsAutomationEnabled) {
                 return recipientBlock(
                     "employee SMS automation is off",
@@ -234,21 +238,40 @@ export class SmsAutomationSafeguardService {
                 .filter((key) => key.length > 0),
         )];
         if (keys.length === 0) return null;
-        const candidates = [...new Set(keys.flatMap((key) => [
-            ...koreanPhoneStoredDigitCandidates(key),
-            ...hyphenatedForms(key),
-        ]))];
+        const digitCandidates = [...new Set(keys.flatMap((key) => koreanPhoneStoredDigitCandidates(key)))];
+        const candidates = [...new Set([...digitCandidates, ...keys.flatMap((key) => hyphenatedForms(key))])];
         const keySet = new Set(keys);
         const phoneMatch = { OR: [{ phoneNormalized: { in: candidates } }, { phone: { in: candidates } }] };
 
+        // A live client that owns the phone always decides first.
         const client = await db.client.findFirst({
-            where: { branchId: job.branchId, smsAutomationEnabled: false, ...phoneMatch },
+            where: { branchId: job.branchId, smsAutomationEnabled: false, deletedAt: null, ...phoneMatch },
             select: { id: true },
         });
         if (client) {
             return recipientBlock(
                 "matched client SMS automation is off",
                 typeof client.id === "number" ? { kind: "client", id: client.id } : null,
+            );
+        }
+
+        // A deleted client keeps its raw phone (phone_normalized is cleared) and its opt-out, and nothing
+        // overrides it: the person who opted out may still own that number. The raw phone is compared after
+        // stripping non-digits in SQL, so "+82 10-1234-5678", "010.1234.5678" and "010 1234 5678" all match.
+        const [deletedClient] = await db.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE branch_id = ${job.branchId}::uuid
+              AND deleted_at IS NOT NULL
+              AND sms_automation_enabled = false
+              AND ${storedPhoneMatchesSql(Prisma.sql`phone`, digitCandidates)}
+            ORDER BY id
+            LIMIT 1
+        `);
+        if (deletedClient) {
+            return recipientBlock(
+                "matched deleted client SMS automation is off",
+                typeof deletedClient.id === "number" ? { kind: "client", id: deletedClient.id } : null,
             );
         }
 

@@ -1,4 +1,4 @@
-import { Equals, IsBoolean, IsEnum, IsIn, IsNotEmpty, IsOptional, IsString, IsInt, Min, Matches, ValidateIf } from "class-validator";
+import { Equals, IsBoolean, IsEnum, IsIn, IsISO8601, IsNotEmpty, IsOptional, IsString, IsInt, Min, Matches, ValidateIf } from "class-validator";
 import {
     MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
     MessageTriggerEventType,
@@ -106,4 +106,15 @@ export class UpdateMessageTriggerRuleActivationWithParentDto {
     @IsBoolean()
     @Equals(true)
     enableParent!: true;
+}
+
+export class RescheduleMessageTriggerJobDto {
+    // A date-only value is valid ISO-8601 but not a send time; require the time part.
+    // A value with no time zone would be read in the server's local zone, so it
+    // must end in `Z` or an explicit +hh:mm / -hh:mm offset.
+    @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/, {
+        message: "scheduledFor must be an ISO-8601 datetime with a time zone (Z or ±hh:mm)",
+    })
+    @IsISO8601({ strict: true, strictSeparator: true }, { message: "scheduledFor must be an ISO-8601 datetime" })
+    scheduledFor!: string;
 }

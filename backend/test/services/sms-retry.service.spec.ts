@@ -1472,6 +1472,8 @@ describe("SmsRetryService", () => {
                 },
                 employee: { findFirst: jest.fn().mockResolvedValue(null) },
                 user: { findMany: jest.fn().mockResolvedValue([]) },
+                // Deleted-client raw-phone lookup: no tombstone matches.
+                $queryRaw: jest.fn().mockResolvedValue([]),
             };
             const activation = {
                 runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (

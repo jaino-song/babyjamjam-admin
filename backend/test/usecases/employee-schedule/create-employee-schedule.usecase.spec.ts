@@ -131,7 +131,7 @@ describe("CreateEmployeeScheduleUsecase assignment eligibility", () => {
         expect((error as NotFoundException).message).not.toContain(String(baseParams.clientId));
 
         expect(transaction.client.findFirst).toHaveBeenCalledWith({
-            where: { id: baseParams.clientId, branchId },
+            where: { id: baseParams.clientId, branchId, deletedAt: null },
             select: { id: true },
         });
         expect(transaction.$queryRaw).not.toHaveBeenCalled();
