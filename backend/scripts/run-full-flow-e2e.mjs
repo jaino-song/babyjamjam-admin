@@ -31,6 +31,7 @@ try {
         "exec",
         "jest",
         "test/e2e/full-flow.e2e.spec.ts",
+        "test/e2e/service-record-link-safeguard.e2e.spec.ts",
         "--testPathIgnorePatterns=/node_modules/",
         "--runInBand",
     ]);
