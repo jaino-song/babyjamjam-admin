@@ -4,9 +4,9 @@ import { classifyPaths, complete, compareEvent } from './impact.mjs';
 
 for (const [paths, expected, qa] of [
   [[], [], 'not-applicable'],
-  [['README.md', 'docs/guide.md', 'frontend/docs/help.md'], [], 'not-applicable'],
-  [['backend/scripts/maintenance.ts'], ['backend'], 'assessment-required'],
-  [['backend/src/orders.ts'], ['backend'], 'assessment-required'],
+  [['docs/guide.md', 'docs/nested/help.md', 'docs/guide.txt', 'docs/guide.rst', 'frontend/docs/help.md', 'backend/docs/help.md', 'mobile/docs/help.md'], [], 'not-applicable'],
+  [['backend/scripts/maintenance.ts'], ['backend','frontend'], 'assessment-required'],
+  [['backend/src/orders.ts'], ['backend','frontend'], 'assessment-required'],
   [['frontend/src/page.tsx'], ['frontend'], 'interaction-visual-responsive-required'],
   [['mobile/src/page.tsx'], ['mobile'], 'interaction-visual-responsive-required'],
   [['packages/shared/src/index.ts'], ['backend','frontend','mobile'], 'assessment-required'],
@@ -25,6 +25,30 @@ for (const [paths, expected, qa] of [
   const result = classifyPaths(paths);
   assert.deepEqual(Object.keys(result.selected).filter(key => result.selected[key]), expected);
   assert.equal(result.qa.status, qa);
+});
+
+// Independent expectations pin real consumers, not a closure over selected app jobs.
+for (const [path, expected, qa] of [
+  ['backend/application/dto/contract.dto.ts', ['backend','frontend'], 'assessment-required'],
+  ['frontend/src/components/app/clients/client-update-payload.ts', ['frontend','mobile'], 'interaction-visual-responsive-required'],
+  ['frontend/src/components/app/chat/parts/AgentPartRegistry.tsx', ['backend','frontend'], 'interaction-visual-responsive-required'],
+  ['mobile/src/components/app/chat/MobileAgentPartRegistry.tsx', ['backend','mobile'], 'interaction-visual-responsive-required'],
+  ['frontend/src/components/app/clients/unrelated.ts', ['frontend'], 'interaction-visual-responsive-required'],
+  ['mobile/src/components/app/clients/unrelated.ts', ['mobile'], 'interaction-visual-responsive-required'],
+  ['backend/deploy/cloudrun/excluded-keys.txt', ['backend','frontend'], 'assessment-required'],
+  ['README.md', ['backend'], 'assessment-required'],
+  ['frontend/src/content/help.md', ['frontend'], 'interaction-visual-responsive-required'],
+  ['mobile/src/content/help.md', ['mobile'], 'interaction-visual-responsive-required'],
+  ['registry/authorization.txt', ['backend','frontend','mobile'], 'assessment-required'],
+  ['unrecognized/new-policy.md', ['backend','frontend','mobile'], 'assessment-required'],
+  ['packages/shared/src/help.md', ['backend','frontend','mobile'], 'assessment-required'],
+  ['packages/service-record-ui/src/help.md', ['frontend','mobile'], 'interaction-visual-responsive-required'],
+]) test(`consumer or non-doc input ${path}`, () => {
+  const result = classifyPaths([path]);
+  assert.deepEqual(Object.keys(result.selected).filter(key => result.selected[key]), expected);
+  assert.equal(result.qa.status, qa);
+  // Every refused exemption remains paired with a supported ordinary docs exemption.
+  assert.deepEqual(classifyPaths(['docs/nested/help.md']).selected, {backend:false,frontend:false,mobile:false});
 });
 
 test('completion refuses every failure mode; only deliberate skips pass', () => {

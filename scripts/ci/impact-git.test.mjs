@@ -64,7 +64,7 @@ test('actual workflow loader ignores malicious candidate helper and refuses fals
   const refused=f.run(f.event(head),'gate',{COMPONENT:'backend',IMPACT_RESULT:'success',CHECKS_RESULT:'skipped',REPORTED_SELECTION:'false'});assert.notEqual(refused.status,0);
 });
 test('actual workflow loader authorizes protected docs skip and validates completion afresh',t=>{
-  const f=fixture(t);f.put('README.md','docs');const head=f.save();const r=f.run(f.event(head));assert.equal(r.status,0,r.stderr);assert.deepEqual(r.routing.selected,{backend:false,frontend:false,mobile:false});
+  const f=fixture(t);f.put('docs/guide.md','docs');const head=f.save();const r=f.run(f.event(head));assert.equal(r.status,0,r.stderr);assert.deepEqual(r.routing.selected,{backend:false,frontend:false,mobile:false});
   for (const result of ['skipped','success','failure','cancelled','']) {
     const gate=f.run(f.event(head),'gate',{COMPONENT:'mobile',IMPACT_RESULT:'success',CHECKS_RESULT:result,REPORTED_SELECTION:'false'});
     assert.equal(gate.status===0,['skipped','success'].includes(result),gate.stderr);
@@ -98,3 +98,29 @@ for (const corrupted of ['', '// truncated helper', 'process.exit(0);']) test(`n
   assert.notEqual(f.run(f.event(head)).status,0);
   assert.notEqual(f.run(f.event(head),'gate',{COMPONENT:'backend',IMPACT_RESULT:'success',CHECKS_RESULT:'skipped',REPORTED_SELECTION:'false'}).status,0);
 });
+
+for (const path of ['backend/deploy/cloudrun/excluded-keys.txt', 'README.md', 'registry/authorization.txt']) {
+  test(`real added/deleted operational text and docs rename endpoints: ${path}`, t => {
+    const f = fixture(t);
+    const expected = path === 'README.md' ? {backend:true,frontend:false,mobile:false}
+      : path.startsWith('backend/') ? {backend:true,frontend:true,mobile:false}
+      : {backend:true,frontend:true,mobile:true};
+    // README already exists; other operational text paths exercise addition.
+    f.put(path, 'operational input\n'); const added = f.save();
+    assert.deepEqual(compareEvent(f.cwd,'pull_request',f.event(added),added).selected, expected);
+    f.put('docs/nested/help.md', 'ordinary documentation\n'); const docs = f.save();
+    assert.deepEqual(compareEvent(f.cwd,'pull_request',f.event(docs,added),docs).selected, {backend:false,frontend:false,mobile:false});
+    f.git('mv',path,'docs/moved.md'); const renamed = f.save();
+    let r = compareEvent(f.cwd,'pull_request',f.event(renamed,docs),renamed);
+    assert.deepEqual(r.paths, [path,'docs/moved.md'].sort());
+    assert.deepEqual(r.selected, expected);
+    f.git('mv','docs/moved.md',path); const restored = f.save();
+    r = compareEvent(f.cwd,'pull_request',f.event(restored,renamed),restored);
+    assert.deepEqual(r.paths, [path,'docs/moved.md'].sort());
+    assert.deepEqual(r.selected, expected);
+    f.git('rm',path); const deleted = f.save();
+    assert.deepEqual(compareEvent(f.cwd,'pull_request',f.event(deleted,restored),deleted).selected, expected);
+    f.git('rm','docs/nested/help.md'); const removedDocs = f.save();
+    assert.deepEqual(compareEvent(f.cwd,'pull_request',f.event(removedDocs,deleted),removedDocs).selected, {backend:false,frontend:false,mobile:false});
+  });
+}

@@ -24,7 +24,16 @@ export function classifyPaths(paths, fullReason = null) {
       if (/(?:package\.json|lock|pnpm-workspace|\.gradle|requirements|Cargo\.toml|Gemfile)/.test(path)) categories.dependencies = true;
       reasons.push(`Policy/config/tooling: ${path}`); continue;
     }
-    if (/\.(?:md|txt|rst)$/.test(path)) { categories.docs = true; continue; }
+    // Only named documentation roots are exempt. Extension alone cannot prove
+    // that source, operational or unknown text has no runtime/test consumers.
+    if (/^(?:docs\/|(?:backend|frontend|mobile)\/docs\/).+\.(?:md|txt|rst)$/.test(path)) {
+      categories.docs = true; continue;
+    }
+    if (path === 'README.md') {
+      selected.backend = true;
+      reasons.push('Root README is an input to the backend db-seed contract test');
+      continue;
+    }
     if (path.startsWith('packages/shared/')) {
       categories.shared = true; apps.forEach(app => { selected[app] = true; });
       reasons.push('Shared package reaches all apps, including backend vendored runtime');
@@ -34,6 +43,23 @@ export function classifyPaths(paths, fullReason = null) {
     } else if (apps.some(app => path.startsWith(`${app}/`))) {
       const app = path.split('/')[0]; categories[app] = selected[app] = true;
       if (app !== 'backend') ui = true;
+      // Frontend imports backend application DTOs. Select it conservatively for
+      // every backend path rather than claiming a complete DTO dependency map.
+      if (app === 'backend') {
+        selected.frontend = true;
+        reasons.push('Backend paths may affect DTOs imported by frontend');
+      }
+      if (path === 'frontend/src/components/app/clients/client-update-payload.ts') {
+        selected.mobile = true;
+        reasons.push('Mobile payload parity tests read the frontend payload helper');
+      }
+      if (['frontend/src/components/app/chat/parts/AgentPartRegistry.tsx',
+        'mobile/src/components/app/chat/MobileAgentPartRegistry.tsx'].includes(path)) {
+        selected.backend = true;
+        reasons.push('Backend agent manifest check reads the changed renderer registry');
+      }
+      // Do not expand selected jobs as if their source files had changed.
+
       reasons.push(`${app} change requires its complete existing checks`);
     } else {
       uncertain = true; categories.uncertain = true;

@@ -49,9 +49,13 @@ aggregate evaluator/workflow remains unchanged and disabled; this adds no cross-
 
 | Change | Checks | QA assessment |
 |---|---|---|
-| Empty comparison or only ordinary non-executable Markdown/text docs | Skip application jobs; stable gates report | Not applicable, with reason |
-| Backend source, tests or maintenance | Backend including auth E2E | Browser-impact assessment required; paths cannot prove a maintenance exemption |
-| Frontend/mobile UI surface | Respective complete app suite | Interaction, visual and responsive QA required |
+| Empty comparison or only non-executable `.md`/`.txt`/`.rst` under `docs/`, `backend/docs/`, `frontend/docs/` or `mobile/docs/` | Skip application jobs; stable gates report | Not applicable, with reason |
+| Backend source, tests, maintenance or operational text outside its docs root | Backend including auth E2E, plus frontend | Browser-impact assessment required; paths cannot prove a maintenance exemption |
+| Frontend/mobile UI surface outside the special consumer paths below | Respective complete app suite | Interaction, visual and responsive QA required |
+| Root `README.md` (backend db-seed test input) | Backend including auth E2E | Browser-impact assessment required |
+| `frontend/src/components/app/clients/client-update-payload.ts` | Frontend and mobile (payload parity test) | Interaction, visual and responsive QA required |
+| `frontend/src/components/app/chat/parts/AgentPartRegistry.tsx` | Frontend and backend (agent manifest check) | Interaction, visual and responsive QA required |
+| `mobile/src/components/app/chat/MobileAgentPartRegistry.tsx` | Mobile and backend (agent manifest check) | Interaction, visual and responsive QA required |
 | `packages/shared` | Backend (including vendored runtime), frontend, mobile | Assessment required |
 | `packages/service-record-ui` | Frontend and mobile | Interaction, visual and responsive QA required |
 | Dependency/config/tooling/policy, unknown, native, executable, symlink or submodule changes | All three apps conservatively | Assessment required, or UI QA when UI also changed |
@@ -60,6 +64,22 @@ Markdown under executable policy locations (`.agents`, `.codex`, `.github`, `rul
 policy entry points (`AGENTS.md`, `CLAUDE.md`, `SKILL.md`) is never a docs exemption. Executable Git
 modes are inspected at both comparison endpoints. Config/dependency changes anywhere are
 conservative. The classifier describes potential impact rather than claiming source-code semantics.
+Text extensions alone never establish a docs-only exemption. For example,
+`backend/deploy/cloudrun/excluded-keys.txt` selects backend and frontend;
+`frontend/src/content/help.md` and `mobile/src/content/help.md` select their owning app;
+`registry/authorization.txt` and `unrecognized/new-policy.md` conservatively select all apps.
+These inputs require QA assessment rather than an exemption. Ordinary `docs/guide.md` and
+`docs/nested/help.md` remain exempt, subject to policy/config and Git-mode checks above.
+
+Frontend imports backend DTOs through its `@/backend/*` alias. All non-exempt backend paths
+therefore also select frontend, conservatively paying for extra frontend checks on backend-only
+maintenance instead of claiming a complete transitive DTO dependency map. The payload and renderer
+edges are keyed to actual changed paths. Selecting backend because a mobile registry changed does
+not imply backend source changed, so that case does not also select frontend. Unrelated paths such
+as `frontend/src/components/app/clients/unrelated.ts` and
+`mobile/src/components/app/clients/unrelated.ts` retain single-app selection. New cross-app
+consumers must be added to this routing contract when introduced.
+
 Non-required mobile-unit and shared-contract workflow path filters include service-record-ui.
 Existing full-suite coverage and push/manual behavior remain intact.
 
