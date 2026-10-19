@@ -2178,6 +2178,23 @@ describe("MessageTriggerService", () => {
             expect(warn).not.toHaveBeenCalled();
         });
 
+        it.each([
+            ["a sealed agent-automation job", { payload: { memberId: "m", agentAutomationSeal: { digest: "x" } } }],
+            ["a job whose seal key is null", { payload: { memberId: "m", agentAutomationSeal: null } }],
+            ["a manual agent-sms job (rule prefix)", { ruleId: "agent-sms:abc" }],
+            ["a manual agent-sms retry job (dedupe prefix)", { dedupeKey: "agent-sms-retry:1" }],
+        ] as const)("answers 409 with the automatic-rules-only message for %s, without updating it", async (_label, overrides) => {
+            const { service, jobRepository, warn } = rescheduleFixture(overrides as Parameters<typeof createJob>[0]);
+
+            const failure = await service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9").catch((e) => e);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect(failure.getStatus()).toBe(409);
+            expect(failure.message).toBe("자동 발송 규칙으로 만든 대기 문자만 시간을 바꿀 수 있어요.");
+            expect(jobRepository.rescheduleDebugPending).not.toHaveBeenCalled();
+            expect(warn).not.toHaveBeenCalled();
+        });
+
         it("moves a pending job that is just over a minute from due", async () => {
             const { service, jobRepository } = rescheduleFixture({ scheduledFor: new Date(Date.now() + 61_000) });
 
