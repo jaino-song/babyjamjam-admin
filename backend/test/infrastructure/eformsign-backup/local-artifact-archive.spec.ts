@@ -174,4 +174,39 @@ describe("LocalArtifactArchive", () => {
         // Fail closed: cannot safely clean an attempt via a now-invalid root path.
         expect((await fs.readdir(`${base}/original`)).every(entry => entry.endsWith(".tmp"))).toBe(true);
     });
+    describe("objectName option (BJJ-455)", () => {
+        const objectName = () => `${claim().contentSha256}.pdf`;
+        it("should publish under the object name and report it as the relative key", async () => {
+            const result = await new LocalArtifactArchive(config).archive(claim(), stream(), { objectName: objectName() });
+            expect(result).toEqual({ ok: true, artifactId: artifactIdentity(claim()), relativeKey: objectName(),
+                contentSha256: claim().contentSha256, byteLength: bytes.length, disposition: "created" });
+            expect(await fs.readFile(`${root}/${objectName()}`)).toEqual(bytes);
+            expect(await fs.readdir(root)).toEqual([objectName()]);
+        });
+        it.each([
+            ["a short name", "abc.pdf"], ["upper-case hex", `${"A".repeat(64)}.pdf`], ["the default extension", `${"a".repeat(64)}.bin`],
+            ["a traversal", `../${"a".repeat(64)}.pdf`], ["a nested path", `a/${"a".repeat(64)}.pdf`], ["a trailing newline", `${"a".repeat(64)}.pdf\n`],
+            ["a trailing slash", `${"a".repeat(64)}.pdf/`], ["an empty name", ""], ["a non-string", 5 as unknown as string],
+        ])("should reject %s as INVALID_INPUT and write nothing", async (_name, name) => {
+            expect(await new LocalArtifactArchive(config).archive(claim(), stream(), { objectName: name }))
+                .toEqual({ ok: false, error: "INVALID_INPUT" });
+            expect(await fs.readdir(root)).toEqual([]);
+        });
+        it("should keep the default name when the option object has no objectName", async () => {
+            const result = await new LocalArtifactArchive(config).archive(claim(), stream(), {});
+            expect(result).toMatchObject({ ok: true, relativeKey: `${artifactIdentity(claim())}.bin` });
+        });
+        it("should reuse verified bytes under the object name without clobbering", async () => {
+            const archive = new LocalArtifactArchive(config);
+            await archive.archive(claim(), stream(), { objectName: objectName() });
+            expect(await archive.archive(claim(), stream(), { objectName: objectName() })).toMatchObject({ ok: true, disposition: "reused" });
+            expect(await fs.readdir(root)).toEqual([objectName()]);
+        });
+        it("should refuse and keep different bytes already sitting at the object name", async () => {
+            const corrupt = Buffer.alloc(bytes.length, 0x78);
+            await fs.writeFile(`${root}/${objectName()}`, corrupt);
+            await expectFailure(new LocalArtifactArchive(config).archive(claim(), stream(), { objectName: objectName() }));
+            expect(await fs.readFile(`${root}/${objectName()}`)).toEqual(corrupt);
+        });
+    });
 });
