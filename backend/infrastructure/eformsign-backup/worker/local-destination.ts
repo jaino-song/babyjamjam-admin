@@ -279,6 +279,8 @@ export class LocalDestination {
                 throw new WorkerError("archive-unavailable");
             }
             if (!stat.isDirectory() || stat.uid !== uid || (stat.mode & WRITABLE_BY_OTHERS) !== 0) throw new WorkerError("archive-unsafe-path");
+            // A segment on another device means the archive root was unmounted under us: this is the root disk.
+            if (stat.dev !== this.options.expectedDev) throw new WorkerError("archive-identity-mismatch");
         }
         return current;
     }
@@ -422,7 +424,8 @@ export class LocalDestination {
             const result = await this.runPrimitive({ path: leaf, dev: stat.dev, ino: stat.ino }, input, source, objectName, "archive-unavailable");
             if (!result.ok) return result;
             if (!await this.pdfShapeOf(`${leaf}/${objectName}`)) return refuse("pdf-shape");
-            const last = await this.checkArchive();
+            // Identity and marker only: room dropping after the publish must not turn a success into a failure.
+            const last = await this.verifyRoot(null, true);
             if (!last.ok) return last;
             return { ok: true, relativeKey: key, disposition: result.disposition };
         } catch (error) {

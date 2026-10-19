@@ -208,7 +208,7 @@ export class ExportClient {
     /**
      * Resolves once the response headers agree with the candidate (status 200, `Content-Length`,
      * `X-Content-Sha256`, `X-Artifact-Identity`); the returned stream then re-checks length and sha256 while it is
-     * read, stops as soon as more bytes than announced arrive, and fails with `artifact-integrity` on any mismatch.
+     * read, stops as soon as more bytes than announced arrive, and fails with `artifact-integrity` on excess bytes or a length/sha256 mismatch at a clean end; a dropped connection is a `NETWORK` `ExportFailure`.
      */
     async openArtifact(snapshotId: string, artifact: ArtifactRequest): Promise<AsyncIterable<Uint8Array>> {
         const segment = this.snapshotSegment(snapshotId);
@@ -229,10 +229,10 @@ export class ExportClient {
             await response.body?.cancel().catch(() => undefined);
             throw new WorkerError("artifact-integrity");
         }
-        return this.stream(response, artifact, signal);
+        return this.stream(response, artifact);
     }
 
-    private async *stream(response: Response, artifact: ArtifactRequest, signal: AbortSignal): AsyncGenerator<Uint8Array> {
+    private async *stream(response: Response, artifact: ArtifactRequest): AsyncGenerator<Uint8Array> {
         const reader = response.body?.getReader();
         if (!reader) throw new WorkerError("artifact-integrity");
         const hash = createHash("sha256");
@@ -244,8 +244,8 @@ export class ExportClient {
                 try {
                     chunk = await reader.read();
                 } catch {
-                    // A body that dies mid-transfer is a short body; a timeout is a network failure.
-                    throw signal.aborted ? new ExportFailure(0, NETWORK, true, null) : new WorkerError("artifact-integrity");
+                    // A reset, a premature close or our own timeout is a network failure (retry_wait), never an integrity error.
+                    throw new ExportFailure(0, NETWORK, true, null);
                 }
                 if (chunk.done) break;
                 count += chunk.value.byteLength;

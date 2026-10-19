@@ -281,7 +281,7 @@ describe("ExportClient against a fake export server", () => {
             const error = await client.openArtifact(SNAPSHOT_ID, request).then(drain).catch((e: unknown) => e);
             expect(error).toMatchObject({ reasonCode: "artifact-integrity" });
         });
-        it("should refuse a truncated connection as artifact-integrity", async () => {
+        it("should report a connection dropped mid-body as a retryable NETWORK failure, not an integrity error", async () => {
             server.handler = (_req, res) => {
                 res.writeHead(200, {
                     "Content-Length": String(pdfBytes.length), "X-Artifact-Identity": IDENTITY, "X-Content-Sha256": sha256Of(pdfBytes),
@@ -290,7 +290,9 @@ describe("ExportClient against a fake export server", () => {
                 setTimeout(() => res.destroy(), 20);
             };
             const error = await client.openArtifact(SNAPSHOT_ID, request).then(drain).catch((e: unknown) => e);
-            expect(error).toMatchObject({ reasonCode: "artifact-integrity" });
+            expect(error).toBeInstanceOf(ExportFailure);
+            expect(error).toMatchObject({ httpStatus: 0, code: "NETWORK", retryable: true, retryAfterSeconds: null });
+            expect(dumpOf(error)).not.toContain(TOKEN);
         });
         it("should refuse a candidate larger than 64 MiB before sending any request", async () => {
             const error = await client.openArtifact(SNAPSHOT_ID, { ...request, byteLength: 64 * 1024 * 1024 + 1 }).catch((e: unknown) => e);

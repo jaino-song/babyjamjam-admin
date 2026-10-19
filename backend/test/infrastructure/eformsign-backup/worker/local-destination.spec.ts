@@ -2,13 +2,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { artifactKey, completionKey, manifestKey, runKey, WorkerError } from "domain/eformsign-backup/worker";
-import { ExportFailure } from "infrastructure/eformsign-backup/worker/export-client";
+import { ExportClient, ExportFailure } from "infrastructure/eformsign-backup/worker/export-client";
 import { NFS_SUPER_MAGIC } from "infrastructure/eformsign-backup/worker/fs-probe";
 
 import {
     TEST_ARCHIVE_ID, TEST_INSTALLATION_ID, installationMarkerBytes, makeArchive, makeDestination, makeTestBase, probeFor, publishInput,
     restoreDirectoryModes, sha256Of, snapshotTree, streamOf, type ArchiveFixture,
 } from "./helpers/destination-support";
+import { FakeExportServer } from "./helpers/destination-fake-export-server";
 import { buildMinimalPdf } from "./helpers/pdf-fixture-minimal";
 
 const UUID_RUN = "3f2b8c1e-5d4a-4b6c-9e7f-1a2b3c4d5e6f";
@@ -22,6 +23,7 @@ describe("LocalDestination", () => {
         fixture = await makeArchive(base);
     });
     afterEach(async () => {
+        jest.restoreAllMocks();
         await restoreDirectoryModes(fixture.root);
         await fs.rm(base, { recursive: true, force: true });
     });
@@ -334,6 +336,54 @@ describe("LocalDestination", () => {
                 await fs.mkdir(path.join(fixture.root, "eformsign"), { mode: 0o700 });
                 await fs.chmod(path.join(fixture.root, "eformsign"), 0o770);
                 expect(await makeDestination(fixture).publishArtifact(publishInput(pdf), streamOf(pdf))).toEqual({ ok: false, reasonCode: "archive-unsafe-path" });
+            });
+        });
+
+        describe("review fixes", () => {
+            it("should report a connection dropped mid-download as network-timeout, never as an integrity error", async () => {
+                const server = new FakeExportServer();
+                try {
+                    const baseUrl = await server.start();
+                    const identity = "a".repeat(64);
+                    server.handler = (_req, res) => {
+                        res.writeHead(200, { "Content-Length": String(pdf.length), "X-Artifact-Identity": identity, "X-Content-Sha256": sha256Of(pdf) });
+                        res.write(pdf.subarray(0, 40));
+                        setTimeout(() => res.destroy(), 20);
+                    };
+                    const client = new ExportClient({ baseUrl, token: `ebx_${"A".repeat(43)}`, companyId: "C001", requestTimeoutMs: 3000 });
+                    const source = await client.openArtifact("7c1f6f0e-2a3b-4c5d-8e9f-0a1b2c3d4e5f", { artifactIdentity: identity, sha256: sha256Of(pdf), byteLength: pdf.length });
+                    const before = await snapshotTree(base);
+                    expect(await makeDestination(fixture).publishArtifact(publishInput(pdf), source)).toEqual({ ok: false, reasonCode: "network-timeout" });
+                    expect((await snapshotTree(base)).filter(line => line.includes(".pdf|"))).toEqual((before).filter(line => line.includes(".pdf|")));
+                } finally { await server.stop(); }
+            });
+            it("should refuse a directory segment that sits on another device than the archive root", async () => {
+                const realLstat = fs.lstat.bind(fs);
+                jest.spyOn(fs, "lstat").mockImplementation((async (target: Parameters<typeof fs.lstat>[0], ...rest: unknown[]) => {
+                    const stat = await (realLstat as (...a: unknown[]) => Promise<import("node:fs").Stats>)(target, ...rest);
+                    return String(target).endsWith("/eformsign/C001") ? Object.create(stat, { dev: { value: stat.dev + 1 } }) : stat;
+                }) as typeof fs.lstat);
+                expect(await makeDestination(fixture).publishArtifact(publishInput(pdf), streamOf(pdf))).toEqual({ ok: false, reasonCode: "archive-identity-mismatch" });
+                expect((await snapshotTree(base)).filter(line => line.includes(".pdf|"))).toEqual([]);
+            });
+            it("should apply the same device check to JSON publishing", async () => {
+                const realLstat = fs.lstat.bind(fs);
+                jest.spyOn(fs, "lstat").mockImplementation((async (target: Parameters<typeof fs.lstat>[0], ...rest: unknown[]) => {
+                    const stat = await (realLstat as (...a: unknown[]) => Promise<import("node:fs").Stats>)(target, ...rest);
+                    return String(target).endsWith("/manifests") ? Object.create(stat, { dev: { value: stat.dev + 1 } }) : stat;
+                }) as typeof fs.lstat);
+                const key = manifestKey({ companyId: "C001", documentId: "D001", metadataRevision: "a".repeat(64) });
+                expect(await makeDestination(fixture).publishJson(key, Buffer.from("{}"))).toEqual({ ok: false, reasonCode: "archive-identity-mismatch" });
+            });
+            it("should not report a successful publish as archive-space when room drops only after the file is published", async () => {
+                let low = false;
+                const healthy = probeFor();
+                const probe = { readProcLocks: healthy.readProcLocks, statfs: async (p: string) => ({ ...(await healthy.statfs(p)), bavail: low ? 1 : 1_000_000, ffree: low ? 1 : 1_000_000 }) };
+                const destination = makeDestination(fixture, {}, probe, point => { if (point === "directory-sync") low = true; });
+                const result = await destination.publishArtifact(publishInput(pdf), streamOf(pdf));
+                expect(low).toBe(true);
+                expect(result).toMatchObject({ ok: true, disposition: "created" });
+                expect((await fs.readFile(path.join(fixture.root, (result as { relativeKey: string }).relativeKey))).equals(pdf)).toBe(true);
             });
         });
 
