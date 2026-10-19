@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { ClientEntity } from "domain/entities/client.entity";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { ScopedDeleteNotFoundError } from "domain/errors/retention-delete-blocked.error";
@@ -180,13 +180,69 @@ describe("client tombstone (고객-06)", () => {
     let employeeRepository: SbEmployeeRepository;
     let usecase: DeleteClientUsecase;
 
+    const originalSwitch = process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+
+    // The tombstone delete is behind CLIENT_TOMBSTONE_DELETE_ENABLED (default off); the
+    // cases below describe the switched-on behaviour, the "switch off" block the default.
     beforeEach(() => {
+        process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "true";
         clearSchemaCapabilityCache();
         db = createFakeDatabase();
         const prisma = db.prisma as unknown as PrismaService;
         repository = new SbClientRepository(prisma);
         employeeRepository = new SbEmployeeRepository(prisma);
         usecase = new DeleteClientUsecase(repository);
+    });
+
+    afterEach(() => {
+        if (originalSwitch === undefined) delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+        else process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = originalSwitch;
+    });
+
+    describe("delete with CLIENT_TOMBSTONE_DELETE_ENABLED off", () => {
+        it.each([undefined, "", "false", "TRUE", "1", "yes", " true"])(
+            "refuses a client with history with a 409 and writes nothing (switch=%j)",
+            async (value) => {
+                if (value === undefined) delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+                else process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = value;
+                const client = db.addClient();
+                db.messageLogClientIds.add(client.id);
+                const schedule = db.addSchedule({ clientId: client.id });
+                const job = db.addJob({ clientId: client.id });
+
+                await expect(usecase.execute(BRANCH, client.id)).rejects.toBeInstanceOf(ConflictException);
+
+                expect(db.clients).toHaveLength(1);
+                expect(db.clients[0]?.deletedAt).toBeNull();
+                expect(db.clients[0]?.phoneNormalized).toBe(MOM_PHONE_NORMALIZED);
+                expect(schedule.terminatedAt ?? null).toBeNull();
+                expect(job.cancelReason ?? null).toBeNull();
+                expect(job.status).toBe("pending");
+            },
+        );
+
+        it("carries the existing CLIENT_RETENTION_BLOCKED code and message", async () => {
+            process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "false";
+            const client = db.addClient();
+            db.messageLogClientIds.add(client.id);
+
+            const error = await usecase.execute(BRANCH, client.id).catch((caught) => caught);
+
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getResponse()).toMatchObject({
+                code: "CLIENT_RETENTION_BLOCKED",
+                message: "연결된 운영 또는 이력 데이터가 있어 고객을 삭제할 수 없습니다.",
+            });
+        });
+
+        it("still hard deletes a client without history", async () => {
+            process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "false";
+            const client = db.addClient();
+
+            await expect(usecase.execute(BRANCH, client.id)).resolves.toBe("deleted");
+
+            expect(db.clients).toHaveLength(0);
+        });
     });
 
     describe("delete", () => {
