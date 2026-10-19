@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const BACKEND = path.resolve(__dirname, "../../../..");
@@ -18,13 +19,73 @@ const ALLOWED_BARE: Array<string | RegExp> = [
 const FORBIDDEN_UNLINK = /(^|[^A-Za-z0-9_$])(unlink|unlinkSync|rmdir|rmdirSync|rmSync|rm)\s*\(|\.(unlink|rmdir|rm)\b|\b(unlink|rmdir|rmSync)\b/;
 const FORBIDDEN_EXCEPTIONS = /\b(BadRequest|NotFound|Conflict|Forbidden|Unauthorized|InternalServerError|ServiceUnavailable|BadGateway|Http)Exception\b/;
 
-async function listTs(dir: string): Promise<string[]> {
+/** Every source flavour Node can execute or compile here; a `.js` file would otherwise slip past the scan. */
+const SCANNED_FILE = /\.(ts|mts|cts|js|mjs|cjs)$/;
+
+async function listSources(dir: string, root: string = BACKEND): Promise<string[]> {
     const found: string[] = [];
-    for (const entry of await fs.readdir(path.join(BACKEND, dir), { withFileTypes: true })) {
-        if (entry.isDirectory()) found.push(...(await listTs(path.join(dir, entry.name))));
-        else if (entry.name.endsWith(".ts")) found.push(path.join(dir, entry.name));
+    for (const entry of await fs.readdir(path.join(root, dir), { withFileTypes: true })) {
+        if (entry.isDirectory()) found.push(...(await listSources(path.join(dir, entry.name), root)));
+        else if (SCANNED_FILE.test(entry.name)) found.push(path.join(dir, entry.name));
     }
     return found.sort();
+}
+
+/** The `process` members a runtime file may use. `env` must never be on this list. */
+const ALLOWED_PROCESS_MEMBERS = ["argv", "exitCode", "getuid", "pid", "stderr", "stdout"];
+
+/**
+ * Blank out comments (keeping string and template contents, so `${process.env}` is still seen) and
+ * replace each with one space, so a comment between `process` and `.env` is not glued away.
+ * This is a scanner, not a parser: a regex literal holding an unbalanced quote can confuse it, which
+ * is acceptable here because the runtime files are reviewed code and any such confusion errs only
+ * toward scanning more text.
+ */
+function stripComments(source: string): string {
+    let out = "";
+    let i = 0;
+    while (i < source.length) {
+        const ch = source[i]!;
+        const next = source[i + 1];
+        if (ch === "/" && next === "/") {
+            while (i < source.length && source[i] !== "\n") i += 1;
+            out += " ";
+        } else if (ch === "/" && next === "*") {
+            const end = source.indexOf("*/", i + 2);
+            i = end === -1 ? source.length : end + 2;
+            out += " ";
+        } else if (ch === '"' || ch === "'" || ch === "`") {
+            let j = i + 1;
+            while (j < source.length && source[j] !== ch) j += source[j] === "\\" ? 2 : 1;
+            out += source.slice(i, j + 1);
+            i = j + 1;
+        } else {
+            out += ch;
+            i += 1;
+        }
+    }
+    return out;
+}
+
+/**
+ * Every use of `process` must be `process.<allowed member>`. Anything else is a violation: another
+ * member (env, cwd, binding...), a bracket access, destructuring, aliasing, or passing `process`
+ * around. `globalThis` and `global` are banned outright because they reach `process` by another name.
+ */
+function processViolations(source: string): string[] {
+    const hits: string[] = [];
+    for (const match of source.matchAll(/(?<![\w$])process(?![\w$])/g)) {
+        const member = /^\s*\??\.\s*([A-Za-z_$][\w$]*)/.exec(source.slice(match.index! + match[0].length));
+        if (!member) hits.push(`process used other than as process.<member>: ${source.slice(match.index!, match.index! + 24).trim()}`);
+        else if (!ALLOWED_PROCESS_MEMBERS.includes(member[1]!)) hits.push(`process.${member[1]}`);
+    }
+    for (const match of source.matchAll(/(?<![\w$])(globalThis|global)(?![\w$])/g)) hits.push(match[1]!);
+    return hits;
+}
+
+/** Runtime files report through the CLI's own stdout/stderr writers, never through console. */
+function consoleViolations(source: string): string[] {
+    return [...source.matchAll(/(?<![\w$])console(?![\w$])/g)].map(() => "console");
 }
 
 function specifiers(source: string): string[] {
@@ -45,8 +106,18 @@ function insideRuntime(file: string, specifier: string): boolean {
     return RUNTIME_DIRS.some((dir) => resolved === dir || resolved.startsWith(`${dir}/`));
 }
 
+/** A bare specifier is matched on its text, so a `.` or `..` segment could walk out of an allowed prefix. */
+function hasPathTraversal(specifier: string): boolean {
+    return specifier.includes("\\") || specifier.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+        || path.posix.normalize(specifier) !== specifier;
+}
+
+/** `node:process` hands out `env` as a named import, which no `process.<member>` check would see. */
+const FORBIDDEN_BARE = new Set(["node:process", "process"]);
+
 function allowed(file: string, specifier: string): boolean {
     if (specifier.startsWith(".")) return insideRuntime(file, specifier);
+    if (FORBIDDEN_BARE.has(specifier) || hasPathTraversal(specifier)) return false;
     return ALLOWED_BARE.some((rule) => (typeof rule === "string" ? rule === specifier : rule.test(specifier)));
 }
 
@@ -54,7 +125,7 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
     let files: string[] = [];
     const sources = new Map<string, string>();
     beforeAll(async () => {
-        files = [...(await Promise.all(RUNTIME_DIRS.map(listTs))).flat(), ...RUNTIME_SCRIPTS];
+        files = [...(await Promise.all(RUNTIME_DIRS.map((dir) => listSources(dir)))).flat(), ...RUNTIME_SCRIPTS];
         for (const file of files) sources.set(file, await fs.readFile(path.join(BACKEND, file), "utf8"));
     });
 
@@ -82,12 +153,85 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "domain/utils/x", "../application/x"]) {
             expect(allowed("infrastructure/eformsign-backup/worker/x.ts", bad)).toBe(false);
         }
+        for (const bad of [
+            "domain/eformsign-backup/worker/../../../infrastructure/database/prisma.service",
+            "domain/eformsign-backup/worker/../../../infrastructure/database/prisma.service.ts",
+            "domain/eformsign-backup/worker/./x",
+            "domain/eformsign-backup/worker/..",
+            "domain/eformsign-backup/export/../evidence",
+            "infrastructure/eformsign-backup/local-artifact-archive/../../database/prisma.service",
+            "domain/eformsign-backup/source-evidence/../../x",
+            "node:fs/../../x",
+            "zod/../x",
+            "domain\\eformsign-backup\\worker\\x",
+            "domain/eformsign-backup//worker/x",
+            "node:process",
+        ]) expect(allowed("infrastructure/eformsign-backup/worker/x.ts", bad)).toBe(false);
         expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "./runner")).toBe(true);
+        expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "domain/eformsign-backup/worker/ledger-state")).toBe(true);
+        expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "node:fs/promises")).toBe(true);
         expect(allowed("scripts/eformsign-backup-worker.ts", "../infrastructure/eformsign-backup/worker/cli")).toBe(true);
     });
 
-    it("should never read process.env", () => {
-        expect([...sources].filter(([, source]) => /\bprocess\s*\.\s*env\b|process\[\s*["']env["']\s*\]/.test(source)).map(([file]) => file)).toEqual([]);
+    it("should touch no process member outside the allowlist, and never read process.env", () => {
+        const offenders: string[] = [];
+        for (const [file, source] of sources) for (const hit of processViolations(stripComments(source))) offenders.push(`${file}: ${hit}`);
+        expect(offenders).toEqual([]);
+        expect(ALLOWED_PROCESS_MEMBERS).not.toContain("env");
+    });
+
+    it("should refuse every way of reaching process.env (the check itself can fail)", () => {
+        for (const bad of [
+            "const x = process.env.DATABASE_URL;",
+            'const x = process["env"];',
+            'const { env: workerEnv } = process; export const leakedHost = workerEnv["DATABASE_URL"];',
+            "const { env } = process;",
+            "const p = process; p.env.X;",
+            "const { env } = globalThis.process;",
+            "globalThis.process.env.X",
+            "process?.env",
+            "process.cwd()",
+            "process.chdir(x)",
+            "process.binding('fs')",
+            "process[key]",
+            'process["en" + "v"]',
+            "const e = (0, process).env;",
+            "process . env",
+            "process\n  .env",
+            "process/* hidden */.env",
+            "const { getuid, env } = process;",
+        ]) expect(processViolations(stripComments(bad))).not.toEqual([]);
+        for (const good of [
+            "process.getuid?.()", "process.pid", "process.argv.slice(2)", "process.exitCode = code;",
+            "process.stdout.write(line);", "process.stderr.write(line);",
+            "// process.env is never read here", "/* the process must hold it */", "const child_process = 1;",
+        ]) expect(processViolations(stripComments(good))).toEqual([]);
+    });
+
+    it("should write nothing through console (the check itself can fail)", () => {
+        const offenders: string[] = [];
+        for (const [file, source] of sources) for (const hit of consoleViolations(stripComments(source))) offenders.push(`${file}: ${hit}`);
+        expect(offenders).toEqual([]);
+        for (const bad of ["console.log(x)", "console.error(x)", "console['warn'](x)", "const { log } = console;", "globalThis.console.info(x)"]) {
+            expect(consoleViolations(stripComments(bad))).not.toEqual([]);
+        }
+        expect(consoleViolations(stripComments("// console.log is not used"))).toEqual([]);
+        expect(consoleViolations(stripComments("process.stdout.write(line)"))).toEqual([]);
+    });
+
+    it("should scan .js, .mjs and .cjs runtime files too, not only .ts (the check itself can fail)", async () => {
+        const root = await fs.mkdtemp(path.join(os.homedir(), "bjj455-a1-"));
+        try {
+            await fs.mkdir(path.join(root, "w", "nested"), { recursive: true });
+            for (const name of ["a.ts", "b.mts", "c.cts", "d.js", "e.mjs", "f.cjs", "nested/g.js", "notes.md", "data.json", "h.d.ts.map"]) {
+                await fs.writeFile(path.join(root, "w", name), "export {};\n");
+            }
+            expect(await listSources("w", root)).toEqual(
+                ["w/a.ts", "w/b.mts", "w/c.cts", "w/d.js", "w/e.mjs", "w/f.cjs", "w/nested/g.js"].sort(),
+            );
+        } finally {
+            await fs.rm(root, { recursive: true, force: true });
+        }
     });
 
     it("should unlink or remove nothing except atomic-file.ts removing its own temp file", () => {
