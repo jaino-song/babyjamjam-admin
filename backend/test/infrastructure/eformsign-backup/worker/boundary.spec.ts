@@ -37,9 +37,9 @@ const ALLOWED_PROCESS_MEMBERS = ["argv", "exitCode", "getuid", "pid", "stderr", 
 /**
  * Blank out comments (keeping string and template contents, so `${process.env}` is still seen) and
  * replace each with one space, so a comment between `process` and `.env` is not glued away.
- * This is a scanner, not a parser: a regex literal holding an unbalanced quote can confuse it, which
- * is acceptable here because the runtime files are reviewed code and any such confusion errs only
- * toward scanning more text.
+ * This is a scanner, not a parser, and it does not recognise regex literals: `/^a\/\//` reads as a
+ * line comment, and `/x\/*\/` as the start of a block comment, so it can HIDE real code after one.
+ * Never rely on it alone for a security rule; `processViolations` also scans the raw source.
  */
 function stripComments(source: string): string {
     let out = "";
@@ -67,12 +67,23 @@ function stripComments(source: string): string {
     return out;
 }
 
+/** Unstripped patterns: they hold even where `stripComments` is fooled, at the price of also reading comments. */
+const RAW_PROCESS_PATTERNS = [
+    /(?<![\w$])process\s*\??\.\s*env\b/,
+    /(?<![\w$])process\s*\??\.?\s*\[/,
+    /\{[^}]*\}\s*=\s*(?:globalThis\s*\.\s*|global\s*\.\s*)?process(?![\w$])/,
+    /(?<![\w$])(globalThis|global)(?![\w$])/,
+];
+
 /**
  * Every use of `process` must be `process.<allowed member>`. Anything else is a violation: another
  * member (env, cwd, binding...), a bracket access, destructuring, aliasing, or passing `process`
  * around. `globalThis` and `global` are banned outright because they reach `process` by another name.
+ * Takes RAW source: the member check runs on the comment-stripped text, and the raw patterns run on
+ * the text as written, so a regex literal that fools the stripper cannot hide an access.
  */
-function processViolations(source: string): string[] {
+function processViolations(raw: string): string[] {
+    const source = stripComments(raw);
     const hits: string[] = [];
     for (const match of source.matchAll(/(?<![\w$])process(?![\w$])/g)) {
         const member = /^\s*\??\.\s*([A-Za-z_$][\w$]*)/.exec(source.slice(match.index! + match[0].length));
@@ -80,6 +91,7 @@ function processViolations(source: string): string[] {
         else if (!ALLOWED_PROCESS_MEMBERS.includes(member[1]!)) hits.push(`process.${member[1]}`);
     }
     for (const match of source.matchAll(/(?<![\w$])(globalThis|global)(?![\w$])/g)) hits.push(match[1]!);
+    for (const pattern of RAW_PROCESS_PATTERNS) if (pattern.test(raw)) hits.push(`raw ${pattern.source}`);
     return hits;
 }
 
@@ -175,7 +187,7 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
 
     it("should touch no process member outside the allowlist, and never read process.env", () => {
         const offenders: string[] = [];
-        for (const [file, source] of sources) for (const hit of processViolations(stripComments(source))) offenders.push(`${file}: ${hit}`);
+        for (const [file, source] of sources) for (const hit of processViolations(source)) offenders.push(`${file}: ${hit}`);
         expect(offenders).toEqual([]);
         expect(ALLOWED_PROCESS_MEMBERS).not.toContain("env");
     });
@@ -200,12 +212,16 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "process\n  .env",
             "process/* hidden */.env",
             "const { getuid, env } = process;",
-        ]) expect(processViolations(stripComments(bad))).not.toEqual([]);
+            // A regex literal ends in `//` or holds `/*`: a scanner that misses regex literals reads the rest as a comment.
+            'const URL_PREFIX = /^https?:\\/\\//; export const leaked = URL_PREFIX.test(process.env["DATABASE_URL"] ?? "");',
+            "const re = /x\\/*/; export const leaked = process.env.X; const y = 1; /* closes the phantom comment */",
+            "const re = /^a\\/\\//; const { env: e } = process; export const z = e.X;",
+        ]) expect(processViolations(bad)).not.toEqual([]);
         for (const good of [
             "process.getuid?.()", "process.pid", "process.argv.slice(2)", "process.exitCode = code;",
             "process.stdout.write(line);", "process.stderr.write(line);",
-            "// process.env is never read here", "/* the process must hold it */", "const child_process = 1;",
-        ]) expect(processViolations(stripComments(good))).toEqual([]);
+            "// the process must hold it", "/* the process must hold it */", "const child_process = 1;",
+        ]) expect(processViolations(good)).toEqual([]);
     });
 
     it("should write nothing through console (the check itself can fail)", () => {
