@@ -539,14 +539,18 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
             });
         });
 
-        describe("X3: ledger/ holds the real prior and a stale quarantine dir describes another installation", () => {
+        describe.each<[string, (body: Awaited<ReturnType<typeof installedBody>>) => Record<string, unknown>]>([
+            ["archiveIno", (body) => ({ ...body, archiveIno: body.archiveIno + 1 })],
+            ["archiveDev", (body) => ({ ...body, archiveDev: body.archiveDev + 1 })],
+            ["installationId", (body) => ({ ...body, installationId: "other-installation" })],
+        ])("X3: ledger/ holds the real prior and a stale quarantine dir differs only in %s", (_field, vary) => {
             async function build(): Promise<string> {
                 await history();
                 const id = await installationOf();
                 await corruptLedger();
                 const body = await installedBody();
                 await writeQuarantine(`ledger.quarantine-${QS}`, encodeLedgerLine({
-                    v: 1, seq: 1, type: "installed", at: AT, body: { ...body, archiveIno: body.archiveIno + 1 },
+                    v: 1, seq: 1, type: "installed", at: AT, body: vary(body) as Awaited<ReturnType<typeof installedBody>>,
                 }));
                 expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
                 return id;
@@ -556,6 +560,37 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
                 const id = await build();
                 if (swapped) await swappedWithCopiedMarker();
                 await expectRefused(id);
+            });
+        });
+
+        describe("P1: unreadable evidence is not empty evidence", () => {
+            /** The Q4 shape: the only durable `installed` record sits in quarantine A, a fresh ledger/ beside it. */
+            async function q4(): Promise<string> {
+                const id = await renamedAway();
+                await emptyLedgerDir();
+                await journalOne("");
+                return id;
+            }
+            const locked: Array<[string, () => string]> = [
+                ["the quarantine dir", () => quarantineDir(QA)],
+                ["only the quarantine journal", () => path.join(quarantineDir(QA), JOURNAL_1)],
+            ];
+
+            describe.each(locked)("%s is mode 000", (_name, target) => {
+                it.each([["a swapped archive with a copied marker", true], ["the genuine archive", false]])(
+                    "should refuse %s with control-unavailable and change nothing", async (_n, swapped) => {
+                        const id = await q4();
+                        if (swapped) await swappedWithCopiedMarker();
+                        const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+                        const mode = (await fs.stat(target())).mode & 0o777;
+                        await fs.chmod(target(), 0o000);
+                        try {
+                            await expect(recover(id)).rejects.toMatchObject({ reasonCode: "control-unavailable" });
+                        } finally {
+                            await fs.chmod(target(), mode);
+                        }
+                        expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+                    });
             });
         });
 

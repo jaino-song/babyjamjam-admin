@@ -20,13 +20,30 @@ import {
 const JOURNAL_NAME = /^journal-\d{12}\.jsonl$/;
 const QUARANTINE_PREFIX = "ledger.quarantine-";
 
+const isEnoent = (error: unknown): boolean => error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
+
+/**
+ * Evidence files: only a missing file (ENOENT) counts as absent. Anything else that stops it being read, or a name that is
+ * not a regular file, could be hiding a record, so it is `control-unavailable` rather than an empty answer.
+ */
 async function readIfPresent(file: string): Promise<Buffer | null> {
     try {
         const stat = await fs.lstat(file);
-        if (!stat.isFile()) return null;
+        if (!stat.isFile()) throw new WorkerError("control-unavailable");
         return await fs.readFile(file);
-    } catch {
-        return null;
+    } catch (error) {
+        if (isEnoent(error)) return null;
+        throw error instanceof WorkerError ? error : new WorkerError("control-unavailable");
+    }
+}
+
+/** Evidence directories: a missing one (ENOENT) is absent, any other failure to list it is `control-unavailable`. */
+async function readEvidenceDir(dir: string): Promise<string[] | null> {
+    try {
+        return await fs.readdir(dir);
+    } catch (error) {
+        if (isEnoent(error)) return null;
+        throw new WorkerError("control-unavailable");
     }
 }
 
@@ -114,12 +131,8 @@ async function rehash(archive: LocalDestination, relativeKey: string, sha256: st
  * empty directory, empty journals and a torn first line are what a kill inside `init` leaves: nothing was ever recorded.
  */
 async function ledgerHoldsRecords(dir: string): Promise<boolean> {
-    let names: string[];
-    try {
-        names = await fs.readdir(dir);
-    } catch {
-        return false;
-    }
+    const names = await readEvidenceDir(dir);
+    if (names === null) return false;
     if (names.includes(CHECKPOINT_NAME)) return true;
     for (const name of names.filter((entry) => JOURNAL_NAME.test(entry))) {
         const bytes = await readIfPresent(path.join(dir, name));
@@ -138,13 +151,9 @@ async function readPriorInstallation(ledgerDir: string): Promise<PriorInstallati
         const { installationId, archiveDev, archiveIno } = restored.installation;
         return { installationId, archiveDev, archiveIno };
     }
-    let names: string[];
-    try {
-        names = (await fs.readdir(ledgerDir)).filter((name) => JOURNAL_NAME.test(name)).sort();
-    } catch {
-        return null;
-    }
-    for (const name of names) {
+    const listed = await readEvidenceDir(ledgerDir);
+    if (listed === null) return null;
+    for (const name of listed.filter((entry) => JOURNAL_NAME.test(entry)).sort()) {
         const bytes = await readIfPresent(path.join(ledgerDir, name));
         const first = bytes?.toString("utf8").split("\n")[0];
         if (first === undefined || first === "") continue;

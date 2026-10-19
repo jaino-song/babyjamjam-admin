@@ -190,7 +190,10 @@ installation. Nothing repairs this on its own. To decide:
    `recover` reads `ledger/` and every `ledger.quarantine-<uuid>` directory:
    a `ledger.quarantine-*` directory from another installation (a reused control
    directory) makes it refuse, so move that directory out of the control directory
-   before retrying.
+   before retrying. The same goes for an operator who moved the archive to a new
+   inode: move the `ledger.quarantine-*` directories out as well as `ledger/`. A
+   directory that cannot be read, and a checkpoint or journal that cannot be read,
+   also make it refuse with `control-unavailable`.
 4. After the checks, `recover` moves the damaged ledger aside as
    `ledger.quarantine-<runId>`, starts a new one that records the highest
    sequence found in the archive (so a sequence is never reused) and the gaps
