@@ -1,9 +1,10 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
 import {
     koreanPhoneStoredDigitCandidates,
     normalizeKoreanPhoneLookupKey,
+    storedPhoneMatchesSql,
 } from "infrastructure/database/repositories/stored-phone-lookup";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import {
@@ -237,15 +238,13 @@ export class SmsAutomationSafeguardService {
                 .filter((key) => key.length > 0),
         )];
         if (keys.length === 0) return null;
-        const candidates = [...new Set(keys.flatMap((key) => [
-            ...koreanPhoneStoredDigitCandidates(key),
-            ...hyphenatedForms(key),
-        ]))];
+        const digitCandidates = [...new Set(keys.flatMap((key) => koreanPhoneStoredDigitCandidates(key)))];
+        const candidates = [...new Set([...digitCandidates, ...keys.flatMap((key) => hyphenatedForms(key))])];
         const keySet = new Set(keys);
         const phoneMatch = { OR: [{ phoneNormalized: { in: candidates } }, { phone: { in: candidates } }] };
 
+        // A live client that owns the phone always decides first.
         const client = await db.client.findFirst({
-            // A tombstoned client no longer owns its phone, so it cannot block a new owner of it.
             where: { branchId: job.branchId, smsAutomationEnabled: false, deletedAt: null, ...phoneMatch },
             select: { id: true },
         });
@@ -253,6 +252,26 @@ export class SmsAutomationSafeguardService {
             return recipientBlock(
                 "matched client SMS automation is off",
                 typeof client.id === "number" ? { kind: "client", id: client.id } : null,
+            );
+        }
+
+        // A deleted client keeps its raw phone (phone_normalized is cleared) and its opt-out, and nothing
+        // overrides it: the person who opted out may still own that number. The raw phone is compared after
+        // stripping non-digits in SQL, so "+82 10-1234-5678", "010.1234.5678" and "010 1234 5678" all match.
+        const [deletedClient] = await db.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE branch_id = ${job.branchId}::uuid
+              AND deleted_at IS NOT NULL
+              AND sms_automation_enabled = false
+              AND ${storedPhoneMatchesSql(Prisma.sql`phone`, digitCandidates)}
+            ORDER BY id
+            LIMIT 1
+        `);
+        if (deletedClient) {
+            return recipientBlock(
+                "matched deleted client SMS automation is off",
+                typeof deletedClient.id === "number" ? { kind: "client", id: deletedClient.id } : null,
             );
         }
 

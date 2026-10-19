@@ -20,8 +20,10 @@ describe("SmsAutomationSafeguardService", () => {
         } | null;
         /** Phone-match lookups: entities with the flag off, by phone key. */
         disabledClientPhones: string[];
-        /** The phone-matched client with the flag off is a tombstone (its row still carries the phone). */
-        disabledClientIsTombstone: boolean;
+        /** Live phone-matched clients (normalized phone). */
+        phoneClients: Array<{ id: number; phone: string; smsAutomationEnabled: boolean }>;
+        /** Tombstoned clients: they keep their RAW phone spelling and their flag. */
+        tombstones: Array<{ id: number; phone: string; smsAutomationEnabled: boolean }>;
         disabledEmployeePhones: string[];
         disabledUsers: Array<{ id?: string; phone: string | null }>;
         branchOn: boolean;
@@ -31,20 +33,39 @@ describe("SmsAutomationSafeguardService", () => {
         const world: World = {
             rule: { isActive: true, branchId }, override: null, client: { smsAutomationEnabled: true },
             schedule: { primaryEmployee: { smsAutomationEnabled: true }, secondaryEmployee: { smsAutomationEnabled: true } },
-            disabledClientPhones: [], disabledClientIsTombstone: false, disabledEmployeePhones: [], disabledUsers: [], branchOn: true, ...overrides,
+            disabledClientPhones: [], phoneClients: [], tombstones: [], disabledEmployeePhones: [], disabledUsers: [], branchOn: true, ...overrides,
         };
         const phoneHit = (phones: string[], where: { OR: Array<{ phoneNormalized?: { in: string[] } }> }) =>
             phones.some((phone) => where.OR[0]!.phoneNormalized!.in.includes(phone));
+        interface ClientWhere {
+            smsAutomationEnabled?: boolean;
+            deletedAt?: null;
+            OR?: Array<{ phoneNormalized?: { in: string[] } }>;
+        }
         const db = {
             message_trigger_rule: { findFirst: jest.fn(async () => world.rule) },
             message_trigger_rule_branch_override: { findFirst: jest.fn(async () => world.override) },
             client: {
-                findFirst: jest.fn(async ({ where }: { where: { smsAutomationEnabled?: boolean; deletedAt?: null; OR: never } }) =>
-                    where.smsAutomationEnabled === false
-                        ? (phoneHit(world.disabledClientPhones, where as never)
-                            && !(where.deletedAt === null && world.disabledClientIsTombstone) ? { id: 1 } : null)
-                        : world.client),
+                findFirst: jest.fn(async ({ where }: { where: ClientWhere }) => {
+                    if (!where.OR) return world.client;
+                    const candidates = where.OR[0]!.phoneNormalized!.in;
+                    const rows = [
+                        ...world.disabledClientPhones.map((phone, index) => (
+                            { id: index === 0 ? 1 : 100 + index, phone, smsAutomationEnabled: false })),
+                        ...world.phoneClients,
+                    ].filter((row) => candidates.includes(row.phone));
+                    const hit = rows.find((row) =>
+                        where.smsAutomationEnabled === undefined || row.smsAutomationEnabled === where.smsAutomationEnabled);
+                    return hit ? { id: hit.id } : null;
+                }),
             },
+            // Emulates the tombstone SQL: opted-out tombstones whose digits-only raw phone is in the candidate array.
+            $queryRaw: jest.fn(async (query: { values: unknown[] }) => {
+                const candidates = query.values.find(Array.isArray) as string[];
+                return world.tombstones
+                    .filter((row) => !row.smsAutomationEnabled && candidates.includes(row.phone.replace(/[^0-9]/g, "")))
+                    .map((row) => ({ id: row.id }));
+            }),
             employee: {
                 findFirst: jest.fn(async ({ where }: { where: { OR: never } }) =>
                     phoneHit(world.disabledEmployeePhones, where as never) ? { id: 2 } : null),
@@ -235,12 +256,75 @@ describe("SmsAutomationSafeguardService", () => {
             }
         });
 
-        it("ignore a tombstoned client that still carries the phone, so its new owner is not blocked", async () => {
-            const { service, db } = harness({ disabledClientPhones: ["01012345678"], disabledClientIsTombstone: true });
-            await expect(service.check(agentJob())).resolves.toEqual({ allowed: true });
-            expect(db.client.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-                where: expect.objectContaining({ branchId, smsAutomationEnabled: false, deletedAt: null }),
-            }));
+        describe("tombstoned clients that still carry the phone", () => {
+            const tomb = (smsAutomationEnabled: boolean, phone = "+82 10-1234-5678") => ({ id: 31, phone, smsAutomationEnabled });
+
+            it("block when the client was deleted with automation off", async () => {
+                const { service } = harness({ tombstones: [tomb(false)] });
+                await expect(service.check(agentJob({ recipientPhone: "01012345678" }))).resolves.toMatchObject({
+                    allowed: false, level: "recipient", reason: "matched deleted client SMS automation is off",
+                    recipient: { kind: "client", id: 31 },
+                });
+            });
+
+            it("block whatever the raw spelling of the stored phone", async () => {
+                for (const raw of ["+82 10-1234-5678", "010.1234.5678", "010 1234 5678", "01012345678", "010-1234-5678"]) {
+                    const { service } = harness({ tombstones: [tomb(false, raw)] });
+                    await expect(service.check(agentJob({ recipientPhone: "01012345678" })))
+                        .resolves.toMatchObject({ allowed: false, recipient: { kind: "client", id: 31 } });
+                }
+            });
+
+            it("are not cleared by a live opted-in client with the same phone", async () => {
+                const { service } = harness({
+                    tombstones: [tomb(false)], phoneClients: [{ id: 32, phone: "01012345678", smsAutomationEnabled: true }],
+                });
+                await expect(service.check(agentJob({ recipientPhone: "01012345678" }))).resolves.toMatchObject({
+                    allowed: false, reason: "matched deleted client SMS automation is off", recipient: { kind: "client", id: 31 },
+                });
+            });
+
+            it("block a multi-recipient job when any one key matches the tombstone", async () => {
+                const { service } = harness({ tombstones: [tomb(false)] });
+                await expect(service.check(agentJob({ recipientPhone: "01099998888,010-1234-5678" })))
+                    .resolves.toMatchObject({ allowed: false, recipient: { kind: "client", id: 31 } });
+            });
+
+            it("do not block when the tombstone itself was opted in", async () => {
+                const { service } = harness({ tombstones: [tomb(true)] });
+                await expect(service.check(agentJob({ recipientPhone: "01012345678" }))).resolves.toEqual({ allowed: true });
+            });
+
+            it("do not block an unrelated phone", async () => {
+                const { service } = harness({ tombstones: [tomb(false)] });
+                await expect(service.check(agentJob({ recipientPhone: "01099998888" }))).resolves.toEqual({ allowed: true });
+            });
+
+            it("leave a live opted-out match to decide first, without querying tombstones", async () => {
+                const { service, db } = harness({ disabledClientPhones: ["01012345678"], tombstones: [tomb(false)] });
+                await expect(service.check(agentJob({ recipientPhone: "01012345678" })))
+                    .resolves.toMatchObject({ allowed: false, reason: "matched client SMS automation is off" });
+                expect(db.$queryRaw).not.toHaveBeenCalled();
+            });
+
+            it("query the branch's deleted, opted-out clients by digits-only raw phone", async () => {
+                const { service, db } = harness();
+                await service.check(agentJob({ recipientPhone: "010-1234-5678" }));
+                const query = db.$queryRaw.mock.calls[0]![0] as unknown as { sql: string; values: unknown[] };
+                expect(query.sql).toContain("regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g')");
+                expect(query.sql).toContain("deleted_at IS NOT NULL");
+                expect(query.sql).toContain("sms_automation_enabled = false");
+                expect(query.sql).toContain("branch_id = ?::uuid");
+                expect(query.values[0]).toBe(branchId);
+                expect(query.values.find(Array.isArray)).toEqual(expect.arrayContaining(["01012345678", "821012345678", "8201012345678"]));
+            });
+
+            it("still reach the employee check when no tombstone matches", async () => {
+                const { service } = harness({ disabledEmployeePhones: ["01012345678"] });
+                await expect(service.check(agentJob())).resolves.toMatchObject({
+                    allowed: false, recipient: { kind: "employee", id: 2 },
+                });
+            });
         });
 
         it("are blocked when the phone matches an employee whose automation is off", async () => {
