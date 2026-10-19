@@ -456,6 +456,38 @@ describe("MessageTriggerController (Integration)", () => {
             expect(triggerService.rescheduleJobForDebug).not.toHaveBeenCalled();
         });
 
+        it.each(["2099-01-01T00:05", "2099-01-01T00:05:00", "2099-01-01T00:05:00.000", "2099-01-01T00:05:00+0900"])(
+            "rejects a scheduledFor with no usable time zone %p with 400",
+            async (value) => {
+                authRole = "owner";
+                const response = await request(app.getHttpServer())
+                    .post("/message-trigger-jobs/job-1/reschedule")
+                    .send({ scheduledFor: value });
+
+                expect(response.status).toBe(400);
+                expect(triggerService.rescheduleJobForDebug).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each([
+            ["2099-01-01T00:05:00Z", "2099-01-01T00:05:00.000Z"],
+            ["2099-01-01T00:05:00.000Z", "2099-01-01T00:05:00.000Z"],
+            ["2099-01-01T09:05:00+09:00", "2099-01-01T00:05:00.000Z"],
+            ["2099-01-01T00:05:00-05:00", "2099-01-01T05:05:00.000Z"],
+        ])("accepts a scheduledFor with an explicit zone %p", async (value, expectedIso) => {
+            authRole = "owner";
+            triggerService.rescheduleJobForDebug.mockResolvedValue({ id: "job-1", status: "pending", scheduledFor: expectedIso });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor: value });
+
+            expect(response.status).toBe(200);
+            expect(triggerService.rescheduleJobForDebug).toHaveBeenCalledWith(
+                expect.anything(), "job-1", new Date(expectedIso), expect.anything(),
+            );
+        });
+
         it("surfaces the service's 400 for a time that is not in the future", async () => {
             authRole = "owner";
             triggerService.rescheduleJobForDebug.mockRejectedValue(new BadRequestException("past"));

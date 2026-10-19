@@ -78,6 +78,7 @@ import {
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
+import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
@@ -165,6 +166,7 @@ const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없
 // `scheduled_for`; the repository enforces the same minute in SQL.
 const RESCHEDULE_MIN_LEAD_MS = 60_000;
 const RESCHEDULE_JOB_CONFLICT_MESSAGE = "1분 넘게 남은 대기 중인 문자만 바꿀 수 있어요.";
+const RESCHEDULE_JOB_NOT_AUTOMATIC_MESSAGE = "자동 발송 규칙으로 만든 대기 문자만 시간을 바꿀 수 있어요.";
 const RESCHEDULE_JOB_TOO_SOON_MESSAGE = "곧 발송될 예정이라 시간을 바꿀 수 없어요. 1분 넘게 남은 대기 중인 문자만 바꿀 수 있어요.";
 const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.";
 const RESEND_TARGET_CHANGED_REASON = "발송 대상 일정이 변경되어 재전송하지 않았습니다";
@@ -1961,6 +1963,16 @@ export class MessageTriggerService {
         }
         if (job.status !== "pending") {
             throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_CONFLICT_MESSAGE });
+        }
+        // Fail closed: a sealed agent-automation job (its send time is part of
+        // the authority digest, so moving it would make dispatch cancel it) or a
+        // manual job is never moved. The key's presence is enough, even if null.
+        // The repository enforces the same exclusions in the UPDATE itself.
+        const payload = job.payload as unknown;
+        const sealed = !!payload && typeof payload === "object"
+            && Object.prototype.hasOwnProperty.call(payload, AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY);
+        if (sealed || isReservedAutomationJob(job) || isManualMessageTriggerJob(job)) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_NOT_AUTOMATIC_MESSAGE });
         }
         if (job.scheduledFor.getTime() <= Date.now() + RESCHEDULE_MIN_LEAD_MS) {
             throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_TOO_SOON_MESSAGE });

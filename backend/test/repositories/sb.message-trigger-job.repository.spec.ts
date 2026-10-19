@@ -1,4 +1,6 @@
 import {
+    AGENT_SMS_RULE_ID_PREFIX,
+    AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
@@ -269,6 +271,11 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("next_attempt_at = NULL");
         expect(sqlText).toContain("RETURNING id");
         expect(query.values).toEqual(expect.arrayContaining(["job-1", "branch-1", target]));
+        // Sealed agent-automation jobs and manual jobs must never be moved.
+        expect(query.sql).toMatch(/\n\s+AND NOT \(payload \? \?\)\n/);
+        expect(query.values).toContain("agentAutomationSeal");
+        expect(query.sql).toMatch(/\n\s+AND NOT \(left\(rule_id, \?::integer\) = \? OR left\(dedupe_key, \?::integer\) = \?/);
+        expect(query.values).toEqual(expect.arrayContaining([AGENT_SMS_RULE_ID_PREFIX, AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX]));
     });
 
     it("does not revive or duplicate needs_setup on repeated same-key resync without a source change", async () => {
