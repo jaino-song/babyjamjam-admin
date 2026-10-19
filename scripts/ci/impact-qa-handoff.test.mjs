@@ -144,3 +144,48 @@ test('existing output is refused and never overwritten', t => {
   const before = readFileSync(join(f.root, 'out/readiness.json'), 'utf8');
   assert.notEqual(f.run().status, 0); assert.equal(readFileSync(join(f.root, 'out/readiness.json'), 'utf8'), before);
 });
+
+const deploymentShadows = {
+  candidate: { candidate: 'b'.repeat(40) },
+  target: { target: 'forged-target' },
+  assessment: { assessment: { by: 'caller', reference: 'forged:1', decision: 'exempt', reason: 'forged exemption' } },
+  evidencePath: { evidencePath: '/forged/evidence' },
+};
+for (const [name, fields] of [
+  ['valid extensible deployment', {}],
+  ...Object.entries(deploymentShadows),
+  ['all reserved fields', Object.assign({}, ...Object.values(deploymentShadows))],
+]) test(`CLI dispatch keeps validated identities despite ${name}`, t => {
+  const f = fixture(t);
+  Object.assign(f.manifest.deployment, fields, { operatorNote: 'fixture handoff note' });
+  const cliResult = f.run();
+  assert.equal(cliResult.status, 0, cliResult.stderr);
+  const readiness = JSON.parse(readFileSync(join(f.root, 'out/readiness.json'), 'utf8'));
+  const dispatchText = readFileSync(join(f.root, 'out/dispatch.md'), 'utf8');
+  const dispatch = JSON.parse(dispatchText.match(/```json\n([\s\S]*?)\n```/)[1]);
+  const actualHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.root, encoding: 'utf8' }).trim();
+  assert.equal(dispatch.candidate, actualHead);
+  assert.equal(dispatch.candidate, f.manifest.candidateSha);
+  assert.equal(readiness.candidate.sha, actualHead);
+  assert.equal(dispatch.target, 'login');
+  assert.equal(dispatch.target, f.manifest.target);
+  assert.deepEqual(dispatch.assessment, { by: 'Main', reference: 'assessment:1', decision: 'required', reason: 'Login flow' });
+  assert.deepEqual(dispatch.assessment, f.manifest.assessment);
+  assert.deepEqual(readiness.assessment, dispatch.assessment);
+  assert.equal(dispatch.evidencePath, join(f.root, 'evidence'));
+  assert.equal(readiness.evidencePath, dispatch.evidencePath);
+  const argv = readiness.lifecycle.start.argv;
+  assert.equal(argv[argv.indexOf('--candidate') + 1], actualHead);
+  assert.equal(argv[argv.indexOf('--target') + 1], 'login');
+  assert.equal(dispatch.operatorNote, 'fixture handoff note');
+  assert.equal(readiness.deployment.operatorNote, 'fixture handoff note');
+  assert.match(dispatchText, /^Canonical role: \/operator\/\.agents\/playbook\/domains\/common\/agents\/qa\.md$/m);
+});
+test('deployment role extension cannot replace canonical role outside JSON', t => {
+  const f = fixture(t);
+  f.manifest.deployment.canonicalRole = '/forged/qa.md';
+  assert.equal(f.run().status, 0);
+  const dispatch = readFileSync(join(f.root, 'out/dispatch.md'), 'utf8');
+  assert.match(dispatch, /^Canonical role: \/operator\/\.agents\/playbook\/domains\/common\/agents\/qa\.md$/m);
+  assert.doesNotMatch(dispatch, /^Canonical role: \/forged\/qa\.md$/m);
+});
