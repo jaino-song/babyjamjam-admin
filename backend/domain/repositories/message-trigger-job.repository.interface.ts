@@ -316,6 +316,13 @@ export interface IMessageTriggerJobRepository {
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
     ): Promise<ClaimProviderRejectedForRetryResult>;
+    /**
+     * Debug/testing only: move one `pending` job in this branch to a new send
+     * time. A single conditional update (`status = 'pending'`), so a job that was
+     * claimed or finished meanwhile is left untouched. Clears `nextAttemptAt` so
+     * the job is due at the new time. Returns whether a row moved.
+     */
+    rescheduleDebugPending(id: string, branchId: string, scheduledFor: Date): Promise<boolean>;
 }
 
 export const MESSAGE_TRIGGER_JOB_REPOSITORY = "MESSAGE_TRIGGER_JOB_REPOSITORY";

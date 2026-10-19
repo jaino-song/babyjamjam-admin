@@ -1650,6 +1650,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         }
     }
 
+    async rescheduleDebugPending(id: string, branchId: string, scheduledFor: Date): Promise<boolean> {
+        // Conditional on `pending` so it cannot race a claim (a claimed row is
+        // `processing`). `nextAttemptAt` is cleared: due selection treats
+        // `null` as "no retry delay" and otherwise requires `nextAttemptAt <= now`,
+        // so a stale retry delay would keep the moved job from being picked up
+        // at the new `scheduledFor`.
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: { ...ordinaryAutomationJobWhere(), id, branchId, status: "pending" },
+            data: { scheduledFor, nextAttemptAt: null },
+        });
+        return result.count === 1;
+    }
+
     private toCreate(job: MessageTriggerJobEntity) {
         return {
             branchId: job.branchId,
