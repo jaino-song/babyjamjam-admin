@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
-    WorkerError, completionContentDigest, completionSchema, decodeLedgerLine, judgeHistoricalCoverage,
+    UUID_V4_PATTERN, WorkerError, completionContentDigest, completionSchema, decodeLedgerLine, judgeHistoricalCoverage,
     parseCompletionName, type KnownGap, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { decodeCheckpoint } from "./ledger-checkpoint";
@@ -18,6 +18,7 @@ import {
 } from "./runner-types";
 
 const JOURNAL_NAME = /^journal-\d{12}\.jsonl$/;
+const QUARANTINE_PREFIX = "ledger.quarantine-";
 
 async function readIfPresent(file: string): Promise<Buffer | null> {
     try {
@@ -109,11 +110,10 @@ async function rehash(archive: LocalDestination, relativeKey: string, sha256: st
 }
 
 /**
- * True when the ledger holds a record: a checkpoint, or a journal with at least one newline-terminated line. A missing or
+ * True when the directory holds a record: a checkpoint, or a journal with at least one newline-terminated line. A missing or
  * empty directory, empty journals and a torn first line are what a kill inside `init` leaves: nothing was ever recorded.
  */
-async function ledgerHoldsRecords(controlPath: string): Promise<boolean> {
-    const dir = path.join(controlPath, LEDGER_DIR_NAME);
+async function ledgerHoldsRecords(dir: string): Promise<boolean> {
     let names: string[];
     try {
         names = await fs.readdir(dir);
@@ -128,11 +128,10 @@ async function ledgerHoldsRecords(controlPath: string): Promise<boolean> {
     return false;
 }
 
-/** The installation the damaged ledger last described, when any of it can still be read (best effort, never trusted alone). */
+/** The installation a ledger directory last described, when any of it can still be read (best effort, never trusted alone). */
 interface PriorInstallation { installationId: string; archiveDev: number; archiveIno: number }
 
-async function readPriorInstallation(controlPath: string): Promise<PriorInstallation | null> {
-    const ledgerDir = path.join(controlPath, LEDGER_DIR_NAME);
+async function readPriorInstallation(ledgerDir: string): Promise<PriorInstallation | null> {
     const checkpoint = await readIfPresent(path.join(ledgerDir, CHECKPOINT_NAME));
     const restored = checkpoint === null ? null : decodeCheckpoint(checkpoint);
     if (restored?.installation) {
@@ -156,6 +155,58 @@ async function readPriorInstallation(controlPath: string): Promise<PriorInstalla
         }
     }
     return null;
+}
+
+/**
+ * Every directory that can hold identity evidence: `ledger/` and each `ledger.quarantine-<uuid-v4>`. `quarantineAndReset`
+ * moves the ledger aside before `recovery_started` is written, so a kill in between leaves the only durable record in a
+ * quarantine directory. A symlink or a non-directory under one of these names is not something to read through.
+ */
+async function listEvidenceDirs(controlPath: string): Promise<string[]> {
+    let names: string[];
+    try {
+        names = (await fs.readdir(controlPath)).sort();
+    } catch {
+        throw new WorkerError("control-unavailable");
+    }
+    const found: string[] = [];
+    for (const name of names) {
+        const quarantine = name.startsWith(QUARANTINE_PREFIX) && UUID_V4_PATTERN.test(name.slice(QUARANTINE_PREFIX.length));
+        if (name !== LEDGER_DIR_NAME && !quarantine) continue;
+        let stat;
+        try {
+            stat = await fs.lstat(path.join(controlPath, name));
+        } catch {
+            throw new WorkerError("control-unavailable");
+        }
+        if (!stat.isDirectory()) throw new WorkerError("control-unavailable");
+        found.push(name);
+    }
+    return found;
+}
+
+/**
+ * The installation every record-holding evidence directory agrees on, with the directory it was read from (`ledger` when
+ * `ledger/` held records, otherwise the first quarantine directory). Null only when no directory anywhere holds a record.
+ * A directory that holds records but yields no readable prior, or priors that disagree, refuse: nothing then proves which
+ * archive was installed. Order, names and mtimes never pick a "newest".
+ */
+async function resolvePriorInstallation(controlPath: string): Promise<{ prior: PriorInstallation; source: string } | null> {
+    const found: Array<{ name: string; prior: PriorInstallation }> = [];
+    for (const name of await listEvidenceDirs(controlPath)) {
+        const dir = path.join(controlPath, name);
+        if (!(await ledgerHoldsRecords(dir))) continue;
+        const prior = await readPriorInstallation(dir);
+        if (prior === null) throw new WorkerError("archive-identity-mismatch");
+        found.push({ name, prior });
+    }
+    const first = found[0];
+    if (first === undefined) return null;
+    for (const other of found) {
+        if (other.prior.installationId !== first.prior.installationId || other.prior.archiveDev !== first.prior.archiveDev
+            || other.prior.archiveIno !== first.prior.archiveIno) throw new WorkerError("archive-identity-mismatch");
+    }
+    return { prior: first.prior, source: found.some((entry) => entry.name === LEDGER_DIR_NAME) ? LEDGER_DIR_NAME : first.name };
 }
 
 interface CompletionFacts {
@@ -192,10 +243,10 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
     const initialStatus = deps.ledger.status;
     if (initialStatus === "ok") throw new WorkerError("ledger-inconsistent");
 
-    const prior = await readPriorInstallation(config.control.path);
-    // The archive root is compared with what the ledger recorded at install time. When the ledger holds records but
-    // none of them can be read, nothing proves which archive was installed: refuse rather than compare the archive with itself.
-    if (prior === null && await ledgerHoldsRecords(config.control.path)) throw new WorkerError("archive-identity-mismatch");
+    // The archive root is compared with what the ledger recorded at install time. Marker-only proof is allowed only when no
+    // directory anywhere (ledger/ or a quarantine dir) holds a record; otherwise the agreed prior is the expected identity.
+    const resolved = await resolvePriorInstallation(config.control.path);
+    const prior = resolved === null ? null : resolved.prior;
     let current;
     try {
         current = await fs.lstat(config.archive.path);
@@ -238,11 +289,13 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
     const others = (await listManifestFiles(config.archive.path, config.companyId)).filter((file) => !named.has(file.key));
     const runId = deps.uuid();
     await deps.ledger.quarantineAndReset(runId);
+    await deps.runnerFault?.("recover-after-quarantine");
     const at = nowIso(deps);
     await deps.ledger.append("recovery_started", {
         installationId: marker.installationId, archiveId: marker.archiveId, archiveDev: current.dev, archiveIno: current.ino,
         destinationIdentity: localDestinationIdentity(marker.archiveId), destinationRevision: LOCAL_DESTINATION_REVISION,
-        priorLedgerName: `ledger.quarantine-${runId}`, sequenceFloor: facts.floor, knownGaps: facts.gaps,
+        priorLedgerName: resolved === null || resolved.source === LEDGER_DIR_NAME ? `${QUARANTINE_PREFIX}${runId}` : resolved.source,
+        sequenceFloor: facts.floor, knownGaps: facts.gaps,
     }, at);
 
     let recovered = 0;

@@ -1,12 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { WorkerError } from "domain/eformsign-backup/worker";
+import { WorkerError, encodeLedgerLine } from "domain/eformsign-backup/worker";
 import { LocalDestination } from "infrastructure/eformsign-backup/worker/local-destination";
 import { restoreFromArchive } from "infrastructure/eformsign-backup/worker/restore";
 import { controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runner";
 
 import { probeFor } from "./helpers/destination-support";
+import { spawnUnderFlock } from "./helpers/runner-flock-support";
 import {
     ARCHIVE_ID, COMPANY, archivePdfs, createHarness, destroyHarness, identityFor, initArchive, listFiles, pairDoc, readCompletions,
     readJsonFile, readLedgerRecords, runOnce, singleDoc, transitionPath, treeSignature, tryRun, withWorker, type Harness,
@@ -390,6 +391,207 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
             const before = await treeSignature(h.control);
             await expect(recover("install-window-1")).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
             expect(await treeSignature(h.control)).toBe(before);
+        });
+    });
+
+    describe("a crash inside recover (quarantine window)", () => {
+        const QA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const QB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const QS = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        const JOURNAL_1 = "journal-000000000001.jsonl";
+        const AT = "2026-10-19T00:00:00.000Z";
+        const ledgerDir = (): string => path.join(h.control, "ledger");
+        const quarantineDir = (id: string): string => path.join(h.control, `ledger.quarantine-${id}`);
+
+        /** What `quarantineAndReset` leaves after its rename: the old ledger under `ledger.quarantine-A`, no new directory yet. */
+        async function renamedAway(): Promise<string> {
+            await history();
+            const id = await installationOf();
+            await fs.rename(ledgerDir(), quarantineDir(QA));
+            expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+            return id;
+        }
+        const emptyLedgerDir = async (): Promise<void> => { await fs.mkdir(ledgerDir(), { mode: 0o700 }); };
+        const journalOne = async (content: string): Promise<void> => {
+            await fs.writeFile(path.join(ledgerDir(), JOURNAL_1), content, { mode: 0o600 });
+        };
+        const installedBody = async () => {
+            const first = (await readLedgerRecords(h.control))[0]!;
+            expect(first.type).toBe("installed");
+            return first.body as { installationId: string; archiveId: string; archiveDev: number; archiveIno: number; destinationIdentity: string; destinationRevision: string };
+        };
+        async function writeQuarantine(name: string, line: string): Promise<void> {
+            await fs.mkdir(path.join(h.control, name), { mode: 0o700 });
+            await fs.writeFile(path.join(h.control, name, JOURNAL_1), line, { mode: 0o600 });
+        }
+        async function swappedWithCopiedMarker(): Promise<void> {
+            const away = await swapArchive(h);
+            await fs.mkdir(path.join(h.archive, ".bjj-backup"), { mode: 0o700 });
+            await fs.copyFile(path.join(away, ".bjj-backup", "installation.json"), path.join(h.archive, ".bjj-backup", "installation.json"));
+        }
+        async function expectRefused(id: string): Promise<void> {
+            const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+            await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+            expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+        }
+        async function expectRecovered(id: string, priorLedgerName: string | RegExp): Promise<void> {
+            const stat = await fs.lstat(h.archive);
+            expect(await recover(id)).toMatchObject({ recovered: 4, unverified: 0, sequenceFloor: 2 });
+            const records = await readLedgerRecords(h.control);
+            expect(records[0]).toMatchObject({
+                type: "recovery_started",
+                body: { archiveDev: stat.dev, archiveIno: stat.ino, sequenceFloor: 2, knownGaps: [{ documentId: "D009", reasonCode: "source-removed" }] },
+            });
+            const recorded = records[0]!.body["priorLedgerName"] as string;
+            if (typeof priorLedgerName === "string") expect(recorded).toBe(priorLedgerName);
+            else expect(recorded).toMatch(priorLedgerName);
+            expect((await runOnce(h)).sequence).toBe(3);
+        }
+
+        const shapes: Array<[string, () => Promise<string>, string]> = [
+            ["Q2: ledger/ renamed to a quarantine dir, no new ledger/", renamedAway, `ledger.quarantine-${QA}`],
+            ["Q3: Q2 plus an empty ledger/", async () => { const id = await renamedAway(); await emptyLedgerDir(); return id; }, `ledger.quarantine-${QA}`],
+            ["Q4: Q3 plus an empty first journal", async () => {
+                const id = await renamedAway();
+                await emptyLedgerDir();
+                await journalOne("");
+                return id;
+            }, `ledger.quarantine-${QA}`],
+            ["Q5: Q4 with the torn first bytes of recovery_started", async () => {
+                const id = await renamedAway();
+                await emptyLedgerDir();
+                await journalOne("{\"v\":1,\"seq\":1,\"type\":\"recovery_st");
+                return id;
+            }, `ledger.quarantine-${QA}`],
+        ];
+
+        describe.each(shapes)("%s", (_name, build, priorLedgerName) => {
+            it("should accept the genuine archive, adopt the quarantined prior and continue above the floor", async () => {
+                const id = await build();
+                await expectRecovered(id, priorLedgerName);
+            });
+
+            it("should refuse a swapped archive with a copied marker and change nothing", async () => {
+                const id = await build();
+                await swappedWithCopiedMarker();
+                await expectRefused(id);
+            });
+        });
+
+        describe("Q7: two quarantine dirs that agree, a fresh ledger/", () => {
+            async function build(): Promise<string> {
+                const id = await renamedAway();
+                const body = { ...(await readPriorBody()), priorLedgerName: `ledger.quarantine-${QA}`, sequenceFloor: 0, knownGaps: [] };
+                await writeQuarantine(`ledger.quarantine-${QB}`, encodeLedgerLine({ v: 1, seq: 1, type: "recovery_started", at: AT, body }));
+                await emptyLedgerDir();
+                await journalOne("");
+                return id;
+            }
+            // The installed record now sits in quarantine A, so read it from there.
+            async function readPriorBody() {
+                const line = (await fs.readFile(path.join(quarantineDir(QA), JOURNAL_1), "utf8")).split("\n")[0]!;
+                const { body } = JSON.parse(line) as { body: Awaited<ReturnType<typeof installedBody>> };
+                return body;
+            }
+
+            it("should accept the genuine archive", async () => {
+                await expectRecovered(await build(), /^ledger\.quarantine-[0-9a-f-]{36}$/);
+            });
+
+            it("should refuse a swapped archive with a copied marker and change nothing", async () => {
+                const id = await build();
+                await swappedWithCopiedMarker();
+                await expectRefused(id);
+            });
+        });
+
+        describe("X1: the quarantine dir holds records but its first line is corrupt", () => {
+            async function build(): Promise<string> {
+                await history();
+                const id = await installationOf();
+                await fs.rename(ledgerDir(), quarantineDir(QA));
+                await flipByte(path.join(quarantineDir(QA), JOURNAL_1), 30);
+                await emptyLedgerDir();
+                await journalOne("");
+                return id;
+            }
+
+            it.each([["the genuine archive", false], ["a swapped archive with a copied marker", true]])("should refuse %s and change nothing", async (_n, swapped) => {
+                const id = await build();
+                if (swapped) await swappedWithCopiedMarker();
+                await expectRefused(id);
+            });
+        });
+
+        describe("X2: the quarantine dir holds only a torn line, nothing is recorded anywhere", () => {
+            it("should accept the genuine archive on the marker alone", async () => {
+                await history();
+                const id = await installationOf();
+                await fs.rm(ledgerDir(), { recursive: true });
+                await writeQuarantine(`ledger.quarantine-${QA}`, "{\"v\":1,\"seq\":1,\"type\":\"insta");
+                await emptyLedgerDir();
+                await journalOne("");
+                expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+
+                await recover(id);
+
+                expect((await readLedgerRecords(h.control))[0]).toMatchObject({ type: "recovery_started", body: { installationId: id, sequenceFloor: 2 } });
+            });
+        });
+
+        describe("X3: ledger/ holds the real prior and a stale quarantine dir describes another installation", () => {
+            async function build(): Promise<string> {
+                await history();
+                const id = await installationOf();
+                await corruptLedger();
+                const body = await installedBody();
+                await writeQuarantine(`ledger.quarantine-${QS}`, encodeLedgerLine({
+                    v: 1, seq: 1, type: "installed", at: AT, body: { ...body, archiveIno: body.archiveIno + 1 },
+                }));
+                expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+                return id;
+            }
+
+            it.each([["the genuine archive", false], ["a swapped archive with a copied marker", true]])("should refuse %s and change nothing", async (_n, swapped) => {
+                const id = await build();
+                if (swapped) await swappedWithCopiedMarker();
+                await expectRefused(id);
+            });
+        });
+
+        describe("SIGKILL between quarantineAndReset and the recovery_started record", () => {
+            async function killed(): Promise<string> {
+                await history();
+                const id = await installationOf();
+                await corruptLedger();
+                const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", id, "--kill-at", "recover-after-quarantine"]);
+                expect(await child.exited).toEqual({ code: null, signal: "SIGKILL" });
+                const quarantined = (await fs.readdir(h.control)).filter((name) => name.startsWith("ledger.quarantine-"));
+                expect(quarantined).toHaveLength(1);
+                expect((await readLedgerRecords(h.control)).length).toBe(0);
+                expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+                return id;
+            }
+
+            it("should leave run recovery-required and let recover with the genuine archive succeed", async () => {
+                const id = await killed();
+                const name = (await fs.readdir(h.control)).find((entry) => entry.startsWith("ledger.quarantine-"))!;
+
+                await expectRecovered(id, name);
+
+                expect((await fs.readdir(h.control)).filter((entry) => entry.startsWith("ledger.quarantine-"))).toEqual([name]);
+            }, 120_000);
+
+            it("should refuse with exit 69 and change nothing when the archive was swapped for one with a copied marker", async () => {
+                const id = await killed();
+                await swappedWithCopiedMarker();
+                const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+
+                const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", id]);
+                expect(await child.exited).toEqual({ code: 69, signal: null });
+
+                expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+            }, 120_000);
         });
     });
 });

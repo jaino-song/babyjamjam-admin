@@ -187,6 +187,10 @@ installation. Nothing repairs this on its own. To decide:
    only when the ledger directory is missing, empty, or holds no complete record
    (no checkpoint, and no journal with a newline-terminated line): that is what a
    crash inside `init` leaves.
+   `recover` reads `ledger/` and every `ledger.quarantine-<uuid>` directory:
+   a `ledger.quarantine-*` directory from another installation (a reused control
+   directory) makes it refuse, so move that directory out of the control directory
+   before retrying.
 4. After the checks, `recover` moves the damaged ledger aside as
    `ledger.quarantine-<runId>`, starts a new one that records the highest
    sequence found in the archive (so a sequence is never reused) and the gaps

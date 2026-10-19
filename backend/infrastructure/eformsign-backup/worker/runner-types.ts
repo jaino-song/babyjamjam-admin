@@ -16,6 +16,7 @@ export const RUNNER_FAULT_POINTS = [
     "after-verifying-before-verified",
     "after-manifest-before-record",
     "after-completion-before-record",
+    "recover-after-quarantine",
 ] as const;
 export type RunnerFaultPoint = typeof RUNNER_FAULT_POINTS[number];
 export type RunnerFault = (point: RunnerFaultPoint) => void | Promise<void>;
