@@ -800,7 +800,7 @@ export class ExtendedReadAgentCapabilitiesProvider implements AgentCapabilityPro
             outputSchema: AnalyticsSummaryOutputSchema,
             execute: async (context, rawInput) => {
                 z.object({}).parse(rawInput);
-                const where = { branchId: context.principal.branchId };
+                const where = { branchId: context.principal.branchId, deletedAt: null };
                 const [totalClients, voucherClients, grouped] = await Promise.all([
                     this.prisma.client.count({ where }),
                     this.prisma.client.count({ where: { ...where, voucherClient: true } }),

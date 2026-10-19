@@ -13,13 +13,15 @@ describe("SmsAutomationSafeguardService", () => {
     interface World {
         rule: { isActive: boolean; branchId: string | null } | null;
         override: { isActive: boolean } | null;
-        client: { smsAutomationEnabled: boolean } | null;
+        client: { smsAutomationEnabled: boolean; deletedAt?: Date | null } | null;
         schedule: {
-            primaryEmployee: { id?: number; smsAutomationEnabled: boolean } | null;
-            secondaryEmployee: { id?: number; smsAutomationEnabled: boolean } | null;
+            primaryEmployee: { id?: number; smsAutomationEnabled: boolean; deletedAt?: Date | null } | null;
+            secondaryEmployee: { id?: number; smsAutomationEnabled: boolean; deletedAt?: Date | null } | null;
         } | null;
         /** Phone-match lookups: entities with the flag off, by phone key. */
         disabledClientPhones: string[];
+        /** The phone-matched client with the flag off is a tombstone (its row still carries the phone). */
+        disabledClientIsTombstone: boolean;
         disabledEmployeePhones: string[];
         disabledUsers: Array<{ id?: string; phone: string | null }>;
         branchOn: boolean;
@@ -29,7 +31,7 @@ describe("SmsAutomationSafeguardService", () => {
         const world: World = {
             rule: { isActive: true, branchId }, override: null, client: { smsAutomationEnabled: true },
             schedule: { primaryEmployee: { smsAutomationEnabled: true }, secondaryEmployee: { smsAutomationEnabled: true } },
-            disabledClientPhones: [], disabledEmployeePhones: [], disabledUsers: [], branchOn: true, ...overrides,
+            disabledClientPhones: [], disabledClientIsTombstone: false, disabledEmployeePhones: [], disabledUsers: [], branchOn: true, ...overrides,
         };
         const phoneHit = (phones: string[], where: { OR: Array<{ phoneNormalized?: { in: string[] } }> }) =>
             phones.some((phone) => where.OR[0]!.phoneNormalized!.in.includes(phone));
@@ -37,9 +39,10 @@ describe("SmsAutomationSafeguardService", () => {
             message_trigger_rule: { findFirst: jest.fn(async () => world.rule) },
             message_trigger_rule_branch_override: { findFirst: jest.fn(async () => world.override) },
             client: {
-                findFirst: jest.fn(async ({ where }: { where: { smsAutomationEnabled?: boolean; OR: never } }) =>
+                findFirst: jest.fn(async ({ where }: { where: { smsAutomationEnabled?: boolean; deletedAt?: null; OR: never } }) =>
                     where.smsAutomationEnabled === false
-                        ? (phoneHit(world.disabledClientPhones, where as never) ? { id: 1 } : null)
+                        ? (phoneHit(world.disabledClientPhones, where as never)
+                            && !(where.deletedAt === null && world.disabledClientIsTombstone) ? { id: 1 } : null)
                         : world.client),
             },
             employee: {
@@ -129,6 +132,37 @@ describe("SmsAutomationSafeguardService", () => {
             await expect(service.check(clientJob())).resolves.toMatchObject({ allowed: false, level: "recipient" });
         });
 
+        it("blocks at the recipient level when the client is a tombstone, even with its flag on", async () => {
+            const { service, db } = harness({ client: { smsAutomationEnabled: true, deletedAt: new Date("2026-10-18T00:00:00.000Z") } });
+            await expect(service.check(clientJob())).resolves.toEqual({
+                allowed: false, level: "recipient", reason: "recipient client is deleted",
+            });
+            expect(db.client.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                select: expect.objectContaining({ deletedAt: true }),
+            }));
+        });
+
+        it.each([
+            [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, { primaryEmployee: { id: 11, smsAutomationEnabled: true, deletedAt: new Date("2026-10-18T00:00:00.000Z") }, secondaryEmployee: { id: 12, smsAutomationEnabled: true } }],
+            [MessageTriggerRecipientType.SECONDARY_EMPLOYEE, { primaryEmployee: { id: 11, smsAutomationEnabled: true }, secondaryEmployee: { id: 12, smsAutomationEnabled: true, deletedAt: new Date("2026-10-18T00:00:00.000Z") } }],
+        ])("blocks at the recipient level when the %s was deleted, even with the flag on", async (type, schedule) => {
+            const { service } = harness({ schedule });
+            await expect(service.check(employeeJob(type))).resolves.toEqual({
+                allowed: false, level: "recipient", reason: "recipient employee is deleted",
+            });
+        });
+
+        it("does not block the other employee because this one was deleted", async () => {
+            const { service } = harness({
+                schedule: {
+                    primaryEmployee: { id: 11, smsAutomationEnabled: true, deletedAt: new Date("2026-10-18T00:00:00.000Z") },
+                    secondaryEmployee: { id: 12, smsAutomationEnabled: true },
+                },
+            });
+            await expect(service.check(employeeJob(MessageTriggerRecipientType.SECONDARY_EMPLOYEE)))
+                .resolves.toEqual({ allowed: true });
+        });
+
         it.each([
             [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, { primaryEmployee: { id: 11, smsAutomationEnabled: false }, secondaryEmployee: { id: 12, smsAutomationEnabled: true } }, 11],
             [MessageTriggerRecipientType.SECONDARY_EMPLOYEE, { primaryEmployee: { id: 11, smsAutomationEnabled: true }, secondaryEmployee: { id: 12, smsAutomationEnabled: false } }, 12],
@@ -199,6 +233,14 @@ describe("SmsAutomationSafeguardService", () => {
                 await expect(service.check(agentJob({ recipientPhone: phone })))
                     .resolves.toMatchObject({ allowed: false, level: "recipient", recipient: { kind: "client", id: 1 } });
             }
+        });
+
+        it("ignore a tombstoned client that still carries the phone, so its new owner is not blocked", async () => {
+            const { service, db } = harness({ disabledClientPhones: ["01012345678"], disabledClientIsTombstone: true });
+            await expect(service.check(agentJob())).resolves.toEqual({ allowed: true });
+            expect(db.client.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                where: expect.objectContaining({ branchId, smsAutomationEnabled: false, deletedAt: null }),
+            }));
         });
 
         it("are blocked when the phone matches an employee whose automation is off", async () => {

@@ -2054,7 +2054,7 @@ export class MessageTriggerService {
         }
 
         const clients = await this.prisma.client.findMany({
-            where: { branchId, phone: { not: null } },
+            where: { branchId, phone: { not: null }, deletedAt: null },
             select: { id: true, phone: true, createdAt: true, suppressGreetingSms: true },
         });
         const clientsByPhone = new Map<string, typeof clients>();
@@ -2352,7 +2352,7 @@ export class MessageTriggerService {
         // Prisma's type inference does not correctly narrow the `area` relation type when
         // the select key is inside a conditional spread; cast to ClientTriggerSource[] explicitly.
         const clients = await (transaction ?? this.prisma).client.findMany({
-            where: { branchId },
+            where: { branchId, deletedAt: null },
             select: {
                 id: true,
                 name: true,

@@ -1,5 +1,6 @@
 import { ClientEntity } from "domain/entities/client.entity";
 import {
+    ClientDeleteOutcome,
     AutomaticServiceStatusUpdateResult,
     ClientPhoneMatch,
     ClientWithInitialSchedule,
@@ -264,11 +265,12 @@ export class MockClientRepository implements IClientRepository {
         return client;
     }
 
-    async delete(_branchid: string, id: number): Promise<void> {
+    async delete(_branchid: string, id: number): Promise<ClientDeleteOutcome> {
         if (!this.clients.has(id)) {
             throw new Error(`Client with id ${id} not found`);
         }
         this.clients.delete(id);
+        return "deleted";
     }
 
     /**

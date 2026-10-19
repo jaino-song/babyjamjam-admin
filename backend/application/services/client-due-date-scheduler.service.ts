@@ -79,6 +79,7 @@ export class ClientDueDateSchedulerService {
         const upcomingDueDate = this.getKstDateOnly(referenceDate, START_DATE_COPY_LEAD_DAYS);
         const candidates = await this.prisma.client.findMany({
             where: {
+                deletedAt: null,
                 dueDate: {
                     gte: kstToday,
                     lte: upcomingDueDate,

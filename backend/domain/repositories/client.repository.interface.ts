@@ -228,6 +228,8 @@ export function buildClientListWhere(
     const normalizedSearch = search?.trim();
     const where: Prisma.clientWhereInput = {
         branchId: branchid,
+        // A deleted client with retained history is a tombstone: it never appears in a list.
+        deletedAt: null,
         ...(normalizedSearch
             ? {
                 OR: [
@@ -245,6 +247,8 @@ export function buildClientListWhere(
 
     return where;
 }
+
+export type ClientDeleteOutcome = "deleted" | "tombstoned";
 
 export interface InitialClientSchedule {
     primaryEmployeeId: number;
@@ -338,7 +342,12 @@ export interface IClientRepository {
         calendar: KrBusinessDayCalendar,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null>;
-    delete(branchid: string, id: number): Promise<void>;
+    /**
+     * `deleted`: no history, the row is gone. `tombstoned`: history exists, so the row
+     * stays with `deletedAt` set, open assignments ended and pending messages canceled.
+     * A client that is already tombstoned or absent throws `ScopedDeleteNotFoundError`.
+     */
+    delete(branchid: string, id: number): Promise<ClientDeleteOutcome>;
 
     // Date-based queries for scheduler (P3)
     /**

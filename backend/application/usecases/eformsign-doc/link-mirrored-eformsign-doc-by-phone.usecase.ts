@@ -681,6 +681,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                         ? {}
                                         : { id: params.existingClientId }),
                                     phone: { not: null },
+                                    deletedAt: null,
                                     branchId: existingClientBranchId,
                                     OR: [{ phone: { endsWith: phoneSuffix } }],
                                 },
