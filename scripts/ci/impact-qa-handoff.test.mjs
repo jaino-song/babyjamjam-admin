@@ -189,3 +189,78 @@ test('deployment role extension cannot replace canonical role outside JSON', t =
   assert.match(dispatch, /^Canonical role: \/operator\/\.agents\/playbook\/domains\/common\/agents\/qa\.md$/m);
   assert.doesNotMatch(dispatch, /^Canonical role: \/forged\/qa\.md$/m);
 });
+
+// Each refusal below leaves the other admission conditions valid so that the
+// named guard is the reason the real CLI refuses to prepare output.
+test('admission refuses clean HEAD advanced beyond all supplied candidate evidence', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.root, 'tracked'), 'second commit');
+  execFileSync('git', ['add', 'tracked'], { cwd: f.root });
+  execFileSync('git', ['commit', '-qm', 'advance clean HEAD'], { cwd: f.root });
+  assert.notEqual(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: f.root, encoding: 'utf8' }).trim(), f.sha);
+  assert.equal(execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: f.root, encoding: 'utf8' }), '');
+  assert.notEqual(f.run().status, 0);
+  assert.equal(existsSync(join(f.root, 'out')), false);
+});
+for (const boundary of ['selected component', 'missing intentional flag', 'local skip']) {
+  test(`admission refuses otherwise valid stable-gated skip: ${boundary}`, t => {
+    const f = fixture(t);
+    const common = { component: 'mobile', kind: 'ci', required: true, sha: f.sha, reference: 'ci:mobile', result: 'intentional routing' };
+    const skipped = { ...common, id: 'mobile-job', status: 'skipped', intentionalSkip: true, skipReason: 'impact deselected mobile' };
+    f.manifest.verification.push(skipped, { ...common, id: 'mobile-gate', status: 'success', stableGate: true });
+    if (boundary === 'selected component') f.impact.selected.mobile = true;
+    if (boundary === 'missing intentional flag') delete skipped.intentionalSkip;
+    if (boundary === 'local skip') skipped.kind = 'local';
+    assert.notEqual(f.run().status, 0);
+    assert.equal(existsSync(join(f.root, 'out')), false);
+  });
+}
+for (const [field, value] of [['nodeEnv', 'production'], ['tunnel', true], ['reverseProxy', true]]) {
+  test(`admission refuses loopback auto-login with ${field}`, t => {
+    const f = fixture(t);
+    f.manifest.autoLogin = true;
+    f.manifest.deployment[field] = value;
+    assert.notEqual(f.run().status, 0);
+    assert.equal(existsSync(join(f.root, 'out')), false);
+  });
+}
+test('admission allows loopback auto-login in development without proxy or tunnel', t => {
+  const f = fixture(t);
+  f.manifest.autoLogin = true;
+  Object.assign(f.manifest.deployment, { nodeEnv: 'development', tunnel: false, reverseProxy: false });
+  assert.equal(f.run().status, 0);
+  assert.equal(JSON.parse(readFileSync(join(f.root, 'out/readiness.json'))).status, 'prepared');
+});
+test('admission allows anonymous manual login in production mode on loopback', t => {
+  const f = fixture(t);
+  f.manifest.autoLogin = false;
+  f.manifest.deployment.nodeEnv = 'production';
+  assert.equal(f.run().status, 0);
+  assert.equal(JSON.parse(readFileSync(join(f.root, 'out/readiness.json'))).status, 'prepared');
+});
+test('admission refuses missing selected backend evidence with successful frontend evidence', t => {
+  const f = fixture(t);
+  f.impact.selected.backend = true;
+  assert.notEqual(f.run().status, 0);
+  assert.equal(existsSync(join(f.root, 'out')), false);
+});
+test('admission refuses non-UI required assessment with only nonrequired cases', t => {
+  const f = fixture(t);
+  f.impact.qa.status = 'assessment-required';
+  f.manifest.deployment.testCases[0].required = false;
+  assert.notEqual(f.run().status, 0);
+  assert.equal(existsSync(join(f.root, 'out')), false);
+});
+test('admission refuses visual-only resulting-state claim despite screenshot evidence', t => {
+  const f = fixture(t);
+  f.manifest.deployment.testCases[0].assertions = [{ id: 'visual-state', oracleKind: 'VISUAL_RUBRIC', expected: 'Login form visually matches design', evidenceKinds: ['screenshot', 'resulting-state'] }];
+  assert.notEqual(f.run().status, 0);
+  assert.equal(existsSync(join(f.root, 'out')), false);
+});
+test('admission refuses UI phone viewport covered only by a nonrequired case', t => {
+  const f = fixture(t), first = f.manifest.deployment.testCases[0];
+  first.viewportIds = ['desktop'];
+  f.manifest.deployment.testCases.push({ ...structuredClone(first), id: 'optional-phone', required: false, viewportIds: ['phone'] });
+  assert.notEqual(f.run().status, 0);
+  assert.equal(existsSync(join(f.root, 'out')), false);
+});
