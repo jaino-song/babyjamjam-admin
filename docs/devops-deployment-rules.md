@@ -30,7 +30,7 @@
 | 브랜치 | 역할 | 프론트(Vercel) | 백엔드 | DB 패치 잡 |
 |---|---|---|---|---|
 | `dev` | 통합 대상. 모든 feature/fix PR의 목적지 | 빌드 안 함 (2026-08-06부터, [외부] Ignored Build Step) | 배포 없음. 로컬 `localhost:3001`로 테스트 | `apply-dev` (prisma 경로 push 시) |
-| `preview` | 릴리스 후보 검증 | preview 빌드 | Google Cloud Run `babyjamjam-api-preview` (`*.run.app`, asia-northeast3, min 0 / max 1), push 시 `deploy-cloudrun` 잡이 자동(`apply-preview` 뒤, BJJ-341부터). runbook: `docs/plans/2026-09-23-preview-cloud-run.md` | `apply-preview` |
+| `preview` | 릴리스 후보 검증 | preview 빌드 | Google Cloud Run `babyjamjam-api-preview` (`*.run.app`, asia-northeast3, min 0 / max 1), push 시 `deploy-cloudrun` 잡이 자동(`apply-production` 뒤, BJJ-341부터). runbook: `docs/plans/2026-09-23-preview-cloud-run.md` | `apply-production` (운영 DB, BJJ-484) |
 | `main` | 프로덕션 | production 빌드 (`admin.babyjamjam.com`, `m.admin.babyjamjam.com`) | **LightNode VPS Fallback Server** (`api.babyjamjam.com` DNS가 가리키는 대상), push 시 자동(같은 커밋의 `apply-production` 패치 성공 뒤). AWS Lightsail은 더 이상 쓰지 않는다(2026-10-19 사용자 확인) | `apply-production` |
 
 규칙:
@@ -111,8 +111,15 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
   gh workflow run database-patches.yml --ref dev -f target=production
   gh workflow run database-patches.yml --ref dev -f target=preview
   ```
-  `--ref dev`가 핵심이다. preview/main의 워크플로 사본에는 새 스텝이 없다. `apply-production`은 `if: always()`라 skip된 preview 잡에 막히지 않는다.
-- `paths: backend/prisma/**` push 트리거만 믿지 않는다. 그 트리거는 해당 브랜치 환경만 패치한다.
+  `--ref dev`가 핵심이다. preview/main의 워크플로 사본에는 새 스텝이 없다. `apply-production`은 `if: always()`라 skip된 preview 잡에 막히지 않는다. `-f target=preview`는 이제 어떤 백엔드도 쓰지 않는 preview 전용 DB(`PREVIEW_DATABASE_URL`)만 패치한다.
+- push 트리거(`paths: backend/prisma/**`)는 브랜치 이름이 아니라 **백엔드가 실제로 쓰는 DB**를 패치한다 (BJJ-484):
+  - preview push와 main push는 둘 다 **운영 DB**를 패치한다 (`apply-production`). preview 백엔드(Cloud Run)와 main 백엔드가 같은 운영 DB를 쓰기 때문이다.
+  - dev push는 dev DB를 패치한다 (`apply-dev`).
+  - preview 전용 DB(`PREVIEW_DATABASE_URL`)는 수동 `-f target=preview` dispatch로만 패치한다 (`apply-preview`는 push에서 실행되지 않는다).
+  - 백엔드 배포 게이트(`wait for database patches`)는 같은 커밋의 `Database Patches` 런이 성공했을 뿐 아니라 그 안의 `apply production database patches` 잡이 `success`였는지까지 확인한다. 잡이 skipped이거나 없으면 게이트가 실패한다(런 단위 결론만 보면 skip된 잡도 `success`로 보인다).
+  - Cloud Run 배포 잡은 마지막에 `/health/schema`로 Prisma 컬럼이 DB에 모두 있는지 확인한다. 이 확인은 트래픽이 새 리비전으로 넘어간 **뒤에** 실행되므로 드리프트를 배포 후에 감지할 뿐 막지는 못한다.
+  - preview push, main push, `target=production` dispatch는 같은 concurrency 그룹(`database-patches-production`)을 쓴다. GitHub은 그룹당 실행 1개 + 대기 1개만 유지하므로 더 새로운 런이 대기에 들어오면 이전 대기 런이 취소된다. 게이트는 취소된 런을 실패로 처리하므로(fail closed) "취소된 push 런을 재실행한 뒤 Backend CI 실패 잡을 재실행한다".
+- 사고: PR #830(2026-10-18) preview 승격 후 preview 마이그레이션 6개가 운영 DB에 없어 preview 고객 화면 500 (BJJ-484). 수동 `-f target=production` dispatch(run 39125064314)로 복구. 원인은 preview push가 `apply-preview`(다른 DB)만 실행하고 `apply-production`을 skip했는데도 런이 `success`로 끝나 게이트를 통과한 것이다.
 - 사고: `eformsign_doc` 컬럼(PR #407, 2026-07-28). 앱은 배포됐는데 프로덕션 DB에 컬럼이 없던 하루 동안 호환 SELECT가 `templateId`를 null로 채워 **10분 중복 발송 가드가 조용히 무력화**됐다. 2026-07-29 11:52 수동 dispatch로 복구.
 - 같은 유형: PR #616(2026-09-03). `backend-ci`가 `database-patches.yml`의 production 승인 대기와 무관하게 ~20분 만에 배포를 끝냈고, 새 코드가 아직 없던 `employee_schedule.terminated_at`/`scheduler_lease`를 조회해 데스크톱 목록이 500으로 빈 상태가 됐다.
 - 승격 후 확인: `git show origin/main:.github/workflows/database-patches.yml | grep -c '<패치 이름>'`.

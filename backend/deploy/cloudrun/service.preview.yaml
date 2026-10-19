@@ -249,7 +249,8 @@ spec:
                   name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_20
                   key: latest
             # 공공데이터포털 특일 정보 (KASI) key for the nightly holiday sync. Preview is
-            # the only hosted server on the shared dev/preview database, so it syncs there.
+            # the only hosted server that runs this sync, and the preview service uses the
+            # production database (shared with production; see docs/devops-deployment-rules.md), so it syncs there.
             - name: DATA_GO_KR_SERVICE_KEY
               valueFrom:
                 secretKeyRef:
