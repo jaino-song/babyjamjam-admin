@@ -123,7 +123,7 @@ describe("SbClientRepository", () => {
                 // Assert
                 expect(clientModel.findFirst).toHaveBeenCalledTimes(1);
                 expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { id: 1, branchId: branchId },
+                    where: { id: 1, branchId: branchId, deletedAt: null },
                     select: expect.any(Object),
                 }));
                 expect(result).toBeInstanceOf(ClientEntity);
@@ -161,7 +161,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { id: 999, branchId: branchId },
+                    where: { id: 999, branchId: branchId, deletedAt: null },
                     select: expect.any(Object),
                 }));
                 expect(result).toBeNull();
@@ -187,7 +187,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { branchId: branchId },
+                    where: { branchId: branchId, deletedAt: null },
                     select: expect.any(Object),
                 }));
                 expect(result).toHaveLength(2);
@@ -230,14 +230,14 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { branchId: branchId },
+                    where: { branchId: branchId, deletedAt: null },
                     skip: 0,
                     take: 10,
                     orderBy: { id: "desc" },
                     select: expect.any(Object),
                 }));
                 expect(clientModel.count).toHaveBeenCalledWith({
-                    where: { branchId: branchId },
+                    where: { branchId: branchId, deletedAt: null },
                 });
                 expect(result).toEqual({
                     data: expect.arrayContaining([
@@ -303,6 +303,7 @@ describe("SbClientRepository", () => {
                         { phone: { contains: "John", mode: "insensitive" } },
                     ],
                     branchId: branchId,
+                    deletedAt: null,
                 };
 
                 // Act
@@ -330,9 +331,9 @@ describe("SbClientRepository", () => {
 
             expect(clientModel.findMany).toHaveBeenCalledTimes(1);
             expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                where: { branchId },
+                where: { branchId, deletedAt: null },
             }));
-            expect(clientModel.count).toHaveBeenCalledWith({ where: { branchId } });
+            expect(clientModel.count).toHaveBeenCalledWith({ where: { branchId, deletedAt: null } });
         });
 
         it("applies the effective status tab to both rows and total", async () => {
@@ -344,6 +345,7 @@ describe("SbClientRepository", () => {
 
             expect(listWhere).toEqual({
                 branchId,
+                deletedAt: null,
                 OR: [
                     { name: { contains: "Kim", mode: "insensitive" } },
                     { address: { contains: "Kim", mode: "insensitive" } },
@@ -367,6 +369,7 @@ describe("SbClientRepository", () => {
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
                     where: {
                         branchId,
+                        deletedAt: null,
                         AND: [clientListTabWhere(tab, getClientListDateRanges().todayStart)],
                     },
                 }));
@@ -397,7 +400,7 @@ describe("SbClientRepository", () => {
             await repository.findAllPaginated(branchId, 1, 10, "ㄱㅎ", "all");
 
             expect(clientModel.findMany.mock.calls[0]?.[0]).toEqual({
-                where: { branchId },
+                where: { branchId, deletedAt: null },
                 select: {
                     id: true,
                     name: true,
@@ -408,6 +411,7 @@ describe("SbClientRepository", () => {
             });
             expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [{ id: { in: [7] } }],
             });
         });
@@ -428,9 +432,10 @@ describe("SbClientRepository", () => {
 
             await repository.findAllPaginated(branchId, 1, 10, "+82 10 1234 5678", "all");
 
-            expect(clientModel.findMany.mock.calls[0]?.[0]?.where).toEqual({ branchId });
+            expect(clientModel.findMany.mock.calls[0]?.[0]?.where).toEqual({ branchId, deletedAt: null });
             expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [{ id: { in: [7] } }],
             });
         });
@@ -449,6 +454,7 @@ describe("SbClientRepository", () => {
 
             expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [{ id: { in: [2] } }],
             });
         });
@@ -620,10 +626,12 @@ describe("SbClientRepository", () => {
             expect(list.data[0]?.serviceStatus).toBe("active");
             expect(listWhere).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [clientListTabWhere("completed", todayStart)],
             });
             expect(completedSummaryWhere).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [clientListTabWhere("completed", todayStart)],
             });
             expect(clientModel.update).not.toHaveBeenCalled();
@@ -874,7 +882,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.updateMany).toHaveBeenCalledWith({
-                    where: { id: 7, branchId: branchId },
+                    where: { id: 7, branchId: branchId, deletedAt: null },
                     data: {
                         name: "Updated Name",
                         address: "Updated Address",
@@ -950,7 +958,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { id: 7, branchId: branchId },
+                    where: { id: 7, branchId: branchId, deletedAt: null },
                     data: expect.objectContaining({
                         birthDate,
                     }),
@@ -976,7 +984,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.updateMany).toHaveBeenCalledWith({
-                    where: { id: 8, branchId: branchId },
+                    where: { id: 8, branchId: branchId, deletedAt: null },
                     data: expect.objectContaining({
                         breastPump: true,
                     }),
@@ -1021,7 +1029,7 @@ describe("SbClientRepository", () => {
 
             expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
             expect(transaction.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-                where: { id: row.id, branchId },
+                where: { id: row.id, branchId, deletedAt: null },
                 data: expect.objectContaining({ name: "Updated" }),
             }));
             expect(result).toMatchObject({ id: row.id, name: "Updated" });

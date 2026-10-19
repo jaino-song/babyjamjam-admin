@@ -184,6 +184,66 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(repository.upsertPending).not.toHaveBeenCalled();
     });
 
+    it.each(smsCases)("%s looks up only live clients and refuses a phone owned only by a deleted client", async (name) => {
+        const { capabilities, prisma, repository } = setup();
+        const tombstoned = { id: 5, name: "삭제된 고객", phone: smsInput.receiver, deletedAt: new Date("2026-08-01T00:00:00.000Z") };
+        // Behave like the database: a row only matches when the where clause excludes tombstones.
+        prisma.client.findFirst.mockImplementation((async ({ where }: { where: { deletedAt?: null } }) =>
+            where.deletedAt === null ? null : tombstoned) as never);
+        await expect(capabilities.find((entry) => entry.meta.name === name)!.inspect!(context, inputFor(name)))
+            .rejects.toThrow("SMS recipient is not an active client or employee in this branch");
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { branchId: principal.branchId, phone: smsInput.receiver, deletedAt: null },
+            select: { id: true, name: true, phone: true },
+        });
+        expect(repository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it.each(smsCases)("%s still resolves a live client through the tombstone-filtered lookup", async (name) => {
+        const { capabilities, prisma } = setup();
+        const inspection = await capabilities.find((entry) => entry.meta.name === name)!.inspect!(context, inputFor(name));
+        expect(inspection.targetSnapshot).toEqual({ clientId: 1, name: "테스트 고객" });
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { branchId: principal.branchId, phone: smsInput.receiver, deletedAt: null },
+            select: { id: true, name: true, phone: true },
+        });
+    });
+
+    it("does not bind a deleted client into a retry target (inspection falls back to no recipient ID)", async () => {
+        const source = terminalJob({ recipientType: MessageTriggerRecipientType.CLIENT, clientId: 5 });
+        const { capabilities, prisma } = setup(source);
+        const tombstoned = { id: 5, name: "삭제된 고객", phone: smsInput.receiver };
+        prisma.client.findFirst.mockImplementation((async ({ where }: { where: { deletedAt?: null } }) =>
+            where.deletedAt === null ? null : tombstoned) as never);
+        prisma.employee.findFirst.mockResolvedValue(null);
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await retry.inspect!(context, { jobId: source.id });
+        expect(inspection.targetSnapshot).not.toHaveProperty("clientId");
+        expect(inspection.targetSnapshot).not.toHaveProperty("employeeId");
+        expect(inspection.summary).toContain("수신자 님에게");
+        expect(inspection.summary).not.toContain("삭제된 고객");
+        expect(prisma.client.findFirst).toHaveBeenCalledWith({
+            where: { branchId: principal.branchId, phone: smsInput.receiver, deletedAt: null },
+            select: { id: true, name: true, phone: true },
+        });
+    });
+
+    it("refuses to execute a retry when the approved client was deleted after approval", async () => {
+        const { capabilities, prisma, repository } = setup();
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await retry.inspect!(context, { jobId: "job-a" });
+        expect(inspection.targetSnapshot?.["clientId"]).toBe(1);
+        const tombstoned = { id: 1, name: "테스트 고객", phone: smsInput.receiver };
+        prisma.client.findFirst.mockImplementation((async ({ where }: { where: { deletedAt?: null } }) =>
+            where.deletedAt === null ? null : tombstoned) as never);
+        await expect(retry.execute({
+            ...context,
+            approvedTargetVersion: inspection.targetVersion,
+            approvedTargetSnapshot: inspection.targetSnapshot,
+        }, { jobId: "job-a" })).rejects.toThrow("SMS recipient is not an active client or employee in this branch");
+        expect(repository.claimProviderRejectedForRetry).not.toHaveBeenCalled();
+    });
+
     it.each(smsCases)("%s sends when the approved recipient ID still matches", async (name) => {
         const { capabilities, repository } = setup();
         const capability = capabilities.find((entry) => entry.meta.name === name)!;

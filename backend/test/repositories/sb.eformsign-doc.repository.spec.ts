@@ -590,6 +590,7 @@ describe("SbEformsignDocRepository", () => {
         expect(docs.map((doc) => doc.documentId)).toEqual(["live"]);
         expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
             documentKind: "contract", statusType: { in: ["070", "70", "doc_request_reviewer"] }, permanentPurgeRequestedAt: null, voidedAt: null,
+            OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }],
         } }));
     });
     it("excludes purge-pending rows from the headquarters list", async () => {

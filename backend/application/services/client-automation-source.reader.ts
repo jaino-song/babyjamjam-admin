@@ -99,7 +99,7 @@ export class ClientAutomationSourceReader {
         // Prisma's type inference does not correctly narrow the `area` relation type when
         // the select key is inside a conditional spread; cast to ClientTriggerSource explicitly.
         return await (transaction ?? this.prisma).client.findFirst({
-            where: { id: clientId, branchId },
+            where: { id: clientId, branchId, deletedAt: null },
             select: {
                 id: true,
                 name: true,

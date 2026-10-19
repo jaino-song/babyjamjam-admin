@@ -422,7 +422,7 @@ describe("MessageDeliveryController", () => {
         ).rejects.toMatchObject({ status: 404, response: { code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" } });
 
         expect(prismaService.client.findFirst).toHaveBeenCalledWith({
-            where: { id: 7, branchId: "branch-a" },
+            where: { id: 7, branchId: "branch-a", deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
@@ -464,7 +464,7 @@ describe("MessageDeliveryController", () => {
         ).resolves.toMatchObject({ provider: "aligo_sms" });
 
         expect(prismaService.client.findFirst).toHaveBeenCalledWith({
-            where: { id: 7, branchId: "branch-a" },
+            where: { id: 7, branchId: "branch-a", deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         expect(prismaService.message_log.create).toHaveBeenCalledWith({

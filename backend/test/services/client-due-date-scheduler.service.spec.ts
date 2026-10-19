@@ -47,6 +47,7 @@ describe("ClientDueDateSchedulerService", () => {
         expect(count).toBe(2);
         expect(prismaService.client.findMany).toHaveBeenCalledWith({
             where: {
+                deletedAt: null,
                 dueDate: {
                     gte: new Date("2026-06-12T00:00:00.000Z"),
                     lte: new Date("2026-06-19T00:00:00.000Z"),
@@ -77,6 +78,7 @@ describe("ClientDueDateSchedulerService", () => {
 
         expect(prismaService.client.findMany).toHaveBeenCalledWith({
             where: {
+                deletedAt: null,
                 dueDate: {
                     gte: new Date("2026-06-13T00:00:00.000Z"),
                     lte: new Date("2026-06-20T00:00:00.000Z"),
@@ -135,6 +137,7 @@ describe("ClientDueDateSchedulerService", () => {
         expect(count).toBe(0);
         expect(prismaService.client.findMany).toHaveBeenCalledWith({
             where: {
+                deletedAt: null,
                 dueDate: {
                     gte: new Date("2026-06-12T00:00:00.000Z"),
                     lte: new Date("2026-06-19T00:00:00.000Z"),
