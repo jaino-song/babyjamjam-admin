@@ -16,6 +16,7 @@ jest.mock("infrastructure/observability/service-record-sentry", () => ({
 
 function setup(options: {
     claimCount?: number;
+    tombstonedAtSend?: boolean;
     snapshotError?: Error;
     staleCount?: number;
     includeCandidate?: boolean;
@@ -24,9 +25,14 @@ function setup(options: {
         id: "case-1",
         branchId: "branch-1",
         finalizationAttempts: 0,
+        status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+        nextAttemptAt: null,
+        finalizationStartedAt: null,
+        lastError: null,
     };
     const prisma = {
         service_record_case: {
+            count: jest.fn().mockResolvedValue(options.tombstonedAtSend ? 1 : 0),
             findMany: jest.fn()
                 .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([])
@@ -100,6 +106,7 @@ describe("ServiceRecordFinalizationService", () => {
         expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
             where: {
                 snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
+                AND: [{ OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }] }],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                     {
@@ -125,6 +132,51 @@ describe("ServiceRecordFinalizationService", () => {
                 ],
             },
         }));
+    });
+
+    it("never selects or claims a case whose client is a tombstone", async () => {
+        const { service, prisma } = setup();
+        const notTombstoned = { OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }] };
+
+        await service.processDueCases();
+
+        expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            where: expect.objectContaining({ AND: [notTombstoned] }),
+        }));
+        expect(prisma.service_record_case.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ id: "case-1", AND: [notTombstoned] }),
+                data: expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.FINALIZING }),
+            }),
+        );
+    });
+
+    it("sends nothing and leaves the case as it was when the client is deleted after the claim", async () => {
+        const { service, prisma, snapshot } = setup({ tombstonedAtSend: true });
+
+        await expect(service.processDueCases()).resolves.toBe(0);
+
+        expect(snapshot.executeCase).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.count).toHaveBeenCalledWith({
+            where: { id: "case-1", client: { is: { deletedAt: { not: null } } } },
+        });
+        expect(prisma.service_record_case.updateMany).toHaveBeenCalledWith({
+            where: { id: "case-1", status: SERVICE_RECORD_CASE_STATUS.FINALIZING },
+            data: expect.objectContaining({
+                status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+                nextAttemptAt: null,
+                finalizationAttempts: 0,
+                lastError: null,
+            }),
+        });
+        expect(prisma.service_record_case.updateMany).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ id: "case-1" }),
+                data: expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED }),
+            }),
+        );
+        expect(prisma.service_record_token.updateMany).not.toHaveBeenCalled();
+        expect(mockCaptureServiceRecordError).not.toHaveBeenCalled();
     });
 
     it("does not call eformsign when another instance already owns the DB claim", async () => {
