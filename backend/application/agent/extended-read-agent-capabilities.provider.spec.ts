@@ -99,7 +99,7 @@ describe("ExtendedReadAgentCapabilitiesProvider", () => {
 
         expect(output).toEqual({ totalClients: 4, voucherClients: 2, byServiceStatus: [{ status: "active", count: 3 }] });
         expect(models.client.count).toHaveBeenCalledTimes(2);
-        expect(models.client.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where: { branchId: "branch-a" } }));
+        expect(models.client.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where: { branchId: "branch-a", deletedAt: null } }));
     });
 
     it("uses canonical services for consultation and file mutations", async () => {
