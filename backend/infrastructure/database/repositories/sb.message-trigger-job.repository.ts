@@ -1657,10 +1657,16 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // on status, not on `scheduled_for`: it selects due jobs, and if we moved
         // a selected job before its claim ran, the claim would still succeed and
         // preparation would then see the schedule mismatch as `lost`, leaving the
-        // job `processing`. A job more than a minute from due cannot be in a
-        // dispatcher selection, so the guard has to live in this one statement
-        // (`updateMany` cannot express `clock_timestamp()`). Keep the one-minute
-        // lead in step with RESCHEDULE_MIN_LEAD_MS in the service.
+        // job `processing`. The one-minute lead keeps this endpoint out of the
+        // dispatcher's way in practice, but it is not a fence: a row lock held
+        // past the lead, or a dispatcher clock more than a minute ahead, can
+        // still let a selected job be moved before its claim. That job then sits
+        // `processing` until the stale-processing reclaim (10 minutes) defers it
+        // back to `pending`, and its next claim runs the safeguard again — a late
+        // send, never a wrong one. Accepted for this owner-only debug tool
+        // (2026-10-19) instead of changing the claim every send goes through.
+        // `updateMany` cannot express `clock_timestamp()`, hence raw SQL. Keep
+        // the one-minute lead in step with RESCHEDULE_MIN_LEAD_MS in the service.
         //
         // `next_attempt_at` is cleared: due selection treats `null` as "no retry
         // delay" and otherwise requires `next_attempt_at <= now`, so a stale retry
