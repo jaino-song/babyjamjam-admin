@@ -8,7 +8,7 @@ import {
     artifactKey, completionKey, completionName, manifestKey, type ArchiveArtifactType,
 } from "./archive-paths";
 import {
-    artifactTypeField, count, hex64, isoUtc, isoWithOffset, pathIdentifier, reasonCodeField, relativeKeyField,
+    artifactTypeField, count, hex64, isoUtc, isoWithOffset, opaqueId, pathIdentifier, reasonCodeField, relativeKeyField,
     runCountsSchema, runIdField, sequenceField, identifier,
 } from "./schema-fields";
 import { JUDGED_HISTORICAL_COVERAGES, JUDGED_SNAPSHOT_STATUSES } from "./snapshot-status";
@@ -21,7 +21,16 @@ export function toArchiveArtifactType(fileType: ExportFileType): ArchiveArtifact
     return fileType === "audit_trail" ? "audit-trail" : "document";
 }
 
-export const manifestSchema = z.strictObject({
+/** True when `build` returns `key`; a segment `build` rejects counts as a mismatch, never as a throw. */
+function keyMatches(build: () => string, key: string): boolean {
+    try {
+        return build() === key;
+    } catch {
+        return false;
+    }
+}
+
+const manifestShape = z.strictObject({
     schemaVersion: z.literal(ARCHIVE_SCHEMA_VERSION),
     companyId: pathIdentifier,
     documentId: pathIdentifier,
@@ -36,9 +45,24 @@ export const manifestSchema = z.strictObject({
         relativeKey: relativeKeyField,
     })).min(1).max(2),
 });
+/** Every relativeKey is the artifact key of this manifest's own document; bundleId and consistency follow the types. */
+export const manifestSchema = manifestShape.superRefine((manifest, ctx) => {
+    const issue = (message: string) => ctx.addIssue({ code: "custom", message });
+    const types = new Set(manifest.artifacts.map((artifact) => artifact.artifactType));
+    if (types.size !== manifest.artifacts.length) issue("duplicate artifactType");
+    for (const artifact of manifest.artifacts) {
+        const bound = keyMatches(() => artifactKey({
+            companyId: manifest.companyId, documentId: manifest.documentId,
+            artifactType: artifact.artifactType, sha256: artifact.sha256,
+        }), artifact.relativeKey);
+        if (!bound) issue("relativeKey is not this document's artifact key");
+    }
+    if ((manifest.bundleId === null) !== (types.size < 2)) issue("bundleId must be null exactly when fewer than two artifact types");
+    if (manifest.consistency !== (manifest.bundleId === null ? "incomplete" : "unverified")) issue("consistency does not match bundleId");
+});
 export type Manifest = z.infer<typeof manifestSchema>;
 
-export const completionSchema = z.strictObject({
+const completionShape = z.strictObject({
     schemaVersion: z.literal(ARCHIVE_SCHEMA_VERSION),
     companyId: pathIdentifier,
     sequence: sequenceField,
@@ -55,7 +79,20 @@ export const completionSchema = z.strictObject({
         manifestKey: relativeKeyField,
         manifestSha256: hex64,
     })),
-    gaps: z.array(z.strictObject({ documentId: z.string().min(1).max(512), reasonCode: reasonCodeField })),
+    gaps: z.array(z.strictObject({ documentId: opaqueId, reasonCode: reasonCodeField })),
+});
+/** Every manifestKey is the manifest key of its own entry in this company; entries are strictly sorted by documentId. */
+export const completionSchema = completionShape.superRefine((completion, ctx) => {
+    const issue = (message: string) => ctx.addIssue({ code: "custom", message });
+    completion.entries.forEach((entry, index) => {
+        const bound = keyMatches(() => manifestKey({
+            companyId: completion.companyId, documentId: entry.documentId, metadataRevision: entry.metadataRevision,
+        }), entry.manifestKey);
+        if (!bound) issue("manifestKey is not this entry's manifest key");
+        if (index > 0 && compare(completion.entries[index - 1]!.documentId, entry.documentId) >= 0) {
+            issue("entries must be strictly sorted and unique by documentId");
+        }
+    });
 });
 export type Completion = z.infer<typeof completionSchema>;
 

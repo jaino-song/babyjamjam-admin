@@ -7,7 +7,8 @@ export interface CompletionFileEntry {
     content: unknown;
 }
 
-export type RestoreQuery = { snapshotId: string } | { latest: true };
+/** Restore is always for one company: a completion of any other company is never selected. */
+export type RestoreQuery = { companyId: string; snapshotId: string } | { companyId: string; latest: true };
 
 export interface SelectedCompletion {
     name: string;
@@ -17,7 +18,7 @@ export interface SelectedCompletion {
 }
 
 export type QuarantineReason =
-    | "name-invalid" | "content-invalid" | "sequence-mismatch" | "digest-mismatch" | "conflict";
+    | "name-invalid" | "content-invalid" | "sequence-mismatch" | "digest-mismatch" | "company-mismatch" | "conflict";
 export interface QuarantinedEntry {
     name: string;
     reason: QuarantineReason;
@@ -28,13 +29,14 @@ export type CompletionSelection =
     | { kind: "none"; quarantined: QuarantinedEntry[] }
     | { kind: "conflict"; names: string[]; quarantined: QuarantinedEntry[] };
 
-function validate(entry: CompletionFileEntry): SelectedCompletion | QuarantineReason {
+function validate(entry: CompletionFileEntry, companyId: string): SelectedCompletion | QuarantineReason {
     const parsedName = parseCompletionName(entry.name);
     if (!parsedName) return "name-invalid";
     const content = completionSchema.safeParse(entry.content);
     if (!content.success) return "content-invalid";
     if (content.data.sequence !== parsedName.sequence) return "sequence-mismatch";
     if (completionContentDigest(content.data) !== parsedName.contentDigest) return "digest-mismatch";
+    if (content.data.companyId !== companyId) return "company-mismatch";
     return {
         name: entry.name, sequence: parsedName.sequence, contentDigest: parsedName.contentDigest, completion: content.data,
     };
@@ -58,7 +60,7 @@ export function selectCompletion(entries: readonly CompletionFileEntry[], query:
     for (const entry of entries) {
         if (seen.has(entry.name)) continue;
         seen.add(entry.name);
-        const result = validate(entry);
+        const result = validate(entry, query.companyId);
         if (typeof result === "string") quarantined.push({ name: entry.name, reason: result });
         else valid.push(result);
     }

@@ -161,3 +161,107 @@ describe("buildRunInventory", () => {
         expect(() => buildRunInventory({ ...input, historicalCoverage: "no_known_gap" as never })).toThrow(WorkerError);
     });
 });
+
+describe("manifestSchema binds every key to the manifest's own document (D1)", () => {
+    const revision = metadataRevision(stableMetadata);
+    const artifacts = claims(["document", "audit-trail"]).map((claim) => ({
+        artifactType: claim.artifactKind, artifactIdentity: artifactIdentity(claim), sha256: claim.contentSha256, byteLength: claim.byteLength,
+    }));
+    const good = () => structuredClone(buildManifest({ companyId: COMPANY, documentId: "D001", metadataRevision: revision, artifacts }).value);
+    const accepts = (value: unknown) => manifestSchema.safeParse(value).success;
+
+    it("accepts correctly bound keys, with one or two artifact types", () => {
+        expect(accepts(good())).toBe(true);
+        const single = buildManifest({ companyId: COMPANY, documentId: "D004", metadataRevision: revision, artifacts: [artifacts[0]!] });
+        expect(accepts(single.value)).toBe(true);
+    });
+
+    it("rejects a relativeKey that points at another document, another company or another sha", () => {
+        const otherDoc = good();
+        otherDoc.artifacts[0]!.relativeKey = otherDoc.artifacts[0]!.relativeKey.replace("/D001/", "/D002/");
+        expect(accepts(otherDoc)).toBe(false);
+        const otherCompany = good();
+        otherCompany.artifacts[1]!.relativeKey = otherCompany.artifacts[1]!.relativeKey.replace(`/${COMPANY}/`, "/company-2/");
+        expect(accepts(otherCompany)).toBe(false);
+        const otherSha = good();
+        otherSha.artifacts[0]!.relativeKey = otherSha.artifacts[0]!.relativeKey.replace(/[0-9a-f]{64}\.pdf$/, `${"0".repeat(64)}.pdf`);
+        expect(accepts(otherSha)).toBe(false);
+        const swappedType = good();
+        swappedType.artifacts[0]!.relativeKey = swappedType.artifacts[1]!.relativeKey;
+        expect(accepts(swappedType)).toBe(false);
+    });
+
+    it("rejects the installation marker, or any non-artifact path, as a relativeKey", () => {
+        for (const key of [".bjj-backup/installation.json", "eformsign/company-1/runs/x.json", "../outside.pdf", "/etc/passwd"]) {
+            const value = good();
+            value.artifacts[0]!.relativeKey = key;
+            expect(accepts(value)).toBe(false);
+        }
+    });
+
+    it("rejects a duplicate artifactType", () => {
+        const value = good();
+        value.artifacts[1] = { ...value.artifacts[0]! };
+        expect(accepts(value)).toBe(false);
+    });
+
+    it("rejects a bundleId or consistency that disagrees with the artifact types", () => {
+        const withoutBundle = good();
+        withoutBundle.bundleId = null;
+        expect(accepts(withoutBundle)).toBe(false); // two types need a bundleId
+        const incompleteWithBundle = good();
+        incompleteWithBundle.consistency = "incomplete";
+        expect(accepts(incompleteWithBundle)).toBe(false);
+        const single = structuredClone(buildManifest({ companyId: COMPANY, documentId: "D004", metadataRevision: revision, artifacts: [artifacts[0]!] }).value);
+        expect(accepts({ ...single, bundleId: sha("b") })).toBe(false); // one type may not carry a bundleId
+        expect(accepts({ ...single, consistency: "unverified" })).toBe(false);
+    });
+});
+
+describe("completionSchema binds every manifestKey and orders entries (D1, D2)", () => {
+    const base = {
+        companyId: COMPANY, sequence: 2, snapshotId: "snap-0002", runId: RUN, scopeRevision: "2026-10-19-company-all-docs",
+        policyRevision: "2026-10-18-completed-pdf-audit", destinationIdentity: "local:arch-1", destinationRevision: "local-layout-v1",
+        gaps: [],
+    };
+    const entry = (documentId: string) => ({ documentId, metadataRevision: sha(`m-${documentId}`), manifestSha256: sha(`f-${documentId}`) });
+    const good = () => structuredClone(buildCompletion({ ...base, entries: [entry("D001"), entry("D002")] }).value);
+    const accepts = (value: unknown) => completionSchema.safeParse(value).success;
+
+    it("accepts correctly bound, sorted entries", () => {
+        expect(accepts(good())).toBe(true);
+        expect(accepts({ ...good(), entries: [] })).toBe(true);
+    });
+
+    it("rejects a manifestKey of another document, another company or another revision", () => {
+        const otherDoc = good();
+        otherDoc.entries[0]!.manifestKey = otherDoc.entries[1]!.manifestKey;
+        expect(accepts(otherDoc)).toBe(false);
+        const otherCompany = good();
+        otherCompany.entries[0]!.manifestKey = otherCompany.entries[0]!.manifestKey.replace(`/${COMPANY}/`, "/company-2/");
+        expect(accepts(otherCompany)).toBe(false);
+        const otherRevision = good();
+        otherRevision.entries[1]!.manifestKey = otherRevision.entries[1]!.manifestKey.replace(/[0-9a-f]{64}\.json$/, `${"0".repeat(64)}.json`);
+        expect(accepts(otherRevision)).toBe(false);
+        const marker = good();
+        marker.entries[0]!.manifestKey = ".bjj-backup/installation.json";
+        expect(accepts(marker)).toBe(false);
+    });
+
+    it("rejects unsorted and duplicate entries", () => {
+        const value = good();
+        expect(accepts({ ...value, entries: [...value.entries].reverse() })).toBe(false);
+        expect(accepts({ ...value, entries: [value.entries[0], value.entries[0]] })).toBe(false);
+    });
+
+    it("buildCompletion refuses duplicate entries instead of publishing them", () => {
+        expect(() => buildCompletion({ ...base, entries: [entry("D001"), entry("D001")] })).toThrow(WorkerError);
+    });
+
+    it("rejects control characters in a gap documentId, like the ledger field", () => {
+        for (const documentId of ["D\u0000001", "D\n001", "D\u007f001", "", "x".repeat(513)]) {
+            expect(accepts({ ...good(), gaps: [{ documentId, reasonCode: "source-removed" }] })).toBe(false);
+        }
+        expect(accepts({ ...good(), gaps: [{ documentId: "Dé", reasonCode: "source-removed" }] })).toBe(true);
+    });
+});

@@ -26,7 +26,7 @@ describe("selectCompletion (T-WRK-04 / V13)", () => {
         ["M1 listed first", [asEntry(M1), asEntry(M2)]],
         ["M1 listed last", [asEntry(M2), asEntry(M1)]],
     ])("returns exactly M1 for snapshot M1 (%s)", (_name, entries) => {
-        const result = selectCompletion(entries, { snapshotId: "snap-m1" });
+        const result = selectCompletion(entries, { companyId: COMPANY, snapshotId: "snap-m1" });
         expect(result.kind).toBe("selected");
         if (result.kind !== "selected") return;
         expect(result.entry.name).toBe(M1.name);
@@ -39,21 +39,21 @@ describe("selectCompletion (T-WRK-04 / V13)", () => {
         ["M1 listed first", [asEntry(M1), asEntry(M2)]],
         ["M1 listed last", [asEntry(M2), asEntry(M1)]],
     ])("latest picks the maximum sequence, M2, whatever the listing order (%s)", (_name, entries) => {
-        const result = selectCompletion(entries, { latest: true });
+        const result = selectCompletion(entries, { companyId: COMPANY, latest: true });
         expect(result.kind === "selected" && result.entry.name).toBe(M2.name);
     });
 
     it("has no input that depends on time: a clock running backwards changes nothing", () => {
         // M2 was written first according to any file time; selection sees only names and content.
-        const forward = selectCompletion([asEntry(M1), asEntry(M2)], { latest: true });
-        const backward = selectCompletion([asEntry(M2), asEntry(M1)], { latest: true });
+        const forward = selectCompletion([asEntry(M1), asEntry(M2)], { companyId: COMPANY, latest: true });
+        const backward = selectCompletion([asEntry(M2), asEntry(M1)], { companyId: COMPANY, latest: true });
         expect(forward).toEqual(backward);
         expect(Object.keys(asEntry(M1))).toEqual(["name", "content"]);
     });
 
     it("quarantines a stray latest.json-like entry and still selects the real latest", () => {
         const stray: CompletionFileEntry = { name: "latest.json", content: M1.value };
-        const result = selectCompletion([stray, asEntry(M1), asEntry(M2)], { latest: true });
+        const result = selectCompletion([stray, asEntry(M1), asEntry(M2)], { companyId: COMPANY, latest: true });
         expect(result.kind === "selected" && result.entry.name).toBe(M2.name);
         expect(result.quarantined).toEqual([{ name: "latest.json", reason: "name-invalid" }]);
     });
@@ -62,7 +62,7 @@ describe("selectCompletion (T-WRK-04 / V13)", () => {
         const liar: CompletionFileEntry = { name: M2.name.replace(/^000000000002/, "000000000009"), content: M2.value };
         const wrongDigest: CompletionFileEntry = { name: `000000000003-${sha("nope")}.json`, content: { ...M2.value, sequence: 3 } };
         const garbage: CompletionFileEntry = { name: `000000000004-${sha("junk")}.json`, content: { hello: "world" } };
-        const result = selectCompletion([asEntry(M1), liar, wrongDigest, garbage], { latest: true });
+        const result = selectCompletion([asEntry(M1), liar, wrongDigest, garbage], { companyId: COMPANY, latest: true });
         expect(result.kind === "selected" && result.entry.name).toBe(M1.name);
         expect(result.quarantined).toEqual([
             { name: liar.name, reason: "sequence-mismatch" },
@@ -73,7 +73,7 @@ describe("selectCompletion (T-WRK-04 / V13)", () => {
 
     it("reports a conflict, and selects nothing, when one sequence has two digests", () => {
         const other = completion(2, "snap-other");
-        const result = selectCompletion([asEntry(M1), asEntry(M2), asEntry(other)], { latest: true });
+        const result = selectCompletion([asEntry(M1), asEntry(M2), asEntry(other)], { companyId: COMPANY, latest: true });
         expect(result.kind).toBe("conflict");
         if (result.kind !== "conflict") return;
         expect(result.names).toEqual([M2.name, other.name].sort());
@@ -82,34 +82,51 @@ describe("selectCompletion (T-WRK-04 / V13)", () => {
 
     it("reports a conflict when two different completions claim the same snapshot", () => {
         const again = completion(5, "snap-m2");
-        const result = selectCompletion([asEntry(M1), asEntry(M2), asEntry(again)], { snapshotId: "snap-m2" });
+        const result = selectCompletion([asEntry(M1), asEntry(M2), asEntry(again)], { companyId: COMPANY, snapshotId: "snap-m2" });
         expect(result.kind).toBe("conflict");
         expect(result.kind === "conflict" && result.names).toEqual([M2.name, again.name].sort());
     });
 
     it("returns none for an unknown snapshot, for no files, and for only invalid files", () => {
-        expect(selectCompletion([asEntry(M1)], { snapshotId: "snap-zzz" }).kind).toBe("none");
-        expect(selectCompletion([], { latest: true })).toEqual({ kind: "none", quarantined: [] });
-        const only = selectCompletion([{ name: "latest.json", content: M1.value }], { latest: true });
+        expect(selectCompletion([asEntry(M1)], { companyId: COMPANY, snapshotId: "snap-zzz" }).kind).toBe("none");
+        expect(selectCompletion([], { companyId: COMPANY, latest: true })).toEqual({ kind: "none", quarantined: [] });
+        const only = selectCompletion([{ name: "latest.json", content: M1.value }], { companyId: COMPANY, latest: true });
         expect(only).toEqual({ kind: "none", quarantined: [{ name: "latest.json", reason: "name-invalid" }] });
     });
 
     it("treats a repeated file name as one file", () => {
-        const result = selectCompletion([asEntry(M2), asEntry(M2)], { latest: true });
+        const result = selectCompletion([asEntry(M2), asEntry(M2)], { companyId: COMPANY, latest: true });
         expect(result.kind).toBe("selected");
     });
 
     it("does not select a snapshot completion from an invalid file", () => {
         const liar: CompletionFileEntry = { name: M1.name.replace(/^000000000001/, "000000000007"), content: M1.value };
-        expect(selectCompletion([liar], { snapshotId: "snap-m1" })).toEqual({
+        expect(selectCompletion([liar], { companyId: COMPANY, snapshotId: "snap-m1" })).toEqual({
             kind: "none", quarantined: [{ name: liar.name, reason: "sequence-mismatch" }],
         });
+    });
+
+    it("quarantines a completion of another company, for latest and for a snapshot query", () => {
+        const foreign = completion(9, "snap-foreign", { companyId: "company-2" });
+        const latest = selectCompletion([asEntry(M1), asEntry(foreign)], { companyId: COMPANY, latest: true });
+        expect(latest.kind === "selected" && latest.entry.name).toBe(M1.name);
+        expect(latest.quarantined).toEqual([{ name: foreign.name, reason: "company-mismatch" }]);
+        const bySnapshot = selectCompletion([asEntry(foreign)], { companyId: COMPANY, snapshotId: "snap-foreign" });
+        expect(bySnapshot).toEqual({ kind: "none", quarantined: [{ name: foreign.name, reason: "company-mismatch" }] });
+        const theirs = selectCompletion([asEntry(M1), asEntry(foreign)], { companyId: "company-2", latest: true });
+        expect(theirs.kind === "selected" && theirs.entry.name).toBe(foreign.name);
+    });
+
+    it("does not let another company's completion cause a conflict", () => {
+        const foreign = completion(2, "snap-m2", { companyId: "company-2" });
+        const result = selectCompletion([asEntry(M2), asEntry(foreign)], { companyId: COMPANY, snapshotId: "snap-m2" });
+        expect(result.kind === "selected" && result.entry.name).toBe(M2.name);
     });
 
     it("selects the maximum sequence when it is not the first or last listed", () => {
         const m3 = completion(3, "snap-m3");
         const m10 = completion(10, "snap-m10");
-        const result = selectCompletion([asEntry(m3), asEntry(m10), asEntry(M1), asEntry(M2)], { latest: true });
+        const result = selectCompletion([asEntry(m3), asEntry(m10), asEntry(M1), asEntry(M2)], { companyId: COMPANY, latest: true });
         expect(result.kind === "selected" && result.entry.sequence).toBe(10);
     });
 });
