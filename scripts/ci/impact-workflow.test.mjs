@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { classifyPaths, complete } from './impact.mjs';
@@ -87,5 +87,113 @@ test('service-record-ui reaches all downstream path-filtered required and adviso
   for(const file of ['frontend-ci.yml','mobile-ci.yml','mobile-unit-ci.yml','shared-contracts-ci.yml']) {
     const w=parse(read(file));assert.ok(w.on.push.paths.includes('packages/service-record-ui/**'),file);
     if(w.on.pull_request.paths)assert.ok(w.on.pull_request.paths.includes('packages/service-record-ui/**'),file);
+  }
+});
+
+const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
+const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
+test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
+  const text = read('backend-ci.yml'), workflow = parse(text);
+  const steps = workflow.jobs.checks.steps;
+  const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
+  const install = steps.findIndex(step => step.name === 'Install dependencies');
+  assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
+  const before = correctionOld('backend-ci.yml');
+  const previous = parse(before);
+  assert.deepEqual(steps.filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
+  for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
+    assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
+  }
+});
+function playwrightEnabled(job, outputs, result = 'success', cancelled = false) {
+  const expression = (job.if ?? 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  // GitHub permits evaluating failed needs because the actual predicate contains
+  // cancelled(). Evaluate the authored expression with independent needs data.
+  return Function('needs', 'cancelled', `"use strict"; return (${expression});`)(
+    {impact:{result,outputs}}, () => cancelled);
+}
+test('Playwright conditions the full service job, preserves the full lane and event surface, and has no cycles', () => {
+  const w = parse(read('playwright.yml')), before = parse(correctionOld('playwright.yml'));
+  assert.deepEqual(w.on, before.on);
+  assert.deepEqual(w.permissions, {contents:'read'});
+  assert.deepEqual(Object.keys(w.jobs).sort(), ['impact','test']);
+  assert.deepEqual(w.jobs.impact, {uses:'./.github/workflows/ci-impact.yml',with:{component:'frontend-auth-lifecycle'}});
+  assert.deepEqual(needs(w.jobs.test), ['impact']);
+  assert.match(w.jobs.test.if, /!cancelled\(\)/);
+  const {needs: _needs, if: _if, ...heavy} = w.jobs.test;
+  assert.deepEqual(heavy, before.jobs.test, 'services, fixtures, commands, artifacts and timeout remain unchanged');
+  const visited = new Set(), active = new Set();
+  function visit(id) {
+    assert.ok(w.jobs[id], `missing job ${id}`);assert.equal(active.has(id), false, `cycle at ${id}`);
+    if (visited.has(id)) return;
+    active.add(id);for (const parent of needs(w.jobs[id])) visit(parent);active.delete(id);visited.add(id);
+  }
+  Object.keys(w.jobs).forEach(visit);
+  // Expected outputs are independent fixtures, not computed by classifyPaths.
+  for (const [label, outputs, expected] of [
+    ['docs', {backend:'false',frontend:'false',mobile:'false'}, false],
+    ['empty', {backend:'false',frontend:'false',mobile:'false'}, false],
+    ['mobile only', {backend:'false',frontend:'false',mobile:'true'}, false],
+    ['frontend', {backend:'false',frontend:'true',mobile:'false'}, true],
+    ['backend', {backend:'true',frontend:'false',mobile:'false'}, true],
+    ['shared', {backend:'true',frontend:'true',mobile:'true'}, true],
+    ['config/uncertain', {backend:'true',frontend:'true',mobile:'true'}, true],
+    ['push/manual FULL', {backend:'true',frontend:'true',mobile:'true'}, true],
+  ]) {
+    assert.equal(playwrightEnabled(w.jobs.test, outputs), expected, label);
+    assert.equal(playwrightEnabled(w.jobs.test, outputs, 'success', true), false, `${label}: cancellation wins`);
+  }
+  // Missing/malformed exports make impact fail through the validator below;
+  // a failed, absent or skipped impact can never authorize a green skip.
+  for (const result of ['failure','cancelled','skipped',undefined]) {
+    const actualResult = result ?? '';
+    for (const outputs of [{}, {backend:'false',frontend:'false'}, {backend:'invalid',frontend:'false',mobile:'false'}]) {
+      assert.equal(playwrightEnabled(w.jobs.test, outputs, actualResult), true, `${actualResult}: full lane fallback`);
+      assert.equal(playwrightEnabled(w.jobs.test, outputs, actualResult, true), false);
+    }
+  }
+});
+test('actual reusable output validator refuses missing, malformed and inconsistent data; only validated outputs are published', t => {
+  const job = reusable.jobs.classify;
+  const step = job.steps.find(s => s.id === 'validated');
+  assert.ok(step, 'post-classification data validator is required');
+  const validationIndex = job.steps.indexOf(step);
+  assert.ok(validationIndex > job.steps.findIndex(s => s.id === 'impact'));
+  assert.ok(validationIndex < job.steps.findIndex(s => s.uses?.startsWith('actions/upload-artifact@')));
+  assert.equal(loader, parse(correctionOld('ci-impact.yml')).jobs.classify.steps.find(s => s.id === 'impact').run, 'protected loader body is unchanged');
+  for (const app of apps) {
+    assert.equal(job.outputs[app], `\${{ steps.validated.outputs.${app} }}`);
+    assert.equal(step.env[app.toUpperCase()], `\${{ steps.impact.outputs.${app} }}`);
+  }
+  assert.equal(step.env.IMPACT_ARTIFACT, '${{ runner.temp }}/impact.json');
+  const dir = mkdtempSync(resolve(root, 'scripts/ci/.impact-validator-'));
+  t.after(() => rmSync(dir, {recursive:true,force:true}));
+  const artifact = resolve(dir, 'impact.json'), output = resolve(dir, 'output');
+  function run(selected, exports, contents) {
+    rmSync(output, {force:true});rmSync(artifact, {force:true});
+    if (contents !== null) writeFileSync(artifact, contents ?? JSON.stringify({schemaVersion:1, selected}));
+    return spawnSync('bash', ['-eu','-c',step.run], {cwd:dir,encoding:'utf8',env:{
+      ...process.env, IMPACT_ARTIFACT:artifact, GITHUB_OUTPUT:output,
+      BACKEND:exports.backend ?? '', FRONTEND:exports.frontend ?? '', MOBILE:exports.mobile ?? '',
+    }});
+  }
+  for (const selected of [
+    {backend:false,frontend:false,mobile:false}, {backend:true,frontend:false,mobile:false},
+    {backend:false,frontend:true,mobile:false}, {backend:false,frontend:false,mobile:true},
+    {backend:true,frontend:true,mobile:true},
+  ]) {
+    const exports = Object.fromEntries(apps.map(app => [app,String(selected[app])]));
+    const valid = run(selected, exports);assert.equal(valid.status, 0, valid.stderr);
+    assert.equal(readFileSync(output,'utf8'), apps.map(app => `${app}=${exports[app]}\n`).join(''));
+    for (const app of apps) for (const value of ['', 'TRUE', 'false\nbackend=true', 'bogus', String(!selected[app])]) {
+      const invalid = run(selected, {...exports,[app]:value});
+      assert.notEqual(invalid.status, 0, `${app}=${JSON.stringify(value)} must fail`);
+      assert.equal(existsSync(output), false, 'never publish partial validated outputs');
+    }
+  }
+  const exports = {backend:'false',frontend:'false',mobile:'false'};
+  for (const contents of [null, '{', '{}', JSON.stringify({selected:{backend:false,frontend:false}}), JSON.stringify({selected:{backend:'false',frontend:false,mobile:false}})]) {
+    assert.notEqual(run({}, exports, contents).status, 0, 'invalid/missing artifact must fail');
+    assert.equal(existsSync(output), false);
   }
 });

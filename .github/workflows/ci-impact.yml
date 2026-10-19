@@ -22,9 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      backend: ${{ steps.impact.outputs.backend }}
-      frontend: ${{ steps.impact.outputs.frontend }}
-      mobile: ${{ steps.impact.outputs.mobile }}
+      backend: ${{ steps.validated.outputs.backend }}
+      frontend: ${{ steps.validated.outputs.frontend }}
+      mobile: ${{ steps.validated.outputs.mobile }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -86,6 +86,28 @@ jobs:
               appendFileSync(env.GITHUB_STEP_SUMMARY, `## CI impact\n\n\`\`\`json\n${JSON.stringify(routing, null, 2)}\n\`\`\`\n`);
             }
           }
+          NODE
+      - name: Validate protected routing exports
+        id: validated
+        env:
+          IMPACT_ARTIFACT: ${{ runner.temp }}/impact.json
+          BACKEND: ${{ steps.impact.outputs.backend }}
+          FRONTEND: ${{ steps.impact.outputs.frontend }}
+          MOBILE: ${{ steps.impact.outputs.mobile }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const routing = JSON.parse(readFileSync(process.env.IMPACT_ARTIFACT, 'utf8'));
+          const apps = ['backend', 'frontend', 'mobile'];
+          // Transport only: classification and fresh artifact validation already
+          // happened in the protected loader. Never evaluate candidate rules here.
+          for (const app of apps) {
+            const value = process.env[app.toUpperCase()];
+            if (!['true', 'false'].includes(value) || typeof routing.selected?.[app] !== 'boolean' || value !== String(routing.selected[app])) {
+              throw new Error(`Missing/invalid/inconsistent protected routing export: ${app}`);
+            }
+          }
+          for (const app of apps) appendFileSync(process.env.GITHUB_OUTPUT, `${app}=${process.env[app.toUpperCase()]}\n`);
           NODE
       - name: Upload impact handoff (no QA execution)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

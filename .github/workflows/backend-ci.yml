@@ -70,9 +70,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: CI impact routing contracts
-        run: node --test scripts/ci/impact*.test.mjs
-
       - name: Setup pnpm
         uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
@@ -87,6 +84,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: CI impact routing contracts
+        run: node --test scripts/ci/impact*.test.mjs
 
       # database-patches.yml re-executes its whole migration block on every push, so a
       # statement that raises on its second run aborts the step and silently stops every

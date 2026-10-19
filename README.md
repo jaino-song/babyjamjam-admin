@@ -431,8 +431,13 @@ The repository uses layered verification rather than relying on a single test ty
 The three existing required component check names remain stable. Protected-base impact triage
 selects complete app suites, and an always-reporting completion gate validates their actual
 results. Docs-only and empty PRs skip app services; shared contracts reach all consumers and
-service-record-ui reaches frontend and mobile. Push/manual runs remain full. Bootstrap without a
-protected helper requires full successful checks; invalid bases or corrupt helpers fail.
+service-record-ui reaches frontend and mobile. The two backend constants compiled by shared also
+select mobile, guarded by an actual compiler-input contract. Frontend Playwright Auth Lifecycle
+routes its full service job when backend or frontend is selected; unrelated mobile-only PRs skip
+it. Missing/invalid routing fails impact and runs that lane unless cancelled. Exported selections
+must match the fresh protected artifact. Push/manual runs remain full where supported by the
+existing event filters. Bootstrap without a protected helper requires full successful checks;
+invalid bases or corrupt helpers fail.
 
 Each component publishes `impact-<component>/impact.json` with comparison/candidate identity,
 affected categories, selected checks and QA assessment reasons. This is an impact handoff, not a

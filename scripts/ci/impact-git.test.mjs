@@ -141,3 +141,20 @@ for (const [path, expected] of [
   assert.equal(loaded.status, 0, loaded.stderr);
   assert.deepEqual(loaded.routing.selected, expected);
 });
+
+for (const path of ['backend/domain/constants/system-template-registry.ts', 'backend/domain/constants/service-end-notice-message.ts']) {
+  test(`protected loader routes shared compiler input modifications/deletions: ${path}`, t => {
+    const f = fixture(t);
+    f.put(path, 'original constant\n'); const base = f.save();
+    f.put(path, 'modified constant\n'); const modified = f.save();
+    const changed = f.run(f.event(modified, base));
+    assert.equal(changed.status, 0, changed.stderr);
+    assert.deepEqual(changed.routing.selected, {backend:true,frontend:true,mobile:true});
+    assert.equal(changed.routing.qa.status, 'assessment-required');
+    f.git('rm', path); const deleted = f.save();
+    const removed = f.run(f.event(deleted, modified));
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.deepEqual(removed.routing.selected, {backend:true,frontend:true,mobile:true});
+    assert.equal(removed.routing.qa.status, 'assessment-required');
+  });
+}

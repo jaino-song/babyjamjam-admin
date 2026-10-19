@@ -49,6 +49,11 @@ export function classifyPaths(paths, fullReason = null) {
         selected.frontend = true;
         reasons.push('Backend paths may affect DTOs imported by frontend');
       }
+      if (['backend/domain/constants/system-template-registry.ts',
+        'backend/domain/constants/service-end-notice-message.ts'].includes(path)) {
+        selected.mobile = true;
+        reasons.push('Shared compiler imports the changed backend constant; mobile runs shared type-check');
+      }
       if (path === 'frontend/src/components/app/clients/client-update-payload.ts') {
         selected.mobile = true;
         reasons.push('Mobile payload parity tests read the frontend payload helper');

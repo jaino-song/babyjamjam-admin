@@ -11,11 +11,16 @@ The stable `verify` gate always evaluates completion, including failed classific
 checks. The backend read-only `lightnode-status` manual operation retains its special skip behavior.
 Auth E2E depends on `[verify, impact]`, runs its unchanged observe/enforce matrix when backend is
 selected, and never becomes a predecessor of verify. Mobile real-backend E2E retains its full suite
-and advisory status; docs-only/empty PRs do not start its services. Deployment jobs are unchanged.
+and advisory status; docs-only/empty PRs do not start its services. Frontend Playwright Auth
+Lifecycle uses a separate `impact-frontend-auth-lifecycle` handoff and starts its full existing
+service job when frontend or backend is selected. Valid docs-only/empty and unrelated mobile-only
+comparisons skip that job. Failed, missing or invalid classification runs the full lane unless
+the workflow is cancelled; failed impact still makes the workflow fail. Its event/branch filters,
+services, fixtures, four Playwright invocations and timeout remain unchanged. Deployment jobs are unchanged.
 
 ## Routing and authority
 
-`ci-impact.yml` is reused by the three component workflows. It runs with `contents: read`, full
+`ci-impact.yml` is reused by the three component workflows and Frontend Playwright Auth Lifecycle. It runs with `contents: read`, full
 history, no persisted checkout token, no dependencies and no secrets. PRs use their actual
 `pull_request.base.sha` and `pull_request.head.sha`; merge queues use the explicit
 `merge_group.base_sha` and `merge_group.head_sha`. The diff starts at their merge-base. Added and
@@ -32,6 +37,10 @@ then checks the impact result, selected-output value and application result. A s
 succeed. An unselected job may intentionally skip or succeed, but failure, cancellation and absent
 results fail the gate. Missing or inconsistent routing fails. The loader requires a fresh validated routing artifact and
 an explicit protected completion proof, so a truncated/no-op helper cannot succeed by exiting zero.
+After classification, a data-only validator requires all three exported strings to be exactly
+`true`/`false` and equal the booleans in that fresh protected artifact. It publishes the reusable
+job outputs only after all match. Missing, malformed or inconsistent exports fail impact itself;
+the validator does not classify paths or execute candidate modules.
 
 A successful Git tree listing that genuinely lacks the helper selects **FULL** with an explicit
 bootstrap reason. The workflow-owned bootstrap completion path requires successful impact and
@@ -58,6 +67,7 @@ aggregate evaluator/workflow remains unchanged and disabled; this adds no cross-
 | `mobile/src/components/app/chat/MobileAgentPartRegistry.tsx` | Mobile and backend (agent manifest check) | Interaction, visual and responsive QA required |
 | `frontend/src/app/api/ai/chat/stream/route.ts` | Frontend and backend (legacy cutover sentinel) | Interaction, visual and responsive QA required |
 | `mobile/src/app/api/ai/chat/stream/route.ts` | Mobile and backend (legacy cutover sentinel) | Interaction, visual and responsive QA required |
+| `backend/domain/constants/system-template-registry.ts` or `backend/domain/constants/service-end-notice-message.ts` | Backend, frontend and mobile (shared compiler inputs) | Assessment required |
 | `packages/shared` | Backend (including vendored runtime), frontend, mobile | Assessment required |
 | `packages/service-record-ui` | Frontend and mobile | Interaction, visual and responsive QA required |
 | Dependency/config/tooling/policy, unknown, native, executable, symlink or submodule changes | All three apps conservatively | Assessment required, or UI QA when UI also changed |
@@ -83,7 +93,12 @@ and sentinel edges are keyed to actual changed paths. Selecting backend because 
 or sentinel changed does not imply backend source changed, so those cases do not also select
 frontend. Unrelated paths such as `frontend/src/components/app/clients/unrelated.ts` and
 `mobile/src/components/app/clients/unrelated.ts` retain single-app selection. New cross-app
-consumers must be added to this routing contract when introduced.
+consumers must be added to this routing contract when introduced. The two exact backend constants
+above are actual inputs to `packages/shared` compilation, which mobile checks require. An independent
+contract test runs the installed shared `tsc --noEmit --listFiles`, enumerates every backend input,
+and requires mobile selection for each. New backend imports therefore fail this guard until their
+routing is updated. Missing compiler/dependencies fail explicitly. Backend runs routing contracts
+after its existing frozen dependency install so this guard uses the declared TypeScript compiler.
 
 Non-required mobile-unit and shared-contract workflow path filters include service-record-ui.
 Existing full-suite coverage and push/manual behavior remain intact.
@@ -135,11 +150,16 @@ demonstration are a **subsequent dependent unit**, not completed by this documen
 
 ## Validation and rollback
 
-Run `node --test scripts/ci/impact*.test.mjs` and `node --test scripts/ci/*.test.mjs`. Tests execute
+Run `node --test scripts/ci/impact*.test.mjs` and
+`node --test scripts/ci/*.test.mjs scripts/start-local-qa.test.mjs` after the frozen dependency install. Tests execute
 the actual workflow loader against temporary real Git histories, malicious candidate replacements,
 protected-helper bootstrap/corruption and completion refusals. Parsed workflow tests check job
 graphs, unchanged required names, app steps, auth matrix, full advisory suite, permissions and
 byte-identical deployment blocks against base `e92aca0a18b14b072a2b70f54a557a67673f63a8`.
+The phase correction additionally checks unchanged operational/deploy blocks and the complete
+Playwright lane against `a05682829ef59dd072d07401b6cdcf058c309085`, executes its job predicate with
+independent selection/failure/cancellation fixtures, and executes the actual output validator
+against valid and refused exports/artifacts.
 
 Roll back this routing unit as a reviewed revert to restore always-running application jobs and
 keep existing required names. No branch-protection or deployment rollback is required by this

@@ -65,3 +65,11 @@ test('completion refuses every failure mode; only deliberate skips pass', () => 
   for (const value of ['',undefined,'bogus','true'])
     assert.throws(() => complete(classifyPaths([]),'backend','success','skipped',value));
 });
+
+for (const path of ['backend/domain/constants/system-template-registry.ts', 'backend/domain/constants/service-end-notice-message.ts']) {
+  test(`shared compiler backend input selects every required consumer: ${path}`, () => {
+    const result = classifyPaths([path]);
+    assert.deepEqual(result.selected, {backend:true,frontend:true,mobile:true});
+    assert.equal(result.qa.status, 'assessment-required');
+  });
+}
