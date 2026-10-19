@@ -479,6 +479,16 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             expect((await readJsonFile(path.join(h.archive, inventory)))["reasonCodes"]).toContain("invalid-path-segment");
         });
 
+        it("should ignore an excluded candidate whose documentId is unusable: only included candidates can change the status (W8)", async () => {
+            h = await createHarness({ docs: [pairDoc("D001"), { documentId: "y".repeat(600), classification: "excluded_by_policy", statusType: "060" }] });
+            await initArchive(h);
+
+            const summary = await runOnce(h);
+
+            expect(summary).toMatchObject({ snapshotStatus: "partial", counts: { candidates: 2, included: 1, verified: 2, blocked: 0 } });
+            expect(summary.reasonCodes).toEqual(["coverage-unverified", "drive-not-configured"]);
+        });
+
         it("should not let a document called completions or runs shadow the archive's own directories", async () => {
             h = await createHarness({ docs: [pairDoc("D001"), singleDoc("completions"), singleDoc("runs")] });
             await initArchive(h);

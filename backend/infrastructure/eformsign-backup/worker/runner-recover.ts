@@ -2,12 +2,13 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
-    WorkerError, completionContentDigest, completionSchema, decodeLedgerLine, judgeHistoricalCoverage, manifestSchema,
+    WorkerError, completionContentDigest, completionSchema, decodeLedgerLine, judgeHistoricalCoverage,
     parseCompletionName, type KnownGap, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { decodeCheckpoint } from "./ledger-checkpoint";
 import { CHECKPOINT_NAME, LEDGER_DIR_NAME, MARKER_NAME, encodeMarker } from "./ledger-replay";
 import type { LocalDestination } from "./local-destination";
+import { listManifestFiles, readManifest } from "./restore";
 import {
     DestinationLedger, VERIFY_STALE_MS, assertSameInstallation, controlMarkerWriter, nowIso, parseMarker, readArchiveMarker,
     requireInstallation, sha256Hex,
@@ -107,6 +108,15 @@ async function rehash(archive: LocalDestination, relativeKey: string, sha256: st
     return sha256Hex(bytes) === sha256 ? "ok" : "mismatch";
 }
 
+/** True when the ledger directory holds anything at all (an empty ledger directory means nothing was ever recorded; a non-empty one with no readable install record is damaged). */
+async function ledgerHoldsFiles(controlPath: string): Promise<boolean> {
+    try {
+        return (await fs.readdir(path.join(controlPath, LEDGER_DIR_NAME))).length > 0;
+    } catch {
+        return false;
+    }
+}
+
 /** The installation the damaged ledger last described, when any of it can still be read (best effort, never trusted alone). */
 interface PriorInstallation { installationId: string; archiveDev: number; archiveIno: number }
 
@@ -129,7 +139,7 @@ async function readPriorInstallation(controlPath: string): Promise<PriorInstalla
         const first = bytes?.toString("utf8").split("\n")[0];
         if (first === undefined || first === "") continue;
         const decoded = decodeLedgerLine(first);
-        if (decoded.ok && decoded.record.type === "installed") {
+        if (decoded.ok && (decoded.record.type === "installed" || decoded.record.type === "recovery_started")) {
             const { installationId, archiveDev, archiveIno } = decoded.record.body;
             return { installationId, archiveDev, archiveIno };
         }
@@ -172,6 +182,9 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
     if (initialStatus === "ok") throw new WorkerError("ledger-inconsistent");
 
     const prior = await readPriorInstallation(config.control.path);
+    // The archive root is compared with what the ledger recorded at install time. When the ledger holds records but
+    // none of them can be read, nothing proves which archive was installed: refuse rather than compare the archive with itself.
+    if (prior === null && await ledgerHoldsFiles(config.control.path)) throw new WorkerError("archive-identity-mismatch");
     let current;
     try {
         current = await fs.lstat(config.archive.path);
@@ -210,6 +223,8 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
     if (deps.ledger.status !== "recovery_required") throw new WorkerError("ledger-inconsistent");
 
     const facts = await readCompletionFacts(archive, config.companyId);
+    const named = new Set(facts.valid.flatMap((completion) => completion.entries.map((entry) => entry.manifestKey)));
+    const others = (await listManifestFiles(config.archive.path, config.companyId)).filter((file) => !named.has(file.key));
     const runId = deps.uuid();
     await deps.ledger.quarantineAndReset(runId);
     const at = nowIso(deps);
@@ -222,52 +237,41 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
     let recovered = 0;
     let unverified = 0;
     const seen = new Set<string>();
-    for (const completion of facts.valid) {
-        for (const entry of completion.entries) {
-            const found = await verifyManifest(archive, entry);
-            if (found === null) {
+    const manifests = [
+        ...facts.valid.flatMap((completion) => completion.entries.map((entry) => ({
+            key: entry.manifestKey, companyId: completion.companyId, documentId: entry.documentId,
+            metadataRevision: entry.metadataRevision, sha256: entry.manifestSha256,
+        }))),
+        // A manifest no completion names (its run died before the completion) is re-hashed all the same.
+        ...others.map((file) => ({ key: file.key, companyId: config.companyId, documentId: file.documentId, metadataRevision: file.metadataRevision })),
+    ];
+    for (const item of manifests) {
+        let manifest;
+        try {
+            manifest = await readManifest(archive, item.key, item);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            unverified += 1;
+            continue;
+        }
+        for (const artifact of manifest.artifacts) {
+            if (seen.has(artifact.artifactIdentity)) continue;
+            seen.add(artifact.artifactIdentity);
+            let state: "ok" | "missing" | "mismatch" = "missing";
+            try {
+                state = await archive.reverify(artifact.relativeKey, artifact.sha256, artifact.byteLength);
+            } catch (error) {
+                if (!(error instanceof WorkerError)) throw error;
+            }
+            if (state !== "ok") {
                 unverified += 1;
                 continue;
             }
-            for (const artifact of found.artifacts) {
-                if (seen.has(artifact.artifactIdentity)) continue;
-                seen.add(artifact.artifactIdentity);
-                let state: "ok" | "missing" | "mismatch" = "missing";
-                try {
-                    state = await archive.reverify(artifact.relativeKey, artifact.sha256, artifact.byteLength);
-                } catch (error) {
-                    if (!(error instanceof WorkerError)) throw error;
-                }
-                if (state !== "ok") {
-                    unverified += 1;
-                    continue;
-                }
-                await deps.ledger.append("recovered_verified", {
-                    artifactIdentity: artifact.artifactIdentity, relativeKey: artifact.relativeKey, sha256: artifact.sha256,
-                }, nowIso(deps));
-                recovered += 1;
-            }
+            await deps.ledger.append("recovered_verified", {
+                artifactIdentity: artifact.artifactIdentity, relativeKey: artifact.relativeKey, sha256: artifact.sha256,
+            }, nowIso(deps));
+            recovered += 1;
         }
     }
     return { outcome: "finished", recovered, unverified, sequenceFloor: facts.floor, knownGaps: facts.gaps.length };
-}
-
-async function verifyManifest(
-    archive: LocalDestination, entry: { documentId: string; metadataRevision: string; manifestKey: string; manifestSha256: string },
-): Promise<ReturnType<typeof manifestSchema.parse> | null> {
-    let bytes: Buffer | null;
-    try {
-        bytes = await archive.readArchiveFile(entry.manifestKey);
-    } catch (error) {
-        if (!(error instanceof WorkerError)) throw error;
-        return null;
-    }
-    if (bytes === null || sha256Hex(bytes) !== entry.manifestSha256) return null;
-    try {
-        const parsed = manifestSchema.safeParse(JSON.parse(bytes.toString("utf8")));
-        if (!parsed.success || parsed.data.documentId !== entry.documentId || parsed.data.metadataRevision !== entry.metadataRevision) return null;
-        return parsed.data;
-    } catch {
-        return null;
-    }
 }

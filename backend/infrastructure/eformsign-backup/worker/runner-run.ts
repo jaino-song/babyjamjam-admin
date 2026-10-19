@@ -310,7 +310,8 @@ class RunExecution {
             else blocked = checked.reasonCode;
         }
         if (!OPAQUE_ID.test(item.documentId)) {
-            blocked = "invalid-path-segment";
+            // Only an included candidate can change the status; an excluded one with an unusable id is just not recorded.
+            if (included) blocked = "invalid-path-segment";
         } else {
             await this.deps.ledger.append("candidate_observed", {
                 snapshotId, ordinal: item.ordinal, documentId: item.documentId, classification: item.classification,
@@ -422,12 +423,42 @@ class RunExecution {
             return;
         }
 
+        if ((await this.transfer(job, !staged)) !== "staging-corrupt") return;
+        // The staged copy did not match its own hash: it is set aside, so this artifact is now simply not staged.
+        if (mode === "carry") {
+            await this.dl.transition(id, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: job.relativeKey });
+            return;
+        }
+        if (this.stopDownloads || !(await controlHasStagingRoom(this.deps, job.byteLength))) return;
+        await this.transfer(job, true);
+    }
+
+    /** pending -> transferring -> (download) -> publish. `staging-corrupt`: the staged bytes failed their hash, the artifact waits in retry_wait. */
+    private async transfer(job: ArtifactJob, needDownload: boolean): Promise<"done" | "stopped" | "staging-corrupt"> {
         await assertLedgerRoom(this.deps);
         await this.ensurePending(job);
-        await this.dl.transition(id, "transferring", { relativeKey: job.relativeKey });
+        await this.dl.transition(job.artifactIdentity, "transferring", { relativeKey: job.relativeKey });
         await this.fault("after-transferring");
-        if (!staged && !(await this.download(job))) return;
-        await this.publish(job);
+        if (needDownload && !(await this.download(job))) return "stopped";
+        return this.publish(job);
+    }
+
+    /**
+     * Renames a staged file aside as `<id>.bin.corrupt-<runId>[-n]` in the same directory. Never removes it and never
+     * replaces an earlier one; the operator decides when it goes (README).
+     */
+    private async setStagingAside(job: ArtifactJob): Promise<void> {
+        const source = `${this.staging.path}/${job.artifactIdentity}.bin`;
+        let target = `${source}.corrupt-${this.runId}`;
+        for (let n = 2; await fs.lstat(target).then(() => true, () => false); n++) target = `${source}.corrupt-${this.runId}-${n}`;
+        try {
+            await fs.rename(source, target);
+            const dir = await fs.open(this.staging.path, "r");
+            try { await dir.sync(); } finally { await dir.close(); }
+        } catch (error) {
+            if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+            throw new WorkerError("control-unavailable");
+        }
     }
 
     private async blockedMayRetry(entry: DestinationEntry, job: ArtifactJob, staged: boolean): Promise<boolean> {
@@ -466,15 +497,23 @@ class RunExecution {
     private async download(job: ArtifactJob): Promise<boolean> {
         const client = this.deps.exportClient;
         if (client === null || this.snapshotId === null) throw new WorkerError("internal");
-        let stream: AsyncIterable<Uint8Array>;
-        try {
-            stream = await client.openArtifact(this.snapshotId, { artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength });
-        } catch (error) {
-            await this.onDownloadError(job, error);
-            return false;
+        // A staged file that is not usable (wrong size, or no record of it) would make the staging name conflict.
+        const leftover = await fs.lstat(`${this.staging.path}/${job.artifactIdentity}.bin`).catch(() => null);
+        if (leftover !== null && (!leftover.isFile() || leftover.size !== job.byteLength)) await this.setStagingAside(job);
+        let staged: Awaited<ReturnType<LocalDestination["stageArtifact"]>> | null = null;
+        for (let attempt = 0; staged === null || (!staged.ok && staged.reasonCode === "archive-conflict" && attempt < 2); attempt++) {
+            if (staged !== null) await this.setStagingAside(job); // same size, other bytes: set aside and ask once more
+            let stream: AsyncIterable<Uint8Array>;
+            try {
+                stream = await client.openArtifact(this.snapshotId, { artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength });
+            } catch (error) {
+                await this.onDownloadError(job, error);
+                return false;
+            }
+            staged = await this.archive.stageArtifact(this.staging, this.input(job), stream);
         }
-        const staged = await this.archive.stageArtifact(this.staging, this.input(job), stream);
-        if (!staged.ok) {
+        if (staged === null || !staged.ok) {
+            if (staged === null) throw new WorkerError("internal");
             await this.onStageFailure(job, staged.reasonCode);
             return false;
         }
@@ -563,17 +602,14 @@ class RunExecution {
         }
     }
 
-    private async publish(job: ArtifactJob): Promise<void> {
+    private async publish(job: ArtifactJob): Promise<"done" | "staging-corrupt"> {
         const id = job.artifactIdentity;
         if (!this.archiveOk) {
             await this.dl.transition(id, "blocked", { reasonCode: "archive-unavailable", relativeKey: job.relativeKey });
-            return;
+            return "done";
         }
         const result = await this.archive.publishArtifact(this.input(job), this.archive.openStaged(this.staging, id));
-        if (!result.ok) {
-            await this.onPublishFailure(job, result.reasonCode);
-            return;
-        }
+        if (!result.ok) return this.onPublishFailure(job, result.reasonCode);
         const relativeKey = result.relativeKey;
         await this.fault("after-publish-before-verifying");
         await this.dl.transition(id, "verifying", { relativeKey });
@@ -584,24 +620,29 @@ class RunExecution {
             if (!(error instanceof WorkerError)) throw error;
             this.archiveLost();
             await this.dl.transition(id, "blocked", { reasonCode: "archive-unavailable", relativeKey });
-            return;
+            return "done";
         }
         if (found === "ok") {
             await this.fault("after-verifying-before-verified");
             await this.dl.transition(id, "verified", { relativeKey });
-            return;
+            return "done";
         }
         if (found === "mismatch") await this.quarantine(relativeKey);
         await this.dl.transition(id, "integrity_error", { reasonCode: "artifact-integrity", relativeKey });
+        return "done";
     }
 
-    private async onPublishFailure(job: ArtifactJob, code: WorkerReasonCode): Promise<void> {
+    private async onPublishFailure(job: ArtifactJob, code: WorkerReasonCode): Promise<"done" | "staging-corrupt"> {
         const id = job.artifactIdentity;
         if (isArchiveSide(code)) {
             this.archiveLost();
             await this.dl.transition(id, "blocked", { reasonCode: "archive-unavailable", relativeKey: job.relativeKey });
         } else if (code === "artifact-integrity" || code === "pdf-shape") {
-            await this.recordIntegrityError(job);
+            // The source of a publish is the staged copy, which was verified when it was written: if it no longer
+            // matches, the damage is local. It is set aside and does not count against the export's integrity budget.
+            await this.setStagingAside(job);
+            await this.park(job, "artifact-integrity", null, true);
+            return "staging-corrupt";
         } else if (code === "archive-conflict") {
             // Other bytes already sit at the final name: move them aside, never overwrite, and let the next run publish again.
             await this.quarantine(job.relativeKey);
@@ -611,6 +652,7 @@ class RunExecution {
         } else {
             await this.dl.transition(id, "blocked", { reasonCode: code, relativeKey: job.relativeKey });
         }
+        return "done";
     }
 
     // ---- steps 9-10: manifests and the completion ------------------------------------------------------------------

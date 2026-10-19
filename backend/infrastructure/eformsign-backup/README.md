@@ -121,11 +121,25 @@ elsewhere (from `flock`), 78 configuration (`config-invalid`,
 `token-file-invalid`, `lock-not-held`, `unsupported-filesystem`).
 
 A run ends as `partial` at best, because the archive can prove its own bytes but
-not that nothing is missing. `blocked` means a control problem such as an
-unavailable archive; `failed` means no usable snapshot. Reason codes in the run
-record say why.
+not that nothing is missing. `blocked` means the run could not take everything it
+was offered: the archive side refused (`archive-unavailable`, `archive-space`,
+`archive-conflict`, ...), the control side had no room to stage (`control-space`),
+a download was refused outright (credential rejected), or at
+least one included candidate was refused (`invalid-path-segment`,
+`export-response-invalid`, `artifact-too-large`). Only included candidates count;
+an excluded one never changes the status. Documents gone at the source
+(`source-removed`, `exact-bytes-unavailable`) are gaps, reported as
+`known_gap` coverage, not as `blocked`. `failed` means no usable snapshot.
+Reason codes in the run record say why.
 
 ## Crash recovery
+
+A staged copy that no longer matches its own hash (flipped bytes, truncation)
+is never published: `run` renames it to `<artifactIdentity>.bin.corrupt-<runId>`
+in `<control>/staging`, downloads the artifact again when the snapshot still
+offers it, and otherwise records `exact-bytes-unavailable`. Local staging damage
+does not count towards `integrity-repeated`. The worker never deletes the
+renamed file, so see "Staging files the worker leaves behind" below.
 
 `run` always starts by finishing what a killed run left behind: an artifact in
 `transferring` or `verifying` is re-checked against the archive (found with the
@@ -161,13 +175,37 @@ installation. Nothing repairs this on its own. To decide:
 2. Read `<archive>/.bjj-backup/installation.json`: its `installationId` is the
    identity of the archive you mean to keep. If the archive was replaced or
    restored from another disk, stop: this is not a recovery, it is a new install.
-3. `recover --installation-id <that id>` refuses, changing nothing, unless the
-   archive root is the one that was installed, its marker names that id and this
-   archive, and the control marker (if any) agrees. It then moves the damaged
-   ledger aside as `ledger.quarantine-<runId>`, starts a new one that records the
-   highest sequence found in the archive (so a sequence is never reused) and the
-   gaps the completions already knew about, and re-hashes every artifact the
-   manifests name. Only artifacts that still hash correctly are recorded as
+3. `recover --installation-id <that id>` refuses, changing nothing, unless all of
+   these hold: the archive root is the directory the ledger recorded at install
+   time (device and inode from the `installed` or an earlier `recovery_started`
+   record, read from the checkpoint or from the first line of a journal), the
+   archive marker names that id and this archive, and the control marker (if
+   any) agrees. If the ledger directory holds files but none of them yields that
+   record, nothing proves which archive was installed and `recover` refuses with
+   `archive-identity-mismatch` (exit 69); restore the control directory from a
+   copy, or install again. Only when the ledger directory is empty (a crash
+   inside `init`, before the first record) is the id on the archive marker
+   accepted as the proof.
+4. After the checks, `recover` moves the damaged ledger aside as
+   `ledger.quarantine-<runId>`, starts a new one that records the highest
+   sequence found in the archive (so a sequence is never reused) and the gaps
+   the completions already knew about, and re-hashes every artifact named by
+   every manifest found in the archive: the ones a completion names (the manifest
+   itself is also checked against the hash the completion recorded) and the ones
+   no completion names. Only artifacts that still hash correctly are recorded as
    recovered; the command reports the rest as `unverified`.
-4. A control marker that exists but disagrees with the archive is never
-   overwritten. Move it aside by hand once you have decided the archive is right.
+5. A control marker that exists but disagrees with the archive is never
+   overwritten, and neither is one that cannot be parsed. In both cases move
+   `<control>/installation.json` aside by hand once you have decided the archive
+   is right; `recover` then writes it again from the archive marker.
+
+## Staging files the worker leaves behind
+
+`<control>/staging` holds `<artifactIdentity>.bin` (kept after publishing, so a
+damaged archive copy can be republished without a download) and, after damage,
+`<artifactIdentity>.bin.corrupt-<runId>`. The worker never deletes anything. Both
+kinds of leftover (and any temporary file a killed run left) are safe to remove by
+hand while no worker is running, after you have looked at them; a `.bin` the
+ledger still needs is simply downloaded again. `orphanTemps` in the run counts
+everything in the directory that is not a plain `<64 hex>.bin`, including the
+`.corrupt-` copies, so it tells you when something is waiting for you.

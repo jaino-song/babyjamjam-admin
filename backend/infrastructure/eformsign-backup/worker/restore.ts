@@ -103,7 +103,7 @@ function artifactSetOf(manifest: Manifest): string {
     return manifest.artifacts.map((artifact) => `${artifact.artifactType}:${artifact.sha256}`).sort().join("|");
 }
 
-async function readManifest(
+export async function readManifest(
     archive: LocalDestination, key: string, expect: { companyId: string; documentId: string; metadataRevision: string; sha256?: string },
 ): Promise<Manifest> {
     const bytes = await archive.readArchiveFile(key);
@@ -131,8 +131,14 @@ async function planFromCompletion(archive: LocalDestination, completion: Complet
     return planned;
 }
 
-/** No completion: every document with a manifest. Two manifests of one document that disagree on the bytes are a conflict, not a guess. */
-async function planFromManifests(archive: LocalDestination, archivePath: string, companyId: string): Promise<PlannedDocument[]> {
+export interface ManifestFile {
+    documentId: string;
+    metadataRevision: string;
+    key: string;
+}
+
+/** Every `eformsign/<company>/<document>/manifests/<revision>.json` in the archive, sorted by document, then revision. */
+export async function listManifestFiles(archivePath: string, companyId: string): Promise<ManifestFile[]> {
     const root = `${archivePath}/eformsign/${companyId}`;
     let names: string[];
     try {
@@ -140,7 +146,7 @@ async function planFromManifests(archive: LocalDestination, archivePath: string,
     } catch {
         return [];
     }
-    const planned: PlannedDocument[] = [];
+    const found: ManifestFile[] = [];
     for (const documentId of names) {
         if (!isPathIdentifier(documentId)) continue;
         const stat = await fs.lstat(`${root}/${documentId}`);
@@ -152,11 +158,22 @@ async function planFromManifests(archive: LocalDestination, archivePath: string,
         } catch {
             continue;
         }
-        const manifests: Manifest[] = [];
         for (const name of files) {
-            const metadataRevision = MANIFEST_NAME.exec(name)![1]!;
-            manifests.push(await readManifest(archive, `eformsign/${companyId}/${documentId}/manifests/${name}`, { companyId, documentId, metadataRevision }));
+            found.push({ documentId, metadataRevision: MANIFEST_NAME.exec(name)![1]!, key: `eformsign/${companyId}/${documentId}/manifests/${name}` });
         }
+    }
+    return found;
+}
+
+/** No completion: every document with a manifest. Two manifests of one document that disagree on the bytes are a conflict, not a guess. */
+async function planFromManifests(archive: LocalDestination, archivePath: string, companyId: string): Promise<PlannedDocument[]> {
+    const byDocument = new Map<string, Manifest[]>();
+    for (const file of await listManifestFiles(archivePath, companyId)) {
+        const manifest = await readManifest(archive, file.key, { companyId, documentId: file.documentId, metadataRevision: file.metadataRevision });
+        byDocument.set(file.documentId, [...(byDocument.get(file.documentId) ?? []), manifest]);
+    }
+    const planned: PlannedDocument[] = [];
+    for (const [documentId, manifests] of byDocument) {
         if (manifests.length === 0) continue;
         if (new Set(manifests.map(artifactSetOf)).size > 1) throw new WorkerError("restore-conflict");
         planned.push({ documentId, manifest: manifests[0]! });

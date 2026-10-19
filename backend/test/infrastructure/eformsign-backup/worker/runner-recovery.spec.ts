@@ -93,6 +93,59 @@ describe("T-WRK-11: verified, then damaged (V10)", () => {
         expect(h.api.artifactRequests()).toHaveLength(before + 1);
     });
 
+    describe("a damaged staged copy is set aside, never trusted (V10 path 2)", () => {
+        const stagedFile = (id: string): string => path.join(h.control, "staging", `${id}.bin`);
+        const corruptCopies = async (): Promise<string[]> => (await fs.readdir(path.join(h.control, "staging"))).filter((name) => name.includes(".bin.corrupt-"));
+
+        it("should download once and converge when the staged bytes were flipped in place (same size)", async () => {
+            const { id } = await damaged();
+            const before = await fs.readFile(stagedFile(id));
+            await flipByte(stagedFile(id), 20);
+            const requests = h.api.artifactRequests().length;
+
+            const next = await runOnce(h);
+
+            expect(next.counts).toMatchObject({ verified: 4, integrityError: 0, blocked: 0 });
+            expect(h.api.artifactRequests()).toHaveLength(requests + 1);
+            expect(await archivePdfs(h.archive)).toHaveLength(4);
+            const kept = await corruptCopies();
+            expect(kept).toHaveLength(1);
+            expect((await fs.readFile(path.join(h.control, "staging", kept[0]!))).equals(before)).toBe(false);
+            expect(await fs.readFile(stagedFile(id))).toHaveLength(before.length);
+            const states = await transitionPath(h.control, id);
+            expect(states.filter((state) => state === "integrity_error")).toHaveLength(1);
+            expect(states[states.length - 1]).toBe("verified");
+        });
+
+        it("should download once and converge when the staged file was truncated", async () => {
+            const { id } = await damaged();
+            await fs.truncate(stagedFile(id), 100);
+            const requests = h.api.artifactRequests().length;
+
+            const next = await runOnce(h);
+
+            expect(next.counts).toMatchObject({ verified: 4, integrityError: 0, blocked: 0 });
+            expect(h.api.artifactRequests()).toHaveLength(requests + 1);
+            expect(await archivePdfs(h.archive)).toHaveLength(4);
+            const kept = await corruptCopies();
+            expect(kept).toHaveLength(1);
+            expect((await fs.stat(path.join(h.control, "staging", kept[0]!))).size).toBe(100);
+            expect((await transitionPath(h.control, id)).filter((state) => state === "blocked")).toHaveLength(0);
+        });
+
+        it("should record exact-bytes-unavailable, keeping the damaged copy, when the identity is not in the new snapshot", async () => {
+            const { id } = await damaged();
+            await flipByte(stagedFile(id), 20);
+            h.api.docs = [pairDoc("D002")];
+
+            const next = await runOnce(h);
+
+            expect(next).toMatchObject({ historicalCoverage: "known_gap", counts: { terminalUnavailable: 1 } });
+            expect((await transitionPath(h.control, id)).pop()).toBe("blocked");
+            expect(await corruptCopies()).toHaveLength(1);
+        });
+    });
+
     it("should not touch verified entries when the archive is unavailable during verify, and say so at run level (U2)", async () => {
         h = await createHarness({ docs: [pairDoc("D001")] });
         await initArchive(h);
@@ -215,6 +268,33 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
         const before = await treeSignature(h.control);
         await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
         expect(await treeSignature(h.control)).toBe(before);
+    });
+
+    it("should refuse, changing nothing, when the prior installation cannot be read and the archive root was swapped for one with a copied marker", async () => {
+        await history();
+        const id = await installationOf();
+        await flipByte(path.join(h.control, "ledger", "journal-000000000001.jsonl"), 30);
+        expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+        const away = await swapArchive(h);
+        await fs.mkdir(path.join(h.archive, ".bjj-backup"), { mode: 0o700 });
+        await fs.copyFile(path.join(away, ".bjj-backup", "installation.json"), path.join(h.archive, ".bjj-backup", "installation.json"));
+        const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+
+        await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+
+        expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+    });
+
+    it("should re-hash every manifest found in the archive, also those no completion names", async () => {
+        await history();
+        const dir = path.join(h.archive, "eformsign", COMPANY, "completions");
+        for (const name of await fs.readdir(dir)) await fs.rename(path.join(dir, name), path.join(h.base, `${name}.away`));
+        await corruptLedger();
+
+        const result = await recover(await installationOf());
+
+        expect(result).toMatchObject({ recovered: 4, unverified: 0, sequenceFloor: 0 });
+        expect((await readLedgerRecords(h.control)).filter((record) => record.type === "recovered_verified")).toHaveLength(4);
     });
 
     it("should refuse recover while the ledger is healthy", async () => {
