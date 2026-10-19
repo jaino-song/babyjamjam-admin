@@ -180,12 +180,13 @@ installation. Nothing repairs this on its own. To decide:
    time (device and inode from the `installed` or an earlier `recovery_started`
    record, read from the checkpoint or from the first line of a journal), the
    archive marker names that id and this archive, and the control marker (if
-   any) agrees. If the ledger directory holds files but none of them yields that
-   record, nothing proves which archive was installed and `recover` refuses with
+   any) agrees. If the ledger holds records but none of them is such an
+   install record, nothing proves which archive was installed and `recover` refuses with
    `archive-identity-mismatch` (exit 69); restore the control directory from a
-   copy, or install again. Only when the ledger directory is empty (a crash
-   inside `init`, before the first record) is the id on the archive marker
-   accepted as the proof.
+   copy, or install again. The id on the archive marker is accepted as the proof
+   only when the ledger directory is missing, empty, or holds no complete record
+   (no checkpoint, and no journal with a newline-terminated line): that is what a
+   crash inside `init` leaves.
 4. After the checks, `recover` moves the damaged ledger aside as
    `ledger.quarantine-<runId>`, starts a new one that records the highest
    sequence found in the archive (so a sequence is never reused) and the gaps

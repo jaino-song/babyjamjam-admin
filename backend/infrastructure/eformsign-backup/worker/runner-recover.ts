@@ -108,13 +108,24 @@ async function rehash(archive: LocalDestination, relativeKey: string, sha256: st
     return sha256Hex(bytes) === sha256 ? "ok" : "mismatch";
 }
 
-/** True when the ledger directory holds anything at all (an empty ledger directory means nothing was ever recorded; a non-empty one with no readable install record is damaged). */
-async function ledgerHoldsFiles(controlPath: string): Promise<boolean> {
+/**
+ * True when the ledger holds a record: a checkpoint, or a journal with at least one newline-terminated line. A missing or
+ * empty directory, empty journals and a torn first line are what a kill inside `init` leaves: nothing was ever recorded.
+ */
+async function ledgerHoldsRecords(controlPath: string): Promise<boolean> {
+    const dir = path.join(controlPath, LEDGER_DIR_NAME);
+    let names: string[];
     try {
-        return (await fs.readdir(path.join(controlPath, LEDGER_DIR_NAME))).length > 0;
+        names = await fs.readdir(dir);
     } catch {
         return false;
     }
+    if (names.includes(CHECKPOINT_NAME)) return true;
+    for (const name of names.filter((entry) => JOURNAL_NAME.test(entry))) {
+        const bytes = await readIfPresent(path.join(dir, name));
+        if (bytes !== null && bytes.includes(0x0a)) return true;
+    }
+    return false;
 }
 
 /** The installation the damaged ledger last described, when any of it can still be read (best effort, never trusted alone). */
@@ -184,7 +195,7 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
     const prior = await readPriorInstallation(config.control.path);
     // The archive root is compared with what the ledger recorded at install time. When the ledger holds records but
     // none of them can be read, nothing proves which archive was installed: refuse rather than compare the archive with itself.
-    if (prior === null && await ledgerHoldsFiles(config.control.path)) throw new WorkerError("archive-identity-mismatch");
+    if (prior === null && await ledgerHoldsRecords(config.control.path)) throw new WorkerError("archive-identity-mismatch");
     let current;
     try {
         current = await fs.lstat(config.archive.path);

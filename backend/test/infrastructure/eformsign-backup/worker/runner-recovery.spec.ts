@@ -362,5 +362,34 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
             await recover("install-window-1");
             expect((await runOnce(h)).counts?.verified).toBe(2);
         });
+
+        /** Marker on both sides and a ledger directory whose first journal holds `content` (what a kill inside `initialize` leaves). */
+        const journalWith = async (content: string): Promise<void> => {
+            await archiveMarkerOnly();
+            const bytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, installationId: "install-window-1", archiveId: ARCHIVE_ID, createdAt: "2026-10-19T00:00:00.000Z" })}\n`);
+            await controlMarkerWriter(h.control, "installation.json", bytes);
+            await fs.mkdir(path.join(h.control, "ledger"), { mode: 0o700 });
+            await fs.writeFile(path.join(h.control, "ledger", "journal-000000000001.jsonl"), content, { mode: 0o600 });
+            expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+        };
+
+        it.each([
+            ["an empty first journal (killed after the journal was created)", ""],
+            ["a torn first line without a newline (killed in the middle of the installed record)", "{\"v\":1,\"seq\":1,\"type\":\"insta"],
+        ])("should resolve the init window when the ledger holds %s", async (_name, content) => {
+            await journalWith(content);
+
+            await recover("install-window-1");
+
+            expect((await readLedgerRecords(h.control))[0]).toMatchObject({ type: "recovery_started", body: { sequenceFloor: 0, installationId: "install-window-1" } });
+            expect(await runOnce(h)).toMatchObject({ sequence: 1, counts: { verified: 2 } });
+        });
+
+        it("should still refuse, changing nothing, when the first complete journal line is corrupt", async () => {
+            await journalWith("this is not a record\n");
+            const before = await treeSignature(h.control);
+            await expect(recover("install-window-1")).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+            expect(await treeSignature(h.control)).toBe(before);
+        });
     });
 });
