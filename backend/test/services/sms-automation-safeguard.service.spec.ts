@@ -20,8 +20,8 @@ describe("SmsAutomationSafeguardService", () => {
         } | null;
         /** Phone-match lookups: entities with the flag off, by phone key. */
         disabledClientPhones: string[];
-        /** The phone-matched client with the flag off is a tombstone (its row still carries the phone). */
-        disabledClientIsTombstone: boolean;
+        /** Further phone-matched clients, live or tombstoned (a tombstone keeps its raw phone and flag). */
+        phoneClients: Array<{ id: number; phone: string; smsAutomationEnabled: boolean; deleted: boolean }>;
         disabledEmployeePhones: string[];
         disabledUsers: Array<{ id?: string; phone: string | null }>;
         branchOn: boolean;
@@ -31,19 +31,32 @@ describe("SmsAutomationSafeguardService", () => {
         const world: World = {
             rule: { isActive: true, branchId }, override: null, client: { smsAutomationEnabled: true },
             schedule: { primaryEmployee: { smsAutomationEnabled: true }, secondaryEmployee: { smsAutomationEnabled: true } },
-            disabledClientPhones: [], disabledClientIsTombstone: false, disabledEmployeePhones: [], disabledUsers: [], branchOn: true, ...overrides,
+            disabledClientPhones: [], phoneClients: [], disabledEmployeePhones: [], disabledUsers: [], branchOn: true, ...overrides,
         };
         const phoneHit = (phones: string[], where: { OR: Array<{ phoneNormalized?: { in: string[] } }> }) =>
             phones.some((phone) => where.OR[0]!.phoneNormalized!.in.includes(phone));
+        interface ClientWhere {
+            smsAutomationEnabled?: boolean;
+            deletedAt?: null | { not: null };
+            OR?: Array<{ phoneNormalized?: { in: string[] } }>;
+        }
         const db = {
             message_trigger_rule: { findFirst: jest.fn(async () => world.rule) },
             message_trigger_rule_branch_override: { findFirst: jest.fn(async () => world.override) },
             client: {
-                findFirst: jest.fn(async ({ where }: { where: { smsAutomationEnabled?: boolean; deletedAt?: null; OR: never } }) =>
-                    where.smsAutomationEnabled === false
-                        ? (phoneHit(world.disabledClientPhones, where as never)
-                            && !(where.deletedAt === null && world.disabledClientIsTombstone) ? { id: 1 } : null)
-                        : world.client),
+                findFirst: jest.fn(async ({ where }: { where: ClientWhere }) => {
+                    if (!where.OR) return world.client;
+                    const candidates = where.OR[0]!.phoneNormalized!.in;
+                    const rows = [
+                        ...world.disabledClientPhones.map((phone, index) => (
+                            { id: index === 0 ? 1 : 100 + index, phone, smsAutomationEnabled: false, deleted: false })),
+                        ...world.phoneClients,
+                    ].filter((row) => candidates.includes(row.phone));
+                    const hit = rows.find((row) =>
+                        (where.smsAutomationEnabled === undefined || row.smsAutomationEnabled === where.smsAutomationEnabled)
+                        && (where.deletedAt === undefined || (where.deletedAt === null ? !row.deleted : row.deleted)));
+                    return hit ? { id: hit.id } : null;
+                }),
             },
             employee: {
                 findFirst: jest.fn(async ({ where }: { where: { OR: never } }) =>
@@ -235,12 +248,43 @@ describe("SmsAutomationSafeguardService", () => {
             }
         });
 
-        it("ignore a tombstoned client that still carries the phone, so its new owner is not blocked", async () => {
-            const { service, db } = harness({ disabledClientPhones: ["01012345678"], disabledClientIsTombstone: true });
-            await expect(service.check(agentJob())).resolves.toEqual({ allowed: true });
-            expect(db.client.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-                where: expect.objectContaining({ branchId, smsAutomationEnabled: false, deletedAt: null }),
-            }));
+        describe("tombstoned clients that still carry the phone", () => {
+            const phone = "01012345678";
+            const tomb = (smsAutomationEnabled: boolean) => ({ id: 31, phone, smsAutomationEnabled, deleted: true });
+            const live = (smsAutomationEnabled: boolean) => ({ id: 32, phone, smsAutomationEnabled, deleted: false });
+
+            it("block when the opted-out tombstone has no live owner", async () => {
+                const { service } = harness({ phoneClients: [tomb(false)] });
+                await expect(service.check(agentJob())).resolves.toMatchObject({
+                    allowed: false, level: "recipient", reason: "matched deleted client SMS automation is off",
+                    recipient: { kind: "client", id: 31 },
+                });
+            });
+
+            it("do not block when a live opted-in client owns the same phone", async () => {
+                const { service } = harness({ phoneClients: [tomb(false), live(true)] });
+                await expect(service.check(agentJob())).resolves.toEqual({ allowed: true });
+            });
+
+            it("block when a live opted-out client owns the same phone", async () => {
+                const { service } = harness({ phoneClients: [tomb(false), live(false)] });
+                await expect(service.check(agentJob())).resolves.toMatchObject({
+                    allowed: false, level: "recipient", reason: "matched client SMS automation is off",
+                    recipient: { kind: "client", id: 32 },
+                });
+            });
+
+            it("do not block when the tombstone itself was opted in", async () => {
+                const { service } = harness({ phoneClients: [tomb(true)] });
+                await expect(service.check(agentJob())).resolves.toEqual({ allowed: true });
+            });
+
+            it("still reach the employee check when a live owner clears the tombstone", async () => {
+                const { service } = harness({ phoneClients: [tomb(false), live(true)], disabledEmployeePhones: [phone] });
+                await expect(service.check(agentJob())).resolves.toMatchObject({
+                    allowed: false, recipient: { kind: "employee", id: 2 },
+                });
+            });
         });
 
         it("are blocked when the phone matches an employee whose automation is off", async () => {

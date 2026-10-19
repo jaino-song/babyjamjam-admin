@@ -244,8 +244,8 @@ export class SmsAutomationSafeguardService {
         const keySet = new Set(keys);
         const phoneMatch = { OR: [{ phoneNormalized: { in: candidates } }, { phone: { in: candidates } }] };
 
+        // A live client that owns the phone always decides first.
         const client = await db.client.findFirst({
-            // A tombstoned client no longer owns its phone, so it cannot block a new owner of it.
             where: { branchId: job.branchId, smsAutomationEnabled: false, deletedAt: null, ...phoneMatch },
             select: { id: true },
         });
@@ -254,6 +254,26 @@ export class SmsAutomationSafeguardService {
                 "matched client SMS automation is off",
                 typeof client.id === "number" ? { kind: "client", id: client.id } : null,
             );
+        }
+
+        // A tombstoned client keeps its raw phone and its opt-out. It keeps blocking unless a live client of the
+        // branch now owns the same phone: that owner's own flag governs (a live opted-out owner already blocked above,
+        // so any live owner reaching here is opted in).
+        const deletedClient = await db.client.findFirst({
+            where: { branchId: job.branchId, smsAutomationEnabled: false, deletedAt: { not: null }, ...phoneMatch },
+            select: { id: true },
+        });
+        if (deletedClient) {
+            const liveOwner = await db.client.findFirst({
+                where: { branchId: job.branchId, deletedAt: null, ...phoneMatch },
+                select: { id: true },
+            });
+            if (!liveOwner) {
+                return recipientBlock(
+                    "matched deleted client SMS automation is off",
+                    typeof deletedClient.id === "number" ? { kind: "client", id: deletedClient.id } : null,
+                );
+            }
         }
 
         const employee = await db.employee.findFirst({
