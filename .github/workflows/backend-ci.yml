@@ -434,6 +434,9 @@ jobs:
 
       - name: Wait for the Database Patches run of this commit
         env:
+          # BJJ-484: preview and main backends both use the production database,
+          # so the production patch job must have succeeded on either branch.
+          REQUIRED_JOB_NAME: apply production database patches
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           HEAD_SHA: ${{ github.sha }}
@@ -673,6 +676,25 @@ jobs:
           if ! curl -sS --max-time 10 "$SERVICE_URL/health/lease" \
               | jq -e '.mode == "standby" and .held == false' >/dev/null; then
             echo "::error::/health/lease must report mode 'standby' with held=false"
+            exit 1
+          fi
+
+          # BJJ-484: schema-drift check. This runs after traffic has moved to the
+          # new revision, so it detects drift after deploy; it does not prevent it.
+          # 200 {"status":"ok"} = every Prisma column exists; 503 = drift/unavailable.
+          schema_tmp="$(mktemp)"
+          schema_ok=false
+          for _attempt in $(seq 1 6); do
+            schema_code="$(curl -sS -o "$schema_tmp" -w '%{http_code}' --max-time 15 "$SERVICE_URL/health/schema" || true)"
+            if [[ "$schema_code" == "200" ]] && jq -e '.status == "ok"' "$schema_tmp" >/dev/null 2>&1; then
+              schema_ok=true
+              break
+            fi
+            sleep 5
+          done
+          rm -f "$schema_tmp"
+          if [[ "$schema_ok" != "true" ]]; then
+            echo "::error::/health/schema reports schema drift — the database this backend uses is missing columns the code expects (BJJ-484). Check Cloud Run logs for the missing columns, then run Database Patches with target=production."
             exit 1
           fi
 
