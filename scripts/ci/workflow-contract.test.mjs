@@ -234,8 +234,8 @@ test("mobile pull-request E2E uses only a run-scoped dummy JWT", async () => {
 test("backend pull requests and merge queues cannot receive the protected cutover manifest", async () => {
     const fileName = "backend-ci.yml";
     const workflow = await readWorkflow(fileName);
-    const job = jobBlock(workflow, "verify", fileName);
-    const steps = stepBlocks(job, "verify", fileName);
+    const job = jobBlock(workflow, "checks", fileName);
+    const steps = stepBlocks(job, "checks", fileName);
     const cutoverSteps = steps.filter((step) => step.join("\n").includes("agent:cutover:guard"));
 
     assert.equal(cutoverSteps.length, 2, `${fileName} must retain trusted and PR-safe cutover guard steps`);
@@ -260,7 +260,9 @@ test("backend pull requests and merge queues cannot receive the protected cutove
 test("PR-controlled frontend and mobile lanes use explicit read-only permissions and no persisted checkout token", async () => {
     const lanes = [
         ["mobile-ci.yml", "verify"],
+        ["mobile-ci.yml", "checks"],
         ["frontend-ci.yml", "verify"],
+        ["frontend-ci.yml", "checks"],
         ["playwright.yml", "test"],
     ];
 
