@@ -39,7 +39,7 @@ export class CreateEmployeeScheduleUsecase {
     ): Promise<EmployeeScheduleEntity> {
         const persist = async (tx: Prisma.TransactionClient): Promise<EmployeeScheduleEntity> => {
             const client = await tx.client.findFirst({
-                where: { id: params.clientId, branchId: branchid },
+                where: { id: params.clientId, branchId: branchid, deletedAt: null },
                 select: { id: true },
             });
             if (!client) {
@@ -64,7 +64,7 @@ export class CreateEmployeeScheduleUsecase {
             // ownership after the stable-row lock before reading employees or
             // writing the new schedule.
             const lockedClient = await tx.client.findFirst({
-                where: { id: params.clientId, branchId: branchid },
+                where: { id: params.clientId, branchId: branchid, deletedAt: null },
                 select: { id: true },
             });
             if (!lockedClient) {

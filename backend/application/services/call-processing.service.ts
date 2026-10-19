@@ -342,7 +342,7 @@ export class CallProcessingService {
     private async matchClient(branchId: string, callerPhone: string | null): Promise<number | null> {
         if (!callerPhone) return null;
         const clients = await this.prismaService.client.findMany({
-            where: { branchId, phone: { not: null } },
+            where: { branchId, phone: { not: null }, deletedAt: null },
             select: { id: true, phone: true },
         });
         const matches = clients.filter((c) => normalizePhone(c.phone) === callerPhone);

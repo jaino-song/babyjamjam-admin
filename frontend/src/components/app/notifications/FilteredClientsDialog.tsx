@@ -232,7 +232,7 @@ export function FilteredClientsDialog({
                 }}
                 dataComponent="desktop_admin_filtered-clients-dialog_delete-approval"
                 title="고객을 삭제하시겠습니까?"
-                description="삭제한 고객 정보는 복구할 수 없어요."
+                description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel="삭제"
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"

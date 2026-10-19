@@ -264,7 +264,7 @@
     "search-placeholder": "이름, 연락처, 주소 검색",
     "no-data": "등록된 고객이 없습니다.",
     "load-error": "고객 목록을 불러오는데 실패했어요.",
-    "delete-confirm": "정말로 이 고객을 삭제하시겠습니까?",
+    "delete-confirm": "삭제한 고객은 목록에서 사라지고 복구할 수 없어요.",
     "delete-success": "고객을 삭제했어요",
     "delete-success-description": "선택한 고객을 목록에서 지웠어요",
     "delete-fail": "고객을 삭제하지 못했어요",

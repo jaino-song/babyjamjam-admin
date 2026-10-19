@@ -19,7 +19,7 @@ describe("DashboardAgentCapabilitiesProvider", () => {
         const repository = new PrismaClientDashboardRepository(prisma as never);
 
         await expect(repository.getSummary("branch-a")).resolves.toEqual({ totalClients: 101, activeClients: 98 });
-        expect(prisma.client.count).toHaveBeenNthCalledWith(1, { where: { branchId: "branch-a" } });
-        expect(prisma.client.count).toHaveBeenNthCalledWith(2, { where: { branchId: "branch-a", serviceStatus: "active" } });
+        expect(prisma.client.count).toHaveBeenNthCalledWith(1, { where: { branchId: "branch-a", deletedAt: null } });
+        expect(prisma.client.count).toHaveBeenNthCalledWith(2, { where: { branchId: "branch-a", deletedAt: null, serviceStatus: "active" } });
     });
 });

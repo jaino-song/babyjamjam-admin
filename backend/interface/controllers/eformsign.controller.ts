@@ -862,7 +862,7 @@ export class EformsignController {
                 throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
             const client = await this.prisma.client.findFirst({
-                where: { id: body.clientId, branchId },
+                where: { id: body.clientId, branchId, deletedAt: null },
                 select: { eDocId: true },
             });
             if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));

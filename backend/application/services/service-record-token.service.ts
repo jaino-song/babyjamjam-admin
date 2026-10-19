@@ -97,9 +97,11 @@ export class ServiceRecordTokenService {
             const current = await db.employee_schedule.findFirst({
                 where: { clientId: original.clientId, branchId: record.branchId, replaced: false },
                 orderBy: { id: "desc" },
-                include: { primaryEmployee: true, client: { select: { serviceStatus: true } } },
+                include: { primaryEmployee: true, client: { select: { serviceStatus: true, deletedAt: true } } },
             });
-            if (!current || current.client.serviceStatus === "terminated" || current.primaryEmployee.deletedAt) return null;
+            // The client tombstone is authoritative: a deleted client's links must never
+            // resolve or be (re)issued, whether or not post-commit revocation succeeded.
+            if (!current || current.client.deletedAt || current.client.serviceStatus === "terminated" || current.primaryEmployee.deletedAt) return null;
             return current;
         });
     }

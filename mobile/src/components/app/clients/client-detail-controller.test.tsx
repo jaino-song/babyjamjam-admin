@@ -373,7 +373,7 @@ describe("useClientDetailController", () => {
       description: string;
       onConfirm: () => Promise<void>;
     }>;
-    expect(deleteModal.props.description).toBe("정말로 이 고객을 삭제하시겠습니까?");
+    expect(deleteModal.props.description).toBe("삭제한 고객은 목록에서 사라지고 복구할 수 없어요.");
 
     await act(async () => {
       await deleteModal.props.onConfirm();

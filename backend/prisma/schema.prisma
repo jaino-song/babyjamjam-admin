@@ -267,6 +267,7 @@ model client {
   dueDate                DateTime?                 @map("due_date") @db.Date
   birthDate              DateTime?                 @map("birth_date") @db.Date
   createdAt              DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt              DateTime?                 @map("deleted_at") @db.Timestamptz(6)
   branchId               String?                   @map("branch_id") @db.Uuid
   areaId                 String?                   @map("area_id")
   eformsignDocByEDocId   eformsign_doc?            @relation("client_e_doc_idToeformsign_doc", fields: [eDocId], references: [documentId], onUpdate: NoAction)

@@ -489,7 +489,7 @@ export class AdminServiceRecordService {
 
     private async assertClientBelongsToBranch(branchId: string, clientId: number): Promise<void> {
         const client = await this.prisma.client.findFirst({
-            where: { id: clientId, branchId },
+            where: { id: clientId, branchId, deletedAt: null },
             select: { id: true },
         });
         if (!client) {

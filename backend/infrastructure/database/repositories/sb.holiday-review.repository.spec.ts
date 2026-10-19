@@ -60,7 +60,9 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             const events = await repository.listOpenEventSummaries(BRANCH);
 
             expect(prisma.end_date_review_item.groupBy).toHaveBeenCalledWith(
-                expect.objectContaining({ where: { branchId: BRANCH, status: "open" } }),
+                expect.objectContaining({
+                    where: { branchId: BRANCH, status: "open", client: { deletedAt: null } },
+                }),
             );
             expect(prisma.holiday_change_event.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -87,7 +89,11 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             prisma.end_date_review_item.findFirst.mockResolvedValue({ id: ITEM });
 
             await expect(repository.branchHasEventItems(BRANCH, EVENT)).resolves.toBe(true);
-            expect(whereOf(prisma.end_date_review_item.findFirst)).toEqual({ branchId: BRANCH, changeEventId: EVENT });
+            expect(whereOf(prisma.end_date_review_item.findFirst)).toEqual({
+                branchId: BRANCH,
+                changeEventId: EVENT,
+                client: { deletedAt: null },
+            });
         });
 
         it("findEventRecord never reads an event by bare id", async () => {
@@ -112,19 +118,23 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
                         changeEventId: EVENT,
                         category: "risk",
                         status: "kept",
-                        client: { name: { contains: "김", mode: "insensitive" } },
+                        client: { deletedAt: null, name: { contains: "김", mode: "insensitive" } },
                     },
                     orderBy: [{ client: { name: "asc" } }, { id: "asc" }],
                 }),
             );
         });
 
-        it("listEventItems without filters only scopes by branch and event", async () => {
+        it("listEventItems without filters only scopes by branch, event and live client", async () => {
             const { prisma, repository } = makeRepository();
 
             await repository.listEventItems(BRANCH, EVENT, {});
 
-            expect(whereOf(prisma.end_date_review_item.findMany)).toEqual({ branchId: BRANCH, changeEventId: EVENT });
+            expect(whereOf(prisma.end_date_review_item.findMany)).toEqual({
+                branchId: BRANCH,
+                changeEventId: EVENT,
+                client: { deletedAt: null },
+            });
         });
 
         it("findEventItemsByIds scopes by branch and event and skips the query for no ids", async () => {
@@ -138,6 +148,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
                 branchId: BRANCH,
                 changeEventId: EVENT,
                 id: { in: [ITEM] },
+                client: { deletedAt: null },
             });
         });
 
@@ -145,7 +156,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             const { prisma, repository } = makeRepository();
 
             await expect(repository.findFixSnapshot(BRANCH, 7)).resolves.toBeNull();
-            expect(whereOf(prisma.client.findFirst)).toEqual({ id: 7, branchId: BRANCH });
+            expect(whereOf(prisma.client.findFirst)).toEqual({ id: 7, branchId: BRANCH, deletedAt: null });
         });
     });
 
@@ -173,6 +184,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             expect(transaction.end_date_review_item.updateMany).toHaveBeenCalledWith({
                 where: {
                     id: ITEM, branchId: BRANCH, changeEventId: EVENT, clientId: 7, status: "open",
+                    client: { deletedAt: null },
                     storedEnd: day(expected.storedEnd), recalculatedEnd: day(expected.recalculatedEnd),
                     affectedFrom: day(expected.affectedFrom), category: "safe", reason: "no_sessions_after_date",
                 },
@@ -282,6 +294,8 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
 
             const where = whereOf(prisma.client.findMany) as { startDate: unknown; AND: Array<Record<string, unknown>> };
             expect(where.startDate).toEqual({ lte: day("2026-05-01") });
+            // A tombstoned client is never a review candidate.
+            expect(where).toMatchObject({ deletedAt: null });
             // Top-level AND entry: it applies to the in-period branch and to the open-item branch alike.
             expect(where.AND).toContainEqual({ endDate: { gte: day("2026-10-01") } });
             expect(where.AND).toContainEqual({
@@ -343,7 +357,7 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         const lock = tx.$executeRaw.mock.calls[0]?.[0];
         expect(lock?.values).toEqual([HOLIDAY_REVIEW_LOCK_KEY]);
         expect(tx.client.findMany).toHaveBeenCalledWith({
-            where: { id: { in: [CLIENT] }, branchId: { in: [BRANCH] } },
+            where: { id: { in: [CLIENT] }, branchId: { in: [BRANCH] }, deletedAt: null },
             select: { id: true, endDate: true },
         });
         expect(tx.end_date_review_item.upsert).toHaveBeenCalledTimes(1);
@@ -358,6 +372,7 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         const query = tx.$queryRaw.mock.calls[0]?.[0];
         expect(query?.text).toMatch(/FROM "client"/);
         expect(query?.text).toMatch(/ORDER BY "id" ASC\s+FOR UPDATE/);
+        expect(query?.text).toMatch(/WHERE "deleted_at" IS NULL\s+AND \(/);
         expect(query?.values).toEqual([CLIENT, BRANCH]);
         const clientLockOrder = tx.$queryRaw.mock.invocationCallOrder[0]!;
         expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(clientLockOrder);

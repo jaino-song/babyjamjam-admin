@@ -85,7 +85,9 @@ describe("DeleteClientUsecase", () => {
         const branchId = "org-1";
         const clientId = 5;
 
-        let clientModel: { findFirst: jest.Mock; deleteMany: jest.Mock };
+        let clientModel: { findFirst: jest.Mock; deleteMany: jest.Mock; updateMany: jest.Mock };
+        let scheduleModel: { updateMany: jest.Mock };
+        let jobModel: { updateMany: jest.Mock };
         let transactionQueryRaw: jest.Mock;
         let serviceRecordCaseModel: { findUnique: jest.Mock; delete: jest.Mock };
         let serviceRecordDayModel: { count: jest.Mock };
@@ -118,7 +120,9 @@ describe("DeleteClientUsecase", () => {
         beforeEach(() => {
             clearSchemaCapabilityCache();
 
-            clientModel = { findFirst: jest.fn(), deleteMany: jest.fn() };
+            clientModel = { findFirst: jest.fn(), deleteMany: jest.fn(), updateMany: jest.fn() };
+            scheduleModel = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+            jobModel = { updateMany: jest.fn().mockResolvedValue({ count: 2 }) };
             transactionQueryRaw = jest.fn()
                 .mockResolvedValueOnce([{ id: clientId }])
                 .mockResolvedValue([{ count: 0 }]);
@@ -130,7 +134,12 @@ describe("DeleteClientUsecase", () => {
                 service_record_day: serviceRecordDayModel,
                 $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
                 $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
-                    callback({ client: clientModel, $queryRaw: transactionQueryRaw })),
+                    callback({
+                        client: clientModel,
+                        employee_schedule: scheduleModel,
+                        message_trigger_job: jobModel,
+                        $queryRaw: transactionQueryRaw,
+                    })),
             } as unknown as PrismaService;
 
             repository = new SbClientRepository(prisma);
@@ -159,6 +168,82 @@ describe("DeleteClientUsecase", () => {
 
             expect(clientModel.deleteMany).toHaveBeenCalledWith({
                 where: { id: clientId, branchId },
+            });
+        });
+
+        it("reports a plain delete when the client has no history", async () => {
+            clientModel.deleteMany.mockResolvedValue({ count: 1 });
+
+            await expect(usecase.execute(branchId, clientId)).resolves.toBe("deleted");
+
+            expect(clientModel.updateMany).not.toHaveBeenCalled();
+            expect(scheduleModel.updateMany).not.toHaveBeenCalled();
+            expect(jobModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        describe("a client with retained history", () => {
+            beforeEach(() => {
+                transactionQueryRaw = jest.fn()
+                    .mockResolvedValueOnce([{ id: clientId }])
+                    .mockResolvedValue([{ count: 3 }]);
+                clientModel.updateMany.mockResolvedValue({ count: 1 });
+            });
+
+            it("is tombstoned instead of refused with a 409", async () => {
+                await expect(usecase.execute(branchId, clientId)).resolves.toBe("tombstoned");
+
+                expect(clientModel.deleteMany).not.toHaveBeenCalled();
+                expect(clientModel.updateMany).toHaveBeenCalledWith({
+                    where: { id: clientId, branchId, deletedAt: null },
+                    data: { deletedAt: expect.any(Date), phoneNormalized: null },
+                });
+            });
+
+            it("ends its open assignments in the same transaction", async () => {
+                await usecase.execute(branchId, clientId);
+
+                expect(scheduleModel.updateMany).toHaveBeenCalledWith({
+                    where: { clientId, branchId, replaced: false, terminatedAt: null },
+                    data: { terminatedAt: expect.any(Date) },
+                });
+                expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+            });
+
+            it("cancels its pending ordinary automation jobs with the 고객 삭제 reason", async () => {
+                await usecase.execute(branchId, clientId);
+
+                expect(jobModel.updateMany).toHaveBeenCalledTimes(1);
+                const args = jobModel.updateMany.mock.calls[0]?.[0];
+                expect(args.where).toMatchObject({
+                    branchId,
+                    status: { in: ["pending", "processing", "needs_setup"] },
+                    OR: [{ clientId }, { employeeSchedule: { is: { clientId } } }],
+                });
+                expect(args.where.AND).toBeDefined();
+                expect(args.data).toEqual({
+                    status: "canceled",
+                    canceledAt: expect.any(Date),
+                    cancelReason: "고객 삭제",
+                    claimToken: null,
+                });
+            });
+
+            it("answers 404 when the client is already tombstoned", async () => {
+                clientModel.findFirst.mockResolvedValue(null);
+
+                await expect(usecase.execute(branchId, clientId)).rejects.toBeInstanceOf(NotFoundException);
+                expect(clientModel.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("answers 404 when a concurrent delete tombstoned it after the existence check", async () => {
+                // The FOR UPDATE select filters deleted_at, so the second deleter finds no row.
+                transactionQueryRaw.mockReset().mockResolvedValue([]);
+
+                await expect(usecase.execute(branchId, clientId)).rejects.toBeInstanceOf(NotFoundException);
+                expect(clientModel.updateMany).not.toHaveBeenCalled();
+                expect(clientModel.deleteMany).not.toHaveBeenCalled();
+                const lockSql = (transactionQueryRaw.mock.calls[0]?.[0] as readonly string[]).join("?");
+                expect(lockSql).toContain('"deleted_at" IS NULL');
             });
         });
 

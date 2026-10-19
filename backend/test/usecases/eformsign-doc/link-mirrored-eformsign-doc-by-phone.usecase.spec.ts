@@ -461,6 +461,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.findMany).toHaveBeenCalledWith({
             where: {
                 phone: { not: null },
+                deletedAt: null,
                 branchId: "branch-1",
                 OR: [{ phone: { endsWith: "5678" } }],
             },
@@ -557,6 +558,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.findMany).toHaveBeenCalledWith({
             where: {
                 phone: { not: null },
+                deletedAt: null,
                 branchId: "branch-2",
                 OR: [{ phone: { endsWith: "5678" } }],
             },
@@ -637,6 +639,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             where: {
                 id: 21,
                 phone: { not: null },
+                deletedAt: null,
                 branchId: "branch-1",
                 OR: [{ phone: { endsWith: "5678" } }],
             },

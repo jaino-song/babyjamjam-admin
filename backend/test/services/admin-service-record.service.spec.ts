@@ -248,7 +248,7 @@ describe("AdminServiceRecordService", () => {
         });
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
-            where: { id: 100, branchId: "branch-1" },
+            where: { id: 100, branchId: "branch-1", deletedAt: null },
             select: { id: true },
         });
         expect(prisma.service_record_case.findFirst).toHaveBeenCalled();
@@ -454,7 +454,7 @@ describe("AdminServiceRecordService", () => {
         });
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
-            where: { id: 404, branchId: "branch-1" },
+            where: { id: 404, branchId: "branch-1", deletedAt: null },
             select: { id: true },
         });
         expect(prisma.service_record_case.findFirst).not.toHaveBeenCalled();
