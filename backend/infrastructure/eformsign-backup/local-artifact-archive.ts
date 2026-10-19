@@ -20,6 +20,12 @@ export type LocalArchiveResult = Readonly<{
     disposition: "created" | "reused";
 }> | Readonly<{ ok: false; error: "INVALID_INPUT" | "ARCHIVE_FAILED" }>;
 
+export interface LocalArchiveOptions {
+    /** Replaces the default `${artifactId}.bin` object name. Must be `<64 lowercase hex>.pdf`. */
+    objectName?: string;
+}
+
+const OBJECT_NAME_PATTERN = /^[0-9a-f]{64}\.pdf$/;
 const IO_BYTES = 64 * 1024;
 const PRIVATE_FILE_MODE = 0o600;
 const WRITABLE_BY_OTHERS = 0o022;
@@ -96,9 +102,10 @@ export class LocalArtifactArchive {
         } finally { await file.close(); }
     }
 
-    async archive(input: ArtifactClaim, source: AsyncIterable<Uint8Array>): Promise<LocalArchiveResult> {
+    async archive(input: ArtifactClaim, source: AsyncIterable<Uint8Array>, options?: LocalArchiveOptions): Promise<LocalArchiveResult> {
         let claim: Readonly<ArtifactClaim>;
         let artifactId: string;
+        let objectName: string | undefined;
         try {
             // Canonical validation rejects accessors/proxies before any field is read or await occurs.
             canonicalJson(input);
@@ -108,9 +115,11 @@ export class LocalArtifactArchive {
             artifactId = artifactIdentity(claim);
             assertCount(this.config.maxBytes);
             if (claim.byteLength > this.config.maxBytes) fail();
+            objectName = options?.objectName;
+            if (objectName !== undefined && (typeof objectName !== "string" || !OBJECT_NAME_PATTERN.test(objectName))) fail();
         } catch { return Object.freeze({ ok: false, error: "INVALID_INPUT" }); }
 
-        const relativeKey = `${artifactId}.bin`;
+        const relativeKey = objectName ?? `${artifactId}.bin`;
         const finalPath = `${this.config.rootPath}/${relativeKey}`;
         let tempPath: string | undefined;
         let tempIdentity: { dev: number; ino: number } | undefined;
