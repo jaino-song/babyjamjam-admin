@@ -495,3 +495,72 @@ test("database patch jobs apply every schema migration after the pre-applied bas
         }
     }
 });
+
+function jobCondition(job) {
+    const start = job.findIndex((line) => /^    if:/.test(line));
+    assert.notEqual(start, -1, "job must define an if: condition");
+    const lines = [job[start]];
+    for (const line of job.slice(start + 1)) {
+        if (/^    [A-Za-z0-9_-]+:/.test(line)) {
+            break;
+        }
+        lines.push(line);
+    }
+    return lines.join("\n");
+}
+
+function jobDisplayName(job) {
+    const nameLine = job.find((line) => /^    name:/.test(line));
+    assert.ok(nameLine, "job must define a name");
+    return nameLine.replace(/^    name:\s*/, "").trim();
+}
+
+test("preview and main pushes patch the production database and the backend gate requires that job (BJJ-484)", async () => {
+    const patchesFile = "database-patches.yml";
+    const patches = await readWorkflow(patchesFile);
+    const production = jobBlock(patches, "apply-production", patchesFile);
+    const preview = jobBlock(patches, "apply-preview", patchesFile);
+
+    const productionIf = jobCondition(production);
+    assert.match(productionIf, /always\(\)/, "apply-production must keep always() so a skipped apply-preview does not skip it");
+    assert.match(productionIf, /github\.event_name == 'push' && github\.ref_name == 'preview'/, "apply-production must run on a push to preview (the preview backend uses the production database)");
+    assert.match(productionIf, /github\.event_name == 'push' && github\.ref_name == 'main'/, "apply-production must run on a push to main");
+    assert.match(productionIf, /github\.event_name == 'workflow_dispatch' && inputs\.target == 'production'/, "apply-production must keep the manual production dispatch");
+
+    const previewIf = jobCondition(preview);
+    assert.doesNotMatch(previewIf, /\bpush\b/, "apply-preview must not run on push: no backend uses PREVIEW_DATABASE_URL");
+    assert.match(previewIf, /github\.event_name == 'workflow_dispatch' && inputs\.target == 'preview'/, "apply-preview must stay available to manual dispatch");
+
+    const requiredJobName = jobDisplayName(production);
+    assert.equal(requiredJobName, "apply production database patches", "the backend gate keys on this exact job name");
+
+    const concurrencyMatch = patches.match(/^concurrency:\n([\s\S]*?)^jobs:/m);
+    assert.ok(concurrencyMatch, `${patchesFile} must define a top-level concurrency block`);
+    const concurrency = concurrencyMatch[1]
+        .split("\n")
+        .filter((line) => !/^\s*#/.test(line))
+        .join("\n");
+    assert.match(concurrency, /database-patches-production/, "preview push, main push and production dispatch must share the production group");
+    assert.match(concurrency, /database-patches-dev/);
+    assert.match(concurrency, /database-patches-preview-db/);
+    assert.doesNotMatch(concurrency, /github\.ref_name\s*\}\}/, "the concurrency group must be keyed by target database, not by branch name");
+    assert.doesNotMatch(concurrency, /github\.ref_name == '(?:preview|main)'/, "preview and main pushes must not get their own groups");
+    assert.match(concurrency, /cancel-in-progress: false/);
+
+    const ciFile = "backend-ci.yml";
+    const ci = await readWorkflow(ciFile);
+    const waitJob = jobBlock(ci, "wait-database-patches", ciFile);
+    const waitStep = stepBlocks(waitJob, "wait-database-patches", ciFile).find((step) => stepName(step) === "Wait for the Database Patches run of this commit");
+    assert.ok(waitStep, `${ciFile} wait-database-patches must have the wait step`);
+    assert.ok(
+        waitStep.includes(`          REQUIRED_JOB_NAME: ${requiredJobName}`),
+        `${ciFile} wait step must require the job named "${requiredJobName}" (read from ${patchesFile})`,
+    );
+
+    const cloudRunJob = jobBlock(ci, "deploy-cloudrun", ciFile);
+    const smokeStep = stepBlocks(cloudRunJob, "deploy-cloudrun", ciFile).find((step) => stepName(step) === "Smoke the service health endpoints");
+    assert.ok(smokeStep, `${ciFile} deploy-cloudrun must have the smoke step`);
+    const smokeText = smokeStep.join("\n");
+    assert.match(smokeText, /\/health\/schema/, "the Cloud Run smoke step must check /health/schema");
+    assert.ok(smokeText.includes(".status == \"ok\""), "the Cloud Run smoke step must require status ok from /health/schema");
+});

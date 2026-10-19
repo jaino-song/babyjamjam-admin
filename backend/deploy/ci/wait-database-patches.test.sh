@@ -64,6 +64,45 @@ case "$cmd" in
                     printf '%s\n' "${RUNS_PRIMARY}"
                 fi
                 ;;
+            */actions/runs/*/jobs*)
+                # Must precede the generic */actions/runs/* case, which would
+                # otherwise swallow this endpoint. Serves a RAW jobs payload and
+                # applies the script's own --jq filter with real jq, so the
+                # script's name/conclusion extraction is genuinely exercised.
+                id="${endpoint#*/actions/runs/}"
+                id="${id%%/*}"
+                counter_file="$state_dir/jobs_calls_$id"
+                count=0
+                [[ -f "$counter_file" ]] && count="$(cat "$counter_file")"
+                count=$((count + 1))
+                echo "$count" >"$counter_file"
+
+                fail_always_var="JOBS_FAIL_ALWAYS_$id"
+                [[ "${!fail_always_var:-0}" == 1 ]] && exit 1
+                fail_until_var="JOBS_FAIL_UNTIL_$id"
+                fail_until="${!fail_until_var:-0}"
+                if (( count <= fail_until )); then
+                    exit 1
+                fi
+
+                json_var="JOBS_JSON_$id"
+                if [[ -z "${!json_var:-}" ]]; then
+                    echo "fake gh: no JOBS_JSON_$id fixture for $endpoint" >&2
+                    exit 98
+                fi
+                jq_expr=""
+                args=("$@")
+                for ((i = 0; i < ${#args[@]}; i++)); do
+                    if [[ "${args[$i]}" == "--jq" ]]; then
+                        jq_expr="${args[$((i + 1))]:-}"
+                    fi
+                done
+                if [[ -n "$jq_expr" ]]; then
+                    printf '%s' "${!json_var}" | /usr/bin/jq -r "$jq_expr"
+                else
+                    printf '%s' "${!json_var}"
+                fi
+                ;;
             */actions/runs/*)
                 id="${endpoint##*/actions/runs/}"
                 counter_file="$state_dir/calls_$id"
@@ -162,13 +201,15 @@ run_script() {
         PRIMARY_FAIL="${PRIMARY_FAIL:-0}" \
         RUNS_FALLBACK="${RUNS_FALLBACK:-}" \
         FALLBACK_FAIL="${FALLBACK_FAIL:-0}" \
+        REQUIRED_JOB_NAME="${REQUIRED_JOB_NAME:-}" \
         bash "$SCRIPT"
 }
 
 reset_scenario_env() {
     unset BEFORE_SHA POLL_SECONDS APPEAR_TIMEOUT_SECONDS COMPLETE_TIMEOUT_SECONDS
     unset CHANGED_FILES COMPARE_FAIL RUNS_PRIMARY PRIMARY_FAIL RUNS_FALLBACK FALLBACK_FAIL
-    for name in $(compgen -v | grep -E '^RUN_STATUS_SEQUENCE_|^RUN_STATUS_FAIL_UNTIL_' || true); do
+    unset REQUIRED_JOB_NAME
+    for name in $(compgen -v | grep -E '^RUN_STATUS_SEQUENCE_|^RUN_STATUS_FAIL_UNTIL_|^JOBS_JSON_|^JOBS_FAIL_' || true); do
         unset "$name"
     done
 }
@@ -296,5 +337,193 @@ export RUN_STATUS_SEQUENCE_501="completed:success"
 out="$(run_script)" || fail "scenario 10: expected exit 0 with a correctly HEAD_SHA-filtered fallback lookup: $out"
 grep -Fq 'Database Patches run(s) succeeded' <<<"$out" \
     || fail "scenario 10: expected the success message, got: $out"
+
+# --- BJJ-484: REQUIRED_JOB_NAME. A run can conclude "success" while the job
+#     that patches this backend's database was skipped (preview push ran only
+#     apply-preview). The jobs fixtures below are raw GitHub payloads; the fake
+#     gh runs the script's own --jq over them with real jq.
+REQUIRED_JOB="apply production database patches"
+
+jobs_json() {
+    # jobs_json <name:conclusion>...  ->  {"jobs":[{"name":..,"conclusion":..},..]}
+    local entry first=true out='{"jobs":['
+    for entry in "$@"; do
+        [[ "$first" == true ]] || out+=','
+        first=false
+        out+="{\"name\":\"${entry%%:*}\",\"conclusion\":\"${entry#*:}\",\"status\":\"completed\"}"
+    done
+    printf '%s]}' "$out"
+}
+
+# --- Scenario 11: required job succeeded -> exit 0 (the permitting direction).
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="601 completed success"
+export RUN_STATUS_SEQUENCE_601="completed:success"
+export JOBS_JSON_601
+JOBS_JSON_601="$(jobs_json "apply production database patches:success")"
+out="$(run_script)" || fail "scenario 11: expected exit 0 when the required job succeeded: $out"
+grep -Fq 'Database Patches run(s) succeeded' <<<"$out" \
+    || fail "scenario 11: expected the success message, got: $out"
+
+# --- Scenario 12: run success but required job skipped (the BJJ-484 incident
+#     shape: preview push, apply-production skipped) -> exit 1.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="602 completed success"
+export RUN_STATUS_SEQUENCE_602="completed:success"
+export JOBS_JSON_602
+JOBS_JSON_602="$(jobs_json "apply production database patches:skipped")"
+set +e
+out="$(run_script 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 12: expected exit 1 for a skipped required job, got exit $status: $out"
+grep -Fq '::error::Database Patches run 602' <<<"$out" \
+    || fail "scenario 12: expected an error naming run 602, got: $out"
+grep -Fq "job 'apply production database patches' is skipped" <<<"$out" \
+    || fail "scenario 12: expected the job name and skipped conclusion, got: $out"
+grep -Fq 'https://github.com/acme/widgets/actions/runs/602' <<<"$out" \
+    || fail "scenario 12: expected the run URL, got: $out"
+grep -Fq 'did not patch the database this backend uses' <<<"$out" \
+    || fail "scenario 12: expected the wrong-database explanation, got: $out"
+if grep -Fq 'Database Patches run(s) succeeded' <<<"$out"; then
+    fail "scenario 12: a skipped required job must not print the success message: $out"
+fi
+
+# --- Scenario 13: run success but required job absent from the jobs list.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="603 completed success"
+export RUN_STATUS_SEQUENCE_603="completed:success"
+export JOBS_JSON_603
+JOBS_JSON_603="$(jobs_json "apply dev database patches:success")"
+set +e
+out="$(run_script 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 13: expected exit 1 for a missing required job, got exit $status: $out"
+grep -Fq "job 'apply production database patches' is missing" <<<"$out" \
+    || fail "scenario 13: expected the job to be reported missing, got: $out"
+
+# --- Scenario 13b: a different job succeeded but the required one was skipped
+#     (a preview push: apply-preview success, apply-production skipped) -> exit 1.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="604 completed success"
+export RUN_STATUS_SEQUENCE_604="completed:success"
+export JOBS_JSON_604
+JOBS_JSON_604="$(jobs_json "apply preview database patches:success" "apply production database patches:skipped")"
+set +e
+out="$(run_script 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 13b: expected exit 1 when only a different job succeeded, got exit $status: $out"
+grep -Fq "job 'apply production database patches' is skipped" <<<"$out" \
+    || fail "scenario 13b: expected the skipped required job, got: $out"
+
+# --- Scenario 13c: required job failed -> exit 1 naming the conclusion.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="605 completed success"
+export RUN_STATUS_SEQUENCE_605="completed:success"
+export JOBS_JSON_605
+JOBS_JSON_605="$(jobs_json "apply production database patches:failure")"
+set +e
+out="$(run_script 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 13c: expected exit 1 for a failed required job, got exit $status: $out"
+grep -Fq "is failure" <<<"$out" || fail "scenario 13c: expected the failure conclusion, got: $out"
+
+# --- Scenario 13d: two runs for the commit; the second one skipped the
+#     required job -> exit 1 (every run is checked, not just the first).
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY=$'606 completed success\n607 completed success'
+export RUN_STATUS_SEQUENCE_606="completed:success"
+export RUN_STATUS_SEQUENCE_607="completed:success"
+export JOBS_JSON_606 JOBS_JSON_607
+JOBS_JSON_606="$(jobs_json "apply production database patches:success")"
+JOBS_JSON_607="$(jobs_json "apply production database patches:skipped")"
+set +e
+out="$(run_script 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 13d: expected exit 1 when any run skipped the required job, got exit $status: $out"
+grep -Fq '::error::Database Patches run 607' <<<"$out" \
+    || fail "scenario 13d: expected the error to name run 607, got: $out"
+
+# --- Scenario 14: a transient jobs lookup failure is retried, not read as
+#     "missing" -> exit 0, after at least 3 lookups (2 failures + 1 success).
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="608 completed success"
+export RUN_STATUS_SEQUENCE_608="completed:success"
+export JOBS_JSON_608 JOBS_FAIL_UNTIL_608=2
+JOBS_JSON_608="$(jobs_json "apply production database patches:success")"
+scenario14_calls_dir="$(mktemp -d "$STATE_DIR/calls.XXXXXX")"
+out="$(run_script "$scenario14_calls_dir")" || fail "scenario 14: expected exit 0 once the transient jobs lookup failures clear: $out"
+grep -Fq 'Database Patches run(s) succeeded' <<<"$out" \
+    || fail "scenario 14: expected the success message, got: $out"
+call_count="$(cat "$scenario14_calls_dir/jobs_calls_608")"
+(( call_count == 3 )) || fail "scenario 14: expected exactly 3 jobs lookups (2 transient failures + 1 success), got $call_count"
+
+# --- Scenario 15: the jobs lookup never recovers -> fail closed with a
+#     distinct error after 5 attempts, never a "missing"/"skipped" pass.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="609 completed success"
+export RUN_STATUS_SEQUENCE_609="completed:success"
+export JOBS_FAIL_ALWAYS_609=1
+scenario15_calls_dir="$(mktemp -d "$STATE_DIR/calls.XXXXXX")"
+set +e
+out="$(run_script "$scenario15_calls_dir" 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 15: expected exit 1 when jobs can never be read, got exit $status: $out"
+grep -Fq 'could not read jobs of run 609' <<<"$out" \
+    || fail "scenario 15: expected the 'could not read jobs' error, got: $out"
+call_count="$(cat "$scenario15_calls_dir/jobs_calls_609")"
+(( call_count == 5 )) || fail "scenario 15: expected exactly 5 jobs lookup attempts, got $call_count"
+
+# --- Scenario 16: REQUIRED_JOB_NAME unset -> the jobs endpoint is never
+#     called and a success run passes exactly as before (no fixture is
+#     provided, so any jobs call would exit 98 and fail the gate).
+reset_scenario_env
+RUNS_PRIMARY="610 completed success"
+export RUN_STATUS_SEQUENCE_610="completed:success"
+scenario16_calls_dir="$(mktemp -d "$STATE_DIR/calls.XXXXXX")"
+out="$(run_script "$scenario16_calls_dir")" || fail "scenario 16: expected exit 0 with REQUIRED_JOB_NAME unset: $out"
+grep -Fq 'Database Patches run(s) succeeded' <<<"$out" \
+    || fail "scenario 16: expected the success message, got: $out"
+[[ ! -e "$scenario16_calls_dir/jobs_calls_610" ]] \
+    || fail "scenario 16: the jobs endpoint must not be called when REQUIRED_JOB_NAME is unset"
+
+# --- Scenario 17: REQUIRED_JOB_NAME set but no run exists and none is
+#     expected (no prisma changes) -> still proceeds; the job check is not
+#     added to the no-run path.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+CHANGED_FILES=$'backend/src/foo.ts'
+RUNS_PRIMARY=""
+RUNS_FALLBACK=""
+out="$(run_script)" || fail "scenario 17: expected exit 0 on the no-run path with REQUIRED_JOB_NAME set: $out"
+grep -Fq "No Database Patches run for $HEAD_SHA_FIXTURE" <<<"$out" \
+    || fail "scenario 17: expected the no-run-expected message, got: $out"
+
+# --- Scenario 18: a failed run is still reported by the run-level check
+#     before any job lookup, even with REQUIRED_JOB_NAME set.
+reset_scenario_env
+export REQUIRED_JOB_NAME="$REQUIRED_JOB"
+RUNS_PRIMARY="611 completed failure"
+export RUN_STATUS_SEQUENCE_611="completed:failure"
+set +e
+out="$(run_script 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 1 ]] || fail "scenario 18: expected exit 1 for a failed run, got exit $status: $out"
+grep -Fq '::error::Database Patches run 611 concluded failure' <<<"$out" \
+    || fail "scenario 18: expected the run-level failure message, got: $out"
 
 echo "wait-database-patches unit tests passed"

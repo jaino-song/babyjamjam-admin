@@ -22,7 +22,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: database-patches-${{ inputs.target || github.ref_name }}
+  # Keyed by the DATABASE being written, not the branch (BJJ-484): a preview
+  # push, a main push and a production dispatch all write the production DB,
+  # so they must serialize in one group. `inputs.target` is empty on push.
+  group: >-
+    ${{
+      ((github.event_name == 'push' && github.ref_name == 'dev') || inputs.target == 'dev') && 'database-patches-dev' ||
+      (inputs.target == 'preview' && 'database-patches-preview-db') ||
+      'database-patches-production'
+    }}
   cancel-in-progress: false
 
 jobs:
@@ -489,9 +497,10 @@ jobs:
 
   apply-preview:
     name: apply preview database patches
-    if: >-
-      (github.event_name == 'push' && github.ref_name == 'preview') ||
-      (github.event_name == 'workflow_dispatch' && inputs.target == 'preview')
+    # BJJ-484: no backend uses PREVIEW_DATABASE_URL; the preview backend uses the
+    # production DB (patched by apply-production on a preview push). This job is
+    # kept for manual dispatch only.
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'preview'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: preview
@@ -1121,6 +1130,7 @@ jobs:
     if: >-
       always() &&
       (
+        (github.event_name == 'push' && github.ref_name == 'preview') ||
         (github.event_name == 'push' && github.ref_name == 'main') ||
         (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
       )

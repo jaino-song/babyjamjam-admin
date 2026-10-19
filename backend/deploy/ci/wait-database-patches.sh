@@ -16,6 +16,13 @@
 #   APPEAR_TIMEOUT_SECONDS      seconds to wait for a run to appear (default 600)
 #   COMPLETE_TIMEOUT_SECONDS    seconds to wait for the run to finish (default 7200)
 #   GH_BIN                      `gh` binary to invoke (default "gh"; override in tests)
+#   REQUIRED_JOB_NAME           optional; exact name of a job that must have
+#                                concluded "success" in every run found. A run
+#                                whose conclusion is "success" because that job
+#                                was skipped did not patch the database the
+#                                backend uses (BJJ-484), so a skipped, missing or
+#                                failed required job fails the gate. Unset or
+#                                empty keeps the run-level check only.
 
 set -euo pipefail
 
@@ -23,6 +30,8 @@ readonly GH_BIN="${GH_BIN:-gh}"
 readonly POLL_SECONDS="${POLL_SECONDS:-30}"
 readonly APPEAR_TIMEOUT_SECONDS="${APPEAR_TIMEOUT_SECONDS:-600}"
 readonly COMPLETE_TIMEOUT_SECONDS="${COMPLETE_TIMEOUT_SECONDS:-7200}"
+readonly REQUIRED_JOB_NAME="${REQUIRED_JOB_NAME:-}"
+readonly JOBS_LOOKUP_ATTEMPTS=5
 
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${HEAD_SHA:?HEAD_SHA is required}"
@@ -93,6 +102,49 @@ refresh_run_status() {
         --jq '"\(.status) \(.conclusion // "-")"'
 }
 
+# Prints one line "<job name><TAB><conclusion>" per job of run $1 ("-" when a
+# job has no conclusion yet). Retries a transient API failure, spaced by
+# POLL_SECONDS, and returns non-zero only after JOBS_LOOKUP_ATTEMPTS failures.
+lookup_jobs() {
+    local id="$1"
+    local attempt out
+    for ((attempt = 1; attempt <= JOBS_LOOKUP_ATTEMPTS; attempt++)); do
+        if out="$("$GH_BIN" api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" \
+            --jq '.jobs[] | "\(.name)\t\(.conclusion // "-")"' 2>/dev/null)"; then
+            printf '%s' "$out"
+            return 0
+        fi
+        if [[ "$attempt" -lt "$JOBS_LOOKUP_ATTEMPTS" ]]; then
+            sleep "$POLL_SECONDS"
+        fi
+    done
+    return 1
+}
+
+# Exits 1 unless run $1 has a job named REQUIRED_JOB_NAME that concluded
+# "success". A skipped job is a failure: the run-level conclusion is "success"
+# even when the job that patches this backend's database never ran.
+require_job_succeeded() {
+    local id="$1"
+    local jobs name conclusion observed="missing"
+
+    if ! jobs="$(lookup_jobs "$id")"; then
+        error "could not read jobs of run $id ($(run_url "$id")) after $JOBS_LOOKUP_ATTEMPTS attempts; cannot confirm job '$REQUIRED_JOB_NAME' succeeded. Re-run the failed jobs of the Backend CI workflow."
+        exit 1
+    fi
+
+    while IFS=$'\t' read -r name conclusion; do
+        [[ "$name" == "$REQUIRED_JOB_NAME" ]] || continue
+        if [[ "$conclusion" == success ]]; then
+            return 0
+        fi
+        observed="$conclusion"
+    done <<<"$jobs"
+
+    error "Database Patches run $id ($(run_url "$id")): job '$REQUIRED_JOB_NAME' is $observed, not success. The run did not patch the database this backend uses; fix or re-dispatch Database Patches for the target database, then re-run the failed jobs of the Backend CI workflow."
+    exit 1
+}
+
 # Polls until every run in $1 (lines "<id> <status> <conclusion>") reaches
 # status "completed", then exits 0 if all concluded "success", else exits 1.
 wait_for_runs_to_complete() {
@@ -157,6 +209,12 @@ wait_for_runs_to_complete() {
             error "Database Patches run $id concluded $conclusion; fix or approve the Database Patches run, then re-run the failed jobs of the Backend CI workflow."
         done
         exit 1
+    fi
+
+    if [[ -n "$REQUIRED_JOB_NAME" ]]; then
+        for id in "${ids[@]}"; do
+            require_job_succeeded "$id"
+        done
     fi
 
     echo "Database Patches run(s) succeeded for $HEAD_SHA."
