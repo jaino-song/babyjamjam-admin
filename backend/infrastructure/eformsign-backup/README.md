@@ -79,3 +79,95 @@ provider documents and deployed host filesystem validation are outside this unit
 The hermetic tests use synthetic bytes and private temporary directories under
 the test user's home because `/workspace` on the implementation host has a
 world-writable ancestor; each test removes only its own generated directory.
+
+# Local backup worker (BJJ-455)
+
+The worker copies the BJJ-454 export snapshot into a local archive and keeps a
+checksummed ledger of what it did. It has no database, no Nest context and no
+environment variables: one JSON configuration file, one token file, two
+directories. It is a command line tool; scheduling and the real host paths are
+BJJ-457, not this unit.
+
+## Running it
+
+Every command except `inspect` must run while the process holds
+`<control>/worker.lock`. Use `flock -F` so the lock belongs to the node process
+itself, which the worker verifies against `/proc/locks`:
+
+    cd backend && NODE_PATH=. flock -n -F -E 75 <control>/worker.lock \
+      node -r ts-node/register/transpile-only scripts/eformsign-backup-worker.ts \
+      run --config <abs path to worker.json>
+
+`flock` exits 75 when another worker holds the lock; treat that as "skipped,
+overlapping run", not as a failure.
+
+| command | what it does |
+| --- | --- |
+| `init` | first install only: archive marker, control marker, first ledger record |
+| `run [--scheduled-for <ISO+offset>]` | finishes interrupted work, then one snapshot: download, publish, verify, manifests, completion |
+| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error` |
+| `recover --installation-id <id>` | rebuilds a damaged ledger from the archive; see below |
+| `inspect` | read-only report of the ledger; needs no lock |
+
+With `"enabled": false` the commands `run`, `verify` and `recover` print
+`{"event":"disabled"}` and do nothing (no lock, no ledger, no network).
+
+stdout is one JSON object per line with keys from `event`, `runId`,
+`reasonCode`, `counts`. stderr is a reason code and nothing else, so no token, path
+or provider message reaches a log. Exit codes: 0 ok, 69 state or archive
+(`not-initialized`, `recovery-required`, `archive-*`, `ledger-*`), 70 internal,
+74 control directory (`control-unavailable`, `control-space`), 75 lock held
+elsewhere (from `flock`), 78 configuration (`config-invalid`,
+`token-file-invalid`, `lock-not-held`, `unsupported-filesystem`).
+
+A run ends as `partial` at best, because the archive can prove its own bytes but
+not that nothing is missing. `blocked` means a control problem such as an
+unavailable archive; `failed` means no usable snapshot. Reason codes in the run
+record say why.
+
+## Crash recovery
+
+`run` always starts by finishing what a killed run left behind: an artifact in
+`transferring` or `verifying` is re-checked against the archive (found with the
+right hash: verified; damaged: renamed aside and `integrity_error`; missing:
+queued again), and every unfinished run gets a late `run_finished` with
+`crashed`. Nothing is deleted at any point; damaged files get a `.corrupt-<runId>`
+suffix.
+
+## Restore from the archive alone
+
+    cd backend && NODE_PATH=. node -r ts-node/register/transpile-only \
+      scripts/eformsign-backup-restore.ts --archive <abs> --company <id> \
+      (--latest | --snapshot <id>) [--allow-incomplete] --out <abs>
+
+Restore reads only the archive: not the control directory, not the ledger, not
+the database. The completion with the highest sequence in its file name is the
+latest one; `latest.json` and file times are ignored. Two completions that cannot
+both be right (`restore-conflict`, exit 65), a tampered or missing artifact or
+manifest (`artifact-integrity`, exit 65) stop the restore before anything is
+written. `--out` must be a new or empty real directory outside the archive. The
+report `restore-report.json` says `unverified-archive` (or `incomplete-archive`
+when restored from manifests with `--allow-incomplete`), lists the gaps recorded
+in the completion and the completions that were set aside; it never says the
+archive is complete.
+
+## When the ledger says `recovery-required`
+
+`run` and `verify` refuse (exit 69) when the ledger is damaged, the control
+marker does not match the ledger, or an archive marker exists with no
+installation. Nothing repairs this on its own. To decide:
+
+1. `inspect` shows the status and the reasons without changing anything.
+2. Read `<archive>/.bjj-backup/installation.json`: its `installationId` is the
+   identity of the archive you mean to keep. If the archive was replaced or
+   restored from another disk, stop: this is not a recovery, it is a new install.
+3. `recover --installation-id <that id>` refuses, changing nothing, unless the
+   archive root is the one that was installed, its marker names that id and this
+   archive, and the control marker (if any) agrees. It then moves the damaged
+   ledger aside as `ledger.quarantine-<runId>`, starts a new one that records the
+   highest sequence found in the archive (so a sequence is never reused) and the
+   gaps the completions already knew about, and re-hashes every artifact the
+   manifests name. Only artifacts that still hash correctly are recorded as
+   recovered; the command reports the rest as `unverified`.
+4. A control marker that exists but disagrees with the archive is never
+   overwritten. Move it aside by hand once you have decided the archive is right.
