@@ -89,12 +89,17 @@ describe("ExportClient base URL", () => {
 describe("ExportClient against a fake export server", () => {
     let server: FakeExportServer;
     let client: ExportClient;
+    let target: FakeExportServer; // a live second listener: a client that follows a redirect would reach it
+    let targetBase: string;
     beforeEach(async () => {
         server = new FakeExportServer();
+        target = new FakeExportServer();
+        target.handler = (_req, res) => sendJson(res, 200, SNAPSHOT);
+        targetBase = (await target.start()).replace("/internal/eformsign-backup/v1", "");
         const baseUrl = await server.start();
         client = new ExportClient({ baseUrl, token: TOKEN, companyId: "C001", requestTimeoutMs: 2000 });
     });
-    afterEach(async () => { await server.stop(); });
+    afterEach(async () => { await server.stop(); await target.stop(); });
 
     function dumpOf(error: unknown): string {
         return `${String(error)}\n${(error as Error).stack ?? ""}\n${JSON.stringify(error, Object.getOwnPropertyNames(error))}`;
@@ -149,11 +154,41 @@ describe("ExportClient against a fake export server", () => {
             });
             await expect(client.listCandidates(SNAPSHOT_ID, null)).rejects.toMatchObject({ reasonCode: "export-response-invalid" });
         });
-        it("should not follow a redirect with the token", async () => {
-            server.handler = (_req, res) => { res.writeHead(302, { Location: "http://127.0.0.1:1/steal" }); res.end(); };
-            const error = await client.getSnapshot(SNAPSHOT_ID).catch((e: unknown) => e);
-            expect(error).toBeInstanceOf(ExportFailure);
-            expect(server.requests).toHaveLength(1);
+        describe("redirects", () => {
+            const artifactRequest = { artifactIdentity: IDENTITY, sha256: "c".repeat(64), byteLength: 10 };
+            const routes: Array<[string, () => Promise<unknown>]> = [
+                ["snapshot creation", () => client.createSnapshot("run-key-redirect")],
+                ["snapshot read", () => client.getSnapshot(SNAPSHOT_ID)],
+                ["candidate listing", () => client.listCandidates(SNAPSHOT_ID, null)],
+                ["artifact download", () => client.openArtifact(SNAPSHOT_ID, artifactRequest)],
+            ];
+            it.each([302, 307, 308])("should not follow a %i redirect, on any route, and never send the token to the target", async status => {
+                for (const [name, call] of routes) {
+                    const before = server.requests.length;
+                    server.handler = (_req, res) => { res.writeHead(status, { Location: `${targetBase}/steal` }); res.end(); };
+                    const error = await call().catch((e: unknown) => e);
+                    // The redirect response itself must surface: a network error would also fail, but with status 0.
+                    expect({ route: name, isExportFailure: error instanceof ExportFailure }).toEqual({ route: name, isExportFailure: true });
+                    const failure = error as ExportFailure;
+                    expect({ route: name, httpStatus: failure.httpStatus, code: failure.code, retryable: failure.retryable })
+                        .toEqual({ route: name, httpStatus: status, code: "UNKNOWN_ERROR", retryable: false });
+                    expect(server.requests.length - before).toBe(1);
+                }
+                expect(target.requests).toHaveLength(0);
+                expect([...server.requests, ...target.requests].filter(r => r.url.includes("/steal"))).toHaveLength(0);
+                expect(target.requests.filter(r => r.headers["authorization"] !== undefined)).toHaveLength(0);
+            });
+            it("should not follow a redirect to another path on the same server", async () => {
+                server.handler = (req, res) => {
+                    if (req.url.endsWith("/steal")) { sendJson(res, 200, SNAPSHOT); return; }
+                    res.writeHead(302, { Location: "/internal/eformsign-backup/v1/steal" });
+                    res.end();
+                };
+                const error = await client.getSnapshot(SNAPSHOT_ID).catch((e: unknown) => e);
+                expect(error).toBeInstanceOf(ExportFailure);
+                expect(error).toMatchObject({ httpStatus: 302, code: "UNKNOWN_ERROR", retryable: false });
+                expect(server.requests).toHaveLength(1);
+            });
         });
     });
 
