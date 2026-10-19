@@ -7,9 +7,12 @@ on:
     paths:
       - 'mobile/**'
       - 'packages/shared/**'
+      - 'packages/service-record-ui/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - 'scripts/ci/**'
+      - '.github/workflows/ci-impact.yml'
       - '.github/workflows/mobile-ci.yml'
   # No paths filter on pull_request: this job is a REQUIRED check on dev,
   # so it must report on every PR — path-filtered required checks block
@@ -22,8 +25,15 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: type-check · lint · test · build
+  impact:
+    uses: ./.github/workflows/ci-impact.yml
+    with:
+      component: mobile
+
+  checks:
+    name: mobile application checks
+    needs: impact
+    if: needs.impact.outputs.mobile == 'true'
     timeout-minutes: 30
     runs-on: ubuntu-latest
 
@@ -105,6 +115,77 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: https://ci-build.invalid
         run: pnpm --filter ./mobile run build
 
+  verify:
+    name: type-check · lint · test · build
+    needs: [impact, checks]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Protected-base completion (FULL bootstrap requires success)
+        env:
+          IMPACT_MODE: gate
+          COMPONENT: mobile
+          IMPACT_RESULT: ${{ needs.impact.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          REPORTED_SELECTION: ${{ needs.impact.outputs.mobile }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const env = process.env;
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+          const exact = sha => {
+            if (!/^[0-9a-f]{40}$/.test(sha ?? '') || /^0+$/.test(sha)) throw new Error('Invalid exact event commit');
+            try { git('cat-file', '-e', `${sha}^{commit}`); }
+            catch { git('fetch', '--no-tags', 'origin', sha); }
+            if (git('rev-parse', '--verify', `${sha}^{commit}`).trim() !== sha) throw new Error('Unresolved event commit');
+            return sha;
+          };
+          const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
+          const compared = ['pull_request', 'merge_group'].includes(env.GITHUB_EVENT_NAME);
+          const base = compared ? exact(env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.base?.sha : event.merge_group?.base_sha) : null;
+          const head = compared ? exact(env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.head?.sha : event.merge_group?.head_sha) : exact(env.GITHUB_SHA);
+          const sha = exact(env.GITHUB_SHA);
+          const helper = 'scripts/ci/impact.mjs';
+          // A successful tree listing distinguishes absence from git/read failure.
+          const entries = base ? git('ls-tree', base, '--', helper).trim() : '';
+          if (entries) {
+            if (!/^100644 blob [0-9a-f]{40}\t/.test(entries)) throw new Error('Trusted helper is not a regular blob');
+            const directory = mkdtempSync(join(env.RUNNER_TEMP, 'protected-impact-'));
+            const executable = join(directory, 'impact.mjs');
+            writeFileSync(executable, git('show', `${base}:${helper}`), { mode: 0o600 });
+            // No candidate module path, imports, packages or fallback helpers are executed.
+            const artifact = join(directory, 'impact.json');
+            const proof = join(directory, 'completed');
+            execFileSync(process.execPath, [executable], { env: { ...env, IMPACT_ARTIFACT: artifact, IMPACT_COMPLETION_PROOF: proof }, stdio: 'inherit' });
+            if (env.IMPACT_MODE === 'gate') {
+              if (readFileSync(proof, 'utf8') !== 'protected-complete\n') throw new Error('Missing protected completion proof');
+            } else {
+              const routing = JSON.parse(readFileSync(artifact, 'utf8'));
+              if (routing.schemaVersion !== 1 || routing.candidate?.sha !== sha || routing.candidate?.base !== base || routing.candidate?.head !== head || !['backend', 'frontend', 'mobile'].every(app => typeof routing.selected?.[app] === 'boolean')) throw new Error('Missing/invalid protected routing artifact');
+              writeFileSync(env.IMPACT_ARTIFACT, JSON.stringify(routing, null, 2) + '\n');
+            }
+          } else {
+            // Workflow-owned bootstrap also handles push/manual: FULL only, never exemptions.
+            const reason = compared ? 'Protected base predates impact helper: bootstrap FULL' : `${env.GITHUB_EVENT_NAME}: FULL; no exemptions`;
+            const selected = { backend: true, frontend: true, mobile: true };
+            if (env.IMPACT_MODE === 'gate') {
+              if (!Object.hasOwn(selected, env.COMPONENT) || env.IMPACT_RESULT !== 'success' || env.REPORTED_SELECTION !== 'true' || env.CHECKS_RESULT !== 'success') throw new Error('FULL completion requires successful selected checks and impact');
+            } else {
+              const routing = { schemaVersion: 1, candidate: { event: env.GITHUB_EVENT_NAME, sha, base, head, mergeBase: null }, comparison: { kind: 'full', reason }, paths: [], categories: { ...selected, shared: true, native: true, infra: true, docs: false, dependencies: true, config: true, uncertain: true }, selected, reasons: [reason], qa: { status: 'assessment-required', reasons: ['Full/unknown impact requires Main browser-impact assessment'] } };
+              writeFileSync(env.IMPACT_ARTIFACT, JSON.stringify(routing, null, 2) + '\n');
+              for (const app of Object.keys(selected)) appendFileSync(env.GITHUB_OUTPUT, `${app}=true\n`);
+              appendFileSync(env.GITHUB_STEP_SUMMARY, `## CI impact\n\n\`\`\`json\n${JSON.stringify(routing, null, 2)}\n\`\`\`\n`);
+            }
+          }
+          NODE
+
   # Advisory on PRs: runs the real-backend suite on every pull request (and on
   # manual dispatch), reporting pass/fail as a signal. It is intentionally NOT
   # marked a required check in branch protection, so a red run does not block
@@ -114,11 +195,12 @@ jobs:
   e2e:
     name: playwright e2e (advisory · real backend)
     if: >-
+      needs.impact.outputs.mobile == 'true' && (
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
       github.event_name == 'merge_group' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/dev')
-    needs: verify
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev'))
+    needs: [verify, impact]
     # 90: the full 266-test suite against the real stack needs headroom —
     # two 60-minute runs were cancelled mid-suite before any report upload.
     timeout-minutes: 90
