@@ -255,6 +255,22 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(getSqlText(queryRaw.mock.calls[0][0])).not.toContain("needs_setup");
     });
 
+    it("reschedules only a pending job in the branch whose current send time is over a minute away by the database clock", async () => {
+        const target = new Date("2026-07-09T01:00:00.000Z");
+        queryRaw.mockResolvedValueOnce([{ id: "job-1" }]).mockResolvedValueOnce([]);
+
+        await expect(repository.rescheduleDebugPending("job-1", "branch-1", target)).resolves.toBe(true);
+        await expect(repository.rescheduleDebugPending("job-1", "branch-1", target)).resolves.toBe(false);
+
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        const sqlText = getSqlText(query);
+        expect(sqlText).toContain("status = 'pending'");
+        expect(sqlText).toContain("scheduled_for > clock_timestamp() + interval '1 minute'");
+        expect(sqlText).toContain("next_attempt_at = NULL");
+        expect(sqlText).toContain("RETURNING id");
+        expect(query.values).toEqual(expect.arrayContaining(["job-1", "branch-1", target]));
+    });
+
     it("does not revive or duplicate needs_setup on repeated same-key resync without a source change", async () => {
         const waiting = createRow({ status: "needs_setup", cancelReason: "필수 정보 누락 (name)" });
         messageTriggerJobModel.findUnique.mockImplementation(async () => waiting);

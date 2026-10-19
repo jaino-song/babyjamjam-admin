@@ -2088,6 +2088,115 @@ describe("MessageTriggerService", () => {
         expect(failure.getResponse()).toMatchObject({ code: "REQUEST_CONFLICT" });
     });
 
+    describe("rescheduleJobForDebug", () => {
+        const future = () => new Date(Date.now() + 5 * 60 * 1000);
+        const rescheduleFixture = (jobOverrides: Parameters<typeof createJob>[0] = {}) => {
+            const fx = createService();
+            const job = createJob({ id: "job-1", status: "pending", scheduledFor: new Date("2099-06-01T00:00:00.000Z"), ...jobOverrides });
+            const jobRepository = Object.assign(fx.jobRepository, {
+                findByIdInBranch: jest.fn().mockResolvedValue(job),
+                rescheduleDebugPending: jest.fn().mockResolvedValue(true),
+            });
+            const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+            return { ...fx, job, jobRepository, warn };
+        };
+        afterEach(() => jest.restoreAllMocks());
+
+        it("moves a pending job in the caller's branch, logs once and returns the new time", async () => {
+            const { service, job, jobRepository, warn } = rescheduleFixture();
+            const target = future();
+
+            await expect(service.rescheduleJobForDebug(branchId, "job-1", target, "user-9")).resolves.toEqual({
+                id: "job-1",
+                status: "pending",
+                scheduledFor: target.toISOString(),
+            });
+            expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith(branchId, "job-1");
+            expect(jobRepository.rescheduleDebugPending).toHaveBeenCalledWith("job-1", branchId, target);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(warn).toHaveBeenCalledWith(
+                `[debug] message trigger job job-1 rescheduled ${job.scheduledFor.toISOString()} -> ${target.toISOString()} by user-9`,
+            );
+        });
+
+        it.each([
+            ["the past", () => new Date(Date.now() - 1000)],
+            ["now", () => new Date()],
+            ["30 seconds ahead", () => new Date(Date.now() + 30_000)],
+            ["exactly 60 seconds ahead", () => new Date(Date.now() + 60_000)],
+            ["an invalid date", () => new Date("nope")],
+        ])("rejects %s with 400 before touching the repository", async (_label, makeTime) => {
+            const { service, jobRepository, warn } = rescheduleFixture();
+
+            const failure = await service.rescheduleJobForDebug(branchId, "job-1", makeTime(), "user-9").catch((e) => e);
+
+            expect(failure).toBeInstanceOf(BadRequestException);
+            expect(jobRepository.findByIdInBranch).not.toHaveBeenCalled();
+            expect(jobRepository.rescheduleDebugPending).not.toHaveBeenCalled();
+            expect(warn).not.toHaveBeenCalled();
+        });
+
+        it("answers 404 when the job is not in the caller's branch", async () => {
+            const { service, jobRepository, warn } = rescheduleFixture();
+            jobRepository.findByIdInBranch.mockResolvedValue(null);
+
+            const failure = await service.rescheduleJobForDebug("other-branch", "job-1", future(), "user-9").catch((e) => e);
+
+            expect(failure).toBeInstanceOf(NotFoundException);
+            expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith("other-branch", "job-1");
+            expect(jobRepository.rescheduleDebugPending).not.toHaveBeenCalled();
+            expect(warn).not.toHaveBeenCalled();
+        });
+
+        it.each(["processing", "sent", "canceled", "failed", "needs_setup"] as const)(
+            "answers 409 for a %s job without updating it",
+            async (status) => {
+                const { service, jobRepository, warn } = rescheduleFixture({ status });
+
+                const failure = await service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9").catch((e) => e);
+
+                expect(failure).toBeInstanceOf(ConflictException);
+                expect(failure.getStatus()).toBe(409);
+                expect(jobRepository.rescheduleDebugPending).not.toHaveBeenCalled();
+                expect(warn).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each([
+            ["already due", () => new Date(Date.now() - 60_000)],
+            ["due in 30 seconds", () => new Date(Date.now() + 30_000)],
+            ["due in exactly 60 seconds", () => new Date(Date.now() + 60_000)],
+        ])("answers 409 with the too-soon message for a pending job that is %s, without updating it", async (_label, makeTime) => {
+            const { service, jobRepository, warn } = rescheduleFixture({ scheduledFor: makeTime() });
+
+            const failure = await service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9").catch((e) => e);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect(failure.getStatus()).toBe(409);
+            expect(failure.message).toContain("곧 발송될 예정");
+            expect(jobRepository.rescheduleDebugPending).not.toHaveBeenCalled();
+            expect(warn).not.toHaveBeenCalled();
+        });
+
+        it("moves a pending job that is just over a minute from due", async () => {
+            const { service, jobRepository } = rescheduleFixture({ scheduledFor: new Date(Date.now() + 61_000) });
+
+            await expect(service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9")).resolves.toMatchObject({ status: "pending" });
+            expect(jobRepository.rescheduleDebugPending).toHaveBeenCalledTimes(1);
+        });
+
+        it("answers 409 and does not log when the conditional update loses a race (count 0)", async () => {
+            const { service, jobRepository, warn } = rescheduleFixture();
+            jobRepository.rescheduleDebugPending.mockResolvedValue(false);
+
+            const failure = await service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9").catch((e) => e);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect(failure.getResponse()).toMatchObject({ code: "REQUEST_CONFLICT" });
+            expect(warn).not.toHaveBeenCalled();
+        });
+    });
+
     it("cancelJobByUser scopes the cancel to the caller's branch, so a job from another branch is refused", async () => {
         const { service, jobRepository } = createService();
         jobRepository.cancelPendingByUser.mockResolvedValueOnce(false);

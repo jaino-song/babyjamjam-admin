@@ -160,6 +160,12 @@ const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과"
 const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
 const USER_REQUESTED_CANCEL_REASON = "사용자가 발송을 취소함";
 const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없는 상태입니다";
+// A reschedule needs more than this much lead both before (current send time)
+// and after (new send time). The dispatcher's claim does not fence on
+// `scheduled_for`; the repository enforces the same minute in SQL.
+const RESCHEDULE_MIN_LEAD_MS = 60_000;
+const RESCHEDULE_JOB_CONFLICT_MESSAGE = "1분 넘게 남은 대기 중인 문자만 바꿀 수 있어요.";
+const RESCHEDULE_JOB_TOO_SOON_MESSAGE = "곧 발송될 예정이라 시간을 바꿀 수 없어요. 1분 넘게 남은 대기 중인 문자만 바꿀 수 있어요.";
 const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.";
 const RESEND_TARGET_CHANGED_REASON = "발송 대상 일정이 변경되어 재전송하지 않았습니다";
 const RESEND_NEWER_SIBLING_REASON = "새 예약 메시지가 있어 재전송하지 않았습니다";
@@ -1924,6 +1930,52 @@ export class MessageTriggerService {
             throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: CANCEL_JOB_CONFLICT_MESSAGE });
         }
         return { id, status: "canceled" };
+    }
+
+    /**
+     * Debug/testing tool (owner-only at the controller): move one pending
+     * trigger job to a new send time so automatic SMS behaviour can be
+     * exercised without waiting. The branch-scoped read tells 404 from 409 and
+     * supplies the old time for the log; the update itself is conditional on
+     * `pending` and on the current send time being over a minute away, so a
+     * claim that wins the race turns this into a 409.
+     */
+    async rescheduleJobForDebug(
+        branchId: string,
+        id: string,
+        scheduledFor: Date,
+        actorUserId: string,
+    ): Promise<{ id: string; status: "pending"; scheduledFor: string }> {
+        await this.ensureTriggerSchemaReady();
+        if (Number.isNaN(scheduledFor.getTime()) || scheduledFor.getTime() <= Date.now() + RESCHEDULE_MIN_LEAD_MS) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/scheduledFor",
+                code: "INVALID_VALUE",
+                detail: "발송 시각은 지금부터 1분 넘게 이후여야 합니다.",
+                location: "body",
+            }));
+        }
+        const job = await this.jobRepository.findByIdInBranch(branchId, id);
+        if (!job) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        if (job.status !== "pending") {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_CONFLICT_MESSAGE });
+        }
+        if (job.scheduledFor.getTime() <= Date.now() + RESCHEDULE_MIN_LEAD_MS) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_TOO_SOON_MESSAGE });
+        }
+        // The repository re-checks this against the database clock in the same
+        // statement; this read only gives a clearer error.
+        const moved = await this.jobRepository.rescheduleDebugPending(id, branchId, scheduledFor);
+        if (!moved) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESCHEDULE_JOB_CONFLICT_MESSAGE });
+        }
+        const newIso = scheduledFor.toISOString();
+        this.logger.warn(
+            `[debug] message trigger job ${id} rescheduled ${job.scheduledFor.toISOString()} -> ${newIso} by ${actorUserId}`,
+        );
+        return { id, status: "pending", scheduledFor: newIso };
     }
 
     async readClientAutomationSource(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
