@@ -1652,15 +1652,32 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async rescheduleDebugPending(id: string, branchId: string, scheduledFor: Date): Promise<boolean> {
         // Conditional on `pending` so it cannot race a claim (a claimed row is
-        // `processing`). `nextAttemptAt` is cleared: due selection treats
-        // `null` as "no retry delay" and otherwise requires `nextAttemptAt <= now`,
-        // so a stale retry delay would keep the moved job from being picked up
-        // at the new `scheduledFor`.
-        const result = await this.prisma.message_trigger_job.updateMany({
-            where: { ...ordinaryAutomationJobWhere(), id, branchId, status: "pending" },
-            data: { scheduledFor, nextAttemptAt: null },
-        });
-        return result.count === 1;
+        // `processing`), and on the CURRENT `scheduled_for` being more than one
+        // minute away by the database clock. The dispatcher's claim fences only
+        // on status, not on `scheduled_for`: it selects due jobs, and if we moved
+        // a selected job before its claim ran, the claim would still succeed and
+        // preparation would then see the schedule mismatch as `lost`, leaving the
+        // job `processing`. A job more than a minute from due cannot be in a
+        // dispatcher selection, so the guard has to live in this one statement
+        // (`updateMany` cannot express `clock_timestamp()`). Keep the one-minute
+        // lead in step with RESCHEDULE_MIN_LEAD_MS in the service.
+        //
+        // `next_attempt_at` is cleared: due selection treats `null` as "no retry
+        // delay" and otherwise requires `next_attempt_at <= now`, so a stale retry
+        // delay would keep the moved job from being picked up at the new time.
+        const moved = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job"
+            SET scheduled_for = ${scheduledFor}::timestamptz,
+                next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${id}
+              AND branch_id = ${branchId}::uuid
+              AND status = 'pending'
+              AND scheduled_for > clock_timestamp() + interval '1 minute'
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+            RETURNING id
+        `);
+        return moved.length === 1;
     }
 
     private toCreate(job: MessageTriggerJobEntity) {

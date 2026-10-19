@@ -2122,6 +2122,8 @@ describe("MessageTriggerService", () => {
         it.each([
             ["the past", () => new Date(Date.now() - 1000)],
             ["now", () => new Date()],
+            ["30 seconds ahead", () => new Date(Date.now() + 30_000)],
+            ["exactly 60 seconds ahead", () => new Date(Date.now() + 60_000)],
             ["an invalid date", () => new Date("nope")],
         ])("rejects %s with 400 before touching the repository", async (_label, makeTime) => {
             const { service, jobRepository, warn } = rescheduleFixture();
@@ -2159,6 +2161,29 @@ describe("MessageTriggerService", () => {
                 expect(warn).not.toHaveBeenCalled();
             },
         );
+
+        it.each([
+            ["already due", () => new Date(Date.now() - 60_000)],
+            ["due in 30 seconds", () => new Date(Date.now() + 30_000)],
+            ["due in exactly 60 seconds", () => new Date(Date.now() + 60_000)],
+        ])("answers 409 with the too-soon message for a pending job that is %s, without updating it", async (_label, makeTime) => {
+            const { service, jobRepository, warn } = rescheduleFixture({ scheduledFor: makeTime() });
+
+            const failure = await service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9").catch((e) => e);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect(failure.getStatus()).toBe(409);
+            expect(failure.message).toContain("곧 발송될 예정");
+            expect(jobRepository.rescheduleDebugPending).not.toHaveBeenCalled();
+            expect(warn).not.toHaveBeenCalled();
+        });
+
+        it("moves a pending job that is just over a minute from due", async () => {
+            const { service, jobRepository } = rescheduleFixture({ scheduledFor: new Date(Date.now() + 61_000) });
+
+            await expect(service.rescheduleJobForDebug(branchId, "job-1", future(), "user-9")).resolves.toMatchObject({ status: "pending" });
+            expect(jobRepository.rescheduleDebugPending).toHaveBeenCalledTimes(1);
+        });
 
         it("answers 409 and does not log when the conditional update loses a race (count 0)", async () => {
             const { service, jobRepository, warn } = rescheduleFixture();
