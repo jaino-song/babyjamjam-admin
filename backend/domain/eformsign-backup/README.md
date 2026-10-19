@@ -33,3 +33,19 @@ Persisted assessment is deliberately a precommit candidate with observedScan=inc
 Provider request list `type=01/03/04` and returned `status_type` are different fields. Existing internal treatment of 04 is preserved; vendor list enum semantics and company-wide visibility remain unverified. Repeated ID sets prove neither an atomic provider snapshot nor backup durability.
 
 Rollback of a future activated version means removing the writer binding and returning to the prior collector code while retaining the additive ledger tables and evidence. Do not drop ledger data as an application rollback. Migration replay, constraints, timeout/rollback, crash recovery, forward reactivation and rollback must be verified on an authorized disposable PostgreSQL/shadow environment before phase close. Source-only tests are not those DB gates.
+
+## Worker domain rules (BJJ-455)
+
+`worker/` holds the pure rules of the local backup worker: the ledger records and
+their reducer, the destination state machine, the snapshot-status judgement, the
+archive paths, manifests and completions, the restore selection and the closed set
+of reason codes. It imports nothing but `node:crypto`, `zod`, `source-evidence` and the export
+constants. The facts that matter when reading a restore report:
+
+- A completion is selected by the sequence in its file name and is valid only when
+  name and content agree; two valid completions that disagree are a conflict and
+  select nothing.
+- Coverage is always `unverified` (or `known_gap` once a document is known to be
+  unrecoverable): the archive never claims to be complete.
+- A document appears in a completion only when every artifact of its manifest was
+  verified in the archive.
