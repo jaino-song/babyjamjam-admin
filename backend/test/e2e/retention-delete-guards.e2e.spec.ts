@@ -115,7 +115,12 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
         });
     };
 
+    // The tombstone cases below need CLIENT_TOMBSTONE_DELETE_ENABLED=true; it is read per
+    // delete, so setting it before the first delete and restoring it afterwards is enough.
+    const originalTombstoneSwitch = process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+
     beforeAll(async () => {
+        process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "true";
         await prisma.$connect();
         const created = await prisma.branch.create({
             data: { name: "Retention delete E2E", slug: unique("retention-branch") },
@@ -158,6 +163,8 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
     });
 
     afterAll(async () => {
+        if (originalTombstoneSwitch === undefined) delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+        else process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = originalTombstoneSwitch;
         await prisma.employee.deleteMany({ where: { branchId: branch.id } });
         await prisma.branch.delete({ where: { id: branch.id } });
         await prisma.$disconnect();
@@ -456,6 +463,20 @@ describeE2E("retention-sensitive destructive deletes (real PostgreSQL)", () => {
                 && days.length === 1;
             expect(deleteWon || insertWon).toBe(true);
         });
+    });
+
+    it("refuses a client with history and writes nothing while the switch is off", async () => {
+        const client = await createClient();
+        await createSchedule(client.id);
+        process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "false";
+        try {
+            await expect(clientRepository.delete(branch.id, client.id)).rejects.toBeInstanceOf(RetentionDeleteBlockedError);
+        } finally {
+            process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "true";
+        }
+
+        const row = await prisma.client.findUnique({ where: { id: client.id } });
+        expect(row?.deletedAt).toBeNull();
     });
 
     it("maps a branch-scoped missing client from the repository to 404", async () => {

@@ -117,7 +117,12 @@ describe("DeleteClientUsecase", () => {
             branchId,
         });
 
+        const originalSwitch = process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+
+        // The existing cases describe the switched-on tombstone behaviour; the
+        // "switch off" block below covers the default.
         beforeEach(() => {
+            process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "true";
             clearSchemaCapabilityCache();
 
             clientModel = { findFirst: jest.fn(), deleteMany: jest.fn(), updateMany: jest.fn() };
@@ -146,6 +151,49 @@ describe("DeleteClientUsecase", () => {
             usecase = new DeleteClientUsecase(repository);
 
             clientModel.findFirst.mockResolvedValue(clientRow());
+        });
+
+        afterEach(() => {
+            if (originalSwitch === undefined) delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+            else process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = originalSwitch;
+        });
+
+        describe("with CLIENT_TOMBSTONE_DELETE_ENABLED off", () => {
+            beforeEach(() => {
+                delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+            });
+
+            it.each([undefined, "", "false", "TRUE", "1"])(
+                "answers a coded 409 for a client with history and writes nothing (switch=%j)",
+                async (value) => {
+                    if (value === undefined) delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+                    else process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = value;
+                    transactionQueryRaw.mockReset()
+                        .mockResolvedValueOnce([{ id: clientId }])
+                        .mockResolvedValue([{ count: 3 }]);
+
+                    const error = await usecase.execute(branchId, clientId).catch((caught) => caught);
+
+                    expect(error).toBeInstanceOf(ConflictException);
+                    expect((error as ConflictException).getResponse()).toMatchObject({
+                        code: "CLIENT_RETENTION_BLOCKED",
+                        message: "연결된 운영 또는 이력 데이터가 있어 고객을 삭제할 수 없습니다.",
+                    });
+                    expect(clientModel.updateMany).not.toHaveBeenCalled();
+                    expect(clientModel.deleteMany).not.toHaveBeenCalled();
+                    expect(scheduleModel.updateMany).not.toHaveBeenCalled();
+                    expect(jobModel.updateMany).not.toHaveBeenCalled();
+                },
+            );
+
+            it("still hard deletes a client without history", async () => {
+                clientModel.deleteMany.mockResolvedValue({ count: 1 });
+
+                await expect(usecase.execute(branchId, clientId)).resolves.toBe("deleted");
+
+                expect(clientModel.deleteMany).toHaveBeenCalledWith({ where: { id: clientId, branchId } });
+                expect(clientModel.updateMany).not.toHaveBeenCalled();
+            });
         });
 
         it("deletes the client without touching its completed service-record case", async () => {

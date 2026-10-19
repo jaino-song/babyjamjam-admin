@@ -41,7 +41,12 @@ import {
     isAutomaticServiceStatusTransitionAllowed,
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
-import { ScopedDeleteNotFoundError } from "domain/errors/retention-delete-blocked.error";
+import {
+    CLIENT_RETENTION_BLOCKED,
+    CLIENT_RETENTION_BLOCKED_MESSAGE,
+    RetentionDeleteBlockedError,
+    ScopedDeleteNotFoundError,
+} from "domain/errors/retention-delete-blocked.error";
 import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 import type { Prisma } from "@prisma/client";
 
@@ -618,6 +623,12 @@ export class SbClientRepository implements IClientRepository {
             `;
 
             if (Number(dependencyRows[0]?.count ?? 0) > 0) {
+                // Fail closed: the tombstone is written only when the switch is exactly
+                // "true". Otherwise the row is left untouched and the delete is refused
+                // before any assignment is ended or any job is canceled.
+                if (!this.isTombstoneDeleteEnabled()) {
+                    throw new RetentionDeleteBlockedError(CLIENT_RETENTION_BLOCKED, CLIENT_RETENTION_BLOCKED_MESSAGE);
+                }
                 await this.tombstoneLockedClient(transaction, branchid, id);
                 return "tombstoned";
             }
@@ -630,6 +641,18 @@ export class SbClientRepository implements IClientRepository {
             }
             return "deleted";
         });
+    }
+
+    /**
+     * CLIENT_TOMBSTONE_DELETE_ENABLED stays off until production main runs a build that
+     * reads `client.deleted_at`; an older build would revive the canceled jobs of a
+     * tombstoned client. Only the exact string "true" enables it. Read per call.
+     */
+    private isTombstoneDeleteEnabled(): boolean {
+        const raw = this.configService
+            ? this.configService.get<string>("CLIENT_TOMBSTONE_DELETE_ENABLED")
+            : process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+        return raw === "true";
     }
 
     /**
