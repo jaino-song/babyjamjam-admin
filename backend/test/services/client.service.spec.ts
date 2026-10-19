@@ -6502,81 +6502,6 @@ describe("ClientService", () => {
             }
         });
 
-        describe("rule 기록-09: a 예약 전 client cannot request a replacement", () => {
-            const expectRefusedWithoutWrites = async (): Promise<void> => {
-                await expect(service.requestReplacement(branchId, 1, 7)).rejects.toMatchObject({
-                    status: 400,
-                    response: {
-                        code: "VALIDATION_FAILED",
-                        errors: [{
-                            pointer: "/id",
-                            code: "INVALID_VALUE",
-                            detail: "예약 전 고객은 제공인력 교체를 요청할 수 없습니다",
-                        }],
-                    },
-                });
-                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
-                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
-                expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
-                expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
-                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-            };
-
-            it("refuses a stored pre_booking client that has both dates", async () => {
-                const client = createClientEntity();
-                Object.assign(client, { bookingConfirmedAt: null });
-                client.serviceStatus = "pre_booking";
-                findClientByIdUsecase.execute.mockResolvedValue(client);
-
-                await expectRefusedWithoutWrites();
-            });
-
-            it("refuses an unconfirmed stored waiting client with both dates", async () => {
-                const client = Object.assign(createClientEntity(), { bookingConfirmedAt: null, serviceStatus: "waiting" });
-                findClientByIdUsecase.execute.mockResolvedValue(client);
-                await expectRefusedWithoutWrites();
-            });
-
-            it("refuses a client without an end date (stored status null)", async () => {
-                const client = createClientEntity();
-                client.serviceStatus = null;
-                client.endDate = null;
-                findClientByIdUsecase.execute.mockResolvedValue(client);
-
-                await expectRefusedWithoutWrites();
-            });
-
-            it("decides on the locked re-read, not the preflight snapshot", async () => {
-                const preflight = createClientEntity();
-                preflight.serviceStatus = "waiting";
-                const locked = createClientEntity();
-                locked.serviceStatus = "pre_booking";
-                Object.assign(locked, { bookingConfirmedAt: null });
-                findClientByIdUsecase.execute.mockResolvedValue(preflight);
-                prismaService.client.findUnique.mockResolvedValue(locked);
-
-                await expectRefusedWithoutWrites();
-            });
-
-            it("still proceeds for a stored waiting client with both dates", async () => {
-                const client = createClientEntity();
-                client.serviceStatus = "waiting";
-                findClientByIdUsecase.execute.mockResolvedValue(client);
-                prismaService.employee_schedule.findFirst.mockResolvedValue(null);
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
-
-                await service.requestReplacement(branchId, 1, 7);
-
-                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
-                    where: { id: 1, branchId },
-                    data: { serviceStatus: "replacement_requested" },
-                });
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
-                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
-            });
-        });
-
         // Incident: a replacement completed at 2026-10-17T16:33Z (KST 2026-10-18 01:33)
         // was stored as 2026-10-17 because the UTC date of the instant was used.
         describe("handover date follows the Korean calendar day", () => {
@@ -6665,6 +6590,81 @@ describe("ClientService", () => {
                 } finally {
                     jest.useRealTimers();
                 }
+            });
+        });
+
+        describe("rule 기록-09: a 예약 전 client cannot request a replacement", () => {
+            const expectRefusedWithoutWrites = async (): Promise<void> => {
+                await expect(service.requestReplacement(branchId, 1, 7)).rejects.toMatchObject({
+                    status: 400,
+                    response: {
+                        code: "VALIDATION_FAILED",
+                        errors: [{
+                            pointer: "/id",
+                            code: "INVALID_VALUE",
+                            detail: "예약 전 고객은 제공인력 교체를 요청할 수 없습니다",
+                        }],
+                    },
+                });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            };
+
+            it("refuses a stored pre_booking client that has both dates", async () => {
+                const client = createClientEntity();
+                Object.assign(client, { bookingConfirmedAt: null });
+                client.serviceStatus = "pre_booking";
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+
+                await expectRefusedWithoutWrites();
+            });
+
+            it("refuses an unconfirmed stored waiting client with both dates", async () => {
+                const client = Object.assign(createClientEntity(), { bookingConfirmedAt: null, serviceStatus: "waiting" });
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                await expectRefusedWithoutWrites();
+            });
+
+            it("refuses a client without an end date (stored status null)", async () => {
+                const client = createClientEntity();
+                client.serviceStatus = null;
+                client.endDate = null;
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+
+                await expectRefusedWithoutWrites();
+            });
+
+            it("decides on the locked re-read, not the preflight snapshot", async () => {
+                const preflight = createClientEntity();
+                preflight.serviceStatus = "waiting";
+                const locked = createClientEntity();
+                locked.serviceStatus = "pre_booking";
+                Object.assign(locked, { bookingConfirmedAt: null });
+                findClientByIdUsecase.execute.mockResolvedValue(preflight);
+                prismaService.client.findUnique.mockResolvedValue(locked);
+
+                await expectRefusedWithoutWrites();
+            });
+
+            it("still proceeds for a stored waiting client with both dates", async () => {
+                const client = createClientEntity();
+                client.serviceStatus = "waiting";
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+
+                await service.requestReplacement(branchId, 1, 7);
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 1, branchId },
+                    data: { serviceStatus: "replacement_requested" },
+                });
+                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
         });
 
