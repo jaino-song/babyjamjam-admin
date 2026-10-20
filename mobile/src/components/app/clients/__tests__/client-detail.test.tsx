@@ -75,7 +75,8 @@ describe("customer message retry", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
   }
   it("confirms before retrying the numeric log id and closes the snapshot", async () => {
-    await openRecord("failed", { resentByLogId: null });
+    await openRecord("failed", { resentByLogId: null, retryBlockedByLogId: null });
+    expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
     await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
     expect(mockRetryHistory).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent("메시지를 다시 보낼까요?");
@@ -101,6 +102,17 @@ describe("customer message retry", () => {
     const retry = screen.getByRole("button", { name: "재발송" });
     expect(retry).toBeDisabled();
     await user.click(retry);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+    expect(mockResendJob).not.toHaveBeenCalled();
+  });
+  it.each([undefined, "checking", "exhausted"])("keeps a retry-blocked failure's normal label for %s lookup without retrying", async historyLookup => {
+    await openRecord("failed", { resentByLogId: null, retryBlockedByLogId: "902", variables: { historyLookup } });
+    expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+    expect(screen.getByText(historyLookup === "checking" ? "확인 중" : historyLookup === "exhausted" ? "확인 필요" : "발송 실패")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await userEvent.setup().click(retry);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockRetryHistory).not.toHaveBeenCalled();
     expect(mockResendJob).not.toHaveBeenCalled();

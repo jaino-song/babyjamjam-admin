@@ -67,9 +67,21 @@ describe("ClientMessageHistoryDetail", () => {
     expect(onRetry).not.toHaveBeenCalled();
   });
 
+  it("keeps a retry-blocked failure's normal badge and disables retry", () => {
+    const onRetry = jest.fn();
+    renderDetail({ isResent: false, isRetryBlocked: true, statusLabel: "발송 실패", statusTone: "burgundy" }, { canRetry: true, onRetry });
+    expect(screen.getByText("발송 실패")).toHaveClass("burgundy");
+    expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("allows retry for a plain failed row", () => {
     const onRetry = jest.fn();
-    renderDetail({ isResent: false, statusLabel: "발송 실패", statusTone: "burgundy" }, { canRetry: true, onRetry });
+    renderDetail({ isResent: false, isRetryBlocked: false, statusLabel: "발송 실패", statusTone: "burgundy" }, { canRetry: true, onRetry });
     const button = screen.getByRole("button", { name: "재발송" });
     expect(button).toBeEnabled();
     fireEvent.click(button);
