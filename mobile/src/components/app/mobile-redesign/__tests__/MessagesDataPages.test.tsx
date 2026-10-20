@@ -830,6 +830,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       ...sentRecord,
       id: 77,
       status: "failed" as const,
+      resentByLogId: null,
       errorMessage: "등록되지 않은 발신번호입니다.",
     };
     const mutateAsync = jest.fn().mockResolvedValue({ ...failedRecord, status: "pending" });
@@ -855,6 +856,33 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       description: "재발송 요청을 접수했어요",
       variant: "success",
     }));
+  });
+
+  it.each(["checking", "exhausted"])("shows a resent success badge in list and SlidingCard header despite %s lookup and never retries", async historyLookup => {
+    const user = userEvent.setup();
+    const mutateAsync = jest.fn();
+    mockUseRetryMessageHistory.mockReturnValue({ mutateAsync, isPending: false });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [{
+      ...sentRecord, id: 77, status: "failed", resentByLogId: 78,
+      variables: { historyLookup }, errorMessage: "등록되지 않은 발신번호입니다.",
+    }] });
+    const { container } = render(<MessagesHistoryPage />);
+    const badge = container.querySelector('[data-component$="_body_item_status"]');
+    expect(badge).toHaveTextContent("재발송됨");
+    expect(badge).not.toHaveTextContent("발송 실패");
+    expect(badge).toHaveClass("bg-status-success", "text-status-success-fg");
+    expect(badge?.querySelector("svg")).toHaveClass("lucide-circle-check");
+    await user.click(screen.getByRole("button", { name: /김문자/ }));
+    const header = container.querySelector('[data-component$="_detail-pane_header_status"]');
+    expect(header).toHaveTextContent("재발송됨");
+    expect(header).toHaveClass("bg-status-success", "text-status-success-fg");
+    expect(screen.queryByText(historyLookup === "checking" ? "확인 중" : "확인 필요")).not.toBeInTheDocument();
+    expect(screen.getByText("실패 사유")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 
   it("opens the desktop-equivalent message detail when a history row is selected", async () => {

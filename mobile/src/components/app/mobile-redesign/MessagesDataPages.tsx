@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  MESSAGE_RESENT_LABEL,
   getMessageHistoryDetailStatusLabel,
   MESSAGE_JOB_CANCEL_COPY,
   MESSAGE_JOB_RESEND_COPY,
@@ -567,9 +568,10 @@ function HistoryRow({
   onSelect: (record: MessageLogRecord) => void;
 }) {
   const normalized = normalizeMessageHistoryPresentation(record);
-  const meta = HISTORY_STATUS[normalized.status];
+  const displayStatus = normalized.isResent ? "sent" : normalized.status;
+  const meta = HISTORY_STATUS[displayStatus];
   const StatusIcon = meta.icon;
-  const variant = MESSAGE_LOG_STATUS_BADGE_VARIANT[normalized.status];
+  const variant = MESSAGE_LOG_STATUS_BADGE_VARIANT[displayStatus];
 
   return (
     <button
@@ -594,7 +596,7 @@ function HistoryRow({
         <div className="message-data-status-group" data-slot="status-group">
           <StatusBadge variant={variant} data-component={`${HISTORY_ROW_BASE}_status`}>
             <StatusIcon aria-hidden="true" />
-            {meta.label}
+            {normalized.isResent ? MESSAGE_RESENT_LABEL : meta.label}
           </StatusBadge>
         </div>
       </div>
@@ -757,6 +759,7 @@ export function MessagesHistoryPage() {
   };
 
   const handleRequestRetry = () => {
+    if (selectedRecord && normalizeMessageHistoryPresentation(selectedRecord).isResent) return;
     // A resend the server would refuse is disabled in the detail; never open
     // the confirm dialog for it.
     if (getResendableJobId(selectedRecord) !== null && selectedRecord?.resendBlockedBy) return;
@@ -828,7 +831,7 @@ export function MessagesHistoryPage() {
   };
 
   const handleConfirmRetry = async () => {
-    if (!retryTarget) return;
+    if (!retryTarget || normalizeMessageHistoryPresentation(retryTarget).isResent) return;
 
     const resendJobId = getResendableJobId(retryTarget);
     if (resendJobId !== null) {
@@ -1104,11 +1107,12 @@ export function MessagesHistoryPage() {
                       data-component={`${HISTORY_DETAIL_BASE}_content`}
                       showBackAction={false}
                       view={{
+                        isResent: normalizedSelectedRecord.isResent,
                         title: normalizedSelectedRecord.title,
                         templateLabel: normalizedSelectedRecord.templateLabel,
                         channelLabel: normalizedSelectedRecord.channelLabel,
-                        statusLabel: getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables }),
-                        statusTone: HISTORY_DETAIL_TONE[normalizedSelectedRecord.status],
+                        statusLabel: normalizedSelectedRecord.isResent ? MESSAGE_RESENT_LABEL : getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables }),
+                        statusTone: HISTORY_DETAIL_TONE[normalizedSelectedRecord.isResent ? "sent" : normalizedSelectedRecord.status],
                         sentAtLabel: formatMessageDateTimeCompact(normalizedSelectedRecord.sentAt),
                         recipientName: normalizedSelectedRecord.recipientName,
                         recipientPhone: normalizedSelectedRecord.recipientPhone,
@@ -1139,10 +1143,10 @@ export function MessagesHistoryPage() {
               detailHeaderTrailing={normalizedSelectedRecord ? (
                 <StatusPill
                   data-component={`${HISTORY_SLIDING_CARD_BASE}_stage_detail-pane_header_status`}
-                  variant={HISTORY_STATUS_PILL_VARIANT[normalizedSelectedRecord.status]}
+                  variant={HISTORY_STATUS_PILL_VARIANT[normalizedSelectedRecord.isResent ? "sent" : normalizedSelectedRecord.status]}
                   size="sm"
                 >
-                  {getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables })}
+                  {normalizedSelectedRecord.isResent ? MESSAGE_RESENT_LABEL : getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables })}
                 </StatusPill>
               ) : null}
             />

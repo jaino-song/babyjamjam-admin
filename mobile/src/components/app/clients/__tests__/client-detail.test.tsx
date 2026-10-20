@@ -75,7 +75,7 @@ describe("customer message retry", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
   }
   it("confirms before retrying the numeric log id and closes the snapshot", async () => {
-    await openRecord();
+    await openRecord("failed", { resentByLogId: null });
     await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
     expect(mockRetryHistory).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent("메시지를 다시 보낼까요?");
@@ -84,6 +84,26 @@ describe("customer message retry", () => {
     expect(mockUseRetryHistory).toHaveBeenCalledWith(client.id);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(toast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" });
+  });
+  it.each(["checking", "exhausted"])("replaces a resent failure badge in list and detail despite %s lookup", async historyLookup => {
+    const user = userEvent.setup();
+    render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
+      client={client} activeTab="message" notificationLogs={[{ ...row, resentByLogId: "902", variables: { historyLookup }, errorMessage: "발신번호 오류" }]}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+    const listRow = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+    expect(listRow).toHaveTextContent("재발송됨");
+    expect(listRow).not.toHaveTextContent("발송 실패");
+    expect(screen.getByText("재발송됨")).toHaveClass("green");
+    await user.click(listRow);
+    expect(screen.getByText("재발송됨")).toHaveClass("green");
+    expect(screen.queryByText(historyLookup === "checking" ? "확인 중" : "확인 필요")).not.toBeInTheDocument();
+    expect(screen.getByText("실패 사유")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+    expect(mockResendJob).not.toHaveBeenCalled();
   });
   it.each(["sent", "pending", "canceled", "needs_setup"])("does not retry %s logs", async status => {
     await openRecord(status);

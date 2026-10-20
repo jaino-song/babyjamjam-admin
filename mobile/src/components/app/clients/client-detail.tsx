@@ -40,6 +40,7 @@ import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  MESSAGE_RESENT_LABEL,
   MESSAGE_JOB_RESEND_COPY,
   normalizeApiError,
   getMessageHistoryDetailStatusLabel,
@@ -498,6 +499,7 @@ export type DetailTabId = "scheduleChange" | "basic" | "contracts" | "message" |
 
 export interface ClientNotificationLogRecord {
   id: number | string;
+  resentByLogId?: number | string | null;
   triggerJobId?: string | null;
   provider: string;
   templateKey: string;
@@ -627,8 +629,13 @@ function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNot
   });
 }
 
-function notificationStatusLabel(status: string): string {
-  switch (status) {
+function isResentNotification(log: ClientNotificationLogRecord): boolean {
+  return log.status === "failed" && log.resentByLogId != null;
+}
+
+function notificationStatusLabel(log: ClientNotificationLogRecord): string {
+  if (isResentNotification(log)) return MESSAGE_RESENT_LABEL;
+  switch (log.status) {
     case "failed":
       return MESSAGE_HISTORY_STATUS_LABELS.failed;
     case "pending":
@@ -640,7 +647,7 @@ function notificationStatusLabel(status: string): string {
     case "needs_setup":
       return MESSAGE_HISTORY_STATUS_LABELS.needs_setup;
     default:
-      return status || "-";
+      return log.status || "-";
   }
 }
 
@@ -778,7 +785,7 @@ export function ClientDetailContent({
     }
     : undefined;
   const handleConfirmMessageRetry = async () => {
-    if (!retryLog || !canManageBranchFeatures || isRetryingMessage) return;
+    if (!retryLog || isResentNotification(retryLog) || !canManageBranchFeatures || isRetryingMessage) return;
     const jobId = getResendableJobId(retryLog);
     if (jobId !== null) {
       if (retryLog.resendBlockedBy) return;
@@ -1687,11 +1694,12 @@ export function ClientDetailContent({
           <ClientMessageHistoryDetail
             data-component={`${dataComponent}_tab-panel_message_history-detail`}
             view={{
+              isResent: isResentNotification(selectedLog),
               title: notificationTitle(selectedLog),
               templateLabel: notificationTitle(selectedLog),
               channelLabel: notificationChannelLabel(selectedLog),
-              statusLabel: getMessageHistoryDetailStatusLabel(selectedLog),
-              statusTone: notificationStatusTone(selectedLog.status),
+              statusLabel: isResentNotification(selectedLog) ? MESSAGE_RESENT_LABEL : getMessageHistoryDetailStatusLabel(selectedLog),
+              statusTone: notificationStatusTone(isResentNotification(selectedLog) ? "sent" : selectedLog.status),
               sentAtLabel: formatNotificationTime(selectedLog),
               recipientName: selectedLog.recipientName?.trim() || client.name,
               recipientPhone: selectedLog.recipientPhone?.trim() || selectedLog.receiver?.trim() || "-",
@@ -1713,7 +1721,7 @@ export function ClientDetailContent({
             isRetrying={isRetryingMessage}
             retryBlock={retryBlock}
             canOpenOwnerAdmin={canOpenOwnerAdmin}
-            onRetry={() => { if (selectedLog && canRetryMessage && !retryBlock) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
+            onRetry={() => { if (selectedLog && !isResentNotification(selectedLog) && canRetryMessage && !retryBlock) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
           />
           </>
         ) : (
@@ -1748,7 +1756,7 @@ export function ClientDetailContent({
                   />
                 ) : null}
                 {displayNotificationLogs.map((log) => {
-                  const tone = notificationStatusTone(log.status);
+                  const tone = notificationStatusTone(isResentNotification(log) ? "sent" : log.status);
                   const channel = notificationChannelLabel(log);
                   return (
                     <DetailDocRow
@@ -1763,7 +1771,7 @@ export function ClientDetailContent({
                       }
                       title={`${channel} · ${notificationTitle(log)}`}
                       meta={formatNotificationTime(log)}
-                      badge={notificationStatusLabel(log.status)}
+                      badge={notificationStatusLabel(log)}
                       tone={tone}
                       onClick={() => setSelectedEntry({ key: detailKey, log })}
                     />

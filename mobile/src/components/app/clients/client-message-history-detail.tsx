@@ -20,6 +20,7 @@ export type MessageHistoryDetailTone =
   | "purple";
 
 export interface ClientMessageHistoryDetailView {
+  isResent?: boolean;
   title: string;
   templateLabel: string;
   channelLabel: string;
@@ -89,7 +90,7 @@ export function ClientMessageHistoryDetail({
       size="md"
       className="w-full"
       data-component={sub("retry-trigger")}
-      disabled={isRetrying || Boolean(retryBlock)}
+      disabled={view.isResent || isRetrying || Boolean(retryBlock)}
       aria-busy={isRetrying || undefined}
       onClick={onRetry}
     >
