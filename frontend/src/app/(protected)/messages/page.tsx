@@ -1,7 +1,5 @@
 "use client";
 import { canRetryFailedHistory, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
-
-
 import {
   cloneElement,
   isValidElement,
@@ -17,6 +15,7 @@ import { useSearchParams } from "next/navigation";
 import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_HISTORY_STATUS_LABELS,
+  MESSAGE_RESENT_LABEL,
   MESSAGE_JOB_CANCEL_COPY,
   MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
@@ -285,9 +284,10 @@ const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "s
 
 const TEMPLATE_SEND_FORM_ID = "messages-template-send-form-active";
 
-function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"]) {
+function getMessageHistoryListStatusMeta(record: MessageHistoryRecord) {
+  const status = record.isResent ? "sent" : record.status;
   return {
-    label: MESSAGE_HISTORY_STATUS_LABELS[status],
+    label: record.isResent ? MESSAGE_RESENT_LABEL : MESSAGE_HISTORY_STATUS_LABELS[status],
     variant: MESSAGE_LOG_STATUS_BADGE_VARIANT[status],
   };
 }
@@ -955,7 +955,7 @@ function MessageHistorySection() {
   const retryBlock = needsSetupJob ? selectedRecord?.resendBlock : undefined;
 
   const handleRetry = useCallback(async () => {
-    if (!selectedRecord || typeof selectedRecord.id !== "number") return;
+    if (!selectedRecord || selectedRecord.isResent || typeof selectedRecord.id !== "number") return;
     toast(await retryMessageHistory(retryHistory, selectedRecord.id));
   }, [retryHistory, selectedRecord, toast]);
 
@@ -1250,7 +1250,7 @@ function MessageHistorySection() {
               onSlotClick={(record) => setSelectedRecordId(record.id)}
               render={({ item: record }) => {
                 if (!record) return null;
-                const statusMeta = getMessageHistoryListStatusMeta(record.status);
+                const statusMeta = getMessageHistoryListStatusMeta(record);
                 const ItemIcon = record.icon;
                 const inlineReason = record.status === "failed"
                   ? record.failureReason
