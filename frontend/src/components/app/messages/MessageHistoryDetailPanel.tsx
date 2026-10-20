@@ -57,6 +57,7 @@ export interface MessageHistoryRecord {
   sentAt: string;
   status: MessageHistoryStatus;
   isResent?: boolean;
+  isRetryBlocked?: boolean;
   detailStatusLabel?: string;
   messagePreview: string;
   failureReason?: string;
@@ -317,8 +318,8 @@ export function MessageHistoryDetailPanel({
       type="button"
       size="sm"
       variant="outline"
-      onClick={selectedRecord?.isResent ? undefined : onRetry}
-      disabled={isRetrying || !!retryBlock || !!selectedRecord?.isResent}
+      onClick={selectedRecord?.isRetryBlocked ? undefined : onRetry}
+      disabled={isRetrying || !!retryBlock || !!selectedRecord?.isRetryBlocked}
       className="rounded-full"
     >
       <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />

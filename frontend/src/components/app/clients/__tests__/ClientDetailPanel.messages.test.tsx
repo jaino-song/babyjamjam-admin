@@ -86,6 +86,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         sentAt: record.lastAttemptAt ?? record.updatedAt,
         status: record.status,
         isResent: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).isResent,
+        isRetryBlocked: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).isRetryBlocked,
         messagePreview: record.messageBody,
         failureReason: record.status === "failed" ? record.errorMessage ?? undefined : undefined,
         cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
@@ -417,12 +418,25 @@ describe("ClientDetailPanel messages tab", () => {
     }
 
     it("retries a failed client log using its log id, not its trigger job id", async () => {
-        openRecord({ ...failedHistoryRecord, resentByLogId: null });
+        openRecord({ ...failedHistoryRecord, resentByLogId: null, retryBlockedByLogId: null });
         expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
         fireEvent.click(screen.getByRole("button", { name: "재발송" }));
         await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(11));
         expect(mockResendJob).not.toHaveBeenCalled();
         await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" }));
+    });
+
+    it("keeps failed badges and blocks the button and callback for a blocked but not resent log", () => {
+        openRecord({ ...failedHistoryRecord, resentByLogId: null, retryBlockedByLogId: 12 });
+        expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+        expect(screen.getAllByText("발송 실패")).toHaveLength(2);
+        screen.getAllByText("발송 실패").forEach(badge => expect(badge).not.toHaveClass("bg-status-success"));
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.click(retry);
+        mockDetailRetry?.();
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+        expect(mockResendJob).not.toHaveBeenCalled();
     });
 
     it("replaces failed badges with 재발송됨 and blocks both the button and retry callback", () => {

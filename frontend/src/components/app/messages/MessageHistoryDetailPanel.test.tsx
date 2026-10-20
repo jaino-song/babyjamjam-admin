@@ -123,11 +123,16 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
   } as unknown as MessageLogRecord;
   const prefix = "desktop_messages_test";
 
-  it.each([null, 8])("keeps failed retry visible and only disables resent logs (%s)", (resentByLogId) => {
+  it.each([
+    { resentByLogId: null, retryBlockedByLogId: null },
+    { resentByLogId: 8, retryBlockedByLogId: null },
+    { resentByLogId: null, retryBlockedByLogId: 8 },
+  ])("keeps the failure label unless resent and disables blocked logs (%j)", ({ resentByLogId, retryBlockedByLogId }) => {
+    const isRetryBlocked = resentByLogId !== null || retryBlockedByLogId !== null;
     const onRetry = jest.fn();
     const { container } = render(
       <MessageHistoryDetailPanel
-        selectedRecord={normalizeMessageHistoryRecord({ ...baseLog, resentByLogId })}
+        selectedRecord={normalizeMessageHistoryRecord({ ...baseLog, resentByLogId, retryBlockedByLogId })}
         dataComponentPrefix={prefix}
         canRetry
         onRetry={onRetry}
@@ -137,13 +142,16 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     expect(badge).toHaveTextContent(resentByLogId === null ? "발송 실패" : "재발송됨");
     expect(screen.getByText("실패 사유")).toBeInTheDocument();
     const button = screen.getByRole("button", { name: "재발송" });
-    if (resentByLogId === null) expect(button).toBeEnabled();
+    if (!isRetryBlocked) expect(button).toBeEnabled();
     else expect(button).toBeDisabled();
     expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
     fireEvent.click(button);
-    expect(onRetry).toHaveBeenCalledTimes(resentByLogId === null ? 1 : 0);
+    expect(onRetry).toHaveBeenCalledTimes(isRetryBlocked ? 0 : 1);
     if (resentByLogId !== null) {
       expect(badge?.className).toBe(cn(statusBadgeVariants({ variant: MESSAGE_LOG_STATUS_BADGE_VARIANT.sent, size: "sm" })));
+    } else {
+      expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+      expect(badge).not.toHaveClass("bg-status-success");
     }
   });
 

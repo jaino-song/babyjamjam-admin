@@ -955,7 +955,7 @@ function MessageHistorySection() {
   const retryBlock = needsSetupJob ? selectedRecord?.resendBlock : undefined;
 
   const handleRetry = useCallback(async () => {
-    if (!selectedRecord || selectedRecord.isResent || typeof selectedRecord.id !== "number") return;
+    if (!selectedRecord || selectedRecord.isRetryBlocked || typeof selectedRecord.id !== "number") return;
     toast(await retryMessageHistory(retryHistory, selectedRecord.id));
   }, [retryHistory, selectedRecord, toast]);
 
