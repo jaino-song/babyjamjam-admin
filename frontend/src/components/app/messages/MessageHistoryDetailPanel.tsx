@@ -347,7 +347,7 @@ export function MessageHistoryDetailPanel({
             selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.isResent ? "sent" : selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
           )}
         >
-          <History className="h-5 w-5" />
+          {selectedRecord?.isResent ? <CheckCircle2 className="h-5 w-5" /> : <History className="h-5 w-5" />}
         </div>
       }
       title={selectedRecord?.title ?? "발송 상세"}
