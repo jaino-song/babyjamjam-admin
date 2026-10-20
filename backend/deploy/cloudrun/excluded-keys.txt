@@ -22,4 +22,3 @@ TYPESAFE_BASE_URL  # optional JEV decision provider endpoint; production does no
 AGENT_DECISION_ENVIRONMENT  # JEV environment gate; unset keeps JEV off. Preview is deployed from the committed service.preview.yaml (gcloud run services replace), so enabling this on preview requires adding it there and redeploying, not a console edit — a console-only change is wiped on the next deploy.
 AUTH_RATE_LIMIT_DISABLED  # local runs only; the guard ignores it when NODE_ENV=production and preview must keep login rate limiting on
 AUTH_RATE_LIMIT_EXEMPT_EMAILS  # not deployed to preview yet (keeps current behaviour); wiring it as a preview value is a separate decision for the preview E2E account
-CLIENT_TOMBSTONE_DELETE_ENABLED  # not deployed: unset means off; tombstone delete stays off until production main runs a build that reads client.deleted_at (decision 2026-10-19)

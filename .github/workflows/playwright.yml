@@ -10,7 +10,14 @@ permissions:
   contents: read
 
 jobs:
+  impact:
+    uses: ./.github/workflows/ci-impact.yml
+    with:
+      component: frontend-auth-lifecycle
+
   test:
+    needs: impact
+    if: ${{ !cancelled() && (needs.impact.result != 'success' || needs.impact.outputs.frontend == 'true' || needs.impact.outputs.backend == 'true') }}
     name: frontend auth lifecycle · real backend
     timeout-minutes: 60
     runs-on: ubuntu-latest

@@ -224,6 +224,7 @@ const EXPECTED_PLAIN_ENV = new Map([
     ["SCHEDULER_LEASE_HOLDER_ID", "preview"],
     ["EFORMSIGN_RECONCILE_ALLOW_UNLOCKED", "false"],
     ["SERVICE_RECORD_AUTO_FINALIZE_ENABLED", "false"],
+    ["CLIENT_TOMBSTONE_DELETE_ENABLED", "true"],
     ["PREVIEW_FRONTEND_URL", "https://preview.admin.babyjamjam.com"],
     ["PRODUCTION_FRONTEND_URL", "https://preview.admin.babyjamjam.com"],
     ["PRODUCTION_MOBILE_FRONTEND_URL", "https://preview.m.admin.babyjamjam.com"],
