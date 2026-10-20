@@ -65,7 +65,7 @@ describe("ClientDetailPanel confirm booking", () => {
     renderPanel();
     const button = screen.getByRole("button", { name: "예약 확정" });
     expect(button).toBeEnabled();
-    expect(button).toHaveClass("h-9", "w-1/4");
+    expect(button).toHaveClass("h-9", "w-full");
   });
   it.each(["startDate", "endDate"] as const)("disables confirmation with an accessible explanation for missing %s", (date) => {
     renderPanel({ [date]: null });

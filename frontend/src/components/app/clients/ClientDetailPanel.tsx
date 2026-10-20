@@ -1526,7 +1526,7 @@ function ClientDetailPanelBody({
                 type="button"
                 variant="positive"
                 size="sm"
-                width="sm"
+                width="lg"
                 disabled={!hasBookingDates || isConfirmingBooking}
                 title={!hasBookingDates ? "서비스 시작일과 종료일을 먼저 입력해 주세요." : undefined}
                 aria-describedby={!hasBookingDates ? bookingDatesHelpId : undefined}
