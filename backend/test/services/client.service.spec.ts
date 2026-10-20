@@ -412,6 +412,45 @@ describe("ClientService", () => {
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
         });
 
+        describe("status chosen at creation", () => {
+            const baseParams = {
+                name: "Status Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: false,
+                breastPump: false,
+            };
+
+            it.each(["waiting", "active", "completed"])("refuses %s without both service dates before any write", async (serviceStatus) => {
+                await expect(service.create(branchId, { ...baseParams, serviceStatus, startDate: "2026-11-02" }))
+                    .rejects.toMatchObject({ status: 400 });
+                expect(createClientUsecase.execute).not.toHaveBeenCalled();
+            });
+
+            it.each(["waiting", "active", "completed"])("confirms the booking after creating a %s client", async (serviceStatus) => {
+                const created = createClientEntity();
+                const confirmed = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(created);
+                const confirmBooking = jest.spyOn(service, "confirmBooking").mockResolvedValue(confirmed);
+
+                await expect(service.create(branchId, {
+                    ...baseParams, serviceStatus, startDate: "2026-11-02", endDate: "2026-11-13",
+                })).resolves.toBe(confirmed);
+
+                expect(confirmBooking).toHaveBeenCalledWith(branchId, created.id);
+            });
+
+            it.each(["pre_booking", "terminated", undefined])("does not confirm a %s client", async (serviceStatus) => {
+                const created = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(created);
+                const confirmBooking = jest.spyOn(service, "confirmBooking");
+
+                await expect(service.create(branchId, { ...baseParams, serviceStatus })).resolves.toBe(created);
+
+                expect(confirmBooking).not.toHaveBeenCalled();
+            });
+        });
+
         describe("smsAutomationEnabled persistence", () => {
             const baseParams = {
                 name: "Automation Client",
@@ -5899,16 +5938,18 @@ describe("ClientService", () => {
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         });
 
-        it("service create stores dated waiting input as unconfirmed 예약 전 in the shared create layer", async () => {
+        it("service create stores dated waiting input as unconfirmed 예약 전 in the shared create layer, then confirms through confirmBooking", async () => {
             clientRepository.create.mockImplementation(async (_branch, client) => client);
             const realCreate = new CreateClientUsecase(clientRepository, holidayCalendar);
             createClientUsecase.execute.mockImplementation(realCreate.execute.bind(realCreate));
-            const result = await service.create(branchId, {
+            const confirmBooking = jest.spyOn(service, "confirmBooking").mockImplementation(async () => createClientEntity());
+            await service.create(branchId, {
                 name: "상담 고객", phone: null, careCenter: false, voucherClient: false, breastPump: false,
                 startDate: "2026-11-02", endDate: "2026-11-13", serviceStatus: "waiting",
             });
-            expect(ClientMapper.toPrismaCreate(result)).toMatchObject({ serviceStatus: "pre_booking", bookingConfirmedAt: null });
-            expect(clientRepository.create).toHaveBeenCalled();
+            const stored = clientRepository.create.mock.calls[0]![1];
+            expect(ClientMapper.toPrismaCreate(stored)).toMatchObject({ serviceStatus: "pre_booking", bookingConfirmedAt: null });
+            expect(confirmBooking).toHaveBeenCalledWith(branchId, stored.id);
         });
 
         it("client.service.update never writes the confirmation column", async () => {

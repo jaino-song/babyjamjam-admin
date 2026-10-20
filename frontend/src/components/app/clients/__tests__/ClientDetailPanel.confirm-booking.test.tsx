@@ -55,6 +55,7 @@ describe("ClientDetailPanel confirm booking", () => {
     { bookingConfirmedAt: "2026-10-13T00:00:00.000Z" },
     { serviceStatus: "terminated" as const },
     { serviceStatus: "replacement_requested" as const },
+    { serviceStatus: "active" as const },
   ])("hides confirmation for %j", (overrides) => {
     renderPanel(overrides);
     expect(screen.queryByRole("button", { name: "예약 확정" })).not.toBeInTheDocument();
@@ -62,7 +63,9 @@ describe("ClientDetailPanel confirm booking", () => {
   });
   it("shows enabled confirmation for an unconfirmed dated client", () => {
     renderPanel();
-    expect(screen.getByRole("button", { name: "예약 확정" })).toBeEnabled();
+    const button = screen.getByRole("button", { name: "예약 확정" });
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("h-9", "w-1/4");
   });
   it.each(["startDate", "endDate"] as const)("disables confirmation with an accessible explanation for missing %s", (date) => {
     renderPanel({ [date]: null });

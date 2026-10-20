@@ -1293,6 +1293,20 @@ export class ClientService {
         // only a fallback when the caller does not supply one.
         const duration = params.duration ?? derivedDuration ?? null;
         assertAllowedServiceStatus(params.serviceStatus);
+        // A new client may start in any status. 대기/진행/완료 are date-derived
+        // and only hold for a confirmed booking, so choosing one at creation
+        // confirms the booking right after the client is saved.
+        const confirmBookingOnCreate = params.serviceStatus === SERVICE_STATUS.WAITING
+            || params.serviceStatus === SERVICE_STATUS.ACTIVE
+            || params.serviceStatus === SERVICE_STATUS.COMPLETED;
+        if (confirmBookingOnCreate && (!startDate || !endDate)) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/serviceStatus",
+                code: "INVALID_VALUE",
+                detail: "대기·진행·완료로 등록하려면 서비스 시작일과 종료일을 먼저 입력해 주세요.",
+                location: "body",
+            }));
+        }
         await assertAllowedClientArea(this.prismaService, branchid, params.areaId);
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
@@ -1576,6 +1590,9 @@ export class ClientService {
             });
         }
 
+        if (confirmBookingOnCreate) {
+            return this.confirmBooking(branchid, client.id);
+        }
         return client;
     }
 
