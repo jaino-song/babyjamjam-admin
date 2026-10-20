@@ -199,7 +199,7 @@
 | 2026-10-12 | 개인정보-01, S9 | 보완: 연락처는 외부 AI 모델로 보내지 않는다. 모델에는 ID만 가고 화면이 ID로 조회해 보여 준다. 화면·로그에서는 가리지 않는다. |
 | 2026-10-16 | 기록-07 | 판을 확정할 때 고치기 전 내용을 새 칸에 함께 저장해 변경 내용을 보여 준다. 그 전에 확정된 판은 변경 전 내용 없음으로 표시. |
 | 2026-10-19 | 고객-06 | 삭제된 고객은 tombstone을 남기지만 UI 목록에는 없는 게 정상이다. 기록이 있어도 삭제가 막히지 않는다. (사용자 결정) |
-| 2026-10-20 | 고객-06 | 운영 main이 `client.deleted_at`을 읽는 빌드로 배포되어 운영·preview에서 `CLIENT_TOMBSTONE_DELETE_ENABLED=true`로 켠다. (사용자 결정) |
+| 2026-10-20 | 고객-06 | 운영 main이 `client.deleted_at`을 읽는 빌드로 배포되어 운영·preview에서 `CLIENT_TOMBSTONE_DELETE_ENABLED=true`로 켜기로 한다. preview는 배포로 바로 켜진다. 운영(LightNode)은 compose 파일이 배포로 전달되지 않으므로, root로 `install.sh`를 다시 실행하고 replace해야 켜진다. (사용자 결정) |
 
 현재 결정 대기 항목 없음.
 

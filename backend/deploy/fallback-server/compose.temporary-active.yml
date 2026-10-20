@@ -29,6 +29,7 @@ services:
       MESSAGE_TRIGGER_JOBS_WORKER_ENABLED: "false"
       # Delete a client with history as a hidden tombstone (고객-06). Safe once every
       # backend on the shared DB reads client.deleted_at (decision 2026-10-20).
+      # A merge does not ship this file: re-run install.sh on the host, then replace.
       CLIENT_TOMBSTONE_DELETE_ENABLED: "true"
     depends_on:
       valkey:
