@@ -20,6 +20,8 @@ export type MessageHistoryDetailTone =
   | "purple";
 
 export interface ClientMessageHistoryDetailView {
+  isResent?: boolean;
+  isRetryBlocked?: boolean;
   title: string;
   templateLabel: string;
   channelLabel: string;
@@ -89,7 +91,7 @@ export function ClientMessageHistoryDetail({
       size="md"
       className="w-full"
       data-component={sub("retry-trigger")}
-      disabled={isRetrying || Boolean(retryBlock)}
+      disabled={view.isRetryBlocked || view.isResent || isRetrying || Boolean(retryBlock)}
       aria-busy={isRetrying || undefined}
       onClick={onRetry}
     >
@@ -181,6 +183,8 @@ export function ClientMessageHistoryDetail({
           {retryBlockCard ? (
             <HoverCard
               data-component={sub("retry-blocked-hover-card")}
+              // Above the mobile detail sheet (z-70), like the sheet's other popups.
+              className="z-[200]"
               triggerClassName="w-full rounded-2xl"
               side="top"
               align="center"

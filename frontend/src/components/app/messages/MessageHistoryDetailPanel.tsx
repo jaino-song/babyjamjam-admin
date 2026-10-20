@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  MESSAGE_RESENT_LABEL,
   getMessageHistoryDetailStatusLabel,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_RECIPIENT_LABELS,
@@ -55,6 +56,8 @@ export interface MessageHistoryRecord {
   channelLabel: string;
   sentAt: string;
   status: MessageHistoryStatus;
+  isResent?: boolean;
+  isRetryBlocked?: boolean;
   detailStatusLabel?: string;
   messagePreview: string;
   failureReason?: string;
@@ -260,7 +263,7 @@ export function normalizeMessageHistoryRecord(
 
   return {
     ...normalized,
-    detailStatusLabel: getMessageHistoryDetailStatusLabel(record),
+    detailStatusLabel: normalized.isResent ? MESSAGE_RESENT_LABEL : getMessageHistoryDetailStatusLabel(record),
     cancelReason,
     triggerJobId: record.triggerJobId ?? null,
     isTriggerJobRow: record.provider === "message_job",
@@ -315,8 +318,8 @@ export function MessageHistoryDetailPanel({
       type="button"
       size="sm"
       variant="outline"
-      onClick={onRetry}
-      disabled={isRetrying || !!retryBlock}
+      onClick={selectedRecord?.isRetryBlocked ? undefined : onRetry}
+      disabled={isRetrying || !!retryBlock || !!selectedRecord?.isRetryBlocked}
       className="rounded-full"
     >
       <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
@@ -341,10 +344,10 @@ export function MessageHistoryDetailPanel({
           data-component={`${dataComponentPrefix}_detail-avatar`}
           className={cn(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
-            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
+            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.isResent ? "sent" : selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
           )}
         >
-          <History className="h-5 w-5" />
+          {selectedRecord?.isResent ? <CheckCircle2 className="h-5 w-5" /> : <History className="h-5 w-5" />}
         </div>
       }
       title={selectedRecord?.title ?? "발송 상세"}
@@ -357,10 +360,10 @@ export function MessageHistoryDetailPanel({
         selectedRecord ? (
           <StatusBadge
             data-component={`${dataComponentPrefix}_detail-status`}
-            variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[selectedRecord.status]}
+            variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[selectedRecord.isResent ? "sent" : selectedRecord.status]}
             size="sm"
           >
-            {selectedRecord.detailStatusLabel ?? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
+            {selectedRecord.isResent ? MESSAGE_RESENT_LABEL : selectedRecord.detailStatusLabel ?? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
           </StatusBadge>
         ) : null
       }

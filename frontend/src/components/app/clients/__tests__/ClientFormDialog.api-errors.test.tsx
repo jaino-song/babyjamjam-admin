@@ -123,14 +123,14 @@ describe("ClientFormDialog API errors", () => {
       bookingConfirmedAt: null, serviceStatus: "pre_booking", ...overrides,
     });
 
-    it("renders a disabled create select with only pre-booking", async () => {
+    it("renders an enabled create select with every status, defaulting to pre-booking", async () => {
       renderForm();
       await flushOpenEffect();
       const status = screen.getByLabelText("계약 상태");
-      expect(status).toBeDisabled();
+      expect(status).toBeEnabled();
       expect(status).toHaveValue("pre_booking");
-      expect(within(status).getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(["pre_booking"]);
-      expect(screen.getByText("대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다.")).toBeInTheDocument();
+      expect(within(status).getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(SERVICE_STATUS_OPTIONS.map((option) => option.value));
+      expect(screen.queryByText("대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다.")).not.toBeInTheDocument();
     });
 
     it.each([
@@ -150,7 +150,7 @@ describe("ClientFormDialog API errors", () => {
       expect(Boolean(screen.queryByText("대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다."))).toBe(bookingConfirmedAt == null);
     });
 
-    it("always sends pre_booking on create even if a synthetic change bypasses the disabled control", async () => {
+    it("sends the chosen status on create", async () => {
       const prefill = { name: "예약고객", birthday: "1990-01-01", address: "서울시 강남구", phone: "01012345678" };
       if (surface === "dialog") render(<ClientFormDialog open prefill={prefill} onClose={jest.fn()} />);
       else render(<ClientFormPanel open activeStep={3} prefill={prefill} onClose={jest.fn()} />);
@@ -159,7 +159,7 @@ describe("ClientFormDialog API errors", () => {
       const submit = screen.getByRole("button", { name: "생성" });
       await waitFor(() => expect(submit).toBeEnabled());
       fireEvent.click(submit);
-      await waitFor(() => expect(mockCreateClientMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ serviceStatus: "pre_booking" })));
+      await waitFor(() => expect(mockCreateClientMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ serviceStatus: "active" })));
     });
 
     it("puts /serviceStatus refusal on the select with authored copy", async () => {

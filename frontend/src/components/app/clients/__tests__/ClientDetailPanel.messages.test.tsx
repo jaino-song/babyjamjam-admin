@@ -69,7 +69,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
     getMessageHistoryTimestamp: (record: MessageLogRecord) => record.lastAttemptAt ?? record.updatedAt,
     formatMessageHistoryDate: (value: string) => `날짜 ${value}`,
     MESSAGE_HISTORY_STATUS_META: {
-        sent: { avatarClass: "status-avatar-sent" },
+        sent: { avatarClass: "status-avatar-sent", icon: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").MESSAGE_HISTORY_STATUS_META.sent.icon },
         failed: { avatarClass: "status-avatar-failed" },
         pending: { avatarClass: "status-avatar-pending" },
         canceled: { avatarClass: "status-avatar-canceled" },
@@ -85,12 +85,14 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         channelLabel: "메시지",
         sentAt: record.lastAttemptAt ?? record.updatedAt,
         status: record.status,
+        isResent: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).isResent,
+        isRetryBlocked: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).isRetryBlocked,
         messagePreview: record.messageBody,
         failureReason: record.status === "failed" ? record.errorMessage ?? undefined : undefined,
         cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
         recipientType: record.recipientType,
         resendBlock: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).resendBlock,
-        icon: () => <span aria-hidden="true">아이콘</span>,
+        icon: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).icon,
     }),
     MessageHistoryDetailPanel: (props: ComponentProps<typeof MessageHistoryDetailPanel>) => {
         mockDetailRetry = props.onRetry;
@@ -140,6 +142,7 @@ jest.mock("@/components/app/v3", () => ({
         meta,
         status,
         iconContainerClassName,
+        icon: Icon,
         "data-component": dataComponent,
     }: {
         title: ReactNode;
@@ -147,10 +150,11 @@ jest.mock("@/components/app/v3", () => ({
         meta?: ReactNode;
         status?: ReactNode;
         iconContainerClassName?: string;
+        icon: import("lucide-react").LucideIcon;
         "data-component"?: string;
     }) => (
         <article data-component={dataComponent}>
-            <div data-slot="icon" className={iconContainerClassName} />
+            <div data-slot="icon" className={iconContainerClassName}><Icon /></div>
             <h4>{title}</h4>
             {subtitle ? <div data-slot="subtitle">{subtitle}</div> : null}
             {meta ? <div data-slot="meta">{meta}</div> : null}
@@ -158,7 +162,7 @@ jest.mock("@/components/app/v3", () => ({
         </article>
     ),
     DetailEmptyState: ({ message }: { message: string }) => <p>{message}</p>,
-    DetailPanel: ({ children, tabs, trailing }: { children: ReactNode; tabs?: ReactNode; trailing?: ReactNode }) => <main>{tabs}{trailing}{children}</main>,
+    DetailPanel: ({ children, tabs, trailing, badges }: { children: ReactNode; tabs?: ReactNode; trailing?: ReactNode; badges?: ReactNode }) => <main>{tabs}{badges}{trailing}{children}</main>,
     DetailTabPanels: ({ activeTab, panels }: { activeTab: string; panels: Array<{ key: string; children: ReactNode }> }) => (
         <>{panels.find((panel) => panel.key === activeTab)?.children}</>
     ),
@@ -415,12 +419,53 @@ describe("ClientDetailPanel messages tab", () => {
         fireEvent.click(screen.getByRole("heading", { name: record.ruleName! }).closest('[role="button"]')!);
     }
 
+    it.each([
+        { resentByLogId: 12, retryBlockedByLogId: null, success: true },
+        { resentByLogId: null, retryBlockedByLogId: 12, success: false },
+        { resentByLogId: null, retryBlockedByLogId: null, success: false },
+    ])("uses success avatars only for resent logs (%j)", ({ resentByLogId, retryBlockedByLogId, success }) => {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([{ ...failedHistoryRecord, resentByLogId, retryBlockedByLogId }]));
+        openMessagesTab();
+        const row = screen.getByRole("heading", { name: "실패 안내" }).closest('[role="button"]');
+        const avatar = row?.querySelector('[data-slot="icon"]');
+        expect(avatar).toHaveClass(success ? "status-avatar-sent" : "status-avatar-failed");
+        expect(avatar?.querySelector(success ? ".lucide-circle-check" : ".lucide-calendar-range")).toBeInTheDocument();
+        expect(avatar?.querySelector(success ? ".lucide-calendar-range" : ".lucide-circle-check")).toBeNull();
+    });
+
     it("retries a failed client log using its log id, not its trigger job id", async () => {
-        openRecord(failedHistoryRecord);
+        openRecord({ ...failedHistoryRecord, resentByLogId: null, retryBlockedByLogId: null });
+        expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
         fireEvent.click(screen.getByRole("button", { name: "재발송" }));
         await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(11));
         expect(mockResendJob).not.toHaveBeenCalled();
         await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" }));
+    });
+
+    it("keeps failed badges and blocks the button and callback for a blocked but not resent log", () => {
+        openRecord({ ...failedHistoryRecord, resentByLogId: null, retryBlockedByLogId: 12 });
+        expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+        expect(screen.getAllByText("발송 실패")).toHaveLength(2);
+        screen.getAllByText("발송 실패").forEach(badge => expect(badge).not.toHaveClass("bg-status-success"));
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.click(retry);
+        mockDetailRetry?.();
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+        expect(mockResendJob).not.toHaveBeenCalled();
+    });
+
+    it("replaces failed badges with 재발송됨 and blocks both the button and retry callback", () => {
+        openRecord({ ...failedHistoryRecord, resentByLogId: 12 });
+        expect(screen.getAllByText("재발송됨")).toHaveLength(2);
+        screen.getAllByText("재발송됨").forEach(badge => expect(badge).toHaveClass("bg-status-success"));
+        expect(screen.queryByText("발송 실패")).not.toBeInTheDocument();
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.click(retry);
+        mockDetailRetry?.();
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+        expect(mockResendJob).not.toHaveBeenCalled();
     });
 
     it("resends a needs_setup job with its trigger job id", async () => {

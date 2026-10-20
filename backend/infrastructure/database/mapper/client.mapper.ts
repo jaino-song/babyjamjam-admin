@@ -80,7 +80,7 @@ export class ClientMapper {
             dueDate: entity.dueDate,
             birthDate: entity.birthDate,
             createdAt: entity.createdAt ?? undefined,
-            bookingConfirmedAt: null,
+            bookingConfirmedAt: entity.bookingConfirmedAt,
             serviceStatus: entity.serviceStatus,
             breastPump: entity.breastPump,
             eDocId: entity.eDocId,
