@@ -1593,6 +1593,17 @@ export class ClientService {
                 this.logger.error(`Failed to fulfill assignment message intent: ${error}`);
             });
         }
+        // A booking confirmed at creation gets the same service-record link
+        // SMS that [예약 확정] schedules, whatever the automation choice.
+        if (confirmBookingOnCreate) {
+            await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                branchid,
+                client.id,
+                { serviceStatus: SERVICE_STATUS.PRE_BOOKING, startDate: client.startDate, endDate: client.endDate, bookingConfirmedAt: null },
+                client,
+                applyMessageAutomation ? createdScheduleId : null,
+            );
+        }
 
         return client;
     }
