@@ -61,6 +61,8 @@ spec:
               value: "false"
             - name: SERVICE_RECORD_AUTO_FINALIZE_ENABLED
               value: "false"
+            - name: CLIENT_TOMBSTONE_DELETE_ENABLED
+              value: "true"
             - name: PREVIEW_FRONTEND_URL
               value: "https://preview.admin.babyjamjam.com"
             - name: PRODUCTION_FRONTEND_URL
