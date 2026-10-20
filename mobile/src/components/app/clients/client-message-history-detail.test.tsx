@@ -54,6 +54,40 @@ function renderDetail(
 }
 
 describe("ClientMessageHistoryDetail", () => {
+  it("keeps a resent failure visible with the caller's success badge and disables retry", () => {
+    const onRetry = jest.fn();
+    renderDetail({ isResent: true, statusLabel: "재발송됨", statusTone: "green", failureReason: "실패 원인" }, { canRetry: true, onRetry });
+
+    expect(screen.getByText("재발송됨")).toHaveClass("green");
+    expect(screen.getByText("실패 원인")).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeDisabled();
+    expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
+    fireEvent.click(button);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("keeps a retry-blocked failure's normal badge and disables retry", () => {
+    const onRetry = jest.fn();
+    renderDetail({ isResent: false, isRetryBlocked: true, statusLabel: "발송 실패", statusTone: "burgundy" }, { canRetry: true, onRetry });
+    expect(screen.getByText("발송 실패")).toHaveClass("burgundy");
+    expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("allows retry for a plain failed row", () => {
+    const onRetry = jest.fn();
+    renderDetail({ isResent: false, isRetryBlocked: false, statusLabel: "발송 실패", statusTone: "burgundy" }, { canRetry: true, onRetry });
+    const button = screen.getByRole("button", { name: "재발송" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the 추가 필요 정보 row for a needs_setup message and no 실패 사유", () => {
     renderDetail({ setupReason: "연락처가 연결되지 않았습니다." });
 

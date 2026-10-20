@@ -6,6 +6,7 @@ import {
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_SETUP_REASON_LABEL,
+  MESSAGE_RESENT_LABEL,
   formatMessageFailureReason,
   getMessageResendBlockCard,
   normalizeMessageHistoryPresentation,
@@ -43,6 +44,27 @@ function historyRecord(overrides: Partial<MessageLogRecord> = {}): MessageLogRec
     ...overrides,
   };
 }
+
+describe("resent presentation", () => {
+  it.each([
+    ["failed", 12, true], ["failed", "12", true], ["failed", null, false],
+    ["failed", undefined, false], ["sent", 12, false], ["pending", 12, false],
+    ["needs_setup", 12, false],
+  ] as const)("normalizes %s with resentByLogId=%s", (status, resentByLogId, expected) => {
+    expect(normalizeMessageHistoryPresentation(historyRecord({ status, resentByLogId })).isResent).toBe(expected);
+    expect(MESSAGE_RESENT_LABEL).toBe("재발송됨");
+  });
+
+  it.each([
+    ["failed", null, 7, false, true], ["failed", 12, 12, true, true], ["failed", 12, null, true, true],
+    ["failed", null, null, false, false], ["failed", undefined, undefined, false, false],
+    ["sent", null, 7, false, false], ["needs_setup", null, 7, false, false],
+  ] as const)("normalizes %s with resentByLogId=%s retryBlockedByLogId=%s", (status, resentByLogId, retryBlockedByLogId, resent, blocked) => {
+    const view = normalizeMessageHistoryPresentation(historyRecord({ status, resentByLogId, retryBlockedByLogId }));
+    expect(view.isResent).toBe(resent);
+    expect(view.isRetryBlocked).toBe(blocked);
+  });
+});
 
 describe("needs_setup presentation", () => {
   it("labels the status 추가 정보 필요 with the warning tone in every map", () => {

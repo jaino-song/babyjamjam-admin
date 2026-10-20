@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { MessageResendBlock } from "@babyjamjam/shared";
+import { MESSAGE_LOG_STATUS_BADGE_VARIANT } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
+import { statusBadgeVariants } from "@/components/app/ui/status-badge";
+import { cn } from "@/lib/utils";
 
 import {
   MessageHistoryDetailPanel,
@@ -13,7 +16,7 @@ const source = fs.readFileSync(require.resolve("./MessageHistoryDetailPanel"), "
 
 describe("MessageHistoryDetailPanel delivery status labels", () => {
   it("carries the shared lookup label through normalization into the detail badge only", () => {
-    expect(source).toContain("detailStatusLabel: getMessageHistoryDetailStatusLabel(record)");
+    expect(source).toContain("detailStatusLabel: normalized.isResent ? MESSAGE_RESENT_LABEL : getMessageHistoryDetailStatusLabel(record)");
     expect(source).toContain("selectedRecord.detailStatusLabel ?? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label");
     const matcher = source.slice(source.indexOf("export function matchesMessageHistoryQuery"), source.indexOf("export function MessageHistoryDetailPanel"));
     expect(matcher).not.toContain("detailStatusLabel");
@@ -119,6 +122,47 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     errorMessage: "수신자 연락처가 필요합니다.",
   } as unknown as MessageLogRecord;
   const prefix = "desktop_messages_test";
+
+  it.each([
+    { resentByLogId: null, retryBlockedByLogId: null },
+    { resentByLogId: 8, retryBlockedByLogId: null },
+    { resentByLogId: null, retryBlockedByLogId: 8 },
+  ])("keeps the failure label unless resent and disables blocked logs (%j)", ({ resentByLogId, retryBlockedByLogId }) => {
+    const isRetryBlocked = resentByLogId !== null || retryBlockedByLogId !== null;
+    const onRetry = jest.fn();
+    const { container } = render(
+      <MessageHistoryDetailPanel
+        selectedRecord={normalizeMessageHistoryRecord({ ...baseLog, resentByLogId, retryBlockedByLogId })}
+        dataComponentPrefix={prefix}
+        canRetry
+        onRetry={onRetry}
+      />,
+    );
+    const badge = container.querySelector(`[data-component="${prefix}_detail-status"]`);
+    expect(badge).toHaveTextContent(resentByLogId === null ? "발송 실패" : "재발송됨");
+    expect(screen.getByText("실패 사유")).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "재발송" });
+    if (!isRetryBlocked) expect(button).toBeEnabled();
+    else expect(button).toBeDisabled();
+    expect(button.closest('[data-slot="hover-card-trigger"]')).toBeNull();
+    fireEvent.click(button);
+    expect(onRetry).toHaveBeenCalledTimes(isRetryBlocked ? 0 : 1);
+    if (resentByLogId !== null) {
+      expect(badge?.className).toBe(cn(statusBadgeVariants({ variant: MESSAGE_LOG_STATUS_BADGE_VARIANT.sent, size: "sm" })));
+    } else {
+      expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+      expect(badge).not.toHaveClass("bg-status-success");
+    }
+  });
+
+  it.each(["checking", "exhausted"])("prioritizes the resent label over history lookup %s", (historyLookup) => {
+    const record = normalizeMessageHistoryRecord({ ...baseLog, resentByLogId: 8, variables: { historyLookup } });
+    expect(record.detailStatusLabel).toBe("재발송됨");
+    render(<MessageHistoryDetailPanel selectedRecord={record} dataComponentPrefix={prefix} />);
+    expect(screen.getByText("재발송됨")).toBeInTheDocument();
+    expect(screen.queryByText("확인 중")).not.toBeInTheDocument();
+    expect(screen.queryByText("확인 필요")).not.toBeInTheDocument();
+  });
 
   it("carries the trigger job id and the job-row flag through normalization", () => {
     const job = normalizeMessageHistoryRecord(needsSetupJobRow);

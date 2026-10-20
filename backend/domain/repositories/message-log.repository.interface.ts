@@ -88,6 +88,7 @@ export interface IMessageLogRepository {
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
     /** Root and all descendants, including a child source's siblings, restricted to one branch. */
     findRetryFamilyInBranch(branchId: string, id: number): Promise<MessageLogEntity[]>;
+    findRetryFamiliesInBranch(branchId: string, ids: number[]): Promise<Map<number, MessageLogEntity[]>>;
     /** A newer non-failed link SMS for the source's schedule, including exhausted sources. */
     hasNewerServiceRecordSmsInBranch(branchId: string, source: MessageLogEntity): Promise<boolean>;
     findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{

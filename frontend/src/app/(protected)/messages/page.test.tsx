@@ -1489,16 +1489,48 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
   });
 
   it("still retries a failed log through the old API", async () => {
-    mockData({ history: [buildHistoryRecord({ status: "failed", errorMessage: "발송 오류" })] });
+    mockData({ history: [buildHistoryRecord({ status: "failed", resentByLogId: null, retryBlockedByLogId: null, errorMessage: "발송 오류" })] });
     render(<MessagesPage />);
     goToHistorySection();
     fireEvent.click(screen.getByText("이하은"));
 
     expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
+    expect(getRetryButton()).toBeEnabled();
     fireEvent.click(getRetryButton() as HTMLButtonElement);
 
     await waitFor(() => expect(mockRetryMutateAsync).toHaveBeenCalledTimes(1));
     expect(mockRetryMutateAsync).toHaveBeenCalledWith(101);
+    expect(mockResendMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed badges and disables retry for a blocked but not resent log", () => {
+    mockData({ history: [buildHistoryRecord({ status: "failed", resentByLogId: null, retryBlockedByLogId: 102, errorMessage: "발송 오류" })] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("이하은"));
+
+    expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
+    const badges = screen.getAllByText("발송 실패").filter(element => element.dataset.slot === "status-badge");
+    expect(badges).toHaveLength(2);
+    badges.forEach(badge => expect(badge).not.toHaveClass("bg-status-success"));
+    expect(getRetryButton()).toBeDisabled();
+    fireEvent.click(getRetryButton() as HTMLButtonElement);
+    expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+    expect(mockResendMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("replaces failed list and detail badges with 재발송됨 and disables retry", () => {
+    mockData({ history: [buildHistoryRecord({ status: "failed", resentByLogId: 102, errorMessage: "발송 오류" })] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("이하은"));
+
+    expect(screen.getAllByText("재발송됨")).toHaveLength(2);
+    screen.getAllByText("재발송됨").forEach(badge => expect(badge).toHaveClass("bg-status-success"));
+    expect(within(getDetailPanel() as HTMLElement).queryByText("발송 실패")).not.toBeInTheDocument();
+    expect(getRetryButton()).toBeDisabled();
+    fireEvent.click(getRetryButton() as HTMLButtonElement);
+    expect(mockRetryMutateAsync).not.toHaveBeenCalled();
     expect(mockResendMutateAsync).not.toHaveBeenCalled();
   });
 });

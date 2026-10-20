@@ -393,6 +393,10 @@ export interface MessageLogRecord {
   recipientName: string | null;
   clientName: string | null;
   employeeName: string | null;
+  /** Failed SMS rows only: the newer retry-family attempt that actually landed. Drives the "재발송됨" label. */
+  resentByLogId?: number | string | null;
+  /** Failed SMS rows only: a retry-family member that makes the server refuse a manual retry (any blocker, landed or not). Disables [재발송] without changing the label. */
+  retryBlockedByLogId?: number | string | null;
   /** Set only on `needs_setup` rows: the safeguard level that would refuse a resend, or null when it would pass. */
   resendBlockedBy?: MessageResendBlockedBy | null;
   /** With a `recipient` block: who has the flag off, when the server could tell. */

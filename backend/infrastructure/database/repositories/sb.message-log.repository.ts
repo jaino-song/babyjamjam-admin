@@ -538,6 +538,43 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return result.count === 1;
     }
 
+    async findRetryFamiliesInBranch(branchId: string, ids: number[]): Promise<Map<number, MessageLogEntity[]>> {
+        const result = new Map<number, MessageLogEntity[]>();
+        if (ids.length === 0) return result;
+        // Bind the seed array as one parameter. UNION deduplicates per seed,
+        // including cyclic JSON links; text comparisons tolerate bad links.
+        const members = await this.prisma.$queryRaw<Array<{ seed_id: number; id: number }>>(Prisma.sql`
+            WITH RECURSIVE ancestors AS (
+                SELECT id AS seed_id, id, variables FROM message_log
+                WHERE branch_id = ${branchId}::uuid AND id = ANY(${Prisma.join([ids])}::int[])
+                UNION
+                SELECT ancestors.seed_id, parent.id, parent.variables FROM message_log AS parent
+                JOIN ancestors ON parent.id::text = ancestors.variables->>'retryOfLogId'
+                WHERE parent.branch_id = ${branchId}::uuid
+            ), family AS (
+                SELECT seed_id, id FROM ancestors
+                UNION
+                SELECT family.seed_id, child.id FROM message_log AS child
+                JOIN family ON child.variables->>'retryOfLogId' = family.id::text
+                WHERE child.branch_id = ${branchId}::uuid
+            )
+            SELECT seed_id, id FROM family
+        `);
+        if (members.length === 0) return result;
+        const rows = await this.prisma.message_log.findMany({
+            where: { branchId, id: { in: [...new Set(members.map((member) => member.id))] } },
+        });
+        const logs = new Map(rows.map((row) => [row.id, MessageLogMapper.toDomain(row)]));
+        for (const member of members) {
+            const log = logs.get(member.id);
+            if (!log) continue;
+            const family = result.get(member.seed_id) ?? [];
+            family.push(log);
+            result.set(member.seed_id, family);
+        }
+        return result;
+    }
+
     async findRetryFamilyInBranch(branchId: string, id: number, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity[]> {
         const client = transaction ?? this.prisma;
         // UNION (not UNION ALL) also terminates malformed cyclic retry chains.
