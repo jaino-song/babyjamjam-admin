@@ -60,6 +60,9 @@ const preview: ServiceRecordEditPreviewResponse = {
         changedSessionIndexes: [1, 2],
     },
     impactedAssignments: ["assignment-1"],
+    impactedAssignmentDetails: [
+        { assignmentId: "assignment-1", employeeName: "임선녀", startDate: "2026-10-14", endDate: "2026-10-23" },
+    ],
     blockingReasons: [
         { code: "SOURCE_CHANGED", message: "원본 기록이 변경되어 확인이 필요합니다." },
     ],
@@ -106,7 +109,8 @@ describe("ServiceRecordEditPreviewDialog", () => {
         // The calendar version is an opaque fingerprint now; it is not shown.
         expect(screen.getByText("초안 버전 4")).toBeInTheDocument();
         expect(screen.queryByText(/달력/)).not.toBeInTheDocument();
-        expect(screen.getByText("assignment-1")).toBeInTheDocument();
+        expect(screen.getByText("임선녀 · 2026.10.14 ~ 2026.10.23")).toBeInTheDocument();
+        expect(screen.queryByText(/assignment-1/)).not.toBeInTheDocument();
         expect(screen.getByText("원본 기록이 변경되어 확인이 필요합니다.")).toBeInTheDocument();
         expect(screen.getByText("기본정보: 변경됨")).toBeInTheDocument();
         expect(screen.getByText("기록 회차: 1회차, 2회차")).toBeInTheDocument();
@@ -121,6 +125,42 @@ describe("ServiceRecordEditPreviewDialog", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "닫기" }));
         expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("falls back to a generic caregiver name when details are missing or unnamed", () => {
+        const legacyPreview: ServiceRecordEditPreviewResponse = { ...preview, impactedAssignmentDetails: undefined };
+        const { unmount } = render(
+            <ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={legacyPreview} data-component={DATA_COMPONENT} />,
+        );
+        expect(screen.getByText("이름 없는 관리사")).toBeInTheDocument();
+        expect(screen.queryByText(/assignment-1/)).not.toBeInTheDocument();
+        unmount();
+
+        render(
+            <ServiceRecordEditPreviewDialog
+                open
+                onOpenChange={jest.fn()}
+                preview={{
+                    ...preview,
+                    impactedAssignmentDetails: [{ assignmentId: "assignment-1", employeeName: null, startDate: "2026-10-14", endDate: null }],
+                }}
+                data-component={DATA_COMPONENT}
+            />,
+        );
+        expect(screen.getByText("이름 없는 관리사 · 2026.10.14 ~ 없음")).toBeInTheDocument();
+    });
+
+    it("still lists every impacted id when details are empty", () => {
+        render(
+            <ServiceRecordEditPreviewDialog
+                open
+                onOpenChange={jest.fn()}
+                preview={{ ...preview, impactedAssignmentDetails: [] }}
+                data-component={DATA_COMPONENT}
+            />,
+        );
+        expect(screen.getByText("이름 없는 관리사")).toBeInTheDocument();
+        expect(screen.queryByText("변경되는 배정이 없습니다.")).not.toBeInTheDocument();
     });
 
     it("retains a visible error and does not expose preview controls while loading", () => {

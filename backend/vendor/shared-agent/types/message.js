@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SERVICE_RECORD_LINK_RULE_ID = exports.STORED_MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SENDER_APPROVAL_STATUSES = exports.updateMessageTriggerRuleDtoSchema = exports.createMessageTriggerRuleDtoSchema = exports.UpdateMessageTriggerRuleSchema = exports.CreateMessageTriggerRuleSchema = exports.updateMessageTriggerRuleSchema = exports.createMessageTriggerRuleSchema = exports.CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = exports.messageTriggerTemplateKeySchema = exports.messageTriggerRecipientTypeSchema = exports.messageTriggerOffsetTypeSchema = exports.messageTriggerEventTypeSchema = exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = exports.MESSAGE_TRIGGER_OFFSET_TYPES = exports.MESSAGE_TRIGGER_EVENT_TYPES = void 0;
+exports.SERVICE_RECORD_LINK_RULE_ID = exports.STORED_MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SENDER_APPROVAL_STATUSES = exports.updateMessageTriggerRuleDtoSchema = exports.createMessageTriggerRuleDtoSchema = exports.UpdateMessageTriggerRuleSchema = exports.CreateMessageTriggerRuleSchema = exports.updateMessageTriggerRuleSchema = exports.createMessageTriggerRuleSchema = exports.CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = exports.messageTriggerTargetClientStatusSchema = exports.messageTriggerTemplateKeySchema = exports.messageTriggerRecipientTypeSchema = exports.messageTriggerOffsetTypeSchema = exports.messageTriggerEventTypeSchema = exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS = exports.DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = exports.DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS = exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES = exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = exports.MESSAGE_TRIGGER_OFFSET_TYPES = exports.MESSAGE_TRIGGER_EVENT_TYPES = void 0;
 exports.getTriggerTemplateChannel = getTriggerTemplateChannel;
 const zod_1 = require("zod");
 // Shared message contracts used by both frontend and mobile.
@@ -59,10 +59,29 @@ exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = [
     "INFO",
     "SERVICE_END_NOTICE",
 ];
+/**
+ * Which clients a trigger rule applies to, by their service stage at send time.
+ * Backend parity: backend/domain/constants/message-trigger-catalog.ts.
+ */
+exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES = [
+    "all",
+    "pre_booking",
+    "waiting",
+    "active",
+];
+exports.DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS = "all";
+exports.DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = true;
+exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS = {
+    all: "전체",
+    pre_booking: "예약 전",
+    waiting: "대기",
+    active: "진행",
+};
 exports.messageTriggerEventTypeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_EVENT_TYPES);
 exports.messageTriggerOffsetTypeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_OFFSET_TYPES);
 exports.messageTriggerRecipientTypeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_RECIPIENT_TYPES);
 exports.messageTriggerTemplateKeySchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_TEMPLATE_KEYS);
+exports.messageTriggerTargetClientStatusSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES);
 /**
  * Variables each scheduler can derive without operator input.
  * Backend parity is enforced by message-trigger-template-consistency.spec.ts.
@@ -154,6 +173,8 @@ exports.createMessageTriggerRuleSchema = zod_1.z
     sendTime: zod_1.z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
     recipientType: exports.messageTriggerRecipientTypeSchema,
     templateKey: exports.messageTriggerTemplateKeySchema,
+    targetClientStatus: exports.messageTriggerTargetClientStatusSchema.optional(),
+    retryOnFailure: zod_1.z.boolean().optional(),
 })
     .passthrough();
 /** Runtime validation for `PATCH/PUT /message-trigger-rules/:id`. */

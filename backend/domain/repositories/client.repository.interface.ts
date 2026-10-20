@@ -1,5 +1,5 @@
 import { ClientEntity } from "domain/entities/client.entity";
-import { SERVICE_STATUS, ServiceStatusType, clientCalendarDate } from "domain/value-objects/service-status.vo";
+import { SERVICE_STATUS, ServiceStatusType, computeServiceStatus } from "domain/value-objects/service-status.vo";
 import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type { Prisma } from "@prisma/client";
 
@@ -57,7 +57,6 @@ export interface ClientListDateRanges {
 }
 
 const MANUAL_CLIENT_SERVICE_STATUSES = [
-    SERVICE_STATUS.PRE_BOOKING,
     SERVICE_STATUS.TERMINATED,
     SERVICE_STATUS.REPLACEMENT_REQUESTED,
 ] as const;
@@ -119,31 +118,55 @@ export function getClientListDateRanges(now = new Date()): ClientListDateRanges 
 }
 
 /**
+ * The Korean calendar day containing `date`, as the UTC-midnight bounds a `@db.Date` column
+ * compares against (`gte` start, `lt` nextDayStart). Never use the runtime's local timezone:
+ * deployed containers run in UTC, one calendar day behind Korea from 00:00 to 08:59 KST.
+ */
+export function getClientCalendarDayRange(date: Date): { dayStart: Date; nextDayStart: Date } {
+    const day = isoDateInKorea(date);
+    return { dayStart: dateOnlyStart(day), nextDayStart: dateOnlyStart(shiftCalendarDays(day, 1)) };
+}
+
+/**
+ * The Korean calendar day containing `date`, as the instants a timestamp column compares
+ * against (`gte` start, `lt` endExclusive): KST midnight to the next KST midnight.
+ */
+export function getKstDayInstantRange(date: Date): { start: Date; endExclusive: Date } {
+    const day = isoDateInKorea(date);
+    return {
+        start: new Date(`${day}T00:00:00.000+09:00`),
+        endExclusive: new Date(`${shiftCalendarDays(day, 1)}T00:00:00.000+09:00`),
+    };
+}
+
+/**
+ * "Today through `days` days from now" on the Korean calendar, as UTC-midnight bounds for a
+ * `@db.Date` column (`gte` start, `lt` endExclusive). The last day is included.
+ */
+export function getClientDateWindow(
+    days: number,
+    now = new Date(),
+): { start: Date; endExclusive: Date } {
+    const today = isoDateInKorea(now);
+    return {
+        start: dateOnlyStart(today),
+        endExclusive: dateOnlyStart(shiftCalendarDays(today, days + 1)),
+    };
+}
+
+/**
  * Resolve the status shown by the client list from the stored status and the
  * authoritative Korean calendar date. The stored manual states are preserved;
- * every other state follows the service period dates.
+ * every other state follows booking confirmation and the service period dates.
  */
 export function getEffectiveClientServiceStatus(
     currentStatus: string | null,
     startDate: Date | null,
     endDate: Date | null,
+    bookingConfirmedAt: Date | null,
     now = new Date(),
 ): ServiceStatusType {
-    if (currentStatus === SERVICE_STATUS.PRE_BOOKING
-        || currentStatus === SERVICE_STATUS.TERMINATED
-        || currentStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
-        return currentStatus;
-    }
-
-    if (!startDate || !endDate) return SERVICE_STATUS.PRE_BOOKING;
-
-    const today = isoDateInKorea(now);
-    const start = clientCalendarDate(startDate);
-    const end = clientCalendarDate(endDate);
-
-    if (start > today) return SERVICE_STATUS.WAITING;
-    if (end < today) return SERVICE_STATUS.COMPLETED;
-    return SERVICE_STATUS.ACTIVE;
+    return computeServiceStatus(currentStatus, startDate, endDate, bookingConfirmedAt, now);
 }
 
 function nonManualClientServiceStatusWhere(): Prisma.clientWhereInput {
@@ -169,26 +192,24 @@ export function clientListTabWhere(
 ): Prisma.clientWhereInput {
     switch (tab) {
         case SERVICE_STATUS.PRE_BOOKING:
-            return {
-                OR: [
-                    { serviceStatus: SERVICE_STATUS.PRE_BOOKING },
-                    withNonManualStatus([
-                        { OR: [{ startDate: null }, { endDate: null }] },
-                    ]),
-                ],
-            };
+            return withNonManualStatus([
+                { OR: [{ bookingConfirmedAt: null }, { startDate: null }, { endDate: null }] },
+            ]);
         case SERVICE_STATUS.WAITING:
             return withNonManualStatus([
+                { bookingConfirmedAt: { not: null } },
                 { startDate: { gt: todayStart } },
                 { endDate: { not: null } },
             ]);
         case SERVICE_STATUS.ACTIVE:
             return withNonManualStatus([
+                { bookingConfirmedAt: { not: null } },
                 { startDate: { lte: todayStart } },
                 { endDate: { gte: todayStart } },
             ]);
         case SERVICE_STATUS.COMPLETED:
             return withNonManualStatus([
+                { bookingConfirmedAt: { not: null } },
                 { startDate: { lte: todayStart } },
                 { endDate: { lt: todayStart } },
             ]);
@@ -207,6 +228,8 @@ export function buildClientListWhere(
     const normalizedSearch = search?.trim();
     const where: Prisma.clientWhereInput = {
         branchId: branchid,
+        // A deleted client with retained history is a tombstone: it never appears in a list.
+        deletedAt: null,
         ...(normalizedSearch
             ? {
                 OR: [
@@ -225,6 +248,8 @@ export function buildClientListWhere(
     return where;
 }
 
+export type ClientDeleteOutcome = "deleted" | "tombstoned";
+
 export interface InitialClientSchedule {
     primaryEmployeeId: number;
     secondaryEmployeeId: number | null;
@@ -239,6 +264,8 @@ export interface ClientWithInitialSchedule {
 }
 
 export interface IClientRepository {
+    /** Branch-scoped suffix prefilter; callers must compare normalized phones exactly. */
+    findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]>;
     findById(branchid: string, id: number): Promise<ClientEntity | null>;
     /**
      * Lock one branch-owned client row for an approval-bound mutation or
@@ -315,7 +342,12 @@ export interface IClientRepository {
         calendar: KrBusinessDayCalendar,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null>;
-    delete(branchid: string, id: number): Promise<void>;
+    /**
+     * `deleted`: no history, the row is gone. `tombstoned`: history exists, so the row
+     * stays with `deletedAt` set, open assignments ended and pending messages canceled.
+     * A client that is already tombstoned or absent throws `ScopedDeleteNotFoundError`.
+     */
+    delete(branchid: string, id: number): Promise<ClientDeleteOutcome>;
 
     // Date-based queries for scheduler (P3)
     /**
@@ -337,33 +369,37 @@ export interface IClientRepository {
     findByCreatedDate(branchid: string, date: Date): Promise<ClientEntity[]>;
 
     /**
-     * Find clients whose service starts within the next N days (inclusive)
-     * Used for daily summary notifications
+     * Find clients whose service starts within the next N days (inclusive), counted on the
+     * Korean calendar. Used for daily summary notifications and `/clients/filtered`.
      */
-    findStartingWithinDays(branchid: string, days: number): Promise<ClientEntity[]>;
+    findStartingWithinDays(branchid: string, days: number, now?: Date): Promise<ClientEntity[]>;
 
     /**
-     * Find clients whose service ends within the next N days (inclusive)
-     * Used for daily summary notifications
+     * Find clients whose service ends within the next N days (inclusive), counted on the
+     * Korean calendar. Used for daily summary notifications and `/clients/filtered`.
      */
-    findEndingWithinDays(branchid: string, days: number): Promise<ClientEntity[]>;
+    findEndingWithinDays(branchid: string, days: number, now?: Date): Promise<ClientEntity[]>;
 
     /**
-     * Find clients with incomplete contracts (eformsign doc not completed)
-     * whose service starts within the next N days
+     * Find clients whose service starts within the next N days (Korean calendar, inclusive) and
+     * whose CURRENT contract (the dashboard's latest-contract rule, not the `eDocId` pin) is
+     * alive but not completed.
      */
     findWithIncompleteContractsStartingWithinDays(
         branchid: string,
-        days: number
+        days: number,
+        now?: Date,
     ): Promise<ClientEntity[]>;
 
     /**
-     * Find clients without any contract sent (eDocId is null)
-     * whose service starts within the next N days
+     * Find exactly the clients the dashboard counts as `contractsNotSent` and whose list row
+     * carries the "발송 필요" badge: same effective service status, same current-contract
+     * lookup, same business-day send window. A live 040/045 contract is not "not sent".
      */
     findWithoutContractSentStartingWithinDays(
         branchid: string,
-        days: number
+        calendar: KrBusinessDayCalendar,
+        now?: Date,
     ): Promise<ClientEntity[]>;
 
     /**
@@ -386,3 +422,11 @@ export interface IClientRepository {
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";
+
+export interface ClientPhoneMatch {
+    id: number;
+    branchId: string | null;
+    name: string;
+    phone: string | null;
+    birthday: string | null;
+}

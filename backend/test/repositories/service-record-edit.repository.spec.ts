@@ -3,6 +3,7 @@ import {
     ServiceRecordEditNotFoundError,
     ServiceRecordRevisionOperationUnresolvedError,
 } from "domain/errors/service-record-edit.error";
+import { Prisma } from "@prisma/client";
 import type {
     ServiceRecordEditConfirmPlan,
     ServiceRecordEditSource,
@@ -520,8 +521,21 @@ describe("ServiceRecordEditRepository", () => {
     it.each([
         ["060", "in_progress"],
         ["040", "in_progress"],
+        ["045", "in_progress"],
+        ["041", "in_progress"],
         ["042", "rejected"],
+        ["090", "rejected"],
+        ["099", "rejected"],
+        ["047", "rejected"],
+        ["049", "rejected"],
+        ["062", "completed"],
         ["050", "completed"],
+        ["070", "in_progress"],
+        // 계약-04: a reviewer rejection is a live contract, not a rejected one.
+        ["071", "in_progress"],
+        ["080", "rejected"],
+        ["061", "rejected"],
+        ["xyz", "unknown"],
     ])("reports contract status %s as the %s stage", async (contractStatus, stage) => {
         const { repository } = buildDraftSourceFixture(contractStatus);
 
@@ -806,6 +820,90 @@ describe("ServiceRecordEditRepository", () => {
         ))).toBe(true);
     });
 
+    it("writes assignment and schedule dates only for assignments whose dates this confirm changes", async () => {
+        const source = futureSource();
+        const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+        const service_record_assignment = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+        const employee_schedule = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            service_record_edit_draft: {
+                findFirst: jest.fn().mockResolvedValue(activeDraft),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
+            },
+            client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+            service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            service_record_assignment,
+            employee_schedule,
+        };
+        const repository = new ServiceRecordEditRepository(transactionalPrisma(tx) as never);
+        const internals = repository as unknown as {
+            findDraftByIdWithClient: jest.Mock;
+            loadSourceWithClient: jest.Mock;
+        };
+        jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+        jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+
+        const plan: ServiceRecordEditConfirmPlan = {
+            status: "confirmed",
+            sourceFingerprint: "a".repeat(64),
+            caseId,
+            clientId: source.client.id,
+            formVersion: source.formVersion,
+            requiredSessionCount: source.requiredSessionCount,
+            startDate: source.startDate,
+            endDate: source.endDate,
+            header: source.header,
+            plannedSessions: source.plannedSessions,
+            sessions: [],
+            newSessions: [],
+            assignments: [
+                { assignmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", scheduleId: 55, startDate: "2026-09-01", endDate: "2026-09-10", datesChanged: false },
+                { assignmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", scheduleId: 56, startDate: "2026-09-10", endDate: "2026-09-20", datesChanged: true },
+                { assignmentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", scheduleId: 57, startDate: "2026-09-20", endDate: "2026-09-30" },
+            ],
+            revision: null,
+            dispatchContext: null,
+            documentStatus: "capability_unverified",
+            documentJob: null,
+        };
+
+        await repository.confirmDraft({
+            branchId,
+            draftId,
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "66666666-6666-4666-8666-666666666666",
+            requestFingerprint: "b".repeat(64),
+            actorUserId: actorId,
+            prepare: () => plan,
+        });
+
+        const assignmentWrites = service_record_assignment.updateMany.mock.calls.map(([call]) => call.where.id);
+        expect(assignmentWrites).toEqual([
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        ]);
+        expect(employee_schedule.updateMany.mock.calls.map(([call]) => call.where.id)).toEqual([56, 57]);
+        expect(service_record_assignment.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: {
+                startDate: new Date("2026-09-10T00:00:00.000Z"),
+                endDate: new Date("2026-09-20T00:00:00.000Z"),
+            },
+        }));
+        expect(employee_schedule.updateMany).toHaveBeenCalledWith({
+            where: { id: 56, branchId },
+            data: {
+                startDate: new Date("2026-09-10T00:00:00.000Z"),
+                endDate: new Date("2026-09-20T00:00:00.000Z"),
+            },
+        });
+    });
+
     it("allocates the next revision number under a case lock and never updates a prior revision", async () => {
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
@@ -836,6 +934,7 @@ describe("ServiceRecordEditRepository", () => {
                 serviceRecordCaseId: caseId,
                 revisionNumber: 5,
                 payload: { header: { momName: "Confirmed" }, sessions: [] },
+                beforeSnapshot: Prisma.DbNull,
                 plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-08", assignmentId: "assignment-1" }],
                 provenance: { sourceCaseVersion: 7 },
                 formVersionAtConfirm: 1,
@@ -865,6 +964,37 @@ describe("ServiceRecordEditRepository", () => {
             formVersionAtConfirm: 1,
         })).rejects.toBeInstanceOf(ServiceRecordEditNotFoundError);
         expect(tx.service_record_revision.create).not.toHaveBeenCalled();
+    });
+
+    it("persists before snapshots separately and selects only the revision counter", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
+            service_record_revision: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(revisionRow()) },
+        };
+        const repository = new ServiceRecordEditRepository(transactionalPrisma(tx) as never);
+        const beforeSnapshot = { snapshotVersion: 1, header: { momName: "Before" } };
+        const input = { branchId, serviceRecordCaseId: caseId, actorUserId: actorId, payload: { header: { momName: "After" } }, plannedSessions: [], provenance: {}, formVersionAtConfirm: 1 };
+        await repository.appendRevision({ ...input, beforeSnapshot });
+        expect(tx.service_record_revision.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ payload: input.payload, beforeSnapshot }) });
+        expect(tx.service_record_revision.findFirst).toHaveBeenCalledWith({ where: { branchId, serviceRecordCaseId: caseId }, orderBy: { revisionNumber: "desc" }, select: { revisionNumber: true } });
+        await repository.appendRevision({ ...input, beforeSnapshot: null });
+        expect(tx.service_record_revision.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ beforeSnapshot: Prisma.DbNull }) });
+    });
+
+    it("reads changes by branch, client and revision and rejects malformed IDs before querying", async () => {
+        const findFirst = jest.fn().mockResolvedValue({ ...revisionRow(), beforeSnapshot: { snapshotVersion: 1 } });
+        const repository = new ServiceRecordEditRepository({ service_record_revision: { findFirst } } as never);
+        const id = revisionRow().id;
+        expect(await repository.findRevisionForChanges(branchId, 42, id)).toMatchObject({ id, beforeSnapshot: { snapshotVersion: 1 } });
+        expect(findFirst).toHaveBeenCalledWith({
+            where: { id, branchId, serviceRecordCase: { branchId, clientId: 42 } },
+            select: { id: true, revisionNumber: true, confirmedAt: true, formVersionAtConfirm: true, payload: true, plannedSessions: true, beforeSnapshot: true },
+        });
+        findFirst.mockClear();
+        expect(await repository.findRevisionForChanges(branchId, 42, "not-a-uuid")).toBeNull();
+        expect(findFirst).not.toHaveBeenCalled();
+        findFirst.mockResolvedValue(null);
+        expect(await repository.findRevisionForChanges(branchId, 42, id)).toBeNull();
     });
 
     it("allocates contiguous revision numbers without accepting caller overrides", async () => {

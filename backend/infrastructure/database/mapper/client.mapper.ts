@@ -19,11 +19,13 @@ type ClientRow = {
     birthDate?: Date | null;
     createdAt?: Date | null;
     serviceStatus: string | null;
+    bookingConfirmedAt: Date | null;
     breastPump: boolean;
     eDocId: string | null;
     areaId?: string | null;
     branchId?: string | null;
     suppressGreetingSms?: boolean;
+    smsAutomationEnabled?: boolean;
     phoneNormalized?: string | null;
 };
 
@@ -54,6 +56,8 @@ export class ClientMapper {
             row.suppressGreetingSms ?? false,
             row.birthDate ?? null,
             row.phoneNormalized,
+            row.bookingConfirmedAt,
+            row.smsAutomationEnabled ?? true,
         );
     }
 
@@ -76,11 +80,13 @@ export class ClientMapper {
             dueDate: entity.dueDate,
             birthDate: entity.birthDate,
             createdAt: entity.createdAt ?? undefined,
+            bookingConfirmedAt: null,
             serviceStatus: entity.serviceStatus,
             breastPump: entity.breastPump,
             eDocId: entity.eDocId,
             areaId: entity.areaId,
             suppressGreetingSms: entity.suppressGreetingSms,
+            smsAutomationEnabled: entity.smsAutomationEnabled,
         };
     }
 

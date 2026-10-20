@@ -11,6 +11,7 @@ import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import { ListReviewStageContractsUsecase } from "application/usecases/eformsign-doc/list-review-stage-contracts.usecase";
+import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
@@ -121,6 +122,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
                 { provide: EformsignDocService, useValue: {} },
                 { provide: ListClientNamesByBranchUsecase, useValue: {} },
                 { provide: ListReviewStageContractsUsecase, useValue: {} },
+                { provide: ListEformsignLinkConfirmationsUsecase, useValue: {} },
                 { provide: DispatchDocumentHeadlessUsecase, useValue: {} },
                 { provide: FinalizeDocumentHeadlessUsecase, useValue: {} },
                 { provide: AdoptEformsignDocUsecase, useValue: {} },
@@ -150,7 +152,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
             whitelist: true,
             forbidNonWhitelisted: true,
         }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
     });
 
     afterEach(async () => {

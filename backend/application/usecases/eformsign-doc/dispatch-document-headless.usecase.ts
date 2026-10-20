@@ -17,6 +17,14 @@ import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/reposi
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_REJECTED_STATUS_CODES,
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL,
+    TERMINAL_STATUS_CODES,
+    isReviewerRejectedStatus,
+    isRevokeRequestedStatus,
+} from "domain/constants/eformsign-doc-status.constants";
+import {
     EformsignCredentialBoundary,
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
@@ -38,9 +46,6 @@ import {
 } from "infrastructure/locking/eformsign-operation-lock.service";
 
 const DEFAULT_DOCUMENT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
-const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
-const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
-const TERMINAL_STATUS_CODES = new Set([...COMPLETED_STATUS_CODES, ...REJECTED_STATUS_CODES, "090", "099"]);
 const DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const CREATED_DOCUMENT_RETRY_DELAYS_MS = [0, 500, 1_000, 2_000, 4_000, 8_000] as const;
 // Leave 40s beneath the 170s proxy ceiling for the final status read and local
@@ -295,6 +300,8 @@ export class DispatchDocumentHeadlessUsecase {
                 const duplicate = localDocuments
                     .find((document) => (
                         document.templateId === (templateId ?? null)
+                        // A voided (파기) contract is dead: a new one may be sent right after a void.
+                        && !document.isVoided
                         && !TERMINAL_STATUS_CODES.has(document.statusType)
                         && start - document.createdDate.getTime() >= 0
                         && start - document.createdDate.getTime() <= DUPLICATE_WINDOW_MS
@@ -776,10 +783,15 @@ export class DispatchDocumentHeadlessUsecase {
     }
 
     private statusDetail(statusType: string, stepName: string | null | undefined): string {
-        if (COMPLETED_STATUS_CODES.has(statusType)) {
+        if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) {
             return "완료";
         }
-        if (REJECTED_STATUS_CODES.has(statusType)) {
+        // Same text the webhook writes for 040/045 — a revoke REQUEST is not a rejection.
+        if (isRevokeRequestedStatus(statusType)) {
+            return EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL;
+        }
+        // 071 left the rejected set (계약-04: not terminal) but the detail written for it stays "거부".
+        if (EFORMSIGN_REJECTED_STATUS_CODES.has(statusType) || isReviewerRejectedStatus(statusType)) {
             return "거부";
         }
         return stepName?.trim() || "진행중";

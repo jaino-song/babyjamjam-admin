@@ -13,6 +13,7 @@ const createBoundary = () => ({
 const dbDate = (day: number) => new Date(`2026-07-${String(day).padStart(2, "0")}T00:00:00.000Z`);
 
 type PreparedChunk = {
+    assignmentId: string | null;
     employeeName: string;
     days: unknown[];
     tier: number;
@@ -216,6 +217,21 @@ describe("client-owned service record snapshot", () => {
             ["제공A", 5],
             ["제공A", 1],
             ["제공B", 1],
+        ]);
+    });
+
+    it("groups backfilled rows under the writing schedule even when their dates precede that assignment's range", () => {
+        const { usecase } = setup();
+        const record = makeRecord();
+        // Provider B (schedule 102, range day 7..12) backfilled sessions 5 and 6, dated inside A's range.
+        record.days = record.days.map((day) => day.caseSessionIndex === 5 || day.caseSessionIndex === 6
+            ? { ...day, scheduleId: 102, employeeId: 2, employeeNameSnapshot: "제공B" }
+            : day);
+        const chunks = callBuildCaseChunks(usecase, record, BASE_ONLY_TIERS, BASE_ONLY_TEMPLATE_BY_TIER);
+
+        expect(chunks.map((chunk) => [chunk.assignmentId, chunk.firstSessionIndex, chunk.lastSessionIndex])).toEqual([
+            ["assignment-a", 1, 4],
+            ["assignment-b", 5, 7],
         ]);
     });
 

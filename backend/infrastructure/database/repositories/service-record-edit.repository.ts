@@ -9,7 +9,12 @@ import {
     ServiceRecordRevisionOperationUnresolvedError,
     SERVICE_RECORD_BORN_STUCK_ERROR_CODES,
 } from "domain/errors/service-record-edit.error";
-import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_IN_PROGRESS_STATUS_CODES,
+    TERMINAL_STATUS_CODES,
+    isRevokeRequestedStatus,
+} from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import {
@@ -154,18 +159,21 @@ type DocumentScopeRow = {
 
 function contractStage(document: DocumentScopeRow): Exclude<ServiceRecordEditContractStage, null> {
     const status = normalizeEformsignStatusCode(document.statusType);
-    if (["003", "012", "022", "032", "050", "062", "072", "092"].includes(status)) {
+    if (EFORMSIGN_COMPLETED_STATUS_CODES.has(status)) {
         return "completed";
     }
-    // "040" (revoke requested) is a live, non-terminal document: eformsign can still refuse the
-    // request or the signer can carry on, so it is in progress, not rejected.
+    // 040/045 (revoke requested) are live, non-terminal documents: eformsign can still refuse
+    // the request or the signer can carry on, so they are in progress, not rejected.
     if (isRevokeRequestedStatus(status)) {
         return "in_progress";
     }
-    if (["011", "021", "031", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
+    // Every code the domain reads as an ending that is not completion — rejected, revoked
+    // (042/090) and deleted (047/049/099) alike.
+    if (TERMINAL_STATUS_CODES.has(status)) {
         return "rejected";
     }
-    if (["001", "002", "010", "020", "030", "043", "060", "063", "064", "070"].includes(status)) {
+    // 041 (a refused revoke) is in this set: the document continues exactly like 060.
+    if (EFORMSIGN_IN_PROGRESS_STATUS_CODES.has(status)) {
         return "in_progress";
     }
     return "unknown";
@@ -435,12 +443,14 @@ export async function loadRevisionFactsSource(
                     documentKind: true,
                     serviceRecordCaseId: true,
                     templateId: true,
+                    voidedAt: true,
                 },
             });
-            currentContractDocumentId = selectCurrentContractDocument(
+            const current = selectCurrentContractDocument(
                 candidates,
                 serviceRecordTemplateIds,
-            )?.documentId ?? null;
+            );
+            currentContractDocumentId = current && current.voidedAt == null ? current.documentId : null;
         }
         // Token observations come from the documents the scope already named plus the current
         // contract; with the pointer in sync that is the same single document as before.
@@ -2245,6 +2255,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 serviceRecordCaseId: input.serviceRecordCaseId,
             },
             orderBy: { revisionNumber: "desc" },
+            select: { revisionNumber: true },
         });
         const revisionNumber = (latest?.revisionNumber ?? 0) + 1;
         if (!Number.isInteger(revisionNumber) || revisionNumber < 1) {
@@ -2259,6 +2270,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     revisionNumber,
                     confirmedByUserId: input.actorUserId,
                     payload: toPrismaJson(input.payload),
+                    beforeSnapshot: input.beforeSnapshot == null ? Prisma.DbNull : toPrismaJson(input.beforeSnapshot),
                     plannedSessions: toPrismaJson(input.plannedSessions),
                     provenance: toPrismaJson(input.provenance),
                     formVersionAtConfirm: input.formVersionAtConfirm,
@@ -2272,6 +2284,32 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
             throw error;
         }
+    }
+
+    async findRevisionForChanges(branchId: string, clientId: number, revisionId: string) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        // Do not send malformed identifiers to PostgreSQL's uuid cast (or the
+        // conflict-oriented write validator). All unavailable revisions are 404.
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revisionId)) return null;
+        const revision = await this.prisma.service_record_revision.findFirst({
+            where: { id: revisionId, branchId, serviceRecordCase: { branchId, clientId } },
+            select: {
+                id: true,
+                revisionNumber: true,
+                confirmedAt: true,
+                formVersionAtConfirm: true,
+                payload: true,
+                plannedSessions: true,
+                beforeSnapshot: true,
+            },
+        });
+        return revision ? {
+            ...revision,
+            payload: toDomainJson(revision.payload),
+            plannedSessions: toDomainJson(revision.plannedSessions),
+            beforeSnapshot: toDomainJson(revision.beforeSnapshot),
+        } : null;
     }
 
     async listRevisionHistory(
@@ -3253,6 +3291,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 });
             }
             for (const assignment of plan.assignments) {
+                // An assignment whose two tables already hold the computed dates is emitted for
+                // message automation only; otherwise both tables are re-synced to those dates.
+                if (assignment.datesChanged === false) continue;
                 if (assignment.assignmentId) {
                     await tx.service_record_assignment.updateMany({
                         where: { id: assignment.assignmentId, branchId: input.branchId, serviceRecordCaseId: source.caseId },

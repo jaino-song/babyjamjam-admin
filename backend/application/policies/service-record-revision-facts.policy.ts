@@ -865,10 +865,10 @@ function deriveStage(
         return "provider_review";
     }
     if (stepType === "05") {
-        if (recipientType.value === "05" && ["060", "063", "064"].includes(statusType)) {
+        if (recipientType.value === "05" && ["041", "060", "063", "064"].includes(statusType)) {
             return "provider_participant";
         }
-        if (recipientType.value === "02" && ["001", "002", "010", "020", "030", "043", "060", "063", "064"].includes(statusType)) {
+        if (recipientType.value === "02" && ["001", "002", "010", "020", "030", "041", "043", "060", "063", "064"].includes(statusType)) {
             return "signature_pending";
         }
     }

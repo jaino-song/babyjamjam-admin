@@ -62,6 +62,7 @@ import { canCreateNewContractDocument } from "@/components/app/contracts/Contrac
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { AutomationStatusNotice } from "@/components/app/ui/automation-status-notice";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -320,6 +321,7 @@ export default function ClientsPage() {
     const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
     const createdClientSelectionRef = useRef<Client | null>(null);
+    const previousClientIdParamRef = useRef(clientIdParam);
 
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
@@ -327,6 +329,9 @@ export default function ClientsPage() {
     const {
         data: clientFromParam,
         isBranchContextReady: isClientDetailBranchContextReady,
+        isError: isClientFromParamError,
+        isFetching: isClientFromParamFetching,
+        refetch: refetchClientFromParam,
     } = useClient(
         effectiveClientIdParam ? Number(effectiveClientIdParam) : 0
     );
@@ -342,10 +347,14 @@ export default function ClientsPage() {
         ? listSummary.data
         : undefined;
     const selectedClientFromList = useMemo(
-        () =>
-            selectedClient
-                ? clients.find((client) => client.id === selectedClient.id) ?? selectedClient
-                : null,
+        () => {
+            if (!selectedClient) return null;
+            const listedClient = clients.find((client) => client.id === selectedClient.id);
+            if (listedClient && listedClient.bookingConfirmedAt == null && selectedClient.bookingConfirmedAt != null) {
+                return { ...listedClient, bookingConfirmedAt: selectedClient.bookingConfirmedAt, serviceStatus: selectedClient.serviceStatus };
+            }
+            return listedClient ?? selectedClient;
+        },
         [clients, selectedClient]
     );
     const clientFromParamList = useMemo(() => {
@@ -363,6 +372,14 @@ export default function ClientsPage() {
         && isBranchScopeStable
         ? selectedClientFromList ?? (effectiveClientIdParam ? clientFromParamList ?? clientFromParam ?? null : null)
         : null;
+    // A deep-linked client whose own query failed with nothing cached: the detail slot must say
+    // the load failed instead of the "select a client" placeholder (which reads as "nothing here").
+    // Loading and paused (offline) keep the placeholder; there is no loading state for this slot.
+    const isDeepLinkedClientLoadFailed = Boolean(effectiveClientIdParam)
+        && isClientDetailBranchContextReady
+        && isClientFromParamError
+        && clientFromParam === undefined
+        && activeSelectedClient === null;
     const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
 
@@ -393,6 +410,17 @@ export default function ClientsPage() {
             setUrlSelectionSuppressed(false);
         }
     }, [clientIdParam, shouldOpenClientFormFromUrl, urlSelectionSuppressed]);
+    useEffect(() => {
+        // A new ?id= (e.g. from a notification) outranks a stale row selection.
+        if (previousClientIdParamRef.current === clientIdParam) {
+            return;
+        }
+        previousClientIdParamRef.current = clientIdParam;
+        if (clientIdParam) {
+            setSelectedClient(null);
+            setUrlSelectionSuppressed(false);
+        }
+    }, [clientIdParam]);
     useEffect(() => {
         const previousBranchId = previousBranchIdRef.current;
         if (previousBranchId !== undefined && previousBranchId !== null && previousBranchId !== activeBranchId) {
@@ -621,6 +649,15 @@ export default function ClientsPage() {
         clearClientSelectionSources();
         setIsCreateFormDirty(false);
         setPendingCreateDiscard(null);
+    };
+
+    const handleBookingConfirmed = (booking: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => {
+        setSelectedClient((currentClient) => {
+            const snapshot = currentClient ?? activeSelectedClient;
+            return snapshot?.id === booking.id
+                ? { ...snapshot, bookingConfirmedAt: booking.bookingConfirmedAt, serviceStatus: booking.serviceStatus }
+                : currentClient;
+        });
     };
 
     const handleFilterChange = (nextFilter: string) => {
@@ -877,7 +914,7 @@ export default function ClientsPage() {
                             className="flex min-h-0 flex-1 flex-col"
                         >
                             <SplitLayout data-component="desktop_clients_sections_section-content_list-section_split-layout"
-                                hasSelection={shouldShowClientFormPanel || !!activeSelectedClient}
+                                hasSelection={shouldShowClientFormPanel || !!activeSelectedClient || isDeepLinkedClientLoadFailed}
                                 onBack={handleCompactBack}
                             >
                 <ListPanel data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"
@@ -1089,6 +1126,7 @@ export default function ClientsPage() {
                             messageHistoryDataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_message-history"
                             compactBackLabel="고객 목록으로 돌아가기"
                             onScheduleChangeDecided={clearSelectedClientScheduleChange}
+                            onBookingConfirmed={handleBookingConfirmed}
                             onCreateContract={
                                 canCreateNewContractDocument(activeSelectedClient)
                                     ? () => setMaternityContractClient(activeSelectedClient)
@@ -1181,6 +1219,14 @@ export default function ClientsPage() {
                             }
                         />
                     </div>
+                ) : isDeepLinkedClientLoadFailed ? (
+                    <QueryErrorState
+                        dataComponent="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_load-error"
+                        size="panel"
+                        title="고객 정보를 불러오지 못했습니다"
+                        onRetry={() => void refetchClientFromParam()}
+                        isRetrying={isClientFromParamFetching}
+                    />
                 ) : (
                     <EmptyState
                         icon={Users}
@@ -1281,7 +1327,7 @@ export default function ClientsPage() {
                 }}
                 data-component="desktop_clients_modals_delete-approval"
                 title={t(locale, "clients.delete-confirm")}
-                description="삭제한 고객 정보는 복구할 수 없어요."
+                description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel={t(locale, "common.delete")}
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"

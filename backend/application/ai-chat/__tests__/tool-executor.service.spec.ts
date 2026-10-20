@@ -6,6 +6,7 @@ import { codeOnlyProblemBody } from "../../utils/problem-bodies";
 import { clientProblemBody } from "../../usecases/client/client-write-validation";
 import { LegacyChatConfirmationService, hashLegacyChatPayload } from "../legacy-chat-confirmation.service";
 import { ToolExecutorService, type ToolExecutionResult } from "../tool-executor.service";
+import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 
 const TEST_PRINCIPAL = { branchId: "branch-1", globalRole: "owner" };
 type TestExecutor = Omit<ToolExecutorService, "execute"> & {
@@ -148,6 +149,28 @@ function createExecutor(): { executor: TestExecutor; mocks: ServiceMocks } {
 }
 
 describe("ToolExecutorService", () => {
+    it.each([true, false])("contract reads preserve all fields and display voided=%s without actor identity", async (isVoided) => {
+        const { executor, mocks } = createExecutor();
+        const doc = EformsignDocEntity.reconstitute({
+            id: 42, documentId: "doc-1", clientId: 7, createdDate: new Date("2026-01-01"), updatedDate: new Date("2026-01-01"),
+            statusType: "050", statusDetail: "완료", stepType: "05", stepIndex: "1", stepName: "이용자", stepRecipientType: "02", stepRecipientName: "산모", stepRecipientSms: "01012345678", expired: false, expiredDate: new Date("2027-01-01"),
+            voidedAt: isVoided ? new Date() : null, voidedBy: "private-actor-id",
+        });
+        mocks.eformsignDocService.findByDocumentId.mockResolvedValue(doc);
+        mocks.eformsignDocService.findByClientId.mockResolvedValue([doc]);
+        mocks.eformsignDocService.findAll.mockResolvedValue([doc]);
+        const status = await executor.execute("branch-1", "getContractStatus", { documentId: "doc-1" });
+        const clientStatus = await executor.execute("branch-1", "getContractStatus", { clientId: 7 });
+        const list = await executor.execute("branch-1", "listAllContracts", {});
+        for (const result of [status, clientStatus, list]) {
+            expect(result.success).toBe(true);
+            const data = JSON.parse(JSON.stringify(result.data));
+            expect(Array.isArray(data) ? data[0] : data).toMatchObject({ documentId: "doc-1", statusType: isVoided ? "voided" : "050", statusDetail: isVoided ? "파기됨" : "완료" });
+            expect(JSON.stringify(data)).not.toContain("private-actor-id");
+        }
+        if (!isVoided) expect(status.data).toBe(doc);
+        expect(doc.statusType).toBe("050");
+    });
     it("should default missing search pagination but reject invalid provided values", async () => {
         const { executor, mocks } = createExecutor();
 
@@ -335,6 +358,28 @@ describe("ToolExecutorService", () => {
             filter: "everything",
         })).resolves.toMatchObject({ success: false, error: expect.stringContaining("filter") });
         expect(mocks.clientService.findByFilter).not.toHaveBeenCalled();
+    });
+
+    // The chat's 계약서 미발송 / 미완료 counts are the lengths of the same lists /clients/filtered
+    // and the PWA digest serve, so they follow the dashboard's current-contract rule.
+    it("getDashboardStats reports the contract counts from the shared filtered lists", async () => {
+        const { executor, mocks } = createExecutor();
+        mocks.clientService.findAll.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+        mocks.clientService.findByFilter.mockImplementation(async (_branch: string, filter: string) => ({
+            "starting-soon": [{ id: 1 }],
+            "ending-soon": [{ id: 2 }, { id: 3 }],
+            "incomplete-contracts": [{ id: 1 }, { id: 2 }, { id: 3 }],
+            "no-contract": [{ id: 2 }],
+        })[filter] ?? []);
+
+        const result = await executor.execute("branch-1", "getDashboardStats", {});
+
+        expect(result).toMatchObject({
+            success: true,
+            data: expect.objectContaining({ incompleteContractsCount: 3, noContractCount: 1 }),
+        });
+        expect(mocks.clientService.findByFilter).toHaveBeenCalledWith("branch-1", "no-contract");
+        expect(mocks.clientService.findByFilter).toHaveBeenCalledWith("branch-1", "incomplete-contracts");
     });
 
     it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("accepts ISO birthday %s before legacy tool confirmation", async (birthday) => {

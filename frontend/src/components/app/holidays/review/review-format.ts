@@ -27,7 +27,7 @@ export const REVIEW_REASON_LABEL: Record<HolidayReviewReason, string> = {
   no_sessions_after_date: "바뀐 날짜 이후 서비스 기록 없음",
   session_on_or_after_date: "바뀐 날짜에 이미 근무 기록 있음",
   finalized: "서비스 기록 확정됨",
-  locked_session_after_new_end: "새 종료일 뒤에 잠긴 근무 기록 있음",
+  locked_session_after_new_end: "새 종료일 뒤에 마무리된 서비스 제공일 있음",
 };
 
 const GENERIC_SKIP_REASON = "수정하지 못했어요";

@@ -39,6 +39,7 @@ function makeClient(overrides: Partial<Client>): Client {
         voucherClient: true,
         breastPump: false,
         serviceStatus: "active",
+        bookingConfirmedAt: null,
         eDocId: null,
         hasSigned: false,
         documentStatus: null,
@@ -101,6 +102,72 @@ describe("EmployeeScheduleManager calendar grid", () => {
         expect(localDateKey(range.horizonEnd)).toBe("2029-02-28");
     });
 
+});
+
+describe("EmployeeScheduleManager query load failures", () => {
+    afterEach(() => { jest.clearAllMocks(); });
+
+    it("treats a paused first load as loading, never an empty schedule or zero count", () => {
+        mockClients([], {
+            data: undefined, isPending: true, isLoading: false, isError: false,
+            isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused",
+        });
+        renderManager();
+        expect(screen.getByText("일정 불러오는 중…")).toBeInTheDocument();
+        expect(screen.queryByText("조회 기간의 일정이 없습니다.")).not.toBeInTheDocument();
+        expect(screen.queryByText(/0건/)).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it.each([true, false])("keeps cached %s schedule data and one inline retry notice", (hasEntries) => {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const rows = hasEntries ? [makeClient({ startDate: localDateKey(tomorrow) })] : [];
+        const refetch = mockClients(rows, { isError: true, isFetching: false });
+        const { container, rerender } = renderManager();
+        fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(container.querySelector('[data-slot="schedule-workspace"]')).toBeInTheDocument();
+        expect(screen.getAllByRole("alert")).toHaveLength(1);
+        expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
+        expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        if (hasEntries) {
+            expect(container.querySelector('[data-component="test_schedule_manager_list_row"]')).toHaveTextContent("박서연");
+        } else {
+            expect(screen.getByText("조회 기간의 일정이 없습니다.")).toBeInTheDocument();
+            expect(screen.getByText(/· 0건/)).toBeInTheDocument();
+        }
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(refetch).toHaveBeenCalledTimes(1);
+        mockClients(rows, { isError: true, isFetching: true });
+        rerender(<EmployeeScheduleManager data-component="test_schedule_manager" />);
+        expect(screen.getByRole("button", { name: /다시 시도/ })).toBeDisabled();
+        expect(container.querySelector('[data-slot="schedule-workspace"]')).toBeInTheDocument();
+    });
+
+    it("shows successful empty data as real zero without an alert", () => {
+        mockClients([]);
+        renderManager();
+        fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(screen.getByText("조회 기간의 일정이 없습니다.")).toBeInTheDocument();
+        expect(screen.getByText(/· 0건/)).toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("leaves cached data on screen during a paused refetch", () => {
+        mockClients([], { isPaused: true, isFetching: false });
+        const { container } = renderManager();
+        expect(container.querySelector('[data-slot="schedule-workspace"]')).toBeInTheDocument();
+        expect(screen.queryByText("일정 불러오는 중…")).not.toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("keeps no-data idle/disabled behavior unchanged", () => {
+        mockClients([], { data: undefined, isPending: true, isPaused: false, status: "pending", fetchStatus: "idle" });
+        renderManager();
+        fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(screen.getByText("조회 기간의 일정이 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
 });
 
 describe("EmployeeScheduleManager interactions", () => {

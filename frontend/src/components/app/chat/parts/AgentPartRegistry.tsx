@@ -11,6 +11,7 @@ import { ActionResultPart } from "./ActionResultPart";
 import { FormRequestPart } from "./FormRequestPart";
 import { ErrorPart } from "./ErrorPart";
 import { AttachmentPart } from "./AttachmentPart";
+import { AgentContactCard } from "./AgentContactCard";
 import {
     AgentActionProposalPartSchema,
     AgentActionResultPartSchema,
@@ -55,6 +56,26 @@ type AgentPartRegistryProps = {
 // renders model/assistant markdown, including legacy chat).
 const AGENT_TEXT_REMARK_PLUGINS = [remarkGfm, remarkAgentLineBreaks];
 const AGENT_TEXT_MARKDOWN_COMPONENTS = AGENT_SAFE_MARKDOWN_LINK_COMPONENTS;
+
+// An id is a positive safe integer, given as a number or as a string of digits.
+function readContactId(value: unknown): number | null {
+    const id = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+    return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+// The chat carries ids only; the card looks the contact up by id. Priority:
+// target.clientId, target.employeeId, changes.clientId, changes.employeeId.
+function readContactRef(target: Record<string, unknown> | undefined, changes: Record<string, unknown>): { clientId?: number; employeeId?: number } | null {
+    const clientId = readContactId(target?.clientId);
+    if (clientId !== null) return { clientId };
+    const targetEmployeeId = readContactId(target?.employeeId);
+    if (targetEmployeeId !== null) return { employeeId: targetEmployeeId };
+    const changesClientId = readContactId(changes.clientId);
+    if (changesClientId !== null) return { clientId: changesClientId };
+    const changesEmployeeId = readContactId(changes.employeeId);
+    if (changesEmployeeId !== null) return { employeeId: changesEmployeeId };
+    return null;
+}
 
 export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onTaskPatch, onTaskCommand, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;
@@ -102,7 +123,9 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, ta
                 }
                 if (part.type === "data-action-proposal") {
                     const parsed = AgentActionProposalPartSchema.safeParse(data);
-                    return parsed.success ? <AgentActionApprovalCard key={index} data-component={component("action-approval")} {...parsed.data} terminal={terminalActionIds?.has(parsed.data.actionId)} onApprove={onApproveAction} onReject={onRejectAction} /> : <SafePartFallback key={index} data-component={component("fallback")} />;
+                    if (!parsed.success) return <SafePartFallback key={index} data-component={component("fallback")} />;
+                    const contactRef = readContactRef(parsed.data.target, parsed.data.changes);
+                    return <AgentActionApprovalCard key={index} data-component={component("action-approval")} {...parsed.data} contact={contactRef ? <AgentContactCard data-component={component("action-approval_contact")} {...contactRef} /> : undefined} terminal={terminalActionIds?.has(parsed.data.actionId)} onApprove={onApproveAction} onReject={onRejectAction} />;
                 }
                 if (part.type === "data-action-result") {
                     const parsed = AgentActionResultPartSchema.safeParse(data);

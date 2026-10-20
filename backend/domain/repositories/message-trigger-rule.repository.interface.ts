@@ -10,6 +10,15 @@ export interface IMessageTriggerRuleRepository {
         id: string,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerRuleEntity | null>;
+    /**
+     * Dispatch-time read: the rule owned by the branch OR a branchless GLOBAL
+     * rule. `findById` is branch-scoped and returns null for global rules.
+     */
+    findByIdIncludingGlobal(
+        branchId: string,
+        id: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleEntity | null>;
     findActiveByEventTypes(
         branchId: string,
         eventTypes: MessageTriggerEventType[],

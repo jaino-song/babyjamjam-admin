@@ -4,7 +4,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
-import { isContractReceiptSendable } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  isContractReceiptSendable,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
@@ -47,7 +50,9 @@ import {
   DocumentFilterType,
   type DocumentStatusCategory,
   contractStatusBadgeType,
+  isCustomerSignedDisplayStatus,
   mapDocStatusLabel,
+  resolveDocDisplayStatus,
   calendarForEndDate,
   getStatusCategory,
   foldContractStats,
@@ -74,10 +79,12 @@ import {
   SectionNav,
 } from "@/components/app/v3";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
+import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/ContractLinkConfirmationsNotice";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ReceiptSendConfirmDialog } from "@/components/app/contracts/ReceiptSendConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -264,7 +271,8 @@ function formatDateTime(timestamp: number): string {
 function getSignatureProgress(
   category: DocumentStatusCategory,
   hasOpenedDocument: boolean,
-  isCustomerSigned: boolean
+  isCustomerSigned: boolean,
+  isVoided = false,
 ) {
   const isCompleted = category === "completed";
   const isSigned = isCompleted || isCustomerSigned;
@@ -276,7 +284,15 @@ function getSignatureProgress(
     { label: isCompleted ? "제공기관 검토 완료" : "제공기관 검토 필요", done: isCompleted },
     { label: "계약서 완료", done: isCompleted },
   ];
-  return steps;
+  if (!isVoided) {
+    return steps;
+  }
+  // A voided contract is closed: it shows only the stages it actually reached, ending in 파기됨,
+  // so no un-reached stage (or live 제공기관 검토 필요 / 계약서 완료) stays ahead of the void.
+  return [
+    ...steps.filter((step) => step.done),
+    { label: CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided, done: true },
+  ];
 }
 
 function formatCurrencyValue(value: string | null | undefined): string {
@@ -551,7 +567,9 @@ export default function ContractsPage() {
     isFetching: isFetchingDocuments,
     hasNextPage,
     fetchNextPage,
-    error,
+    isError: isDocumentsError,
+    isFetchNextPageError,
+    refetch,
   } = useInfiniteContracts({
     enabled: canFetchDocuments,
     filterType,
@@ -583,6 +601,13 @@ export default function ContractsPage() {
   // server returns is what renders — total_rows/hasNextPage describe the
   // searched set and pagination stops when the matches run out.
   const documents = infiniteDocuments;
+  const retryDocuments = () => {
+    if (isFetchNextPageError) {
+      void fetchNextPage();
+    } else {
+      void refetch();
+    }
+  };
 
   const serviceRecordDocuments = useMemo(
     () => infiniteDocuments.filter(
@@ -702,7 +727,7 @@ export default function ContractsPage() {
       });
     }
   };
-  if (authError || error) {
+  if (authError) {
     return (
       <div data-component="desktop_contracts_error" className="p-[calc(24px*var(--glint-ui-scale,1))]">
         <div data-component="desktop_contracts_error_banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
@@ -738,6 +763,7 @@ export default function ContractsPage() {
         onJobsPopoverOpenChange={setIsDocumentJobsPopoverOpen}
       />
 
+      {activeSection === "maternity" && <ContractLinkConfirmationsNotice />}
       <div
         data-component="desktop_contracts_sections"
         data-slot="contracts-sections"
@@ -793,11 +819,26 @@ export default function ContractsPage() {
               />
             }
             emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <ListEmptyState
+              isDocumentsError ? <QueryErrorState
+                dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
+                size="panel"
+                className="pointer-events-auto"
+                onRetry={retryDocuments}
+                isRetrying={isFetchingDocuments}
+              /> : <ListEmptyState
                 message={searchQuery.trim() ? "검색 결과가 없습니다" : "계약 문서가 없습니다"}
               />
             ) : undefined}
           >
+            {isDocumentsError && documents.length > 0 ? (
+              <QueryErrorState
+                dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
+                size="inline"
+                title="최신 정보를 불러오지 못했습니다"
+                onRetry={retryDocuments}
+                isRetrying={isFetchingDocuments}
+              />
+            ) : null}
             <AnimatedSlotList<EformsignDocument>
                 data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list"
                 items={documents}
@@ -820,7 +861,7 @@ export default function ContractsPage() {
                   setSelectedDocId(doc.id);
                 }}
                 // Load more props
-                hasMore={hasNextPage}
+                hasMore={hasNextPage && !isFetchNextPageError}
                 onLoadMore={fetchNextPage}
                 isFetchingMore={isFetchingDocuments}
                 render={({ item: doc, isLoading }) => {
@@ -930,12 +971,27 @@ export default function ContractsPage() {
                   isContentLoading={isContentLoading}
                   emptyState={
                     serviceRecordDocuments.length === 0 && !isServiceRecordListLoading && !isContentLoading ? (
-                      <ListEmptyState
+                      isDocumentsError ? <QueryErrorState
+                        dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
+                        size="panel"
+                        className="pointer-events-auto"
+                        onRetry={retryDocuments}
+                        isRetrying={isFetchingDocuments}
+                      /> : <ListEmptyState
                         message={serviceRecordSearchQuery.trim() ? "검색 결과가 없습니다" : "아직 제공기록지가 없습니다"}
                       />
                     ) : undefined
                   }
                 >
+                  {isDocumentsError && serviceRecordDocuments.length > 0 ? (
+                    <QueryErrorState
+                      dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
+                      size="inline"
+                      title="최신 정보를 불러오지 못했습니다"
+                      onRetry={retryDocuments}
+                      isRetrying={isFetchingDocuments}
+                    />
+                  ) : null}
                   <AnimatedSlotList<EformsignDocument>
                     data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_list"
                     items={serviceRecordDocuments}
@@ -954,7 +1010,7 @@ export default function ContractsPage() {
                       };
                     }}
                     onSlotClick={(doc) => setSelectedServiceRecordDocId(doc.id)}
-                    hasMore={hasNextPage}
+                    hasMore={hasNextPage && !isFetchNextPageError}
                     onLoadMore={fetchNextPage}
                     isFetchingMore={isFetchingDocuments}
                     render={({ item: doc, isLoading }) => (
@@ -1171,7 +1227,8 @@ export function ContractDetail({
     refetchOnWindowFocus: false,
   });
   const detailedDocument = detailQuery.data ?? doc;
-  const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
+  const isBaseDetailLoading = detailQuery.isPlaceholderData
+    || (detailQuery.isFetching && detailQuery.data === undefined);
   const mappedCustomerName = documentClientSummary?.clientName.trim();
   const customerName = resolveDocumentCustomerName(detailedDocument, mappedCustomerName) || CUSTOMER_NAME_PLACEHOLDER;
   const isServiceRecordDocument = reviewAction === "preview";
@@ -1193,10 +1250,18 @@ export function ContractDetail({
   // The backend's serve-time display_status decides the label — the detail response carries it,
   // and the list row stands in until the detail loads. Without it an unassigned document at the
   // provider-review step resolved to 검토 필요 here and drew the finalize button the list hides.
+  const docContractEndDate = detailedDocument.contract_end_date ?? (contractEndDateIso || null);
+  const docDisplayStatusInput = detailedDocument.display_status ?? doc.display_status;
+  const displayStatus = resolveDocDisplayStatus(
+    detailedDocument.current_status,
+    docContractEndDate,
+    docDisplayStatusInput,
+    calendar,
+  );
   const statusLabel = mapDocStatusLabel(
     detailedDocument.current_status,
-    detailedDocument.contract_end_date ?? (contractEndDateIso || null),
-    detailedDocument.display_status ?? doc.display_status,
+    docContractEndDate,
+    docDisplayStatusInput,
     calendar,
   );
   const statusType: StatusType = contractStatusBadgeType(statusLabel);
@@ -1217,7 +1282,8 @@ export function ContractDetail({
   const finalizeProgressSteps = isServiceRecordDocument
     ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
     : FINALIZE_PROGRESS_STEPS;
-  const canReRequest = canReRequestDocument(detailedDocument);
+  // A voided contract is closed: no re-request, whatever step the provider code still reports.
+  const canReRequest = displayStatus !== "voided" && canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
   const currentRecipient = detailedDocument.current_status?.step_recipients?.[0];
@@ -1368,9 +1434,19 @@ export function ContractDetail({
   const reRequestEvents = extractReRequestEvents(detailedDocument);
   const openEvents = extractOpenEvents(detailedDocument);
   const hasOpenedDocument = openEvents.length > 0;
-  const isReviewNeeded = statusLabel === "검토 필요";
-  const isCustomerSigned = statusLabel === "서명 완료" || isReviewNeeded;
-  const steps = getSignatureProgress(category, hasOpenedDocument, isCustomerSigned);
+  // Decided from the display status (status code + workflow step), not from the label text:
+  // an unassigned document ("고객 등록 필요") at the review step is customer-signed too.
+  const isReviewNeeded = displayStatus === "review";
+  const isCustomerSigned = isCustomerSignedDisplayStatus(displayStatus);
+  const isVoided = displayStatus === "voided";
+  // A voided document's display status hides how far it got; the header stepper keeps the
+  // stages it reached, so read the signature from the status it would have without the void.
+  const wasCustomerSigned = isVoided
+    ? isCustomerSignedDisplayStatus(
+        resolveDocDisplayStatus(detailedDocument.current_status, docContractEndDate, null, calendar),
+      )
+    : isCustomerSigned;
+  const steps = getSignatureProgress(category, hasOpenedDocument, wasCustomerSigned, isVoided);
   const customerSignedTimestamp = extractCustomerSignedTimestamp(detailedDocument);
   const customerSignedDate =
     customerSignedTimestamp != null ? formatDateTime(customerSignedTimestamp) : null;
@@ -1770,6 +1846,19 @@ export function ContractDetail({
     });
   }
 
+  // 파기됨 overrides every provider code: eformsign keeps reporting 060/003/... for a voided
+  // document. The void is a closed, last entry (no live marker); the sent/signed/completed events
+  // are real history and stay, while a live/pending stage is never drawn for a voided document.
+  const pushVoidedEvent = () => {
+    const voidedAtTimestamp = detailedDocument.voided_at ? Date.parse(detailedDocument.voided_at) : NaN;
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "계약이 파기됐어요",
+      time: Number.isNaN(voidedAtTimestamp) ? "" : formatDateTime(voidedAtTimestamp),
+    });
+  };
+
   if (category === "completed") {
     activityItems.push({
       icon: FileSignature,
@@ -1783,13 +1872,33 @@ export function ContractDetail({
       text: "계약서가 완료되었습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
+    if (displayStatus === "voided") pushVoidedEvent();
+  } else if (displayStatus === "voided") {
+    pushVoidedEvent();
   } else if (statusLabel === "철회 요청됨") {
-    // 040 shares the "expired" category (tabs/filters) but is not over: the cancellation was
+    // 040/045 share the "expired" category (tabs/filters) but are not over: the cancellation was
     // requested, and may still be refused or completed.
     activityItems.push({
       icon: AlertTriangle,
       iconVariant: "warning",
       text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
+  } else if (statusLabel === "반려됨") {
+    // 071 is in the "in-progress" category (tabs/stats) and the customer's signature stays valid; the
+    // provider's reviewer sent the document back, and a new review request (070) continues it.
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
+  } else if (statusLabel === "철회됨") {
+    // 042/090 share the "expired" category (tabs/filters) but the document was revoked, not timed out.
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "문서가 철회됐어요",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else if (category === "expired") {
@@ -1817,13 +1926,28 @@ export function ContractDetail({
 
   const documentTabCards = [
     isServiceRecordDocument ? (
-      <ServiceRecordHeaderCard
-        data-component={`${dataComponent}_content_document_header-card`}
-        key="document-profile"
-        header={serviceRecordHeader}
-        isLoading={isCustomerInfoLoading}
-        showStatusBadge={false}
-      />
+      <div data-component={`${dataComponent}_content_document_header-section`} key="document-profile" className="grid content-start gap-5">
+        {serviceRecordQuery.isError && (
+          <QueryErrorState
+            dataComponent={`${dataComponent}_content_document_header-error`}
+            size="inline"
+            title={serviceRecordQuery.data !== undefined
+              ? "최신 정보를 불러오지 못했습니다"
+              : "제공기록지 기본정보를 불러오지 못했습니다"}
+            onRetry={() => { void serviceRecordQuery.refetch(); }}
+            isRetrying={serviceRecordQuery.isFetching}
+          />
+        )}
+        {(!serviceRecordQuery.isError || serviceRecordQuery.data !== undefined) && (
+          <ServiceRecordHeaderCard
+            data-component={`${dataComponent}_content_document_header-card`}
+            header={serviceRecordHeader}
+            isLoading={(serviceRecordQuery.data === undefined && isCustomerInfoLoading)
+              || (serviceRecordQuery.isPaused && serviceRecordQuery.data === undefined)}
+            showStatusBadge={false}
+          />
+        )}
+      </div>
     ) : (
       <InfoRowsCard
         data-component={`${dataComponent}_content_document_client-card`}
@@ -2125,6 +2249,15 @@ export function ContractDetail({
         />
       }
     >
+      {detailQuery.isError && (
+        <QueryErrorState
+          dataComponent={`${dataComponent}_content_refresh-error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => { void detailQuery.refetch(); }}
+          isRetrying={detailQuery.isRefetching || detailQuery.isFetching}
+        />
+      )}
       <DetailTabPanels
         activeTab={activeDetailTab}
         data-component={`${dataComponent}_content`}

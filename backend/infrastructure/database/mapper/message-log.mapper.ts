@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import {
+    CarrierResultState,
     MessageLogEntity,
     MessageLogStatus,
     SmsProviderAcceptanceState,
@@ -34,6 +35,10 @@ type MessageLogRow = {
     providerReconciledAt?: Date | null;
     providerReconciledBy?: string | null;
     providerReconciliationReason?: string | null;
+    carrierCheckDueAt?: Date | null;
+    carrierCheckedAt?: Date | null;
+    carrierResultState?: string | null;
+    carrierResults?: Prisma.JsonValue | null;
 };
 
 export class MessageLogMapper {
@@ -66,6 +71,10 @@ export class MessageLogMapper {
             row.providerReconciledAt ?? null,
             row.providerReconciledBy ?? null,
             row.providerReconciliationReason ?? null,
+            row.carrierCheckDueAt ?? null,
+            row.carrierCheckedAt ?? null,
+            (row.carrierResultState as CarrierResultState | null | undefined) ?? null,
+            Array.isArray(row.carrierResults) ? (row.carrierResults as unknown[]) : null,
         );
     }
 
@@ -95,11 +104,31 @@ export class MessageLogMapper {
             providerReconciledAt: entity.providerReconciledAt,
             providerReconciledBy: entity.providerReconciledBy,
             providerReconciliationReason: entity.providerReconciliationReason,
+            ...MessageLogMapper.carrierCheckFields(entity),
+        };
+    }
+
+    /**
+     * Carrier columns are owned by the one-shot carrier check, so they are
+     * written only when this entity instance scheduled the check. Otherwise a
+     * stale entity's update() could clobber a saved carrier result.
+     */
+    private static carrierCheckFields(entity: MessageLogEntity) {
+        return {
+            carrierCheckDueAt: entity.carrierCheckDueAt,
+            carrierCheckedAt: entity.carrierCheckedAt,
+            carrierResultState: entity.carrierResultState,
+            carrierResults: entity.carrierResults === null
+                ? Prisma.DbNull
+                : (entity.carrierResults as Prisma.InputJsonValue),
         };
     }
 
     static toPrismaUpdate(entity: MessageLogEntity) {
         return {
+            ...(entity.hasPendingCarrierCheckSchedule()
+                ? MessageLogMapper.carrierCheckFields(entity)
+                : {}),
             status: entity.status,
             aligoMid: entity.aligoMid,
             errorMessage: entity.errorMessage,

@@ -41,7 +41,7 @@ interface ServiceRecordLinkTokenParams {
  *   - link token: carried in the SMS URL (possession). Stored plaintext so the issued
  *     form URL can be recovered from the database when needed; only reaches the phone challenge.
  *   - access token: minted after a correct phone number (knowledge). Grants the service-record endpoints
- *     until expiresAt (= schedule.endDate + grace buffer).
+ *     until expiresAt (= midnight KST after schedule.endDate).
  * The access token and expected phone remain sha256 hashes. `linkTokenHash` retains its
  * legacy Prisma/database name even though newly issued form-link values are plaintext.
  */
@@ -97,9 +97,11 @@ export class ServiceRecordTokenService {
             const current = await db.employee_schedule.findFirst({
                 where: { clientId: original.clientId, branchId: record.branchId, replaced: false },
                 orderBy: { id: "desc" },
-                include: { primaryEmployee: true, client: { select: { serviceStatus: true } } },
+                include: { primaryEmployee: true, client: { select: { serviceStatus: true, deletedAt: true } } },
             });
-            if (!current || current.client.serviceStatus === "terminated" || current.primaryEmployee.deletedAt) return null;
+            // The client tombstone is authoritative: a deleted client's links must never
+            // resolve or be (re)issued, whether or not post-commit revocation succeeded.
+            if (!current || current.client.deletedAt || current.client.serviceStatus === "terminated" || current.primaryEmployee.deletedAt) return null;
             return current;
         });
     }
@@ -221,7 +223,7 @@ export class ServiceRecordTokenService {
             const record = await this.findByLinkToken(params.linkToken, tx);
             if (
                 !record
-                || record.expiresAt.getTime() < Date.now()
+                || record.expiresAt.getTime() <= Date.now()
                 || record.branchId !== params.branchId
                 || record.scheduleId !== params.scheduleId
                 || record.employeeId !== params.employeeId
@@ -260,7 +262,7 @@ export class ServiceRecordTokenService {
     /** Resolve a usable (active, not revoked, not expired, not locked) link-token row, else null. */
     async resolveLink(linkToken: string) {
         const record = await this.findByLinkToken(linkToken, this.prismaService);
-        if (!record || (!record.active && !record.revokedAt) || record.expiresAt.getTime() < Date.now()) return null;
+        if (!record || (!record.active && !record.revokedAt) || record.expiresAt.getTime() <= Date.now()) return null;
         const current = await this.currentProvider(record, this.prismaService);
         if (!current || (record.revokedAt && record.scheduleId === current.id)) return null;
         const changed = record.scheduleId !== current.id || record.employeeId !== current.primaryEmployeeId
@@ -415,7 +417,7 @@ export class ServiceRecordTokenService {
                     Object.assign(record, rebound);
                 }
                 if (!record.active || record.revokedAt) return this.unavailable("invalid_token");
-                if (record.expiresAt.getTime() < now.getTime()) return this.unavailable("expired");
+                if (record.expiresAt.getTime() <= now.getTime()) return this.unavailable("expired");
                 if (record.lockedAt) return this.unavailable("locked");
 
                 let failedAttempts = record.failedAttempts;
@@ -505,7 +507,7 @@ export class ServiceRecordTokenService {
             !record.verifiedAt ||
             record.lockedAt ||
             record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS ||
-            record.expiresAt.getTime() < Date.now()
+            record.expiresAt.getTime() <= Date.now()
         ) {
             return null;
         }
@@ -555,11 +557,18 @@ export class ServiceRecordTokenService {
         });
     }
 
-    /** Revoke every active token for an assignment (replacement / termination). */
-    async revokeForSchedule(scheduleId: number): Promise<void> {
-        const schedule = await this.prismaService.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } });
+    /**
+     * Revoke every active token for an assignment (replacement / termination).
+     * `tx` lets a caller that already holds the schedule fence revoke on its own
+     * connection: opening another transaction from inside it would wait on
+     * locks (`service-record-link:` advisory, case row) that this connection
+     * cannot see.
+     */
+    async revokeForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<void> {
+        const db = tx ?? this.prismaService;
+        const schedule = await db.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } });
         if (!schedule?.branchId) return;
-        await this.prismaService.service_record_token.updateMany({
+        await db.service_record_token.updateMany({
             where: { scheduleId, branchId: schedule.branchId, active: true },
             data: { active: false, revokedAt: new Date(), accessTokenHash: null, verifiedAt: null },
         });

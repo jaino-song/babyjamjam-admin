@@ -4,36 +4,33 @@ import type {
     ServiceRecordWizardProps,
     ServiceRecordWizardSlots,
 } from "@babyjamjam/service-record-ui";
-import { ServiceRecordWizard as SharedServiceRecordWizard } from "@babyjamjam/service-record-ui";
 
-import { ProviderInfo, DEFAULT_PROVIDER_NAME } from "@/components/service-record/provider-info";
-
-import { SignaturePad } from "./SignaturePad";
+import { MobileServiceRecordScreen } from "./screen/MobileServiceRecordScreen";
 
 export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots"> & {
     slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature">;
 };
 
+// Rollback: render the package's `ServiceRecordWizard` here again, with the `provider` / `signature` slots (ProviderInfo / SignaturePad).
+/* eslint-disable @typescript-eslint/no-unused-vars -- the administrator-only props are destructured away on purpose, so they are never forwarded */
 export function MobileServiceRecordWizard({
-    "data-component": dataComponent,
-    context,
+    adminMode: _adminMode,
+    readOnly: _readOnly,
+    headerErrors: _headerErrors,
+    changedSessionIndexes: _changedSessionIndexes,
+    onOpenServiceDateEditor: _onOpenServiceDateEditor,
     slots,
     ...props
 }: MobileServiceRecordWizardProps) {
+    /* eslint-enable @typescript-eslint/no-unused-vars */
     return (
-        <SharedServiceRecordWizard
+        <MobileServiceRecordScreen
             {...props}
-            context={context}
-            data-component={dataComponent}
             slots={{
-                ...slots,
-                provider: ({ "data-component": providerDataComponent, providerName }) => (
-                    <ProviderInfo
-                        data-component={providerDataComponent}
-                        providerName={providerName ?? context?.org?.name ?? DEFAULT_PROVIDER_NAME}
-                    />
-                ),
-                signature: (signatureProps) => <SignaturePad {...signatureProps} />,
+                submitModal: slots?.submitModal,
+                scheduleChangeModal: slots?.scheduleChangeModal,
+                serviceDateChangeModal: slots?.serviceDateChangeModal,
+                errorNotification: slots?.errorNotification,
             }}
         />
     );

@@ -53,6 +53,7 @@ interface CreateClientProps {
     areaId?: string | null;
     createdAt?: Date | null;
     suppressGreetingSms?: boolean;
+    smsAutomationEnabled?: boolean;
 }
 
 /**
@@ -149,6 +150,13 @@ export class ClientEntity {
         public birthDate: Date | null = null,
         /** Canonical identity key; display formatting remains in `phone`. */
         public phoneNormalized: string | null = normalizePhone(phone),
+        public readonly bookingConfirmedAt: Date | null = null,
+        /**
+         * Per-client switch for automatic SMS. Written by the create and the
+         * dedicated update path only; the entity-wide persistence update
+         * deliberately leaves the column alone.
+         */
+        public smsAutomationEnabled: boolean = true,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -164,7 +172,7 @@ export class ClientEntity {
      * Returns the computed status without modifying the entity
      */
     computeCurrentStatus(): ServiceStatusType {
-        return computeServiceStatus(this.serviceStatus, this.startDate, this.endDate);
+        return computeServiceStatus(this.serviceStatus, this.startDate, this.endDate, this.bookingConfirmedAt);
     }
 
     /**
@@ -203,7 +211,7 @@ export class ClientEntity {
             props.careCenter,
             props.voucherClient,
             props.birthday,
-            props.serviceStatus,
+            computeServiceStatus(props.serviceStatus, props.startDate, props.endDate, null),
             props.breastPump,
             props.eDocId,
             props.dueDate,
@@ -213,6 +221,8 @@ export class ClientEntity {
             props.suppressGreetingSms ?? false,
             props.birthDate,
             phoneNormalized,
+            null,
+            props.smsAutomationEnabled ?? true,
         );
     }
 
@@ -314,6 +324,8 @@ export class ClientEntity {
         suppressGreetingSms: boolean = false,
         birthDate: Date | null = null,
         phoneNormalized?: string | null,
+        bookingConfirmedAt: Date | null = null,
+        smsAutomationEnabled: boolean = true,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -344,6 +356,8 @@ export class ClientEntity {
             suppressGreetingSms,
             birthDate,
             phoneNormalized,
+            bookingConfirmedAt,
+            smsAutomationEnabled,
         );
     }
 }

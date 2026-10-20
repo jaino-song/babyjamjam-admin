@@ -17,7 +17,7 @@ import { MessageAutomationIntentService } from "../../../application/services/me
 import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTriggerJobStatus } from "../../../domain/entities/message-trigger-job.entity";
 import { ClientAutomationImpactService } from "../../../application/services/client-automation-impact.service";
 import { CLIENT_AUTOMATION_IMPACT } from "../../../domain/ports/client-automation-impact.port";
-import { SERVICE_RECORD_LINK_RULE_ID } from "../../../domain/constants/service-record-link-message";
+import { getServiceRecordTokenExpiresAt, SERVICE_RECORD_LINK_RULE_ID } from "../../../domain/constants/service-record-link-message";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "../../../domain/constants/message-automation-intent";
 import { AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "../../../domain/constants/agent-automation-storage";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "../../../domain/constants/message-trigger-catalog";
@@ -32,8 +32,19 @@ const employeeId = 31221;
 const scheduleId = 971500011;
 const caseId = "7d000000-0000-4000-8000-000000000004";
 const parentPolicyKey = `branch:${branchId}:message_policy:trigger-dispatch:enabled`;
-const serviceStart = new Date("2026-10-01T00:00:00.000Z");
-const serviceEnd = new Date("2026-10-15T00:00:00.000Z");
+// Relative to the run date so the service period never ages out: the link
+// token must still be unexpired when the committed task effect is re-described
+// (an expired token refuses the effect, as it should), and the start stays in
+// the past so the past-trigger materialization path keeps being exercised.
+const DAY_MS = 86_400_000;
+const todayUtc = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z");
+const serviceStart = new Date(todayUtc.getTime() - 2 * DAY_MS);
+const serviceEnd = new Date(serviceStart.getTime() + 14 * DAY_MS);
+// ServiceRecordLifecycleService.ensureForClient re-derives the token expiry
+// from the end date (midnight KST after it) when the client write commits, so
+// the fixture holds the canonical value; an off-canonical one made the
+// committed source digest differ from the reviewed one.
+const serviceRecordTokenExpiresAt = getServiceRecordTokenExpiresAt(serviceEnd);
 
 describeAgentE2E("production service-record-link task effect planner", () => {
     let app: INestApplication;
@@ -86,6 +97,7 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             phoneNormalized: "01000000501",
             voucherClient: false,
             serviceStatus: "pre_booking",
+            bookingConfirmedAt: new Date("2026-01-01"),
             startDate: serviceStart,
             endDate: serviceEnd,
         } });
@@ -125,7 +137,7 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             serviceRecordCaseId: caseId,
             linkTokenHash: "efl_task_source_token",
             expectedPhoneHash: createHash("sha256").update("01000000511").digest("hex"),
-            expiresAt: new Date("2026-10-22T11:00:00.000Z"),
+            expiresAt: serviceRecordTokenExpiresAt,
             active: true,
         } });
         await prisma.message_trigger_rule.createMany({ data: [
@@ -207,7 +219,7 @@ describeAgentE2E("production service-record-link task effect planner", () => {
                 serviceRecordCaseId: caseId,
                 linkTokenHash: "efl_task_source_token",
                 expectedPhoneHash: createHash("sha256").update("01000000511").digest("hex"),
-                expiresAt: new Date("2026-10-22T11:00:00.000Z"),
+                expiresAt: serviceRecordTokenExpiresAt,
                 active: true,
             } });
         }

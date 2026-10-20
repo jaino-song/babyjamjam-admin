@@ -138,15 +138,15 @@ describe("ContractExternalAgentCapabilitiesProvider approval-bound dispatch", ()
         expect(createAndSend.execute).not.toHaveBeenCalled();
     });
 
-    it("exposes only dispatch and keeps a complete masked approval snapshot", async () => {
+    it("exposes only dispatch and keeps a complete approval snapshot without contact", async () => {
         const { provider } = setup();
         const capabilities = provider.getCapabilities();
         expect(capabilities.map((entry) => entry.meta.name)).toEqual(["contracts.dispatch"]);
 
         const { inspection } = await inspectDispatch(provider);
-        expect(inspection.targetSnapshot).toEqual(expect.objectContaining({
+        expect(inspection.targetSnapshot).toEqual({
             clientId: 7,
-            phoneLast4: "••••2222",
+            areaId: "area-1",
             templateId: "template-1",
             templateName: "표준계약서",
             startDate: "2026-08-03",
@@ -157,7 +157,10 @@ describe("ContractExternalAgentCapabilitiesProvider approval-bound dispatch", ()
             actualPrice: "50000",
             effectiveDate: expect.stringMatching(/^2026-/),
             includesSensitiveFields: true,
-        }));
+        });
+        expect(inspection.summary).toBe("김고객 고객에게 표준계약서 계약서를 발송합니다. 민감 필드를 포함해 전송합니다.");
+        expect(inspection.summary).not.toMatch(/[•*]|\d[\d -]{7,}\d/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
 
         const serializedInspection = JSON.stringify(inspection);
         expect(serializedInspection).not.toContain("010-1111-2222");
@@ -282,6 +285,22 @@ describe("ContractExternalAgentCapabilitiesProvider approval-bound dispatch", ()
         }, clientAgentTargetVersion(client() as never))).rejects.toBeInstanceOf(AgentActionCertainFailureError);
 
         expect(createAndSend.execute).not.toHaveBeenCalled();
+    });
+
+    it("rejects pre-deploy approval snapshots with phoneLast4 and requires a new proposal", async () => {
+        const { provider, createAndSend, transaction } = setup();
+        const { capability, inspection } = await inspectDispatch(provider);
+        const approvedContext = {
+            ...context,
+            approvedTargetSnapshot: { ...inspection.targetSnapshot, phoneLast4: "••••2222" },
+        };
+        const input = { clientId: 7, templateId: "template-1" };
+        await expect(capability.revalidate!(approvedContext, input, inspection.targetVersion!))
+            .resolves.toEqual({ valid: false, currentVersion: inspection.targetVersion, reason: TEMPLATE_UNAVAILABLE_ERROR });
+        await expect(capability.executeApprovedTarget!(approvedContext, input, inspection.targetVersion!))
+            .rejects.toEqual(new AgentActionCertainFailureError("Contract approval details are missing or invalid; review a new proposal"));
+        expect(createAndSend.execute).not.toHaveBeenCalled();
+        expect(transaction.agent_action.updateMany).not.toHaveBeenCalled();
     });
 
     it("keeps a temporary remote document uncertain instead of claiming it was dispatched", async () => {

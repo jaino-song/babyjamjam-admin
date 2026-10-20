@@ -149,6 +149,26 @@ describe("ClientServiceRecordsTab", () => {
         jest.restoreAllMocks();
     });
 
+    it.each([
+        ["2026-07-05T00:00:00.000Z", "2026.07.06 00:00"],
+        ["2026-12-31", "2027.01.01 00:00"],
+    ])("shows next-day midnight KST for a tokenless schedule ending %s", (endDate, expected) => {
+        const assignment = createAssignment(1, "none");
+        assignment.endDate = endDate;
+        assignment.link.token = null;
+        render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
+            layout="mobile" clientId={100} isLoading={false} isError={false}
+            overview={{ assignments: [assignment] }} />);
+        expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it("uses the issued token expiry instead of the end-date fallback", () => {
+        render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
+            layout="mobile" clientId={100} isLoading={false} isError={false}
+            overview={{ assignments: [createAssignment(1, "sent")] }} />);
+        expect(screen.getByText("2026.07.05 20:00")).toBeInTheDocument();
+    });
+
     it("presents mobile link controls before basic information and sessions without sending on render", () => {
         render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
             layout="mobile" clientId={100} isLoading={false} isError={false}
@@ -363,7 +383,7 @@ describe("ClientServiceRecordsTab", () => {
             "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.",
         );
         expect(linkCard).not.toHaveTextContent(
-            "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.",
+            "서비스 시작 하루 전 12:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.",
         );
         expect(linkCard).not.toHaveTextContent("발송 취소");
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeEnabled();
@@ -419,7 +439,8 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("최신 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
         expect(screen.getByText("기록 완료 대기")).toBeInTheDocument();
         expect(screen.getByText("실패")).toBeInTheDocument();
         expect(screen.getByText("문서 처리 응답을 확인하지 못했습니다.")).toBeInTheDocument();
@@ -448,14 +469,14 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("아직 제공기록지 이력이 없습니다.")).toBeInTheDocument();
-        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
-        expect(screen.queryByText("잠시 후 다시 조회해 주세요.")).not.toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("최신 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
     });
 
     it.each([
         ["500", 500],
         ["network", undefined],
-    ] as const)("keeps the overview error when the overview request failed (%s)", (_label, status) => {
+    ] as const)("keeps the cached overview and flags the stale data when the overview request failed (%s)", (_label, status) => {
         render(
             <ClientServiceRecordsTab
                 data-component={TEST_COMPONENT}
@@ -468,8 +489,12 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
-        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        // The overview (its schedule projection) is cached, so it stays on screen with
+        // the inline notice rather than being replaced by the panel error.
+        expect(screen.getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+        expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+        // A failed overview never turns the revision 404 into a "no history" claim.
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
@@ -491,7 +516,7 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.getByText("문서 이력을 불러오지 못했습니다")).toBeInTheDocument();
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
@@ -508,8 +533,295 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.getByText("문서 이력을 불러오지 못했습니다")).toBeInTheDocument();
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    describe("failed loads", () => {
+        const revisionHistory = {
+            caseId: "case-1",
+            caseVersion: 4,
+            currentRevisionId: "revision-1",
+            currentUsableRevisionId: null,
+            revisions: [{
+                id: "revision-1",
+                revisionNumber: 1,
+                confirmedAt: "2026-09-08T01:02:03.000Z",
+                isCurrent: true,
+                documents: [],
+            }],
+        };
+
+        it("shows the failed-load state with a retry that refreshes when the overview failed and nothing is cached", () => {
+            const onRefresh = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    onRefresh={onRefresh}
+                />,
+            );
+
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("제공기록지 정보를 불러오지 못했습니다");
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("disables the retry while the refresh is in flight", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    isRefreshing
+                    onRefresh={jest.fn()}
+                />,
+            );
+
+            expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+        });
+
+        it("keeps the cached overview and adds a notice whose retry refreshes when a refresh failed", () => {
+            const onRefresh = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    onRefresh={onRefresh}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 작성 링크")).toBeInTheDocument();
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+            expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the cached schedule projection and revision history when the overview refresh fails", () => {
+            const onRefresh = jest.fn();
+            const props = {
+                "data-component": TEST_COMPONENT,
+                overview: createSourceUnavailableOverview("OTHER_SOURCE_BLOCKER"),
+                clientId: 100,
+                isLoading: false,
+                revisionHistory,
+                onRefresh,
+            };
+            const { rerender } = render(<ClientServiceRecordsTab {...props} isError={false} />);
+
+            expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+
+            rerender(<ClientServiceRecordsTab {...props} isError />);
+
+            expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+            const notice = screen.getByText("최신 정보를 불러오지 못했습니다").closest('[role="alert"]');
+            expect(notice).not.toBeNull();
+
+            fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps cached revision rows on desktop when the overview failed and there is nothing else cached", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    revisionHistory={revisionHistory}
+                />,
+            );
+
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+            expect(screen.getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+        });
+
+        it("shows the panel error on mobile, which renders no revision history, even with revision rows cached", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    revisionHistory={revisionHistory}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
+            expect(screen.queryByText("수정본 #1")).not.toBeInTheDocument();
+        });
+
+        it("shows the panel error, not an empty shell, when only a revision-history flag is set", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    isRevisionHistoryError
+                    revisionHistoryErrorStatus={500}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
+            expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+        });
+
+        it.each(["desktop", "mobile"] as const)(
+            "shows the panel error on %s when the only cached content is a projection that renders nothing",
+            (layout) => {
+                const onRefresh = jest.fn();
+                render(
+                    <ClientServiceRecordsTab
+                        data-component={TEST_COMPONENT}
+                        layout={layout}
+                        overview={{
+                            record: null,
+                            assignments: [],
+                            scheduleProjection: {
+                                entries: [createPlannedSession(1, "2026-07-01")],
+                                blockingReasons: [],
+                            },
+                        }}
+                        clientId={100}
+                        isLoading={false}
+                        isError
+                        onRefresh={onRefresh}
+                    />,
+                );
+
+                const alert = screen.getByRole("alert");
+                expect(alert).toHaveTextContent("제공기록지 정보를 불러오지 못했습니다");
+                expect(screen.queryByText("최신 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+                expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+
+                fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+                expect(onRefresh).toHaveBeenCalledTimes(1);
+            },
+        );
+
+        it("shows the empty text and no alert for a successful load with no assignments", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 배정 정보가 없습니다")).toBeInTheDocument();
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        // The panel reports a query that is paused offline with no data as loading
+        // (BJJ-434): the tab must then show skeletons, never the empty texts.
+        it("shows the loading skeleton, not the empty text, while the overview has not loaded", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    clientId={100}
+                    isLoading
+                    isError={false}
+                    isRevisionHistoryLoading
+                />,
+            );
+
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("shows the revision-history skeleton, not the 'none' pointers or empty text, while the history has not loaded", () => {
+            const { container } = render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="desktop"
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    isRevisionHistoryLoading
+                />,
+            );
+
+            expect(
+                container.querySelector(`[data-component="${TEST_COMPONENT}_revision-history"] [data-slot="skeleton"]`),
+            ).not.toBeNull();
+            expect(screen.queryByText("확정된 수정본이 없습니다.")).not.toBeInTheDocument();
+            expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+            expect(screen.queryByText("없음")).not.toBeInTheDocument();
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("offers a retry on the revision history when it failed and nothing is cached", () => {
+            const onRefreshRevisionHistory = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                    isRevisionHistoryError
+                    revisionHistoryErrorStatus={500}
+                    onRefreshRevisionHistory={onRefreshRevisionHistory}
+                />,
+            );
+
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("문서 이력을 불러오지 못했습니다");
+            expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefreshRevisionHistory).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the cached revision history and adds a notice whose retry refreshes when a refresh failed", () => {
+            const onRefreshRevisionHistory = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                    revisionHistory={revisionHistory}
+                    isRevisionHistoryError
+                    revisionHistoryErrorStatus={500}
+                    onRefreshRevisionHistory={onRefreshRevisionHistory}
+                />,
+            );
+
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefreshRevisionHistory).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe("manual send result", () => {
@@ -737,7 +1049,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(sendingButton).toBeDisabled();
         expect(sendingButton).toHaveAttribute("aria-busy", "true");
         expect(sendingButton).not.toHaveAttribute("data-width", "lg");
-        const hint = screen.getByText(/서비스 시작일 15:00에 자동 발송됩니다/);
+        const hint = screen.getByText(/서비스 시작 하루 전 12:00에 자동 발송됩니다/);
         expect(hint.parentElement).not.toHaveAttribute("aria-hidden", "true");
 
         resolveSend({
@@ -767,7 +1079,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(resendButton).toHaveAttribute("data-width", "lg");
         expect(resendButton).not.toHaveAttribute("aria-busy", "true");
         // The hint stays mounted so its collapse can animate; it is hidden, not removed.
-        const collapsedHint = screen.getByText(/서비스 시작일 15:00에 자동 발송됩니다/);
+        const collapsedHint = screen.getByText(/서비스 시작 하루 전 12:00에 자동 발송됩니다/);
         expect(collapsedHint.parentElement).toHaveAttribute("aria-hidden", "true");
     });
 

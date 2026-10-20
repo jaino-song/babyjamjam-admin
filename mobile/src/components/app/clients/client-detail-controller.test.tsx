@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { Client } from "@/lib/client/types";
 import { fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
+import { shouldRetryQuery } from "@/lib/queryClient";
+import { eformsignApi } from "@/services/api";
 import { useClientDetailController } from "./client-detail-controller";
 
 jest.mock("next/navigation", () => ({
@@ -33,12 +35,17 @@ jest.mock("@/hooks/useEmployees", () => ({
 }));
 
 let mockHistoryHasMore = false;
+let mockHistoryPaused = false;
+let mockHistoryHasData = true;
 jest.mock("@/hooks/useClientMessageHistory", () => ({
   useClientMessageHistory: () => ({
     notificationLogs: [],
     hasMore: mockHistoryHasMore,
     isLoading: false,
+    isPaused: mockHistoryPaused,
+    hasData: mockHistoryHasData,
     isError: false,
+    isFetching: false,
     refetch: jest.fn(),
   }),
 }));
@@ -74,7 +81,7 @@ jest.mock("@/components/app/clients/client-detail", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn() },
+  eformsignApi: { getDocument: jest.fn(), getLinkConfirmations: jest.fn().mockResolvedValue([]) },
 }));
 
 const mockedFetchClient = jest.mocked(fetchClient);
@@ -103,6 +110,7 @@ function makeClient(id: number): Client {
     voucherClient: false,
     breastPump: false,
     serviceStatus: "active",
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,
@@ -111,6 +119,16 @@ function makeClient(id: number): Client {
 
 function createWrapper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
+
+// The app-wide retry policy (queryClient.ts) with no waiting between attempts.
+function createAppPolicyWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: shouldRetryQuery, retryDelay: 0 } },
+  });
   return function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   };
@@ -127,18 +145,21 @@ function hasDataComponent(node: ReactNode, expected: string): boolean {
 function getClientDetailProps(node: ReactNode): {
   onDelete: (id: number) => void;
   onClientUpdated: (client: Client) => void;
+  onContractVoided?: () => void;
 } | null {
   for (const child of Children.toArray(node)) {
     if (!isValidElement(child)) continue;
     const props = child.props as {
       onDelete?: (id: number) => void;
       onClientUpdated?: (client: Client) => void;
+      onContractVoided?: () => void;
       children?: ReactNode;
     };
     if (props.onDelete && props.onClientUpdated) {
       return {
         onDelete: props.onDelete,
         onClientUpdated: props.onClientUpdated,
+        onContractVoided: props.onContractVoided,
       };
     }
     const nested = getClientDetailProps(props.children);
@@ -158,10 +179,41 @@ function findHasMoreNotificationLogs(node: ReactNode): boolean | undefined {
   return undefined;
 }
 
+function findNotificationLogsLoading(node: ReactNode): boolean | undefined {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as { isNotificationLogsLoading?: boolean; children?: ReactNode };
+    if (props.isNotificationLogsLoading !== undefined) return props.isNotificationLogsLoading;
+    const nested = findNotificationLogsLoading(props.children);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 describe("useClientDetailController", () => {
+  it("invalidates the document and both lists and reloads manual client state after void outcomes", async () => {
+    const linked: Client = { ...makeClient(1), eDocId: "doc-1", documentStatus: "requested", hasSigned: true };
+    mockedFetchClient.mockResolvedValue(linked);
+    jest.mocked(eformsignApi.getDocument).mockRejectedValue(new Error("not needed for this handler test"));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useClientDetailController({ client: linked, dataComponent: "mobile_clients_detail-sheet_detail" }), { wrapper });
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    mockedFetchClient.mockClear();
+    mockedFetchClient.mockResolvedValue({ ...linked, documentStatus: "voided", hasSigned: false });
+    await act(async () => getClientDetailProps(result.current.detail)?.onContractVoided?.());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["eformsign-docs", "document", "doc-1"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["clients", "list"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["eformsign-documents"] });
+    await waitFor(() => expect(result.current.detailClient?.documentStatus).toBe("voided"));
+    expect(mockedFetchClient).toHaveBeenCalledWith(1);
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockHistoryHasMore = false;
+    mockHistoryPaused = false;
+    mockHistoryHasData = true;
     mockedFetchClient.mockResolvedValue(makeClient(1));
     mockedUseClient.mockReturnValue({ data: undefined } as ReturnType<typeof useClient>);
     mockedUseDeleteClient.mockReturnValue({
@@ -214,6 +266,68 @@ describe("useClientDetailController", () => {
     expect(findHasMoreNotificationLogs(result.current.detail)).toBe(hasMore);
   });
 
+  it.each([
+    ["paused with no data (offline first load)", true, false, true],
+    ["paused over cached history", true, true, false],
+    ["settled", false, true, false],
+  ])("treats history that is %s as loading only when there is nothing to show", (_name, paused, hasData, expected) => {
+    mockHistoryPaused = paused;
+    mockHistoryHasData = hasData;
+    const { result } = renderHook(
+      () => useClientDetailController({
+        client: makeClient(1),
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { wrapper: createWrapper() },
+    );
+
+    expect(findNotificationLogsLoading(result.current.detail)).toBe(expected);
+  });
+
+  it.each([
+    ["a 500 (4 calls)", { response: { status: 500 } }, 4],
+    ["a 404 (1 call)", { response: { status: 404 } }, 1],
+  ])("loads the contract document under the app-wide retry policy: %s", async (_name, error, calls) => {
+    const getDocument = jest.mocked(eformsignApi.getDocument);
+    getDocument.mockRejectedValue(error);
+    // The fresh detail response must keep the document id, or the document query is disabled mid-retry.
+    mockedFetchClient.mockResolvedValue({ ...makeClient(1), eDocId: "doc-1" });
+    const { result } = renderHook(
+      () => useClientDetailController({
+        client: { ...makeClient(1), eDocId: "doc-1" },
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { wrapper: createAppPolicyWrapper() },
+    );
+
+    await waitFor(() => expect(getDocument).toHaveBeenCalledTimes(calls));
+    // Give any extra (non-policy) retry a chance to show up before asserting the exact count.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(getDocument).toHaveBeenCalledTimes(calls);
+    expect(result.current.detailClient?.id).toBe(1);
+  });
+
+  it.each([
+    ["a 500", { response: { status: 500 } }, 4],
+    ["a 404", { response: { status: 404 } }, 1],
+  ])("loads link confirmations for the contracts tab with the shared retry policy: %s", async (_name, error, calls) => {
+    const getLinkConfirmations = jest.mocked(eformsignApi.getLinkConfirmations);
+    getLinkConfirmations.mockClear().mockRejectedValue(error);
+    const { result } = renderHook(
+      () => useClientDetailController({ client: makeClient(7), dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createAppPolicyWrapper() },
+    );
+    expect(getLinkConfirmations).not.toHaveBeenCalled();
+    act(() => result.current.setDetailSheetTab("contracts"));
+    await waitFor(() => expect(getLinkConfirmations).toHaveBeenCalledTimes(calls));
+    expect(getLinkConfirmations).toHaveBeenCalledWith(7);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    expect(getLinkConfirmations).toHaveBeenCalledTimes(calls);
+    getLinkConfirmations.mockResolvedValue([]);
+  });
+
   it("preserves the selected tab when a same-client fresh response completes", async () => {
     const client = makeClient(1);
     let resolveFresh!: (next: Client) => void;
@@ -259,7 +373,7 @@ describe("useClientDetailController", () => {
       description: string;
       onConfirm: () => Promise<void>;
     }>;
-    expect(deleteModal.props.description).toBe("정말로 이 고객을 삭제하시겠습니까?");
+    expect(deleteModal.props.description).toBe("삭제한 고객은 목록에서 사라지고 복구할 수 없어요.");
 
     await act(async () => {
       await deleteModal.props.onConfirm();

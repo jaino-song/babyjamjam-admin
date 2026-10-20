@@ -9,6 +9,7 @@ import { V3MainContent } from "@/components/app/v3/V3MainContent";
 import { V3MobileHeader } from "@/components/app/v3/V3MobileHeader";
 import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
 import { Toaster } from "@/components/ui/toaster";
+import { OfflineNotice } from "@/components/app/ui/OfflineNotice";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { LocaleProvider } from "@/providers/LocaleProvider";
 import { QueryProvider } from "@/providers/QueryProvider";
@@ -38,6 +39,7 @@ export async function MobileShellProviders({
           >
             <ContractsPrefetchCoordinator />
             <NotificationPermissionPrompt />
+            <OfflineNotice data-component="mobile_shell_root_app-shell_providers_offline-notice" />
             <V3Sidebar data-component="mobile_shell_sidebar" />
             <V3MobileHeader data-component="mobile_shell_header" />
             <V3MainContent data-component="mobile_shell_main-content">{children}</V3MainContent>

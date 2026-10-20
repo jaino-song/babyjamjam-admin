@@ -20,8 +20,18 @@ export class CreateEmployeeUsecase {
         registeredDate?: Date,
         birthday?: string,
         transaction?: Prisma.TransactionClient,
+        smsAutomationEnabled?: boolean,
     ): Promise<EmployeeEntity> {
-        const employee = EmployeeEntity.create(name, workArea, phone, grade, openToNextWork, registeredDate, birthday);
+        const employee = EmployeeEntity.create(
+            name,
+            workArea,
+            phone,
+            grade,
+            openToNextWork,
+            registeredDate,
+            birthday,
+            smsAutomationEnabled,
+        );
         return this.employeeRepository.create(branchid, employee, transaction);
     }
 }

@@ -71,10 +71,39 @@ export const MESSAGE_TRIGGER_TEMPLATE_KEYS = [
 
 export type MessageTriggerTemplateKey = (typeof MESSAGE_TRIGGER_TEMPLATE_KEYS)[number];
 
+/**
+ * Which clients a trigger rule applies to, by their service stage at send time.
+ * Backend parity: backend/domain/constants/message-trigger-catalog.ts.
+ */
+export const MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES = [
+  "all",
+  "pre_booking",
+  "waiting",
+  "active",
+] as const;
+
+export type MessageTriggerTargetClientStatus =
+  (typeof MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES)[number];
+
+export const DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS: MessageTriggerTargetClientStatus = "all";
+export const DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = true;
+
+export const MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS: Readonly<
+  Record<MessageTriggerTargetClientStatus, string>
+> = {
+  all: "전체",
+  pre_booking: "예약 전",
+  waiting: "대기",
+  active: "진행",
+};
+
 export const messageTriggerEventTypeSchema = z.enum(MESSAGE_TRIGGER_EVENT_TYPES);
 export const messageTriggerOffsetTypeSchema = z.enum(MESSAGE_TRIGGER_OFFSET_TYPES);
 export const messageTriggerRecipientTypeSchema = z.enum(MESSAGE_TRIGGER_RECIPIENT_TYPES);
 export const messageTriggerTemplateKeySchema = z.enum(MESSAGE_TRIGGER_TEMPLATE_KEYS);
+export const messageTriggerTargetClientStatusSchema = z.enum(
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
+);
 
 /**
  * Variables each scheduler can derive without operator input.
@@ -210,6 +239,10 @@ export interface MessageTriggerRule {
   sendTime?: string;
   recipientType: MessageTriggerRecipientType;
   templateKey: MessageTriggerTemplateKey;
+  /** Which clients the rule applies to; the server always returns it (default `all`). */
+  targetClientStatus: MessageTriggerTargetClientStatus;
+  /** Whether a failed send is retried automatically; the server always returns it (default `true`). */
+  retryOnFailure: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -231,6 +264,8 @@ export const createMessageTriggerRuleSchema = z
     sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
     recipientType: messageTriggerRecipientTypeSchema,
     templateKey: messageTriggerTemplateKeySchema,
+    targetClientStatus: messageTriggerTargetClientStatusSchema.optional(),
+    retryOnFailure: z.boolean().optional(),
   })
   .passthrough();
 
@@ -269,7 +304,21 @@ export type MessageTriggerJobStatus =
   | "dispatching"
   | "sent"
   | "failed"
-  | "canceled";
+  | "canceled"
+  /**
+   * The job cannot be sent until something is configured (a missing template
+   * value, an unlinked contact, ...). The reason is in the history row's
+   * `errorMessage`; `POST /message-trigger-jobs/:id/resend` retries it.
+   */
+  | "needs_setup";
+
+/** Response of `POST /message-trigger-jobs/:id/resend`. */
+export interface ResendMessageTriggerJobResponse {
+  id: string;
+  /** Full job status after the resend attempt. */
+  status: MessageTriggerJobStatus;
+  reason: string | null;
+}
 
 export interface UpcomingMessageTriggerJobPayload {
   clientId?: number | null;
@@ -305,7 +354,16 @@ export interface UpcomingMessageTriggerJob {
   updatedAt: string;
 }
 
-export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled";
+export type MessageLogStatus = "pending" | "sent" | "failed" | "canceled" | "needs_setup";
+
+/** Which SMS automation safeguard level would refuse a resend of a `needs_setup` job. */
+export type MessageResendBlockedBy = "rule" | "recipient" | "branch";
+
+/** The entity whose automatic-SMS flag is off, when a resend is blocked at the `recipient` level. */
+export type MessageResendBlockedRecipient =
+  | { kind: "client"; id: number }
+  | { kind: "employee"; id: number }
+  | { kind: "user"; id: string };
 
 export interface MessageLogRecord {
   id: number | string;
@@ -335,6 +393,10 @@ export interface MessageLogRecord {
   recipientName: string | null;
   clientName: string | null;
   employeeName: string | null;
+  /** Set only on `needs_setup` rows: the safeguard level that would refuse a resend, or null when it would pass. */
+  resendBlockedBy?: MessageResendBlockedBy | null;
+  /** With a `recipient` block: who has the flag off, when the server could tell. */
+  resendBlockedRecipient?: MessageResendBlockedRecipient | null;
 }
 
 export type MessageTemplateVariableType =

@@ -1,4 +1,23 @@
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import type { Prisma } from "@prisma/client";
+
+export interface EformsignLinkConfirmationCandidate {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: Date;
+    branchId: string | null;
+    clientId: number | null;
+    permanentPurgeRequestedAt: Date | null;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    templateId: string | null;
+    customerName: string | null;
+    customerPhone: string | null;
+    stepRecipientSms: string;
+    detailPayload: Prisma.JsonValue | null;
+}
 
 export interface EformsignDocClientSummary {
     documentId: string;
@@ -18,6 +37,18 @@ export interface EformsignDocUnscopedResult {
     branchId: string | null;
 }
 
+export interface EformsignVoidCandidate {
+    documentId: string;
+    clientId: number | null;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    statusType: string;
+    stepType: string;
+    stepName: string;
+    voidedAt: Date | null;
+    permanentPurgeRequestedAt: Date | null;
+}
+
 /**
  * Projection for `contracts.recent` — a contract-or-unclassified document (never a
  * service-record snapshot), newest updated first, with the client name resolved by
@@ -34,6 +65,7 @@ export interface RecentEformsignDocRow {
     stepName: string;
     updatedDate: Date;
     expired: boolean;
+    isVoided: boolean;
 }
 
 /**
@@ -51,6 +83,7 @@ export interface EformsignContractCandidateRow {
     stepType: string;
     stepName: string;
     permanentPurgeRequestedAt: Date | null;
+    voidedAt: Date | null;
 }
 
 export class EformsignDocMappingError extends Error {
@@ -93,7 +126,11 @@ export interface EformsignDocCompletionClaimParams {
      */
     stepType?: string;
     stepIndex?: string;
-    stepName: string;
+    /**
+     * The mirrored current step's name. The workflow's name is not a step name, so when the
+     * caller has no mirrored step name it is omitted and the stored one is left alone.
+     */
+    stepName?: string;
     expired: boolean;
     sourceUpdatedDate?: Date;
     documentName?: string;
@@ -114,8 +151,50 @@ export interface EformsignDocConditionalUpdateResult {
  * false to leave that column out of the UPDATE; the default (true) writes the entity's value.
  */
 export interface EformsignDocStepWriteOptions {
+    /**
+     * Set false to withhold clientId, documentKind, employeeScheduleId and templateId
+     * from a stale entity's write. Defaults to writing; only the update* methods honour it.
+     */
+    updateOwnershipIdentity?: boolean;
     updateStepType?: boolean;
     updateStepIndex?: boolean;
+    /**
+     * The step's display name. A webhook carries only the workflow's name, not the current
+     * step's, so a caller without the mirrored `current_status.step_name` sets this false
+     * rather than overwrite the stored step name with the workflow name.
+     */
+    updateStepName?: boolean;
+    /**
+     * The recipient the current step is addressed to (`stepRecipientType`/`Name`/`Sms`).
+     * No status webhook carries it; an entity rebuilt from an earlier read holds the old
+     * value, which would revert a newer one the mirror stored in between.
+     */
+    updateStepRecipient?: boolean;
+    /** Same reasoning as `updateStepRecipient`: no status webhook carries a document number. */
+    updateDocumentNumber?: boolean;
+    /**
+     * A caller working from a source without `expired_date` only has a fallback guess (a list
+     * response) or the value it read earlier (a webhook). Set false rather than overwrite a
+     * real stored expiry with it.
+     */
+    updateExpiredDate?: boolean;
+    updateExpired?: boolean;
+    /**
+     * Compare-and-set on the status the caller read: the UPDATE matches only while the row
+     * still holds this `statusType`. A caller whose terminal fence ran against an earlier
+     * read (an action event, which writes the mirror's code but not its detail or expiry)
+     * would otherwise land on a row another writer has since moved to a terminal status.
+     * When it no longer matches nothing is written and the result is `applied: false`.
+     */
+    expectedStatusType?: string;
+    /**
+     * The list endpoint carries no status detail, so a caller working from it only has a
+     * value derived from the step name. Set false there: a new row still needs something,
+     * but overwriting a stored detail — "만료", "거부" — with the derived one loses it.
+     * An action event likewise carries no status detail, only the fact that something
+     * happened, and must not replace "만료" with "서명 페이지 열림".
+     */
+    updateStatusDetail?: boolean;
 }
 
 export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWriteOptions {
@@ -126,19 +205,11 @@ export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWri
      * The mirror service republishes it only after both required PDFs reach ready.
      */
     markMirrorPending?: boolean;
-    updateExpired?: boolean;
     /**
-     * The list endpoint carries no status detail, so a caller working from it only has a
-     * value derived from the step name. Set false there: a new row still needs something,
-     * but overwriting a stored detail — "만료", "거부" — with the derived one loses it.
+     * The event reports no status at all (a document action on a mirrored row), so the
+     * status code is not its to write either; the mirror has already projected it.
      */
-    updateStatusDetail?: boolean;
-    /**
-     * Same reasoning as `updateStatusDetail`: the list endpoint carries no `expired_date`,
-     * so a caller working from it only has a fallback guess. Set false there rather than
-     * overwriting a real stored expiry with it.
-     */
-    updateExpiredDate?: boolean;
+    updateStatusType?: boolean;
     /**
      * Creation time is the list's sort key, and rows written by the create and adopt paths
      * carry the moment we wrote them rather than the moment eformsign created the
@@ -150,6 +221,8 @@ export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWri
 }
 
 export interface UpsertEformsignDocByDocumentIdOptions {
+    /** Atomically accept only an unlinked row or one already owned by this client. */
+    expectedOwnerClientId?: number;
     /**
      * Adoption may assign branch/client ownership to a row whose detail/PDF
      * generation is already ready. Keep that existing vendor projection intact
@@ -176,6 +249,8 @@ export interface ReviewStageContract {
 }
 
 export interface IEformsignDocRepository {
+    /** Unlinked contract-or-unclassified documents owned by the branch. */
+    findLinkConfirmationCandidates(branchId: string, normalizedPhone?: string): Promise<EformsignLinkConfirmationCandidate[]>;
     findById(branchid: string, id: number): Promise<EformsignDocEntity | null>;
     findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null>;
     /** Ownership-only lookup used to retry an already pending permanent purge. */
@@ -235,6 +310,8 @@ export interface IEformsignDocRepository {
      * simply absent from the map.
      */
     findContractEndDatesByDocumentIds(documentIds: string[]): Promise<Map<string, string>>;
+
+    findVoidedByNames(userIds: string[]): Promise<Map<string, string | null>>;
     /** All provider-review-stage (070) contracts, unscoped — the nightly auto-finalize pool and the dashboard card share this. */
     findReviewStageContracts(): Promise<ReviewStageContract[]>;
     /**
@@ -243,11 +320,23 @@ export interface IEformsignDocRepository {
      */
     recordAutoFinalizeFailure(documentId: string, error: string): Promise<number>;
     create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    findVoidCandidate(branchid: string, documentId: string): Promise<EformsignVoidCandidate | null>;
+    markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean>;
     update(
         branchid: string,
         doc: EformsignDocEntity,
         options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocEntity>;
+    /**
+     * Same unguarded write as `update` (no source-timestamp predicate), but reports whether
+     * the UPDATE matched. A write pinned by `expectedStatusType` that finds the row moved
+     * returns the current document with `applied: false`.
+     */
+    updateWithOutcome(
+        branchid: string,
+        doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
+    ): Promise<EformsignDocConditionalUpdateResult>;
     /** Atomically applies a vendor projection only when its generation is strictly newer. */
     updateIfSourceNewer(
         branchid: string,

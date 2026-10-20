@@ -60,6 +60,109 @@ describe("foldContractStats", () => {
     ).toBe(1);
   });
 
+  it("counts 045 like 040 in no bucket, and 041 exactly like 060", () => {
+    const empty = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
+    expect(
+      foldContractStats([
+        { status_type: "045", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+        { status_type: "045", step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: PAST_CONTRACT_END_DATE },
+      ]),
+    ).toEqual(empty);
+    for (const step of [
+      { step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+      { step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: PAST_CONTRACT_END_DATE },
+    ]) {
+      expect(foldContractStats([{ status_type: "041", ...step }])).toEqual(
+        foldContractStats([{ status_type: "060", ...step }]),
+      );
+    }
+    expect(
+      foldContractStats([{ status_type: "041", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] }]).sendRequired,
+    ).toBe(1);
+  });
+
+  it("counts 071 (반려됨, 계약-04) in progress exactly where a 070 is counted — never expired or completed", () => {
+    const reviewStep = { step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"] };
+    const customerStep = { step_type: "05", step_name: "이용자", step_recipient_types: ["01"] };
+    for (const extra of [
+      { contract_end_date: FAR_CONTRACT_END_DATE },
+      { contract_end_date: PAST_CONTRACT_END_DATE },
+      {},
+    ]) {
+      // With the backend's display_status (the status-counts payload) and without it.
+      for (const displayStatus of ["rejected_by_reviewer", undefined]) {
+        expect(
+          foldContractStats(
+            [{ status_type: "071", ...reviewStep, ...extra, display_status: displayStatus }],
+            createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS),
+          ),
+        ).toEqual(
+          foldContractStats(
+            [{ status_type: "070", ...reviewStep, ...extra }],
+            createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS),
+          ),
+        );
+      }
+    }
+    expect(foldContractStats([{ status_type: "071", ...customerStep }])).toEqual(
+      foldContractStats([{ status_type: "070", ...customerStep }]),
+    );
+    const counted = foldContractStats([
+      { status_type: "071", ...reviewStep, contract_end_date: FAR_CONTRACT_END_DATE, display_status: "rejected_by_reviewer" },
+    ]);
+    expect(counted.expired).toBe(0);
+    expect(counted.signed + counted.reviewNeeded + counted.sendRequired).toBe(1);
+    // 080 is still the only expired code.
+    expect(foldContractStats([{ status_type: "080", ...reviewStep }]).expired).toBe(1);
+  });
+
+  it("counts an unassigned 071 where the identical unassigned 070 is counted, linked or not, in or out of the review window", () => {
+    const reviewStep = { step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"] };
+    const calendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS);
+    for (const endDate of [undefined, PAST_CONTRACT_END_DATE, FAR_CONTRACT_END_DATE]) {
+      const extra = endDate === undefined ? {} : { contract_end_date: endDate };
+      // Linked: the backend stamps "review"/"signed" on the 070, and "rejected_by_reviewer" on the 071.
+      const linked070 = foldContractStats(
+        [{ status_type: "070", ...reviewStep, ...extra, display_status: endDate === FAR_CONTRACT_END_DATE ? "signed" : "review", unassigned: false }],
+        calendar,
+      );
+      expect(
+        foldContractStats(
+          [{ status_type: "071", ...reviewStep, ...extra, display_status: "rejected_by_reviewer", unassigned: false }],
+          calendar,
+        ),
+      ).toEqual(linked070);
+      // Unassigned: the 070 reads "unassigned" (counted as signed); the 071 only has the flag.
+      const unassigned070 = foldContractStats(
+        [{ status_type: "070", ...reviewStep, ...extra, display_status: "unassigned", unassigned: true }],
+        calendar,
+      );
+      expect(unassigned070).toEqual({ reviewNeeded: 0, signed: 1, sendRequired: 0, drafting: 0, expired: 0 });
+      expect(
+        foldContractStats(
+          [{ status_type: "071", ...reviewStep, ...extra, display_status: "rejected_by_reviewer", unassigned: true }],
+          calendar,
+        ),
+      ).toEqual(unassigned070);
+    }
+  });
+
+  it("does not let the unassigned flag change how any other status is bucketed", () => {
+    const reviewStep = { step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"] };
+    const calendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS);
+    // A review-window-open 070 stays 검토 필요 whether or not the flag is present on the signal.
+    expect(
+      foldContractStats([{ status_type: "070", ...reviewStep, display_status: "review", unassigned: false }], calendar),
+    ).toEqual({ reviewNeeded: 1, signed: 0, sendRequired: 0, drafting: 0, expired: 0 });
+    // An unassigned doc that is not at the review step is still 발송 필요.
+    expect(
+      foldContractStats(
+        [{ status_type: "071", step_type: "05", step_name: "이용자", step_recipient_types: ["01"], display_status: "rejected_by_reviewer", unassigned: true }],
+        calendar,
+      ),
+    ).toEqual({ reviewNeeded: 0, signed: 0, sendRequired: 1, drafting: 0, expired: 0 });
+  });
+
   it("counts draft (001) as drafting, before the reviewNeeded split", () => {
     expect(
       foldContractStats([{ status_type: "001", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] }]),
@@ -153,6 +256,45 @@ describe("foldContractStats", () => {
         { status_type: "060", step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"] },
         { status_type: "060", step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: FAR_CONTRACT_END_DATE },
         { status_type: "060", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+      ]),
+    ).toEqual({ reviewNeeded: 1, signed: 1, sendRequired: 1, drafting: 1, expired: 1 });
+  });
+});
+
+describe("foldContractStats with a voided contract (계약 파기, BJJ-439)", () => {
+  const empty = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(TEST_NOW);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("counts a voided document in no bucket although eformsign still reports a live in-progress code", () => {
+    const signals = [
+      // 060 on the customer step would be sendRequired, 070 at review would be reviewNeeded/signed,
+      // 001 would be drafting, 080 would be expired.
+      { status_type: "060", step_type: "05", step_name: "이용자", step_recipient_types: ["01"], display_status: "voided" },
+      { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: PAST_CONTRACT_END_DATE, display_status: "voided" },
+      { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: FAR_CONTRACT_END_DATE, display_status: "voided" },
+      { status_type: "001", step_type: null, step_name: null, step_recipient_types: [], display_status: "voided" },
+      { status_type: "080", step_type: null, step_name: null, step_recipient_types: [], display_status: "voided" },
+    ];
+
+    expect(foldContractStats(signals)).toEqual(empty);
+  });
+
+  it("still counts the same documents when they are not voided (control)", () => {
+    expect(
+      foldContractStats([
+        { status_type: "060", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+        { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: PAST_CONTRACT_END_DATE },
+        { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: FAR_CONTRACT_END_DATE },
+        { status_type: "001", step_type: null, step_name: null, step_recipient_types: [] },
+        { status_type: "080", step_type: null, step_name: null, step_recipient_types: [] },
       ]),
     ).toEqual({ reviewNeeded: 1, signed: 1, sendRequired: 1, drafting: 1, expired: 1 });
   });

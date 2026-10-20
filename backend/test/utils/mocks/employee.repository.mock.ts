@@ -71,6 +71,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
             employee.birthday,
             employee.deletedAt,
             employee.phoneNormalized,
+            employee.smsAutomationEnabled,
         );
         this.employees.set(id, newEmployee);
         return newEmployee;

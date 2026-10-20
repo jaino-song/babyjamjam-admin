@@ -1,6 +1,6 @@
 import { createElement, type ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 
 import { clientsApi } from "../api/clients.api";
 import type { Client, ClientListSummary, PaginatedResponse } from "../types";
@@ -258,5 +258,73 @@ describe("useClientDirectory", () => {
     expect(initial.result.current.hasNextPage).toBe(true);
     expect(initial.result.current.isEndOfList).toBe(false);
     expect(initial.result.current.clients.map(({ id }) => id)).toEqual([1]);
+  });
+});
+
+// Characterisation: a first load that never started because the device is offline (react-query
+// "paused": status pending, fetchStatus paused, no data) must read as loading, never as a
+// successful empty result or a failure. The client list page relies on these flags to show
+// skeleton rows and "—" instead of the empty text or zeros.
+describe("paused first load (device offline)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    document.cookie = "selected_branch_id=branch-a; path=/";
+  });
+
+  it("useClientDirectory reports isInitialLoading, not an empty or failed list, while paused with no data", async () => {
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(
+        () => useClientDirectory({ branchId: "branch-a" }),
+        { wrapper: wrapperFor(createQueryClient()) },
+      );
+
+      await waitFor(() => expect(result.current.fetchStatus).toBe("paused"));
+      expect(result.current.data).toBeUndefined();
+      expect(result.current.isPaused).toBe(true);
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.isError).toBe(false);
+      expect(result.current.isInitialLoading).toBe(true);
+      expect(result.current.isSuccessfulEmpty).toBe(false);
+      expect(result.current.isPopulated).toBe(false);
+      expect(result.current.isInitialError).toBe(false);
+      expect(mockList).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("useClientListSummary reports isInitialLoading, not an empty or failed summary, while paused with no data", async () => {
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(
+        () => useClientListSummary({ branchId: "branch-a" }),
+        { wrapper: wrapperFor(createQueryClient()) },
+      );
+
+      await waitFor(() => expect(result.current.fetchStatus).toBe("paused"));
+      expect(result.current.data).toBeUndefined();
+      expect(result.current.isPaused).toBe(true);
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.isError).toBe(false);
+      expect(result.current.isInitialLoading).toBe(true);
+      expect(result.current.isSuccessfulEmpty).toBe(false);
+      expect(result.current.isPopulated).toBe(false);
+      expect(result.current.isInitialError).toBe(false);
+      expect(mockListSummary).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("a disabled directory (branch context not ready) is not reported as loading", () => {
+    const { result } = renderHook(
+      () => useClientDirectory({ branchId: null }),
+      { wrapper: wrapperFor(createQueryClient()) },
+    );
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(result.current.isInitialLoading).toBe(false);
+    expect(result.current.isSuccessfulEmpty).toBe(false);
   });
 });

@@ -127,6 +127,30 @@ describe("ServiceRecordTokenService", () => {
         return { prisma, svc };
     }
 
+    it.each([
+        ["2026-11-14T14:59:59.999Z", true],
+        ["2026-11-14T15:00:00.000Z", false],
+        ["2026-11-14T15:00:00.001Z", false],
+    ])("enforces the midnight expiry boundary at %s on all token entry points", async (now, valid) => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-11-14T00:00:00.000Z"));
+        try {
+            const { svc } = setup();
+            const params = { branchId: "b1", scheduleId: 10, employeeId: 7,
+                expectedPhone: "01011112222", expiresAt: new Date("2026-11-14T15:00:00.000Z") };
+            const { linkToken } = await svc.issueLink(params);
+            const auth = await svc.verifyPhoneAndMintAccess(linkToken, params.expectedPhone);
+            if (!auth.ok) throw new Error("fixture verification failed");
+            jest.setSystemTime(new Date(now));
+
+            expect(Boolean(await svc.resolveLink(linkToken))).toBe(valid);
+            expect(Boolean(await svc.resolveAccess(auth.accessToken))).toBe(valid);
+            expect((await svc.verifyPhoneAndMintAccess(linkToken, params.expectedPhone)).ok).toBe(valid);
+            expect(await svc.activatePreparedLink({ ...params, linkToken })).toBe(valid);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("issues a link, then a correct phone number mints an access token that resolves to the assignment context", async () => {
         const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({
@@ -142,6 +166,49 @@ describe("ServiceRecordTokenService", () => {
         const accessToken = (result as { ok: true; accessToken: string }).accessToken;
         const ctx = await svc.resolveAccess(accessToken);
         expect(ctx).toEqual({ tokenId: expect.any(String), branchId: "b1", scheduleId: 10, employeeId: 7 });
+    });
+
+    describe("client tombstone (deletedAt)", () => {
+        const params = () => ({ branchId: "b1", scheduleId: 10, employeeId: 7,
+            expectedPhone: "01011112222", expiresAt: future() });
+
+        it("stops every token entry point from resolving once the client is tombstoned, without any revocation", async () => {
+            const { prisma, svc } = setup();
+            const p = params();
+            const { linkToken } = await svc.issueLink(p);
+            const auth = await svc.verifyPhoneAndMintAccess(linkToken, p.expectedPhone);
+            if (!auth.ok) throw new Error("fixture verification failed");
+            expect(await svc.resolveAccess(auth.accessToken)).not.toBeNull();
+
+            // Tombstone only; the token row stays active (revocation "failed").
+            (prisma.__schedules[0]!.client as any).deletedAt = new Date();
+            expect(prisma.__rows[0].active).toBe(true);
+
+            expect(await svc.resolveAccess(auth.accessToken)).toBeNull();
+            expect(await svc.resolveLink(linkToken)).toBeNull();
+            expect(await svc.verifyPhoneAndMintAccess(linkToken, p.expectedPhone)).toMatchObject({ ok: false });
+            expect(await svc.activatePreparedLink({ ...p, linkToken })).toBe(false);
+            expect(await svc.reuseActiveLink(p)).toBeNull();
+        });
+
+        it("refuses to issue or prepare a link for a tombstoned client", async () => {
+            const { prisma, svc } = setup();
+            (prisma.__schedules[0]!.client as any).deletedAt = new Date();
+            await expect(svc.issueLink(params())).rejects.toThrow();
+            await expect(svc.prepareLink(params())).rejects.toThrow();
+            expect(prisma.__rows).toHaveLength(0);
+        });
+
+        it("leaves a live client unaffected", async () => {
+            const { prisma, svc } = setup();
+            (prisma.__schedules[0]!.client as any).deletedAt = null;
+            const p = params();
+            const { linkToken } = await svc.issueLink(p);
+            const auth = await svc.verifyPhoneAndMintAccess(linkToken, p.expectedPhone);
+            if (!auth.ok) throw new Error("fixture verification failed");
+            expect(await svc.resolveLink(linkToken)).not.toBeNull();
+            expect(await svc.resolveAccess(auth.accessToken)).not.toBeNull();
+        });
     });
 
     it("does not reactivate finalized tokens when preparing the composer", async () => {

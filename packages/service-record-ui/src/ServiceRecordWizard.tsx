@@ -2,11 +2,6 @@
 
 import { useRef, useState, type ChangeEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { formatIsoDateInput } from "../../shared/src/utils/date-input";
-import {
-    isRealIsoDate,
-    resolveFieldMessage,
-    type FieldInputState,
-} from "../../shared/src/utils/field-validation-message";
 import "./field-help.css";
 
 import {
@@ -20,25 +15,33 @@ import {
     formatReviewFieldValue,
     formatShortDate,
     getServiceRecordNumericErrors,
-    getServiceRecordHeaderErrors,
-    type ServiceRecordHeaderValidationKey,
     hasDisplayValue,
-    hasServiceRecordHeaderValues,
-    isDailyItemComplete,
-    isServiceRecordHeaderComplete,
+    type ServiceRecordHeaderValidationKey,
     type ServiceRecordNumericErrors,
 } from "./form-definition";
 import {
     FIELD_COPY,
-    HEADER_REQUIRED_LABEL,
-    fieldMessageToSlot,
-    requiredChoiceCopy,
-    requiredInputCopy,
-    shortItemLabel,
-    textCounterCopy,
-    textLimitCopy,
     type SlotMessage,
 } from "./field-messages";
+import {
+    HEADER_DATE_KEYS,
+    firstHeaderProblemKey,
+    focusFirstProblem,
+    getDailyItemMessages,
+    getFirstDayPageProblem,
+    getHeaderFieldMessage,
+    getPhoneState,
+    getServiceDateMessage,
+    getServiceDateMin,
+    getWizardProgress,
+    hasInvalidNumericAnswersOnPage,
+    hasInvalidTextAnswers as hasInvalidTextAnswersIn,
+    hintMessage,
+    resolveHeaderErrors,
+    resolvePlannedDates,
+    useHadValue,
+    type DailyItemProblem,
+} from "./headless";
 import type {
     ServiceRecordWizardSlots,
     ServiceRecordWizardProps,
@@ -58,27 +61,6 @@ const HEADER_FIELD_COMPONENT_SUFFIX = {
 const PHONE_INPUT_ID = "service-record-phone";
 const SERVICE_DATE_INPUT_ID = "service-record-date";
 const SERVICE_DATE_PLACEHOLDER = "2026-12-01";
-const PHONE_DIGITS_REQUIRED = 10;
-// The phone rule stays "at least 10 digits". The shared resolver only needs to know
-// whether the value is complete, so it is probed with a fixed complete/incomplete value.
-const PHONE_COMPLETE_PROBE = "01012345678";
-const PHONE_INCOMPLETE_PROBE = "0";
-const HEADER_DATE_KEYS: readonly ServiceRecordHeaderValidationKey[] = ["momBirth", "babyBirth"];
-const COUNT_DISPLAY_LABEL: Record<string, string> = { "회당": "회당 용량" };
-
-const errorMessage = (text: string): SlotMessage => ({ tone: "error", text });
-const hintMessage = (text: string): SlotMessage => ({ tone: "hint", text });
-
-/** `false` is an answer to the payment confirmation, but it is not a filled value. */
-const isFilled = (value: unknown): boolean => value !== false && hasDisplayValue(value);
-
-function focusFirstProblem(id: string | null | undefined) {
-    if (!id || typeof document === "undefined") return;
-    const element = document.getElementById(id);
-    if (!element) return;
-    element.focus();
-    element.scrollIntoView?.({ block: "center", behavior: "smooth" });
-}
 
 function TextInput({
     value,
@@ -101,18 +83,20 @@ function FieldLabelRow({
     dataComponent,
     label,
     htmlFor,
+    labelId,
     slotId,
     message,
 }: {
     dataComponent: string;
     label: string;
     htmlFor?: string;
+    labelId?: string;
     slotId: string;
     message: SlotMessage | null;
 }) {
     return (
         <div data-component={`${dataComponent}_label-row`} data-slot="lab-row" className="lab-row">
-            <label data-slot="lab" className="lab" htmlFor={htmlFor}>{label}</label>
+            <label id={labelId} data-slot="lab" className="lab" htmlFor={htmlFor}>{label}</label>
             <span
                 id={slotId}
                 data-component={`${dataComponent}_helper`}
@@ -136,6 +120,7 @@ function FieldOptions({
     disabled = false,
     firstOptionId,
     describedBy,
+    labelId,
 }: {
     dataComponent: string;
     options: string[];
@@ -145,9 +130,10 @@ function FieldOptions({
     disabled?: boolean;
     firstOptionId?: string;
     describedBy?: string;
+    labelId?: string;
 }) {
     return (
-        <div data-component={dataComponent} data-slot="opts" className="opts">
+        <div data-component={dataComponent} data-slot="opts" className="opts" role={radio ? "radiogroup" : "group"} aria-labelledby={labelId}>
             {options.map((option, optionIndex) => (
                 <button
                     type="button"
@@ -167,33 +153,31 @@ function FieldOptions({
     );
 }
 
+/** A count input whose label is not already part of its item's label needs the item name to be unambiguous (모유수유 횟수 vs 분유수유 횟수). */
+const countAccessibleName = (itemLabel: string, countLabel: string): string => {
+    const plainItemLabel = itemLabel.replace(/^[①-⑳]\s*/u, "").trim();
+    return plainItemLabel.includes(countLabel) ? countLabel : `${plainItemLabel} ${countLabel}`;
+};
+
 const dailyFieldSuffix = (key: string): string => key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 const countInputId = (dataComponent: string, countKey: string): string => `${dataComponent}_count-options_${countKey}-input-control`;
 const firstOptionIdOf = (dataComponent: string): string => `${dataComponent}-first-option`;
 const stoolColorInputId = (dataComponent: string): string => `${dataComponent}-stool-color`;
 const textareaInputId = (dataComponent: string, itemKey: string): string => `${dataComponent}-${itemKey === "etcService" ? "etc-service" : "notes"}`;
 
-/** DOM id of the first control that keeps this item from being complete, or null when it is fine. */
+/** DOM id of the control a headless problem descriptor points at, or null when the item is fine. */
 function getDailyItemProblemId(
     item: (typeof DAILY_ITEMS)[number],
     dataComponent: string,
-    draft: Record<string, unknown>,
-    numericErrors: ServiceRecordNumericErrors,
+    problem: DailyItemProblem | null,
 ): string | null {
-    if (item.type === "textarea") {
-        const text = draft[item.key];
-        return item.maxLength !== undefined && typeof text === "string" && text.length > item.maxLength
-            ? textareaInputId(dataComponent, item.key) : null;
+    if (!problem) return null;
+    switch (problem.kind) {
+        case "textarea": return textareaInputId(dataComponent, item.key);
+        case "count": return countInputId(dataComponent, problem.countKey);
+        case "stoolColor": return stoolColorInputId(dataComponent);
+        case "option": return firstOptionIdOf(dataComponent);
     }
-    if (item.type === "counts") {
-        const count = (item.counts ?? []).find((candidate) => (
-            !hasDisplayValue(draft[`${item.key}_${candidate.k}`]) || numericErrors[`${item.key}_${candidate.k}`]
-        ));
-        return count ? countInputId(dataComponent, count.k) : null;
-    }
-    if (isDailyItemComplete(item, draft)) return null;
-    if (item.type === "stool" && hasDisplayValue(draft[item.key])) return stoolColorInputId(dataComponent);
-    return firstOptionIdOf(dataComponent);
 }
 
 function DailyField({
@@ -221,57 +205,33 @@ function DailyField({
 }) {
     const value = draft[item.key];
     const slotId = `${dataComponent}-helper`;
-    const label = shortItemLabel(item.label);
+    const labelId = `${slotId}-label`;
     const [textFocused, setTextFocused] = useState(false);
     // A "required" message only appears once the field held a value and was cleared (or after submit).
-    const hadValue = useRef<Record<string, boolean>>({});
-    const trackHad = (key: string, candidate: unknown): boolean => {
-        if (isFilled(candidate)) hadValue.current[key] = true;
-        return Boolean(hadValue.current[key]);
-    };
-    const hadMain = trackHad(item.key, value);
-    const hadColor = trackHad(`${item.key}_color`, draft[`${item.key}_color`]);
-    const countHad = (item.counts ?? []).map((count) => trackHad(`${item.key}_${count.k}`, draft[`${item.key}_${count.k}`]));
-
-    let message: SlotMessage | null = null;
-    const invalidCountKeys = new Set<string>();
-    if (item.type === "multi") {
-        const empty = !Array.isArray(value) || value.filter(hasDisplayValue).length === 0;
-        if (requireAnswers && empty) {
-            message = hadMain || submitted ? errorMessage(requiredChoiceCopy(label)) : hintMessage(FIELD_COPY.multiHint);
-        }
-    } else if (item.type === "radio" || item.type === "stool") {
-        if (requireAnswers && !hasDisplayValue(value) && (hadMain || submitted)) message = errorMessage(requiredChoiceCopy(label));
-    } else if (item.type === "counts") {
-        const counts = item.counts ?? [];
-        for (const [countIndex, count] of counts.entries()) {
-            const fieldKey = `${item.key}_${count.k}`;
-            const numericError = numericErrors[fieldKey];
-            let countMessage: SlotMessage | null = null;
-            if (numericError) {
-                countMessage = errorMessage(counts.length > 1 ? `${count.label}: ${numericError}` : numericError);
-            } else if (requireAnswers && !hasDisplayValue(draft[fieldKey]) && (countHad[countIndex] || submitted)) {
-                countMessage = errorMessage(requiredInputCopy(COUNT_DISPLAY_LABEL[count.label] ?? count.label));
-            }
-            if (!countMessage) continue;
-            invalidCountKeys.add(fieldKey);
-            message ??= countMessage;
-        }
-    } else if (item.type === "textarea") {
-        const length = typeof value === "string" ? value.length : 0;
-        if (!readOnly && item.maxLength !== undefined) {
-            if (length > item.maxLength) message = errorMessage(textLimitCopy(item.maxLength));
-            else if (length > 0 || textFocused) message = hintMessage(textCounterCopy(length, item.maxLength));
-        }
-    } else if (item.type === "confirm") {
-        if (requireAnswers && !value && (hadMain || submitted)) message = errorMessage(FIELD_COPY.paymentConfirm);
+    // Every key is tracked on every render, before any message reads the flags.
+    const track = useHadValue();
+    const hadMain = track(item.key, value);
+    const hadColor = track(`${item.key}_color`, draft[`${item.key}_color`]);
+    const hadCounts: Record<string, boolean> = {};
+    for (const count of item.counts ?? []) {
+        const fieldKey = `${item.key}_${count.k}`;
+        hadCounts[fieldKey] = track(fieldKey, draft[fieldKey]);
     }
+    const { message, invalidCountKeys, stoolColorMessage: colorMessage } = getDailyItemMessages(item, draft, {
+        submitted,
+        requireAnswers,
+        readOnly,
+        textFocused,
+        numericErrors,
+        had: { main: hadMain, color: hadColor, counts: hadCounts },
+    });
     const hasError = message?.tone === "error";
     const labelRow = (
         <FieldLabelRow
             dataComponent={dataComponent}
             label={item.label}
             htmlFor={item.type === "textarea" ? textareaInputId(dataComponent, item.key) : undefined}
+            labelId={labelId}
             slotId={slotId}
             message={message}
         />
@@ -289,14 +249,13 @@ function DailyField({
                     disabled={readOnly}
                     firstOptionId={firstOptionIdOf(dataComponent)}
                     describedBy={slotId}
+                    labelId={labelId}
                 />
             </>
         );
     }
 
     if (item.type === "radio" || item.type === "stool") {
-        const colorEmpty = !hasDisplayValue(draft[`${item.key}_color`]);
-        const colorMessage = requireAnswers && colorEmpty && (hadColor || submitted) ? errorMessage(FIELD_COPY.stoolColor) : null;
         const colorSlotId = `${dataComponent}-stool-color-helper`;
         return (
             <>
@@ -310,6 +269,7 @@ function DailyField({
                     disabled={readOnly}
                     firstOptionId={firstOptionIdOf(dataComponent)}
                     describedBy={slotId}
+                    labelId={labelId}
                 />
                 {item.type === "stool" && value === "이상변" && (
                     <div data-component={`${dataComponent}_stool-color`} data-slot="sub-fld" className="sub-fld">
@@ -359,7 +319,7 @@ function DailyField({
                                     <input
                                         data-slot="segnum-input"
                                         type="number"
-                                        aria-label={count.label}
+                                        aria-label={countAccessibleName(item.label, count.label)}
                                         aria-invalid={invalid ? "true" : undefined}
                                         id={countInputId(dataComponent, count.k)}
                                         data-component={`${countComponent}_control-row_control`}
@@ -421,6 +381,7 @@ function DailyField({
                     disabled={readOnly}
                     firstOptionId={firstOptionIdOf(dataComponent)}
                     describedBy={slotId}
+                    labelId={labelId}
                 />
             </>
         );
@@ -445,15 +406,22 @@ function MomConfirmationReview({
     return (
         <div data-component={dataComponent} data-slot="review" className="review">
             {REVIEW_SECTIONS.map((section, sectionIndex) => (
-                <section data-component={`${dataComponent}_section`} data-slot="review-section" className="review-section" key={section.id}>
+                <section
+                    data-component={`${dataComponent}_section`}
+                    data-slot="review-section"
+                    className="review-section"
+                    key={section.id}
+                    aria-labelledby={`${dataComponent}_section_${section.id}-title`}
+                >
                     <div data-component={`${dataComponent}_section_header`} data-slot="sec-head" className="sec-head">
-                        <span data-slot="tag" className={`tag ${section.tone === "finish" ? "etc" : section.tone}`}>{section.title}</span>
+                        <span id={`${dataComponent}_section_${section.id}-title`} data-slot="tag" className={`tag ${section.tone === "finish" ? "etc" : section.tone}`}>{section.title}</span>
                         {editing && !readOnly && (
                             <button
                                 type="button"
                                 data-slot="sec-edit"
                                 className="sec-edit"
                                 data-component={`${dataComponent}_section_header_edit`}
+                                aria-label={`${section.title} 수정`}
                                 onClick={() => onEdit(sectionIndex)}
                             >
                                 수정
@@ -482,19 +450,20 @@ function ReviewFieldRow({
     const isText = field.type === "textarea";
     const valueClassName = display.value ? (display.ok ? "ok" : "") : "empty";
     const value = display.value || REVIEW_EMPTY_LABEL;
+    const labelId = `${dataComponent}_section_${field.key}-label`;
 
     if (isText) {
         return (
-            <div data-component={`${dataComponent}_section_note`} data-slot="review-note" className="review-note">
-                <span>{field.label}</span>
+            <div data-component={`${dataComponent}_section_note`} data-slot="review-note" className="review-note" role="group" aria-labelledby={labelId}>
+                <span id={labelId}>{field.label}</span>
                 <b className={valueClassName}>{value}</b>
             </div>
         );
     }
 
     return (
-        <div data-component={`${dataComponent}_section_row`} data-slot="review-row" className="review-row">
-            <span>{field.label}</span>
+        <div data-component={`${dataComponent}_section_row`} data-slot="review-row" className="review-row" role="group" aria-labelledby={labelId}>
+            <span id={labelId}>{field.label}</span>
             <b className={valueClassName}>{value}</b>
         </div>
     );
@@ -506,15 +475,6 @@ function renderSignature(
 ): ReactNode {
     if (typeof signature !== "function") return null;
     return signature(props);
-}
-
-function isValidDateOnly(value: string): boolean {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-    const [year, month, day] = value.split("-").map(Number);
-    const parsed = new Date(Date.UTC(year, month - 1, day));
-    return parsed.getUTCFullYear() === year
-        && parsed.getUTCMonth() === month - 1
-        && parsed.getUTCDate() === day;
 }
 
 export function ServiceRecordWizard({
@@ -575,147 +535,84 @@ export function ServiceRecordWizard({
     const hadPhoneValue = useRef(false);
     const hadServiceDateValue = useRef(false);
     const touchHeader = (key: ServiceRecordHeaderValidationKey) => setTouchedHeader((current) => ({ ...current, [key]: true }));
-    // Only an administrator editor with an explicit patch error map owns validation scope.
-    // Employee forms and callers without that map still validate the complete header.
-    const usesScopedHeaderErrors = adminMode && suppliedHeaderErrors !== undefined;
-    const headerErrors = usesScopedHeaderErrors ? (suppliedHeaderErrors ?? {}) : {
-        ...suppliedHeaderErrors,
-        ...getServiceRecordHeaderErrors(header, new Date(), { required: !adminMode }),
-    };
+    const { headerErrors, isHeaderComplete } = resolveHeaderErrors(header, {
+        adminMode,
+        suppliedHeaderErrors,
+        now: new Date(),
+    });
     for (const key of SERVICE_RECORD_HEADER_KEYS) {
         if (hasDisplayValue(header[key])) hadHeaderValue.current[key] = true;
     }
-    const headerFieldMessage = (key: ServiceRecordHeaderValidationKey): SlotMessage | null => {
-        if (readOnly) return null;
-        const value = header[key] ?? "";
-        const state: FieldInputState = {
-            value,
-            hadValue: Boolean(hadHeaderValue.current[key]),
-            touched: Boolean(touchedHeader[key]),
-            focused: focusedHeader === key,
-        };
-        const isDate = HEADER_DATE_KEYS.includes(key);
-        const label = HEADER_REQUIRED_LABEL[key];
-        const active = focusedHeader === key || state.touched || headerSubmitted;
-        // Nothing shows for a value the user has not interacted with yet.
-        const resolved = value === "" || active
-            ? resolveFieldMessage(isDate ? "date" : "text", state, { required: !adminMode, submitted: headerSubmitted })
-            : null;
-        if (resolved && !(adminMode && resolved.tone === "error")) {
-            return fieldMessageToSlot(resolved, { label, choice: key === "deliveryType" });
-        }
-        if (value === "") return null;
-        const supplied = suppliedHeaderErrors?.[key];
-        if (supplied) return errorMessage(supplied);
-        const computed = (adminMode || active) ? headerErrors[key] : undefined;
-        return computed ? errorMessage(computed) : null;
-    };
-    const phoneDigits = phone.replace(/\D/g, "");
-    const phoneComplete = phoneDigits.length >= PHONE_DIGITS_REQUIRED;
+    const headerFieldMessage = (key: ServiceRecordHeaderValidationKey): SlotMessage | null => getHeaderFieldMessage(key, {
+        value: header[key] ?? "",
+        hadValue: Boolean(hadHeaderValue.current[key]),
+        touched: Boolean(touchedHeader[key]),
+        focused: focusedHeader === key,
+        submitted: headerSubmitted,
+        adminMode,
+        readOnly,
+        suppliedHeaderErrors,
+        headerErrors,
+    });
     if (phone !== "") hadPhoneValue.current = true;
-    const phoneFormatMessage = fieldMessageToSlot(
-        resolveFieldMessage("phone", {
-            value: phone === "" ? "" : phoneComplete ? PHONE_COMPLETE_PROBE : PHONE_INCOMPLETE_PROBE,
-            hadValue: hadPhoneValue.current,
-            touched: phoneTouched,
-            focused: phoneFocused,
-        }, { required: true, submitted: phoneSubmitted }),
-        { label: "휴대폰 번호" },
-    );
-    // One slot, one message: a format error beats the caller's field error, which beats a hint.
-    const phoneMessage: SlotMessage | null = phoneFormatMessage?.tone === "error"
-        ? phoneFormatMessage
-        : phoneFieldError ? errorMessage(phoneFieldError) : phoneFormatMessage;
+    const { complete: phoneComplete, message: phoneMessage } = getPhoneState(phone, {
+        hadValue: hadPhoneValue.current,
+        touched: phoneTouched,
+        focused: phoneFocused,
+        submitted: phoneSubmitted,
+        phoneFieldError,
+    });
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const adminEditing = adminMode && !readOnly;
-    const currentSession = context?.sessions.find((session) => session.sessionIndex === day);
-    const plannedDateVectorProvided = context?.plannedSessionDates !== undefined;
-    const plannedDateVector = context?.plannedSessionDates;
-    const plannedDateVectorValid = !plannedDateVectorProvided || (
-        Array.isArray(plannedDateVector)
-        && plannedDateVector.length === (context?.totalSessions ?? 0)
-        && new Set(plannedDateVector.map((session) => session.sessionIndex)).size === plannedDateVector.length
-        && new Set(plannedDateVector.map((session) => session.serviceDate)).size === plannedDateVector.length
-        && plannedDateVector.every((session) => (
-                Number.isSafeInteger(session.sessionIndex)
-                && session.sessionIndex > 0
-                && session.sessionIndex <= (context?.totalSessions ?? 0)
-                && isValidDateOnly(session.serviceDate)
-            ))
-    );
-    const plannedDateBySession = plannedDateVectorValid
-        ? new Map(plannedDateVector?.map((session) => [session.sessionIndex, session.serviceDate]))
-        : null;
-    const plannedServiceDate = plannedDateBySession?.get(day);
-    const providerDateLocked = !adminMode && plannedDateVectorProvided;
-    const currentServiceDate = (providerDateLocked ? plannedServiceDate : undefined)
-        || (draft._date as string | undefined)
-        || currentSession?.serviceDate?.slice(0, 10)
-        || plannedServiceDate
-        || (plannedDateVectorProvided ? "" : defaultDate(day));
+    const {
+        currentSession,
+        plannedDateVectorProvided,
+        plannedDateVectorValid,
+        providerDateLocked,
+        currentServiceDate,
+        displayDateForSession,
+    } = resolvePlannedDates({ context, day, adminMode, draft, defaultDate });
     const isMomConfirmationPage = Boolean(currentDayPage.confirmation);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
-    const isHeaderComplete = (usesScopedHeaderErrors
-        ? hasServiceRecordHeaderValues(header)
-        : isServiceRecordHeaderComplete(header)) && Object.keys(headerErrors).length === 0;
     const numericErrors = getServiceRecordNumericErrors(draft);
     const hasInvalidNumericAnswers = Object.keys(numericErrors).length > 0;
-    const hasInvalidTextAnswers = DAILY_ITEMS.some((item) => item.type === "textarea"
-        && item.maxLength !== undefined && typeof draft[item.key] === "string"
-        && (draft[item.key] as string).length > item.maxLength);
-    const plannedDateForSession = (sessionIndex: number): string | undefined => plannedDateBySession?.get(sessionIndex);
-    const displayDateForSession = (sessionIndex: number, session?: { serviceDate: string }): string => (
-        session?.serviceDate?.slice(0, 10)
-        || plannedDateForSession(sessionIndex)
-        || (plannedDateVectorProvided ? "" : defaultDate(sessionIndex))
-    );
+    const hasInvalidTextAnswers = hasInvalidTextAnswersIn(draft);
     const dailyFieldComponent = (item: (typeof DAILY_ITEMS)[number]): string => child(`body_day-field_${dailyFieldSuffix(item.key)}`);
     const currentPageKey = `${day}:${pageIdx}`;
     const daySubmitted = submittedPageKey === currentPageKey;
     // The service date is typed as YYYY-MM-DD; state stays ISO and only a complete valid date is reported.
-    const serviceDateMin = day <= 1 ? (context?.startDate?.slice(0, 10) ?? undefined) : defaultDate(day);
+    const serviceDateMin = getServiceDateMin({ day, context, defaultDate });
     const serviceDateText = serviceDateEdit && serviceDateEdit.base === currentServiceDate && serviceDateEdit.day === day
         ? serviceDateEdit.text : null;
     const serviceDateValue = serviceDateText ?? currentServiceDate;
     if (serviceDateValue !== "") hadServiceDateValue.current = true;
-    const serviceDateIsReportable = (text: string): boolean => (
-        isRealIsoDate(text) && (!serviceDateMin || text >= serviceDateMin)
-    );
-    const serviceDateBlocked = serviceDateText !== null && !serviceDateIsReportable(serviceDateText);
-    const serviceDateMessage = serviceDateText === null ? null : fieldMessageToSlot(
-        resolveFieldMessage("date", {
-            value: serviceDateText,
-            hadValue: hadServiceDateValue.current,
-            touched: serviceDateTouched,
-            focused: serviceDateFocused,
-        }, {
-            required: true,
-            submitted: daySubmitted,
-            dateRange: serviceDateMin ? { notBefore: serviceDateMin } : undefined,
-        }),
-        { label: "제공일자", rangeText: FIELD_COPY.serviceDateBefore },
-    );
     const serviceDateFieldVisible = screen === "day" && !readOnly && !adminMode && !editing && pageIdx === 0;
-    // A date that differs from today is a caution about this field: it sits in the field's slot
-    // (below any error or format hint) while the field is on screen.
-    const serviceDateSlot: SlotMessage | null = serviceDateMessage
-        ?? (serviceDateFieldVisible && hasServiceDateMismatch ? hintMessage(FIELD_COPY.serviceDateMismatch) : null);
-    const firstDayProblemId = (): string | null => {
-        if (serviceDateFieldVisible && serviceDateBlocked) return SERVICE_DATE_INPUT_ID;
-        for (const index of currentDayPage.items) {
-            const item = DAILY_ITEMS[index];
-            if (!item) continue;
-            const problemId = getDailyItemProblemId(item, dailyFieldComponent(item), draft, numericErrors);
-            if (problemId) return problemId;
-        }
-        return null;
-    };
-    const hasInvalidNumericAnswersOnCurrentPage = currentDayPage.items.some((index) => {
-        const item = DAILY_ITEMS[index];
-        return item?.type === "counts"
-            && (item.counts ?? []).some((count) => numericErrors[`${item.key}_${count.k}`]);
+    const {
+        reportable: serviceDateIsReportable,
+        blocked: serviceDateBlocked,
+        message: serviceDateMessage,
+        slot: serviceDateSlot,
+    } = getServiceDateMessage({
+        text: serviceDateText,
+        hadValue: hadServiceDateValue.current,
+        touched: serviceDateTouched,
+        focused: serviceDateFocused,
+        submitted: daySubmitted,
+        min: serviceDateMin,
+        mismatch: hasServiceDateMismatch,
+        fieldVisible: serviceDateFieldVisible,
     });
+    const firstDayProblemId = (): string | null => {
+        const problem = getFirstDayPageProblem(currentDayPage.items, draft, numericErrors, {
+            serviceDateBlocked,
+            serviceDateFieldVisible,
+        });
+        if (!problem) return null;
+        if (problem.kind === "serviceDate") return SERVICE_DATE_INPUT_ID;
+        return getDailyItemProblemId(problem.item, dailyFieldComponent(problem.item), problem.problem);
+    };
+    const hasInvalidNumericAnswersOnCurrentPage = hasInvalidNumericAnswersOnPage(currentDayPage.items, numericErrors);
     const renderServiceDateDisplay = (
         sessionIndex: number,
         serviceDate: string,
@@ -726,15 +623,7 @@ export function ServiceRecordWizard({
         sessionIndex,
         serviceDate,
     }) ?? fallback;
-    const progress = screen === "done"
-        ? 100
-        : screen === "day"
-            ? 20 + Math.round(((pageIdx + 1) / DAY_PAGES.length) * 70)
-            : screen === "overview"
-                ? 20
-                : screen === "service"
-                    ? 12
-                    : 5;
+    const progress = getWizardProgress(screen, pageIdx);
 
     const handleHeaderInput = (key: ServiceRecordHeaderValidationKey, raw: string) => {
         onHeaderChange(key, HEADER_DATE_KEYS.includes(key) ? formatIsoDateInput(raw) : raw);
@@ -767,7 +656,7 @@ export function ServiceRecordWizard({
             void onSaveHeader();
             return;
         }
-        const firstProblem = SERVICE_RECORD_HEADER_KEYS.find((key) => headerErrors[key]);
+        const firstProblem = firstHeaderProblemKey(headerErrors);
         focusFirstProblem(firstProblem ? `service-record-header-${firstProblem}` : null);
     };
     const handleNextPage = () => {
@@ -871,7 +760,7 @@ export function ServiceRecordWizard({
                                 const deliveryComponent = child("body_delivery-field_options");
                                 return (
                                     <div data-component={child("body_delivery-field")} data-slot="fld" className="fld" key={key}>
-                                        <FieldLabelRow dataComponent={deliveryComponent} label="분만형태" slotId={slotId} message={message} />
+                                        <FieldLabelRow dataComponent={deliveryComponent} label="분만형태" labelId={`${slotId}-label`} slotId={slotId} message={message} />
                                         <FieldOptions
                                             dataComponent={deliveryComponent}
                                             options={["자연분만", "제왕절개"]}
@@ -881,6 +770,7 @@ export function ServiceRecordWizard({
                                             disabled={readOnly}
                                             firstOptionId={inputId}
                                             describedBy={slotId}
+                                            labelId={`${slotId}-label`}
                                         />
                                     </div>
                                 );

@@ -1,5 +1,5 @@
 "use client";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { canRetryFailedHistory, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 
 import {
@@ -13,10 +13,12 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_HISTORY_STATUS_LABELS,
   MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
@@ -62,6 +64,7 @@ import {
 import {
   useCancelUpcomingMessageTriggerJob,
   useMessageHistory,
+  useResendMessageTriggerJob,
   useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -123,6 +126,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
@@ -739,8 +743,26 @@ function MessageHistorySection() {
   const [scheduledDetailTab, setScheduledDetailTab] = useState<ScheduledDetailTab>("info");
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
-  const { data: historyData = [], isLoading, isError } = useMessageHistory();
-  const { data: upcomingJobs = [], isLoading: isLoadingUpcoming } = useUpcomingMessageTriggerJobs();
+  const {
+    data: historyDataLoaded,
+    isLoading,
+    isError: isHistoryError,
+    isFetching: isFetchingHistory,
+    isPaused: isHistoryPaused,
+    refetch: refetchHistory,
+  } = useMessageHistory();
+  const {
+    data: upcomingJobsLoaded,
+    isLoading: isLoadingUpcoming,
+    isError: isUpcomingError,
+    isFetching: isFetchingUpcoming,
+    isPaused: isUpcomingPaused,
+    refetch: refetchUpcoming,
+  } = useUpcomingMessageTriggerJobs();
+  // A failed query only counts as "no data" when no earlier successful load is
+  // cached; judged from the data itself, never from !isError.
+  const historyData = historyDataLoaded ?? [];
+  const upcomingJobs = upcomingJobsLoaded ?? [];
   // The history query is often already cached (TemplateSendForm subscribes to
   // the same key), so isLoading can settle before isLoadingUpcoming does. The
   // two zone lists and the three count pills key off this combined flag so the
@@ -748,9 +770,12 @@ function MessageHistorySection() {
   const isPanelLoading = isLoading || isLoadingUpcoming;
   const { mutateAsync: retryHistory, isPending: isRetrying } = useRetryMessageHistory();
   const cancelMutation = useCancelUpcomingMessageTriggerJob();
+  const resendMutation = useResendMessageTriggerJob();
   // Retry and cancel require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
-  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
+  const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
   const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
   const smsHistoryData = useMemo(
@@ -864,7 +889,33 @@ function MessageHistorySection() {
   } = useSplitLayoutSelection(combinedRecordIds);
 
   const totalVisibleCount = filteredUpcomingJobs.length + filteredHistoryRecords.length;
-  const isOverallEmpty = !isError && !isLoading && !isLoadingUpcoming && totalVisibleCount === 0;
+  // Only the zones the active filter shows count: a failed load with no cached
+  // data must read as unknown ("—", failure state), never as an empty/0 result.
+  const isUpcomingZoneFailed = showUpcomingZone && isUpcomingError && upcomingJobsLoaded === undefined;
+  const isPastZoneFailed = showPastZone && isHistoryError && historyDataLoaded === undefined;
+  const isStaleUpcoming = showUpcomingZone && isUpcomingError && upcomingJobsLoaded !== undefined;
+  const isStaleHistory = showPastZone && isHistoryError && historyDataLoaded !== undefined;
+  const isVisibleCountUnknown = isUpcomingZoneFailed || isPastZoneFailed;
+  // A query paused while offline has no data and is neither loading nor failed
+  // (`isLoading` is false while paused). With no cached data it is still
+  // unknown, so it reads as loading, never as an empty/0 result. Judged from
+  // the data and `isPaused`, never from !isError: a disabled query also has no
+  // data and must keep rendering as it does.
+  const isUpcomingZonePaused = showUpcomingZone && isUpcomingPaused && upcomingJobsLoaded === undefined;
+  const isPastZonePaused = showPastZone && isHistoryPaused && historyDataLoaded === undefined;
+  const isUpcomingZoneLoading = isPanelLoading || isUpcomingZonePaused;
+  const isPastZoneLoading = isPanelLoading || isPastZonePaused;
+  const isOverallEmpty =
+    !isVisibleCountUnknown
+    && !isLoading
+    && !isLoadingUpcoming
+    && !isUpcomingZonePaused
+    && !isPastZonePaused
+    && totalVisibleCount === 0;
+  const retryStaleQueries = useCallback(() => {
+    if (isStaleHistory) void refetchHistory();
+    if (isStaleUpcoming) void refetchUpcoming();
+  }, [isStaleHistory, isStaleUpcoming, refetchHistory, refetchUpcoming]);
 
   const selectedJob = useMemo(
     () => filteredUpcomingJobs.find((job) => job.id === selectedRecordId) ?? null,
@@ -890,35 +941,38 @@ function MessageHistorySection() {
     }
   }, []);
 
-  const canRetry = canManageBranchMessages
+  const failedLog = canRetryFailedHistory(selectedRecord, canManageBranchMessages);
+  // A needs_setup job is re-sent by hand once its cause is fixed (resend endpoint);
+  // it is a job row, never a numeric log id.
+  const needsSetupJob = canManageBranchMessages
     && !!selectedRecord
-    && typeof selectedRecord.id === "number"
-    && selectedRecord.status === "failed";
+    && selectedRecord.isTriggerJobRow
+    && !!selectedRecord.triggerJobId
+    && selectedRecord.status === "needs_setup";
+  const canRetry = failedLog || needsSetupJob;
+  // The server refuses a resend while a safeguard level is off; say so up front
+  // instead of letting the admin hit the 409.
+  const retryBlock = needsSetupJob ? selectedRecord?.resendBlock : undefined;
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord || typeof selectedRecord.id !== "number") return;
-
-    try {
-      const retriedRecord = await retryHistory(selectedRecord.id);
-
-      if (retriedRecord.status === "failed") {
-        // Upstream status detail is never forwarded; locally authored copy
-        // covers the failed retry outcome.
-        toast({ variant: "destructive", description: "메시지를 재발송하지 못했어요" });
-        return;
-      }
-
-      toast({ variant: "success", description: "재발송 요청을 접수했어요" });
-    } catch (error) {
-      // Registered problem message (verified) or locally authored copy —
-      // upstream internals are never rendered.
-      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-      toast({
-        variant: "destructive",
-        description: normalized.verified ? normalized.message : "재발송을 요청하지 못했어요",
-      });
-    }
+    toast(await retryMessageHistory(retryHistory, selectedRecord.id));
   }, [retryHistory, selectedRecord, toast]);
+
+  const handleResendJob = useCallback(async () => {
+    if (!selectedRecord?.triggerJobId) return;
+
+    toast(await resendMessageTriggerJob(resendMutation.mutateAsync, selectedRecord.triggerJobId));
+  }, [resendMutation, selectedRecord, toast]);
+
+  const handleRetryOrResend = useCallback(() => {
+    if (needsSetupJob) {
+      if (retryBlock) return;
+      void handleResendJob();
+      return;
+    }
+    void handleRetry();
+  }, [handleResendJob, handleRetry, needsSetupJob, retryBlock]);
 
   // Only a pending trigger job can be canceled (POST /message-trigger-jobs/:id/cancel
   // refuses processing/sent/canceled/missing jobs), and manual scheduled entries
@@ -967,7 +1021,7 @@ function MessageHistorySection() {
         onSearchChange={setSearchValue}
         searchPlaceholder="고객명, 연락처, 템플릿, 내용 검색…"
         headerActions={
-          isPanelLoading ? (
+          isPanelLoading || isUpcomingZonePaused || isPastZonePaused ? (
             <Skeleton
               data-component="desktop_messages_sections_history-list-count"
               className="h-[22px] w-12 rounded-full bg-v3-dim-white"
@@ -977,7 +1031,7 @@ function MessageHistorySection() {
               data-component="desktop_messages_sections_history-list-count"
               className="inline-flex items-center gap-1.5 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
             >
-              {totalVisibleCount}건
+              {isVisibleCountUnknown ? "—" : totalVisibleCount}건
             </span>
           )
         }
@@ -985,7 +1039,7 @@ function MessageHistorySection() {
           <ListEmptyState message={getMergedRecordEmptyStateMessage(recordStatusFilter, deferredSearchValue.trim().length > 0)} />
         ) : undefined}
         subHeader={
-          showPastZone && !isError ? (
+          showPastZone && !isPastZoneFailed ? (
             <div data-component="desktop_messages_sections_split-layout_list-panel-3_history-list-filters" className="flex items-center justify-between gap-2">
               <div data-component="desktop_messages_sections_split-layout_list-panel-3_history-list-filters_history-list-filter-relative" className="w-[110px] shrink-0">
                 <Select value={relativeDateFilter} onValueChange={(value) => setRelativeDateFilter(value as MessageHistoryRelativeDateFilter)}>
@@ -1059,177 +1113,192 @@ function MessageHistorySection() {
           ) : undefined
         }
       >
-        {isError ? (
-          <div
-            data-component="desktop_messages_sections_split-layout_list-panel-3_history-list-error"
-            className="rounded-[18px] border border-red-200 bg-red-50 p-6 text-center"
-          >
-            <p className="text-sm font-semibold text-red-700">발송 기록을 불러오지 못했습니다.</p>
-            <p className="mt-1 text-[0.8rem] text-red-600">잠시 후 다시 시도해 주세요.</p>
+        {isStaleHistory || isStaleUpcoming ? (
+          <QueryErrorState
+            dataComponent="desktop_messages_sections_split-layout_list-panel-3_load-error"
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={retryStaleQueries}
+            isRetrying={(isStaleHistory && isFetchingHistory) || (isStaleUpcoming && isFetchingUpcoming)}
+          />
+        ) : null}
+        {showUpcomingZone && !isOverallEmpty ? (
+          <div data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming">
+            <div
+              data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_label"
+              className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
+            >
+              <span>{MESSAGE_RECORD_ZONE_LABELS.upcoming}</span>
+              {isUpcomingZoneLoading ? (
+                <Skeleton
+                  data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
+                  className="h-[18px] w-7 rounded-full bg-v3-dim-white"
+                />
+              ) : (
+                <span
+                  data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
+                  className="inline-flex items-center rounded-full bg-v3-primary-light px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
+                >
+                  {isUpcomingZoneFailed ? "—" : filteredUpcomingJobs.length}
+                </span>
+              )}
+            </div>
+            {!isUpcomingZoneLoading && isUpcomingZoneFailed ? (
+              <QueryErrorState
+                dataComponent="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_load-error"
+                size="inline"
+                title="예정된 발송을 불러오지 못했습니다"
+                onRetry={() => void refetchUpcoming()}
+                isRetrying={isFetchingUpcoming}
+              />
+            ) : null}
+            <AnimatedSlotList<UpcomingMessageTriggerJob>
+              items={filteredUpcomingJobs}
+              isLoading={isUpcomingZoneLoading}
+              loadingCount={3}
+              className="space-y-2 pb-3"
+              itemDataComponent="desktop_messages_sections_split-layout_list-panel-3_upcoming-list_item"
+              getSlotState={({ item, isLoading: slotLoading }) => ({
+                isActive: !slotLoading && item?.id === selectedRecordId,
+                isInteractive: !slotLoading && Boolean(item),
+              })}
+              onSlotClick={(item) => {
+                setSelectedRecordId(item.id);
+                setScheduledDetailTab("info");
+              }}
+              render={({ item }) => {
+                if (!item) return null;
+                const statusMeta = getScheduledJobStatusMeta(item.status);
+
+                return (
+                  <AnimatedSlotListItemContent
+                    dataComponent="desktop_messages_sections_upcoming-list-item"
+                    icon={Clock3}
+                    iconContainerClassName="text-v3-primary"
+                    title={item.payload.recipientName || "-"}
+                    subtitle={`${getHistoryTemplateLabel(item.templateKey)} · ${formatScheduledPreviewDate(item.scheduledFor)}`}
+                    status={
+                      <div
+                        data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges"
+                        className="flex shrink-0 flex-col items-end gap-1"
+                      >
+                        <StatusBadge
+                          data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges_status"
+                          variant={statusMeta.variant}
+                          size="sm"
+                        >
+                          {item.status === "processing" || item.status === "dispatching" ? (
+                            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          ) : null}
+                          {statusMeta.label}
+                        </StatusBadge>
+                        <span
+                          data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges_recipient"
+                          className="text-[0.64rem] font-medium text-v3-text-muted"
+                        >
+                          {getScheduledRecipientBadge(item.recipientType)}
+                        </span>
+                      </div>
+                    }
+                  />
+                );
+              }}
+            />
           </div>
-        ) : (
-          <>
-            {showUpcomingZone && !isOverallEmpty ? (
-              <div data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming">
-                <div
-                  data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_label"
-                  className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
-                >
-                  <span>{MESSAGE_RECORD_ZONE_LABELS.upcoming}</span>
-                  {isPanelLoading ? (
-                    <Skeleton
-                      data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
-                      className="h-[18px] w-7 rounded-full bg-v3-dim-white"
-                    />
-                  ) : (
-                    <span
-                      data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
-                      className="inline-flex items-center rounded-full bg-v3-primary-light px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
-                    >
-                      {filteredUpcomingJobs.length}
-                    </span>
-                  )}
-                </div>
-                <AnimatedSlotList<UpcomingMessageTriggerJob>
-                  items={filteredUpcomingJobs}
-                  isLoading={isPanelLoading}
-                  loadingCount={3}
-                  className="space-y-2 pb-3"
-                  itemDataComponent="desktop_messages_sections_split-layout_list-panel-3_upcoming-list_item"
-                  getSlotState={({ item, isLoading: slotLoading }) => ({
-                    isActive: !slotLoading && item?.id === selectedRecordId,
-                    isInteractive: !slotLoading && Boolean(item),
-                  })}
-                  onSlotClick={(item) => {
-                    setSelectedRecordId(item.id);
-                    setScheduledDetailTab("info");
-                  }}
-                  render={({ item }) => {
-                    if (!item) return null;
-                    const statusMeta = getScheduledJobStatusMeta(item.status);
+        ) : null}
 
-                    return (
-                      <AnimatedSlotListItemContent
-                        dataComponent="desktop_messages_sections_upcoming-list-item"
-                        icon={Clock3}
-                        iconContainerClassName="text-v3-primary"
-                        title={item.payload.recipientName || "-"}
-                        subtitle={`${getHistoryTemplateLabel(item.templateKey)} · ${formatScheduledPreviewDate(item.scheduledFor)}`}
-                        status={
-                          <div
-                            data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges"
-                            className="flex shrink-0 flex-col items-end gap-1"
-                          >
-                            <StatusBadge
-                              data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges_status"
-                              variant={statusMeta.variant}
-                              size="sm"
-                            >
-                              {item.status === "processing" || item.status === "dispatching" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                              ) : null}
-                              {statusMeta.label}
-                            </StatusBadge>
-                            <span
-                              data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges_recipient"
-                              className="text-[0.64rem] font-medium text-v3-text-muted"
-                            >
-                              {getScheduledRecipientBadge(item.recipientType)}
-                            </span>
-                          </div>
-                        }
-                      />
-                    );
-                  }}
+        {showPastZone && !isOverallEmpty ? (
+          <div data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past">
+            <div
+              data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_label"
+              className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
+            >
+              <span>{MESSAGE_RECORD_ZONE_LABELS.past}</span>
+              {isPastZoneLoading ? (
+                <Skeleton
+                  data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
+                  className="h-[18px] w-7 rounded-full bg-v3-dim-white"
                 />
-              </div>
-            ) : null}
-
-            {showPastZone && !isOverallEmpty ? (
-              <div data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past">
-                <div
-                  data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_label"
-                  className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
+              ) : (
+                <span
+                  data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
+                  className="inline-flex items-center rounded-full bg-v3-dim-white px-2 py-0.5 text-[0.66rem] font-semibold text-v3-text-muted"
                 >
-                  <span>{MESSAGE_RECORD_ZONE_LABELS.past}</span>
-                  {isPanelLoading ? (
-                    <Skeleton
-                      data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
-                      className="h-[18px] w-7 rounded-full bg-v3-dim-white"
-                    />
-                  ) : (
-                    <span
-                      data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
-                      className="inline-flex items-center rounded-full bg-v3-dim-white px-2 py-0.5 text-[0.66rem] font-semibold text-v3-text-muted"
-                    >
-                      {filteredHistoryRecords.length}
-                    </span>
-                  )}
-                </div>
-                <AnimatedSlotList<MessageHistoryRecord>
-                  items={filteredHistoryRecords}
-                  isLoading={isPanelLoading}
-                  loadingCount={4}
-                  className="space-y-2"
-                  itemDataComponent="desktop_messages_sections_split-layout_list-panel-3_history-list_item"
-                  getSlotState={({ item, isLoading: slotLoading }) => ({
-                    isActive: !slotLoading && item?.id === selectedRecordId,
-                    isInteractive: !slotLoading && Boolean(item),
-                  })}
-                  onSlotClick={(record) => setSelectedRecordId(record.id)}
-                  render={({ item: record }) => {
-                    if (!record) return null;
-                    const statusMeta = getMessageHistoryListStatusMeta(record.status);
-                    const ItemIcon = record.icon;
-                    const inlineReason = record.status === "failed"
-                      ? record.failureReason
-                      : record.status === "canceled"
-                        ? record.cancelReason
-                        : undefined;
-
-                    return (
-                      <AnimatedSlotListItemContent
-                        dataComponent="desktop_messages_sections_history-list-item"
-                        icon={ItemIcon}
-                        iconContainerClassName={getMessageHistoryAvatarClassName(record.status)}
-                        title={record.title}
-                        subtitle={record.recipientListLabel}
-                        meta={inlineReason ? (
-                          <span
-                            data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-reason"
-                            className="block max-w-full truncate"
-                          >
-                            {MESSAGE_RECORD_REASON_LABEL}: {inlineReason}
-                          </span>
-                        ) : undefined}
-                        status={
-                          <div
-                            data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta"
-                            className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
-                          >
-                            <StatusBadge
-                              data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta_status"
-                              variant={statusMeta.variant}
-                              size="sm"
-                            >
-                              {statusMeta.label}
-                            </StatusBadge>
-                            <span
-                              data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta_date"
-                              className="whitespace-nowrap text-[0.68rem] text-v3-text-muted"
-                            >
-                              {formatHistoryDate(record.sentAt)}
-                            </span>
-                          </div>
-                        }
-                      />
-                    );
-                  }}
-                />
-              </div>
+                  {isPastZoneFailed ? "—" : filteredHistoryRecords.length}
+                </span>
+              )}
+            </div>
+            {!isPastZoneLoading && isPastZoneFailed ? (
+              <QueryErrorState
+                dataComponent="desktop_messages_sections_split-layout_list-panel-3_history-list-error"
+                size="panel"
+                title="발송 기록을 불러오지 못했습니다"
+                onRetry={() => void refetchHistory()}
+                isRetrying={isFetchingHistory}
+              />
             ) : null}
-          </>
-        )}
+            <AnimatedSlotList<MessageHistoryRecord>
+              items={filteredHistoryRecords}
+              isLoading={isPastZoneLoading}
+              loadingCount={4}
+              className="space-y-2"
+              itemDataComponent="desktop_messages_sections_split-layout_list-panel-3_history-list_item"
+              getSlotState={({ item, isLoading: slotLoading }) => ({
+                isActive: !slotLoading && item?.id === selectedRecordId,
+                isInteractive: !slotLoading && Boolean(item),
+              })}
+              onSlotClick={(record) => setSelectedRecordId(record.id)}
+              render={({ item: record }) => {
+                if (!record) return null;
+                const statusMeta = getMessageHistoryListStatusMeta(record.status);
+                const ItemIcon = record.icon;
+                const inlineReason = record.status === "failed"
+                  ? record.failureReason
+                  : record.status === "canceled"
+                    ? record.cancelReason
+                    : undefined;
+
+                return (
+                  <AnimatedSlotListItemContent
+                    dataComponent="desktop_messages_sections_history-list-item"
+                    icon={ItemIcon}
+                    iconContainerClassName={getMessageHistoryAvatarClassName(record.status)}
+                    title={record.title}
+                    subtitle={record.recipientListLabel}
+                    meta={inlineReason ? (
+                      <span
+                        data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-reason"
+                        className="block max-w-full truncate"
+                      >
+                        {MESSAGE_RECORD_REASON_LABEL}: {inlineReason}
+                      </span>
+                    ) : undefined}
+                    status={
+                      <div
+                        data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta"
+                        className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
+                      >
+                        <StatusBadge
+                          data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta_status"
+                          variant={statusMeta.variant}
+                          size="sm"
+                        >
+                          {statusMeta.label}
+                        </StatusBadge>
+                        <span
+                          data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta_date"
+                          className="whitespace-nowrap text-[0.68rem] text-v3-text-muted"
+                        >
+                          {formatHistoryDate(record.sentAt)}
+                        </span>
+                      </div>
+                    }
+                  />
+                );
+              }}
+            />
+          </div>
+        ) : null}
       </ListPanel>
 
       {selectedJob ? (
@@ -1414,8 +1483,11 @@ function MessageHistorySection() {
           dataComponentPrefix="desktop_messages_sections_section-content_history-section_split-layout_detail-panel"
           selectedRecord={selectedRecord}
           canRetry={canRetry}
-          isRetrying={isRetrying}
-          onRetry={handleRetry}
+          isRetrying={isRetrying || resendMutation.isPending}
+          onRetry={handleRetryOrResend}
+          retryPendingLabel={needsSetupJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
+          retryBlock={retryBlock}
+          canOpenOwnerAdmin={canOpenOwnerAdmin}
         />
       )}
     </SplitLayout>
@@ -1439,7 +1511,17 @@ function MessageHistorySection() {
 
 export default function MessagesPage() {
   const locale = useLocale();
-  const [activeSection, setActiveSection] = useState<MessageSectionId>("send");
+  // The section the viewer picked in the nav; until then the `?section=` deep
+  // link (e.g. the "자동화 설정 열기" link of a disabled 재발송 button) or 전송하기.
+  const [pickedSectionId, setPickedSectionId] = useState<MessageSectionId | null>(null);
+  const requestedSectionId = useSearchParams()?.get("section") ?? null;
+  // A link to another `?section=` (the disabled 재발송 card sits in 발송 기록) must win
+  // over the nav pick, so a changed request drops the pick (adjust-state-during-render).
+  const [seenRequestedSectionId, setSeenRequestedSectionId] = useState(requestedSectionId);
+  if (seenRequestedSectionId !== requestedSectionId) {
+    setSeenRequestedSectionId(requestedSectionId);
+    setPickedSectionId(null);
+  }
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("builtin");
   const [templateDetailTab, setTemplateDetailTab] = useState<TemplateDetailTab>("details");
   const [templatePreviewOverride, setTemplatePreviewOverride] = useState<string | null>(null);
@@ -1463,11 +1545,26 @@ export default function MessagesPage() {
     [canManageBranchMessages, isSenderApprovalRequired],
   );
 
-  const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
+  // A locked section (auth and approval load after mount) is not opened by the link.
+  const requestedSection = messageSections.find((section) => section.id === requestedSectionId);
+  const activeSection: MessageSectionId =
+    pickedSectionId ?? (requestedSection && !requestedSection.disabled ? requestedSection.id : "send");
+
+  const {
+    data: userTemplatesData,
+    isLoading: isLoadingUserTemplates,
+    isError: isUserTemplatesError,
+    isFetching: isFetchingUserTemplates,
+    isPaused: isUserTemplatesPaused,
+    refetch: refetchUserTemplates,
+  } = useMessageTemplates(1, 100);
   const {
     data: systemTemplatesData,
     isLoading: isLoadingSystemTemplates,
     isError: isSystemTemplatesError,
+    isFetching: isFetchingSystemTemplates,
+    isPaused: isSystemTemplatesPaused,
+    refetch: refetchSystemTemplates,
   } = useSystemTemplates({ scope: "branch", branchId: activeBranchId });
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
 
@@ -1502,11 +1599,22 @@ export default function MessagesPage() {
     setSelectedId: setSelectedValue,
     setSplitLayoutMode: setTemplateSplitLayoutMode,
   } = useSplitLayoutSelection(templateItemIds);
+  // Paused (offline) with nothing cached is still loading, not an empty list.
   const isTemplateListLoading = templateFilter === "builtin"
-    ? isLoadingSystemTemplates
-    : isLoadingUserTemplates;
-  const isTemplateListError =
-    templateFilter === "builtin" && isSystemTemplatesError && !systemTemplatesData;
+    ? isLoadingSystemTemplates || (isSystemTemplatesPaused && systemTemplatesData === undefined)
+    : isLoadingUserTemplates || (isUserTemplatesPaused && userTemplatesData === undefined);
+  // A failed list with no earlier successful load is a failure state; one with
+  // cached rows keeps them and gets an inline notice instead.
+  const isTemplateListError = templateFilter === "builtin"
+    ? isSystemTemplatesError && systemTemplatesData === undefined
+    : isUserTemplatesError && userTemplatesData === undefined;
+  const isTemplateListStale = templateFilter === "builtin"
+    ? isSystemTemplatesError && systemTemplatesData !== undefined
+    : isUserTemplatesError && userTemplatesData !== undefined;
+  const refetchTemplateList = templateFilter === "builtin" ? refetchSystemTemplates : refetchUserTemplates;
+  const isFetchingTemplateList = templateFilter === "builtin"
+    ? isFetchingSystemTemplates
+    : isFetchingUserTemplates;
 
   const handleTemplateSelect = useCallback((id: string) => {
     setSelectedValue(id);
@@ -1559,6 +1667,8 @@ export default function MessagesPage() {
     data: selectedSystemTemplateDetail,
     isLoading: isLoadingSystemTemplateDetail,
     isError: isSystemTemplateDetailError,
+    isFetching: isFetchingSystemTemplateDetail,
+    refetch: refetchSystemTemplateDetail,
   } = useSystemTemplate(selectedSystemTemplateKey, {
     scope: "branch",
     branchId: activeBranchId,
@@ -1762,6 +1872,31 @@ export default function MessagesPage() {
       ) : null}
     </>
   ) : undefined;
+  // One notice for a failed built-in template detail load, rendered above the
+  // tab panels (not inside either panel) so it is visible on 상세 and 미리보기
+  // alike, with or without a registered send form. It is a non-shrinking
+  // sibling of DetailTabPanels in the detail panel's flex column, so the panels
+  // keep their `flex-1 min-h-0` share of the remaining height.
+  //
+  // The title depends on one thing only: whether the real detail for the
+  // selected template is loaded. A cached detail (the refetch failed) means older
+  // content is on screen; without it, the list-item fallback that feeds the card
+  // or preview is not the template's information, so the failure title applies.
+  const systemTemplateDetailLoadNotice =
+    isBuiltin && isSystemTemplateDetailError ? (
+      <QueryErrorState
+        dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_detail-load-error"
+        size="inline"
+        className="shrink-0"
+        title={
+          selectedSystemTemplateDetail
+            ? "최신 정보를 불러오지 못했습니다"
+            : "선택한 템플릿 정보를 불러오지 못했습니다"
+        }
+        onRetry={() => void refetchSystemTemplateDetail()}
+        isRetrying={isFetchingSystemTemplateDetail}
+      />
+    ) : null;
   const selectedTemplateFormContent = (
     <>
       {activeSection === "send" && SelectedBuiltinForm ? (
@@ -1788,40 +1923,32 @@ export default function MessagesPage() {
         />
       ) : null}
 
-      {isBuiltin && activeSection === "templates" ? (
-        selectedSystemTemplateDetail ? (
-          <SystemTemplateEditor
-            ref={systemTemplateEditorRef}
-            key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateDetail.templateKey}`}
-            // Registry keys can be added server-side before the shared package
-            // union is updated; the editor consumes the same wire shape.
-            template={selectedSystemTemplateDetail as SystemTemplate}
-            scope="branch"
-            branchId={activeBranchId}
-            dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_editor"
-            showSaveButton={false}
-            onPendingChange={setIsSystemTemplateSaving}
-            onDraftChange={setSystemTemplateDraft}
-            onPreviewMessageChange={handleTemplatePreviewMessageChange}
-          />
-        ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
-          <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
-        ) : null
-        ) : null}
+      {isBuiltin && activeSection === "templates" && selectedSystemTemplateDetail ? (
+        <SystemTemplateEditor
+          ref={systemTemplateEditorRef}
+          key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateDetail.templateKey}`}
+          // Registry keys can be added server-side before the shared package
+          // union is updated; the editor consumes the same wire shape.
+          template={selectedSystemTemplateDetail as SystemTemplate}
+          scope="branch"
+          branchId={activeBranchId}
+          dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_editor"
+          showSaveButton={false}
+          onPendingChange={setIsSystemTemplateSaving}
+          onDraftChange={setSystemTemplateDraft}
+          onPreviewMessageChange={handleTemplatePreviewMessageChange}
+        />
+      ) : null}
 
-      {isBuiltin && activeSection === "send" && !SelectedBuiltinForm ? (
-        selectedSystemTemplatePreview ? (
-          <AppContentCard
-            data-component="desktop_messages_sections_template-detail-readonly-content"
-            title="템플릿 내용"
-            description="선택한 템플릿의 내용을 확인하세요."
-            contentClassName="min-h-0"
-          >
-            <MsgField label="템플릿 내용" value={templatePreviewMessage} />
-          </AppContentCard>
-        ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
-          <DetailEmptyState message="선택한 템플릿 정보를 불러오지 못했습니다." />
-        ) : null
+      {isBuiltin && activeSection === "send" && !SelectedBuiltinForm && selectedSystemTemplatePreview ? (
+        <AppContentCard
+          data-component="desktop_messages_sections_template-detail-readonly-content"
+          title="템플릿 내용"
+          description="선택한 템플릿의 내용을 확인하세요."
+          contentClassName="min-h-0"
+        >
+          <MsgField label="템플릿 내용" value={templatePreviewMessage} />
+        </AppContentCard>
       ) : null}
 
       {!isBuiltin && !selectedUserTemplate ? (
@@ -1865,7 +1992,16 @@ export default function MessagesPage() {
           ariaLabel="메시지 기능"
           items={messageSections}
           activeId={activeSection}
-          onSelect={(id) => setActiveSection(id as MessageSectionId)}
+          onSelect={(id) => {
+            setPickedSectionId(id as MessageSectionId);
+            // Keep the address in step with the pick so a later card link to the
+            // section the viewer last left via the nav still changes `?section=`.
+            // A null state lets Next's patched replaceState sync useSearchParams;
+            // passing history.state (which carries Next's own marker) would not.
+            const url = new URL(window.location.href);
+            url.searchParams.set("section", id);
+            window.history.replaceState(null, "", url);
+          }}
         />
 
         <div data-component="desktop_messages_sections_section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1932,7 +2068,18 @@ export default function MessagesPage() {
                   }
                   emptyState={
                     isTemplateListError ? (
-                      <ListEmptyState message="기본 템플릿을 불러오지 못했습니다." />
+                      <QueryErrorState
+                        dataComponent="desktop_messages_sections_split-layout_list-panel-4_templates-load-error"
+                        size="panel"
+                        className="pointer-events-auto"
+                        title={
+                          templateFilter === "builtin"
+                            ? "기본 템플릿을 불러오지 못했습니다"
+                            : "지점 템플릿을 불러오지 못했습니다"
+                        }
+                        onRetry={() => void refetchTemplateList()}
+                        isRetrying={isFetchingTemplateList}
+                      />
                     ) : !isTemplateListLoading && visibleItems.length === 0 ? (
                       <ListEmptyState
                         message={
@@ -1944,6 +2091,15 @@ export default function MessagesPage() {
                     ) : undefined
                   }
                 >
+                  {isTemplateListStale ? (
+                    <QueryErrorState
+                      dataComponent="desktop_messages_sections_split-layout_list-panel-4_templates-load-error"
+                      size="inline"
+                      title="최신 정보를 불러오지 못했습니다"
+                      onRetry={() => void refetchTemplateList()}
+                      isRetrying={isFetchingTemplateList}
+                    />
+                  ) : null}
                   {isTemplateListLoading || visibleItems.length > 0 ? (
                     <div data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list" className="space-y-2 pb-2">
                       <AnimatedSlotList<TemplateListItem>
@@ -2047,6 +2203,8 @@ export default function MessagesPage() {
                       message="왼쪽 목록에서 템플릿을 선택해 주세요."
                     />
                   ) : (
+                    <>
+                    {systemTemplateDetailLoadNotice}
                     <DetailTabPanels
                       activeTab={templateDetailTab}
                       dataComponent="desktop_messages_sections_template-detail-tabpanes"
@@ -2122,6 +2280,7 @@ export default function MessagesPage() {
                         },
                       ]}
                     />
+                    </>
                   )}
                 </DetailPanel>
               </SplitLayout>

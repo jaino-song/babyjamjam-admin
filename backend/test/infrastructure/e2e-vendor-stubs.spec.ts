@@ -43,6 +43,11 @@ function createConfigService(overrides: Record<string, string | undefined> = {})
 }
 
 describe("vendor stub factory selection", () => {
+    it("defaults both Aligo history endpoints to negative answers, never empty success", async () => {
+        const stub = new E2eAligoApiStub();
+        expect(await stub.listHistory()).toMatchObject({ result_code: -1 });
+        expect(await stub.listSmsHistory()).toMatchObject({ result_code: -1 });
+    });
     it("keeps real vendor clients when E2E_VENDOR_STUBS is off", () => {
         const configService = createConfigService();
 
@@ -277,5 +282,23 @@ describe("assertVendorStubsConfigured (boot-time guard)", () => {
         const configService = createBootEnvConfigService({ NODE_ENV: "test", E2E_VENDOR_STUBS: "true" });
 
         expect(() => assertVendorStubsConfigured(configService)).toThrow(/detected value "true"/);
+    });
+
+    it("Aligo stub returns incrementing msg_ids and per-receiver carrier details", async () => {
+        const stub = new E2eAligoApiStub();
+        const first = await stub.sendSms({ receiver: "010-1234-5678", message: "a" });
+        const second = await stub.sendSms({ receiver: "01000000000", message: "b" });
+
+        expect(first.msg_id).toBe(1);
+        expect(second.msg_id).toBe(2);
+        await expect(stub.getSmsDeliveryDetails(String(first.msg_id))).resolves.toEqual({
+            resultCode: 1,
+            message: "stubbed",
+            rows: [{ mdid: "1", receiver: "01012345678", smsState: "발송완료", sendDate: null }],
+        });
+        await expect(stub.getSmsDeliveryDetails(String(second.msg_id))).resolves.toMatchObject({
+            rows: [{ receiver: "01000000000", smsState: "가입자없음" }],
+        });
+        await expect(stub.getSmsDeliveryDetails("999")).resolves.toMatchObject({ resultCode: 1, rows: [] });
     });
 });

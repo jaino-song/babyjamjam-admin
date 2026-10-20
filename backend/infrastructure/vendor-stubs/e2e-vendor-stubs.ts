@@ -17,6 +17,7 @@ import { CALL_TERM_CORRECTIONS } from "domain/constants/call-vocabulary";
 import { GeminiCallRefinementAdapter } from "infrastructure/api/gemini-call-refinement.adapter";
 import {
     AligoSendSmsParams,
+    AligoSmsDeliveryDetailsResult,
     AligoSmsResponse,
     IAligoSmsApiPort,
     ALIGO_DEFAULT_SENDER_POLICY_VERSION,
@@ -686,6 +687,17 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
 }
 
 export class E2eAligoApiStub implements IAligoSmsApiPort {
+    private nextMsgId = 1;
+    private readonly receiversByMid = new Map<string, string[]>();
+
+    listHistory(): Promise<unknown> {
+        return Promise.resolve({ result_code: -1, message: "history not confirmed by stub" });
+    }
+
+    listSmsHistory(): Promise<unknown> {
+        return Promise.resolve({ result_code: -1, message: "history not confirmed by stub" });
+    }
+
     getDefaultSenderPolicy(): AligoDefaultSenderPolicy {
         // Synthetic positive controls use a separate namespace. A stored stub
         // descriptor can never match the live provider's default-sender digest.
@@ -696,12 +708,32 @@ export class E2eAligoApiStub implements IAligoSmsApiPort {
     }
 
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
+        const msgId = this.nextMsgId++;
+        this.receiversByMid.set(
+            String(msgId),
+            params.receiver.split(",").map((value) => value.replace(/\D/g, "")).filter(Boolean),
+        );
         return Promise.resolve({
             result_code: 1,
             message: "stubbed",
+            msg_id: msgId,
             msg_type: params.msgType ?? "SMS",
             success_cnt: 1,
             error_cnt: 0,
+        });
+    }
+
+    getSmsDeliveryDetails(mid: string): Promise<AligoSmsDeliveryDetailsResult> {
+        const receivers = this.receiversByMid.get(mid) ?? [];
+        return Promise.resolve({
+            resultCode: 1,
+            message: "stubbed",
+            rows: receivers.map((receiver) => ({
+                mdid: mid,
+                receiver,
+                smsState: receiver.endsWith("0000") ? "가입자없음" : "발송완료",
+                sendDate: null,
+            })),
         });
     }
 }

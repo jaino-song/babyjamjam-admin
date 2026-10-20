@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import type { SystemAdminUser } from "@/lib/api/users";
+import { ROLE_LABELS } from "@/lib/constants/roles";
 
 type EditableAccountRole = "admin" | "manager" | "user";
 
@@ -50,12 +51,12 @@ interface SystemAdminAccountEditDialogProps {
 }
 
 const ACCOUNT_ROLE_OPTIONS = [
-  { value: "manager", label: "매니저" },
-  { value: "user", label: "직원" },
+  { value: "manager", label: ROLE_LABELS.manager },
+  { value: "user", label: ROLE_LABELS.user },
 ] as const;
 
 const ADMIN_ACCOUNT_ROLE_OPTIONS = [
-  { value: "admin", label: "지점장" },
+  { value: "admin", label: ROLE_LABELS.admin },
   ...ACCOUNT_ROLE_OPTIONS,
 ] as const;
 
@@ -326,7 +327,7 @@ export function SystemAdminAccountEditDialog({
                   >
                     {isPreservingAdminRole
                       ? "지점장으로 임명된 지점은 지점 정보에서만 해제할 수 있어 선택이 고정됩니다. 비활성 소유 지점도 지점 정보에서 관리해 주세요."
-                      : "매니저 또는 직원으로 변경해 저장하면 지점장 임명이 해제됩니다. 이후 임명 지점도 소속에서 제외할 수 있어요."}
+                      : "매니저 또는 회원으로 변경해 저장하면 지점장 임명이 해제됩니다. 이후 임명 지점도 소속에서 제외할 수 있어요."}
                   </FormHelperText>
                 ) : null}
               </FormField>

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps, ReactNode } from "react";
+import type { MessageHistoryDetailPanel } from "@/components/app/messages/MessageHistoryDetailPanel";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
 import type { Client } from "@/lib/client/types";
@@ -11,7 +12,19 @@ import type {
 import { eformsignApi } from "@/services/api";
 
 const mockUseClientMessageHistory = jest.fn();
+const mockRetryHistory = jest.fn();
+const mockResendJob = jest.fn();
+const mockToast = jest.fn();
+let mockMessageBranchRole = "manager";
+let mockMessageRole = "user";
+let mockDetailRetry: (() => void) | undefined;
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => ({ data: { role: mockMessageRole, branchRole: mockMessageBranchRole } }),
+}));
 const mockUseClientUpcomingMessageTriggerJobs = jest.fn();
+const mockUseClientServiceRecords = jest.fn();
+const mockUseClientServiceRecordRevisionHistory = jest.fn();
+const mockServiceRecordsTabProps: Array<Record<string, unknown>> = [];
 
 jest.mock("@/providers/LocaleProvider", () => ({
     useLocale: () => "ko",
@@ -20,23 +33,19 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("@/features/clients/hooks/use-clients", () => ({
     useApproveScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
     useRejectScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
+    useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+    useRetryMessageHistory: () => ({ mutateAsync: mockRetryHistory, isPending: false }),
+    useResendMessageTriggerJob: () => ({ mutateAsync: mockResendJob, isPending: false }),
     useClientMessageHistory: (...args: unknown[]) => mockUseClientMessageHistory(...args),
     useClientUpcomingMessageTriggerJobs: (...args: unknown[]) => mockUseClientUpcomingMessageTriggerJobs(...args),
 }));
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
-    useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
-    useClientServiceRecordRevisionHistory: () => ({
-        data: undefined,
-        error: undefined,
-        isError: false,
-        isLoading: false,
-        isFetching: false,
-        refetch: jest.fn(),
-    }),
+    useClientServiceRecords: () => mockUseClientServiceRecords(),
+    useClientServiceRecordRevisionHistory: () => mockUseClientServiceRecordRevisionHistory(),
     useRetryServiceRecordDocument: () => ({
         isPending: false,
         variables: undefined,
@@ -45,16 +54,18 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
-    useToast: () => ({ toast: jest.fn() }),
+    useToast: () => ({ toast: mockToast }),
 }));
 
 jest.mock("@/services/api", () => ({
     eformsignApi: {
         getDocumentsByClientId: jest.fn().mockResolvedValue([]),
+        getLinkConfirmations: jest.fn().mockResolvedValue([]),
     },
 }));
 
 jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
+    ...jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel"),
     getMessageHistoryTimestamp: (record: MessageLogRecord) => record.lastAttemptAt ?? record.updatedAt,
     formatMessageHistoryDate: (value: string) => `날짜 ${value}`,
     MESSAGE_HISTORY_STATUS_META: {
@@ -62,6 +73,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         failed: { avatarClass: "status-avatar-failed" },
         pending: { avatarClass: "status-avatar-pending" },
         canceled: { avatarClass: "status-avatar-canceled" },
+        needs_setup: { avatarClass: "status-avatar-needs-setup" },
     },
     normalizeMessageHistoryRecord: (record: MessageLogRecord, options: { recipientNameFallback?: string; recipientListLabelFallback?: string }) => ({
         id: record.id,
@@ -77,15 +89,21 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         failureReason: record.status === "failed" ? record.errorMessage ?? undefined : undefined,
         cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
         recipientType: record.recipientType,
+        resendBlock: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).resendBlock,
         icon: () => <span aria-hidden="true">아이콘</span>,
     }),
-    MessageHistoryDetailPanel: ({ selectedRecord }: { selectedRecord: { messagePreview: string } | null }) => selectedRecord ? (
-        <div data-testid="message-history-detail-body">{selectedRecord.messagePreview}</div>
-    ) : null,
+    MessageHistoryDetailPanel: (props: ComponentProps<typeof MessageHistoryDetailPanel>) => {
+        mockDetailRetry = props.onRetry;
+        const ActualPanel = jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").MessageHistoryDetailPanel;
+        return <div data-testid="message-history-detail-body"><ActualPanel {...props} /></div>;
+    },
 }));
 
 jest.mock("@/components/app/clients/ClientServiceRecordsTab", () => ({
-    ClientServiceRecordsTab: () => null,
+    ClientServiceRecordsTab: (props: Record<string, unknown>) => {
+        mockServiceRecordsTabProps.push(props);
+        return null;
+    },
 }));
 
 jest.mock("@/components/app/v3", () => ({
@@ -140,7 +158,7 @@ jest.mock("@/components/app/v3", () => ({
         </article>
     ),
     DetailEmptyState: ({ message }: { message: string }) => <p>{message}</p>,
-    DetailPanel: ({ children, tabs }: { children: ReactNode; tabs?: ReactNode }) => <main>{tabs}{children}</main>,
+    DetailPanel: ({ children, tabs, trailing }: { children: ReactNode; tabs?: ReactNode; trailing?: ReactNode }) => <main>{tabs}{trailing}{children}</main>,
     DetailTabPanels: ({ activeTab, panels }: { activeTab: string; panels: Array<{ key: string; children: ReactNode }> }) => (
         <>{panels.find((panel) => panel.key === activeTab)?.children}</>
     ),
@@ -185,6 +203,7 @@ const client: Client = {
     voucherClient: false,
     breastPump: false,
     serviceStatus: null,
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,
@@ -250,13 +269,59 @@ const upcomingJob: ClientUpcomingMessageTriggerJob = {
 
 function historyQuery(
     items: MessageLogRecord[],
-    overrides: Partial<{ isError: boolean; isLoading: boolean; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: jest.Mock }> = {},
+    overrides: Partial<{
+        isError: boolean;
+        isLoading: boolean;
+        isPaused: boolean;
+        data: unknown;
+        hasNextPage: boolean;
+        isFetchingNextPage: boolean;
+        isFetchNextPageError: boolean;
+        isRefetching: boolean;
+        fetchNextPage: jest.Mock;
+        refetch: jest.Mock;
+    }> = {},
 ) {
     return {
         items,
+        data: { pages: [] } as unknown,
         isError: false,
         isLoading: false,
+        isPaused: false,
         isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        isRefetching: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+        refetch: jest.fn(),
+        ...overrides,
+    };
+}
+
+function upcomingQuery(
+    items: ClientUpcomingMessageTriggerJob[],
+    overrides: Partial<{
+        isError: boolean;
+        isLoading: boolean;
+        isPaused: boolean;
+        data: unknown;
+        isFetchingNextPage: boolean;
+        isFetchNextPageError: boolean;
+        isRefetching: boolean;
+        hasNextPage: boolean;
+        fetchNextPage: jest.Mock;
+        refetch: jest.Mock;
+    }> = {},
+) {
+    return {
+        items,
+        data: { pages: [] } as unknown,
+        isError: false,
+        isLoading: false,
+        isPaused: false,
+        isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        isRefetching: false,
         hasNextPage: false,
         fetchNextPage: jest.fn(),
         refetch: jest.fn(),
@@ -274,9 +339,40 @@ function renderPanel(layout: "desktop" | "mobile" = "desktop") {
 }
 
 describe("ClientDetailPanel messages tab", () => {
+    const resizeObserverDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    beforeAll(() => {
+        Object.defineProperty(globalThis, "ResizeObserver", {
+            configurable: true,
+            value: jest.fn(() => ({ observe: jest.fn(), unobserve: jest.fn(), disconnect: jest.fn() })),
+        });
+    });
+    afterAll(() => {
+        if (resizeObserverDescriptor) {
+            Object.defineProperty(globalThis, "ResizeObserver", resizeObserverDescriptor);
+        } else {
+            Reflect.deleteProperty(globalThis, "ResizeObserver");
+        }
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
+        mockMessageBranchRole = "manager";
+        mockMessageRole = "user";
+        mockDetailRetry = undefined;
+        mockRetryHistory.mockResolvedValue({ status: "sent" });
+        mockResendJob.mockResolvedValue({ status: "sent" });
         (eformsignApi.getDocumentsByClientId as jest.Mock).mockResolvedValue([]);
+        mockServiceRecordsTabProps.length = 0;
+        mockUseClientServiceRecords.mockReturnValue({ data: undefined, isError: false, isLoading: false, isPaused: false });
+        mockUseClientServiceRecordRevisionHistory.mockReturnValue({
+            data: undefined,
+            error: undefined,
+            isError: false,
+            isLoading: false,
+            isPaused: false,
+            isFetching: false,
+            refetch: jest.fn(),
+        });
         mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord]));
         mockUseClientUpcomingMessageTriggerJobs.mockReturnValue({
             items: [upcomingJob],
@@ -311,6 +407,66 @@ describe("ClientDetailPanel messages tab", () => {
             expect(zone.getAttribute("data-source-component")).not.toBe("InfoCard");
             expect(zone.querySelector('[data-source-component="InfoCard"]')).toBeNull();
         });
+    });
+
+    function openRecord(record: MessageLogRecord) {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([record]));
+        openMessagesTab();
+        fireEvent.click(screen.getByRole("heading", { name: record.ruleName! }).closest('[role="button"]')!);
+    }
+
+    it("retries a failed client log using its log id, not its trigger job id", async () => {
+        openRecord(failedHistoryRecord);
+        fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+        await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(11));
+        expect(mockResendJob).not.toHaveBeenCalled();
+        await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" }));
+    });
+
+    it("resends a needs_setup job with its trigger job id", async () => {
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", triggerJobId: "job-setup" });
+        fireEvent.click(screen.getByRole("button", { name: "재발송" }));
+        await waitFor(() => expect(mockResendJob).toHaveBeenCalledWith("job-setup"));
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+    });
+
+    it("disables a branch-blocked job, explains the safeguard, and guards the callback", async () => {
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", resendBlockedBy: "branch" });
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.click(retry);
+        fireEvent.focus(retry.closest('[data-slot="hover-card-trigger"]')!);
+        expect(await screen.findByText("지점 자동 전송이 꺼져 있어요")).toBeInTheDocument();
+        expect(screen.getByText("이 지점의 ‘자동 전송 실행’이 꺼져 있어 재발송할 수 없어요.")).toBeInTheDocument();
+        expect(mockDetailRetry).toEqual(expect.any(Function));
+        mockDetailRetry?.();
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+        expect(mockResendJob).not.toHaveBeenCalled();
+    });
+
+    it.each(["owner", "user"])("only links account safeguards for an owner (%s)", async role => {
+        mockMessageRole = role;
+        openRecord({ ...historyRecord, id: "job-row", provider: "message_job", status: "needs_setup", resendBlockedBy: "recipient", resendBlockedRecipient: { kind: "user", id: "9" } });
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.focus(retry.closest('[data-slot="hover-card-trigger"]')!);
+        await screen.findByText("자동 문자가 꺼져 있어요");
+        if (role === "owner") {
+            expect(screen.getByRole("link")).toHaveAttribute("href", expect.stringContaining("accounts"));
+        } else {
+            expect(screen.queryByRole("link")).not.toBeInTheDocument();
+        }
+    });
+
+    it.each(["sent", "pending", "canceled", "needs_setup"] as const)("does not retry an ineligible %s log", status => {
+        openRecord({ ...historyRecord, status });
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+    });
+
+    it("does not offer retry without branch management permission", () => {
+        mockMessageBranchRole = "staff";
+        openRecord(failedHistoryRecord);
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
     });
 
     it("keeps the body out of list rows while preserving the selected detail view", () => {
@@ -409,5 +565,209 @@ describe("ClientDetailPanel messages tab", () => {
         openMessagesTab("mobile");
         const mobilePresentation = document.querySelector('[data-slot="client-detail-presentation"]');
         expect(mobilePresentation).toHaveClass("min-w-0", "w-full", "max-w-full");
+    });
+
+    describe("failed loads", () => {
+        const historyZone = () => document.querySelectorAll<HTMLElement>('[data-slot="message-zone"]')[1];
+        const upcomingZone = () => document.querySelectorAll<HTMLElement>('[data-slot="message-zone"]')[0];
+
+        it("shows the failed-load state with a retry, not the empty text, when the history failed and nothing is loaded", () => {
+            const refetch = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isError: true, refetch }));
+            openMessagesTab();
+
+            const alert = within(historyZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("메시지 발송 내역을 불러오지 못했습니다");
+            expect(within(historyZone()).queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the loaded history and adds a notice whose retry refetches when a refresh failed", () => {
+            const refetch = jest.fn();
+            const fetchNextPage = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(
+                historyQuery([historyRecord], { isError: true, refetch, fetchNextPage }),
+            );
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("모니터링 설문")).toBeInTheDocument();
+            const alert = within(historyZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+            expect(fetchNextPage).not.toHaveBeenCalled();
+        });
+
+        it("retries the older page when that is what failed", () => {
+            const refetch = jest.fn();
+            const fetchNextPage = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], {
+                isError: true,
+                isFetchNextPageError: true,
+                hasNextPage: true,
+                refetch,
+                fetchNextPage,
+            }));
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("모니터링 설문")).toBeInTheDocument();
+            fireEvent.click(within(within(historyZone()).getByRole("alert")).getByRole("button", { name: "다시 시도" }));
+            expect(fetchNextPage).toHaveBeenCalledTimes(1);
+            expect(refetch).not.toHaveBeenCalled();
+        });
+
+        it("shows no alert for a healthy history, and the empty text only after a successful empty load", () => {
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([]));
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("메시지 발송 내역이 없습니다")).toBeInTheDocument();
+            expect(within(historyZone()).queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("keeps the cached upcoming jobs and adds a notice whose retry refetches when a refresh failed", () => {
+            const refetch = jest.fn();
+            mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(
+                upcomingQuery([upcomingJob], { isError: true, refetch }),
+            );
+            openMessagesTab();
+
+            expect(within(upcomingZone()).getByRole("heading", { name: "서비스 종료 안내" })).toBeInTheDocument();
+            const alert = within(upcomingZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+            expect(within(upcomingZone()).queryByText("예정된 자동 메시지를 불러오지 못했어요")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the screen's own failure UI and its retry for upcoming jobs when nothing is loaded", () => {
+            const refetch = jest.fn();
+            mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([], { isError: true, refetch }));
+            openMessagesTab();
+
+            expect(within(upcomingZone()).getByText("예정된 자동 메시지를 불러오지 못했어요")).toBeInTheDocument();
+            expect(within(upcomingZone()).queryByRole("alert")).not.toBeInTheDocument();
+            expect(within(upcomingZone()).queryByText("예정된 자동 메시지가 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(upcomingZone()).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        describe("paused (offline) loads are loading, never empty", () => {
+            it("shows the history skeleton, not the empty text, while the first read is paused with no data", () => {
+                mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isPaused: true, data: undefined }));
+                openMessagesTab();
+
+                expect(within(historyZone()).getByRole("status", { name: "메시지 발송 내역을 불러오는 중" })).toBeInTheDocument();
+                expect(within(historyZone()).queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+                expect(within(historyZone()).queryByRole("alert")).not.toBeInTheDocument();
+            });
+
+            it("shows the upcoming loading state, not the empty text, while the first read is paused with no data", () => {
+                mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(
+                    upcomingQuery([], { isPaused: true, data: undefined }),
+                );
+                openMessagesTab();
+
+                // The loading state is the list's own skeleton slots inside the list wrapper.
+                expect(upcomingZone().querySelector('[data-slot="upcoming-messages"]')).not.toBeNull();
+                expect(within(upcomingZone()).queryByText("예정된 자동 메시지가 없습니다")).not.toBeInTheDocument();
+                expect(within(upcomingZone()).queryByRole("alert")).not.toBeInTheDocument();
+            });
+
+            it("keeps the empty text when a paused refetch already has a successful empty load", () => {
+                mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isPaused: true }));
+                mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([], { isPaused: true }));
+                openMessagesTab();
+
+                expect(within(historyZone()).getByText("메시지 발송 내역이 없습니다")).toBeInTheDocument();
+                expect(within(upcomingZone()).getByText("예정된 자동 메시지가 없습니다")).toBeInTheDocument();
+            });
+
+            it("hands the service-record tab a loading state for a paused overview and a paused revision history", () => {
+                mockUseClientServiceRecords.mockReturnValue({ data: undefined, isError: false, isLoading: false, isPaused: true });
+                mockUseClientServiceRecordRevisionHistory.mockReturnValue({
+                    data: undefined,
+                    error: undefined,
+                    isError: false,
+                    isLoading: false,
+                    isPaused: true,
+                    isFetching: false,
+                    refetch: jest.fn(),
+                });
+                renderPanel("desktop");
+                fireEvent.click(screen.getByRole("button", { name: "제공기록지" }));
+
+                const props = mockServiceRecordsTabProps[mockServiceRecordsTabProps.length - 1];
+                expect(props.isLoading).toBe(true);
+                expect(props.isRevisionHistoryLoading).toBe(true);
+                expect(props.isError).toBe(false);
+                expect(props.isRevisionHistoryError).toBe(false);
+            });
+
+            it("does not call the service-record tab loading once the overview has data", () => {
+                mockUseClientServiceRecords.mockReturnValue({
+                    data: { record: null, assignments: [] },
+                    isError: false,
+                    isLoading: false,
+                    isPaused: true,
+                });
+                renderPanel("desktop");
+                fireEvent.click(screen.getByRole("button", { name: "제공기록지" }));
+
+                const props = mockServiceRecordsTabProps[mockServiceRecordsTabProps.length - 1];
+                expect(props.isLoading).toBe(false);
+            });
+        });
+
+        describe("retry button reflects the in-flight retry", () => {
+            const retryButton = (zone: HTMLElement) =>
+                within(within(zone).getByRole("alert")).getByRole("button", { name: "다시 시도" });
+
+            const sections = [
+                {
+                    name: "message history",
+                    zone: historyZone,
+                    mockFor: (overrides: Parameters<typeof historyQuery>[1]) =>
+                        mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], {
+                            isError: true,
+                            ...overrides,
+                        })),
+                },
+                {
+                    name: "upcoming jobs",
+                    zone: upcomingZone,
+                    mockFor: (overrides: Parameters<typeof upcomingQuery>[1]) =>
+                        mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([upcomingJob], {
+                            isError: true,
+                            ...overrides,
+                        })),
+                },
+            ];
+
+            it.each(sections)("$name: disables retry while a failed next page is being refetched", ({ zone, mockFor }) => {
+                mockFor({ isFetchNextPageError: true, hasNextPage: true, isFetchingNextPage: true, isRefetching: false });
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeDisabled();
+            });
+
+            it.each(sections)("$name: disables retry while the list is being refetched", ({ zone, mockFor }) => {
+                mockFor({ isRefetching: true });
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeDisabled();
+            });
+
+            it.each(sections)("$name: keeps retry enabled when nothing is in flight", ({ zone, mockFor }) => {
+                mockFor({});
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeEnabled();
+            });
+        });
     });
 });

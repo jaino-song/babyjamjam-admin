@@ -102,4 +102,26 @@ describe("POST /api/auth/login", () => {
         });
         expect(cookieSet).not.toHaveBeenCalled();
     });
+
+    it.each([
+        [401, "로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요."],
+        [403, "이 작업을 할 권한이 없어요."],
+        [400, "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요."],
+    ])("serializes the status-generic message for an uncoded diagnostic %i failure", async (status, generic) => {
+        mockPost.mockResolvedValue({
+            status,
+            data: {
+                success: false,
+                message: "인증 서비스 analytics.internal 확인 중 /srv/auth/verify.ts:88에서 오류가 발생했습니다.",
+            },
+        });
+
+        const response = await POST(createRequest(JSON.stringify(validBody)));
+
+        expect(response.status).toBe(status);
+        const text = JSON.stringify(await response.json());
+        expect(JSON.parse(text)).toEqual({ error: generic });
+        expect(text).not.toMatch(/analytics|srv|verify\.ts/);
+        expect(cookieSet).not.toHaveBeenCalled();
+    });
 });

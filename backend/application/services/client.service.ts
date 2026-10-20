@@ -2,8 +2,21 @@ import { BadRequestException, ConflictException, Injectable, Inject, Logger, Not
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { eformsignCustomerPhone, extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
-import { selectCurrentContractDocument } from "application/utils/current-contract-document";
+import {
+    eformsignCustomerPhone,
+    extractEformsignContractEndDate,
+    extractEformsignContractClientCandidate,
+    toEformsignDocumentDetail,
+} from "application/utils/eformsign-contract-client-candidate";
+import { compareEformsignClientIdentity } from "application/utils/eformsign-client-identity";
+import {
+    CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD,
+    findLatestContractSignalsByClientId,
+    isActiveContractSignal,
+    isVoidedContractSignal,
+    isContractSendRequired,
+    type LatestContractSignal,
+} from "application/utils/current-contract-document";
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import {
@@ -31,6 +44,8 @@ import {
     findClientByNormalizedPhone,
     mergeAndValidateClientServicePeriod,
     parseClientDate,
+    PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL,
+    resolveSavedServiceStatus,
 } from "application/usecases/client/client-write-validation";
 import {
     assertEmployeeAssignmentEligibility,
@@ -70,6 +85,10 @@ import {
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import {
+    EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES,
+    isEformsignAutoLinkEligibleStatus,
+} from "domain/constants/eformsign-auto-link-status";
+import {
     COMPLETED_DOCUMENT_STATUS_TYPES,
     CREATED_DOCUMENT_STATUS_TYPES,
     hasCustomerSigned,
@@ -89,14 +108,12 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
-// Contract attention window, in KR business days before service start, within
-// which a client with no active contract document is flagged as needing one sent.
-// The badge and the action-required feeds all read this number.
-const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
-const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
-// 040 (cancellation REQUESTED, not done) is deliberately absent: it is its own
+// 071 (a reviewer rejection, 계약-04) is deliberately absent: the document is live — a later 070/072
+// follows and the customer's signature is valid — so it reads "requested" like 070.
+const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "080"]);
+// 040/045 (cancellation REQUESTED, not done) are deliberately absent: they are their own
 // non-terminal "revoke_requested" status (see isRevokeRequestedStatus).
-const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"]);
+const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "090"]);
 // Exported so repository/provider filters exclude the same stored deletion codes
 // (the stored value is never the literal "deleted").
 export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
@@ -114,18 +131,20 @@ const PHONE_LINK_LOCK_SET_CHANGED = Symbol("PHONE_LINK_LOCK_SET_CHANGED");
 // - 020: opened (서명 페이지 열림)
 // - 060: requested (서명 요청됨/진행중)
 // - 080: rejected (거부됨)
-// - 040: revoke_requested (철회 요청됨 — cancellation requested, not done; eformsign may
+// - 060/041: requested (041 = a refused revoke; the document continues exactly like 060)
+// - 040/045: revoke_requested (철회 요청됨 — cancellation requested, not done; eformsign may
 //   still refuse it and the signer may continue, so it is non-terminal)
-// - 042/045/090: revoked (철회됨)
+// - 042/090: revoked (철회됨)
 // - 099: deleted (삭제됨)
-export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | 'voided' | null;
 // A document in one of these states is still "alive" — the client already has
 // a contract in flight (or finished), so the "계약서 필요" signal must not fire
 // even if it is unsigned. A pending cancellation (revoke_requested) is still a live
 // contract until eformsign actually revokes it. Everything else (rejected/revoked/
 // deleted/no document at all) is a dead document and falls back to the "발송 필요" check.
+// `voided` (계약 파기) is dead too: it is deliberately absent from this set.
 const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "revoke_requested", "opened", "completed"]);
-export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"
@@ -176,9 +195,11 @@ export interface ClientWithEmployees {
     dueDate: Date | null;
     birthDate: Date | null;
     serviceStatus: string | null;
+    bookingConfirmedAt: string | null;
     breastPump: boolean;
     eDocId: string | null;
     areaId: string | null;
+    smsAutomationEnabled: boolean;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
     /** ID of the same latest contract used for documentStatus. */
@@ -205,16 +226,6 @@ export type ActionRequiredReason = "교체 요청" | "서명 필요" | "발송 �
 export interface ClientActionRequired {
     reason: ActionRequiredReason;
     priority: 1 | 2 | 3;
-}
-
-/** The latest contract signal the document-status/active-document checks read. */
-interface LatestContractSignal {
-    statusType: string;
-    permanentPurgeRequestedAt: Date | null;
-    documentId: string;
-    stepType: string | null;
-    stepName: string | null;
-    detailPayload: unknown;
 }
 
 export interface ClientActionRequiredAlert extends ClientActionRequired {
@@ -262,6 +273,16 @@ export class ClientService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
     ) {}
+
+    /**
+     * The Korean calendar day of an instant, as the date-only value (midnight UTC)
+     * that `@db.Date` columns store and read back. A handover is dated by the day
+     * it happens in Korea, not by the UTC date of the instant, which lags KST by
+     * up to nine hours.
+     */
+    private kstCalendarDay(instant: Date): Date {
+        return new Date(getKstCalendarDate(instant, 0));
+    }
 
     private async transactionNow(transaction: Prisma.TransactionClient): Promise<Date> {
         if (typeof transaction.$queryRaw === "function") {
@@ -393,6 +414,7 @@ export class ClientService {
                     clientId: true,
                     branchId: true,
                     documentKind: true,
+                    createdDate: true,
                     serviceRecordCaseId: true,
                     templateId: true,
                     stepRecipientSms: true,
@@ -400,6 +422,8 @@ export class ClientService {
                     detailPayload: true,
                     detailSourceUpdatedDate: true,
                     detailSyncedAt: true,
+                    statusType: true,
+                    voidedAt: true,
                 },
             });
             const serviceRecordTemplateIds =
@@ -413,6 +437,7 @@ export class ClientService {
             if (matchingDocs.some((doc) => doc.branchId === null)) {
                 const samePhoneClients = await this.prismaService.client.findMany({
                     where: {
+                        deletedAt: null,
                         phone: { not: null },
                         branchId: { not: null },
                         OR: [{ phone: { endsWith: phoneLookupSuffix } }],
@@ -434,11 +459,26 @@ export class ClientService {
                     matchingDocs = matchingDocs.filter((doc) => doc.branchId === branchid);
                 }
             }
+            matchingDocs = matchingDocs.filter((doc) => {
+                if (doc.clientId !== null && doc.clientId !== client.id) return false;
+                if (doc.clientId === client.id) return true;
+                // 계약-05: a document not yet linked to this client is linked only in an
+                // allowed status. Rows already linked to it are kept in any non-deleted one.
+                if (!isEformsignAutoLinkEligibleStatus(doc.statusType)) return false;
+                const detail = toEformsignDocumentDetail(doc.detailPayload);
+                const candidate = detail
+                    ? extractEformsignContractClientCandidate(detail)
+                    : null;
+                return detail !== null
+                    && compareEformsignClientIdentity(candidate, client, new Date()).length === 0;
+            });
             const documentIdsToReassign = matchingDocs
-                .filter((doc) => doc.clientId !== client.id)
+                .filter((doc) => doc.clientId !== client.id && doc.voidedAt === null)
                 .map((doc) => doc.id);
             const latestContract = matchingDocs[0];
+            // 최신 계약이 파기되었으면 기존 포인터를 유지하고 이전 계약으로 대체하지 않는다.
             const shouldUpdateClientDocument = latestContract !== undefined
+                && latestContract.voidedAt === null
                 && client.eDocId !== latestContract.documentId;
 
             if (documentIdsToReassign.length === 0 && !shouldUpdateClientDocument) {
@@ -451,7 +491,11 @@ export class ClientService {
                 return;
             }
 
+            // Owned by the attempt: reset when an attempt starts, set only once the pointer
+            // update ran, so the in-memory entity below follows what was actually written.
+            let pointerWritten = false;
             await this.retryWhilePhoneLinkLockSetChanges(() => this.prismaService.$transaction(async (transaction) => {
+                pointerWritten = false;
                 const documentIdsToLock = Array.from(new Set([
                     ...documentIdsToReassign,
                     ...(shouldUpdateClientDocument && latestContract ? [latestContract.id] : []),
@@ -521,6 +565,7 @@ export class ClientService {
                     where: { id: { in: documentIdsToLock } },
                     select: {
                         id: true,
+                        clientId: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
                         templateId: true,
@@ -529,6 +574,8 @@ export class ClientService {
                         detailPayload: true,
                         detailSourceUpdatedDate: true,
                         detailSyncedAt: true,
+                        statusType: true,
+                        voidedAt: true,
                     },
                 });
                 const lockedCandidateById = new Map(
@@ -537,11 +584,20 @@ export class ClientService {
                 const initialCandidateById = new Map(
                     matchingDocs.map((candidate) => [candidate.id, candidate]),
                 );
+                const reassignIds = new Set(documentIdsToReassign);
                 const changedCandidate = documentIdsToLock.some((id) => {
                     const initial = initialCandidateById.get(id);
                     const locked = lockedCandidateById.get(id);
                     return !initial
                         || !locked
+                        || locked.voidedAt !== null
+                        || (locked.clientId !== null && locked.clientId !== client.id)
+                        // Only a document about to be newly linked must be in an allowed
+                        // status; the pointer document may already be this client's.
+                        || (
+                            reassignIds.has(id)
+                            && !isEformsignAutoLinkEligibleStatus(locked.statusType)
+                        )
                         || !isMatchingContractPhoneCandidate(
                             locked,
                             normalizedPhone,
@@ -558,12 +614,41 @@ export class ClientService {
                     throw new Error("Contract document candidate changed while locking");
                 }
 
+                // The client row is locked, so its identity is stable now. The caller's
+                // entity was read before the lock: re-read the locked row and compare every
+                // document about to be newly linked against what is stored, not against the
+                // earlier snapshot.
+                if (documentIdsToReassign.length > 0) {
+                    const lockedClient = await transaction.client.findUnique({
+                        where: { id: client.id },
+                        select: { phone: true, name: true, birthday: true },
+                    });
+                    if (!lockedClient || normalizePhone(lockedClient.phone) !== normalizedPhone) {
+                        throw new Error("Contract document candidate changed while locking");
+                    }
+                    const now = new Date();
+                    for (const id of documentIdsToReassign) {
+                        const lockedDetail = toEformsignDocumentDetail(
+                            lockedCandidateById.get(id)?.detailPayload ?? null,
+                        );
+                        const lockedContract = lockedDetail
+                            ? extractEformsignContractClientCandidate(lockedDetail)
+                            : null;
+                        if (
+                            lockedDetail === null
+                            || compareEformsignClientIdentity(lockedContract, lockedClient, now).length > 0
+                        ) {
+                            throw new Error("Contract document candidate changed while locking");
+                        }
+                    }
+                }
+
                 if (documentIdsToReassign.length > 0) {
                     const reassigned = await transaction.eformsign_doc.updateMany({
                         where: {
                             id: { in: documentIdsToReassign },
                             permanentPurgeRequestedAt: null,
-                            statusType: { notIn: [...DELETED_DOCUMENT_STATUS_TYPES] },
+                            statusType: { in: [...EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES] },
                             syncStatus: "ready",
                             detailSourceUpdatedDate: { not: null },
                             detailSyncedAt: { not: null },
@@ -583,7 +668,36 @@ export class ClientService {
                     }
                 }
 
-                if (shouldUpdateClientDocument) {
+                // `client.e_doc_id` is unique: another client still pointing at a document that
+                // is moving to (or becoming the pointer of) the target would raise P2002 and
+                // leave the link undone. Release exactly those pointers, only on clients that
+                // are in the locked set (every pointer client of these documents was verified
+                // to be above), and only for documents this link hands to the target.
+                // D3: a voided contract newer than the pointer candidate means the client has no
+                // live contract, so an older document must not take the pointer. Only the
+                // pointer is skipped; ownership and the other reassignments proceed.
+                const pointerBlockedByVoid = shouldUpdateClientDocument && latestContract !== undefined
+                    && await this.hasNewerVoidedContract(transaction, client.id, latestContract);
+                const takesPointer = shouldUpdateClientDocument && !pointerBlockedByVoid;
+                const releasedDocumentIds = [
+                    ...matchingDocs
+                        .filter((doc) => documentIdsToReassign.includes(doc.id))
+                        .map((doc) => doc.documentId),
+                    ...(takesPointer && latestContract ? [latestContract.documentId] : []),
+                ];
+                const otherLockedClientIds = [...lockedClientIds].filter((id) => id !== client.id);
+                if (releasedDocumentIds.length > 0 && otherLockedClientIds.length > 0) {
+                    await transaction.client.updateMany({
+                        where: {
+                            id: { in: otherLockedClientIds },
+                            branchId: branchid,
+                            eDocId: { in: Array.from(new Set(releasedDocumentIds)) },
+                        },
+                        data: { eDocId: null },
+                    });
+                }
+
+                if (takesPointer) {
                     const updated = await transaction.client.updateMany({
                         where: {
                             id: client.id,
@@ -594,11 +708,12 @@ export class ClientService {
                     if (updated.count !== 1) {
                         throw new Error("Client contract pointer update failed");
                     }
+                    pointerWritten = true;
                 }
                 return undefined;
             }));
 
-            if (shouldUpdateClientDocument) {
+            if (pointerWritten && latestContract) {
                 // SAVED computation: update() re-derives the client's duration.
                 const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
                 client.update({ eDocId: latestContract.documentId }, calendar);
@@ -621,6 +736,41 @@ export class ClientService {
                 `[CLIENT_CONTRACT_PHONE_LINK_FAILED] 고객 ${client.id} 계약서 자동 연결 실패 (${errorType})`,
             );
         }
+    }
+
+    /**
+     * D3 fence, read under the client/document locks: whether this client owns a voided
+     * contract document newer than `document` ("newer" = later created date, larger id on a
+     * tie). Status and purge flags are deliberately ignored - a voided unsigned contract is
+     * cancelled in eformsign and later commonly mirrored as deleted; it must keep blocking.
+     */
+    private async hasNewerVoidedContract(
+        transaction: Prisma.TransactionClient,
+        clientId: number,
+        document: { id: number; createdDate: Date },
+    ): Promise<boolean> {
+        const blocker = await transaction.eformsign_doc.findFirst({
+            where: {
+                clientId,
+                voidedAt: { not: null },
+                AND: [
+                    {
+                        OR: [
+                            { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                            { documentKind: null },
+                        ],
+                    },
+                    {
+                        OR: [
+                            { createdDate: { gt: document.createdDate } },
+                            { createdDate: document.createdDate, id: { gt: document.id } },
+                        ],
+                    },
+                ],
+            },
+            select: { id: true },
+        });
+        return blocker !== null;
     }
 
     private async linkNotReadyContractDocumentsByPhone(
@@ -747,78 +897,23 @@ export class ClientService {
 
     /**
      * Latest non-service-record contract document per client. The selection rule lives in
-     * `selectCurrentContractDocument`, shared with the receipt-link automatic path so the
-     * screen and the receipt always judge the same "current" contract.
+     * `selectCurrentContractDocument`, shared with the receipt-link automatic path and the
+     * repository's digest/filter lookups, so every screen and message judges the same "current"
+     * contract.
      */
     private async findLatestContractByClientId(
         clientIds: number[],
     ): Promise<Map<number, LatestContractSignal>> {
-        const latestContractMap = new Map<number, LatestContractSignal>();
-        if (clientIds.length === 0) return latestContractMap;
-
-        const serviceRecordTemplateIds =
-            configuredServiceRecordTemplateIds(this.configService);
-        const contractDocs = await this.prismaService.eformsign_doc.findMany({
-            where: {
-                clientId: { in: clientIds },
-                serviceRecordCaseId: null,
-                // Contract lifecycle status is an indexed projection that commits before
-                // detail/PDF artifacts finish. Do not filter it by artifact syncStatus:
-                // doing so can hide the newest contract and fall back to an older one.
-                OR: [
-                    { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
-                    { documentKind: null },
-                ],
-            },
-            // Newest first at full timestamptz(6) precision: selectCurrentContractDocument keeps this order.
-            orderBy: [
-                { createdDate: "desc" },
-                { id: "desc" },
-            ],
-            select: {
-                clientId: true,
-                documentId: true,
-                statusType: true,
-                stepType: true,
-                stepName: true,
-                detailPayload: true,
-                permanentPurgeRequestedAt: true,
-                documentKind: true,
-                serviceRecordCaseId: true,
-                templateId: true,
-            },
-        });
-
-        const docsByClientId = new Map<number, typeof contractDocs>();
-        for (const doc of contractDocs) {
-            if (doc.clientId === null) continue;
-            const docs = docsByClientId.get(doc.clientId);
-            if (docs) docs.push(doc);
-            else docsByClientId.set(doc.clientId, [doc]);
-        }
-
-        for (const [clientId, docs] of docsByClientId) {
-            const doc = selectCurrentContractDocument(docs, serviceRecordTemplateIds);
-            if (!doc) continue;
-            latestContractMap.set(clientId, {
-                statusType: doc.statusType,
-                permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
-                documentId: doc.documentId,
-                stepType: doc.stepType,
-                stepName: doc.stepName,
-                detailPayload: doc.detailPayload,
-            });
-        }
-
-        return latestContractMap;
+        return findLatestContractSignalsByClientId(
+            this.prismaService,
+            configuredServiceRecordTemplateIds(this.configService),
+            clientIds,
+        );
     }
 
-    /** Whether a client's latest contract document is still active (see `ACTIVE_DOCUMENT_STATUSES`). */
+    /** Whether a client's latest contract document is still active (see `isActiveContractSignal`). */
     private isActiveContractDocument(contract: LatestContractSignal | undefined): boolean {
-        if (!contract) return false;
-        return contract.permanentPurgeRequestedAt == null
-            && !DELETED_DOCUMENT_STATUS_TYPES.has(contract.statusType.trim().padStart(3, "0"))
-            && ACTIVE_DOCUMENT_STATUSES.has(this.mapStatusTypeToDocumentStatus(contract.statusType));
+        return isActiveContractSignal(contract);
     }
 
     private async findHasActiveContractDocumentByClientId(
@@ -851,36 +946,31 @@ export class ClientService {
      * contract exists, so it must not suppress the contract badge.
      */
     private computeContractActionRequired(params: {
+        clientId?: number;
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
+        now?: Date;
     }, calendar: KrBusinessDayCalendar): ClientActionRequired | null {
-        if (
-            params.serviceStatus === SERVICE_STATUS.PRE_BOOKING ||
-            params.serviceStatus === SERVICE_STATUS.COMPLETED ||
-            params.serviceStatus === SERVICE_STATUS.TERMINATED
-        ) {
-            return null;
-        }
+        return isContractSendRequired(params, calendar, (clientId) => this.warnCalendarSkip(clientId))
+            ? { reason: "발송 필요", priority: 3 }
+            : null;
+    }
 
-        if (!params.startDate) return null;
-
-        const businessDaysUntilStart = calendar.diffBusinessDays(
-            params.startDate.toISOString().slice(0, 10),
+    /**
+     * A client whose dates fall outside the supported/synced holiday-calendar range cannot be
+     * judged by business days. It is skipped from those counts instead of failing the request.
+     * Logs the client id only (no PII).
+     */
+    private warnCalendarSkip(clientId: number | undefined): void {
+        this.logger.warn(
+            `Skipping business-day contract check for client ${clientId ?? "unknown"}: a date is outside the supported holiday calendar range`,
         );
-        if (businessDaysUntilStart === null) return null;
-
-        if (params.hasActiveContractDocument) return null;
-
-        if (businessDaysUntilStart <= CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD) {
-            return { reason: "발송 필요", priority: 3 };
-        }
-
-        return null;
     }
 
     /** Contract attention plus the non-contract 교체 요청 alert, which outranks it. */
     private computeActionRequired(params: {
+        clientId?: number;
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
@@ -894,6 +984,8 @@ export class ClientService {
 
     private buildClientBadges(params: {
         contractActionRequired: ClientActionRequired | null;
+        /** The current contract is 040/045 (철회 요청됨): still live, cancellation only requested. */
+        contractRevokeRequested: boolean;
         serviceStatus: string | null;
         breastPump: boolean;
         careCenter: boolean | null;
@@ -907,6 +999,19 @@ export class ClientService {
                 label: "계약서 필요",
                 tone: "danger",
                 priority: 10,
+            });
+        }
+
+        // Same condition and order as the shared fallback (`legacyClientBadges`): an active
+        // service whose live contract has a pending cancellation gets a warning-toned
+        // contract_status badge right after (never instead of) the contract_required slot.
+        if (params.contractRevokeRequested && params.serviceStatus === SERVICE_STATUS.ACTIVE) {
+            badges.push({
+                key: "contract_status",
+                status: "review",
+                label: "철회 요청됨",
+                tone: "warning",
+                priority: 15,
             });
         }
 
@@ -1054,7 +1159,7 @@ export class ClientService {
             const handover = currentSchedule
                 ? ((): { outgoingEndDate: Date; startDate: Date; endDate: Date } => {
                     const outgoingEndDate = employeeScheduleReplacementEndDate(
-                        new Date(),
+                        this.kstCalendarDay(new Date()),
                         currentSchedule.startDate,
                     );
                     return {
@@ -1163,6 +1268,8 @@ export class ClientService {
         areaId?: string | null;
         suppressGreetingSms?: boolean;
         applyMessageAutomation?: boolean;
+        /** Persisted per-client SMS switch; an explicit value wins over `applyMessageAutomation`. */
+        smsAutomationEnabled?: boolean;
         reuseExistingClient?: boolean;
         source?: string;
     }): Promise<ClientEntity> {
@@ -1190,6 +1297,9 @@ export class ClientService {
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
         const applyMessageAutomation = params.applyMessageAutomation ?? true;
+        // The create-time intent gating above stays keyed to applyMessageAutomation;
+        // the persisted flag prefers the explicit field.
+        const smsAutomationEnabled = params.smsAutomationEnabled ?? params.applyMessageAutomation ?? true;
         if (params.source === CONTRACT_AUTO_REGISTRATION_SOURCE) {
             const autoRegistrationEnabled = await this.systemSettingService
                 .getClientAutoRegistrationEnabled(branchid);
@@ -1218,6 +1328,14 @@ export class ClientService {
                 }));
             }
             this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
+            if (params.smsAutomationEnabled !== undefined) {
+                // Only an explicitly supplied value touches a reused client's flag.
+                await this.prismaService.client.updateMany({
+                    where: { id: existing.id, branchId: branchid },
+                    data: { smsAutomationEnabled: params.smsAutomationEnabled },
+                });
+                existing.smsAutomationEnabled = params.smsAutomationEnabled;
+            }
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
                 const assignment = await this.syncEmployeeAssignment(branchid, {
                     clientId: existing.id,
@@ -1289,6 +1407,7 @@ export class ClientService {
             eDocId: params.eDocId ?? null,
             areaId: params.areaId ?? null,
             suppressGreetingSms,
+            smsAutomationEnabled,
         };
 
         const primaryEmployeeId = params.primaryEmployeeId ?? null;
@@ -1531,9 +1650,10 @@ export class ClientService {
                 );
                 break;
             case 'no-contract':
+                // Exactly the dashboard's contractsNotSent / the list's 발송 필요 badge.
                 clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
                     branchid,
-                    FILTER_DAYS_THRESHOLD
+                    await this.holidayCalendar.forBranch(branchid),
                 );
                 break;
             default:
@@ -1614,6 +1734,7 @@ export class ClientService {
                 client.serviceStatus,
                 client.startDate,
                 client.endDate,
+                client.bookingConfirmedAt,
             );
 
             // Track clients that need status update in DB
@@ -1625,17 +1746,23 @@ export class ClientService {
                 });
             }
             const latestContract = latestContractMap.get(client.id);
+            // Purge-requested wins ("deleted"); else a voided newest contract is "voided" whatever its
+            // eformsign code says (the code keeps moving after a void); else the code decides.
             const documentStatus = latestContract?.permanentPurgeRequestedAt != null
                 ? "deleted"
-                : this.mapStatusTypeToDocumentStatus(latestContract?.statusType);
+                : isVoidedContractSignal(latestContract)
+                    ? "voided"
+                    : this.mapStatusTypeToDocumentStatus(latestContract?.statusType);
             const hasActiveContractDocument = ACTIVE_DOCUMENT_STATUSES.has(documentStatus);
             const contractSignals = {
+                clientId: client.id,
                 serviceStatus: computedStatus,
                 startDate: client.startDate,
                 hasActiveContractDocument,
             };
             const badges = this.buildClientBadges({
                 contractActionRequired: this.computeContractActionRequired(contractSignals, calendar),
+                contractRevokeRequested: documentStatus === "revoke_requested",
                 serviceStatus: computedStatus,
                 breastPump: client.breastPump,
                 careCenter: client.careCenter,
@@ -1661,10 +1788,13 @@ export class ClientService {
                     dueDate: client.dueDate,
                     birthDate: client.birthDate,
                     serviceStatus: computedStatus, // Return computed status, not stored one
+                    bookingConfirmedAt: client.bookingConfirmedAt?.toISOString() ?? null,
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
+                    smsAutomationEnabled: client.smsAutomationEnabled,
                     hasSigned: latestContract?.permanentPurgeRequestedAt == null
+                        && !isVoidedContractSignal(latestContract)
                         && hasCustomerSigned(latestContract),
                     documentStatus,
                     latestContractDocumentId: latestContract?.documentId ?? null,
@@ -1829,6 +1959,7 @@ export class ClientService {
         breastPump?: boolean;
         eDocId?: string | null;
         areaId?: string | null;
+        smsAutomationEnabled?: boolean;
         /**
          * Optimistic guard for callers that compute a change from a snapshot
          * (the holiday review fix). When supplied, the locked client row's end
@@ -1956,6 +2087,14 @@ export class ClientService {
 
         let createdScheduleId: number | null = null;
         let replacedScheduleId: number | null = null;
+        // Status inputs of the locked row the write is based on, kept to tell
+        // after commit whether this save took the client out of 예약 전.
+        let priorStatusInputs: {
+            serviceStatus: string | null;
+            bookingConfirmedAt: Date | null;
+            startDate: Date | null;
+            endDate: Date | null;
+        } | null = null;
         const ordinaryMutationId = randomUUID();
 
         const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
@@ -1999,6 +2138,7 @@ export class ClientService {
                         dueDate: true,
                         birthDate: true,
                         serviceStatus: true,
+                        bookingConfirmedAt: true,
                         breastPump: true,
                         eDocId: true,
                         areaId: true,
@@ -2019,6 +2159,12 @@ export class ClientService {
             // retaining the preflight entity here keeps those doubles focused
             // on the client repository seam.
             const currentClient = lockedClient ?? existingClient;
+            priorStatusInputs = {
+                serviceStatus: currentClient.serviceStatus ?? null,
+                bookingConfirmedAt: currentClient.bookingConfirmedAt,
+                startDate: currentClient.startDate ?? null,
+                endDate: currentClient.endDate ?? null,
+            };
             if (
                 params.expectedEndDate !== undefined
                 && (currentClient.endDate?.toISOString().slice(0, 10) ?? null) !== params.expectedEndDate
@@ -2028,6 +2174,16 @@ export class ClientService {
             const lockedMergedServicePeriod = mergeAndValidateClientServicePeriod(currentClient, {
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,
+            });
+            // Rule 고객-04: a save cannot move the client into or out of 예약 전;
+            // judged on the locked row with the dates as they will be after this
+            // save. Throws (nothing is written yet) or yields what to store.
+            const savedServiceStatus = resolveSavedServiceStatus({
+                currentServiceStatus: currentClient.serviceStatus ?? null,
+                bookingConfirmedAt: currentClient.bookingConfirmedAt ?? null,
+                startDate: lockedMergedServicePeriod.startDate,
+                endDate: lockedMergedServicePeriod.endDate,
+                suppliedServiceStatus: params.serviceStatus,
             });
             const lockedHasDateUpdate = params.startDate !== undefined || params.endDate !== undefined;
             const lockedDerivedDuration = deriveClientDuration(
@@ -2150,7 +2306,7 @@ export class ClientService {
                     const handover = currentSchedule
                         ? ((): { outgoingEndDate: Date; startDate: Date; endDate: Date } => {
                             const outgoingEndDate = employeeScheduleReplacementEndDate(
-                                new Date(),
+                                this.kstCalendarDay(new Date()),
                                 currentSchedule.startDate,
                             );
                             return {
@@ -2225,10 +2381,11 @@ export class ClientService {
                 birthday: params.birthday === undefined ? undefined : params.birthday,
                 dueDate: dueDateUpdate,
                 birthDate: birthDateUpdate,
-                serviceStatus: params.serviceStatus === undefined ? undefined : params.serviceStatus,
+                serviceStatus: savedServiceStatus,
                 breastPump: params.breastPump,
                 eDocId: params.eDocId === undefined ? undefined : params.eDocId,
                 areaId: params.areaId === undefined ? undefined : params.areaId,
+                smsAutomationEnabled: params.smsAutomationEnabled,
             };
             // An employee-only edit still owns the client lock and may create
             // a replacement schedule, but Prisma reports zero rows for an
@@ -2315,7 +2472,68 @@ export class ClientService {
                     this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
                 });
         }
+        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+            branchid,
+            id,
+            priorStatusInputs,
+            updatedClient,
+            createdScheduleId,
+        );
         return updatedClient;
+    }
+
+    /**
+     * A provider assigned while the client was 예약 전 never got the service-record
+     * link SMS (the gates skip a pre-booking client). When a save takes the client
+     * out of 예약 전, schedule the link for every active schedule the save did not
+     * already schedule. `scheduleForServiceStart` owns the timing (the day before
+     * service start at 12:00 KST, or immediately when that has passed), the
+     * dedupe and the completed/terminated/expired refusals. A failure here never
+     * fails the save.
+     */
+    private async scheduleServiceRecordLinksAfterLeavingPreBooking(
+        branchId: string,
+        clientId: number,
+        before: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null,
+        after: { serviceStatus?: string | null; startDate?: Date | null; endDate?: Date | null; bookingConfirmedAt: Date | null },
+        alreadyScheduledScheduleId: number | null,
+    ): Promise<void> {
+        if (!before || !this.serviceRecordLinkService) return;
+        const wasPreBooking = getEffectiveClientServiceStatus(
+            before.serviceStatus,
+            before.startDate,
+            before.endDate,
+            before.bookingConfirmedAt,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (!wasPreBooking) return;
+        const isPreBooking = getEffectiveClientServiceStatus(
+            after.serviceStatus ?? null,
+            after.startDate ?? null,
+            after.endDate ?? null,
+            after.bookingConfirmedAt,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (isPreBooking) return;
+
+        try {
+            const activeSchedules = await this.prismaService.employee_schedule.findMany({
+                where: { branchId, clientId, replaced: false, terminatedAt: null },
+                select: { id: true },
+                orderBy: { id: "asc" },
+            });
+            const scheduleIds = [...new Set(activeSchedules.map(({ id }) => id))]
+                .filter((scheduleId) => scheduleId !== alreadyScheduledScheduleId)
+                .sort((left, right) => left - right);
+            for (const scheduleId of scheduleIds) {
+                await this.serviceRecordLinkService.scheduleForServiceStart(scheduleId).catch((error) => {
+                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
+                });
+            }
+        } catch (error) {
+            this.logger.error(
+                `Failed to schedule service-record link SMS after client ${clientId} left pre-booking: ` +
+                `${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
     }
 
     /**
@@ -2490,6 +2708,7 @@ export class ClientService {
                         endDate: true,
                         duration: true,
                         serviceStatus: true,
+                        bookingConfirmedAt: true,
                     },
                 })
                 : null;
@@ -2503,11 +2722,29 @@ export class ClientService {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const currentClient = lockedClient ?? client;
+            // Rule 기록-09: a 예약 전 client has no service-record case and no
+            // provider link. A replacement would write replacement_requested,
+            // which makes ensureForClient create the case and lets the link
+            // gate pass, so it is refused before anything is written.
+            if (getEffectiveClientServiceStatus(
+                currentClient.serviceStatus ?? null,
+                currentClient.startDate ?? null,
+                currentClient.endDate ?? null,
+                currentClient.bookingConfirmedAt,
+            ) === SERVICE_STATUS.PRE_BOOKING) {
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/id",
+                    code: "INVALID_VALUE",
+                    detail: PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL,
+                    location: "path",
+                }));
+            }
             mergeAndValidateClientServicePeriod(currentClient, {});
             // Use the owning transaction's timestamp so a client edit that
             // waited on this lock cannot derive a replacement from a stale
             // preflight clock or an invented value.
-            const replacementStartDate = await this.transactionNow(transaction);
+            // The handover is dated by the Korean calendar day of that instant.
+            const replacementStartDate = this.kstCalendarDay(await this.transactionNow(transaction));
             const replacementEndDate = currentClient.endDate
                 && currentClient.endDate.getTime() >= replacementStartDate.getTime()
                 ? currentClient.endDate
@@ -2622,7 +2859,7 @@ export class ClientService {
         // SAVED computation: loaded before the transaction opens (see
         // terminateService).
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
-        const updatedClient = await this.prismaService.$transaction(async (transaction) => {
+        const { updatedClient, priorStatusInputs } = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
                     where: { clientId },
@@ -2668,22 +2905,171 @@ export class ClientService {
                 null,
                 lockedClient.startDate,
                 lockedClient.endDate,
+                lockedClient.bookingConfirmedAt,
             );
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: computedStatus,
             }, transaction, calendar);
             await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
-            return updated;
+            return {
+                updatedClient: updated,
+                priorStatusInputs: {
+                    serviceStatus: lockedClient.serviceStatus ?? null,
+                    bookingConfirmedAt: lockedClient.bookingConfirmedAt,
+                    startDate: lockedClient.startDate ?? null,
+                    endDate: lockedClient.endDate ?? null,
+                },
+            };
         });
+        // 예약확정 상태는 여기서 바뀌지 않으므로 예약 전 이탈 여부를 확인하는
+        // 공통 후처리는 교체 완료만으로 제공인력 링크 SMS를 예약하지 않는다.
+        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+            branchid,
+            clientId,
+            priorStatusInputs,
+            updatedClient,
+            null,
+        );
+        return updatedClient;
+    }
+
+    /**
+     * Confirm a booking (rule 고객-04): the only way a client leaves 예약 전.
+     * Stores `bookingConfirmedAt` and the date-derived status in one direct
+     * write under the client row lock, then repairs the service-record
+     * lifecycle in the same transaction. A client that is already confirmed is
+     * returned untouched and no follow-up runs, so a double click is safe.
+     */
+    async confirmBooking(branchid: string, clientId: number): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(branchid, clientId);
+        if (!client) {
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+        }
+
+        this.logger.log(`Confirming booking for client ${clientId}`);
+
+        // SAVED computation: loaded before the transaction opens (see
+        // completeReplacement).
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+        const refuse = (detail: string): never => {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/id",
+                code: "INVALID_VALUE",
+                detail,
+                location: "path",
+            }));
+        };
+        const priorStatusInputs = await this.prismaService.$transaction(async (transaction) => {
+            const existingCase = transaction.service_record_case?.findUnique
+                ? await transaction.service_record_case.findUnique({
+                    where: { clientId },
+                    select: { id: true, branchId: true, clientId: true },
+                })
+                : null;
+            const schedules = transaction.employee_schedule?.findMany
+                ? await transaction.employee_schedule.findMany({
+                    where: { clientId, branchId: branchid },
+                    select: {
+                        id: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                    orderBy: { id: "asc" },
+                })
+                : [];
+            // Every outcome is judged on the locked row, never on the
+            // pre-transaction snapshot. The write-set helper takes the client
+            // row lock first, so locking the same row here keeps the lock
+            // order unchanged and lets a client deleted before the lock answer
+            // not-found instead of the helper's write-target-changed conflict.
+            const lockedClient = await this.clientRepository.findByIdForUpdate(
+                branchid,
+                clientId,
+                transaction,
+            );
+            if (!lockedClient) {
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+            }
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId,
+                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
+                    ? existingCase.id
+                    : undefined,
+                expectedScheduleIds: schedules.map((schedule) => schedule.id),
+                scheduleIds: schedules.map((schedule) => schedule.id),
+                employeeIds: schedules.flatMap((schedule) => [
+                    schedule.primaryEmployeeId,
+                    schedule.secondaryEmployeeId,
+                ]),
+            });
+            if (
+                lockedClient.serviceStatus === SERVICE_STATUS.TERMINATED
+                || lockedClient.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED
+            ) {
+                return refuse("종료되었거나 교체 요청 중인 고객은 예약을 확정할 수 없습니다.");
+            }
+            if (lockedClient.bookingConfirmedAt) {
+                return null;
+            }
+            if (!lockedClient.startDate || !lockedClient.endDate) {
+                return refuse("서비스 시작일과 종료일을 먼저 입력해 주세요.");
+            }
+            const now = new Date();
+            const updateResult = await transaction.client.updateMany({
+                where: { id: clientId, branchId: branchid },
+                data: {
+                    bookingConfirmedAt: now,
+                    serviceStatus: computeServiceStatus(null, lockedClient.startDate, lockedClient.endDate, now, now),
+                },
+            });
+            if (updateResult.count === 0) {
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+            }
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
+            return {
+                serviceStatus: lockedClient.serviceStatus ?? null,
+                bookingConfirmedAt: lockedClient.bookingConfirmedAt ?? null,
+                startDate: lockedClient.startDate,
+                endDate: lockedClient.endDate,
+            };
+        });
+
+        const updatedClient = await this.findClientByIdUsecase.execute(branchid, clientId);
+        if (!updatedClient) {
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+        }
+        // Already confirmed: nothing was written, so no follow-up may run.
+        if (!priorStatusInputs) return updatedClient;
+
+        await this.triggerService?.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
+            this.logger.error(`Failed to sync client trigger rules: ${error}`);
+        });
+        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+            branchid,
+            clientId,
+            priorStatusInputs,
+            updatedClient,
+            null,
+        );
         return updatedClient;
     }
 
     async delete(branchid: string, id: number): Promise<void> {
-        await this.deleteClientUsecase.execute(branchid, id);
-        // The delete use case holds the client row lock and rejects any
-        // retained message-trigger job before the physical delete. Keep this
-        // legacy cleanup hook after a successful delete so a blocked request
-        // cannot partially mutate pending jobs.
+        const outcome = await this.deleteClientUsecase.execute(branchid, id);
+        // A client with history is tombstoned in the delete transaction, which also ends
+        // its open assignments and cancels its pending messages. Outstanding service-record
+        // links die with those assignments, as in terminateService.
+        if (outcome === "tombstoned") {
+            const schedules = await this.prismaService.employee_schedule.findMany({
+                where: { clientId: id, branchId: branchid, replaced: false },
+                select: { id: true },
+            });
+            for (const schedule of schedules) {
+                await this.revokeServiceRecordLinkAfterCommit(id, schedule.id);
+            }
+        }
+        // Keep this legacy cleanup hook after a successful delete.
         await this.triggerService?.cancelPendingJobsForClientDeletion(branchid, id);
     }
 
@@ -2700,30 +3086,38 @@ export class ClientService {
         const { thisMonthStart, nextMonthStart, nextMonthEndExclusive } =
             getClientListDateRanges(now);
 
-        const [activeClients, branchClients, upcomingThisMonth, upcomingNextMonth] =
-            await Promise.all([
-                this.prismaService.client.count({
-                    where: { serviceStatus: SERVICE_STATUS.ACTIVE, branchId: branchid },
-                }),
-                this.prismaService.client.findMany({
-                    where: { branchId: branchid },
-                    select: { id: true, startDate: true, endDate: true, serviceStatus: true },
-                }),
-                this.prismaService.client.count({
-                    where: {
-                        serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: thisMonthStart, lt: nextMonthStart },
-                        branchId: branchid,
-                    },
-                }),
-                this.prismaService.client.count({
-                    where: {
-                        serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: nextMonthStart, lt: nextMonthEndExclusive },
-                        branchId: branchid,
-                    },
-                }),
-            ]);
+        const branchClients = await this.prismaService.client.findMany({
+            where: { branchId: branchid, deletedAt: null },
+            select: { id: true, startDate: true, endDate: true, serviceStatus: true, bookingConfirmedAt: true },
+        });
+
+        // Every figure below counts the DERIVED service status the client list shows
+        // (getEffectiveClientServiceStatus), never the stored column, which lags until the
+        // lazy update runs. Month boundaries are the KST ones from getClientListDateRanges.
+        const effectiveStatusByClientId = new Map<number, ServiceStatusType>();
+        let activeClients = 0;
+        let upcomingThisMonth = 0;
+        let upcomingNextMonth = 0;
+        for (const client of branchClients) {
+            const effectiveStatus = getEffectiveClientServiceStatus(
+                client.serviceStatus ?? null,
+                client.startDate ?? null,
+                client.endDate ?? null,
+                client.bookingConfirmedAt,
+                now,
+            );
+            effectiveStatusByClientId.set(client.id, effectiveStatus);
+            if (effectiveStatus === SERVICE_STATUS.ACTIVE) {
+                activeClients++;
+            } else if (effectiveStatus === SERVICE_STATUS.WAITING && client.startDate) {
+                const startTime = client.startDate.getTime();
+                if (startTime >= thisMonthStart.getTime() && startTime < nextMonthStart.getTime()) {
+                    upcomingThisMonth++;
+                } else if (startTime >= nextMonthStart.getTime() && startTime < nextMonthEndExclusive.getTime()) {
+                    upcomingNextMonth++;
+                }
+            }
+        }
 
         // 대시보드의 "검토 필요 문서"는 계약서 목록과 같은 규칙으로 센다: 제공기관
         // 검토 단계에 있고 검토 창(계약 종료 영업일 1일 전~)이 열린 문서만.
@@ -2737,19 +3131,18 @@ export class ClientService {
         // and the same business-day send window as the list (computeContractActionRequired).
         const contractsNotSent = branchClients.filter((client) =>
             this.computeContractActionRequired({
-                serviceStatus: getEffectiveClientServiceStatus(
-                    client.serviceStatus ?? null,
-                    client.startDate ?? null,
-                    client.endDate ?? null,
-                ),
+                clientId: client.id,
+                now,
+                serviceStatus: effectiveStatusByClientId.get(client.id) ?? null,
                 startDate: client.startDate ?? null,
                 hasActiveContractDocument: this.isActiveContractDocument(latestContracts.get(client.id)),
             }, calendar)?.reason === "발송 필요",
         ).length;
 
-        const contractsPendingSignature = [...latestContracts.values()].filter((doc) => {
+        const contractsPendingSignature = [...latestContracts].filter(([clientId, doc]) => {
             if (
                 doc.permanentPurgeRequestedAt != null
+                || isVoidedContractSignal(doc)
                 || DELETED_DOCUMENT_STATUS_TYPES.has(doc.statusType.trim().padStart(3, "0"))
             ) {
                 return false;
@@ -2757,15 +3150,22 @@ export class ClientService {
             const endDate = doc.detailPayload && typeof doc.detailPayload === "object"
                 ? extractEformsignContractEndDate(doc.detailPayload as unknown as EformsignApiDocumentResponse)
                 : null;
-            return resolveEformsignDocDisplayStatus({
-                id: doc.documentId,
-                current_status: {
-                    status_type: doc.statusType,
-                    step_type: doc.stepType,
-                    step_name: doc.stepName,
-                },
-                ...(endDate ? { contract_end_date: endDate.toISOString().slice(0, 10) } : {}),
-            }, now, calendar) === "review";
+            try {
+                return resolveEformsignDocDisplayStatus({
+                    id: doc.documentId,
+                    current_status: {
+                        status_type: doc.statusType,
+                        step_type: doc.stepType,
+                        step_name: doc.stepName,
+                    },
+                    ...(endDate ? { contract_end_date: endDate.toISOString().slice(0, 10) } : {}),
+                }, now, calendar) === "review";
+            } catch {
+                // A contract end date outside the calendar's supported range must not fail the
+                // whole dashboard request: leave this client out of the review-window count.
+                this.warnCalendarSkip(clientId);
+                return false;
+            }
         }).length;
 
         return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };
@@ -2800,21 +3200,34 @@ export class ClientService {
         // an exclusive calendar bound so this pre-filter only narrows the scan;
         // computeActionRequired still decides (it alone knows whether the latest
         // document is active).
-        const sendWindowEndExclusive = new Date(
-            `${calendar.addBusinessDays(today, CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
-        );
+        // The bound is only an optimisation: when its horizon runs past the supported holiday
+        // years (late December) scan without it; computeActionRequired still decides per client.
+        let startDateBound: Prisma.clientWhereInput["startDate"] = { not: null };
+        try {
+            startDateBound = {
+                lt: new Date(
+                    `${calendar.addBusinessDays(today, CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
+                ),
+            };
+        } catch {
+            this.logger.warn(
+                "Action-required scan lookahead is outside the supported holiday calendar range; scanning without the start-date bound",
+            );
+        }
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
+                deletedAt: null,
                 OR: [
                     { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
                     {
                         OR: [
                             { serviceStatus: null },
-                            { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED, SERVICE_STATUS.REPLACEMENT_REQUESTED] } },
                         ],
-                        startDate: { lt: sendWindowEndExclusive },
+                        bookingConfirmedAt: { not: null },
+                        startDate: startDateBound,
                     },
                 ],
             },
@@ -2825,6 +3238,7 @@ export class ClientService {
                 startDate: true,
                 endDate: true,
                 serviceStatus: true,
+                bookingConfirmedAt: true,
             },
             orderBy: { createdAt: "desc" },
             take: Math.max(limit * 4, 12),
@@ -2842,9 +3256,11 @@ export class ClientService {
                     client.serviceStatus,
                     client.startDate,
                     client.endDate,
+                    client.bookingConfirmedAt,
                 );
 
                 const actionRequired = this.computeActionRequired({
+                    clientId: client.id,
                     serviceStatus,
                     startDate: client.startDate,
                     hasActiveContractDocument: hasActiveDocumentByClientId.get(client.id) ?? false,

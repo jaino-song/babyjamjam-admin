@@ -215,7 +215,7 @@ export class CallInboxService {
             .filter((phone): phone is string => Boolean(phone));
         const branchClients = phones.length
             ? await this.prismaService.client.findMany({
-                where: { branchId, phone: { not: null } },
+                where: { branchId, phone: { not: null }, deletedAt: null },
                 select: { id: true, phone: true },
             })
             : [];
@@ -278,7 +278,7 @@ export class CallInboxService {
         if (dto.proposals !== undefined) assertPhoneProposalValues(dto.proposals);
         if (dto.clientId != null) {
             const client = await this.prismaService.client.findFirst({
-                where: { id: dto.clientId, branchId },
+                where: { id: dto.clientId, branchId, deletedAt: null },
                 select: { id: true },
             });
             if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -309,7 +309,7 @@ export class CallInboxService {
             }
             if (dto.clientId != null) {
                 const client = await transaction.client.findFirst({
-                    where: { id: dto.clientId, branchId },
+                    where: { id: dto.clientId, branchId, deletedAt: null },
                     select: { id: true },
                 });
                 if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));

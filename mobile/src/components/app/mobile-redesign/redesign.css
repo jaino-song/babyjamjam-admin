@@ -1910,6 +1910,12 @@ body.mobile-all-route .menu-row {
   color: hsl(var(--v3-burgundy));
   border-color: hsla(355, 36%, 45%, 0.2);
 }
+/* Solid variant: 반려됨 (eformsign 071) on the contracts detail header. */
+.badge-mini.burgundy-solid {
+  background: hsl(var(--status-danger-solid));
+  color: hsl(var(--status-danger-solid-fg));
+  border-color: hsl(var(--status-danger-solid));
+}
 .badge-mini.primary {
   background: hsl(214, 80%, 95%);
   color: hsl(var(--v3-primary));
@@ -2046,6 +2052,10 @@ body.mobile-all-route .menu-row {
   background: white;
   border: 1px solid hsl(var(--v3-primary));
   color: hsl(var(--v3-primary));
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ===== Detail tabs (pill row + sliding underline indicator) ===== */

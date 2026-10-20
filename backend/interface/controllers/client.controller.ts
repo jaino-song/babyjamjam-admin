@@ -75,6 +75,7 @@ export class ClientController {
             areaId: dto.areaId ?? null,
             suppressGreetingSms: dto.suppressGreetingSms,
             applyMessageAutomation: dto.applyMessageAutomation,
+            smsAutomationEnabled: dto.smsAutomationEnabled,
             reuseExistingClient: dto.reuseExistingClient,
             source: dto.source,
         });
@@ -185,6 +186,7 @@ export class ClientController {
             breastPump: dto.breastPump,
             areaId: dto.areaId,
             expectedEndDate: dto.expectedEndDate,
+            smsAutomationEnabled: dto.smsAutomationEnabled,
         });
     }
 
@@ -230,5 +232,13 @@ export class ClientController {
     @Patch(":id/complete-replacement")
     completeReplacement(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
         return this.clientService.completeReplacement(tenant.branchId ?? "", id);
+    }
+
+    /**
+     * Confirm a booking: the only way a client leaves 예약 전 (rule 고객-04)
+     */
+    @Patch(":id/confirm-booking")
+    confirmBooking(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
+        return this.clientService.confirmBooking(tenant.branchId ?? "", id);
     }
 }

@@ -25,8 +25,13 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
         "render_failed",
         "upload_failed",
         "missing_phone",
+        "contract_voided",
       ].sort(),
     );
+  });
+
+  it("uses the backend's own copy for a voided contract", () => {
+    expect(RECEIPT_LINK_REASON_MESSAGES.contract_voided).toBe("파기된 계약서입니다.");
   });
 
   it("uses the contract_not_signed copy shared with the mobile twin", () => {
@@ -43,6 +48,11 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
 });
 
 describe("describeReceiptLinkError", () => {
+  it("shows the voided-contract message for a contract_voided refusal", () => {
+    const error = errorWithData({ reason: "contract_voided", message: "ignored server text" });
+    expect(describeReceiptLinkError(error)).toBe("파기된 계약서입니다.");
+  });
+
   it("prefers the mapped reason message over a server message", () => {
     const error = errorWithData({
       reason: "missing_phone",

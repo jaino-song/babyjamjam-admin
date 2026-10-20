@@ -1,10 +1,11 @@
 import {
+    AGENT_SMS_RULE_ID_PREFIX,
+    AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
-    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
@@ -13,6 +14,9 @@ import { ordinaryAutomationJobWhere } from "application/utils/message-automation
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_ENDED_REASON,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+    SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerJobEntity,
@@ -22,7 +26,31 @@ import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageTriggerJobRepository, serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+
+describe("serviceRecordScheduleBlockerSql", () => {
+    it("allows only the ended-only cancellation alongside existing reclaim reasons", () => {
+        const sql = serviceRecordScheduleBlockerSql({
+            status: Prisma.sql`blocker.status`,
+            cancelReason: Prisma.sql`blocker.cancel_reason`,
+            canceledByUser: Prisma.sql`blocker.canceled_by_user`,
+        });
+        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(1);
+        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(1);
+        for (const reason of [
+            "Service record access revoked",
+            "Service record link reset without resend",
+            "Service record link schedule ended or replaced",
+        ]) {
+            expect(sql.values).not.toContain(reason);
+        }
+        expect(sql.sql).toContain("NOT IN");
+        expect(sql.sql).toContain("IN ('pending', 'processing', 'dispatching', 'sent', 'needs_setup')");
+        expect(sql.sql).toContain("= 'failed'");
+        expect(sql.sql).toContain("IS DISTINCT FROM");
+        expect(sql.sql).toContain("blocker.canceled_by_user = true");
+    });
+});
 
 describe("MessageTriggerJobEntity", () => {
     const now = new Date("2026-07-09T00:00:00.000Z");
@@ -63,14 +91,19 @@ describe("MessageTriggerJobEntity", () => {
         jest.useRealTimers();
     });
 
-    it("defer config bumps nextAttemptAt without attempts", () => {
-        const job = createJob(2);
+    it.each(["pending", "processing", "dispatching"] as const)("marks %s needs_setup without retrying or losing its claim fence", (status) => {
+        const job = createJob(2, new Date(now.getTime() + 300_000));
+        job.status = status;
+        job.claimToken = "claim-a";
 
-        job.defer("config", "provider unconfigured");
+        job.markNeedsSetup("필수 정보 누락 (name)");
 
-        expect(job.status).toBe("pending");
+        expect(job.status).toBe("needs_setup");
+        expect(job.cancelReason).toBe("필수 정보 누락 (name)");
         expect(job.attempts).toBe(2);
-        expect(job.nextAttemptAt).toEqual(new Date(now.getTime() + TRIGGER_JOB_CONFIG_RETRY_DELAY_MS));
+        expect(job.nextAttemptAt).toBeNull();
+        expect(job.claimToken).toBe("claim-a");
+        expect(job.updatedAt).toEqual(now);
     });
 
     it("defer transient increments attempts and terminal-fails at TRIGGER_JOB_MAX_ATTEMPTS", () => {
@@ -207,6 +240,70 @@ describe("SbMessageTriggerJobRepository", () => {
             },
         });
 
+    it("keeps needs_setup inert to due claims, reclaim, expiry eligibility and upcoming reads", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([]);
+        await repository.findDuePendingSystemScope();
+        expect(messageTriggerJobModel.findMany.mock.calls[0][0].where.status).toBe("pending");
+        await repository.findStaleProcessingSystemScope(now);
+        expect(messageTriggerJobModel.findMany.mock.calls[1][0].where.status.in).toEqual(["processing", "dispatching"]);
+        await repository.findUpcomingPendingByBranch("branch-1");
+        expect(messageTriggerJobModel.findMany.mock.calls[2][0].where.status.in).toEqual(["pending", "processing", "dispatching"]);
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 0 });
+        await repository.cancelPendingOlderThan("rule-1", now, "expired");
+        expect(messageTriggerJobModel.updateMany.mock.calls[0][0].where.status.in).not.toContain("needs_setup");
+        queryRaw.mockResolvedValue([]);
+        await repository.claimPendingWithRuleFence("job-1", "branch-1");
+        expect(getSqlText(queryRaw.mock.calls[0][0])).toContain("AND job.status = 'pending'");
+        expect(getSqlText(queryRaw.mock.calls[0][0])).not.toContain("needs_setup");
+    });
+
+    it("reschedules only a pending job in the branch whose current send time is over a minute away by the database clock", async () => {
+        const target = new Date("2026-07-09T01:00:00.000Z");
+        queryRaw.mockResolvedValueOnce([{ id: "job-1" }]).mockResolvedValueOnce([]);
+
+        await expect(repository.rescheduleDebugPending("job-1", "branch-1", target)).resolves.toBe(true);
+        await expect(repository.rescheduleDebugPending("job-1", "branch-1", target)).resolves.toBe(false);
+
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        const sqlText = getSqlText(query);
+        expect(sqlText).toContain("status = 'pending'");
+        expect(sqlText).toContain("scheduled_for > clock_timestamp() + interval '1 minute'");
+        expect(sqlText).toContain("next_attempt_at = NULL");
+        expect(sqlText).toContain("RETURNING id");
+        expect(query.values).toEqual(expect.arrayContaining(["job-1", "branch-1", target]));
+        // Sealed agent-automation jobs and manual jobs must never be moved.
+        expect(query.sql).toMatch(/\n\s+AND NOT \(payload \? \?\)\n/);
+        expect(query.values).toContain("agentAutomationSeal");
+        expect(query.sql).toMatch(/\n\s+AND NOT \(left\(rule_id, \?::integer\) = \? OR left\(dedupe_key, \?::integer\) = \?/);
+        expect(query.values).toEqual(expect.arrayContaining([AGENT_SMS_RULE_ID_PREFIX, AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX]));
+    });
+
+    it("does not revive or duplicate needs_setup on repeated same-key resync without a source change", async () => {
+        const waiting = createRow({ status: "needs_setup", cancelReason: "필수 정보 누락 (name)" });
+        messageTriggerJobModel.findUnique.mockImplementation(async () => waiting);
+        queryRaw.mockImplementation(async (query: Prisma.Sql) => {
+            const conflict = query.sql.split("DO UPDATE SET")[1]!.split("RETURNING")[0]!;
+            const statuses = [...conflict.matchAll(/\"status\" (?:IN \(([^)]+)\)|= '([^']+)')/g)]
+                .flatMap((match) => match[1] ? match[1].split(",").map((value) => value.trim().replace(/'/g, "")) : [match[2]]);
+            if (statuses.includes(waiting.status)) waiting.status = "pending";
+            return [];
+        });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const result = await repository.upsertPending(createJob());
+            expect(result.id).toBe(waiting.id);
+            expect(result.status).toBe("needs_setup");
+            expect(result.cancelReason).toBe("필수 정보 누락 (name)");
+        }
+        expect(messageTriggerJobModel.create).not.toHaveBeenCalled();
+    });
+
+    it("includes needs_setup in the immediate client-source refresh lookup", async () => {
+        messageTriggerJobModel.findMany.mockResolvedValue([createRow({ status: "needs_setup" })]);
+        const jobs = await repository.findPendingByRuleIdsAndClientId(["rule-1"], 1);
+        expect(messageTriggerJobModel.findMany.mock.calls[0][0].where.status.in).toContain("needs_setup");
+        expect(jobs[0]?.status).toBe("needs_setup");
+    });
+
     it.each(["rule", "dedupe", "payload"])("refuses reserved %s carriers without database access", async (carrier) => {
         const job = createJob();
         if (carrier === "rule") Object.assign(job, { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID });
@@ -217,8 +314,8 @@ describe("SbMessageTriggerJobRepository", () => {
         }
         await expect(repository.upsertPendingForRuleGeneration(job, now, false)).resolves.toBeNull();
         await expect(repository.promoteAutomaticSchedulingClaim("marker", now.toISOString(), job)).resolves.toBeNull();
-        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toBeNull();
-        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toBeNull();
+        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toEqual({ kind: "not_claimable" });
+        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toEqual({ kind: "not_claimable" });
         expect(queryRaw).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
         for (const method of Object.values(messageTriggerJobModel)) expect(method).not.toHaveBeenCalled();
@@ -322,11 +419,56 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("claim_token = gen_random_uuid()::text");
         // The minted token is the CAS fence for every later write on this job.
         expect(sqlText).toContain("RETURNING job.id, job.claim_token");
+        // The ordinary claim clears the reason, so a `processing` row that carries one can only be a
+        // resend claim (the stale-processing reclaim reads that as the resend mark).
+        expect(sqlText).toContain("updated_at = now(), cancel_reason = NULL FROM locked_rule");
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]);
         await expect(repository.claimPendingWithRuleFence("job-1", "branch-1")).resolves.toBeNull();
         expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("claimNeedsSetupWithRuleFence claims only a needs_setup job through the same rule fence, minting a new token and leaving attempts alone", async () => {
+        queryRaw.mockResolvedValueOnce([{ id: "job-1", claim_token: "claim-resend" }]);
+
+        await expect(repository.claimNeedsSetupWithRuleFence("job-1", "branch-1")).resolves.toBe("claim-resend");
+
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+        const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+        // The status predicate appears in both the candidate read and the guarded update.
+        expect(sqlText.match(/AND job\.status = 'needs_setup'/g)).toHaveLength(2);
+        expect(sqlText).not.toContain("job.status = 'pending'");
+        // Same rule fence as the pending claim.
+        expect(sqlText).toContain("WITH candidate_job AS");
+        expect(sqlText).toContain("FOR UPDATE OF rule");
+        expect(sqlText).toContain("rule.jobs_stale = false");
+        expect(sqlText).toContain("rule.is_active = true");
+        expect(sqlText).toContain('"message_trigger_rule_branch_override"');
+        expect(sqlText).toContain("rule.branch_id IS NULL");
+        expect(sqlText).toContain("job.branch_id = ");
+        expect(sqlText).not.toContain("job.branch_id IS NULL");
+        // A new token is minted and returned; processing is the only status written; attempts are not touched.
+        expect(sqlText).toContain("SET status = 'processing', claim_token = gen_random_uuid()::text");
+        expect(sqlText).toContain("RETURNING job.id, job.claim_token");
+        expect(sqlText).not.toContain("attempts");
+        // The setup reason stays on the in-flight row: it is the durable resend mark.
+        expect(sqlText).not.toContain("cancel_reason");
+
+        queryRaw.mockReset();
+        queryRaw.mockResolvedValueOnce([]);
+        await expect(repository.claimNeedsSetupWithRuleFence("job-1", "branch-1")).resolves.toBeNull();
+    });
+
+    it("claimPendingWithRuleFence still claims only pending jobs after the shared-claim refactor", async () => {
+        queryRaw.mockResolvedValueOnce([]);
+
+        await repository.claimPendingWithRuleFence("job-1", "branch-1");
+
+        const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+        expect(sqlText.match(/AND job\.status = 'pending'/g)).toHaveLength(2);
+        expect(sqlText).not.toContain("needs_setup");
     });
 
     it("uses the claim token as a CAS so a stale completion cannot overwrite a newer claim", async () => {
@@ -375,6 +517,36 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
+    it("hasNewerClientRuleSibling asks the database the complete uncapped question and selects only the id", async () => {
+        messageTriggerJobModel.findFirst.mockResolvedValueOnce({ id: "job-2" }).mockResolvedValueOnce(null);
+        const params = {
+            branchId: "branch-1",
+            clientId: 7,
+            ruleId: "rule-1",
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            excludeJobId: "job-1",
+            createdAfter: now,
+        };
+
+        await expect(repository.hasNewerClientRuleSibling(params)).resolves.toBe(true);
+        await expect(repository.hasNewerClientRuleSibling(params)).resolves.toBe(false);
+        expect(messageTriggerJobModel.findFirst).toHaveBeenCalledTimes(2);
+        expect(messageTriggerJobModel.findFirst).toHaveBeenCalledWith({
+            where: { ...ordinaryAutomationJobWhere(),
+                branchId: "branch-1",
+                clientId: 7,
+                ruleId: "rule-1",
+                id: { not: "job-1" },
+                employeeScheduleId: null,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                status: { in: ["pending", "processing", "dispatching", "sent"] },
+                createdAt: { gt: now },
+            },
+            select: { id: true },
+        });
+        expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+    });
+
     it("findDuePendingSystemScope filters out jobs with future nextAttemptAt and includes null/past", async () => {
         messageTriggerJobModel.findMany.mockResolvedValue([]);
 
@@ -418,7 +590,7 @@ describe("SbMessageTriggerJobRepository", () => {
             where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                status: { in: ["failed", "canceled"] },
+                status: { in: ["failed", "canceled", "needs_setup"] },
             },
             orderBy: { updatedAt: "desc" },
             take: 25,
@@ -458,6 +630,7 @@ describe("SbMessageTriggerJobRepository", () => {
                 OR: [
                     { status: "canceled", canceledAt: { gte: since, lt: until } },
                     { status: "failed", updatedAt: { gte: since, lt: until } },
+                    { status: "needs_setup", updatedAt: { gte: since, lt: until } },
                 ],
             }),
             orderBy: { updatedAt: "desc" },
@@ -501,6 +674,7 @@ describe("SbMessageTriggerJobRepository", () => {
                 OR: [
                     { status: "canceled", canceledAt: { gte: since, lt: until } },
                     { status: "failed", updatedAt: { gte: since, lt: until } },
+                    { status: "needs_setup", updatedAt: { gte: since, lt: until } },
                 ],
             },
         });
@@ -536,7 +710,7 @@ describe("SbMessageTriggerJobRepository", () => {
             where: {
                 branchId: "branch-1",
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                status: { in: ["failed", "canceled"] },
+                status: { in: ["failed", "canceled", "needs_setup"] },
                 logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
                 createdAt: { lte: snapshotAt },
                 AND: [{ id: { lt: afterId } }],
@@ -564,7 +738,7 @@ describe("SbMessageTriggerJobRepository", () => {
                 where: {
                     branchId: "branch-1",
                     ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                    status: { in: ["failed", "canceled"] },
+                    status: { in: ["failed", "canceled", "needs_setup"] },
                     logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
                     createdAt: { lte: snapshotAt },
                     AND: [{ id: { lt: afterId } }, { clientId: 7 }],
@@ -588,7 +762,7 @@ describe("SbMessageTriggerJobRepository", () => {
             const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
             expect(sqlText).toContain("job.branch_id = ");
             expect(sqlText).toContain("job.client_id IS NULL");
-            expect(sqlText).toContain("job.status IN ('failed', 'canceled')");
+            expect(sqlText).toContain("job.status IN ('failed', 'canceled', 'needs_setup')");
             expect(sqlText).toContain("COALESCE(job.recipient_phone, job.payload->>'recipientPhone')");
             expect(sqlText).toContain("'[^0-9]'");
             expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -1110,9 +1284,28 @@ describe("SbMessageTriggerJobRepository", () => {
         const updateSql = getSqlText(queryRaw.mock.calls[1][0]);
         expect(updateSql).toContain('UPDATE "message_trigger_job"');
         expect(updateSql).toContain("status IN ('pending', 'processing')");
+        expect(updateSql).not.toContain("needs_setup");
         expect(updateSql).toContain("client_id =");
         expect(updateSql).toContain("branch_id =");
         expect(updateSql).toContain("date_trunc('milliseconds', clock_timestamp())");
+    });
+
+    it.each(["all", "within_window"] as const)("opts into needs_setup supersession with %s", async (needsSetup) => {
+        const updatedAt = new Date("2026-07-09T00:00:00.123Z");
+        queryRaw.mockResolvedValueOnce([{ id: "rule-1", branch_id: "branch-1", jobs_stale: false, updated_at: updatedAt }])
+            .mockResolvedValueOnce([{ id: "job-1" }]);
+        await repository.cancelPendingForRuleGeneration("branch-1", "rule-1", updatedAt, false, "rebuild", { needsSetup });
+        const sql = getSqlText(queryRaw.mock.calls[1][0]);
+        expect(sql).toContain("status IN ('pending', 'processing') OR");
+        expect(sql).toContain("status = 'needs_setup'");
+        if (needsSetup === "within_window") {
+            expect(sql).toContain("scheduled_for >");
+            expect(sql).toContain("clock_timestamp()");
+            expect(sql).toContain("interval '1 millisecond'");
+            expect(queryRaw.mock.calls[1][0].values).toContain(24 * 60 * 60 * 1000);
+        } else {
+            expect(sql).not.toContain("scheduled_for >");
+        }
     });
 
     it.each([
@@ -1218,8 +1411,17 @@ describe("SbMessageTriggerJobRepository", () => {
         txJob.create.mockResolvedValue({
             ...createRow({ id: "retry-1", status: "pending", dedupeKey: retry.dedupeKey, payload: retry.payload }),
         });
-        const transaction = { $queryRaw: jest.fn().mockResolvedValue([rawSource]), message_trigger_job: txJob };
-        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction));
+        const order: string[] = [];
+        const transaction = {
+            $executeRaw: jest.fn().mockImplementation(async (sql: Prisma.Sql) => { order.push(sql.sql.replace(/\s+/g, " ").trim()); return 0; }),
+            $queryRaw: jest.fn().mockResolvedValue([rawSource]),
+            message_trigger_job: txJob,
+        };
+        let transactionOptions: unknown;
+        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>, options?: unknown) => {
+            transactionOptions = options;
+            return operation(transaction);
+        });
 
         const snapshotHash = "snapshot-hash";
         await expect(repository.claimProviderRejectedForRetry(
@@ -1229,7 +1431,12 @@ describe("SbMessageTriggerJobRepository", () => {
             snapshotHash,
             source,
             retry,
-        )).resolves.toEqual(expect.objectContaining({ id: "retry-1" }));
+        )).resolves.toEqual({ kind: "claimed", job: expect.objectContaining({ id: "retry-1" }) });
+        // The lock wait is bounded before any lock is taken, and the interactive
+        // transaction outlives that bound.
+        expect(order).toEqual(["SET LOCAL lock_timeout = '1s'"]);
+        expect(transaction.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(transaction.$queryRaw.mock.invocationCallOrder[0]!);
+        expect(transactionOptions).toEqual({ timeout: 10_000 });
         // Rule row first, then the source job row: rule -> job -> retry INSERT.
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
         const ruleLock = (transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql);
@@ -1237,6 +1444,70 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(ruleLock.values).toEqual(["rule-1"]);
         expect((transaction.$queryRaw.mock.calls[1][0] as Prisma.Sql).sql).toContain('FROM "message_trigger_job"');
         expect(txJob.create).toHaveBeenCalledTimes(1);
+    });
+
+    describe("claimProviderRejectedForRetry lock wait", () => {
+        const source = MessageTriggerJobEntity.reconstitute(
+            "job-1", "branch-1", "rule-1", "failed",
+            new Date("2026-07-09T01:00:00.000Z"), null, null, "provider rejected", 1, null,
+            MessageTriggerRecipientType.CLIENT, "01012345678", MessageTriggerTemplateKey.SERVICE_INFO,
+            "rule-1:client:1",
+            {
+                memberId: "1",
+                recipientName: "홍길동",
+                recipientPhone: "01012345678",
+                templateVariables: { retrySafety: "provider-rejected" },
+            },
+            new Date("2026-07-08T00:00:00.000Z"), new Date("2026-07-08T01:00:00.000Z"), 1, null,
+        );
+        const retry = MessageTriggerJobEntity.create({
+            branchId: "branch-1",
+            ruleId: "rule-1",
+            scheduledFor: now,
+            clientId: 1,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            recipientPhone: "01012345678",
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            dedupeKey: "agent-sms-retry:action-lock",
+            payload: source.payload,
+        });
+        const claimWith = async (failure: unknown) => {
+            const transaction = {
+                $executeRaw: jest.fn().mockResolvedValue(0),
+                $queryRaw: jest.fn().mockRejectedValue(failure),
+                message_trigger_job: createMockPrismaMessageTriggerJob(),
+            };
+            (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction));
+            return {
+                transaction,
+                outcome: repository.claimProviderRejectedForRetry(
+                    "branch-1", source.id, targetVersion(source, "snapshot-hash"), "snapshot-hash", source, retry,
+                ),
+            };
+        };
+
+        it("answers a lock wait past lock_timeout (P2010 / 55P03) as lock_timeout with nothing written", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("lock timeout", {
+                code: "P2010", clientVersion: "test", meta: { code: "55P03", message: "canceling statement due to lock timeout" },
+            });
+            const { transaction, outcome } = await claimWith(failure);
+            await expect(outcome).resolves.toEqual({ kind: "lock_timeout" });
+            expect(transaction.message_trigger_job.create).not.toHaveBeenCalled();
+        });
+
+        it("does not turn an interactive-transaction timeout (P2028) into a definite outcome", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("transaction timeout", { code: "P2028", clientVersion: "test" });
+            const { outcome } = await claimWith(failure);
+            await expect(outcome).rejects.toBe(failure);
+        });
+
+        it("rethrows a P2010 that is not lock_not_available", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("deadlock", {
+                code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+            });
+            const { outcome } = await claimWith(failure);
+            await expect(outcome).rejects.toBe(failure);
+        });
     });
 
     it("findSentByRuleIdAndEmployeeScheduleId queries sent rows for the schedule", async () => {
@@ -1286,7 +1557,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
             where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
-                status: { in: ["pending", "processing"] },
+                status: { in: ["pending", "processing", "needs_setup"] },
                 OR: [
                     { clientId: 42 },
                     { employeeSchedule: { is: { clientId: 42 } } },
@@ -1311,7 +1582,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
             where: { ...ordinaryAutomationJobWhere(),
                 branchId: "branch-1",
-                status: { in: ["pending", "processing"] },
+                status: { in: ["pending", "processing", "needs_setup"] },
                 clientId: null,
                 employeeScheduleId: null,
                 NOT: { ruleId: { startsWith: "agent-sms:" } },
@@ -1420,6 +1691,33 @@ describe("SbMessageTriggerJobRepository", () => {
                 canceledByUser: true,
                 nextAttemptAt: null,
                 claimToken: null,
+            },
+        });
+    });
+
+    it("cancelFailedServiceRecordLinkJobForPreBooking moves only a failed link job in the branch to a system pre-booking cancel", async () => {
+        messageTriggerJobModel.updateMany
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 });
+
+        await expect(repository.cancelFailedServiceRecordLinkJobForPreBooking("job-1", "branch-1")).resolves.toBe(true);
+        // No row matched: not failed, another branch, another rule, or a live scheduling lease.
+        await expect(repository.cancelFailedServiceRecordLinkJobForPreBooking("job-1", "branch-1")).resolves.toBe(false);
+
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: "job-1",
+                branchId: "branch-1",
+                status: "failed",
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                NOT: { cancelReason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON },
+            },
+            data: {
+                status: "canceled",
+                cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                canceledByUser: false,
+                canceledAt: now,
+                nextAttemptAt: null,
             },
         });
     });
@@ -1750,6 +2048,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 if (row.status !== "pending") return [];
                 await this.beforeClaimCommit?.();
                 row.status = "processing";
+                row.cancelReason = null;
                 row.claimToken = `claim-${id}`;
                 return [{ id, claim_token: row.claimToken }];
             }
@@ -1762,7 +2061,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
             if (text.startsWith("WITH locked AS") && text.includes("SET status = 'canceled'")) {
                 // Cancel by rule + schedule: ONE statement that row-locks the cancellable jobs in id order, then updates them.
                 expect(text).toContain("ORDER BY id FOR UPDATE");
-                expect(text).toContain("AND job.status IN ('pending', 'processing')");
+                expect(text).toContain("AND job.status IN ('pending', 'processing', 'needs_setup')");
                 const predicates = boundPredicates(text, values);
                 for (const column of ["rule_id", "employee_schedule_id"]) {
                     expect(predicates.some((predicate) => predicate.column === column && predicate.op === "=")).toBe(true);
@@ -1782,7 +2081,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 for (const candidate of locked) {
                     // READ COMMITTED: the UPDATE re-checks its own status predicate on the latest row version.
                     const current = this.rows.get(candidate.id)!;
-                    if (current.status !== "pending" && current.status !== "processing") continue;
+                    if (current.status !== "pending" && current.status !== "processing" && current.status !== "needs_setup") continue;
                     current.status = "canceled";
                     current.cancelReason = reason;
                     current.claimToken = null;
@@ -1822,12 +2121,12 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 return locked.map((row) => ({ id: row.id, status: row.status }));
             }
             if (text.includes("SET status = 'canceled'")) {
-                expect(text).toContain("AND status = 'pending'");
+                expect(text).toContain("AND status IN ('pending', 'needs_setup')");
                 const ids = values.filter((value) => typeof value === "string" && this.rows.has(value)) as string[];
                 const canceled: Array<{ id: string }> = [];
                 for (const id of ids) {
                     const row = this.rows.get(id)!;
-                    if (row.status !== "pending") continue;
+                    if (row.status !== "pending" && row.status !== "needs_setup") continue;
                     row.status = "canceled";
                     row.cancelReason = values.find((value) => value === CANCEL_REASON) as string;
                     row.claimToken = null;
@@ -1954,6 +2253,13 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         expect(second.status).toBe("canceled");
         expect(result.job.status).toBe("pending");
         expect(database.live().map((row) => row.id)).toEqual([result.job.id]);
+    });
+
+    it("supersedes needs_setup under the schedule fence without treating it as in flight", async () => {
+        const waiting = database.seed("needs_setup");
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+        expect(result.kind).toBe("replaced");
+        expect(waiting.status).toBe("canceled");
     });
 
     it("only looks at this schedule and this rule: other schedules' and other rules' jobs neither block nor get cancelled", async () => {
@@ -2141,6 +2447,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
     describe("cancelPendingByRuleAndEmployeeSchedule", () => {
         it("cancels this schedule's pending and processing jobs in one statement and reports dispatching ones untouched", async () => {
             const pending = database.seed("pending");
+            const waiting = database.seed("needs_setup");
             const processing = database.seed("processing");
             const dispatching = database.seed("dispatching");
             const sent = database.seed("sent");
@@ -2149,7 +2456,8 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
 
             const result = await repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "Service record access revoked");
 
-            expect([...result.canceledJobIds].sort()).toEqual([pending.id, processing.id].sort());
+            expect([...result.canceledJobIds].sort()).toEqual([pending.id, processing.id, waiting.id].sort());
+            expect(waiting).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
             expect(result.inFlightJobIds).toEqual([dispatching.id]);
             expect(pending).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
             expect(processing).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
@@ -2242,5 +2550,111 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         unscoped.employeeScheduleId = null;
         await expect(repository.replacePendingJobsUnlessInFlight(unscoped, CANCEL_REASON))
             .rejects.toThrow("employee schedule scope");
+    });
+});
+
+/**
+ * Statement-shape checks for the b5 cancel/fence additions. The races those
+ * statements close are proven on a real PostgreSQL in
+ * `sb.message-trigger-job.manual-send-concurrency.spec.ts` (env-gated).
+ */
+describe("SbMessageTriggerJobRepository b5 cancel races (statement shape)", () => {
+    const RULE_ID = SERVICE_RECORD_LINK_RULE_ID;
+    const flat = (value: unknown): string => {
+        const candidate = value as { strings?: string[]; text?: string };
+        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ").trim();
+    };
+
+    const spyPrisma = (rows: (sql: string) => unknown[] = () => []) => {
+        const statements: string[] = [];
+        const client = {
+            $queryRaw: jest.fn(async (query: unknown) => { statements.push(flat(query)); return rows(flat(query)); }),
+            $executeRaw: jest.fn(async (query: unknown) => { statements.push(flat(query)); return 1; }),
+        };
+        const transaction = jest.fn(async (work: (tx: typeof client) => Promise<unknown>, options?: unknown) => {
+            statements.push(`BEGIN ${JSON.stringify(options)}`);
+            return work(client);
+        });
+        return { statements, prisma: { ...client, $transaction: transaction } as unknown as PrismaService, transaction };
+    };
+
+    describe("cancelProcessingClaim", () => {
+        it("is one status- and token-predicated UPDATE, not a read-then-write", async () => {
+            const { statements, prisma, transaction } = spyPrisma(() => [{ id: "job-1" }]);
+
+            await expect(new SbMessageTriggerJobRepository(prisma).cancelProcessingClaim("job-1", "token-1", "Client data changed"))
+                .resolves.toBe(true);
+
+            expect(statements).toHaveLength(1);
+            expect(statements[0]).toMatch(/^UPDATE "message_trigger_job" SET status = 'canceled'.*claim_token = NULL/);
+            expect(statements[0]).toMatch(/AND status = 'processing' AND claim_token = \$\d+ RETURNING id$/);
+            expect(transaction).not.toHaveBeenCalled();
+        });
+
+        it("reports false when nothing matched (the job moved on)", async () => {
+            const { prisma } = spyPrisma(() => []);
+
+            await expect(new SbMessageTriggerJobRepository(prisma).cancelProcessingClaim("job-1", "token-1", "x"))
+                .resolves.toBe(false);
+        });
+    });
+
+    describe("cancelPendingUnderScheduleFence", () => {
+        it("takes the schedule advisory lock, then the job locks, then runs afterCancel on the same transaction; no rule lock, no lock_timeout, long limits", async () => {
+            const { statements, prisma, transaction } = spyPrisma();
+            const afterCancel = jest.fn(async () => { statements.push("AFTER_CANCEL"); });
+
+            const result = await new SbMessageTriggerJobRepository(prisma)
+                .cancelPendingUnderScheduleFence(RULE_ID, 10, "Service record access revoked", afterCancel);
+
+            expect(result).toEqual({ canceledJobIds: [], inFlightJobIds: [] });
+            expect(statements[0]).toBe('BEGIN {"timeout":30000,"maxWait":30000}');
+            expect(statements[1]).toMatch(/^SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)$/);
+            expect(statements[2]).toMatch(/^WITH locked AS .*ORDER BY id FOR UPDATE.*UPDATE "message_trigger_job" AS job/);
+            expect(statements[3]).toContain("status = 'dispatching'");
+            expect(statements[4]).toBe("AFTER_CANCEL");
+            expect(afterCancel).toHaveBeenCalledTimes(1);
+            expect(statements.join(" ")).not.toContain("message_trigger_rule");
+            expect(statements.join(" ")).not.toContain("lock_timeout");
+            expect(transaction).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("link token re-check under the fence", () => {
+        const replacement = () => MessageTriggerJobEntity.create({
+            branchId: "11111111-1111-4111-8111-111111111111",
+            ruleId: RULE_ID,
+            scheduledFor: new Date(),
+            clientId: 20,
+            employeeScheduleId: 10,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01011112222",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: `${RULE_ID}:schedule:10:primary:manual:x`,
+            payload: { memberId: "employee:30", recipientName: "p", recipientPhone: "01011112222", templateVariables: {} },
+        });
+
+        it("a manual replace reads the token AFTER the job locks and writes nothing when it is revoked", async () => {
+            const { statements, prisma } = spyPrisma(() => []);
+
+            const result = await new SbMessageTriggerJobRepository(prisma)
+                .replacePendingJobsUnlessInFlight(replacement(), "r", { requireActiveLinkToken: "efl_x" });
+
+            expect(result).toEqual({ kind: "link_revoked" });
+            const jobLock = statements.findIndex((sql) => sql.includes('FROM "message_trigger_job"') && sql.includes("FOR UPDATE"));
+            const tokenRead = statements.findIndex((sql) => sql.includes('FROM "service_record_token"'));
+            expect(jobLock).toBeGreaterThan(-1);
+            expect(tokenRead).toBeGreaterThan(jobLock);
+            expect(statements.join(" ")).not.toContain("INSERT INTO");
+            expect(statements.join(" ")).not.toContain("SET status = 'canceled'");
+        });
+
+        it("without the option no token statement is issued", async () => {
+            const { statements, prisma } = spyPrisma(() => []);
+
+            await new SbMessageTriggerJobRepository(prisma).replacePendingJobsUnlessInFlight(replacement(), "r").catch(() => undefined);
+
+            expect(statements.join(" ")).not.toContain("service_record_token");
+        });
     });
 });

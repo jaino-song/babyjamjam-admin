@@ -913,7 +913,7 @@ class DeterministicProductClientRepository implements IClientRepository {
     async update(_branchId: string, client: ClientEntity): Promise<ClientEntity> { return client; }
     async updateServiceStatusIfCurrent() { return "stale" as const; }
     async updateIfTargetVersion(): Promise<ClientEntity | null> { return null; }
-    async delete(): Promise<void> { return undefined; }
+    async delete() { return "deleted" as const; }
     async findByStartDate(): Promise<ClientEntity[]> { return []; }
     async findByEndDate(): Promise<ClientEntity[]> { return []; }
     async findByCreatedDate(): Promise<ClientEntity[]> { return []; }
@@ -922,6 +922,11 @@ class DeterministicProductClientRepository implements IClientRepository {
     async findWithIncompleteContractsStartingWithinDays(): Promise<ClientEntity[]> { return []; }
     async findWithoutContractSentStartingWithinDays(): Promise<ClientEntity[]> { return []; }
     async findByPhone(): Promise<ClientEntity | null> { return null; }
+    async findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<Awaited<ReturnType<IClientRepository["findPhoneMatches"]>>> {
+        void branchId;
+        void phoneSuffixes;
+        return [];
+    }
     async findNamesByIds(): Promise<Array<{ id: number; name: string }>> { return []; }
 }
 

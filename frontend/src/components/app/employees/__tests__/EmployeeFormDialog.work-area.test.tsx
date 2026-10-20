@@ -298,4 +298,71 @@ describe("EmployeeFormPanel work area multi-select", () => {
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(createdEmployee));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("creates with 메시지 자동 전송 on by default and sends it when switched off", async () => {
+    mockCreateEmployeeMutateAsync.mockResolvedValue({ ...employeeWithLegacyArea, id: 3 });
+
+    render(<EmployeeFormPanel open onClose={jest.fn()} />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
+    expect(automationSwitch).toBeChecked();
+    expect(
+      screen.getByText("끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요."),
+    ).toBeInTheDocument();
+    fireEvent.click(automationSwitch);
+    expect(automationSwitch).not.toBeChecked();
+
+    fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "박테스트" } });
+    fireEvent.click(screen.getByRole("combobox", { name: /근무 지역 선택/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "남동구" }));
+    fireEvent.click(screen.getByRole("button", { name: "완료" }));
+    fireEvent.change(screen.getByLabelText(/연락처/), { target: { value: "01098765432" } });
+    await screen.findByText("등록 가능한 번호입니다.");
+
+    fireEvent.click(
+      document.querySelector<HTMLButtonElement>('[data-component="desktop_employees_form-panel_submit"]')!,
+    );
+
+    await waitFor(() => expect(mockCreateEmployeeMutateAsync).toHaveBeenCalledTimes(1));
+    expect(mockCreateEmployeeMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ smsAutomationEnabled: false }),
+    );
+  });
+
+  it("edits the stored 메시지 자동 전송 flag and sends it with the update", async () => {
+    mockUpdateEmployeeMutateAsync.mockResolvedValue(employeeWithLegacyArea);
+
+    render(
+      <EmployeeFormPanel
+        open
+        employee={{ ...employeeWithLegacyArea, smsAutomationEnabled: false }}
+        onClose={jest.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
+    expect(automationSwitch).not.toBeChecked();
+    fireEvent.click(automationSwitch);
+    expect(automationSwitch).toBeChecked();
+
+    const submit = document.querySelector<HTMLButtonElement>(
+      '[data-component="desktop_employees_form-panel_submit"]',
+    );
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit!);
+
+    await waitFor(() => expect(mockUpdateEmployeeMutateAsync).toHaveBeenCalledTimes(1));
+    expect(mockUpdateEmployeeMutateAsync).toHaveBeenCalledWith({
+      id: employeeWithLegacyArea.id,
+      dto: expect.objectContaining({ smsAutomationEnabled: true }),
+    });
+  });
 });

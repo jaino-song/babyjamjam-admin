@@ -353,6 +353,7 @@ export interface AppendServiceRecordRevisionInput {
     serviceRecordCaseId: string;
     actorUserId: string;
     payload: ServiceRecordEditJsonValue;
+    beforeSnapshot?: ServiceRecordEditJsonValue | null;
     plannedSessions: ServiceRecordEditJsonValue;
     provenance: ServiceRecordEditJsonValue;
     formVersionAtConfirm: number;
@@ -408,6 +409,14 @@ export interface ServiceRecordEditConfirmAssignmentUpdate {
     scheduleId: number | null;
     startDate: string;
     endDate: string;
+    /**
+     * True when service_record_assignment and employee_schedule do not both
+     * already hold `startDate`/`endDate`. Only then are the dates written, to
+     * both tables, so they are re-synced to the computed value; when false
+     * neither table is touched. The entry is emitted either way so message
+     * automation is re-evaluated. A missing flag is treated as true.
+     */
+    datesChanged?: boolean;
 }
 
 export interface ServiceRecordEditConfirmDocumentJobPlan {
@@ -514,6 +523,12 @@ export interface IServiceRecordEditRepository {
     appendRevision(input: AppendServiceRecordRevisionInput): Promise<ServiceRecordRevision>;
     /** Read branch/client-scoped revision history and safe operation summaries. */
     listRevisionHistory(branchId: string, clientId: number): Promise<ServiceRecordRevisionHistoryResponse | null>;
+    /** Read immutable content only inside the owning branch and client. */
+    findRevisionForChanges(branchId: string, clientId: number, revisionId: string): Promise<
+        Pick<ServiceRecordRevision, "id" | "revisionNumber" | "confirmedAt" | "formVersionAtConfirm" | "payload" | "plannedSessions">
+        & { beforeSnapshot: ServiceRecordEditJsonValue | null }
+        | null
+    >;
     /** Read one mutable operation row by all server-owned scope keys. */
     findRevisionDocumentState(
         branchId: string,

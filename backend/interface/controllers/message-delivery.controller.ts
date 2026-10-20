@@ -21,6 +21,7 @@ import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
+import { CARRIER_CHECK_DELAY_MS } from "domain/entities/message-log.entity";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -480,7 +481,7 @@ export class MessageDeliveryController {
                 throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
             const client = await this.prisma.client.findFirst({
-                where: { id: dto.clientId, branchId },
+                where: { id: dto.clientId, branchId, deletedAt: null },
                 select: { id: true, name: true, phone: true },
             });
             if (!client) {
@@ -540,17 +541,17 @@ export class MessageDeliveryController {
 
     private async findClientByPhone(branchId: string, phone: string): Promise<{ id: number; name: string | null } | null> {
         const client = await this.prisma.client.findFirst({
-            where: { branchId, phone },
+            where: { branchId, phone, deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         if (client && normalizePhone(client.phone) === phone) {
             return { id: client.id, name: client.name };
         }
         const clientModel = this.prisma.client as typeof this.prisma.client & {
-            findMany?: (args: { where: { branchId: string }; select: { id: true; name: true; phone: true } }) => Promise<Array<{ id: number; name: string | null; phone: string | null }>>;
+            findMany?: (args: { where: { branchId: string; deletedAt: null }; select: { id: true; name: true; phone: true } }) => Promise<Array<{ id: number; name: string | null; phone: string | null }>>;
         };
         if (typeof clientModel.findMany !== "function") return null;
-        const matches = await clientModel.findMany({ where: { branchId }, select: { id: true, name: true, phone: true } });
+        const matches = await clientModel.findMany({ where: { branchId, deletedAt: null }, select: { id: true, name: true, phone: true } });
         const match = matches.find((candidate) => normalizePhone(candidate.phone) === phone);
         return match ? { id: match.id, name: match.name } : null;
     }
@@ -637,6 +638,21 @@ export class MessageDeliveryController {
                             : "uncertain",
             },
         };
+        if (isAccepted && typeof updateData["aligoMid"] === "string" && updateData["aligoMid"]) {
+            // The one-shot carrier check runs 30 minutes after delivery; for a
+            // reserved send that is counted from the reserved time (Asia/Seoul).
+            const acceptedAt = updateData["providerAcceptedAt"] as Date;
+            const reservedAt = this.reservedSendTime(
+                request?.["scheduledDate"],
+                request?.["scheduledTime"],
+            );
+            updateData["carrierCheckDueAt"] = new Date(
+                (reservedAt ?? acceptedAt).getTime() + CARRIER_CHECK_DELAY_MS,
+            );
+            updateData["carrierCheckedAt"] = null;
+            updateData["carrierResultState"] = null;
+            updateData["carrierResults"] = Prisma.DbNull;
+        }
         const receiver = request?.["receiver"];
         if (typeof receiver === "string" && receiver.trim()) {
             updateData["receiver"] = receiver;
@@ -644,6 +660,16 @@ export class MessageDeliveryController {
         }
 
         await this.updateSmsLog(logId, updateData);
+    }
+
+    /** Reserved send time from Aligo's YYYYMMDD + HHmm request fields (Asia/Seoul), or null. */
+    private reservedSendTime(rawDate: unknown, rawTime: unknown): Date | null {
+        if (typeof rawDate !== "string" || typeof rawTime !== "string") return null;
+        if (!/^\d{8}$/.test(rawDate) || !/^\d{4}$/.test(rawTime)) return null;
+        return parseKstSchedule(
+            `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`,
+            `${rawTime.slice(0, 2)}:${rawTime.slice(2, 4)}`,
+        );
     }
 
     private async updateSmsLog(

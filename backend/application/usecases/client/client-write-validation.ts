@@ -5,7 +5,12 @@ import type { ProblemCode, ProblemDetails, ProblemError } from "@babyjamjam/shar
 import { assertValidPhone, INVALID_PHONE_MESSAGE, normalizePhone } from "application/utils/normalize-phone";
 import { ClientEntity, clientDurationOutOfRangeMessage } from "domain/entities/client.entity";
 import { IClientRepository } from "domain/repositories/client.repository.interface";
-import { isServiceStatus, SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
+import {
+    computeServiceStatus,
+    isServiceStatus,
+    SERVICE_STATUS,
+    SERVICE_STATUS_VALUES,
+} from "domain/value-objects/service-status.vo";
 import {
     type KrBusinessDayCalendar,
     UnsupportedKoreanHolidayYearError,
@@ -248,6 +253,88 @@ export function assertAllowedServiceStatus(status: string | null | undefined): v
             location: "body",
         }));
     }
+}
+
+/** Refusal sentence for a replacement request on a 예약 전 client (also used by the request-replacement route). */
+export const PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL = "예약 전 고객은 제공인력 교체를 요청할 수 없습니다";
+/** Refusal sentence for a save that tries to move a client into or out of 예약 전 / the date-derived states. */
+export const BOOKING_STATUS_CONFIRM_ONLY_DETAIL = "예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
+
+export interface SavedServiceStatusInput {
+    /** Stored `serviceStatus` of the row being saved (locked row where one exists). */
+    currentServiceStatus: string | null | undefined;
+    /** Stored `bookingConfirmedAt` of that row; `null`/`undefined` = not confirmed. */
+    bookingConfirmedAt: Date | null | undefined;
+    /** The service dates AS THEY WILL BE after this save. */
+    startDate: Date | null;
+    endDate: Date | null;
+    /** The `serviceStatus` the caller supplied (`undefined` = not supplied). */
+    suppliedServiceStatus: string | null | undefined;
+}
+
+/**
+ * Rule 고객-04: a save may not move a client into or out of 예약 전 — only
+ * [예약 확정] confirms a booking. Decides what a save may do with a supplied
+ * `serviceStatus`: it throws the refusal, or RETURNS the status to write
+ * (`undefined` = write nothing for the status column).
+ *
+ * C = confirmed, E = effective status from the stored status and
+ * confirmation with the after-save dates, D = date-derived status for those
+ * dates (`pre_booking` when unconfirmed or a date is missing), S = supplied.
+ * `null` is treated exactly as S = D. First matching row wins:
+ *   not supplied                                  -> undefined
+ *   S = E                                         -> undefined
+ *   (unconfirmed or E = 예약 전) and S = replacement_requested -> refuse (예약 전 sentence)
+ *   unconfirmed, S waiting/active/completed       -> refuse
+ *   unconfirmed, any other S                      -> S (terminated; pre_booking over a stored terminated)
+ *   confirmed, E != 예약 전, S = pre_booking      -> refuse
+ *   confirmed, S waiting/active/completed         -> D (the supplied value is not authoritative)
+ *   confirmed, any other S                        -> S (terminated / replacement_requested)
+ */
+export function resolveSavedServiceStatus(
+    input: SavedServiceStatusInput,
+    now = new Date(),
+): string | undefined {
+    if (input.suppliedServiceStatus === undefined) return undefined;
+
+    const confirmedAt = input.bookingConfirmedAt ?? null;
+    const derived = computeServiceStatus(null, input.startDate, input.endDate, confirmedAt, now);
+    const effective = computeServiceStatus(
+        input.currentServiceStatus ?? null,
+        input.startDate,
+        input.endDate,
+        confirmedAt,
+        now,
+    );
+    const supplied = input.suppliedServiceStatus === null ? derived : input.suppliedServiceStatus;
+    if (supplied === effective) return undefined;
+
+    const confirmed = confirmedAt !== null;
+    const effectivePreBooking = effective === SERVICE_STATUS.PRE_BOOKING;
+    const refuse = (detail: string): never => {
+        throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+            pointer: "/serviceStatus",
+            code: "INVALID_VALUE",
+            detail,
+            location: "body",
+        }));
+    };
+    const dateDerivedRequest = supplied === SERVICE_STATUS.WAITING
+        || supplied === SERVICE_STATUS.ACTIVE
+        || supplied === SERVICE_STATUS.COMPLETED;
+
+    if (supplied === SERVICE_STATUS.REPLACEMENT_REQUESTED && (!confirmed || effectivePreBooking)) {
+        return refuse(PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL);
+    }
+    if (!confirmed) {
+        if (dateDerivedRequest) return refuse(BOOKING_STATUS_CONFIRM_ONLY_DETAIL);
+        return supplied;
+    }
+    if (supplied === SERVICE_STATUS.PRE_BOOKING && !effectivePreBooking) {
+        return refuse(BOOKING_STATUS_CONFIRM_ONLY_DETAIL);
+    }
+    if (dateDerivedRequest) return derived;
+    return supplied;
 }
 
 /**

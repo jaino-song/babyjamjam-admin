@@ -36,6 +36,19 @@ const FINALIZATION_STALE_MS = 20 * 60 * 1000;
 const COMPLETED_DOCUMENT_STATUS_TYPES = ["003", "012", "022", "032", "050", "062", "072", "092"];
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * A deleted client is kept as a tombstone (client.deletedAt set) because it
+ * has history. Its retained case must never produce an outbound document, so
+ * every automatic finalization read and claim carries this filter. A case with
+ * no client row at all (clientId null) keeps its pre-tombstone behaviour.
+ */
+const CLIENT_NOT_TOMBSTONED: Prisma.service_record_caseWhereInput = {
+    OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }],
+};
+const CLIENT_TOMBSTONED: Prisma.service_record_caseWhereInput = {
+    client: { is: { deletedAt: { not: null } } },
+};
+
 type FinalizationDaySnapshot = {
     id: string;
     scheduleId: number | null;
@@ -63,6 +76,8 @@ type FinalizationAssignmentSnapshot = {
     employeeNameSnapshot: string;
     startDate: Date;
     endDate: Date;
+    /** The assignment's schedule; `replaced` marks a caregiver who was swapped out. */
+    schedule?: { replaced: boolean } | null;
 };
 
 type FinalizationCaseSnapshot = {
@@ -219,18 +234,66 @@ function currentPlannedSessionsMatchDays(
     return plannedSessions.every((planned) => {
         const day = daysByIndex.get(planned.sessionIndex);
         const assignment = record.assignments.find((candidate) => candidate.id === planned.assignmentId);
-        return Boolean(
-            day
-            && assignment
-            && day.caseSessionIndex === planned.sessionIndex
-            && day.serviceDate instanceof Date
-            && isoDate(day.serviceDate) === planned.serviceDate
-            && day.scheduleId === planned.scheduleId
-            && day.employeeId === planned.employeeId
+        if (
+            !day
+            || !assignment
+            || day.caseSessionIndex !== planned.sessionIndex
+            || !(day.serviceDate instanceof Date)
+            || isoDate(day.serviceDate) !== planned.serviceDate
+        ) {
+            return false;
+        }
+        const matchesPlannedOwner = day.scheduleId === planned.scheduleId
+            && (day.employeeId === null || day.employeeId === planned.employeeId)
             && assignment.scheduleId === planned.scheduleId
-            && assignment.employeeId === planned.employeeId,
-        );
+            && assignment.employeeId === planned.employeeId;
+        return matchesPlannedOwner || isBackfilledBySuccessor(record, assignment, day);
     });
+}
+
+/**
+ * The assignments a written day can belong to: those with the day's schedule,
+ * narrowed by employee only when the day names one. Assignment and employee
+ * records are record-only, so a day with no employee is identified by its
+ * schedule alone. Twin of the row matching in backfillWriter and
+ * persistedDayReasons in service-record-edit-preview.policy.ts.
+ */
+function assignmentsWrittenOnDay(
+    record: FinalizationCaseSnapshot,
+    day: FinalizationDaySnapshot,
+): FinalizationAssignmentSnapshot[] {
+    return record.assignments.filter((candidate) => (
+        candidate.scheduleId === day.scheduleId
+        && (day.employeeId === null || candidate.employeeId === day.employeeId)
+    ));
+}
+
+/**
+ * Write authority moves forward, so a later caregiver may backfill a session
+ * the stored vector still attributes to an earlier, replaced one. Such a day
+ * matches its slot when its writer is the single assignment of the case with
+ * that schedule (and employee, when the day names one), the vector's owner was
+ * replaced, and the writer is that owner's successor: its schedule id is
+ * greater (autoincrement, so later). Stored assignment dates are record-only and may overlap, so they
+ * never decide this. The service-date check in the caller still applies, and
+ * any other disagreement stays a mismatch. Twin of isSuccessorOf in
+ * service-record-edit-preview.policy.ts.
+ */
+function isBackfilledBySuccessor(
+    record: FinalizationCaseSnapshot,
+    plannedAssignment: FinalizationAssignmentSnapshot,
+    day: FinalizationDaySnapshot,
+): boolean {
+    if (plannedAssignment.schedule?.replaced !== true) return false;
+    if (day.scheduleId === null) return false;
+    const writers = assignmentsWrittenOnDay(record, day);
+    if (writers.length !== 1) return false;
+    const writer = writers[0]!;
+    return writer.employeeId !== null
+        && writer.id !== plannedAssignment.id
+        && writer.scheduleId !== null
+        && plannedAssignment.scheduleId !== null
+        && writer.scheduleId > plannedAssignment.scheduleId;
 }
 
 function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {
@@ -277,10 +340,7 @@ function isCompleteFinalizationSource(record: FinalizationCaseSnapshot, calendar
     const seen = new Set<number>();
     for (const day of record.days) {
         const index = day.caseSessionIndex;
-        const assignment = record.assignments.find((candidate) => (
-            candidate.scheduleId === day.scheduleId
-            && candidate.employeeId === day.employeeId
-        ));
+        const assignment = assignmentsWrittenOnDay(record, day)[0];
         if (
             typeof index !== "number"
             ||
@@ -296,8 +356,7 @@ function isCompleteFinalizationSource(record: FinalizationCaseSnapshot, calendar
             || !assignment
             || !Number.isInteger(day.scheduleId)
             || (day.scheduleId ?? 0) < 1
-            || !Number.isInteger(day.employeeId)
-            || (day.employeeId ?? 0) < 1
+            || (day.employeeId !== null && (!Number.isInteger(day.employeeId) || day.employeeId < 1))
             || !day.employeeNameSnapshot?.trim()
             || !Number.isInteger(day.formVersion)
             || day.formVersion < 1
@@ -373,6 +432,7 @@ export class ServiceRecordFinalizationService {
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
                 snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
+                AND: [CLIENT_NOT_TOMBSTONED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                     {
@@ -381,7 +441,15 @@ export class ServiceRecordFinalizationService {
                     },
                 ],
             },
-            select: { id: true, branchId: true, finalizationAttempts: true },
+            select: {
+                id: true,
+                branchId: true,
+                finalizationAttempts: true,
+                status: true,
+                nextAttemptAt: true,
+                finalizationStartedAt: true,
+                lastError: true,
+            },
             orderBy: [{ finalizationDueAt: "asc" }, { updatedAt: "asc" }],
             take: limit,
         });
@@ -390,6 +458,15 @@ export class ServiceRecordFinalizationService {
         for (const candidate of candidates) {
             const claim = await this.claimFinalizationCase(candidate.id, candidate.branchId, referenceDate);
             if (!claim.claimed) continue;
+
+            // Last look before the outbound call: the client can be deleted
+            // between the claim and the send. Give the claim back untouched so
+            // the case is neither failed (which would retry into a send) nor
+            // left in FINALIZING.
+            if (await this.isClientTombstoned(candidate.id)) {
+                await this.releaseClaim(candidate);
+                continue;
+            }
 
             try {
                 const result = await this.createSnapshotUsecase.executeCase(
@@ -441,6 +518,41 @@ export class ServiceRecordFinalizationService {
         return finalizedCount;
     }
 
+    private async isClientTombstoned(caseId: string): Promise<boolean> {
+        const tombstoned = await this.prisma.service_record_case.count({
+            where: { id: caseId, ...CLIENT_TOMBSTONED },
+        });
+        return tombstoned > 0;
+    }
+
+    /**
+     * Undo a FINALIZING claim taken moments ago, restoring the state the case
+     * was selected in. Only touches a case still in FINALIZING.
+     */
+    private async releaseClaim(candidate: {
+        id: string;
+        finalizationAttempts: number;
+        status: string;
+        nextAttemptAt: Date | null;
+        finalizationStartedAt: Date | null;
+        lastError: string | null;
+    }): Promise<void> {
+        await this.prisma.service_record_case.updateMany({
+            where: { id: candidate.id, status: SERVICE_RECORD_CASE_STATUS.FINALIZING },
+            data: {
+                status: candidate.status,
+                nextAttemptAt: candidate.nextAttemptAt,
+                finalizationAttempts: candidate.finalizationAttempts,
+                finalizationStartedAt: candidate.finalizationStartedAt,
+                lastError: candidate.lastError,
+                version: { increment: 1 },
+            },
+        });
+        this.logger.warn(
+            `Skipped service record finalization for a deleted client: case=${candidate.id}`,
+        );
+    }
+
     /**
      * Claim a finalization case under the same client -> employees -> case
      * ordering used by provider and administrator writers. The compatibility
@@ -465,12 +577,14 @@ export class ServiceRecordFinalizationService {
                     status: string;
                     nextAttemptAt: Date | null;
                     finalizationAttempts: number;
+                    client?: { deletedAt: Date | null } | null;
                 } | null>;
             } | undefined;
             if (typeof caseDelegate?.findUnique !== "function") {
                 const claimed = await tx.service_record_case.updateMany({
                     where: {
                         id: caseId,
+                        AND: [CLIENT_NOT_TOMBSTONED],
                         OR: [
                             { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                             {
@@ -540,10 +654,14 @@ export class ServiceRecordFinalizationService {
                     status: true,
                     nextAttemptAt: true,
                     finalizationAttempts: true,
+                    client: { select: { deletedAt: true } },
                 },
             });
             if (
                 !current
+                // Reread under the lock: a client deleted while this run waited
+                // for the lock must not be finalized, and nothing is changed.
+                || (current.client?.deletedAt ?? null) !== null
                 || current.branchId !== branchId
                 || (
                     current.status === SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
@@ -590,6 +708,7 @@ export class ServiceRecordFinalizationService {
                 where: {
                     id: caseId,
                     branchId,
+                    AND: [CLIENT_NOT_TOMBSTONED],
                     OR: [
                         { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                         {
@@ -674,6 +793,7 @@ export class ServiceRecordFinalizationService {
                         employeeNameSnapshot: true,
                         startDate: true,
                         endDate: true,
+                        schedule: { select: { replaced: true } },
                     },
                     orderBy: [{ startDate: "asc" }, { id: "asc" }],
                 },

@@ -8,6 +8,7 @@ const env = {
     DIRECT_URL: databaseUrl,
     NODE_ENV: "test",
     E2E_VENDOR_STUBS: "1",
+    E2E_SMS_SAFEGUARD_TOMBSTONE: "1",
     EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID: "tpl-test",
 };
 
@@ -31,6 +32,8 @@ try {
         "exec",
         "jest",
         "test/e2e/full-flow.e2e.spec.ts",
+        "test/e2e/service-record-link-safeguard.e2e.spec.ts",
+        "test/e2e/sms-safeguard-tombstone.e2e.spec.ts",
         "--testPathIgnorePatterns=/node_modules/",
         "--runInBand",
     ]);

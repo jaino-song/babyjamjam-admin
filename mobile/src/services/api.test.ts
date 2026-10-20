@@ -2,6 +2,30 @@ import { AxiosError } from "axios";
 
 type ApiModule = typeof import("./api");
 
+it("voids an encoded document ID without a body and returns the wire response", async () => {
+    const { apiModule, mockPost } = await loadApiModule();
+    const response = { documentId: "doc/1", voidedAt: "2026-10-14T01:02:00Z", voidedByName: null, displayStatus: "voided" };
+    mockPost.mockResolvedValue({ data: response });
+    expect(await apiModule.eformsignApi.voidDocument("doc/1")).toEqual(response);
+    expect(mockPost).toHaveBeenCalledWith("/eformsign/documents/doc%2F1/void");
+});
+
+it("loads link confirmations with the numeric clientId", async () => {
+    const { apiModule, mockGet } = await loadApiModule();
+    const entries = [{ documentId: "doc-1" }];
+    mockGet.mockResolvedValue({ data: entries });
+    expect(await apiModule.eformsignApi.getLinkConfirmations(7)).toEqual(entries);
+    expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/link-confirmations", { params: { clientId: 7 } });
+});
+
+it("loads the branch-wide link confirmations without any clientId param", async () => {
+    const { apiModule, mockGet } = await loadApiModule();
+    const entries = [{ documentId: "doc-2" }];
+    mockGet.mockResolvedValue({ data: entries });
+    expect(await apiModule.eformsignApi.getLinkConfirmations()).toEqual(entries);
+    expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/link-confirmations", { params: undefined });
+});
+
 function createAxiosServerError(status: number): AxiosError {
     return new AxiosError(
         `Request failed with status code ${status}`,

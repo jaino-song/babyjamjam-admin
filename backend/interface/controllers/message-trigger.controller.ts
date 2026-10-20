@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
+import { OwnerOnlyGuard } from "infrastructure/auth/owner-only.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { MessageTriggerService } from "application/services/message-trigger.service";
@@ -13,6 +14,7 @@ import {
     UpdateMessageTriggerRuleDto,
     UpdateMessageTriggerRuleBranchActivationDto,
     UpdateMessageTriggerRuleActivationWithParentDto,
+    RescheduleMessageTriggerJobDto,
 } from "interface/dto/message-trigger.dto";
 import { parseInteger } from "interface/parse-integer";
 import { SmsProviderReconciliationDto } from "interface/dto/sms-provider-reconciliation.dto";
@@ -63,6 +65,39 @@ export class MessageTriggerController {
         @Param("id") id: string,
     ) {
         return this.triggerService.cancelJobByUser(tenant.branchId ?? "", id);
+    }
+
+    /**
+     * Debug/testing tool: move one pending job's send time (owner only, no UI).
+     */
+    @Post("message-trigger-jobs/:id/reschedule")
+    @HttpCode(200)
+    @UseGuards(OwnerOnlyGuard)
+    rescheduleJob(
+        @CurrentTenant() tenant: { branchId?: string; userId?: string },
+        @Param("id") id: string,
+        @Body() dto: RescheduleMessageTriggerJobDto,
+    ) {
+        return this.triggerService.rescheduleJobForDebug(
+            tenant.branchId ?? "",
+            id,
+            new Date(dto.scheduledFor),
+            tenant.userId ?? "",
+        );
+    }
+
+    /**
+     * Manual resend of one '추가 정보 필요' (needs_setup) message job, one item at a
+     * time (BJJ-444). Branch managers only; no body, no bulk form.
+     */
+    @Post("message-trigger-jobs/:id/resend")
+    @HttpCode(200)
+    @UseGuards(BranchManagerGuard)
+    resendJob(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("id") id: string,
+    ) {
+        return this.triggerService.resendNeedsSetupJob(tenant.branchId ?? "", id);
     }
 
     @Get("message-logs/page")

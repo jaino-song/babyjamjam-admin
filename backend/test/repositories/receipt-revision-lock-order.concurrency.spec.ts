@@ -68,7 +68,9 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
         const statements = [
             `DROP TABLE IF EXISTS receipt_link_token, service_record_revision_document_state, service_record_revision,
                 service_record_case, eformsign_doc_file, eformsign_doc, client CASCADE`,
-            `CREATE TABLE client (id int PRIMARY KEY, branch_id uuid, e_doc_id text UNIQUE, updated_at timestamptz)`,
+            // phone/name/birthday: the phone link re-reads the locked client's identity.
+            `CREATE TABLE client (id int PRIMARY KEY, branch_id uuid, e_doc_id text UNIQUE, updated_at timestamptz,
+                phone text, phone_normalized text, name text, birthday varchar(10))`,
             `CREATE TABLE eformsign_doc (
                 id int PRIMARY KEY, document_id text UNIQUE, client_id int REFERENCES client(id) ON DELETE SET NULL,
                 branch_id uuid, document_kind text, service_record_case_id uuid, revision_id uuid, template_id text,
@@ -80,7 +82,8 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
                 employee_schedule_id int, snapshot_version int, snapshot_chunk_index int, detail_payload jsonb,
                 detail_source_updated_date timestamptz, detail_synced_at timestamptz, sync_status text DEFAULT 'ready',
                 sync_error text, sync_error_at timestamptz, expired_date timestamptz DEFAULT '2030-01-01',
-                auto_finalize_attempts int DEFAULT 0, auto_finalize_last_attempt_at timestamptz, auto_finalize_last_error text)`,
+                auto_finalize_attempts int DEFAULT 0, auto_finalize_last_attempt_at timestamptz, auto_finalize_last_error text,
+                voided_at timestamptz, voided_by uuid)`,
             `ALTER TABLE client ADD FOREIGN KEY (e_doc_id) REFERENCES eformsign_doc(document_id)`,
             `CREATE TABLE eformsign_doc_file (id int PRIMARY KEY, eformsign_doc_id int REFERENCES eformsign_doc(id),
                 file_type text, source_updated_date timestamptz)`,
@@ -591,12 +594,20 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
         const OTHER = 7; // old owner / pointer holder
         const TARGET = 8; // the phone-link target
 
+        const matchingDetail = JSON.stringify({
+            fields: [
+                { id: "이용자 성명", value: "Phone Client", type: "text" },
+                { id: "이용자 생년월일", value: "1990-01-01", type: "text" },
+            ],
+            recipients: [{ recipient_type: "05", name: "Phone Client", sms: PHONE }],
+        });
+
         const freshDocument = (id: number, documentId: string, clientId: number | null, created: string, updated: string) => db.$executeRaw(Prisma.sql`
             INSERT INTO eformsign_doc
                 (id, document_id, client_id, branch_id, document_kind, template_id, created_date, updated_date, status_type,
                  customer_phone, detail_payload, detail_source_updated_date, detail_synced_at, sync_status)
             VALUES (${id}, ${documentId}, ${clientId}, ${BRANCH}::uuid, 'contract', 'template-1', ${created}::timestamptz, ${updated}::timestamptz, '070',
-                    ${PHONE}, '{}'::jsonb, '2026-09-01T00:00:00Z'::timestamptz, '2026-09-01T00:00:10Z'::timestamptz, 'ready')`);
+                    ${PHONE}, ${matchingDetail}::jsonb, '2026-09-01T00:00:00Z'::timestamptz, '2026-09-01T00:00:10Z'::timestamptz, 'ready')`);
 
         const mirrorFiles = async (...docIds: number[]) => {
             for (const docId of docIds) {
@@ -609,8 +620,9 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
             await db.$executeRawUnsafe(
                 "TRUNCATE receipt_link_token, service_record_revision_document_state, service_record_revision, service_record_case, eformsign_doc_file, eformsign_doc, client CASCADE",
             );
-            await db.$executeRaw(Prisma.sql`INSERT INTO client (id, branch_id, e_doc_id, updated_at)
-                VALUES (${OTHER}, ${BRANCH}::uuid, NULL, now()), (${TARGET}, ${BRANCH}::uuid, NULL, now())`);
+            await db.$executeRaw(Prisma.sql`INSERT INTO client (id, branch_id, e_doc_id, updated_at, phone, phone_normalized, name, birthday)
+                VALUES (${OTHER}, ${BRANCH}::uuid, NULL, now(), '010-9999-9999', '01099999999', 'Other Client', '1985-05-05'),
+                       (${TARGET}, ${BRANCH}::uuid, NULL, now(), '010-1234-5678', ${PHONE}, 'Phone Client', '1990-01-01')`);
         });
 
         const targetEntity = () => new ClientEntity(
@@ -667,10 +679,10 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
         const isPhoneLinkDocumentLock = (query: Prisma.Sql) =>
             isAnyDocumentLock(query) && query.text.includes("eformsign_doc_file");
 
-        describe("document moves from another client to the phone target", () => {
+        describe("an unowned matching document moves to the phone target", () => {
             beforeEach(async () => {
-                // doc-B belongs to client 7 (no pointer); the phone link and the linker both hand it to client 8.
-                await freshDocument(20, "doc-B", OTHER, "2026-08-10", "2026-09-01");
+                // Both writers may legitimately link this unowned document to client 8.
+                await freshDocument(20, "doc-B", null, "2026-08-10", "2026-09-01");
                 await mirrorFiles(20);
             });
 
@@ -730,6 +742,165 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
             }, 30000);
         });
 
+        describe("another client's pointer at the document the phone link takes (B6)", () => {
+            const BYSTANDER = 9; // never part of the link: neither owner, pointer holder nor target
+
+            const bystanderRow = async () => (await db.$queryRaw<Array<{ e_doc_id: string | null; updated_at: Date }>>(
+                Prisma.sql`SELECT e_doc_id, updated_at FROM client WHERE id = ${BYSTANDER}`))[0]!;
+
+            beforeEach(async () => {
+                // client 7 owns doc-B AND points at it; client 9 owns/points at an unrelated document.
+                await freshDocument(20, "doc-B", OTHER, "2026-08-10", "2026-09-01");
+                await mirrorFiles(20);
+                await db.$executeRawUnsafe(`UPDATE client SET e_doc_id = 'doc-B' WHERE id = ${OTHER}`);
+                await db.$executeRaw(Prisma.sql`INSERT INTO client (id, branch_id, e_doc_id, updated_at)
+                    VALUES (${BYSTANDER}, ${BRANCH}::uuid, NULL, '2026-01-01T00:00:00Z'::timestamptz)`);
+                await db.$executeRaw(Prisma.sql`INSERT INTO eformsign_doc
+                    (id, document_id, client_id, branch_id, document_kind, template_id, created_date, updated_date, status_type)
+                    VALUES (90, 'doc-Z', ${BYSTANDER}, ${BRANCH}::uuid, 'contract', 'template-1', '2026-07-01', '2026-09-01', '070')`);
+                await db.$executeRawUnsafe(`UPDATE client SET e_doc_id = 'doc-Z' WHERE id = ${BYSTANDER}`);
+            });
+
+            const expectMovedToTarget = async () => {
+                expect(await ownerOf("doc-B")).toBe(TARGET);
+                expect(await pointerOf(TARGET)).toBe("doc-B");
+                expect(await pointerOf(OTHER)).toBeNull();
+            };
+            const expectBystanderUntouched = async () => {
+                const row = await bystanderRow();
+                expect(row.e_doc_id).toBe("doc-Z");
+                expect(row.updated_at.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+            };
+
+            it("preserves another client's document and pointer, touching nobody else", async () => {
+                const phone = phoneLinkService(() => undefined);
+
+                await phone.run();
+
+                expect(phone.failures).toEqual([]);
+                expect(await ownerOf("doc-B")).toBe(OTHER);
+                expect(await pointerOf(OTHER)).toBe("doc-B");
+                expect(await pointerOf(TARGET)).toBeNull();
+                await expectBystanderUntouched();
+            }, 30000);
+
+            it("clears another client's pointer even when the document already belongs to the target", async () => {
+                await db.$executeRaw(Prisma.sql`UPDATE eformsign_doc SET client_id = ${TARGET} WHERE document_id = 'doc-B'`);
+                const phone = phoneLinkService(() => undefined);
+
+                await phone.run();
+
+                expect(phone.failures).toEqual([]);
+                await expectMovedToTarget();
+                await expectBystanderUntouched();
+            }, 30000);
+
+            it("phone link takes an unowned document with a stale pointer first, the linker arrives second: no deadlock, no P2002", async () => {
+                await db.$executeRawUnsafe("UPDATE eformsign_doc SET client_id = NULL WHERE document_id = 'doc-B'");
+                const phoneHoldsDocuments = deferred();
+                const releasePhone = deferred();
+                let paused = false;
+                const phone = phoneLinkService(async (query) => {
+                    if (!paused && isPhoneLinkDocumentLock(query)) {
+                        paused = true;
+                        phoneHoldsDocuments.resolve();
+                        await releasePhone.promise;
+                    }
+                }, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+
+                await phoneHoldsDocuments.promise;
+                const link = new SbEformsignDocRepository(shimFor(other, () => undefined, { deadlockTimeout: true }) as never)
+                    .linkClientIfActive(BRANCH, "doc-B", TARGET);
+                await sleep(600);
+                releasePhone.resolve();
+
+                const outcomes = await Promise.allSettled([phoneLink, link]);
+                expectBothCompleted(outcomes);
+                expect(phone.failures).toEqual([]);
+                expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
+                await expectMovedToTarget();
+                await expectBystanderUntouched();
+            }, 30000);
+
+            it("the linker holds the client rows first, the phone link arrives second: no deadlock, no P2002", async () => {
+                const linkerHoldsClients = deferred();
+                const releaseLinker = deferred();
+                let paused = false;
+                const link = new SbEformsignDocRepository(shimFor(other, async (query) => {
+                    if (!paused && isClientLock(query)) {
+                        paused = true;
+                        linkerHoldsClients.resolve();
+                        await releaseLinker.promise;
+                    }
+                }, { deadlockTimeout: true }) as never).linkClientIfActive(BRANCH, "doc-B", TARGET);
+
+                await linkerHoldsClients.promise;
+                const phone = phoneLinkService(() => undefined, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+                await sleep(600);
+                releaseLinker.resolve();
+
+                const outcomes = await Promise.allSettled([phoneLink, link]);
+                expectBothCompleted(outcomes);
+                expect(phone.failures).toEqual([]);
+                expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
+                await expectMovedToTarget();
+                await expectBystanderUntouched();
+            }, 30000);
+
+            const failuresOf = (failures: string[]) => failures.filter((failure) =>
+                /40P01|deadlock detected|P2002|Unique constraint/.test(failure));
+
+            it("phone link takes an unowned document with a stale pointer first, a purge arrives second: no deadlock, no P2002", async () => {
+                await db.$executeRawUnsafe("UPDATE eformsign_doc SET client_id = NULL WHERE document_id = 'doc-B'");
+                const phoneHoldsDocuments = deferred();
+                const releasePhone = deferred();
+                let paused = false;
+                const phone = phoneLinkService(async (query) => {
+                    if (!paused && isPhoneLinkDocumentLock(query)) {
+                        paused = true;
+                        phoneHoldsDocuments.resolve();
+                        await releasePhone.promise;
+                    }
+                }, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+
+                await phoneHoldsDocuments.promise;
+                const purge = new SbEformsignDocumentMirrorRepository(shimFor(other, () => undefined, { deadlockTimeout: true }) as never)
+                    .purgeContent(["doc-B"], new Date("2026-09-08T00:00:00.000Z"));
+                await sleep(600);
+                releasePhone.resolve();
+
+                expectBothCompleted(await Promise.allSettled([phoneLink, purge]));
+                expect(failuresOf(phone.failures)).toEqual([]);
+                await expectBystanderUntouched();
+            }, 30000);
+
+            it("a purge holds the client rows first, the phone link arrives second: no deadlock, no P2002", async () => {
+                const purgeHoldsClients = deferred();
+                const releasePurge = deferred();
+                let paused = false;
+                const purge = new SbEformsignDocumentMirrorRepository(shimFor(other, async (query) => {
+                    if (!paused && isClientLock(query)) {
+                        paused = true;
+                        purgeHoldsClients.resolve();
+                        await releasePurge.promise;
+                    }
+                }, { deadlockTimeout: true }) as never).purgeContent(["doc-B"], new Date("2026-09-08T00:00:00.000Z"));
+
+                await purgeHoldsClients.promise;
+                const phone = phoneLinkService(() => undefined, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+                await sleep(600);
+                releasePurge.resolve();
+
+                expectBothCompleted(await Promise.allSettled([phoneLink, purge]));
+                expect(failuresOf(phone.failures)).toEqual([]);
+                await expectBystanderUntouched();
+            }, 30000);
+        });
+
         describe("both candidate documents unowned, the linker's client points at the lower-id candidate", () => {
             // Phone target 8 matches doc-A (id 10) and doc-B (id 20), neither owned. Client 7 points at doc-A
             // and the linker links doc-B to client 7: it locks client 7, then doc-B, then its pointed doc-A -
@@ -751,7 +922,7 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
                 expect(new Set(pointers.map((row) => row.e_doc_id)).size).toBe(pointers.length);
             };
 
-            it("the linker holds client 7 and doc-B first, the phone link arrives second: no deadlock", async () => {
+            it("the linker holds client 7 and doc-B first, the phone link arrives second: no deadlock, the linker's ownership is preserved", async () => {
                 const linkerHoldsDocument = deferred();
                 const releaseLinker = deferred();
                 let paused = false;
@@ -773,8 +944,12 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
                 const outcomes = await Promise.allSettled([phoneLink, link]);
                 expectBothCompleted(outcomes);
                 expectNoDeadlock(phone.failures);
+                expect(phone.failures).toHaveLength(1);
+                expect(phone.failures[0]).toContain("Contract document candidate changed while locking");
                 expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
                 await expectLinkerWon();
+                expect(await ownerOf("doc-A")).toBeNull();
+                expect(await pointerOf(TARGET)).toBeNull();
             }, 30000);
 
             it("the phone link holds its documents first, the linker arrives second: no deadlock", async () => {

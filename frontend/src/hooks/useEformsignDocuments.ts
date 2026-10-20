@@ -172,6 +172,7 @@ export function useContractClientCandidate(documentId: string | null) {
     enabled: documentId !== null,
     staleTime: 1000 * 60,
     refetchOnWindowFocus: false,
+    // 클릭으로 여는 등록 폼은 조회 실패 시 즉시 수동 입력으로 전환해야 하므로 자동 재시도하지 않는다.
     retry: false,
   });
 }

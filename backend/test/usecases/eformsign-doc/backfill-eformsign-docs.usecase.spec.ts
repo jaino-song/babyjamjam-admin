@@ -1,6 +1,9 @@
 import {
     BackfillEformsignDocsError,
     BackfillEformsignDocsUsecase,
+    type EformsignDocsBackfillProgress,
+    type EformsignDocsBackfillSummary,
+    type EformsignDocsBackfillTypeSummary,
 } from "application/usecases/eformsign-doc/backfill-eformsign-docs.usecase";
 import { MirrorUnassignedEformsignDocUsecase } from "application/usecases/eformsign-doc/mirror-unassigned-eformsign-doc.usecase";
 import { EformsignDocStaleUpdateError } from "domain/repositories/eformsign-doc.repository.interface";
@@ -1691,6 +1694,477 @@ describe("BackfillEformsignDocsUsecase", () => {
         expect(repository.upsertUnassignedByDocumentId).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({ updateStatusDetail: false }),
+        );
+    });
+});
+
+describe("Backfill collection observation", () => {
+    const page = { documents: [], total_rows: 0 };
+    function setup(observer = { page: jest.fn().mockResolvedValue(undefined), scan: jest.fn().mockResolvedValue(undefined),
+        finish: jest.fn().mockResolvedValue(undefined) }) {
+        const client = { getInProgressDocumentsPage: jest.fn().mockResolvedValue(page),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue(page), getRejectedDocumentsPage: jest.fn().mockResolvedValue(page) };
+        const boundary = createBoundary();
+        const mirror = { mirrorRemoteDocument: jest.fn().mockResolvedValue(undefined) };
+        const writer = { begin: jest.fn().mockResolvedValue(observer) };
+        const usecase = new BackfillEformsignDocsUsecase(client as never, boundary as never,
+            { findByDocumentIdUnscoped: jest.fn() } as never, mirror as never, undefined, undefined, writer as never);
+        const receiptContext = { configuredCompanyId: "company-1", trigger: "operator-backfill" as const, lockMode: "valkey" as const };
+        return { client, boundary, mirror, writer, observer, usecase, receiptContext };
+    }
+
+    it("records six actual empty scans through the explicit optional writer binding", async () => {
+        const { usecase, observer, receiptContext } = setup();
+        await usecase.execute({ receiptContext }, TEST_PRINCIPAL);
+        expect(observer.page).toHaveBeenCalledTimes(6);
+        expect(observer.scan).toHaveBeenCalledTimes(6);
+        expect(observer.page.mock.calls.map(([value]) => [value.documentType, value.pass, value.startOffset,
+            value.returnedCount, value.totalCount, value.terminal])).toEqual([
+            ["01", 1, 0, 0, 0, true], ["01", 2, 0, 0, 0, true],
+            ["03", 1, 0, 0, 0, true], ["03", 2, 0, 0, 0, true],
+            ["04", 1, 0, 0, 0, true], ["04", 2, 0, 0, 0, true],
+        ]);
+        expect(observer.finish).toHaveBeenCalledWith("succeeded");
+    });
+
+    it("begins before credentials and observes the original credential rejection", async () => {
+        const { usecase, observer, boundary, writer, receiptContext } = setup();
+        const error = new Error("credential failure");
+        boundary.withCredentials.mockRejectedValueOnce(error as never);
+        await expect(usecase.execute({ receiptContext }, TEST_PRINCIPAL)).rejects.toBe(error);
+        expect(writer.begin.mock.invocationCallOrder[0]).toBeLessThan(boundary.withCredentials.mock.invocationCallOrder[0]!);
+        expect(observer.finish).toHaveBeenCalledWith("failed");
+    });
+
+    it("awaits observation before mirror and stops after lease loss during observation", async () => {
+        const { usecase, client, observer, mirror, receiptContext } = setup();
+        client.getInProgressDocumentsPage.mockResolvedValue({ documents: [createRemoteDocument("doc-1")], total_rows: 1 } as never);
+        let held = true;
+        observer.page.mockImplementationOnce(async () => { held = false; });
+        await expect(usecase.execute({ receiptContext, shouldContinue: () => held }, TEST_PRINCIPAL)).rejects.toThrow("lease");
+        expect(mirror.mirrorRemoteDocument).not.toHaveBeenCalled();
+        expect(observer.finish).toHaveBeenCalledWith("interrupted", expect.any(Function));
+    });
+
+    it("preserves the rejected fetch as the cause when the lease expires during failure observation", async () => {
+        const { usecase, client, observer, mirror, receiptContext } = setup();
+        const fetchError = new Error("provider request rejected");
+        client.getInProgressDocumentsPage.mockRejectedValueOnce(fetchError);
+        let held = true;
+        const shouldContinue = jest.fn(() => held);
+        observer.page.mockImplementationOnce(async () => { held = false; });
+        let rejected: unknown;
+        try { await usecase.execute({ receiptContext, shouldContinue }, TEST_PRINCIPAL); }
+        catch (error) { rejected = error; }
+        expect(rejected).toBeInstanceOf(BackfillEformsignDocsError);
+        expect((rejected as BackfillEformsignDocsError).cause).toBe(fetchError);
+        expect((rejected as Error).message).toContain("lease");
+        expect(shouldContinue.mock.invocationCallOrder.some(order => order > observer.page.mock.invocationCallOrder[0]!)).toBe(true);
+        expect(client.getCompletedDocumentsPage).not.toHaveBeenCalled();
+        expect(client.getRejectedDocumentsPage).not.toHaveBeenCalled();
+        expect(mirror.mirrorRemoteDocument).not.toHaveBeenCalled();
+        expect(observer.finish).toHaveBeenCalledWith("interrupted", shouldContinue);
+    });
+
+    it("keeps fetch failures unknown and preserves business success when the observer fails", async () => {
+        const first = setup();
+        first.client.getInProgressDocumentsPage.mockRejectedValueOnce(new Error("private provider text"));
+        await expect(first.usecase.execute({ receiptContext: first.receiptContext }, TEST_PRINCIPAL)).rejects.toThrow();
+        expect(first.observer.page).toHaveBeenCalledWith(expect.objectContaining({ returnedCount: null, totalCount: null,
+            terminal: null, outcome: "failed", failureCode: "fetch-failed" }));
+        expect(JSON.stringify(first.observer.page.mock.calls)).not.toContain("private provider text");
+        const second = setup();
+        second.observer.page.mockRejectedValue(new Error("ledger down"));
+        second.observer.finish.mockRejectedValue(new Error("ledger down"));
+        await expect(second.usecase.execute({ receiptContext: second.receiptContext }, TEST_PRINCIPAL)).resolves.toMatchObject({ failed: 0 });
+    });
+
+    it("observes a fetched page before a mirror failure and preserves the business failure", async () => {
+        const { usecase, client, observer, mirror, receiptContext } = setup();
+        client.getInProgressDocumentsPage.mockResolvedValue({ documents: [createRemoteDocument("private-doc")], total_rows: 1 } as never);
+        mirror.mirrorRemoteDocument.mockRejectedValue(new Error("mirror rejected"));
+        await expect(usecase.execute({ receiptContext }, TEST_PRINCIPAL)).rejects.toThrow();
+        expect(observer.page.mock.invocationCallOrder[0]).toBeLessThan(mirror.mirrorRemoteDocument.mock.invocationCallOrder[0]!);
+        expect(JSON.stringify(observer.page.mock.calls)).not.toContain("private-doc");
+        expect(observer.finish).toHaveBeenCalledWith("failed");
+    });
+
+    it("records actual offsets in both passes and a failed pass2 page2 without fabricated counts", async () => {
+        const { usecase, client, observer, receiptContext } = setup();
+        const docs = Array.from({ length: 100 }, (_, index) => createRemoteDocument(`doc-${index}`));
+        client.getInProgressDocumentsPage
+            .mockResolvedValueOnce({ documents: docs, total_rows: 101 } as never)
+            .mockResolvedValueOnce({ documents: [createRemoteDocument("last")], total_rows: 101 } as never)
+            .mockResolvedValueOnce({ documents: docs, total_rows: 101 } as never)
+            .mockRejectedValueOnce(new Error("down"));
+        await expect(usecase.execute({ receiptContext }, TEST_PRINCIPAL)).rejects.toThrow();
+        expect(observer.page.mock.calls.slice(0, 4).map(([value]) => [value.pass, value.ordinal, value.startOffset,
+            value.returnedCount])).toEqual([[1, 0, 0, 100], [1, 1, 100, 1], [2, 0, 0, 100], [2, 1, 100, null]]);
+    });
+});
+
+/**
+ * Characterization of the inactive collection path (BJJ-453 1B). In production no
+ * EformsignBackupCollectionWriter is registered, so the usecase runs without an
+ * observer. The invariant under test is that business outcomes there equal the
+ * pre-collection behaviour exactly. Every expected value below was produced by
+ * running the identical scenario against the base commit (origin/dev e6780416a),
+ * never by recording what the current code returns.
+ */
+describe("Inactive collection path (no writer) keeps base behaviour", () => {
+    // `receiptContext` is accepted by the current option type only; the cast keeps the
+    // same scenario source runnable against the base commit.
+    const RECEIPT_CONTEXT = {
+        configuredCompanyId: "company-1",
+        trigger: "operator-backfill",
+        lockMode: "valkey",
+    };
+    // Expected traces: recorded by running these scenarios on the base commit
+    // (origin/dev e6780416a). Summary rows read fetched/created/updated/skipped/duplicates/failed/pages.
+    const LAST_LEASE_POLL = 16;
+    const LAST_LEASE_POLL_ABSENT = 14;
+    const EXPECT_NORMAL = [
+        "outcome: resolved total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@2/2: total 2/2/0/0/0/0/1 | 01 pending 2/2/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 03@1/1: total 3/3/0/0/0/0/2 | 01 completed 2/2/0/0/0/0/1 | 03 pending 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 04@0/0: total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1",
+        "progress: completed: total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "pages: 01@0,01@0,03@0,03@0,04@0,04@0",
+        "mirrored: a-0,a-1,c-0",
+        "lease polls: 16",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_NORMAL_NO_LEASE = [
+        "outcome: resolved total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@2/2: total 2/2/0/0/0/0/1 | 01 pending 2/2/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 03@1/1: total 3/3/0/0/0/0/2 | 01 completed 2/2/0/0/0/0/1 | 03 pending 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 04@0/0: total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1",
+        "progress: completed: total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "pages: 01@0,01@0,03@0,03@0,04@0,04@0",
+        "mirrored: a-0,a-1,c-0",
+        "lease polls: 0",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_LEASE_LOST_AT_LAST_CHECK = [
+        "outcome: rejected EformsignBackfillLeaseLostError(\"Eformsign document backfill lost its execution lease\" summary={total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@2/2: total 2/2/0/0/0/0/1 | 01 pending 2/2/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 03@1/1: total 3/3/0/0/0/0/2 | 01 completed 2/2/0/0/0/0/1 | 03 pending 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/0",
+        "progress: failed: total 3/3/0/0/0/0/3 | 01 completed 2/2/0/0/0/0/1 | 03 completed 1/1/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1",
+        "pages: 01@0,01@0,03@0,03@0,04@0,04@0",
+        "mirrored: a-0,a-1,c-0",
+        "lease polls: 16",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_FETCH_FAILURE_LEASE_LOST = [
+        "outcome: rejected EformsignBackfillLeaseLostError(\"Eformsign document backfill lost its execution lease\" summary={total 0/0/0/0/0/0/0 | 01 failed 0/0/0/0/0/0/0 error=\"Failed to fetch eformsign document page type=01 skip=0\" | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: failed: total 0/0/0/0/0/0/0 | 01 failed 0/0/0/0/0/0/0 error=\"Failed to fetch eformsign document page type=01 skip=0\" | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "pages: 01@0",
+        "mirrored: ",
+        "lease polls: 3",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_VERIFY_FETCH_FAILURE_LEASE_LOST = [
+        "outcome: rejected EformsignBackfillLeaseLostError(\"Eformsign document backfill lost its execution lease\" summary={total 1/1/0/0/0/0/1 | 01 failed 1/1/0/0/0/0/1 error=\"Failed to verify eformsign document coverage type=01 skip=0\" | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@1/1: total 1/1/0/0/0/0/1 | 01 pending 1/1/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: failed: total 1/1/0/0/0/0/1 | 01 failed 1/1/0/0/0/0/1 error=\"Failed to verify eformsign document coverage type=01 skip=0\" | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "pages: 01@0,01@0",
+        "mirrored: a-0",
+        "lease polls: 5",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_FETCH_FAILURE_LEASE_HELD = [
+        "outcome: rejected BackfillEformsignDocsError(\"Eformsign document backfill failed for types=01\" cause=[BackfillEformsignDocsError(\"Failed to fetch eformsign document page type=01 skip=0\" cause=Error(\"provider request rejected\") summary={total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0})] summary={total 0/0/0/0/0/0/2 | 01 failed 0/0/0/0/0/0/0 error=\"Failed to fetch eformsign document page type=01 skip=0\" | 03 completed 0/0/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 03@0/0: total 0/0/0/0/0/0/1 | 01 failed 0/0/0/0/0/0/0 error=\"Failed to fetch eformsign document page type=01 skip=0\" | 03 pending 0/0/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 04@0/0: total 0/0/0/0/0/0/2 | 01 failed 0/0/0/0/0/0/0 error=\"Failed to fetch eformsign document page type=01 skip=0\" | 03 completed 0/0/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1",
+        "progress: failed: total 0/0/0/0/0/0/2 | 01 failed 0/0/0/0/0/0/0 error=\"Failed to fetch eformsign document page type=01 skip=0\" | 03 completed 0/0/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "pages: 01@0,03@0,03@0,04@0,04@0",
+        "mirrored: ",
+        "lease polls: 10",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_LEASE_LOST_BETWEEN_PAGES = [
+        "outcome: rejected EformsignBackfillLeaseLostError(\"Eformsign document backfill lost its execution lease\" summary={total 100/100/0/0/0/0/1 | 01 pending 100/100/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@100/101: total 100/100/0/0/0/0/1 | 01 pending 100/100/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: failed: total 100/100/0/0/0/0/1 | 01 pending 100/100/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "pages: 01@0",
+        "mirrored: 100 documents",
+        "lease polls: 103",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_LEASE_LOST_DURING_PAGE_FETCH = [
+        "outcome: rejected EformsignBackfillLeaseLostError(\"Eformsign document backfill lost its execution lease\" summary={total 101/100/0/0/0/0/2 | 01 pending 101/100/0/0/0/0/2 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@100/101: total 100/100/0/0/0/0/1 | 01 pending 100/100/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: failed: total 101/100/0/0/0/0/2 | 01 pending 101/100/0/0/0/0/2 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "pages: 01@0,01@100",
+        "mirrored: 100 documents",
+        "lease polls: 104",
+        "mirror service: none",
+        "token refreshes: 0",
+    ];
+    const EXPECT_ABSENT_NORMAL = [
+        "outcome: resolved total 0/0/0/0/0/0/3 | 01 completed 0/0/0/0/0/0/1 | 03 completed 0/0/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@0/0: total 0/0/0/0/0/0/1 | 01 pending 0/0/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 03@0/0: total 0/0/0/0/0/0/2 | 01 completed 0/0/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 04@0/0: total 0/0/0/0/0/0/3 | 01 completed 0/0/0/0/0/0/1 | 03 completed 0/0/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1",
+        "progress: completed: total 0/0/0/0/0/0/3 | 01 completed 0/0/0/0/0/0/1 | 03 completed 0/0/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "pages: 01@0,01@0,03@0,03@0,04@0,04@0",
+        "mirrored: ",
+        "lease polls: 14",
+        "mirror service: {\"findActiveDocumentIds\":[[]],\"findPermanentPurgeRequestedDocumentIds\":[[]],\"markDocumentsDeleted\":[[[\"gone-doc\"]]],\"purgeDocuments\":[]}",
+        "token refreshes: 0",
+    ];
+    const EXPECT_ABSENT_LEASE_LOST = [
+        "outcome: rejected EformsignBackfillLeaseLostError(\"Eformsign document backfill lost its execution lease\" summary={total 0/0/0/0/0/0/3 | 01 completed 0/0/0/0/0/0/1 | 03 completed 0/0/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1})",
+        "progress: started: total 0/0/0/0/0/0/0 | 01 pending 0/0/0/0/0/0/0 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 01@0/0: total 0/0/0/0/0/0/1 | 01 pending 0/0/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/0 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 03@0/0: total 0/0/0/0/0/0/2 | 01 completed 0/0/0/0/0/0/1 | 03 pending 0/0/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/0",
+        "progress: page 04@0/0: total 0/0/0/0/0/0/3 | 01 completed 0/0/0/0/0/0/1 | 03 completed 0/0/0/0/0/0/1 | 04 pending 0/0/0/0/0/0/1",
+        "progress: failed: total 0/0/0/0/0/0/3 | 01 completed 0/0/0/0/0/0/1 | 03 completed 0/0/0/0/0/0/1 | 04 completed 0/0/0/0/0/0/1",
+        "pages: 01@0,01@0,03@0,03@0,04@0,04@0",
+        "mirrored: ",
+        "lease polls: 14",
+        "mirror service: {\"findActiveDocumentIds\":[[]],\"findPermanentPurgeRequestedDocumentIds\":[[]],\"markDocumentsDeleted\":[],\"purgeDocuments\":[]}",
+        "token refreshes: 0",
+    ];
+
+    const variants = ["plain", "receipt"] as const;
+    type Variant = typeof variants[number];
+    type Page = { documents: EformsignApiDocumentResponse[]; total_rows: number };
+    type Handler = (call: number, skip: number, h: Harness) => Promise<Page>;
+
+    interface Harness {
+        usecase: BackfillEformsignDocsUsecase;
+        polls: number;
+        held: boolean;
+        pageCalls: string[];
+        mirrored: string[];
+        mirrorService: Record<string, jest.Mock> | undefined;
+        boundary: ReturnType<typeof createBoundary>;
+    }
+
+    const emptyPage = (): Promise<Page> => Promise.resolve({ documents: [], total_rows: 0 });
+    const docs = (prefix: string, count: number) =>
+        Array.from({ length: count }, (_, index) => createRemoteDocument(`${prefix}-${index}`));
+
+    function makeHarness(
+        handlers: Partial<Record<"01" | "03" | "04", Handler>> = {},
+        onMirror?: (id: string, h: Harness) => void,
+        absentLocalDocument = false,
+    ): Harness {
+        const calls: Record<string, number> = { "01": 0, "03": 0, "04": 0 };
+        const holder = {} as Harness;
+        const page = (type: "01" | "03" | "04") => jest.fn((_token: string, _limit: number, skip: number) => {
+            holder.pageCalls.push(`${type}@${skip}`);
+            const call = calls[type]!;
+            calls[type] = call + 1;
+            return (handlers[type] ?? emptyPage)(call, skip, holder);
+        });
+        const client = {
+            getInProgressDocumentsPage: page("01"),
+            getCompletedDocumentsPage: page("03"),
+            getRejectedDocumentsPage: page("04"),
+        };
+        const mirror = {
+            mirrorRemoteDocument: jest.fn((document: EformsignApiDocumentResponse) => {
+                holder.mirrored.push(document.id);
+                onMirror?.(document.id, holder);
+                return Promise.resolve({ documentId: document.id });
+            }),
+        };
+        // Only the absence post-pass scenario wires the optional mirror service; every
+        // other scenario leaves it out so that post-pass is skipped, as in production specs.
+        const mirrorService = absentLocalDocument ? {
+            findActiveDocumentIds: jest.fn().mockResolvedValue(["gone-doc"]),
+            findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue([]),
+            markDocumentsDeleted: jest.fn().mockResolvedValue(undefined),
+            purgeDocuments: jest.fn(),
+        } : undefined;
+        Object.assign(client, absentLocalDocument
+            ? { getDocument: jest.fn().mockRejectedValue(new EformsignApiError("missing", 404)) } : {});
+        const boundary = createBoundary();
+        // Six constructor parameters: exactly what base accepts, no collection writer.
+        const usecase = new BackfillEformsignDocsUsecase(
+            client as never,
+            boundary as never,
+            { findByDocumentIdUnscoped: jest.fn().mockResolvedValue(null) } as never,
+            mirror as never,
+            mirrorService as never,
+            undefined,
+        );
+        Object.assign(holder, {
+            usecase, polls: 0, held: true, pageCalls: [], mirrored: [], mirrorService, boundary,
+        });
+        return holder;
+    }
+
+    /** One line per summary: counts are fetched/created/updated/skipped/duplicates/failed/pages. */
+    const flat = (summary: EformsignDocsBackfillSummary): string => {
+        const row = (x: EformsignDocsBackfillSummary | EformsignDocsBackfillTypeSummary) =>
+            [x.fetched, x.created, x.updated, x.skipped, x.duplicates, x.failed, x.pages].join("/");
+        return [`total ${row(summary)}`, ...(["01", "03", "04"] as const).map(type => {
+            const entry = summary.byDocumentType[type];
+            return `${type} ${entry.status} ${row(entry)}${entry.error ? ` error=${JSON.stringify(entry.error)}` : ""}`;
+        })].join(" | ");
+    };
+
+    const describeError = (error: unknown): string => {
+        if (Array.isArray(error)) return `[${error.map(describeError).join(", ")}]`;
+        if (!(error instanceof Error)) return `non-error ${String(error)}`;
+        const backfill = error as Partial<BackfillEformsignDocsError>;
+        const cause = (error as { cause?: unknown }).cause;
+        return `${error.constructor.name}(${JSON.stringify(error.message)}`
+            + `${cause !== undefined ? ` cause=${describeError(cause)}` : ""}`
+            + `${backfill.summary ? ` summary={${flat(backfill.summary)}}` : ""})`;
+    };
+
+    /** The whole observable run, one line per concern, so expectations stay readable. */
+    async function run(
+        h: Harness,
+        variant: Variant,
+        lease?: (poll: number, h: Harness) => boolean,
+    ): Promise<string[]> {
+        const progress: string[] = [];
+        const options = {
+            ...(variant === "receipt" ? { receiptContext: RECEIPT_CONTEXT } : {}),
+            ...(lease ? { shouldContinue: () => { h.polls += 1; return lease(h.polls, h); } } : {}),
+            onProgress: (p: EformsignDocsBackfillProgress) => progress.push(
+                `${p.phase}${p.documentType ? ` ${p.documentType}@${p.skip}/${p.totalCount}` : ""}: ${flat(p.summary)}`),
+        };
+        let outcome: string;
+        try {
+            outcome = `resolved ${flat(await h.usecase.execute(options as never, TEST_PRINCIPAL))}`;
+        } catch (error) {
+            outcome = `rejected ${describeError(error)}`;
+        }
+        return [
+            `outcome: ${outcome}`,
+            ...progress.map(line => `progress: ${line}`),
+            `pages: ${h.pageCalls.join(",")}`,
+            `mirrored: ${h.mirrored.length > 6 ? `${h.mirrored.length} documents` : h.mirrored.join(",")}`,
+            `lease polls: ${h.polls}`,
+            `mirror service: ${h.mirrorService
+                ? JSON.stringify(Object.fromEntries(Object.entries(h.mirrorService).map(([name, fn]) => [name, fn.mock.calls])))
+                : "none"}`,
+            `token refreshes: ${h.boundary.withRefreshedCredentials.mock.calls.length}`,
+        ];
+    }
+
+    /** Each scenario is run with and without receiptContext; both must equal the base trace. */
+    async function bothVariants(
+        build: () => Harness,
+        lease: ((poll: number, h: Harness) => boolean) | undefined,
+        expected: string[],
+    ) {
+        for (const variant of variants) {
+            expect(await run(build(), variant, lease)).toEqual(expected);
+        }
+    }
+
+    const NORMAL_HANDLERS = {
+        "01": () => Promise.resolve({ documents: docs("a", 2), total_rows: 2 }),
+        "03": () => Promise.resolve({ documents: docs("c", 1), total_rows: 1 }),
+    };
+    const buildNormal = () => makeHarness(NORMAL_HANDLERS);
+
+    it("a: completes normally with the base summary, progress phases and mirror calls", async () => {
+        await bothVariants(buildNormal, () => true, EXPECT_NORMAL);
+    });
+
+    it("a: completes normally when no shouldContinue is supplied", async () => {
+        await bothVariants(buildNormal, undefined, EXPECT_NORMAL_NO_LEASE);
+    });
+
+    it("b: succeeds when the lease flips only after base's last lease check", async () => {
+        await bothVariants(buildNormal, poll => poll <= LAST_LEASE_POLL, EXPECT_NORMAL);
+    });
+
+    it("b: fails with the base lease error when the lease is lost at the last lease check", async () => {
+        await bothVariants(buildNormal, poll => poll < LAST_LEASE_POLL, EXPECT_LEASE_LOST_AT_LAST_CHECK);
+    });
+
+    const buildAbsent = () => makeHarness({}, undefined, true);
+
+    it("a: the absence post-pass completes normally and tombstones the vendor-absent document", async () => {
+        await bothVariants(buildAbsent, () => true, EXPECT_ABSENT_NORMAL);
+    });
+
+    it("b: the absence post-pass runs unchanged and succeeds when the lease flips after its last check", async () => {
+        await bothVariants(buildAbsent, poll => poll <= LAST_LEASE_POLL_ABSENT, EXPECT_ABSENT_NORMAL);
+    });
+
+    it("b: the absence post-pass fails with the base lease error when the lease is lost at its last check", async () => {
+        await bothVariants(buildAbsent, poll => poll < LAST_LEASE_POLL_ABSENT, EXPECT_ABSENT_LEASE_LOST);
+    });
+
+    it("c: a provider fetch failure while the lease is lost surfaces as the base lease error without the fetch cause", async () => {
+        await bothVariants(
+            () => makeHarness({
+                "01": (_call, _skip, h) => { h.held = false; return Promise.reject(new Error("provider request rejected")); },
+            }),
+            (_poll, h) => h.held,
+            EXPECT_FETCH_FAILURE_LEASE_LOST,
+        );
+    });
+
+    it("c: a pass-2 verification fetch failure while the lease is lost surfaces as the base lease error", async () => {
+        await bothVariants(
+            () => makeHarness({
+                "01": (call, _skip, h) => {
+                    if (call === 0) return Promise.resolve({ documents: docs("a", 1), total_rows: 1 });
+                    h.held = false;
+                    return Promise.reject(new Error("verification request rejected"));
+                },
+            }),
+            (_poll, h) => h.held,
+            EXPECT_VERIFY_FETCH_FAILURE_LEASE_LOST,
+        );
+    });
+
+    it("c: a provider fetch failure with the lease held keeps the base error chain and continues later types", async () => {
+        await bothVariants(
+            () => makeHarness({ "01": () => Promise.reject(new Error("provider request rejected")) }),
+            () => true,
+            EXPECT_FETCH_FAILURE_LEASE_HELD,
+        );
+    });
+
+    it("d: stops before fetching the next page when the lease is lost after a full page was mirrored", async () => {
+        await bothVariants(
+            () => makeHarness(
+                { "01": (_call, skip) => Promise.resolve({ documents: docs(`p${skip}`, skip === 0 ? 100 : 1), total_rows: 101 }) },
+                (_id, h) => { if (h.mirrored.length === 100) h.held = false; },
+            ),
+            (_poll, h) => h.held,
+            EXPECT_LEASE_LOST_BETWEEN_PAGES,
+        );
+    });
+
+    it("d: stops before the first write when the lease is lost while the next page is fetched", async () => {
+        await bothVariants(
+            () => makeHarness({
+                "01": (_call, skip, h) => {
+                    if (skip > 0) h.held = false;
+                    return Promise.resolve({ documents: docs(`p${skip}`, skip === 0 ? 100 : 1), total_rows: 101 });
+                },
+            }),
+            (_poll, h) => h.held,
+            EXPECT_LEASE_LOST_DURING_PAGE_FETCH,
         );
     });
 });

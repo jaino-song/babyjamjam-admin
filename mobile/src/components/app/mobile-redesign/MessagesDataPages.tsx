@@ -1,4 +1,5 @@
 "use client";
+import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "@/features/message-triggers/retry-history";
 
 import { useMemo, useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -16,7 +17,9 @@ import {
 } from "lucide-react";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  getMessageHistoryDetailStatusLabel,
   MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
@@ -29,7 +32,6 @@ import {
   isSmsHistoryRecord,
   isSmsTriggerTemplate,
   normalizeMessageHistoryPresentation,
-  getUserErrorMessage,
   type MessageRecordStatusFilter,
   type MessageSectionId,
 } from "@babyjamjam/shared";
@@ -37,6 +39,7 @@ import {
 import {
   useCancelMessageTriggerJob,
   useMessageHistory,
+  useResendMessageTriggerJob,
   useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -54,6 +57,7 @@ import {
   type MessageHistoryDetailTone,
 } from "@/components/app/clients/client-message-history-detail";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StatusBadge, StatusPill } from "@/components/app/ui/status-badge";
 import {
   InfoCard,
@@ -93,6 +97,7 @@ const JOB_STATUS: Record<MessageTriggerJobStatus, StatusMeta> = {
   sent: { label: MESSAGE_JOB_STATUS_LABELS.sent, icon: CheckCircle2 },
   failed: { label: MESSAGE_JOB_STATUS_LABELS.failed, icon: XCircle },
   canceled: { label: MESSAGE_JOB_STATUS_LABELS.canceled, icon: AlertCircle },
+  needs_setup: { label: MESSAGE_JOB_STATUS_LABELS.needs_setup, icon: AlertCircle },
 };
 
 const HISTORY_STATUS: Record<MessageLogStatus, StatusMeta> = {
@@ -100,6 +105,7 @@ const HISTORY_STATUS: Record<MessageLogStatus, StatusMeta> = {
   sent: { label: MESSAGE_HISTORY_STATUS_LABELS.sent, icon: CheckCircle2 },
   failed: { label: MESSAGE_HISTORY_STATUS_LABELS.failed, icon: XCircle },
   canceled: { label: MESSAGE_HISTORY_STATUS_LABELS.canceled, icon: AlertCircle },
+  needs_setup: { label: MESSAGE_HISTORY_STATUS_LABELS.needs_setup, icon: AlertCircle },
 };
 
 const HISTORY_DETAIL_TONE: Record<MessageLogStatus, MessageHistoryDetailTone> = {
@@ -107,6 +113,7 @@ const HISTORY_DETAIL_TONE: Record<MessageLogStatus, MessageHistoryDetailTone> = 
   sent: "green",
   failed: "burgundy",
   canceled: "muted",
+  needs_setup: "orange",
 };
 
 /**
@@ -128,6 +135,7 @@ const HISTORY_STATUS_PILL_VARIANT: Record<MessageLogStatus, "neutral" | "success
   sent: "success",
   failed: "danger",
   canceled: "neutral",
+  needs_setup: "warning",
 };
 
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
@@ -423,11 +431,11 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-function getMessageHistoryErrorMessage(error: unknown): string {
+function getMessageHistoryErrorMessage(error: unknown): string | undefined {
   if (error instanceof Error && /[가-힣]/.test(error.message)) {
     return error.message;
   }
-  return "발송 기록을 불러오지 못했습니다. 잠시 후 자동으로 다시 시도합니다.";
+  return undefined;
 }
 
 function UnavailableCount({ dataComponent }: { dataComponent?: string }) {
@@ -606,40 +614,49 @@ export function MessagesHistoryPage() {
   const [dateMonth, setDateMonth] = useState("");
 
   const {
-    data: upcomingData = [],
+    data: rawUpcomingData,
     isLoading: isUpcomingLoading,
+    isPaused: isUpcomingPaused,
     isError: isUpcomingError,
+    refetch: refetchUpcoming,
+    isFetching: isUpcomingFetching,
   } = useUpcomingMessageTriggerJobs();
   const {
-    data: historyData = [],
+    data: rawHistoryData,
     isLoading: isHistoryLoading,
+    isPaused: isHistoryPaused,
     isError: isHistoryError,
     error: historyError,
+    refetch: refetchHistory,
+    isFetching: isHistoryFetching,
   } = useMessageHistory();
   const cancelMutation = useCancelMessageTriggerJob();
   const retryMutation = useRetryMessageHistory();
+  const resendMutation = useResendMessageTriggerJob();
   // Cancel and retry require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
-  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
+  const canOpenOwnerAdmin = authUserQuery.data?.role === "owner";
 
   const upcomingJobs = useMemo(
-    () => upcomingData
+    () => (rawUpcomingData ?? [])
       .filter((job) => isSmsTriggerTemplate(job.templateKey))
       .sort(
         (left, right) => new Date(left.scheduledFor).getTime() - new Date(right.scheduledFor).getTime(),
       ),
-    [upcomingData],
+    [rawUpcomingData],
   );
 
   const historyRecords = useMemo(
-    () => historyData
+    () => (rawHistoryData ?? [])
       .filter(isSmsHistoryRecord)
       .sort(
         (left, right) =>
           new Date(right.lastAttemptAt || right.createdAt).getTime()
           - new Date(left.lastAttemptAt || left.createdAt).getTime(),
       ),
-    [historyData],
+    [rawHistoryData],
   );
 
   const historyYearOptions = useMemo(() => {
@@ -681,10 +698,12 @@ export function MessagesHistoryPage() {
       .filter((record) => matchesHistoryQuery(record, searchValue))
     : [];
 
-  // Both queries gate the whole list: they settle at different times, so keying
-  // each zone off its own flag would show real rows next to a loading zone.
-  // Same rule as desktop, where a cached history query makes that routine.
-  const isPanelLoading = isUpcomingLoading || isHistoryLoading;
+  // 각 영역은 자기 조회가 아직 값을 받지 못했을 때만 로딩을 표시한다.
+  // 다른 영역의 재시도로 이미 불러온 행과 건수를 가리지 않는다.
+  const isUpcomingZoneLoading = (isUpcomingLoading || isUpcomingPaused) && rawUpcomingData === undefined;
+  const isHistoryZoneLoading = (isHistoryLoading || isHistoryPaused) && rawHistoryData === undefined;
+  const isPanelLoading = (showUpcomingZone && isUpcomingZoneLoading)
+    || (showHistoryZone && isHistoryZoneLoading);
 
   const filterCounts: Record<MessageRecordStatusFilter, number> = {
     all: upcomingJobs.length + historyRecords.length,
@@ -702,11 +721,11 @@ export function MessagesHistoryPage() {
     canceled: !isHistoryError,
   };
 
-  // While either query is in flight every filterCounts entry is the empty-array
-  // default standing in for a number nobody has fetched, so the pills would
-  // publish confident zeros right beside the skeletoned counts. Skeleton them
-  // too, the way the sibling list screens do.
+  // 각 필터가 집계하는 조회의 값이 없으면 숫자 대신 로딩을 표시한다.
   const filterItems: MessageFilterItem[] = STATUS_FILTER_ORDER.map((filter) => {
+    const isCountLoading = filter === "all"
+      ? isUpcomingZoneLoading || isHistoryZoneLoading
+      : filter === "upcoming" ? isUpcomingZoneLoading : isHistoryZoneLoading;
     const count = !filterCountAvailability[filter]
       ? <UnavailableCount />
       : filter === "failed"
@@ -715,9 +734,9 @@ export function MessagesHistoryPage() {
 
     return {
       label: MESSAGE_RECORD_STATUS_FILTER_LABELS[filter],
-      count: isPanelLoading ? "" : count,
+      count: isCountLoading ? "" : count,
       active: filter === statusFilter,
-      skeleton: isPanelLoading,
+      skeleton: isCountLoading,
     };
   });
 
@@ -738,33 +757,89 @@ export function MessagesHistoryPage() {
   };
 
   const handleRequestRetry = () => {
+    // A resend the server would refuse is disabled in the detail; never open
+    // the confirm dialog for it.
+    if (getResendableJobId(selectedRecord) !== null && selectedRecord?.resendBlockedBy) return;
     if (
       selectedRecord
-      && typeof selectedRecord.id === "number"
-      && selectedRecord.status === "failed"
+      && (
+        (typeof selectedRecord.id === "number" && selectedRecord.status === "failed")
+        || getResendableJobId(selectedRecord) !== null
+      )
     ) {
       setRetryTarget(selectedRecord);
     }
   };
 
-  const handleConfirmRetry = async () => {
-    if (!retryTarget || typeof retryTarget.id !== "number") return;
-
+  const handleConfirmResend = async (jobId: string) => {
     try {
-      const retriedRecord = await retryMutation.mutateAsync(retryTarget.id);
-      if (retriedRecord.status === "failed") {
-        throw new Error(retriedRecord.errorMessage || "메시지를 재발송하지 못했어요");
+      const response = await resendMutation.mutateAsync(jobId);
+      if (response.status === "sent") {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: MESSAGE_JOB_RESEND_COPY.success,
+          variant: "success",
+        });
+      } else if (response.status === "needs_setup") {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup,
+          variant: "destructive",
+        });
+      } else if (response.status === "canceled") {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: response.reason
+            ? `${MESSAGE_JOB_RESEND_COPY.notSent} ${response.reason}`
+            : MESSAGE_JOB_RESEND_COPY.notSent,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: MESSAGE_JOB_RESEND_COPY.failure,
+          variant: "destructive",
+        });
       }
 
-      toast({ variant: "success", description: "재발송 요청을 접수했어요" });
-    } catch (error) {
+      // The open detail is a snapshot that query invalidation does not refresh:
+      // keep it open with the new reason while still blocked, close it otherwise.
+      if (response.status === "needs_setup") {
+        setSelectedRecord((current) => current && { ...current, errorMessage: response.reason });
+      } else {
+        setSelectedRecord(null);
+      }
+    } catch (resendError) {
+      // Shared problem contract resolution. A 409 means the job is no longer
+      // resendable; its backend sentence never reaches the client, so the
+      // locally authored copy is the only text for it.
+      const normalized = normalizeApiError(resendError, { locale: "ko-KR", operation: "mutation" });
       toast({
+        title: MESSAGE_JOB_RESEND_COPY.action,
+        description: normalized.status === 409
+          ? MESSAGE_JOB_RESEND_COPY.conflict
+          : normalized.verified ? normalized.message : MESSAGE_JOB_RESEND_COPY.failure,
         variant: "destructive",
-        description: getUserErrorMessage(
-          error,
-          error instanceof Error ? error.message : "재발송을 요청하지 못했어요",
-        ),
       });
+      setSelectedRecord(null);
+    } finally {
+      setRetryTarget(null);
+    }
+  };
+
+  const handleConfirmRetry = async () => {
+    if (!retryTarget) return;
+
+    const resendJobId = getResendableJobId(retryTarget);
+    if (resendJobId !== null) {
+      await handleConfirmResend(resendJobId);
+      return;
+    }
+
+    if (typeof retryTarget.id !== "number") return;
+
+    try {
+      toast(await retryMessageHistory(retryMutation.mutateAsync, retryTarget.id));
     } finally {
       setRetryTarget(null);
     }
@@ -816,11 +891,11 @@ export function MessagesHistoryPage() {
   const selectedCancelReason = selectedRecord && normalizedSelectedRecord?.status === "canceled"
     ? getRecordReasonText(selectedRecord)
     : "";
-  const canRetrySelectedRecord = canManageBranchMessages && Boolean(
-    selectedRecord
-    && typeof selectedRecord.id === "number"
-    && selectedRecord.status === "failed",
-  );
+  const canRetrySelectedRecord = canRetryFailedHistory(selectedRecord, canManageBranchMessages);
+  const canResendSelectedJob = canManageBranchMessages && getResendableJobId(selectedRecord) !== null;
+  // The server refuses a resend while a safeguard level is off; say so up front
+  // instead of letting the admin hit the 409.
+  const resendBlock = canResendSelectedJob ? normalizedSelectedRecord?.resendBlock : undefined;
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
   const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
 
@@ -936,15 +1011,22 @@ export function MessagesHistoryPage() {
                               {" "}
                               <ZoneCount
                                 dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_header_count`}
-                                isLoading={isPanelLoading}
+                                isLoading={isUpcomingZoneLoading}
                                 value={visibleUpcomingJobs.length}
                               />
                             </>
                           )}
                         </div>
                         {isUpcomingError ? (
-                          <EmptyState message="발송 예정 내역을 불러오지 못했습니다." />
-                        ) : isPanelLoading ? (
+                          <QueryErrorState
+                            dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_load-error`}
+                            size={upcomingJobs.length > 0 ? "inline" : "panel"}
+                            title={upcomingJobs.length > 0 ? "최신 정보를 불러오지 못했습니다" : "발송 예정 내역을 불러오지 못했습니다."}
+                            onRetry={() => void refetchUpcoming()}
+                            isRetrying={isUpcomingFetching}
+                          />
+                        ) : null}
+                        {isUpcomingError && upcomingJobs.length === 0 ? null : isUpcomingZoneLoading && !isUpcomingError ? (
                           Array.from({ length: 3 }, (_, index) => (
                             <RowSkeleton
                               key={index}
@@ -978,15 +1060,23 @@ export function MessagesHistoryPage() {
                               {" "}
                               <ZoneCount
                                 dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_header_count`}
-                                isLoading={isPanelLoading}
+                                isLoading={isHistoryZoneLoading}
                                 value={visibleHistoryRecords.length}
                               />
                             </>
                           )}
                         </div>
                         {isHistoryError ? (
-                          <EmptyState message={historyErrorMessage} />
-                        ) : isPanelLoading ? (
+                          <QueryErrorState
+                            dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_load-error`}
+                            size={historyRecords.length > 0 ? "inline" : "panel"}
+                            title={historyRecords.length > 0 ? "최신 정보를 불러오지 못했습니다" : "발송 기록을 불러오지 못했습니다."}
+                            description={historyErrorMessage}
+                            onRetry={() => void refetchHistory()}
+                            isRetrying={isHistoryFetching}
+                          />
+                        ) : null}
+                        {isHistoryError && historyRecords.length === 0 ? null : isHistoryZoneLoading && !isHistoryError ? (
                           Array.from({ length: 4 }, (_, index) => (
                             <RowSkeleton
                               key={index}
@@ -1017,18 +1107,22 @@ export function MessagesHistoryPage() {
                         title: normalizedSelectedRecord.title,
                         templateLabel: normalizedSelectedRecord.templateLabel,
                         channelLabel: normalizedSelectedRecord.channelLabel,
-                        statusLabel: HISTORY_STATUS[normalizedSelectedRecord.status].label,
+                        statusLabel: getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables }),
                         statusTone: HISTORY_DETAIL_TONE[normalizedSelectedRecord.status],
                         sentAtLabel: formatMessageDateTimeCompact(normalizedSelectedRecord.sentAt),
                         recipientName: normalizedSelectedRecord.recipientName,
                         recipientPhone: normalizedSelectedRecord.recipientPhone,
                         messageBody: normalizedSelectedRecord.messagePreview.trim() || "내용이 없습니다.",
                         failureReason: normalizedSelectedRecord.failureReason ?? null,
+                        setupReason: normalizedSelectedRecord.setupReason ?? null,
                       }}
                       onBack={() => setSelectedRecord(null)}
                       showStatusBadge={false}
-                      canRetry={canRetrySelectedRecord}
-                      isRetrying={retryMutation.isPending}
+                      canRetry={canRetrySelectedRecord || canResendSelectedJob}
+                      isRetrying={retryMutation.isPending || resendMutation.isPending}
+                      retryPendingLabel={canResendSelectedJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
+                      retryBlock={resendBlock}
+                      canOpenOwnerAdmin={canOpenOwnerAdmin}
                       onRetry={handleRequestRetry}
                     />
                     {selectedCancelReason ? (
@@ -1048,7 +1142,7 @@ export function MessagesHistoryPage() {
                   variant={HISTORY_STATUS_PILL_VARIANT[normalizedSelectedRecord.status]}
                   size="sm"
                 >
-                  {HISTORY_STATUS[normalizedSelectedRecord.status].label}
+                  {getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables })}
                 </StatusPill>
               ) : null}
             />
@@ -1074,14 +1168,14 @@ export function MessagesHistoryPage() {
         data-component={`${HISTORY_DETAIL_BASE}_retry-modal`}
         open={retryTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !retryMutation.isPending) setRetryTarget(null);
+          if (!open && !retryMutation.isPending && !resendMutation.isPending) setRetryTarget(null);
         }}
         title="메시지를 다시 보낼까요?"
         description={`${retryTarget?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="재발송"
         pendingLabel="재발송 중..."
-        isPending={retryMutation.isPending}
+        isPending={retryMutation.isPending || resendMutation.isPending}
         onApprove={handleConfirmRetry}
       />
     </>

@@ -29,6 +29,8 @@ import {
     extractEformsignVendorCode,
 } from "infrastructure/api/eformsign-api.error";
 import request from "supertest";
+import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
+import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
 
 // Known transport-level flake (~1/8 full-suite runs under parallel-worker
 // load, observed locally 2026-06-06 and once in CI): a supertest request
@@ -67,6 +69,11 @@ describe("EformsignController (Integration)", () => {
         "execute"
     >>;
     let branchFindUnique: jest.Mock;
+    let missingVoidActor = false;
+    const voidRepository = {
+        findVoidCandidate: jest.fn(), markVoided: jest.fn(), findVoidedByNames: jest.fn(),
+    };
+    const voidEvents = { emit: jest.fn() };
 
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
@@ -78,7 +85,7 @@ describe("EformsignController (Integration)", () => {
                 branchRole: "owner",
             };
             requestContext.tenant = {
-                userId: "user-1",
+                userId: missingVoidActor ? undefined : "user-1",
                 branchId: "branch-1",
                 globalRole: "owner",
                 branchRole: "owner",
@@ -114,6 +121,11 @@ describe("EformsignController (Integration)", () => {
     };
 
     beforeEach(async () => {
+        missingVoidActor = false;
+        voidRepository.findVoidCandidate.mockReset();
+        voidRepository.markVoided.mockReset().mockResolvedValue(true);
+        voidRepository.findVoidedByNames.mockReset().mockResolvedValue(new Map([["user-1", "담당자"]]));
+        voidEvents.emit.mockReset();
         shadowCompareService.compareInBackground.mockClear();
         documentMirrorService.getStoredDetail.mockReset();
         documentMirrorService.getStoredFile.mockReset();
@@ -133,6 +145,9 @@ describe("EformsignController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignController],
             providers: [
+                VoidContractDocumentUsecase,
+                { provide: EFORMSIGN_DOC_REPOSITORY, useValue: voidRepository },
+                { provide: EformsignDocsEventBus, useValue: voidEvents },
                 { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                 {
@@ -227,7 +242,7 @@ describe("EformsignController (Integration)", () => {
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
 
         eformsignService = moduleFixture.get(EformsignService);
         controller = moduleFixture.get(EformsignController);
@@ -1079,6 +1094,62 @@ describe("EformsignController (Integration)", () => {
             expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
         });
 
+        it("refuses to re-request a voided (파기) document with a 409 and never calls the provider", async () => {
+            eformsignDocService.findAll.mockResolvedValue([
+                { documentId: "branch-1-doc", isVoided: true },
+            ] as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1" });
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            // The shared mock is not reset between tests: assert on this capability only.
+            expect(credentialBoundary.withCredentials).not.toHaveBeenCalledWith(
+                expect.anything(),
+                "document.re_request",
+                expect.anything(),
+            );
+            expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
+        });
+
+        it("re-requests a non-voided document through the provider as before (control)", async () => {
+            eformsignDocService.findAll.mockResolvedValue([
+                { documentId: "branch-1-doc", isVoided: false },
+            ] as never);
+            eformsignService.reRequestOutsiderDocument.mockResolvedValue({ ok: true } as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1", comment: "다시 요청" });
+
+            expect(response.status).toBe(201);
+            expect(response.body).toEqual({ ok: true });
+            expect(eformsignService.reRequestOutsiderDocument).toHaveBeenCalledWith(
+                "server-access-token",
+                "branch-1-doc",
+                "01",
+                "1",
+                "다시 요청",
+                undefined,
+            );
+        });
+
+        it("re-requests a document with no local row as before (control)", async () => {
+            // Visible through the branch list but with no resolvable local row: the fence is skipped.
+            eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as never);
+            eformsignDocService.findByDocumentId.mockResolvedValue(null);
+            eformsignService.reRequestOutsiderDocument.mockResolvedValue({ ok: true } as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1" });
+
+            expect(response.status).toBe(201);
+            expect(eformsignService.reRequestOutsiderDocument).toHaveBeenCalledTimes(1);
+        });
+
         it("reports an unexpected re-request failure as a registered 500 problem", async () => {
             eformsignDocService.findAll.mockResolvedValue([
                 { documentId: "branch-1-doc" },
@@ -1539,6 +1610,59 @@ describe("EformsignController (Integration)", () => {
         expect(response.body.outcome).toBe("NOT_APPLIED");
     });
 
+    describe("POST /api/documents/:documentId/void", () => {
+        const row = {
+            documentId: "doc-void", clientId: 1, documentKind: null, serviceRecordCaseId: null,
+            statusType: "050", stepType: "05", stepName: "이용자", voidedAt: null, permanentPurgeRequestedAt: null,
+        };
+        beforeEach(() => {
+            voidRepository.findVoidCandidate.mockResolvedValue(row);
+            eformsignDocService.findByDocumentIdIncludingPurgePending.mockResolvedValue({ documentId: "doc-void" } as EformsignDocEntity);
+            branchFindUnique.mockResolvedValue({ slug: "other" });
+        });
+        it("refuses a missing actor before branch lookup", async () => {
+            missingVoidActor = true;
+            const response = await request(app.getHttpServer()).post("/api/documents/doc-void/void").expect(403);
+            expect(response.body.code).toBe("ACCESS_DENIED");
+            expect(branchFindUnique).not.toHaveBeenCalled();
+            expect(voidRepository.findVoidCandidate).not.toHaveBeenCalled();
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+        it.each(["foreign", "unknown"])("refuses non-HQ %s ids", async (id) => {
+            eformsignDocService.findByDocumentIdIncludingPurgePending.mockResolvedValue(null);
+            const response = await request(app.getHttpServer()).post(`/api/documents/${id}/void`).expect(403);
+            expect(response.body.code).toBe("ACCESS_DENIED");
+            expect(voidRepository.findVoidCandidate).not.toHaveBeenCalled();
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+        it.each(["unknown", "null-branch"])("HQ gets 404 for %s rather than an unscoped mutation", async (id) => {
+            branchFindUnique.mockResolvedValue({ slug: "incheon" });
+            eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue([]);
+            const localRows = id === "null-branch" ? [{ ...row, documentId: id, branchId: null }] : [];
+            voidRepository.findVoidCandidate.mockImplementation(async (branchId: string, documentId: string) =>
+                localRows.find((candidate) => candidate.branchId === branchId && candidate.documentId === documentId) ?? null);
+            const response = await request(app.getHttpServer()).post(`/api/documents/${id}/void`).expect(404);
+            expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
+            expect(voidRepository.findVoidCandidate).toHaveBeenCalledWith("branch-1", id);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(voidRepository.markVoided).not.toHaveBeenCalled();
+        });
+        it("refuses an already voided document", async () => {
+            voidRepository.findVoidCandidate.mockResolvedValue({ ...row, voidedAt: new Date() });
+            const response = await request(app.getHttpServer()).post("/api/documents/doc-void/void").expect(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+        it("returns 200 with exactly four public response keys", async () => {
+            const response = await request(app.getHttpServer()).post("/api/documents/doc-void/void").expect(200);
+            expect(response.body).toEqual({ documentId: "doc-void", voidedAt: expect.any(String), voidedByName: "담당자", displayStatus: "voided" });
+            expect(Object.keys(response.body).sort()).toEqual(["displayStatus", "documentId", "voidedAt", "voidedByName"]);
+            expect(JSON.stringify(response.body)).not.toContain("user-1");
+            expect(voidRepository.markVoided).toHaveBeenCalledWith("branch-1", "doc-void", expect.any(Date), "user-1");
+            expect(voidEvents.emit).toHaveBeenCalledWith({ branchId: "branch-1", documentId: "doc-void", reason: "mirror:changed" });
+        });
+    });
+
     describe("local source-of-truth document reads", () => {
         let mirrorApp: INestApplication;
         const mirrorRepository = {
@@ -1610,6 +1734,8 @@ describe("EformsignController (Integration)", () => {
             const fixture = await Test.createTestingModule({
                 controllers: [EformsignController],
                 providers: [
+                    VoidContractDocumentUsecase,
+                    { provide: EformsignDocsEventBus, useValue: voidEvents },
                     { provide: HolidayCalendarService, useValue: mirrorCalendarStub },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                     { provide: EformsignService, useValue: eformsignService },
@@ -2046,6 +2172,41 @@ describe("EformsignController (Integration)", () => {
             mirrorRepository.findContractEndDatesByDocumentIds.mockResolvedValue(new Map());
         });
 
+        it("lists only 071 contracts for displayStatus=rejected_by_reviewer, before slicing the page", async () => {
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({
+                    documentId: "newer-pending",
+                    createdDate: "2026-07-04T00:00:00.000Z",
+                    statusType: "060",
+                }),
+                createMirrorRow({
+                    documentId: "newer-review",
+                    createdDate: "2026-07-03T00:00:00.000Z",
+                    statusType: "070",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+                createMirrorRow({
+                    documentId: "older-reviewer-rejected",
+                    createdDate: "2026-07-02T00:00:00.000Z",
+                    statusType: "071",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+            ]);
+
+            const response = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?displayStatus=rejected_by_reviewer&limit=1&skip=0");
+
+            expect(response.status).toBe(200);
+            expect(response.body.documents.map((doc: { id: string }) => doc.id)).toEqual([
+                "older-reviewer-rejected",
+            ]);
+            expect(response.body.documents[0].display_status).toBe("rejected_by_reviewer");
+            expect(response.body.total_rows).toBe(1);
+            expect(response.body.has_more).toBe(false);
+        });
+
         it("rejects unsupported display-status filters", async () => {
             const response = await request(mirrorApp.getHttpServer())
                 .get("/api/documents?displayStatus=unexpected");
@@ -2192,6 +2353,33 @@ describe("EformsignController (Integration)", () => {
                 expect.objectContaining({ status_type: expect.any(String) }),
             );
             expect(eformsignService.getAllDocuments).not.toHaveBeenCalled();
+        });
+
+        it("carries the unclaimed flag on every status signal, 071 included (display_status loses it for 071)", async () => {
+            const reviewStep = { stepType: "06", stepName: "제공기관 확인" };
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({ documentId: "070-linked", statusType: "070", ...reviewStep }),
+                createMirrorRow({ documentId: "070-unclaimed", statusType: "070", ...reviewStep, clientId: null }),
+                createMirrorRow({ documentId: "071-linked", statusType: "071", ...reviewStep }),
+                createMirrorRow({ documentId: "071-unclaimed", statusType: "071", ...reviewStep, clientId: null }),
+            ]);
+
+            const response = await request(mirrorApp.getHttpServer())
+                .get("/api/documents/status-counts?accessToken=access-token");
+
+            expect(response.status).toBe(200);
+            const byStatus = (response.body.documents as Array<{
+                status_type: string;
+                display_status: string;
+                unassigned: boolean;
+            }>).map((signal) => [signal.status_type, signal.display_status, signal.unassigned]);
+            expect(byStatus).toEqual(expect.arrayContaining([
+                ["070", "review", false],
+                ["070", "unassigned", true],
+                ["071", "rejected_by_reviewer", false],
+                ["071", "rejected_by_reviewer", true],
+            ]));
+            expect(byStatus).toHaveLength(4);
         });
 
         it.each([

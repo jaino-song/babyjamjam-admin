@@ -71,6 +71,7 @@ async function addOwner(
                 startDate,
                 endDate,
                 serviceStatus: "active",
+                bookingConfirmedAt: new Date("2026-01-01"),
             },
             select: { id: true },
         });

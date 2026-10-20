@@ -6,7 +6,11 @@ import {
     type EformsignListDoc,
 } from "application/utils/eformsign-document-list";
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
-import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
+import {
+    isReviewerRejectedStatus,
+    isRevokeRequestedStatus,
+} from "domain/constants/eformsign-doc-status.constants";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
     isoDateInKorea,
     type KrBusinessDayCalendar,
@@ -31,19 +35,38 @@ import {
  * shared test fixtures — change both files together.
  */
 export type EformsignDocDisplayStatus =
+    | "voided"
     | "pending"
     | "signed"
     | "review"
     | "unassigned"
     | "completed"
     /**
-     * eformsign 040 (doc_request_revoke): cancellation was requested, not done — it may still be
-     * refused (→ 060) or completed (→ 042). Display only: the document keeps the "expired"
+     * eformsign 040 (doc_request_revoke) and 045 (doc_request_reject): cancellation was
+     * requested, not done — it may still be refused (041 → continues like 060) or completed
+     * (→ 042). Display only: the document keeps the "expired"
      * category for tabs, scope and stats; this is neither 기간 만료 (080) nor 철회됨 (042/090).
      */
     | "revoke_requested"
+    /**
+     * eformsign 042 (doc_revoke) and 090 (synthesized withdrawal): the document was revoked —
+     * terminal. Display only: it keeps the "expired" category for tabs, scope and stats; this is
+     * neither 기간 만료 (080) nor 철회 요청됨 (040/045).
+     */
+    | "revoked"
+    /**
+     * eformsign 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document.
+     * Shown "반려됨" (solid burgundy). NOT terminal: a later 070 returns it to 서명 완료/검토 필요, a
+     * later 072 completes it, and the customer's signature stays valid. Its category is
+     * in-progress, not expired.
+     */
+    | "rejected_by_reviewer"
     | "expired"
     | "unknown";
+
+// Local copy: the client.service set is private and domain/constants belongs to another unit.
+// Must stay in step with REVOKED_DOCUMENT_STATUS_TYPES there and EFORMSIGN_REVOKED_STATUS_CODES in shared.
+const REVOKED_STATUS_CODES: ReadonlySet<string> = new Set(["042", "090"]);
 
 const YMD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})/;
 
@@ -91,10 +114,21 @@ export function resolveEformsignDocDisplayStatus(
     now: Date,
     calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
-    // Before the category checks: 040 sits in the expired bucket for filtering, but the document
+    if (document.isVoided === true) return "voided";
+    // Before the category checks: 040/045 sit in the expired bucket for filtering, but the document
     // is not expired — independent of step, unassigned state and end date.
-    if (isRevokeRequestedStatus(stringFromUnknown(getCurrentStatus(document)?.["status_type"]))) {
+    const statusType = stringFromUnknown(getCurrentStatus(document)?.["status_type"]);
+    if (isRevokeRequestedStatus(statusType)) {
         return "revoke_requested";
+    }
+    // Same reason: 042/090 sit in the expired bucket for filtering, but the document was revoked.
+    if (REVOKED_STATUS_CODES.has(normalizeEformsignStatusCode(statusType))) {
+        return "revoked";
+    }
+    // 071 sits in the in-progress list (it is not terminal), but it is neither 서명 대기 nor
+    // 서명 완료 — independent of step, unassigned state and end date, like the revoke codes.
+    if (isReviewerRejectedStatus(statusType)) {
+        return "rejected_by_reviewer";
     }
     const category = getDocumentStatusCategory(document);
     if (category === "completed") return "completed";

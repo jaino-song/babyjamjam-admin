@@ -37,7 +37,7 @@ describe("CallTranscriptWebhookController (Integration)", () => {
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
     });
 
     afterEach(async () => { await app.close(); });

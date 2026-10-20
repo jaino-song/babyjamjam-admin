@@ -22,7 +22,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: database-patches-${{ inputs.target || github.ref_name }}
+  # Keyed by the DATABASE being written, not the branch (BJJ-484): a preview
+  # push, a main push and a production dispatch all write the production DB,
+  # so they must serialize in one group. `inputs.target` is empty on push.
+  group: >-
+    ${{
+      ((github.event_name == 'push' && github.ref_name == 'dev') || inputs.target == 'dev') && 'database-patches-dev' ||
+      (inputs.target == 'preview' && 'database-patches-preview-db') ||
+      'database-patches-production'
+    }}
   cancel-in-progress: false
 
 jobs:
@@ -409,6 +417,61 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260921230000_expand_service_record_birthdays_to_iso/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013000000_add_client_booking_confirmed_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013010000_add_message_trigger_rule_target_status_retry/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261014000000_add_eformsign_doc_voided/migration.sql
+
+      - name: Apply and verify message_log carrier-check columns
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261014120000_add_message_log_carrier_check/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-message-log-carrier-check.sql
+
+      - name: Apply and verify service-record revision before snapshot
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261016000000_add_service_record_revision_before_snapshot/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-revision-before-snapshot.sql
+
+      - name: Apply and verify eformsign backup collection ledger
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261017161431_add_eformsign_backup_collection_ledger/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-backup-collection-ledger.sql
+
+      - name: Apply SMS automation flags
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261018000000_add_sms_automation_flags/migration.sql
+
+      - name: Apply and verify eformsign backup export
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261018163308_add_eformsign_backup_export/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-backup-export.sql
+
+      - name: Apply client tombstone column
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend
@@ -442,9 +505,10 @@ jobs:
 
   apply-preview:
     name: apply preview database patches
-    if: >-
-      (github.event_name == 'push' && github.ref_name == 'preview') ||
-      (github.event_name == 'workflow_dispatch' && inputs.target == 'preview')
+    # BJJ-484: no backend uses PREVIEW_DATABASE_URL; the preview backend uses the
+    # production DB (patched by apply-production on a preview push). This job is
+    # kept for manual dispatch only.
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'preview'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: preview
@@ -990,6 +1054,61 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260921230000_expand_service_record_birthdays_to_iso/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013000000_add_client_booking_confirmed_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013010000_add_message_trigger_rule_target_status_retry/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261014000000_add_eformsign_doc_voided/migration.sql
+
+      - name: Apply and verify message_log carrier-check columns
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261014120000_add_message_log_carrier_check/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-message-log-carrier-check.sql
+
+      - name: Apply and verify service-record revision before snapshot
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261016000000_add_service_record_revision_before_snapshot/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-revision-before-snapshot.sql
+
+      - name: Apply and verify eformsign backup collection ledger
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261017161431_add_eformsign_backup_collection_ledger/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-backup-collection-ledger.sql
+
+      - name: Apply SMS automation flags
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261018000000_add_sms_automation_flags/migration.sql
+
+      - name: Apply and verify eformsign backup export
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261018163308_add_eformsign_backup_export/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-backup-export.sql
+
+      - name: Apply client tombstone column
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend
@@ -1027,6 +1146,7 @@ jobs:
     if: >-
       always() &&
       (
+        (github.event_name == 'push' && github.ref_name == 'preview') ||
         (github.event_name == 'push' && github.ref_name == 'main') ||
         (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
       )
@@ -1549,6 +1669,61 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260921230000_expand_service_record_birthdays_to_iso/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013000000_add_client_booking_confirmed_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013010000_add_message_trigger_rule_target_status_retry/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261014000000_add_eformsign_doc_voided/migration.sql
+
+      - name: Apply and verify message_log carrier-check columns
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261014120000_add_message_log_carrier_check/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-message-log-carrier-check.sql
+
+      - name: Apply and verify service-record revision before snapshot
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261016000000_add_service_record_revision_before_snapshot/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-service-record-revision-before-snapshot.sql
+
+      - name: Apply and verify eformsign backup collection ledger
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261017161431_add_eformsign_backup_collection_ledger/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-backup-collection-ledger.sql
+
+      - name: Apply SMS automation flags
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261018000000_add_sms_automation_flags/migration.sql
+
+      - name: Apply and verify eformsign backup export
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261018163308_add_eformsign_backup_export/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-eformsign-backup-export.sql
+
+      - name: Apply client tombstone column
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
+        run: |
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend

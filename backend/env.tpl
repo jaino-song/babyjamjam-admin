@@ -86,7 +86,15 @@ MOBILE_RECEIPT_BASE_URL="http://192.168.219.142:3002"
 # 생년월일 해시 솔트 (비밀값)
 RECEIPT_LINK_HASH_SALT=
 SERVICE_RECORD_AUTO_FINALIZE_ENABLED=true
+# Client delete with history (tombstone). Keep false until production main runs a build that reads client.deleted_at.
+CLIENT_TOMBSTONE_DELETE_ENABLED=false
 EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID="f091d768fb2c4a74b429525b428337f7"
 EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_10="0dca5a5ace7d47e6a911c6bfa3103534"
 EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_15="acc55dd658c6489f80e64bb3d3970140"
 EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_20="7522d1e4786748068dc3a93e0bfb081a"
+
+# Login rate limiting. AUTH_RATE_LIMIT_DISABLED=true turns it off for local runs only
+# (ignored when NODE_ENV=production). AUTH_RATE_LIMIT_EXEMPT_EMAILS (comma-separated)
+# skips the per-account limit for the preview E2E test account; the per-IP limit stays.
+AUTH_RATE_LIMIT_DISABLED=true
+AUTH_RATE_LIMIT_EXEMPT_EMAILS=

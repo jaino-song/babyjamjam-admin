@@ -111,6 +111,43 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
     mockConfirmMutateAsync.mockResolvedValue({ clientId: 42 });
   });
 
+  it("shows a retryable inline failure rather than endless loading", () => {
+    const refetch = jest.fn();
+    mockUseClientDraft.mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
+    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows loading without a failure while the request is pending", () => {
+    mockUseClientDraft.mockReturnValue({ data: undefined, isLoading: true, isError: false, isFetching: true });
+    render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached detail below one inline notice and disables an in-flight retry", () => {
+    const refetch = jest.fn();
+    mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: true, isFetching: false, refetch });
+    const { rerender } = render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    const alert = screen.getByRole("alert");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(screen.getByRole("textbox", { name: /산모명/i })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: true, isFetching: true, refetch });
+    rerender(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /산모명/i })).toHaveValue("김서연");
+    mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: false });
+    rerender(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+  });
+
   it("pre-fills form inputs from proposals and seeds phone from callerPhone", () => {
     render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
 

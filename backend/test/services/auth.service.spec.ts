@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Logger, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { createHash } from "crypto";
 import { AuthService } from "application/services/auth.service";
@@ -321,5 +321,65 @@ describe("AuthService approval and token hardening", () => {
 
         expect(prisma.user.update).not.toHaveBeenCalled();
         expect(tokens.create).not.toHaveBeenCalled();
+    });
+    describe("server logs keep e-mail addresses unmasked", () => {
+        const email = "member@example.com";
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        it("logs the plain e-mail for a registration attempt on an existing account", async () => {
+            const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+            prisma.user.findUnique.mockResolvedValue({ id: "user-1", kakaoId: "kakao", passwordHash: null, emailVerified: true });
+
+            await service.registerWithEmail(email, "Password1!", "Member", "010", "1990-01-01");
+
+            expect(logSpy).toHaveBeenCalledWith(`Registration attempt for existing email: ${email}`);
+        });
+
+        it("logs the plain e-mail when a verification e-mail is queued", async () => {
+            const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+            prisma.user.findUnique.mockResolvedValue({ id: "user-1", email, name: "Member", emailVerified: false });
+
+            await service.resendVerificationEmail(email);
+
+            expect(logSpy).toHaveBeenCalledWith(`Verification email queued for ${email}`);
+        });
+
+        it("logs the plain e-mail when resending a verification e-mail fails", async () => {
+            const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+            prisma.user.findUnique.mockResolvedValue({ id: "user-1", email, name: "Member", emailVerified: false });
+            prisma.$transaction.mockRejectedValue(new Error("db down"));
+
+            await service.resendVerificationEmail(email);
+
+            expect(errorSpy).toHaveBeenCalledWith(
+                `Failed to resend verification email to ${email}`,
+                expect.any(String),
+            );
+        });
+
+        it("logs the plain e-mail when a password reset e-mail is queued", async () => {
+            const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+            prisma.user.findUnique.mockResolvedValue({ id: "user-1", email, name: "Member" });
+
+            await service.requestPasswordReset(email);
+
+            expect(logSpy).toHaveBeenCalledWith(`Password reset email queued for ${email}`);
+        });
+
+        it("logs the plain e-mail when queueing a password reset e-mail fails", async () => {
+            const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+            prisma.user.findUnique.mockResolvedValue({ id: "user-1", email, name: "Member" });
+            prisma.$transaction.mockRejectedValue(new Error("db down"));
+
+            await service.requestPasswordReset(email);
+
+            expect(errorSpy).toHaveBeenCalledWith(
+                `Failed to send password reset email to ${email}`,
+                expect.any(String),
+            );
+        });
     });
 });

@@ -1,6 +1,8 @@
 import { ClientEntity } from "domain/entities/client.entity";
 import {
+    ClientDeleteOutcome,
     AutomaticServiceStatusUpdateResult,
+    ClientPhoneMatch,
     ClientWithInitialSchedule,
     ClientListSummary,
     ClientListTab,
@@ -59,6 +61,13 @@ export class MockClientRepository implements IClientRepository {
         return this.clients.get(id) ?? null;
     }
 
+    async findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]> {
+        return Array.from(this.clients.values())
+            .filter(client => client.branchId === branchId
+                && phoneSuffixes.some(suffix => client.phone?.endsWith(suffix)))
+            .map(({ id, branchId, name, phone, birthday }) => ({ id, branchId, name, phone, birthday }));
+    }
+
     async findByIdForUpdate(
         branchid: string,
         id: number,
@@ -98,6 +107,7 @@ export class MockClientRepository implements IClientRepository {
                     client.serviceStatus,
                     client.startDate,
                     client.endDate,
+                    client.bookingConfirmedAt,
                 ) === tab,
         );
 
@@ -131,6 +141,7 @@ export class MockClientRepository implements IClientRepository {
             client.serviceStatus,
             client.startDate,
             client.endDate,
+            client.bookingConfirmedAt,
         );
         const byTab = {
             all: data.length,
@@ -195,6 +206,7 @@ export class MockClientRepository implements IClientRepository {
             client.suppressGreetingSms,
             client.birthDate,
             client.phoneNormalized,
+            client.bookingConfirmedAt,
         );
         this.clients.set(id, newClient);
         return newClient;
@@ -253,11 +265,12 @@ export class MockClientRepository implements IClientRepository {
         return client;
     }
 
-    async delete(_branchid: string, id: number): Promise<void> {
+    async delete(_branchid: string, id: number): Promise<ClientDeleteOutcome> {
         if (!this.clients.has(id)) {
             throw new Error(`Client with id ${id} not found`);
         }
         this.clients.delete(id);
+        return "deleted";
     }
 
     /**
@@ -343,22 +356,16 @@ export class MockClientRepository implements IClientRepository {
         });
     }
 
+    /**
+     * The real repository applies the dashboard's current-contract rule over `eformsign_doc`
+     * rows, which this in-memory mock does not hold; it reports none.
+     */
     async findWithoutContractSentStartingWithinDays(
         _branchid: string,
-        days: number
+        _calendar: KrBusinessDayCalendar,
+        _now?: Date,
     ): Promise<ClientEntity[]> {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endDate = new Date(today);
-        endDate.setDate(endDate.getDate() + days);
-        endDate.setHours(23, 59, 59, 999);
-
-        return Array.from(this.clients.values()).filter(client => {
-            if (!client.startDate) return false;
-            const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
-            const noContractSent = client.eDocId === null;
-            return isStartingSoon && noContractSent;
-        });
+        return [];
     }
 
     async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {

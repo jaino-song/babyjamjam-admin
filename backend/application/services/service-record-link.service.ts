@@ -6,9 +6,12 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
     SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
@@ -77,7 +80,7 @@ function readStoredCustomVariables(
 
 /**
  * Issues / revokes the no-login 제공기록지 link for an assignment (BJJ-247).
- * Assignment flows schedule the SMS for service-start day 15:00 KST; the existing
+ * Assignment flows schedule the SMS for noon KST the day before service start; the existing
  * Message trigger scheduler later dispatches it and writes retryable SMS logs.
  */
 @Injectable()
@@ -180,12 +183,16 @@ export class ServiceRecordLinkService {
     }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
-            include: { primaryEmployee: true },
+            include: {
+                primaryEmployee: true,
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+            },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        this.assertClientCanReceiveLink(schedule.client);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -224,12 +231,16 @@ export class ServiceRecordLinkService {
     }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
-            include: { primaryEmployee: true },
+            include: {
+                primaryEmployee: true,
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+            },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        this.assertClientCanReceiveLink(schedule.client);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -241,7 +252,13 @@ export class ServiceRecordLinkService {
             }));
         }
 
-        await this.cancelPendingServiceRecordJobs(scheduleId, "Service record link reset without resend");
+        // The cancel runs under the schedule fence and commits before
+        // `issueLink` below: `issueLink` opens its own transaction (a
+        // `service-record-link:` advisory lock and a case row lock) that must
+        // never be requested from inside the fence. The reset keeps the token
+        // active (same URL), so a send racing it is not refused for its token;
+        // the job it leaves behind still carries a valid link.
+        await this.cancelPendingServiceRecordJobsUnderFence(scheduleId, "Service record link reset without resend");
         await this.supersedeRetryableServiceRecordSmsLogs(scheduleId, "Service record link reset without resend");
 
         const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
@@ -265,8 +282,18 @@ export class ServiceRecordLinkService {
     /** Revoke an assignment's service-record access (replacement / termination). */
     async revoke(scheduleId: number): Promise<void> {
         try {
-            await this.tokenService.revokeForSchedule(scheduleId);
-            await this.cancelPendingServiceRecordJobs(scheduleId, "Service record access revoked");
+            // One fence for the job cancel and the token revocation, on one
+            // connection (jobs are locked first, tokens after). A send that
+            // prepared its link before this revoke is then either already
+            // enqueued (and cancelled here) or re-checks the token under the
+            // same fence afterwards and refuses. In-flight (`dispatching`) jobs
+            // are only logged: the SMS already left and the link dies with the
+            // token.
+            await this.cancelPendingServiceRecordJobsUnderFence(
+                scheduleId,
+                "Service record access revoked",
+                (transaction) => this.tokenService.revokeForSchedule(scheduleId, transaction),
+            );
             this.logger.log(`Service record access revoked for schedule ${scheduleId}`);
         } catch (error) {
             this.logger.error(`Failed to revoke service-record link for schedule ${scheduleId}: ${error}`);
@@ -290,23 +317,32 @@ export class ServiceRecordLinkService {
     }
 
     /**
-     * Cancel the schedule's pending/processing link jobs in one atomic
-     * repository statement. Returns the ids of jobs the dispatcher already
+     * Cancel the schedule's pending/processing link jobs under the schedule
+     * fence (revoke / reset). Returns the ids of jobs the dispatcher already
      * moved to `dispatching`: those are left untouched (the SMS may be on its
-     * way) and each caller decides what that means. Never throws on them.
+     * way) and each caller decides what that means. `afterCancel` runs in the
+     * fence's transaction, after the jobs are locked and cancelled.
      */
-    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<string[]> {
-        const { inFlightJobIds } = await this.jobRepository.cancelPendingByRuleAndEmployeeSchedule(
+    private async cancelPendingServiceRecordJobsUnderFence(
+        scheduleId: number,
+        reason: string,
+        afterCancel?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    ): Promise<string[]> {
+        const { inFlightJobIds } = await this.jobRepository.cancelPendingUnderScheduleFence(
             SERVICE_RECORD_LINK_RULE_ID,
             scheduleId,
             reason,
+            afterCancel,
         );
-        if (inFlightJobIds.length > 0) {
-            this.logger.warn(
-                `Schedule ${scheduleId}: ${inFlightJobIds.length} service-record link job(s) already dispatching were left untouched (${reason}): ${inFlightJobIds.join(", ")}`,
-            );
-        }
+        this.logInFlightLinkJobs(scheduleId, reason, inFlightJobIds);
         return inFlightJobIds;
+    }
+
+    private logInFlightLinkJobs(scheduleId: number, reason: string, inFlightJobIds: string[]): void {
+        if (inFlightJobIds.length === 0) return;
+        this.logger.warn(
+            `Schedule ${scheduleId}: ${inFlightJobIds.length} service-record link job(s) already dispatching were left untouched (${reason}): ${inFlightJobIds.join(", ")}`,
+        );
     }
 
     private async supersedeRetryableServiceRecordSmsLogs(
@@ -318,6 +354,22 @@ export class ServiceRecordLinkService {
         for (const log of logs) {
             log.markRetrySuperseded(reason);
             await this.logRepository.update(log, transaction);
+        }
+    }
+
+    private assertClientCanReceiveLink(client: {
+        serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    }): void {
+        if (getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/scheduleId",
+                code: "INVALID_VALUE",
+                detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다",
+                location: "body",
+            }));
         }
     }
 
@@ -346,6 +398,7 @@ export class ServiceRecordLinkService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(
@@ -357,6 +410,21 @@ export class ServiceRecordLinkService {
         const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
         if (!options.isManualSend) {
+            // 종료일은 KST 자정까지 유효하므로 종료일 당일의 늦은 등록도 발송한다.
+            if (
+                schedule.terminatedAt
+                || getEffectiveClientServiceStatus(
+                    schedule.client.serviceStatus,
+                    schedule.client.startDate,
+                    schedule.client.endDate,
+                    schedule.client.bookingConfirmedAt,
+                ) === "pre_booking"
+                || schedule.client?.serviceStatus === "completed"
+                || schedule.client?.serviceStatus === "terminated"
+                || getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()
+            ) {
+                return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
+            }
             automaticSchedulingClaim = await this.claimAutomaticScheduling({
                 branchId: schedule.branchId,
                 scheduleId,
@@ -515,18 +583,17 @@ export class ServiceRecordLinkService {
                         : {}),
                 },
             });
-            const promote = (transaction?: Prisma.TransactionClient) => transaction
-                ? this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim!.id,
-                    automaticSchedulingClaim!.claimVersion,
-                    pendingJob,
-                    transaction,
-                )
-                : this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim!.id,
-                    automaticSchedulingClaim!.claimVersion,
-                    pendingJob,
-                );
+            // The fence re-checks, after the job locks, that this link token was
+            // not revoked while it was being prepared: a revoke is serialized
+            // with the fence and cancels only what already exists.
+            const linkGuard = { requireActiveLinkToken: linkToken };
+            const promote = (transaction?: Prisma.TransactionClient) => this.jobRepository.promoteAutomaticSchedulingClaim(
+                automaticSchedulingClaim!.id,
+                automaticSchedulingClaim!.claimVersion,
+                pendingJob,
+                transaction,
+                linkGuard,
+            );
             let persistedJob: MessageTriggerJobEntity | null;
             if (automaticSchedulingClaim) {
                 persistedJob = await this.branchLock!.runExclusive(
@@ -541,17 +608,24 @@ export class ServiceRecordLinkService {
                 const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
                     pendingJob,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                    { requireActiveLinkToken: linkToken },
                     (transaction) => this.supersedeRetryableServiceRecordSmsLogs(
                         scheduleId,
                         SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                         transaction,
                     ),
                 );
-                if (replaced.kind === "in_flight" || replaced.kind === "lock_timeout") {
+                if (
+                    replaced.kind === "in_flight"
+                    || replaced.kind === "lock_timeout"
+                    || replaced.kind === "link_revoked"
+                ) {
                     // Never queue a second send behind one the dispatcher
                     // already claimed; the caller re-reads the (sending) status.
                     // A lock held past the fence's lock_timeout is the same
-                    // answer: nothing was written, try again.
+                    // answer: nothing was written, try again. So is a link that
+                    // was revoked while the send was being prepared: nothing was
+                    // written and the caller re-reads the schedule.
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
                 persistedJob = replaced.job;
@@ -701,7 +775,9 @@ export class ServiceRecordLinkService {
                 AND "message_trigger_job"."canceled_by_user" = false
                 AND "message_trigger_job"."cancel_reason" IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
+                    ${SERVICE_RECORD_LINK_ENDED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
+                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON},
                     ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
                 )
             )
@@ -874,7 +950,7 @@ export class ServiceRecordLinkService {
 
     private resolveExpiry(endDate: Date, allowLateReissue: boolean): Date {
         const normalExpiry = getServiceRecordTokenExpiresAt(endDate);
-        if (!allowLateReissue || normalExpiry.getTime() >= Date.now()) return normalExpiry;
+        if (!allowLateReissue || normalExpiry.getTime() > Date.now()) return normalExpiry;
         return new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 }

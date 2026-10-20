@@ -60,6 +60,13 @@ function createUploadRequest(extraFields: Record<string, string | File> = {}): N
 }
 
 describe("file-storage API routes", () => {
+  it.each(["branch", "all_branches", undefined])("forwards scope only when supplied (%s)", async (scope) => {
+    mockPost.mockResolvedValue({ status: 201, data: { id: "doc-1" } });
+    const response = await uploadFile(createUploadRequest(scope ? { visibilityScope: scope } : {}));
+    expect(response.status).toBe(201);
+    const forwarded = mockPost.mock.calls[0][1] as FormData;
+    expect(forwarded.get("visibilityScope")).toBe(scope ?? null);
+  });
   let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {

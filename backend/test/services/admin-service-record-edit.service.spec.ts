@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { createHash } from "node:crypto";
+import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import {
@@ -9,6 +11,7 @@ import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar, type KrBusinessDa
 import type {
     ServiceRecordEditRevisionFactsSource,
     ServiceRecordEditSource,
+    ServiceRecordEditConfirmPlan,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -781,11 +784,42 @@ describe("AdminServiceRecordEditService", () => {
         const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
             prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
         };
-        const plan = input.prepare({ draft: activeDraft, source }) as {
-            sessions: Array<Record<string, unknown>>;
-            revision: { payload: Record<string, unknown> } | null;
-        };
-        expect(plan.sessions[0]?.["answers"]).toEqual({
+        const plan = input.prepare({ draft: activeDraft, source }) as ServiceRecordEditConfirmPlan;
+        const bytesHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+        // Pinned against this pre-existing fixture before introducing beforeSnapshot.
+        expect({
+            revisionPayload: bytesHash(plan.revision?.payload),
+            revisionFingerprint: plan.documentJob?.payloadFingerprint,
+            documentJobPayload: bytesHash(plan.documentJob?.payload),
+            contractImmutableInput: bytesHash(plan.contractOperation?.immutableInput),
+            receiptImmutableInput: bytesHash(plan.receiptOperation?.immutableInput),
+        }).toEqual({
+            contractImmutableInput: "17522468ae55ca34c4a75644631d5def376e3ba6d17023965d28ee86f0974602",
+            documentJobPayload: "a2a5a37767da82212f44ecb021f3c0f05cc7447e48fcb54a16c4b2ae48c41292",
+            receiptImmutableInput: "7938134c25809346905c0be4772af31ec247830138aa11310e0b0c82edb7e5f1",
+            revisionFingerprint: "4f5a18231965c321cbfa2136e70b3902abd48da3a09fb574f7a63eecea5cae07",
+            revisionPayload: "4f5a18231965c321cbfa2136e70b3902abd48da3a09fb574f7a63eecea5cae07",
+        });
+        expect(plan.revision?.beforeSnapshot).toEqual({
+            snapshotVersion: 1,
+            startDate: source.startDate,
+            endDate: source.endDate,
+            header: source.header,
+            plannedSessions: preview.before.sessions,
+            sessions: source.sessions.map((session) => ({
+                sessionIndex: session.sessionIndex,
+                serviceDate: session.serviceDate,
+                answers: session.answers,
+                etcService: session.etcService,
+                notes: session.notes,
+                paymentConfirmed: session.paymentConfirmed,
+                employeeId: session.employeeId,
+                employeeNameSnapshot: session.employeeNameSnapshot,
+                clientSignatureFingerprint: serviceRecordSignatureFingerprint(session.clientSignature),
+            })),
+        });
+        expect(JSON.stringify(plan.revision?.beforeSnapshot)).not.toContain("data:image");
+        expect(plan.sessions[0]?.answers).toEqual({
             perineum: ["이상없음"],
             breast: ["이상없음"],
         });
@@ -2067,5 +2101,1001 @@ describe("AdminServiceRecordEditService receipt facts follow the current contrac
         });
 
         expect(Array.isArray(input.serviceRecordTemplateIds)).toBe(true);
+    });
+});
+
+describe("AdminServiceRecordEditService confirm assignment dates", () => {
+    const base = previewSourceSnapshot();
+    const caregiverA = {
+        ...base.assignments[0]!,
+        id: "aaaaaaaa-0000-4000-8000-00000000000a",
+        scheduleId: 701,
+        employeeId: 31,
+        employeeName: "공혜순",
+        primaryEmployeeId: 31,
+        primaryEmployeeName: "공혜순",
+        startDate: "2026-10-01",
+        endDate: "2026-10-14",
+        scheduleStartDate: "2026-10-01",
+        scheduleEndDate: "2026-10-14",
+        replaced: true,
+    };
+    const caregiverB = {
+        ...caregiverA,
+        id: "bbbbbbbb-0000-4000-8000-00000000000b",
+        scheduleId: 702,
+        employeeId: 32,
+        employeeName: "임선녀",
+        primaryEmployeeId: 32,
+        primaryEmployeeName: "임선녀",
+        startDate: "2026-10-14",
+        endDate: "2026-10-23",
+        scheduleStartDate: "2026-10-14",
+        scheduleEndDate: "2026-10-23",
+        replaced: false,
+    };
+    const dates = [
+        "2026-10-01", "2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08",
+        "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16",
+        "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23",
+    ];
+
+    function written(sessionIndex: number, owner: typeof caregiverA) {
+        return {
+            ...base.sessions[0]!,
+            id: `day-${sessionIndex}`,
+            sourceRowId: `day-${sessionIndex}`,
+            sessionIndex,
+            rawCaseSessionIndex: sessionIndex,
+            rawSessionIndex: sessionIndex,
+            serviceDate: dates[sessionIndex - 1]!,
+            scheduleId: owner.scheduleId,
+            employeeId: owner.employeeId,
+            employeeNameSnapshot: owner.employeeName,
+        };
+    }
+
+    /** The stored vector gives sessions 1-7 to A and 8-15 to B, as an earlier confirmed edit left it. */
+    function handoverSource(rows: ReturnType<typeof written>[]): ServiceRecordEditSource {
+        return {
+            ...base,
+            requiredSessionCount: dates.length,
+            startDate: dates[0]!,
+            endDate: dates.at(-1)!,
+            client: { ...base.client, startDate: dates[0]!, endDate: dates.at(-1)! },
+            sessions: rows,
+            assignments: [caregiverA, caregiverB],
+            plannedSessions: dates.map((serviceDate, index) => {
+                const owner = index < 7 ? caregiverA : caregiverB;
+                return {
+                    sessionIndex: index + 1,
+                    serviceDate,
+                    originalDate: serviceDate,
+                    assignmentId: owner.id,
+                    scheduleId: owner.scheduleId,
+                    employeeId: owner.employeeId,
+                    provenanceVersion: "case-7",
+                };
+            }),
+        };
+    }
+
+    async function confirmedAssignments(
+        source: ServiceRecordEditSource,
+        changes: Record<string, unknown>,
+    ) {
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = { ...started.draft, changes };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        expect(preview.blockingReasons).toEqual([]);
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-10-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+        };
+        return input.prepare({ draft: activeDraft, source }) as {
+            assignments: Array<{
+                assignmentId: string | null;
+                scheduleId: number | null;
+                startDate: string;
+                endDate: string;
+                datesChanged?: boolean;
+            }>;
+            revision: { provenance: Array<{ assignmentId: string; startDate: string; endDate: string }> } | null;
+        };
+    }
+
+    const headerOnly = { header: { momName: "수정 산모" } };
+
+    it("keeps the stored handover boundary on a header-only confirm", async () => {
+        const plan = await confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            headerOnly,
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, scheduleId: 701, startDate: "2026-10-01", endDate: "2026-10-14" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, scheduleId: 702, startDate: "2026-10-14", endDate: "2026-10-23" }),
+        ]);
+        // The revision still records the owned session ranges.
+        expect(plan.revision?.provenance).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-13" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23" }),
+        ]);
+    });
+
+    it("keeps both stored boundaries after the new caregiver backfilled earlier sessions", async () => {
+        const rows = [written(1, caregiverA), ...[2, 3, 4, 5, 6, 7].map((index) => written(index, caregiverB))];
+        const plan = await confirmedAssignments(handoverSource(rows), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23" }),
+        ]);
+        expect(plan.revision?.provenance).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-01" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-02", endDate: "2026-10-23" }),
+        ]);
+    });
+
+    it("keeps every stored date for three caregivers after a partial backfill", async () => {
+        // Vector A 1-7 / B 8-10 / C 11-15. A wrote 1 and C backfilled 2, so B owns no session at all.
+        const caregiverC = {
+            ...caregiverB,
+            id: "cccccccc-0000-4000-8000-00000000000c",
+            scheduleId: 703,
+            employeeId: 33,
+            employeeName: "후임",
+            primaryEmployeeId: 33,
+            primaryEmployeeName: "후임",
+            startDate: "2026-10-19",
+            scheduleStartDate: "2026-10-19",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+            replaced: false,
+        };
+        const middle = {
+            ...caregiverB,
+            replaced: true,
+            endDate: "2026-10-19",
+            scheduleEndDate: "2026-10-19",
+        };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA), written(2, caregiverC)]),
+            assignments: [caregiverA, middle, caregiverC],
+            plannedSessions: dates.map((serviceDate, index) => {
+                const owner = index < 7 ? caregiverA : index < 10 ? middle : caregiverC;
+                return {
+                    sessionIndex: index + 1,
+                    serviceDate,
+                    originalDate: serviceDate,
+                    assignmentId: owner.id,
+                    scheduleId: owner.scheduleId,
+                    employeeId: owner.employeeId,
+                    provenanceVersion: "case-7",
+                };
+            }),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14" }),
+            expect.objectContaining({ assignmentId: middle.id, startDate: "2026-10-14", endDate: "2026-10-19" }),
+            expect.objectContaining({ assignmentId: caregiverC.id, startDate: "2026-10-19", endDate: "2026-10-23" }),
+        ]);
+    });
+
+    it("moves only the case's last edge, never the handover, when sessions move later", async () => {
+        // Every session from 7 on moves two business days later, so A now owns a session (10-15) after
+        // the stored handover day (10-14). The handover is the caregiver replacement flow's to change, so it
+        // stays; only the latest assignment's end follows the new last session.
+        const moved = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27"];
+        const plan = await confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            { sessions: moved.map((serviceDate, offset) => ({ sessionIndex: offset + 7, serviceDate })) },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-27" }),
+        ]);
+    });
+
+    it("reports a conflict instead of writing an assignment whose end precedes its start", async () => {
+        // Stored A end = B start = 10-22 (after a pause). Sessions 8-9 are moved back to 10-14 and 10-15,
+        // so the case would end before B's stored start.
+        const afterPause = ["2026-10-22", "2026-10-23"];
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA)]),
+            requiredSessionCount: 9,
+            endDate: "2026-10-23",
+            assignments: [
+                { ...caregiverA, endDate: "2026-10-22", scheduleEndDate: "2026-10-22" },
+                { ...caregiverB, startDate: "2026-10-22", scheduleStartDate: "2026-10-22" },
+            ],
+            plannedSessions: [...dates.slice(0, 7), ...afterPause].map((serviceDate, index) => {
+                const owner = index < 7 ? caregiverA : caregiverB;
+                return {
+                    sessionIndex: index + 1,
+                    serviceDate,
+                    originalDate: serviceDate,
+                    assignmentId: owner.id,
+                    scheduleId: owner.scheduleId,
+                    employeeId: owner.employeeId,
+                    provenanceVersion: "case-7",
+                };
+            }),
+        };
+        await expect(confirmedAssignments(source, {
+            sessions: [
+                { sessionIndex: 8, serviceDate: "2026-10-14" },
+                { sessionIndex: 9, serviceDate: "2026-10-15" },
+            ],
+        })).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+    });
+
+    /** A terminated schedule on the case: dates only, never an outer edge (even when it owns no session). */
+    const terminated = {
+        ...caregiverB,
+        scheduleTerminatedAt: "2026-09-06T00:00:00.000Z",
+        id: "dddddddd-0000-4000-8000-00000000000d",
+        scheduleId: 704,
+        employeeId: 34,
+        employeeName: "종료",
+        primaryEmployeeId: 34,
+        primaryEmployeeName: "종료",
+        replaced: false,
+    };
+    function singleOwnerSource(
+        single: typeof caregiverB,
+        extra: typeof terminated,
+        order: "extra-first" | "extra-last",
+    ): ServiceRecordEditSource {
+        return {
+            ...handoverSource([written(1, single)]),
+            assignments: order === "extra-first" ? [extra, single] : [single, extra],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+    }
+
+    it("does not treat a session-less terminated schedule before the first session as the case start", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const early = {
+            ...terminated,
+            startDate: "2026-09-01",
+            scheduleStartDate: "2026-09-01",
+            endDate: "2026-09-05",
+            scheduleEndDate: "2026-09-05",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, early, "extra-first"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: early.id, scheduleId: 704, startDate: "2026-09-01", endDate: "2026-09-05" }),
+            expect.objectContaining({ assignmentId: single.id, scheduleId: 702, startDate: "2026-10-01", endDate: "2026-10-23" }),
+        ]);
+    });
+
+    it("does not extend a session-less terminated schedule stored after the last session", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const late = {
+            ...terminated,
+            startDate: "2026-10-26",
+            scheduleStartDate: "2026-10-26",
+            endDate: "2026-10-30",
+            scheduleEndDate: "2026-10-30",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, late, "extra-last"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-23" }),
+            expect.objectContaining({ assignmentId: late.id, scheduleId: 704, startDate: "2026-10-26", endDate: "2026-10-30" }),
+        ]);
+    });
+
+    it("keeps both stored ranges when only the later caregiver wrote sessions, backfilling the earlier ones", async () => {
+        // B wrote sessions 1-8, so the provenance holds only B. B's first session (10-01) lies inside A's
+        // stored period, so B's start must stay on the stored handover day, not move to 10-01.
+        const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((index) => written(index, caregiverB));
+        const plan = await confirmedAssignments(handoverSource(rows), headerOnly);
+        expect(plan.revision?.provenance).toEqual([
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-01", endDate: "2026-10-23" }),
+        ]);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("ends the latest assignment on the last session even when the earlier caregiver owns every session", async () => {
+        // Mirror of the header-only backfill case: every session is A's, and the last (10-23) lies inside B's
+        // stored period. Ownership no longer decides the edges: B is the latest active assignment, so it
+        // covers 10-23 and its end follows the last planned session, which is its stored end already.
+        // A is the earliest and starts on the first session (its stored start). Both stay unchanged; the
+        // old "keep B because A owns everything" reasoning is gone, only the result is the same.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverA))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("ends the latest assignment on a moved last session even when the earlier caregiver owns every session", async () => {
+        // Same ownership, but the last session moves to 10-27: B (the latest active assignment) ends on 10-27
+        // although it owns no session, since its period covers the day; A keeps its stored dates.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverA))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-27" }] });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-27", datesChanged: true }),
+        ]);
+    });
+
+    it("starts the replaced caregiver on the moved first session when she wrote nothing and the successor backfilled", async () => {
+        // A (10-01..10-14, replaced) wrote nothing; B (10-14..10-23) owns every session. Session 1 moves to
+        // 09-29. The case now starts on 09-29, and A's period must cover it: A, the earliest active
+        // assignment, starts on 09-29. B and A's end stay (inner handover untouched).
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverB))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverB.id,
+                scheduleId: caregiverB.scheduleId,
+                employeeId: caregiverB.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-29" }] });
+        expect(plan.revision?.provenance).toEqual([
+            expect.objectContaining({ assignmentId: caregiverB.id }),
+        ]);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-09-29", endDate: "2026-10-14", datesChanged: true }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("ends the successor on the moved last session when the replaced caregiver wrote nothing", async () => {
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverB))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverB.id,
+                scheduleId: caregiverB.scheduleId,
+                employeeId: caregiverB.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-27" }] });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-27", datesChanged: true }),
+        ]);
+    });
+
+    const shiftedAll = [
+        "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21",
+        "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28",
+        "2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04",
+    ].map((serviceDate, offset) => ({ sessionIndex: offset + 1, serviceDate }));
+
+    it("keeps an assignment that wrote nothing when every session moves past its stored end", async () => {
+        // A (10-01..10-14) wrote nothing, B owns the sessions. All 15 sessions shift to start on 10-15, after
+        // A's stored end. A owns no session, so it keeps its stored period instead of failing the confirm
+        // (the replacement flow cannot edit a replaced schedule, so a throw would make the case uneditable);
+        // the next assignment's start is an inner boundary and stays. B, the latest, ends on the last session.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverB))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverB.id,
+                scheduleId: caregiverB.scheduleId,
+                employeeId: caregiverB.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, { sessions: shiftedAll });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-11-04", datesChanged: true }),
+        ]);
+    });
+
+    it("still reports a conflict when the earliest assignment owns sessions and they all move past its stored end", async () => {
+        // A owns sessions 1-7 and B 8-15. Every session moves to 10-15 or later, so A, which owns sessions,
+        // would start after its stored end 10-14: a real conflict for the replacement flow.
+        const plan = confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            { sessions: shiftedAll },
+        );
+        await expect(plan).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+    });
+
+    it("keeps the latest assignment that wrote nothing when every session now ends before its stored start", async () => {
+        // Mirror: A owns every session and the plan now ends 10-13, before B's stored start 10-14. B owns
+        // nothing, so it keeps its stored period instead of failing the confirm; A is untouched.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA)]),
+            requiredSessionCount: 7,
+            endDate: "2026-10-13",
+            plannedSessions: dates.slice(0, 7).map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps a replaced zero-length period and its successor's start when every session shifts one slot later", async () => {
+        // R was replaced before the contract start, so it is stored as [10-01,10-01]; B [10-01,10-23] owns
+        // every session. The first session moves to 10-02: R (owns nothing) must not throw, nor move.
+        const replacedEarly = {
+            ...caregiverA,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-01",
+            scheduleEndDate: "2026-10-01",
+        };
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const shifted = [...dates.slice(1), "2026-10-26"];
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, successor))),
+            assignments: [replacedEarly, successor],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: successor.id,
+                scheduleId: successor.scheduleId,
+                employeeId: successor.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, {
+            sessions: shifted.map((serviceDate, offset) => ({ sessionIndex: offset + 1, serviceDate })),
+        });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: replacedEarly.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-26", datesChanged: true }),
+        ]);
+    });
+
+    it("keeps the first active start when a terminated assignment stored before it ends after the first session", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const overlapping = {
+            ...terminated,
+            startDate: "2026-09-20",
+            scheduleStartDate: "2026-09-20",
+            endDate: "2026-10-05",
+            scheduleEndDate: "2026-10-05",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, overlapping, "extra-first"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: overlapping.id, startDate: "2026-09-20", endDate: "2026-10-05", datesChanged: false }),
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-09-28", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the last active end when a terminated assignment stored after it starts before the last session", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const overlapping = {
+            ...terminated,
+            startDate: "2026-10-20",
+            scheduleStartDate: "2026-10-20",
+            endDate: "2026-10-30",
+            scheduleEndDate: "2026-10-30",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, overlapping, "extra-last"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-25", datesChanged: false }),
+            expect.objectContaining({ assignmentId: overlapping.id, startDate: "2026-10-20", endDate: "2026-10-30", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the contracted period of a single terminated caregiver, extending its end but never shrinking it", async () => {
+        // A case ended early (중도 종료) has its only schedule terminated, and termination deliberately keeps
+        // the contracted period in end_date (client.service.ts). The schedule owns the sessions, so it is
+        // still an outer edge, but only to grow: stored 09-28..10-25. Header-only: the first session (10-01)
+        // is later than the stored start and the last (10-23) earlier than the stored end, so nothing
+        // shrinks. Last session moved to 10-26: the end extends, the start still stays.
+        const single = {
+            ...caregiverB,
+            scheduleTerminatedAt: "2026-10-20T00:00:00.000Z",
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const source = {
+            ...handoverSource([written(1, single)]),
+            assignments: [single],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const unchanged = await confirmedAssignments(source, headerOnly);
+        expect(unchanged.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-09-28", endDate: "2026-10-25", datesChanged: false }),
+        ]);
+        const later = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-26" }] });
+        expect(later.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-09-28", endDate: "2026-10-26", datesChanged: true }),
+        ]);
+    });
+
+    it("moves a terminated caregiver's start earlier when the first session precedes it", async () => {
+        const single = {
+            ...caregiverB,
+            scheduleTerminatedAt: "2026-10-20T00:00:00.000Z",
+            startDate: "2026-10-03",
+            scheduleStartDate: "2026-10-03",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const source = {
+            ...handoverSource([written(1, single)]),
+            assignments: [single],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-25", datesChanged: true }),
+        ]);
+    });
+
+    it("ends a terminated latest caregiver on the last session when she owns sessions", async () => {
+        const terminatedB = { ...caregiverB, scheduleTerminatedAt: "2026-10-25T00:00:00.000Z" };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA), written(8, terminatedB)]),
+            assignments: [caregiverA, terminatedB],
+        };
+        const plan = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-27" }] });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: terminatedB.id, startDate: "2026-10-14", endDate: "2026-10-27", datesChanged: true }),
+        ]);
+    });
+
+    it("keeps the last active end when a session-less terminated assignment starts exactly on it", async () => {
+        // A [10-01,10-14] owns sessions 1-7 (plan now ends 10-13); T [10-14,10-23] is terminated and owns
+        // nothing. T abuts A's end, so A's end is a boundary shared with T and must not shrink to 10-13.
+        const abutting = {
+            ...terminated,
+            startDate: "2026-10-14",
+            scheduleStartDate: "2026-10-14",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA)]),
+            requiredSessionCount: 7,
+            endDate: "2026-10-13",
+            assignments: [caregiverA, abutting],
+            plannedSessions: dates.slice(0, 7).map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: abutting.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the first active start when a session-less terminated assignment ends exactly on it", async () => {
+        // Mirror: T [09-25,10-01] is terminated and owns nothing; B [10-01,10-23] owns the sessions and the
+        // plan now starts 10-02. T's end is shared with B's start, so B's start must not move to 10-02.
+        const abutting = {
+            ...terminated,
+            startDate: "2026-09-25",
+            scheduleStartDate: "2026-09-25",
+            endDate: "2026-10-01",
+            scheduleEndDate: "2026-10-01",
+        };
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([]),
+            requiredSessionCount: 14,
+            startDate: "2026-10-02",
+            assignments: [abutting, successor],
+            plannedSessions: dates.slice(1).map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: successor.id,
+                scheduleId: successor.scheduleId,
+                employeeId: successor.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: abutting.id, startDate: "2026-09-25", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    /** B owns every session; `others` are session-less neighbours stored around it. */
+    function successorOwnsAllSource(
+        successor: typeof caregiverB,
+        others: Array<typeof terminated>,
+        order: "others-first" | "others-last" = "others-first",
+    ): ServiceRecordEditSource {
+        return {
+            ...handoverSource(dates.map((_, index) => written(index + 1, successor))),
+            assignments: order === "others-first" ? [...others, successor] : [successor, ...others],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: successor.id,
+                scheduleId: successor.scheduleId,
+                employeeId: successor.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+    }
+
+    const placeholderOn = (date: string, suffix: string, scheduleId: number) => ({
+        ...terminated,
+        id: `eeeeeeee-0000-4000-8000-0000000000${suffix}`,
+        scheduleId,
+        startDate: date,
+        scheduleStartDate: date,
+        endDate: date,
+        scheduleEndDate: date,
+    });
+
+    it("lets the successor start on an earlier first session and moves the same-day zero-length terminated placeholder with it", async () => {
+        // T was replaced before the service started (stored [10-01,10-01], owns nothing); B [10-01,10-23]
+        // owns every session. The first session moves to 09-29: B's start follows it, and T moves to
+        // [09-29,09-29] so T's end still equals B's start.
+        const placeholder = placeholderOn("2026-10-01", "01", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder]),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-29" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-09-29", endDate: "2026-09-29", datesChanged: true }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-09-29", endDate: "2026-10-23", datesChanged: true }),
+        ]);
+    });
+
+    it("leaves a same-day zero-length terminated placeholder alone when the first session does not move earlier", async () => {
+        const placeholder = placeholderOn("2026-10-01", "01", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(successorOwnsAllSource(successor, [placeholder]), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("moves none of several same-day zero-length terminated placeholders and keeps the successor's start", async () => {
+        const first = placeholderOn("2026-10-01", "01", 704);
+        const second = placeholderOn("2026-10-01", "02", 705);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [first, second]),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-29" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: first.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: second.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps blocking when a non-placeholder terminated neighbour abuts the first active start", async () => {
+        // T [09-25,10-01] is a real (non-zero-length) period ending on B's start: it is a boundary, not a
+        // placeholder, so B's start must not move to 09-29 and T must not move.
+        const real = {
+            ...terminated,
+            startDate: "2026-09-25",
+            scheduleStartDate: "2026-09-25",
+            endDate: "2026-10-01",
+            scheduleEndDate: "2026-10-01",
+        };
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [real]),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-29" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: real.id, startDate: "2026-09-25", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("lets the last active end follow a later last session and moves the same-day zero-length terminated placeholder after it", async () => {
+        // Mirror: B [10-01,10-23] owns every session; T is stored [10-23,10-23] and owns nothing.
+        const placeholder = placeholderOn("2026-10-23", "03", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder], "others-last"),
+            { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-27" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-27", datesChanged: true }),
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-10-27", endDate: "2026-10-27", datesChanged: true }),
+        ]);
+    });
+
+    it("keeps the placeholder and the successor's start when the first session moves later (inward)", async () => {
+        // T [10-01,10-01] owns nothing; B [10-01,10-23] owns every session. Sessions 1 and 2 move later
+        // (first now 10-03): an inward move never pulls the shared boundary apart, so T and B keep their dates.
+        const placeholder = placeholderOn("2026-10-01", "01", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder]),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-10-03" }, { sessionIndex: 2, serviceDate: "2026-10-04" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the placeholder and the last active end when the last session moves earlier (inward)", async () => {
+        const placeholder = placeholderOn("2026-10-23", "03", 704);
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder], "others-last"),
+            {
+                sessions: [
+                    { sessionIndex: 11, serviceDate: "2026-10-17" },
+                    { sessionIndex: 12, serviceDate: "2026-10-18" },
+                    { sessionIndex: 13, serviceDate: "2026-10-19" },
+                    { sessionIndex: 14, serviceDate: "2026-10-20" },
+                    { sessionIndex: 15, serviceDate: "2026-10-22" },
+                ],
+            },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: false }),
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-10-23", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("treats a same-day placeholder as the head side whatever the source order of identical stored periods", async () => {
+        // B stored [10-01,10-01] owns the sessions and the placeholder is listed AFTER it: the sort still puts
+        // the session-less terminated one first, so the first session moving to 09-29 carries both.
+        const placeholder = placeholderOn("2026-10-01", "01", 704);
+        const successor = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-01",
+            scheduleEndDate: "2026-10-01",
+        };
+        const plan = await confirmedAssignments(
+            successorOwnsAllSource(successor, [placeholder], "others-last"),
+            { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-29" }] },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: placeholder.id, startDate: "2026-09-29", endDate: "2026-09-29", datesChanged: true }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-09-29" }),
+        ]);
+    });
+
+    it("never writes a conflict for a pause between caregivers: the later caregiver's period is a record only", async () => {
+        // A [10-01,10-14] (replaced) owns every session (9); B [10-22,10-23] owns none. Sessions 8 and 9
+        // move to 10-15 and 10-16, which lie in neither period's outer reach for B. The confirm succeeds and
+        // keeps both stored periods untouched.
+        const pausedB = { ...caregiverB, startDate: "2026-10-22", scheduleStartDate: "2026-10-22" };
+        const planned = [...dates.slice(0, 7), "2026-10-15", "2026-10-16"];
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA)]),
+            requiredSessionCount: 9,
+            endDate: "2026-10-23",
+            assignments: [caregiverA, pausedB],
+            plannedSessions: [...dates.slice(0, 7), "2026-10-22", "2026-10-23"].map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, {
+            sessions: [
+                { sessionIndex: 8, serviceDate: planned[7]! },
+                { sessionIndex: 9, serviceDate: planned[8]! },
+            ],
+        });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: pausedB.id, startDate: "2026-10-22", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("flags an assignment whose employee_schedule disagrees with the computed dates", async () => {
+        const drifted = { ...caregiverB, scheduleStartDate: "2026-10-12" };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            assignments: [caregiverA, drifted],
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: true }),
+        ]);
+    });
+
+    it("flags no assignment as changed when a confirm leaves every date alone", async () => {
+        const plan = await confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            headerOnly,
+        );
+        expect(plan.assignments).toHaveLength(2);
+        expect(plan.assignments.map((assignment) => assignment.datesChanged)).toEqual([false, false]);
+    });
+
+    it("flags only the outer-edge assignment whose dates actually move", async () => {
+        const moved = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27"];
+        const plan = await confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            { sessions: moved.map((serviceDate, offset) => ({ sessionIndex: offset + 7, serviceDate })) },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, datesChanged: true }),
+        ]);
+    });
+
+    it("flags a moved start and leaves a session-less neighbour unflagged", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const early = {
+            ...terminated,
+            startDate: "2026-09-01",
+            scheduleStartDate: "2026-09-01",
+            endDate: "2026-09-05",
+            scheduleEndDate: "2026-09-05",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, early, "extra-first"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: early.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: single.id, datesChanged: true }),
+        ]);
+    });
+
+    it("still moves a single caregiver's end with the last session", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const source = {
+            ...handoverSource([written(1, single)]),
+            assignments: [single],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-26" }] });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, scheduleId: 702, startDate: "2026-10-01", endDate: "2026-10-26" }),
+        ]);
     });
 });

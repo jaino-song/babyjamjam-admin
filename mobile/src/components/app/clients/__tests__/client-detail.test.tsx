@@ -1,7 +1,11 @@
-import { render, renderHook, screen } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
+import { formatMessageDateTimeCompact, MESSAGE_JOB_RESEND_COPY } from "@babyjamjam/shared";
+import { AxiosError, AxiosHeaders } from "axios";
+import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { eformsignApi } from "@/services/api";
+import { toast } from "@/hooks/use-toast";
 
 import {
   ClientDetailContent,
@@ -12,6 +16,174 @@ import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useIssueContract } from "@/hooks/useIssueContract";
 import { useFormStore } from "@/stores/form-store";
+
+const mockRetryHistory = jest.fn();
+const mockResendJob = jest.fn();
+const mockUseResendJob = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockResendJob, isPending: false }));
+const mockUseRetryHistory = jest.fn((_clientId?: unknown) => ({ mutateAsync: mockRetryHistory, isPending: false }));
+let mockMessageBranchRole = "manager";
+let mockMessageRole = "user";
+jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
+  useRetryMessageHistory: (...args: unknown[]) => mockUseRetryHistory(...args),
+  useResendMessageTriggerJob: (...args: unknown[]) => mockUseResendJob(...args),
+}));
+
+describe("client message lookup detail labels", () => {
+  it.each(["checking", "exhausted"])("renders %s in detail without changing the list label", async historyLookup => {
+    const row: ClientNotificationLogRecord = {
+      id: 901, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "failed",
+      receiver: "01012345678", messageBody: "내용", variables: { historyLookup },
+      recipientName: null, clientId: null, errorMessage: null, ruleName: null,
+      createdAt: "2026-10-12T00:00:00Z",
+    };
+    render(<ClientDetailContent data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+      client={client} contractDocument={null} activeTab="message" notificationLogs={[row]}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+    const button = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+    expect(button).toHaveTextContent("발송 실패");
+    await userEvent.setup().click(button);
+    expect(screen.getByText(historyLookup === "checking" ? "확인 중" : "확인 필요")).toBeInTheDocument();
+  });
+});
+
+describe("customer message retry", () => {
+  const originalResizeObserver = global.ResizeObserver;
+  beforeAll(() => {
+    global.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  });
+  afterAll(() => { global.ResizeObserver = originalResizeObserver; });
+  const row: ClientNotificationLogRecord = {
+    id: 901, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "failed",
+    receiver: "01012345678", messageBody: "내용", recipientName: "고객", clientId: 7,
+    errorMessage: null, ruleName: null, createdAt: "2026-10-12T00:00:00Z",
+  };
+  beforeEach(() => {
+    mockMessageBranchRole = "manager";
+    mockMessageRole = "user";
+    mockRetryHistory.mockReset().mockResolvedValue({ status: "sent" });
+    mockResendJob.mockReset().mockResolvedValue({ status: "sent" });
+  });
+  afterEach(() => { mockMessageBranchRole = "manager"; mockMessageRole = "user"; });
+  async function openRecord(status = "failed", overrides: Partial<ClientNotificationLogRecord> = {}) {
+    render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
+      client={client} activeTab="message" notificationLogs={[{ ...row, status, ...overrides }]}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+  }
+  it("confirms before retrying the numeric log id and closes the snapshot", async () => {
+    await openRecord();
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("메시지를 다시 보낼까요?");
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(901));
+    expect(mockUseRetryHistory).toHaveBeenCalledWith(client.id);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" });
+  });
+  it.each(["sent", "pending", "canceled", "needs_setup"])("does not retry %s logs", async status => {
+    await openRecord(status);
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it("does not offer retry to a staff member", async () => {
+    mockMessageBranchRole = "staff";
+    await openRecord();
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  const jobRow = { id: "job:job-123", provider: "message_job", triggerJobId: "job-123" };
+  it("disables a branch-blocked resend and explains why without opening confirmation", async () => {
+    await openRecord("needs_setup", { ...jobRow, resendBlockedBy: "branch" });
+    const user = userEvent.setup();
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const trigger = retry.closest('[data-slot="hover-card-trigger"]');
+    expect(trigger).not.toBeNull();
+    await user.hover(trigger!);
+    expect(await screen.findByText("지점 자동 전송이 꺼져 있어요")).toBeInTheDocument();
+    expect(screen.getByText("이 지점의 ‘자동 전송 실행’이 꺼져 있어 재발송할 수 없어요.")).toBeInTheDocument();
+    expect(mockResendJob).not.toHaveBeenCalled();
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+  });
+  it("confirms a needs_setup job resend with its bare job id and client context", async () => {
+    await openRecord("needs_setup", jobRow);
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    expect(mockResendJob).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("메시지를 다시 보낼까요?");
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(mockResendJob).toHaveBeenCalledWith("job-123"));
+    expect(mockUseResendJob).toHaveBeenCalledWith(client.id);
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "재발송", variant: "success" }));
+  });
+  it.each(["user", "owner"])("shows the blocked account link only to an owner (%s)", async role => {
+    mockMessageRole = role;
+    await openRecord("needs_setup", {
+      ...jobRow,
+      resendBlockedBy: "recipient",
+      resendBlockedRecipient: { kind: "user", id: "account-123" },
+    });
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await userEvent.setup().hover(retry.closest('[data-slot="hover-card-trigger"]')!);
+    expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+    expect(Boolean(screen.queryByRole("link"))).toBe(role === "owner");
+    expect(mockResendJob).not.toHaveBeenCalled();
+    expect(mockRetryHistory).not.toHaveBeenCalled();
+  });
+  it.each([null, "", "   "])("hides job resend without a usable triggerJobId (%s)", async triggerJobId => {
+    await openRecord("needs_setup", { ...jobRow, triggerJobId });
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it.each(["sent", "pending", "failed", "canceled"])("hides job resend for %s", async status => {
+    await openRecord(status, jobRow);
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it("hides needs_setup job resend for non-managers", async () => {
+    mockMessageBranchRole = "staff";
+    await openRecord("needs_setup", jobRow);
+    expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+  });
+  it.each([
+    ["sent", null, MESSAGE_JOB_RESEND_COPY.success, "success"],
+    ["needs_setup", "새 설정 사유", MESSAGE_JOB_RESEND_COPY.stillNeedsSetup, "destructive"],
+    ["canceled", "발송 취소 사유", `${MESSAGE_JOB_RESEND_COPY.notSent} 발송 취소 사유`, "destructive"],
+    ["canceled", null, MESSAGE_JOB_RESEND_COPY.notSent, "destructive"],
+    ["failed", null, MESSAGE_JOB_RESEND_COPY.failure, "destructive"],
+  ])("matches global resend feedback for %s (%s)", async (status, reason, description, variant) => {
+    mockResendJob.mockResolvedValue({ status, reason });
+    await openRecord("needs_setup", jobRow);
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith({ title: MESSAGE_JOB_RESEND_COPY.action, description, variant }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    if (status === "needs_setup") {
+      expect(screen.getByText("새 설정 사유")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("button", { name: "목록으로" })).not.toBeInTheDocument();
+    }
+  });
+  it.each([409, 500])("uses safe error copy for HTTP %s and closes the snapshot", async status => {
+    mockResendJob.mockRejectedValue(new AxiosError("internal", "ERR_BAD_REQUEST", undefined, undefined, {
+      status, statusText: "Error", data: { message: "internal" }, headers: {}, config: { headers: new AxiosHeaders() },
+    }));
+    await openRecord("needs_setup", jobRow);
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "재발송" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith({
+      title: MESSAGE_JOB_RESEND_COPY.action, variant: "destructive",
+      description: status === 409 ? MESSAGE_JOB_RESEND_COPY.conflict : MESSAGE_JOB_RESEND_COPY.failure,
+    }));
+    expect(screen.queryByRole("button", { name: "목록으로" })).not.toBeInTheDocument();
+  });
+});
 
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({ data: [] }),
@@ -24,7 +196,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "user", branchRole: "manager" },
+    data: { role: mockMessageRole, branchRole: mockMessageBranchRole },
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -32,21 +204,31 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
   }),
 }));
 
+const mockServiceRecordsQuery: {
+  data: unknown;
+  isError: boolean;
+  isLoading: boolean;
+  isPaused: boolean;
+  isFetching: boolean;
+  refetch: jest.Mock;
+} = { data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false, refetch: jest.fn() };
+const mockServiceRecordsRenders: Array<{ isLoading: boolean; isError: boolean }> = [];
+
 jest.mock("@/hooks/useServiceRecords", () => ({
   applyServiceScheduleChange: jest.fn(),
   fetchClientServiceRecords: jest.fn(),
   previewServiceScheduleChange: jest.fn(),
   resetServiceRecordLink: jest.fn(),
-  useClientServiceRecords: () => ({
-    data: undefined,
-    isError: false,
-    isLoading: false,
-  }),
+  useClientServiceRecords: () => mockServiceRecordsQuery,
 }));
 
 jest.mock("@/hooks/useClients", () => ({
   approveScheduleChange: jest.fn(),
   rejectScheduleChange: jest.fn(),
+}));
+
+jest.mock("@/features/clients", () => ({
+  useConfirmBooking: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 jest.mock("@/hooks/use-toast", () => ({
@@ -90,7 +272,10 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 jest.mock("../client-service-records", () => ({
-  ClientServiceRecords: () => null,
+  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean }) => {
+    mockServiceRecordsRenders.push({ isLoading: props.isLoading, isError: props.isError });
+    return null;
+  },
 }));
 
 jest.mock("../ServiceRecordLinkResetResultModal", () => ({
@@ -104,7 +289,7 @@ jest.mock("../ServiceScheduleChangeModal", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }) },
+  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }), getLinkConfirmations: jest.fn().mockResolvedValue([]), voidDocument: jest.fn() },
 }));
 
 const client: Client = {
@@ -132,6 +317,7 @@ const client: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,
@@ -196,6 +382,121 @@ function contractDocumentWithDates({
     detail_template_info: [],
   };
 }
+
+describe("contract void workflow", () => {
+  const linkedClient: Client = { ...client, eDocId: "document-1", latestContractDocumentId: "document-1", documentStatus: "requested", hasSigned: true };
+  const voidedAt = "2026-10-14T01:02:00Z";
+  const document = (display_status: string): EformsignDocument => ({
+    ...contractDocumentWithDates({ createdDate: Date.parse("2026-10-01T00:00:00Z") }),
+    display_status,
+  });
+  const refresh = jest.fn();
+  function renderVoid(doc = document("signed"), target = linkedClient) {
+    return render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
+      client={target} contractDocument={doc} activeTab="contracts" onContractVoided={refresh}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+      onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+  }
+  beforeEach(() => {
+    jest.mocked(eformsignApi.voidDocument).mockReset();
+    jest.mocked(toast).mockClear();
+    refresh.mockClear();
+  });
+  it.each(["003", "060"])("voided overrides provider code %s and shows time/name with no action", (code) => {
+    const doc = document("voided");
+    doc.current_status.status_type = code;
+    doc.voided_at = voidedAt;
+    doc.voided_by_name = "담당자";
+    renderVoid(doc, { ...linkedClient, hasSigned: false });
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.getByText("파기")).toBeInTheDocument();
+    expect(screen.getByText(`${formatMessageDateTimeCompact(voidedAt)} · 담당자`)).toBeInTheDocument();
+    expect(screen.getByText("서명 대기자").parentElement).toHaveTextContent("-");
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+    expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+  });
+  it("uses the void timestamp even when display status lags and the actor is unknown", () => {
+    renderVoid({ ...document("signed"), voided_at: voidedAt, voided_by_name: null });
+    expect(screen.getByText(`${formatMessageDateTimeCompact(voidedAt)} · 알 수 없음`)).toBeInTheDocument();
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("honors display_status voided without a timestamp regardless of a completed code", () => {
+    const doc = document("voided");
+    doc.current_status.status_type = "003";
+    renderVoid(doc, { ...linkedClient, documentStatus: "completed" });
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByText("계약 완료")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("uses only the coarse voided status when no document is loaded", () => {
+    renderDetail(null, { ...linkedClient, documentStatus: "voided" }, "contracts");
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByText("파기")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it.each(["revoked", "expired"])("does not offer void for %s", (status) => {
+    renderVoid(document(status));
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("does not void an older linked document or inherit the latest contract's voided badge", () => {
+    renderVoid(document("signed"), { ...linkedClient, latestContractDocumentId: "newer", documentStatus: "voided" });
+    expect(screen.getAllByText("서명 완료").length).toBeGreaterThan(0);
+    expect(screen.queryByText("파기됨")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("keeps the loaded document's status even when the same client's coarse status is voided", () => {
+    renderVoid(document("signed"), { ...linkedClient, documentStatus: "voided" });
+    expect(screen.queryByText("파기됨")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action })).toBeInTheDocument();
+  });
+  it("shows shared confirmation copy and cancels without a request", async () => {
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmTitle);
+    expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmDescription);
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel }));
+    expect(eformsignApi.voidDocument).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("submits once, disables pending actions, ignores dismissal, and refreshes on success", async () => {
+    let resolve!: (response: Awaited<ReturnType<typeof eformsignApi.voidDocument>>) => void;
+    jest.mocked(eformsignApi.voidDocument).mockImplementation(() => new Promise((done) => { resolve = done; }));
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
+    const pending = screen.getByRole("button", { name: CONTRACT_VOID_COPY.pending });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(eformsignApi.voidDocument).toHaveBeenCalledTimes(1);
+    expect(eformsignApi.voidDocument).toHaveBeenCalledWith("document-1");
+    await act(async () => resolve({ documentId: "document-1", voidedAt, voidedByName: null, displayStatus: "voided" }));
+    expect(toast).toHaveBeenCalledWith({ title: CONTRACT_VOID_COPY.success });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it.each([
+    [409, { isAxiosError: true, response: { status: 409 } }, CONTRACT_VOID_COPY.conflict, false],
+    [500, { isAxiosError: true, response: { status: 500 } }, CONTRACT_VOID_COPY.failure, true],
+    ["network", new Error("network"), CONTRACT_VOID_COPY.failure, true],
+  ])("refreshes after %s and preserves the correct modal state", async (_name, error, copy, staysOpen) => {
+    jest.mocked(eformsignApi.voidDocument).mockRejectedValue(error);
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(toast).toHaveBeenCalledWith({ title: copy, variant: "destructive" });
+    if (staysOpen) expect(screen.getByRole("dialog")).toBeInTheDocument();
+    else expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
 
 describe("ClientDetailContent", () => {
   it("leaves the payment date blank when the old document fetch fails during reissue", async () => {
@@ -317,6 +618,103 @@ describe("ClientDetailContent", () => {
     expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(shown);
     expect(screen.queryAllByText(hidden)).toHaveLength(0);
   });
+  it.each([
+    ["display_status", { display_status: "rejected_by_reviewer" }],
+    ["the 071 status code when display_status is absent", {}],
+  ])("shows a rejected contract as 반려됨 with the solid badge, from %s — never 서명 완료", (_source, extra) => {
+    // The backend reports a 071 contract as documentStatus requested + hasSigned, which the coarse
+    // summary alone would read as 서명 완료.
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: { status_type: "071", step_type: "06", step_name: "제공기관 확인" },
+      ...extra,
+    } as EformsignDocument;
+
+    const { container } = renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("반려됨");
+    expect(screen.queryAllByText("서명 완료")).toHaveLength(0);
+    const cardBadge = container.querySelector(
+      '[data-component$="_contract-card_doc-row"] .badge-mini',
+    );
+    expect(cardBadge).toHaveTextContent("반려됨");
+    expect(cardBadge).toHaveClass("burgundy-solid");
+  });
+
+  it.each([
+    ["signed", "070", "signed", "서명 완료", "green"],
+    ["review", "060", "review", "검토 필요", "orange"],
+    ["pending", "060", "pending", "서명 대기", "primary"],
+  ])("shows the latest contract's own %s status, never the coarse client summary", (_state, statusType, displayStatus, label, tone) => {
+    // The summary reads 서명 완료 whenever hasSigned, which includes a contract still at the
+    // provider-review step; the document's display status must decide, as on the list and desktop.
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      display_status: displayStatus,
+      current_status: {
+        status_type: statusType,
+        step_type: "06",
+        step_name: "제공기관 확인",
+      },
+    } as EformsignDocument;
+
+    const { container } = renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(label);
+    if (label !== "서명 완료") expect(screen.queryAllByText("서명 완료")).toHaveLength(0);
+    expect(screen.queryAllByText("반려됨")).toHaveLength(0);
+    const cardBadge = container.querySelector(
+      '[data-component$="_contract-card_doc-row"] .badge-mini',
+    );
+    expect(cardBadge).toHaveTextContent(label);
+    expect(cardBadge).toHaveClass(tone);
+    expect(cardBadge).not.toHaveClass("burgundy-solid");
+  });
+
+  it("labels an unassigned latest contract the way the desktop card does", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      display_status: "unassigned",
+      current_status: { status_type: "060", step_type: "06", step_name: "제공기관 확인" },
+    } as EformsignDocument;
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("고객 등록 필요");
+  });
+
+  it("falls back to the client summary when there is no contract document", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+
+    renderDetail(null, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("서명 완료");
+    expect(screen.queryAllByText("반려됨")).toHaveLength(0);
+  });
+
   it("does not supersede a signed contract that still reports documentStatus requested", async () => {
     const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
     jest.mocked(fetchClientServiceRecords).mockResolvedValue({
@@ -676,6 +1074,7 @@ describe("ClientDetailContent", () => {
   it.each([
     ["canceled", "취소 사유", "사용자가 발송을 취소했습니다."],
     ["failed", "실패 사유", "발신번호 인증에 실패했습니다."],
+    ["needs_setup", "추가 필요 정보", "연락처가 연결되지 않았습니다."],
   ] as const)("shows only the %s reason in the real history detail", async (status, reasonLabel, reason) => {
     const view = render(
       <ClientDetailContent
@@ -711,7 +1110,11 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText(reasonLabel)).toBeInTheDocument();
     expect(screen.getByText(reason)).toBeInTheDocument();
-    expect(screen.queryByText(status === "canceled" ? "실패 사유" : "취소 사유")).not.toBeInTheDocument();
+    for (const otherLabel of ["실패 사유", "취소 사유", "추가 필요 정보"]) {
+      if (otherLabel !== reasonLabel) expect(screen.queryByText(otherLabel)).not.toBeInTheDocument();
+    }
+    // The same numeric failed-log rule as the global messages page applies.
+    expect(Boolean(screen.queryByRole("button", { name: "재발송" }))).toBe(status === "failed");
     view.unmount();
   });
 
@@ -828,5 +1231,228 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText("발송 내역을 불러오지 못했습니다.")).toBeInTheDocument();
     expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
+  });
+
+  describe("failed history refetch over cached logs", () => {
+    const cachedLog: ClientNotificationLogRecord = {
+      id: 902, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "sent",
+      receiver: "01012345678", messageBody: "내용", variables: {},
+      recipientName: null, clientId: null, errorMessage: null, ruleName: "제공기록지 작성 링크",
+      createdAt: "2026-10-12T00:00:00Z",
+    };
+    const renderMessageTab = (props: Record<string, unknown>) =>
+      render(
+        <ClientDetailContent
+          data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+          client={client}
+          contractDocument={null}
+          activeTab="message"
+          onTabChange={jest.fn()}
+          onMessage={jest.fn()}
+          onIssueContract={jest.fn()}
+          onEdit={jest.fn()}
+          onDelete={jest.fn()}
+          onClientUpdated={jest.fn()}
+          {...props}
+        />,
+      );
+
+    it("keeps the cached logs and shows a notice whose retry refetches", async () => {
+      const onRetryNotificationLogs = jest.fn();
+      renderMessageTab({ notificationLogs: [cachedLog], isNotificationLogsError: true, onRetryNotificationLogs });
+
+      const row = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+      expect(alert).toHaveAttribute("data-size", "inline");
+      // The notice sits above the cached rows, and the no-data error UI is not used.
+      expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByText("발송 내역을 불러오지 못했습니다.")).not.toBeInTheDocument();
+
+      await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables the notice's retry while a refetch is in flight", () => {
+      renderMessageTab({
+        notificationLogs: [cachedLog],
+        isNotificationLogsError: true,
+        isNotificationLogsRetrying: true,
+        onRetryNotificationLogs: jest.fn(),
+      });
+
+      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    });
+
+    it("shows no notice over cached logs when the load succeeded", () => {
+      renderMessageTab({ notificationLogs: [cachedLog] });
+
+      expect(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    describe("while a message detail is open", () => {
+      const detailProps = (extra: Record<string, unknown> = {}) => ({
+        notificationLogs: [{ ...cachedLog, messageBody: "열린 메시지 본문" }],
+        onRetryNotificationLogs: jest.fn(),
+        ...extra,
+      });
+      const renderOpenDetail = async (extra: Record<string, unknown> = {}) => {
+        const props = detailProps(extra);
+        const view = renderMessageTab(props);
+        await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        return { view, props };
+      };
+      const rerenderWith = (view: ReturnType<typeof renderMessageTab>, props: Record<string, unknown>) =>
+        view.rerender(
+          <ClientDetailContent
+            data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+            client={client}
+            contractDocument={null}
+            activeTab="message"
+            onTabChange={jest.fn()}
+            onMessage={jest.fn()}
+            onIssueContract={jest.fn()}
+            onEdit={jest.fn()}
+            onDelete={jest.fn()}
+            onClientUpdated={jest.fn()}
+            {...props}
+          />,
+        );
+
+      it("shows the notice above the kept message body after a failed refetch, and its retry refetches", async () => {
+        const { view, props } = await renderOpenDetail();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true });
+
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        const body = screen.getByText("열린 메시지 본문");
+        expect(alert.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+        await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(props.onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+      });
+
+      it("disables the notice's retry while a refetch is in flight", async () => {
+        const { view, props } = await renderOpenDetail();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true, isNotificationLogsRetrying: true });
+
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      });
+
+      it("shows no notice over the open detail when the load succeeded", async () => {
+        await renderOpenDetail();
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+    });
+
+    it("keeps the truncation notice over cached logs after a failed refetch", () => {
+      renderMessageTab({ notificationLogs: [cachedLog], hasMoreNotificationLogs: true, isNotificationLogsError: true });
+
+      expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+    });
+  });
+
+  describe("detail-empty-state slot", () => {
+    const baseProps = {
+      "data-component": "mobile_clients_detail-sheet_stack_detail-page_content",
+      client,
+      contractDocument: null,
+      onTabChange: jest.fn(),
+      onMessage: jest.fn(),
+      onIssueContract: jest.fn(),
+      onEdit: jest.fn(),
+      onDelete: jest.fn(),
+      onClientUpdated: jest.fn(),
+    } as const;
+    const slotted = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll(".detail-empty-state"));
+
+    it.each([
+      ["loading", { isNotificationLogsLoading: true }],
+      ["error", { isNotificationLogsError: true }],
+      ["empty", {}],
+    ] as const)("marks the %s message history state with data-slot", (_name, flags) => {
+      const { container } = render(
+        <ClientDetailContent {...baseProps} activeTab="message" notificationLogs={[]} {...flags} />,
+      );
+      const states = slotted(container);
+      expect(states).toHaveLength(1);
+      expect(states[0]).toHaveAttribute("data-slot", "detail-empty-state");
+    });
+
+    it("marks the truncation notice and the empty contract card with data-slot", () => {
+      const truncated = render(
+        <ClientDetailContent
+          {...baseProps}
+          activeTab="message"
+          notificationLogs={[]}
+          hasMoreNotificationLogs
+        />,
+      );
+      const notices = slotted(truncated.container);
+      expect(notices.length).toBeGreaterThan(0);
+      for (const element of notices) expect(element).toHaveAttribute("data-slot", "detail-empty-state");
+      truncated.unmount();
+
+      const contracts = render(<ClientDetailContent {...baseProps} activeTab="contracts" notificationLogs={[]} />);
+      const cards = slotted(contracts.container);
+      expect(cards.length).toBeGreaterThan(0);
+      for (const element of cards) expect(element).toHaveAttribute("data-slot", "detail-empty-state");
+    });
+  });
+});
+
+describe("service records tab: a load that has not succeeded is never an empty result (BJJ-434)", () => {
+  const baseProps = {
+    "data-component": "mobile_clients_detail-sheet_stack_detail-page_content",
+    client,
+    contractDocument: null,
+    onTabChange: jest.fn(),
+    onMessage: jest.fn(),
+    onIssueContract: jest.fn(),
+    onEdit: jest.fn(),
+    onDelete: jest.fn(),
+    onClientUpdated: jest.fn(),
+  } as const;
+  const lastRender = () => mockServiceRecordsRenders[mockServiceRecordsRenders.length - 1];
+
+  beforeEach(() => {
+    mockServiceRecordsRenders.length = 0;
+    Object.assign(mockServiceRecordsQuery, {
+      data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false,
+    });
+  });
+
+  it("passes loading to the tab for a first load paused by the offline pause", () => {
+    Object.assign(mockServiceRecordsQuery, { isPaused: true });
+    render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+
+    expect(lastRender()).toEqual({ isLoading: true, isError: false });
+  });
+
+  it("does not hold the skeleton over cached data when a refetch is paused", () => {
+    Object.assign(mockServiceRecordsQuery, { isPaused: true, data: { assignments: [] } });
+    render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+
+    expect(lastRender()).toEqual({ isLoading: false, isError: false });
+  });
+
+  it("keeps a real first load as loading and a settled query as not loading", () => {
+    Object.assign(mockServiceRecordsQuery, { isLoading: true });
+    const loading = render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+    expect(lastRender()).toEqual({ isLoading: true, isError: false });
+    loading.unmount();
+
+    Object.assign(mockServiceRecordsQuery, { isLoading: false, data: { assignments: [] } });
+    render(<ClientDetailContent {...baseProps} activeTab="serviceRecords" />);
+    expect(lastRender()).toEqual({ isLoading: false, isError: false });
   });
 });

@@ -8,6 +8,8 @@ import {
     MessageTriggerJobCancellationScope,
     MessageTriggerJobReviewSnapshot,
     ReplacePendingJobsResult,
+    ClaimProviderRejectedForRetryResult,
+    ScheduleFenceLinkOptions,
     ClientUpcomingMessageTriggerJobCursor,
     ClientUpcomingMessageTriggerJobRecord,
     ClientUpcomingMessageTriggerJobStatus,
@@ -28,14 +30,17 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, PAST_OCCURRENCE_GRACE_MS } from "domain/constants/message-automation-policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+    SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
-import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { ordinaryAutomationJobSql, ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 
 type MessageTriggerJobPrismaRow = {
@@ -117,6 +122,30 @@ function scheduleFenceLockKey(ruleId: string, employeeScheduleId: number): strin
 }
 
 /**
+ * Whether the link token a job is about to carry is still usable for the
+ * schedule. Read under the schedule fence AFTER the job rows are locked: a
+ * revoke holds that same fence (advisory lock, then jobs, then tokens) for its
+ * whole cancel + token revocation, so once this transaction owns the fence a
+ * committed revoke is visible here and a pending one has not started. A plain
+ * read is enough; no token row lock is taken.
+ */
+async function activeLinkTokenExists(
+    client: Prisma.TransactionClient,
+    linkToken: string,
+    employeeScheduleId: number,
+): Promise<boolean> {
+    const rows = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id
+        FROM "service_record_token"
+        WHERE "link_token_hash" = ${linkToken}
+          AND "schedule_id" = ${employeeScheduleId}
+          AND "active" = true
+          AND "revoked_at" IS NULL
+    `);
+    return rows.length > 0;
+}
+
+/**
  * Rows that make an automatic service-record scheduling claim impossible, or
  * that mean a send now exists for the schedule. The claim INSERT refuses to
  * start behind any such row and the claim promotion refuses to proceed when
@@ -129,7 +158,7 @@ export function serviceRecordScheduleBlockerSql(columns: {
     canceledByUser: Prisma.Sql;
 }): Prisma.Sql {
     return Prisma.sql`(
-        ${columns.status} IN ('pending', 'processing', 'dispatching', 'sent')
+        ${columns.status} IN ('pending', 'processing', 'dispatching', 'sent', 'needs_setup')
         OR (
             ${columns.status} = 'failed'
             AND ${columns.cancelReason} IS DISTINCT FROM ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
@@ -141,7 +170,9 @@ export function serviceRecordScheduleBlockerSql(columns: {
                 OR ${columns.cancelReason} IS NULL
                 OR ${columns.cancelReason} NOT IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
+                    ${SERVICE_RECORD_LINK_ENDED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
+                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON},
                     ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
                 )
             )
@@ -276,6 +307,42 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         branchId: string | null,
         transaction?: Prisma.TransactionClient,
     ): Promise<string | null> {
+        return this.claimWithRuleFence("pending", id, branchId, transaction);
+    }
+
+    /**
+     * Manual resend of a '추가 정보 필요' (needs_setup) job (BJJ-444): the same rule fence and
+     * token-minting claim as the pending claim, but the predicate is
+     * `needs_setup`. `attempts` is untouched; a lost race, an inactive rule or
+     * branch override, or a stale rule generation returns null and leaves the
+     * row exactly as it was.
+     */
+    async claimNeedsSetupWithRuleFence(
+        id: string,
+        branchId: string | null,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<string | null> {
+        return this.claimWithRuleFence("needs_setup", id, branchId, transaction);
+    }
+
+    private async claimWithRuleFence(
+        expectedStatus: "pending" | "needs_setup",
+        id: string,
+        branchId: string | null,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<string | null> {
+        const statusPredicate = expectedStatus === "pending"
+            ? Prisma.sql`job.status = 'pending'`
+            : Prisma.sql`job.status = 'needs_setup'`;
+        // A resend claim leaves `cancel_reason` (the setup reason) on the
+        // `processing` row: that non-null reason is the durable mark that the
+        // in-flight row came from a resend, which the stale-processing reclaim
+        // returns to `needs_setup` instead of deferring it to `pending`. The
+        // ordinary claim therefore clears the column, so a `processing` row
+        // that carries a reason can only be a resend claim.
+        const claimedReasonAssignment = expectedStatus === "pending"
+            ? Prisma.sql`, cancel_reason = NULL`
+            : Prisma.empty;
         const jobBranchPredicate = branchId === null
             ? Prisma.sql`job.branch_id IS NULL`
             : Prisma.sql`job.branch_id = ${branchId}::uuid`;
@@ -330,7 +397,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_job" AS job
                 WHERE job.id = ${id}
                   AND ${jobBranchPredicate}
-                  AND job.status = 'pending'
+                  AND ${statusPredicate}
                   AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             ),
             locked_rule AS MATERIALIZED (
@@ -344,12 +411,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FOR UPDATE OF rule
             )
             UPDATE "message_trigger_job" AS job
-            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = now()
+            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = now()${claimedReasonAssignment}
             FROM locked_rule AS rule
             WHERE job.id = ${id}
               AND job.rule_id = rule.id
               AND ${jobBranchPredicate}
-              AND job.status = 'pending'
+              AND ${statusPredicate}
               AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             RETURNING job.id, job.claim_token
         `);
@@ -492,7 +559,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             where: { ...ordinaryAutomationJobWhere(),
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-                status: { in: ["failed", "canceled"] },
+                status: { in: ["failed", "canceled", "needs_setup"] },
             },
             orderBy: { updatedAt: "desc" },
             take: limit,
@@ -517,7 +584,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 // fences immutable creation only; current status changes may
                 // appear or disappear between page requests and are allowed
                 // to settle on the next poll.
-                status: { in: ["failed", "canceled"] },
+                status: { in: ["failed", "canceled", "needs_setup"] },
                 // A post-cutoff log must not hide a job that is currently
                 // terminal; suppress only logs present at this cutoff.
                 logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
@@ -560,7 +627,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             WHERE job.branch_id = ${branchId}::uuid
               AND job.client_id IS NULL
               AND job.rule_id <> ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
-              AND job.status IN ('failed', 'canceled')
+              AND job.status IN ('failed', 'canceled', 'needs_setup')
               AND job.created_at <= ${snapshotAt}
               ${afterFilter}
               AND NOT EXISTS (
@@ -605,7 +672,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 branchId,
                 ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 // Same current-state view as findHistoryPageByBranch.
-                status: { in: ["failed", "canceled"] },
+                status: { in: ["failed", "canceled", "needs_setup"] },
                 logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
                 createdAt: { lte: query.snapshotAt },
                 AND: [...(afterWhere ? [afterWhere] : []), ownerWhere],
@@ -638,6 +705,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 OR: [
                     { status: "canceled", canceledAt: { gte: since, lt: until } },
                     { status: "failed", updatedAt: { gte: since, lt: until } },
+                    { status: "needs_setup", updatedAt: { gte: since, lt: until } },
                 ],
             },
             orderBy: { updatedAt: "desc" },
@@ -659,6 +727,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 OR: [
                     { status: "canceled", canceledAt: { gte: since, lt: until } },
                     { status: "failed", updatedAt: { gte: since, lt: until } },
+                    { status: "needs_setup", updatedAt: { gte: since, lt: until } },
                 ],
             },
         });
@@ -697,6 +766,30 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return row !== null;
     }
 
+    async hasNewerClientRuleSibling(params: {
+        branchId: string;
+        clientId: number;
+        ruleId: string;
+        recipientType: MessageTriggerRecipientType;
+        excludeJobId: string;
+        createdAfter: Date;
+    }): Promise<boolean> {
+        const row = await this.prisma.message_trigger_job.findFirst({
+            where: { ...ordinaryAutomationJobWhere(),
+                branchId: params.branchId,
+                clientId: params.clientId,
+                ruleId: params.ruleId,
+                id: { not: params.excludeJobId },
+                employeeScheduleId: null,
+                recipientType: params.recipientType,
+                status: { in: ["pending", "processing", "dispatching", "sent"] },
+                createdAt: { gt: params.createdAfter },
+            },
+            select: { id: true },
+        });
+        return row !== null;
+    }
+
     async findPendingByRuleIdsAndClientId(
         ruleIds: string[],
         clientId: number,
@@ -706,7 +799,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             where: { ...ordinaryAutomationJobWhere(),
                 ruleId: { in: ruleIds },
                 clientId,
-                status: { in: ["pending", "processing"] },
+                status: { in: ["pending", "processing", "needs_setup"] },
             },
         });
         return rows.map((row) => this.toDomain(row));
@@ -755,22 +848,84 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         employeeScheduleId: number,
         reason: string,
     ): Promise<CancelPendingJobsResult> {
-        // ONE statement, no interactive transaction, no advisory/rule lock and no
-        // lock_timeout (revoke/reset must never fail on a conflict). The CTE
+        return this.cancelPendingByRuleAndEmployeeScheduleWith(this.prisma, ruleId, employeeScheduleId, reason);
+    }
+
+    async cancelPendingUnderScheduleFence(
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+        afterCancel?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    ): Promise<CancelPendingJobsResult> {
+        // Lock order: schedule advisory lock -> job rows (`ORDER BY id FOR
+        // UPDATE`, inside the cancel statement) -> whatever `afterCancel` writes
+        // (the token rows). Deliberately NO rule `FOR UPDATE` and NO `lock_timeout`:
+        // a revoke must not fail on a conflict, and a rule lock held by a rule
+        // normalisation (seconds) must not push it past the transaction limit.
+        // The advisory lock is the same key a manual send and an automatic
+        // promotion take first, so a revoke is serialized with both: it either
+        // runs wholly before them (they then see the revoked token and refuse) or
+        // wholly after (it cancels what they enqueued). The interactive
+        // transaction gets a limit well past Prisma's 5 s default because the
+        // advisory wait can outlast a promotion that is itself waiting on the rule.
+        return this.prisma.$transaction(async (transaction) => {
+            await transaction.$executeRaw(Prisma.sql`
+                SELECT pg_advisory_xact_lock(hashtextextended(${scheduleFenceLockKey(ruleId, employeeScheduleId)}, 0))
+            `);
+            const result = await this.cancelPendingByRuleAndEmployeeScheduleWith(
+                transaction,
+                ruleId,
+                employeeScheduleId,
+                reason,
+            );
+            if (afterCancel) await afterCancel(transaction);
+            return result;
+        }, { timeout: 30_000, maxWait: 30_000 });
+    }
+
+    async cancelProcessingClaim(id: string, claimToken: string, reason: string): Promise<boolean> {
+        // ONE statement: the row lock the UPDATE takes re-checks `status` and the
+        // claim token on the locked version. A job the dispatcher moved on to
+        // `dispatching` (that step leaves the claim token unchanged) while the
+        // caller was deciding is skipped, never overwritten.
+        const canceled = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job"
+            SET status = 'canceled',
+                canceled_at = date_trunc('milliseconds', clock_timestamp()),
+                cancel_reason = ${reason},
+                claim_token = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${id}
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+              AND status = 'processing'
+              AND claim_token = ${claimToken}
+            RETURNING id
+        `);
+        return canceled.length === 1;
+    }
+
+    private async cancelPendingByRuleAndEmployeeScheduleWith(
+        client: PrismaService | Prisma.TransactionClient,
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+    ): Promise<CancelPendingJobsResult> {
+        // ONE statement, no advisory/rule lock and no lock_timeout of its own
+        // (revoke/reset must never fail on a conflict). The CTE
         // row-locks the cancellable jobs in id order (the same job-lock order as
         // `replacePendingJobsUnlessInFlight`); the UPDATE then re-checks the
         // status on the locked version, so a job the dispatcher moved to
         // `dispatching` while this statement waited is skipped, never overwritten.
         // `processing` is cancelled on purpose: clearing its claim token is what
         // makes the dispatcher's `processing -> dispatching` authorization lose.
-        const canceled = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        const canceled = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             WITH locked AS (
                 SELECT id
                 FROM "message_trigger_job"
                 WHERE ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
                   AND rule_id = ${ruleId}
                   AND employee_schedule_id = ${employeeScheduleId}
-                  AND status IN ('pending', 'processing')
+                  AND status IN ('pending', 'processing', 'needs_setup')
                 ORDER BY id
                 FOR UPDATE
             )
@@ -782,10 +937,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             FROM locked
             WHERE job.id = locked.id
-              AND job.status IN ('pending', 'processing')
+              AND job.status IN ('pending', 'processing', 'needs_setup')
             RETURNING job.id
         `);
-        const inFlight = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        const inFlight = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             SELECT id
             FROM "message_trigger_job"
             WHERE ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
@@ -808,7 +963,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const result = await this.prisma.message_trigger_job.updateMany({
             where: { ...ordinaryAutomationJobWhere(),
                 branchId,
-                status: { in: ["pending", "processing"] },
+                status: { in: ["pending", "processing", "needs_setup"] },
                 OR: [
                     { clientId },
                     { employeeSchedule: { is: { clientId } } },
@@ -828,7 +983,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const result = await this.prisma.message_trigger_job.updateMany({
             where: { ...ordinaryAutomationJobWhere(),
                 ...(branchId ? { branchId } : {}),
-                status: { in: ["pending", "processing"] },
+                status: { in: ["pending", "processing", "needs_setup"] },
                 clientId: null,
                 employeeScheduleId: null,
                 NOT: { ruleId: { startsWith: AGENT_SMS_RULE_ID_PREFIX } },
@@ -935,6 +1090,26 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return result.count === 1;
     }
 
+    async cancelFailedServiceRecordLinkJobForPreBooking(id: string, branchId: string): Promise<boolean> {
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: {
+                id,
+                branchId,
+                status: "failed",
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                NOT: { cancelReason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON },
+            },
+            data: {
+                status: "canceled",
+                cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                canceledByUser: false,
+                canceledAt: new Date(),
+                nextAttemptAt: null,
+            },
+        });
+        return result.count === 1;
+    }
+
     async cancelPendingForRuleGeneration(
         branchId: string,
         ruleId: string,
@@ -976,7 +1151,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` }),
                 Prisma.sql`branch_id = ${branchId}::uuid`,
                 Prisma.sql`rule_id = ${ruleId}`,
-                Prisma.sql`status IN ('pending', 'processing')`,
+                scope.needsSetup === "all"
+                    ? Prisma.sql`(status IN ('pending', 'processing') OR status = 'needs_setup')`
+                    : scope.needsSetup === "within_window"
+                        ? Prisma.sql`(status IN ('pending', 'processing') OR (status = 'needs_setup'
+                            AND scheduled_for > clock_timestamp() - ${PAST_OCCURRENCE_GRACE_MS} * interval '1 millisecond'))`
+                        : Prisma.sql`status IN ('pending', 'processing')`,
                 Prisma.sql`NOT ${manualMessageTriggerJobPredicate({
                     templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
                 })}`,
@@ -1013,6 +1193,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     async replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
+        options: ScheduleFenceLinkOptions = {},
         afterReplace?: (transaction: Prisma.TransactionClient) => Promise<void>,
     ): Promise<ReplacePendingJobsResult> {
         this.assertOrdinaryJob(replacement);
@@ -1067,13 +1248,24 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     WHERE ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
                       AND rule_id = ${ruleId}
                       AND employee_schedule_id = ${employeeScheduleId}
-                      AND status IN ('pending', 'processing', 'dispatching')
+                      AND status IN ('pending', 'processing', 'dispatching', 'needs_setup')
                     ORDER BY id
                     FOR UPDATE
                 `);
-                const inFlightJobIds = live.filter((row) => row.status !== "pending").map((row) => row.id);
+                const inFlightJobIds = live.filter((row) => row.status === "processing" || row.status === "dispatching").map((row) => row.id);
                 if (inFlightJobIds.length > 0) {
                     return { kind: "in_flight", inFlightJobIds };
+                }
+
+                // A revoke that committed while the link was being prepared has
+                // already cancelled every job; enqueueing now would queue a send
+                // whose link is dead. Read after the job locks, like a revoke
+                // writes its token rows after its job locks.
+                if (
+                    options.requireActiveLinkToken !== undefined
+                    && !(await activeLinkTokenExists(transaction, options.requireActiveLinkToken, employeeScheduleId))
+                ) {
+                    return { kind: "link_revoked" };
                 }
 
                 const pendingIds = live.map((row) => row.id);
@@ -1086,7 +1278,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                             claim_token = NULL,
                             updated_at = date_trunc('milliseconds', clock_timestamp())
                         WHERE id IN (${Prisma.join(pendingIds)})
-                          AND status = 'pending'
+                          AND status IN ('pending', 'needs_setup')
                         RETURNING id
                     `);
                     if (canceled.length !== pendingIds.length) {
@@ -1115,6 +1307,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
         transaction?: Prisma.TransactionClient,
+        options: ScheduleFenceLinkOptions = {},
     ): Promise<MessageTriggerJobEntity | null> {
         if (isReservedAutomationJob(job)) return null;
         // Automatic service-record scheduling uses a failed row as a durable
@@ -1160,6 +1353,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FOR UPDATE
             `);
             if (blockers.length > 0) return null;
+
+            // A revoke that committed while the link was being prepared left the
+            // lease alone (it is `failed`, not cancellable) and revoked the
+            // token. Promoting would queue a send whose link is dead; refuse and
+            // let the caller release the lease. Read after the job locks above.
+            if (
+                options.requireActiveLinkToken !== undefined
+                && !(await activeLinkTokenExists(client, options.requireActiveLinkToken, employeeScheduleId))
+            ) {
+                return null;
+            }
 
             const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
                 UPDATE "message_trigger_job"
@@ -1372,61 +1576,122 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedSnapshotHash: string,
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
-    ): Promise<MessageTriggerJobEntity | null> {
-        if (isReservedAutomationJob(expectedSource) || isReservedAutomationJob(retryJob)) return null;
+    ): Promise<ClaimProviderRejectedForRetryResult> {
+        if (isReservedAutomationJob(expectedSource) || isReservedAutomationJob(retryJob)) return { kind: "not_claimable" };
         // The target version is computed by the capability from the canonical
         // provider snapshot. The row lock below is the linearization point at
         // which that approved source is compared and the retry is claimed.
-        if (!expectedTargetVersion || jobTargetVersion(expectedSource, expectedSnapshotHash) !== expectedTargetVersion) return null;
-        return this.prisma.$transaction(async (transaction) => {
-            // Rule row first, then the source job row, then the retry INSERT (whose
-            // foreign key takes a KEY SHARE lock on its rule row): the same order as
-            // the dispatcher claim, the manual send fence and the automatic
-            // promotion. Taking the job row first and the rule only at INSERT time
-            // inverts it against a transaction that holds the rule row and waits on
-            // this failed row (PostgreSQL aborts one side with 40P01). The source's
-            // rule is re-verified against the locked row below (`sameRetrySource`);
-            // the retry job's rule, if it differs, is locked too, in id order.
-            const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
-            await transaction.$queryRaw(Prisma.sql`
-                SELECT id
-                FROM "message_trigger_rule"
-                WHERE id IN (${Prisma.join(ruleIds)})
-                ORDER BY id
-                FOR UPDATE
-            `);
-            const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
-                SELECT *
-                FROM "message_trigger_job"
-                WHERE "id" = ${sourceJobId}
-                  AND "branch_id" = ${branchId}::uuid
-                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
-                FOR UPDATE
-            `);
-            const row = rows[0];
-            if (!row) return null;
+        if (!expectedTargetVersion || jobTargetVersion(expectedSource, expectedSnapshotHash) !== expectedTargetVersion) {
+            return { kind: "not_claimable" };
+        }
+        try {
+            return await this.prisma.$transaction(async (transaction): Promise<ClaimProviderRejectedForRetryResult> => {
+                // Never wait on another transaction's lock for longer than this: a
+                // branch that is normalising a large rule holds the rule row for
+                // seconds, and waiting past the interactive transaction's own
+                // timeout ends in a bare P2028 that leaves the caller unable to
+                // tell whether the retry was created. Past this the request is
+                // answered as a definite "nothing written, try again". The error is
+                // not caught in here: it must abort the transaction.
+                await transaction.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '1s'`);
+                // Rule row first, then the source job row, then the retry INSERT (whose
+                // foreign key takes a KEY SHARE lock on its rule row): the same order as
+                // the dispatcher claim, the manual send fence and the automatic
+                // promotion. Taking the job row first and the rule only at INSERT time
+                // inverts it against a transaction that holds the rule row and waits on
+                // this failed row (PostgreSQL aborts one side with 40P01). The source's
+                // rule is re-verified against the locked row below (`sameRetrySource`);
+                // the retry job's rule, if it differs, is locked too, in id order.
+                const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
+                await transaction.$queryRaw(Prisma.sql`
+                    SELECT id
+                    FROM "message_trigger_rule"
+                    WHERE id IN (${Prisma.join(ruleIds)})
+                    ORDER BY id
+                    FOR UPDATE
+                `);
+                const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
+                    SELECT *
+                    FROM "message_trigger_job"
+                    WHERE "id" = ${sourceJobId}
+                      AND "branch_id" = ${branchId}::uuid
+                      AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+                    FOR UPDATE
+                `);
+                const row = rows[0];
+                if (!row) return { kind: "not_claimable" };
 
-            const current = this.rawRowToDomain(row);
-            const retrySafety = current.payload.templateVariables?.["retrySafety"];
-            if (
-                current.status !== "failed"
-                || retrySafety !== "provider-rejected"
-                || !sameRetrySource(current, expectedSource)
-                || jobTargetVersion(current, expectedSnapshotHash) !== expectedTargetVersion
-            ) {
-                return null;
-            }
+                const current = this.rawRowToDomain(row);
+                const retrySafety = current.payload.templateVariables?.["retrySafety"];
+                if (
+                    current.status !== "failed"
+                    || retrySafety !== "provider-rejected"
+                    || !sameRetrySource(current, expectedSource)
+                    || jobTargetVersion(current, expectedSnapshotHash) !== expectedTargetVersion
+                ) {
+                    return { kind: "not_claimable" };
+                }
 
-            const existing = await transaction.message_trigger_job.findUnique({
-                where: { dedupeKey: retryJob.dedupeKey, ...ordinaryAutomationJobWhere() },
-            });
-            if (existing) return this.toDomain(existing);
+                const existing = await transaction.message_trigger_job.findUnique({
+                    where: { dedupeKey: retryJob.dedupeKey, ...ordinaryAutomationJobWhere() },
+                });
+                if (existing) return { kind: "claimed", job: this.toDomain(existing) };
 
-            const created = await transaction.message_trigger_job.create({
-                data: this.toCreate(retryJob),
-            });
-            return this.toDomain(created);
-        });
+                const created = await transaction.message_trigger_job.create({
+                    data: this.toCreate(retryJob),
+                });
+                return { kind: "claimed", job: this.toDomain(created) };
+            }, { timeout: 10_000 });
+        } catch (error) {
+            // Only 55P03 is proof that nothing was written. A P2028 (interactive
+            // transaction timeout) is not: it is rethrown and stays uncertain.
+            if (isLockNotAvailable(error)) return { kind: "lock_timeout" };
+            throw error;
+        }
+    }
+
+    async rescheduleDebugPending(id: string, branchId: string, scheduledFor: Date): Promise<boolean> {
+        // Conditional on `pending` so it cannot race a claim (a claimed row is
+        // `processing`), and on the CURRENT `scheduled_for` being more than one
+        // minute away by the database clock. The dispatcher's claim fences only
+        // on status, not on `scheduled_for`: it selects due jobs, and if we moved
+        // a selected job before its claim ran, the claim would still succeed and
+        // preparation would then see the schedule mismatch as `lost`, leaving the
+        // job `processing`. The one-minute lead keeps this endpoint out of the
+        // dispatcher's way in practice, but it is not a fence: a row lock held
+        // past the lead, or a dispatcher clock more than a minute ahead, can
+        // still let a selected job be moved before its claim. That job then sits
+        // `processing` until the stale-processing reclaim (10 minutes) defers it
+        // back to `pending`, and its next claim runs the safeguard again — a late
+        // send, never a wrong one. Accepted for this owner-only debug tool
+        // (2026-10-19) instead of changing the claim every send goes through.
+        // Sealed agent-automation jobs and manual jobs are never moved: a sealed
+        // job's `scheduled_for` is part of its authority digest, so moving one
+        // makes dispatch cancel it (`automation-authority-unavailable`), and a
+        // manual job was scheduled by a person, not by an automation rule.
+        // `updateMany` cannot express `clock_timestamp()`, hence raw SQL. Keep
+        // the one-minute lead in step with RESCHEDULE_MIN_LEAD_MS in the service.
+        //
+        // `next_attempt_at` is cleared: due selection treats `null` as "no retry
+        // delay" and otherwise requires `next_attempt_at <= now`, so a stale retry
+        // delay would keep the moved job from being picked up at the new time.
+        const moved = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job"
+            SET scheduled_for = ${scheduledFor}::timestamptz,
+                next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${id}
+              AND branch_id = ${branchId}::uuid
+              AND status = 'pending'
+              AND scheduled_for > clock_timestamp() + interval '1 minute'
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+              AND NOT (payload ? ${AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY})
+              AND NOT ${manualMessageTriggerJobPredicate({
+                  templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
+              })}
+            RETURNING id
+        `);
+        return moved.length === 1;
     }
 
     private toCreate(job: MessageTriggerJobEntity) {

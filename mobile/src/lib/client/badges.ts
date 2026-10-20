@@ -22,11 +22,12 @@ export interface MobileClientBadge {
   priority: number;
 }
 
-const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "service_status"] as const satisfies readonly ClientBadgeKey[];
+const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "contract_status", "service_status"] as const satisfies readonly ClientBadgeKey[];
 const SCHEDULE_CHANGE_BADGE_LABEL = "일정 변경";
 
 const CLIENT_BADGE_ORDER: Record<ClientBadgeKey, number> = {
   contract_required: 10,
+  contract_status: 15,
   service_status: 20,
   breast_pump: 30,
   care_center: 40,

@@ -18,7 +18,7 @@ jest.mock("./ContractStatusWizard", () => ({
     ),
 }));
 
-function renderResult(result: { documentStatus: string; hasSigned: boolean }) {
+function renderResult(result: { documentStatus: string; hasSigned: boolean; rejectedByReviewer?: boolean }) {
     mockWizardResult = {
         clientId: 7,
         clientName: "홍길동",
@@ -54,6 +54,18 @@ describe("AssistantMessage contract-status result honours hasSigned", () => {
         renderResult({ documentStatus: "requested", hasSigned: false });
         expect(screen.getByText("서명 요청됨")).toBeInTheDocument();
         expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("shows a rejected (071) contract as 반려됨 although the summary reads signed", () => {
+        renderResult({ documentStatus: "requested", hasSigned: true, rejectedByReviewer: true });
+        expect(screen.getByText("반려됨")).toBeInTheDocument();
+        expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("keeps the summary wording when the contract is not rejected", () => {
+        renderResult({ documentStatus: "requested", hasSigned: true, rejectedByReviewer: false });
+        expect(screen.getByText("서명 완료")).toBeInTheDocument();
+        expect(screen.queryByText("반려됨")).not.toBeInTheDocument();
     });
 
     it("keeps a finalized contract as 계약 완료 regardless of the flag", () => {

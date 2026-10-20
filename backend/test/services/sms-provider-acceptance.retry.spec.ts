@@ -47,6 +47,8 @@ describe("SMS provider acceptance and retry boundary", () => {
 
     const createRepository = (source: MessageLogEntity) => {
         const repository = {
+            findRetryFamilyInBranch: jest.fn().mockResolvedValue([]),
+            hasNewerServiceRecordSmsInBranch: jest.fn().mockResolvedValue(false),
             findByIdInBranch: jest.fn().mockResolvedValue(source),
             update: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
             reconcileProviderAttempt: jest.fn().mockImplementation(async (
@@ -263,6 +265,8 @@ describe("SMS partial acceptance survives process restart as a durable resend ba
         });
 
         const repository = {
+            findRetryFamilyInBranch: jest.fn().mockResolvedValue([]),
+            hasNewerServiceRecordSmsInBranch: jest.fn().mockResolvedValue(false),
             findByIdInBranch: jest.fn(async (_branchId: string, id: number) => {
                 const row = rows.get(id);
                 return row ? MessageLogEntity.reconstitute(...row.fields) : null;

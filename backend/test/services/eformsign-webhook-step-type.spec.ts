@@ -54,6 +54,7 @@ describe("EformsignWebhookService step kind persistence (real usecase, in-memory
         findBranchIdByDocumentId: jest.fn(),
         claimCompletionStatus: jest.fn(),
         update: jest.fn(),
+        updateWithOutcome: jest.fn(),
         updateIfSourceNewer: jest.fn(),
         upsertUnassignedByDocumentId: jest.fn(),
     };
@@ -77,6 +78,12 @@ describe("EformsignWebhookService step kind persistence (real usecase, in-memory
             async (_branch: string, doc: EformsignDocEntity) => {
                 row = doc;
                 return doc;
+            },
+        );
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            async (_branch: string, doc: EformsignDocEntity) => {
+                row = doc;
+                return { document: doc, applied: true };
             },
         );
         eformsignDocRepository.updateIfSourceNewer.mockImplementation(

@@ -3,7 +3,8 @@ import {
     EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
     getEformsignStatusCategory,
     isDeletedEformsignStatusCode,
-    normalizeEformsignStatusCode,
+    isReviewerRejectedEformsignStatus,
+    isRevokeRequestedEformsignStatus,
 } from "./eformsign-status-codes";
 
 /**
@@ -54,18 +55,23 @@ export type SignatureStatusMeta = ServiceRecordStatusMeta;
  * 영어 키워드로 분기하면 거부 문서가 중립 톤으로 새어 나간다 — 라벨 본문으로만 쓴다.
  * 코드 집합은 eformsign-status-codes의 정본(완료/거부·만료/삭제/진행 중)을 그대로 쓴다.
  *
- * 040(doc_request_revoke)은 정본 집합에서 거부·만료 묶음에 들어 있지만 철회가 "요청"된
- * 상태일 뿐 종료가 아니다(백엔드도 040을 비종료로 취급). 그래서 묶음 분기보다 먼저 처리하고,
+ * 040(doc_request_revoke)과 045(doc_request_reject)는 정본 집합에서 거부·만료 묶음에 들어 있지만
+ * 철회가 "요청"된 상태일 뿐 종료가 아니다(백엔드도 비종료로 취급). 그래서 묶음 분기보다 먼저 처리하고,
  * 저장된 statusDetail("거부" 등)이 무엇이든 무시한다.
  */
-/** eformsign doc_request_revoke — 문서 취소가 요청됐을 뿐 아직 철회되지 않은 비종료 상태. */
+/** eformsign doc_request_revoke(040) — 문서 취소가 요청됐을 뿐 아직 철회되지 않은 비종료 상태. 045도 같은 취급. */
 export const SIGNATURE_REVOKE_REQUESTED_STATUS_CODE = EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE;
 
 export function getSignatureStatusMeta(doc: SignatureStatusInput): SignatureStatusMeta {
     const detail = (doc.statusDetail ?? "").trim();
     const hasType = (doc.statusType ?? "").toString().trim() !== "";
-    if (hasType && normalizeEformsignStatusCode(doc.statusType) === SIGNATURE_REVOKE_REQUESTED_STATUS_CODE) {
+    if (hasType && isRevokeRequestedEformsignStatus(doc.statusType)) {
         return { label: "철회 요청됨", variant: "warning" };
+    }
+    // 계약-04(071 = 비종결 '반려됨')는 계약서에만 적용된다. 정본 분류가 진행 중으로 바뀌었어도
+    // 제공기록지 서명 문서의 071은 종전처럼 danger "거부·만료"로 보인다.
+    if (hasType && isReviewerRejectedEformsignStatus(doc.statusType)) {
+        return { label: detail || "거부·만료", variant: "danger" };
     }
     const category = hasType ? getEformsignStatusCategory(doc.statusType) : "unknown";
 

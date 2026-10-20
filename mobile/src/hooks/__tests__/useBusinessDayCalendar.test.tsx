@@ -325,4 +325,24 @@ describe("useBusinessDayCalendar", () => {
         await waitFor(() => expect(result.current.calendar).not.toBe(first));
         expect(result.current.calendar.isBusinessDay(branchHoliday)).toBe(false);
     });
+
+    it("fails fast on save: refreshForSave does not inherit the app-wide query retries", async () => {
+        // Mirrors the production defaults (3 retries) with no delay, unlike the file's shared retry:false client.
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 3, retryDelay: 0 } } });
+        const wrapper = ({ children }: { children: ReactNode }) => (
+            <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        );
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year));
+        const { result } = renderHook(() => useBusinessDayCalendar(), { wrapper });
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        const yearsRequested = mockGetYear.mock.calls.length;
+        expect(yearsRequested).toBeGreaterThan(0);
+
+        mockGetYear.mockClear();
+        mockGetYear.mockRejectedValue(new Error("offline"));
+        await act(async () => { expect(await result.current.refreshForSave()).toEqual({ ok: false }); });
+
+        // One attempt per requested year, no retries.
+        expect(mockGetYear).toHaveBeenCalledTimes(yearsRequested);
+    });
 });

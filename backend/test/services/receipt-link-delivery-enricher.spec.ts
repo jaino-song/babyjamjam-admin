@@ -31,6 +31,13 @@ function makeJob(dedupeKey: string, receiptUrl?: string, branchId: string | null
 }
 
 describe("ReceiptLinkDeliveryEnricher", () => {
+    it("skips service-end notice when the contract is voided", async () => {
+        const issueService = { issue: jest.fn().mockRejectedValue(new ReceiptLinkSkipError("contract_voided")) };
+        const enricher = new ReceiptLinkDeliveryEnricher(new SmsTriggerPayloadEnricherRegistry(), issueService as never);
+        const job = makeJob("rule-1:client:7");
+        await expect(enricher.enrich(job)).rejects.toMatchObject({ skipReason: "contract_voided", message: "파기된 계약서입니다." });
+        expect(job.payload.templateVariables["receiptUrl"]).toBeUndefined();
+    });
     it("registers itself for SERVICE_END_NOTICE on module init", () => {
         const registry = new SmsTriggerPayloadEnricherRegistry();
         const enricher = new ReceiptLinkDeliveryEnricher(registry, { issue: jest.fn() } as never);

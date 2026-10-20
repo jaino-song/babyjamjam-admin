@@ -38,6 +38,7 @@ function makeClient(id: number, overrides: Partial<Client> = {}): Client {
     voucherClient: true,
     breastPump: false,
     serviceStatus: "active",
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,
@@ -133,6 +134,84 @@ describe("EmployeeScheduleScreen", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("일정을 불러오지 못했습니다");
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a paused first load (offline) as loading, not as an empty schedule", () => {
+    mockClients([], {
+      allClients: [],
+      isLoading: false,
+      isPaused: true,
+      hasData: false,
+      isFetching: false,
+    });
+    render(<EmployeeScheduleScreen />);
+
+    expect(screen.getByRole("status", { name: "일정 로딩 중" })).toBeInTheDocument();
+    expect(screen.queryByText("조회 기간의 일정이 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByText("선택한 날짜의 일정이 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the schedule and shows exactly one inline notice when a refetch fails over cached clients", () => {
+    const refetch = jest.fn();
+    mockClients([makeClient(1, { startDate: "2026-09-18" })], {
+      isError: true,
+      hasData: true,
+      isFetching: false,
+      refetch,
+    });
+    const { container } = render(<EmployeeScheduleScreen />);
+
+    fireEvent.click(container.querySelector('[data-slot="calendar-day"][data-date="2026-09-18"]')!);
+    expect(screen.getByRole("button", { name: /고객 1/ })).toBeInTheDocument();
+    expect(screen.queryByText("일정을 불러오지 못했습니다")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the notice retry while the refetch is in flight", () => {
+    mockClients([makeClient(1, { startDate: "2026-09-18" })], {
+      isError: true,
+      hasData: true,
+      isFetching: true,
+    });
+    render(<EmployeeScheduleScreen />);
+
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+  });
+
+  it("shows the empty text and no alert after a successful load with no schedule", () => {
+    mockClients([], { allClients: [], hasData: true, isPaused: false });
+    render(<EmployeeScheduleScreen />);
+
+    expect(screen.getByText("선택한 날짜의 일정이 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "일정 로딩 중" })).not.toBeInTheDocument();
+  });
+
+  it("shows the empty text and the notice when a refetch fails over a cached empty schedule", () => {
+    mockClients([], { allClients: [], isError: true, hasData: true });
+    render(<EmployeeScheduleScreen />);
+
+    expect(screen.getByText("선택한 날짜의 일정이 없습니다.")).toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+  });
+
+  it("does not change what a paused refetch over cached clients renders", () => {
+    mockClients([makeClient(1, { startDate: "2026-09-18" })], {
+      isPaused: true,
+      hasData: true,
+    });
+    const { container } = render(<EmployeeScheduleScreen />);
+
+    fireEvent.click(container.querySelector('[data-slot="calendar-day"][data-date="2026-09-18"]')!);
+    expect(screen.getByRole("button", { name: /고객 1/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "일정 로딩 중" })).not.toBeInTheDocument();
   });
 
   it("closes the selected schedule detail when the controller reports a deleted client", () => {

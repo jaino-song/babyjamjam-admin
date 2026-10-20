@@ -9,7 +9,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "./agent-markdown-link-components";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
-import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
+import { contractStatusResultLabel } from "./contract-status-label";
 import type { ChatMessage } from "@/hooks/useChatStream";
 import ClientRegistrationWizard, { type CreatedClient } from "./ClientRegistrationWizard";
 import ContractSendWizard from "./ContractSendWizard";
@@ -78,7 +78,7 @@ export function AssistantMessage({
                     return (
                         <div data-component={`${dataComponent}_markdown_wizard-contract-status-result`} className="space-y-1 py-1">
                             <div>
-                                계약서 상태: <strong>{getClientDocumentStatusMeta(contractStatus.documentStatus, { hasSigned: contractStatus.hasSigned }).label}</strong>
+                                계약서 상태: <strong>{contractStatusResultLabel(contractStatus)}</strong>
                             </div>
                             <div className="text-sm text-muted-foreground">
                                 산모: {contractStatus.clientName} (ID: {contractStatus.clientId})
@@ -122,7 +122,7 @@ export function AssistantMessage({
                                 remarkPlugins={[remarkGfm]}
                                 components={{
                                     ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
-                                    code: ({ className, children, ref: _ref, ...props }) => {
+                                    code: ({ className, children, ...props }) => {
                                         const match = /language-(\w+)/.exec(className || "");
                                         const language = match ? match[1] : "";
                                         const codeString = String(children).replace(/\n$/, "");

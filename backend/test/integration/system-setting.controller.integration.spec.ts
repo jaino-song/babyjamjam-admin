@@ -18,7 +18,6 @@ import {
     SMS_DELIVERY_MAX_ATTEMPTS,
     SMS_DELIVERY_RETRY_DELAY_MS,
     TRIGGER_DISPATCH_CRON,
-    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
     TRIGGER_JOB_RETRY_DELAY_MS,
@@ -26,7 +25,6 @@ import {
 import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
-    SERVICE_RECORD_LINK_GRACE_DAYS,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
@@ -109,7 +107,7 @@ describe("SystemSettingController (Integration)", () => {
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
 
         systemSettingService = moduleFixture.get(SystemSettingService);
         messageSenderApprovalService = moduleFixture.get(MessageSenderApprovalService);
@@ -244,8 +242,8 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(`${formatMinutes(TRIGGER_JOB_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "trigger-job-retry", "max-attempts"))
                 .toBe(`최대 ${TRIGGER_JOB_MAX_ATTEMPTS}회`);
-            expect(getRowValue(response, "trigger-job-retry", "config-retry-delay"))
-                .toBe(`${formatMinutes(TRIGGER_JOB_CONFIG_RETRY_DELAY_MS)} 후`);
+            expect(getPolicy(response, "trigger-job-retry").rows.some((row) => row.id === "config-retry-delay"))
+                .toBe(false);
             expect(getRowValue(response, "trigger-job-retry", "processing-reclaim"))
                 .toBe(`${formatMinutes(TRIGGER_JOB_PROCESSING_RECLAIM_MS)} 후`);
             expect(getRowValue(response, "sms-retry", "max-attempts"))
@@ -263,9 +261,9 @@ describe("SystemSettingController (Integration)", () => {
             expect(getRowValue(response, "service-feedback-link", "trigger-type"))
                 .toBe(SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE);
             expect(getRowValue(response, "service-feedback-link", "scheduled-for"))
-                .toBe(`서비스 시작일 ${formatKstDateHour(getServiceRecordLinkScheduledFor(REFERENCE_SERVICE_DATE))} KST`);
+                .toBe(`서비스 시작 1일 전 ${formatKstDateHour(getServiceRecordLinkScheduledFor(REFERENCE_SERVICE_DATE))} KST (늦게 등록되면 즉시 발송)`);
             expect(getRowValue(response, "service-feedback-link", "token-expires-at"))
-                .toBe(`서비스 종료일 +${SERVICE_RECORD_LINK_GRACE_DAYS}일 ${formatKstDateHour(getServiceRecordTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`);
+                .toBe(`서비스 종료일 다음 날 ${formatKstDateHour(getServiceRecordTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`);
             expect(getRowValue(response, "service-feedback-link", "rule-id"))
                 .toBe(SERVICE_RECORD_LINK_RULE_ID);
             expect(getRowValue(response, "service-feedback-link", "automation-key"))

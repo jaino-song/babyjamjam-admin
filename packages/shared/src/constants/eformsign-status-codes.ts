@@ -11,9 +11,9 @@
  *    terminal-negative status: eformsign-webhook.service.ts:614 synthesizes
  *    `{ statusType: "090", statusDetail: "철회" }`, and
  *    backend/application/services/client.service.ts:26 groups it with the
- *    other revoke-family codes: `REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"])` (040 is the
+ *    other revoke-family codes: `REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "090"])` (040 and 045 are the
  *    separate non-terminal "revoke_requested" client status; this per-document
- *    category list below still buckets 040 with the revoke family).
+ *    category list below still buckets 040/045 with the revoke family).
  *    "090" is not part of eformsign's own API status-code table — it is a
  *    backend-synthesized status — which is why neither frontend nor mobile
  *    (whose code sets are transcribed from the eformsign API docs) had it.
@@ -61,13 +61,12 @@ export const EXPIRED_STATUS_CODES = [
     "011", // doc_reject_approval: 문서 결재 반려
     "021", // doc_reject_reception: 문서 내부자 반려
     "031", // doc_reject_outsider: 문서 외부자 반려
-    "040", // doc_request_revoke: 문서 취소 요청
+    "040", // doc_request_revoke: 문서 취소 요청 (철회 요청됨 — see EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES)
     "042", // doc_revoke: 문서 취소
-    "045", // doc_request_reject: 문서 반려 요청
+    "045", // doc_request_reject: 문서 반려 요청 (040과 동일하게 철회 요청됨으로 취급)
     "047", // doc_request_delete: 문서 삭제 요청
     "049", // doc_delete: 문서 삭제
     "061", // doc_reject_participant: 참여자 반려
-    "071", // doc_reject_reviewer: 검토자 반려
     "080", // doc_expired: 문서 만료
     "090", // 철회 (backend-synthesized withdrawal status; see eformsign-webhook.service.ts:614)
 ] as const;
@@ -91,11 +90,13 @@ export const IN_PROGRESS_STATUS_CODES = [
     "010", // doc_request_approval
     "020", // doc_request_reception
     "030", // doc_request_outsider
+    "041", // doc_refuse_revoke: 철회 요청 거절 — the document continues exactly like 060
     "043", // doc_update
     "060", // doc_request_participant
     "063", // doc_rerequest_participant
     "064", // doc_open_participant
     "070", // doc_request_reviewer
+    "071", // doc_reject_reviewer: 검토자 반려 — NOT terminal (계약-04), see EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE
 ] as const;
 
 export const DELETED_STATUS_CODES = [
@@ -105,13 +106,32 @@ export const DELETED_STATUS_CODES = [
 ] as const;
 
 /**
- * "040" (doc_request_revoke): cancellation was requested but has not happened — it may still
- * be refused (→ 060) or completed (→ 042). It keeps the "expired" category above for
- * filtering, tabs and stats, but it is not expired: display layers show it as "철회 요청됨"
- * (warning), never as 기간 만료 or 철회됨. The backend has its own copy
- * (backend/domain/constants/eformsign-doc-status.constants.ts).
+ * "040" (doc_request_revoke) and "045" (doc_request_reject): cancellation was requested but
+ * has not happened — it may still be refused (041, which continues like 060) or completed
+ * (→ 042). They keep the "expired" category above for filtering, tabs and stats, but they are
+ * not expired: display layers show them as "철회 요청됨" (warning), never as 기간 만료 or
+ * 철회됨. The backend has its own copy (backend/domain/constants/eformsign-doc-status.constants.ts).
  */
+export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES = ["040", "045"] as const;
+
+/** The canonical (040) member of {@link EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES}. */
 export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE = "040";
+
+/**
+ * "042" (doc_revoke) and "090" (backend-synthesized withdrawal): the document was revoked —
+ * terminal. They stay in the "expired" category above for tabs, filters and stats, but display
+ * layers show them as "철회됨" (danger), never as 기간 만료 (080).
+ */
+export const EFORMSIGN_REVOKED_STATUS_CODES = ["042", "090"] as const;
+
+/**
+ * "071" (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document. It is NOT
+ * terminal — a later 070 returns the contract to 서명 완료 (or 검토 필요) and a later 072 completes
+ * it — and the customer's signature stays valid. It therefore lives in the in-progress category
+ * (tabs, stats), and display layers show it as "반려됨" (rejected_by_reviewer), never as 기간 만료.
+ * The backend has its own copy (backend/domain/constants/eformsign-doc-status.constants.ts).
+ */
+export const EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE = "071";
 
 export type EformsignStatusCategory = "completed" | "expired" | "in-progress" | "unknown";
 
@@ -137,6 +157,7 @@ export const EFORMSIGN_STATUS_NAME_TO_CODE: Readonly<Record<string, string>> = {
     doc_reject_outsider: "031",
     doc_accept_outsider: "032",
     doc_request_revoke: "040",
+    doc_refuse_revoke: "041",
     doc_revoke: "042",
     doc_update: "043",
     doc_request_reject: "045",
@@ -178,7 +199,19 @@ export function normalizeEformsignStatusCode(status: EformsignStatusInput): stri
 export const normalizeEformsignStatusName = normalizeEformsignStatusCode;
 
 export function isRevokeRequestedEformsignStatus(status: EformsignStatusInput): boolean {
-    return normalizeEformsignStatusCode(status) === EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE;
+    return (EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES as readonly string[]).includes(
+        normalizeEformsignStatusCode(status),
+    );
+}
+
+export function isRevokedEformsignStatus(status: EformsignStatusInput): boolean {
+    return (EFORMSIGN_REVOKED_STATUS_CODES as readonly string[]).includes(
+        normalizeEformsignStatusCode(status),
+    );
+}
+
+export function isReviewerRejectedEformsignStatus(status: EformsignStatusInput): boolean {
+    return normalizeEformsignStatusCode(status) === EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE;
 }
 
 export function isDeletedEformsignStatusCode(status: EformsignStatusInput): boolean {

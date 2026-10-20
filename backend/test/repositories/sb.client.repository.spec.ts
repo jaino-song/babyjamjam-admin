@@ -1,3 +1,6 @@
+import { Logger } from "@nestjs/common";
+import { isContractSendRequired } from "application/utils/current-contract-document";
+import { findManyFrom } from "../utils/prisma-where-evaluator";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientEntity } from "domain/entities/client.entity";
@@ -42,6 +45,7 @@ describe("SbClientRepository", () => {
         voucherClient: false,
         birthday: "900101",
         serviceStatus: "completed",
+        bookingConfirmedAt: new Date("2024-01-01"),
         breastPump: true,
         eDocId: null,
         dueDate: null,
@@ -73,6 +77,7 @@ describe("SbClientRepository", () => {
     const branchId = "org-1";
 
     let clientModel: ReturnType<typeof createMockPrismaClient>;
+    let eformsignDocModel: { findMany: jest.Mock };
     let transactionQueryRaw: jest.Mock;
     let prisma: PrismaService;
     let repository: SbClientRepository;
@@ -84,11 +89,13 @@ describe("SbClientRepository", () => {
         // answer and silently pass/fail for the wrong reason.
         clearSchemaCapabilityCache();
         clientModel = createMockPrismaClient();
+        eformsignDocModel = { findMany: jest.fn().mockResolvedValue([]) };
         transactionQueryRaw = jest.fn()
             .mockResolvedValueOnce([{ id: 1 }])
             .mockResolvedValue([{ count: 0 }]);
         prisma = {
             client: clientModel,
+            eformsign_doc: eformsignDocModel,
             $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
             $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
                 callback({ client: clientModel, $queryRaw: transactionQueryRaw })),
@@ -116,7 +123,7 @@ describe("SbClientRepository", () => {
                 // Assert
                 expect(clientModel.findFirst).toHaveBeenCalledTimes(1);
                 expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { id: 1, branchId: branchId },
+                    where: { id: 1, branchId: branchId, deletedAt: null },
                     select: expect.any(Object),
                 }));
                 expect(result).toBeInstanceOf(ClientEntity);
@@ -132,6 +139,18 @@ describe("SbClientRepository", () => {
             });
         });
 
+        describe("given a client whose smsAutomationEnabled is false", () => {
+            it("selects the column and maps the stored false onto the entity", async () => {
+                clientModel.findFirst.mockResolvedValue(createClientRow({ smsAutomationEnabled: false }));
+
+                const result = await repository.findById(branchId, 1);
+
+                const { select } = clientModel.findFirst.mock.calls[0][0];
+                expect(select).toMatchObject({ smsAutomationEnabled: true });
+                expect(result?.smsAutomationEnabled).toBe(false);
+            });
+        });
+
         describe("given a client id does not exist", () => {
             it("should return null", async () => {
                 // Arrange
@@ -142,7 +161,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { id: 999, branchId: branchId },
+                    where: { id: 999, branchId: branchId, deletedAt: null },
                     select: expect.any(Object),
                 }));
                 expect(result).toBeNull();
@@ -168,7 +187,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { branchId: branchId },
+                    where: { branchId: branchId, deletedAt: null },
                     select: expect.any(Object),
                 }));
                 expect(result).toHaveLength(2);
@@ -211,14 +230,14 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { branchId: branchId },
+                    where: { branchId: branchId, deletedAt: null },
                     skip: 0,
                     take: 10,
                     orderBy: { id: "desc" },
                     select: expect.any(Object),
                 }));
                 expect(clientModel.count).toHaveBeenCalledWith({
-                    where: { branchId: branchId },
+                    where: { branchId: branchId, deletedAt: null },
                 });
                 expect(result).toEqual({
                     data: expect.arrayContaining([
@@ -284,6 +303,7 @@ describe("SbClientRepository", () => {
                         { phone: { contains: "John", mode: "insensitive" } },
                     ],
                     branchId: branchId,
+                    deletedAt: null,
                 };
 
                 // Act
@@ -311,9 +331,9 @@ describe("SbClientRepository", () => {
 
             expect(clientModel.findMany).toHaveBeenCalledTimes(1);
             expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                where: { branchId },
+                where: { branchId, deletedAt: null },
             }));
-            expect(clientModel.count).toHaveBeenCalledWith({ where: { branchId } });
+            expect(clientModel.count).toHaveBeenCalledWith({ where: { branchId, deletedAt: null } });
         });
 
         it("applies the effective status tab to both rows and total", async () => {
@@ -325,6 +345,7 @@ describe("SbClientRepository", () => {
 
             expect(listWhere).toEqual({
                 branchId,
+                deletedAt: null,
                 OR: [
                     { name: { contains: "Kim", mode: "insensitive" } },
                     { address: { contains: "Kim", mode: "insensitive" } },
@@ -348,6 +369,7 @@ describe("SbClientRepository", () => {
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
                     where: {
                         branchId,
+                        deletedAt: null,
                         AND: [clientListTabWhere(tab, getClientListDateRanges().todayStart)],
                     },
                 }));
@@ -378,7 +400,7 @@ describe("SbClientRepository", () => {
             await repository.findAllPaginated(branchId, 1, 10, "ㄱㅎ", "all");
 
             expect(clientModel.findMany.mock.calls[0]?.[0]).toEqual({
-                where: { branchId },
+                where: { branchId, deletedAt: null },
                 select: {
                     id: true,
                     name: true,
@@ -389,6 +411,7 @@ describe("SbClientRepository", () => {
             });
             expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [{ id: { in: [7] } }],
             });
         });
@@ -409,9 +432,10 @@ describe("SbClientRepository", () => {
 
             await repository.findAllPaginated(branchId, 1, 10, "+82 10 1234 5678", "all");
 
-            expect(clientModel.findMany.mock.calls[0]?.[0]?.where).toEqual({ branchId });
+            expect(clientModel.findMany.mock.calls[0]?.[0]?.where).toEqual({ branchId, deletedAt: null });
             expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [{ id: { in: [7] } }],
             });
         });
@@ -430,6 +454,7 @@ describe("SbClientRepository", () => {
 
             expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [{ id: { in: [2] } }],
             });
         });
@@ -601,10 +626,12 @@ describe("SbClientRepository", () => {
             expect(list.data[0]?.serviceStatus).toBe("active");
             expect(listWhere).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [clientListTabWhere("completed", todayStart)],
             });
             expect(completedSummaryWhere).toEqual({
                 branchId,
+                deletedAt: null,
                 AND: [clientListTabWhere("completed", todayStart)],
             });
             expect(clientModel.update).not.toHaveBeenCalled();
@@ -665,7 +692,8 @@ describe("SbClientRepository", () => {
                         careCenter: false,
                         voucherClient: true,
                         birthday: "950315",
-                        serviceStatus: "waiting",
+                        serviceStatus: "pre_booking",
+                        bookingConfirmedAt: null,
                         breastPump: false,
                         eDocId: null,
                         dueDate: null,
@@ -748,7 +776,8 @@ describe("SbClientRepository", () => {
                         phone: null,
                         type: null,
                         birthday: null,
-                        serviceStatus: null,
+                        serviceStatus: "pre_booking",
+                        bookingConfirmedAt: null,
                     }),
                     select: expect.any(Object),
                 }));
@@ -853,7 +882,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.updateMany).toHaveBeenCalledWith({
-                    where: { id: 7, branchId: branchId },
+                    where: { id: 7, branchId: branchId, deletedAt: null },
                     data: {
                         name: "Updated Name",
                         address: "Updated Address",
@@ -929,7 +958,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: { id: 7, branchId: branchId },
+                    where: { id: 7, branchId: branchId, deletedAt: null },
                     data: expect.objectContaining({
                         birthDate,
                     }),
@@ -955,7 +984,7 @@ describe("SbClientRepository", () => {
 
                 // Assert
                 expect(clientModel.updateMany).toHaveBeenCalledWith({
-                    where: { id: 8, branchId: branchId },
+                    where: { id: 8, branchId: branchId, deletedAt: null },
                     data: expect.objectContaining({
                         breastPump: true,
                     }),
@@ -1000,7 +1029,7 @@ describe("SbClientRepository", () => {
 
             expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
             expect(transaction.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-                where: { id: row.id, branchId },
+                where: { id: row.id, branchId, deletedAt: null },
                 data: expect.objectContaining({ name: "Updated" }),
             }));
             expect(result).toMatchObject({ id: row.id, name: "Updated" });
@@ -1027,6 +1056,14 @@ describe("SbClientRepository", () => {
     });
 
     describe("automatic service-status CAS", () => {
+        it("allows stored pre_booking to move after confirmation-derived recomputation", async () => {
+            clientModel.updateMany.mockResolvedValue({ count: 1 });
+            expect(await repository.updateServiceStatusIfCurrent(branchId, 1, "pre_booking", "waiting")).toBe("updated");
+            expect(clientModel.updateMany).toHaveBeenCalledWith({
+                where: { id: 1, branchId, serviceStatus: "pre_booking" },
+                data: { serviceStatus: "waiting" },
+            });
+        });
         it("updates only when the branch and observed status still match", async () => {
             clientModel.updateMany.mockResolvedValue({ count: 1 });
 
@@ -1061,7 +1098,7 @@ describe("SbClientRepository", () => {
             });
         });
 
-        it.each(["pre_booking", "terminated", "replacement_requested"])(
+        it.each(["terminated", "replacement_requested"])(
             "rejects automatic movement from manual %s before touching the database",
             async (manualStatus) => {
                 const result = await repository.updateServiceStatusIfCurrent(
@@ -1177,118 +1214,425 @@ describe("SbClientRepository", () => {
     });
 
     // ============================================
-    // findStartingWithinDays
+    // Korean-calendar windows (digest, /clients/filtered, PWA reminders)
     // ============================================
-    describe("findStartingWithinDays", () => {
-        describe("given clients with start dates within the specified days", () => {
-            it("should query with gte (not gt) so clients starting today are included", async () => {
-                // Arrange
-                const rows = [createClientRow({ id: 1, name: "Future Client" })];
-                clientModel.findMany.mockResolvedValue(rows);
+    // 2026-09-30T16:30:00Z is 2026-10-01 01:30 in Korea; the server runs in UTC, so a
+    // runtime-local "today" would still be 2026-09-30. 2026-10-01T03:00:00Z is the control
+    // where both readings already agree. Both must produce the same Korean-date window.
+    const KST_EARLY_MORNING = new Date("2026-09-30T16:30:00.000Z");
+    const KST_MORNING_CONTROL = new Date("2026-10-01T03:00:00.000Z");
+    const INSTANTS: Array<[string, Date]> = [
+        ["2026-09-30T16:30:00Z (01:30 KST next day)", KST_EARLY_MORNING],
+        ["2026-10-01T03:00:00Z (control)", KST_MORNING_CONTROL],
+    ];
 
-                // Act
-                await repository.findStartingWithinDays(branchId, 7);
+    describe.each(INSTANTS)("Korean calendar window at %s", (_label, now) => {
+        it("findStartingWithinDays spans Korean today through today + N days, last day included", async () => {
+            clientModel.findMany.mockResolvedValue([]);
 
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.startDate.gte).toBeDefined();
-                expect(callArgs.where.startDate.gt).toBeUndefined();
-                expect(callArgs.where.startDate.lte).toBeDefined();
+            await repository.findStartingWithinDays(branchId, 7, now);
+
+            const { startDate } = clientModel.findMany.mock.calls[0][0].where;
+            expect(startDate.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+            expect(startDate.lt).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+            expect(startDate.gt).toBeUndefined();
+            expect(startDate.lte).toBeUndefined();
+        });
+
+        it("findEndingWithinDays spans Korean today through today + N days, last day included", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await repository.findEndingWithinDays(branchId, 7, now);
+
+            const { endDate } = clientModel.findMany.mock.calls[0][0].where;
+            expect(endDate.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+            expect(endDate.lt).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+        });
+
+        it("findWithIncompleteContractsStartingWithinDays uses the same Korean window", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, now);
+
+            const { startDate } = clientModel.findMany.mock.calls[0][0].where;
+            expect(startDate.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+            expect(startDate.lt).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+        });
+
+        it("findByStartDate / findByEndDate match the Korean calendar day of the given instant", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await repository.findByStartDate(branchId, now);
+            await repository.findByEndDate(branchId, now);
+
+            const [startCall, endCall] = clientModel.findMany.mock.calls;
+            expect(startCall![0].where.startDate).toEqual({
+                gte: new Date("2026-10-01T00:00:00.000Z"),
+                lt: new Date("2026-10-02T00:00:00.000Z"),
             });
-
-            it("should return mapped ClientEntity array", async () => {
-                // Arrange
-                const rows = [
-                    createClientRow({ id: 1, name: "Client A" }),
-                    createClientRow({ id: 2, name: "Client B" }),
-                ];
-                clientModel.findMany.mockResolvedValue(rows);
-
-                // Act
-                const result = await repository.findStartingWithinDays(branchId, 7);
-
-                // Assert
-                expect(result).toHaveLength(2);
-                expect(result[0]).toBeInstanceOf(ClientEntity);
-                expect(result[0]!.name).toBe("Client A");
+            expect(endCall![0].where.endDate).toEqual({
+                gte: new Date("2026-10-01T00:00:00.000Z"),
+                lt: new Date("2026-10-02T00:00:00.000Z"),
             });
         });
 
-        describe("given no clients within date range", () => {
-            it("should return empty array", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+        it("findByCreatedDate spans KST midnight to KST midnight of the given instant", async () => {
+            clientModel.findMany.mockResolvedValue([]);
 
-                // Act
-                const result = await repository.findStartingWithinDays(branchId, 7);
+            await repository.findByCreatedDate(branchId, now);
 
-                // Assert
+            expect(clientModel.findMany.mock.calls[0][0].where.createdAt).toEqual({
+                gte: new Date("2026-09-30T15:00:00.000Z"),
+                lt: new Date("2026-10-01T15:00:00.000Z"),
+            });
+        });
+    });
+
+    describe("findStartingWithinDays result mapping", () => {
+        it("should return mapped ClientEntity array", async () => {
+            clientModel.findMany.mockResolvedValue([
+                createClientRow({ id: 1, name: "Client A" }),
+                createClientRow({ id: 2, name: "Client B" }),
+            ]);
+
+            const result = await repository.findStartingWithinDays(branchId, 7);
+
+            expect(result).toHaveLength(2);
+            expect(result[0]).toBeInstanceOf(ClientEntity);
+            expect(result[0]!.name).toBe("Client A");
+        });
+
+        it("should return empty array when nothing is in the window", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await expect(repository.findStartingWithinDays(branchId, 7)).resolves.toEqual([]);
+        });
+    });
+
+    // ============================================
+    // Current-contract rule (digest, /clients/filtered, PWA reminders)
+    // ============================================
+    // These two lists must use the dashboard's rule: the CURRENT contract (newest
+    // non-service-record eformsign_doc per client), never the document pinned by eDocId.
+    describe("current-contract lists", () => {
+        // 2026-03-17 is a Tuesday; 2026-03-20 is 3 business days out (inside the send window).
+        const NOW = new Date("2026-03-17T09:00:00.000Z");
+        const contractDoc = (clientId: number, statusType: string, overrides: Record<string, unknown> = {}) => ({
+            clientId,
+            documentId: `doc-${clientId}-${statusType}`,
+            statusType,
+            stepType: "02",
+            stepName: "이용자 서명",
+            detailPayload: null,
+            permanentPurgeRequestedAt: null,
+            voidedAt: null,
+            documentKind: "contract",
+            serviceRecordCaseId: null,
+            templateId: null,
+            ...overrides,
+        });
+        const VOIDED_AT = new Date("2026-03-10T00:00:00.000Z");
+        const row = (id: number, overrides: Record<string, unknown> = {}) => createClientRow({
+            id,
+            name: `Client ${id}`,
+            branchId,
+            serviceStatus: "waiting",
+            startDate: new Date("2026-03-20T00:00:00.000Z"),
+            endDate: new Date("2026-04-04T00:00:00.000Z"),
+            eDocId: null,
+            ...overrides,
+        });
+        // The fake database evaluates the COMPLETE where clause the repository sends, so a
+        // mutated predicate (an extra impossible condition, a flipped bound) changes the answer.
+        const seedDb = (clients: unknown[], docs: unknown[] = []) => {
+            clientModel.findMany.mockImplementation(findManyFrom(clients as Array<Record<string, unknown>>));
+            eformsignDocModel.findMany.mockImplementation(findManyFrom(docs as Array<Record<string, unknown>>));
+        };
+        const ids = (clients: ClientEntity[]) => clients.map((client) => client.id).sort((a, b) => a - b);
+
+        describe("findWithIncompleteContractsStartingWithinDays", () => {
+            it("counts a client whose CURRENT contract is alive but not completed, whatever eDocId points at", async () => {
+                seedDb([
+                    row(1, { eDocId: null }), // live 060 contract linked only by clientId
+                    row(2, { eDocId: "stale-pin" }), // pinned doc is stale; current contract is completed
+                    row(3), // completed
+                    row(4), // current contract rejected: nothing alive, so it is "발송 필요", not "미완료"
+                    row(5), // no contract at all
+                    row(6), // 040 revoke requested: alive, not completed
+                    row(7), // 041 refused revoke: continues like 060
+                ], [
+                    contractDoc(1, "060"),
+                    contractDoc(2, "050"),
+                    contractDoc(3, "003"),
+                    contractDoc(4, "080"),
+                    contractDoc(6, "040"),
+                    contractDoc(7, "041"),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([1, 6, 7]);
+            });
+
+            it("judges a client by the newest contract, not an older completed one", async () => {
+                // Newest first, as the lookup orders them: the re-issued contract is still unsigned.
+                seedDb([row(1)], [
+                    contractDoc(1, "060", { documentId: "reissued" }),
+                    contractDoc(1, "050", { documentId: "older-completed" }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([1]);
+            });
+
+            it("drops a client whose NEWEST contract is voided, even with an older live one, and keeps the non-voided control", async () => {
+                seedDb([row(1), row(2), row(3)], [
+                    // Client 1: newest voided (code still 060 = would be alive), older one is alive too.
+                    contractDoc(1, "060", { documentId: "voided-newest", voidedAt: VOIDED_AT }),
+                    contractDoc(1, "060", { documentId: "older-alive" }),
+                    // Client 2: control, the same newest contract without a void is still incomplete.
+                    contractDoc(2, "060", { documentId: "alive-newest" }),
+                    // Client 3: voided newest with a voided older one in front of an alive older one: still dead.
+                    contractDoc(3, "070", { documentId: "voided-070", voidedAt: VOIDED_AT }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([2]);
+            });
+
+            it("keeps a live newest contract incomplete when only an OLDER one is voided (no skipping either way)", async () => {
+                seedDb([row(1)], [
+                    contractDoc(1, "060", { documentId: "newest-alive" }),
+                    contractDoc(1, "060", { documentId: "older-voided", voidedAt: VOIDED_AT }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([1]);
+            });
+
+            it("ignores service-record documents and purge-requested contracts", async () => {
+                seedDb([row(1), row(2)], [
+                    // Client 1: the only alive-looking document is a service record, so no contract.
+                    contractDoc(1, "060", { documentKind: "service_record" }),
+                    // Client 2: the newest contract is purge-requested (deleted), so it is dead.
+                    contractDoc(2, "060", { permanentPurgeRequestedAt: new Date("2026-03-01T00:00:00.000Z") }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
                 expect(result).toEqual([]);
             });
         });
-    });
 
-    // ============================================
-    // findWithIncompleteContractsStartingWithinDays
-    // ============================================
-    describe("findWithIncompleteContractsStartingWithinDays", () => {
-        describe("given clients with incomplete contracts starting soon", () => {
-            it("should query with gte (not gt) so clients starting today are included", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+        describe("findWithoutContractSentStartingWithinDays (발송 필요)", () => {
+            const find = (clients: unknown[], docs: unknown[], now = NOW) => {
+                seedDb(clients, docs);
+                return repository.findWithoutContractSentStartingWithinDays(branchId, KR_BUILTIN_CALENDAR, now);
+            };
 
-                // Act
-                await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7);
+            it("lists a client whose newest contract is voided as 발송 필요, even with an older signed one, and not the live control", async () => {
+                const result = await find(
+                    [row(1), row(2), row(3), row(4)],
+                    [
+                        // Client 1: newest voided (completed code) over an older completed contract.
+                        contractDoc(1, "003", { documentId: "voided-newest", voidedAt: VOIDED_AT }),
+                        contractDoc(1, "003", { documentId: "older-signed" }),
+                        // Client 2: control, same code, not voided: contract alive, nothing to send.
+                        contractDoc(2, "003"),
+                        // Client 3: voided in-flight contract.
+                        contractDoc(3, "060", { voidedAt: VOIDED_AT }),
+                        // Client 4: live newest over an older voided one: nothing to send.
+                        contractDoc(4, "060", { documentId: "newest-alive" }),
+                        contractDoc(4, "060", { documentId: "older-voided", voidedAt: VOIDED_AT }),
+                    ],
+                );
 
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.startDate.gte).toBeDefined();
-                expect(callArgs.where.startDate.gt).toBeUndefined();
+                expect(ids(result)).toEqual([1, 3]);
             });
 
-            it("should filter by eDocId not null and statusType not 050", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+            it("does not treat a live 040/045 contract as not sent, even when eDocId is null", async () => {
+                const result = await find(
+                    [row(1, { eDocId: null }), row(2, { eDocId: null }), row(3, { eDocId: null })],
+                    [contractDoc(1, "040"), contractDoc(2, "045"), contractDoc(3, "041")],
+                );
 
-                // Act
-                await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7);
-
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.eDocId).toEqual({ not: null });
-                expect(callArgs.where.eformsignDocByEDocId.statusType).toEqual({ not: '050' });
-            });
-        });
-    });
-
-    // ============================================
-    // findWithoutContractSentStartingWithinDays
-    // ============================================
-    describe("findWithoutContractSentStartingWithinDays", () => {
-        describe("given clients without contracts sent starting soon", () => {
-            it("should query with gte (not gt) so clients starting today are included", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
-
-                // Act
-                await repository.findWithoutContractSentStartingWithinDays(branchId, 7);
-
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.startDate.gte).toBeDefined();
-                expect(callArgs.where.startDate.gt).toBeUndefined();
+                expect(result).toEqual([]);
             });
 
-            it("should filter by eDocId being null", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+            it("counts a client whose pinned doc is stale only when the CURRENT contract is dead or absent", async () => {
+                const result = await find(
+                    [
+                        row(1, { eDocId: "doc-1-080" }), // pinned + current contract expired
+                        row(2, { eDocId: "doc-2-060-old" }), // pinned stale but current contract is live
+                        row(3, { eDocId: null }), // no contract at all
+                        row(4, { eDocId: "doc-4-042" }), // revoked
+                        row(5, { eDocId: null }), // live contract linked only by clientId
+                    ],
+                    [
+                        contractDoc(1, "080"),
+                        contractDoc(2, "050"),
+                        contractDoc(4, "042"),
+                        contractDoc(5, "060"),
+                    ],
+                );
 
-                // Act
-                await repository.findWithoutContractSentStartingWithinDays(branchId, 7);
+                expect(ids(result)).toEqual([1, 3, 4]);
+            });
 
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.eDocId).toBeNull();
+            it("uses the effective service status, not the stored one", async () => {
+                const result = await find(
+                    [
+                        // Stored waiting but the service already ended: effectively completed.
+                        row(1, { startDate: new Date("2026-02-01T00:00:00.000Z"), endDate: new Date("2026-03-01T00:00:00.000Z") }),
+                        // Stored active but the start is still ahead: effectively waiting, inside the window.
+                        row(2, { serviceStatus: "active" }),
+                        // Manual statuses never need a contract sent.
+                        row(3, { serviceStatus: "terminated" }),
+                        row(4, { serviceStatus: "pre_booking", bookingConfirmedAt: null }),
+                        // 교체 요청 keeps its stored status and still needs a contract.
+                        row(5, { serviceStatus: "replacement_requested" }),
+                        // Confirmed clients derive waiting even with a stale pre_booking value.
+                        row(6, { serviceStatus: "pre_booking" }),
+                    ],
+                    [],
+                );
+
+                expect(ids(result)).toEqual([2, 5, 6]);
+            });
+
+            it("only returns clients inside the business-day send window", async () => {
+                // 2026-03-26 is the 7th business day after 2026-03-17: outside the window of 6.
+                const result = await find(
+                    [row(1, { startDate: new Date("2026-03-25T00:00:00.000Z") }), row(2, { startDate: new Date("2026-03-26T00:00:00.000Z") })],
+                    [],
+                );
+
+                expect(ids(result)).toEqual([1]);
+            });
+
+            it("lets the database predicate exclude other branches, finished and manual-status clients and allow the rest", async () => {
+                const result = await find(
+                    [
+                        row(1), // allowed
+                        row(2, { branchId: "other-branch" }), // other branch
+                        row(3, { serviceStatus: null }), // NULL stored status is allowed (derived from dates)
+                        row(4, { serviceStatus: "replacement_requested", endDate: null }), // keeps its stored status, allowed
+                        row(5, { endDate: null }), // non-manual without an end date is effectively pre_booking
+                        row(6, { startDate: null }), // no start date: never in a window
+                        row(7, { startDate: new Date("2026-04-20T00:00:00.000Z"), endDate: new Date("2026-05-05T00:00:00.000Z") }), // far future start
+                        row(8, { endDate: new Date("2026-03-16T00:00:00.000Z"), startDate: new Date("2026-03-01T00:00:00.000Z") }), // ended yesterday
+                    ],
+                    [],
+                );
+
+                expect(ids(result)).toEqual([1, 3, 4]);
+            });
+
+            it("skips a client whose dates are outside the calendar range instead of failing the request", async () => {
+                // 2030 is beyond the supported years, but inside no send window: the database
+                // predicate drops it before the per-client guard is even needed.
+                const result = await find(
+                    [row(1), row(2, { startDate: new Date("2030-01-10T00:00:00.000Z"), endDate: new Date("2030-02-10T00:00:00.000Z") })],
+                    [],
+                );
+
+                expect(ids(result)).toEqual([1]);
+            });
+
+            // 2027-12-30 03:00Z: the 7-business-day lookahead runs into 2028, which the holiday
+            // calendar does not support. That is only an optimisation horizon, so the list must
+            // still answer (never "none") and fall back to a bound-free scan whose per-client
+            // calendar guard handles the clients it cannot judge.
+            describe("when the lookahead horizon is outside the supported holiday years", () => {
+                const YEAR_END = new Date("2027-12-30T03:00:00.000Z");
+                const yearEndRow = (id: number, overrides: Record<string, unknown> = {}) => row(id, {
+                    serviceStatus: "active",
+                    startDate: new Date("2027-12-20T00:00:00.000Z"),
+                    endDate: new Date("2027-12-31T00:00:00.000Z"),
+                    ...overrides,
+                });
+
+                it("still lists the client the dashboard counts, and skips the one it cannot judge", async () => {
+                    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+                    try {
+                        const result = await find(
+                            [
+                                yearEndRow(1), // active, no contract: counted by the dashboard
+                                yearEndRow(2, { startDate: new Date("2027-12-29T00:00:00.000Z") }), // live contract below
+                                yearEndRow(3, { startDate: new Date("2028-01-05T00:00:00.000Z"), endDate: new Date("2028-02-05T00:00:00.000Z") }), // beyond the supported years
+                            ],
+                            [contractDoc(2, "060")],
+                            YEAR_END,
+                        );
+
+                        expect(ids(result)).toEqual([1]);
+                        expect(clientModel.findMany.mock.calls[0][0].where.startDate).toEqual({ not: null });
+                        const message = warn.mock.calls.map(([text]) => String(text)).join("\n");
+                        expect(message).toContain("client ids 3");
+                        expect(message).not.toContain("Client 3");
+                    } finally {
+                        warn.mockRestore();
+                    }
+                });
+
+                it("agrees with the dashboard rule evaluated on every fixture client", async () => {
+                    const clients = [yearEndRow(1), yearEndRow(2, { startDate: new Date("2027-12-29T00:00:00.000Z") })];
+                    const docs = [contractDoc(2, "040")];
+                    const expected = clients
+                        .filter((client) => isContractSendRequired(
+                            {
+                                clientId: client.id,
+                                now: YEAR_END,
+                                serviceStatus: "active",
+                                startDate: client.startDate as Date,
+                                hasActiveContractDocument: docs.some((doc) => doc.clientId === client.id),
+                            },
+                            KR_BUILTIN_CALENDAR,
+                        ))
+                        .map((client) => client.id);
+
+                    const result = await find(clients, docs, YEAR_END);
+
+                    expect(expected).toEqual([1]);
+                    expect(ids(result)).toEqual(expected);
+                });
+            });
+
+            it("narrows the query to a superset of the send window without the stored-status or eDocId pin", async () => {
+                await find([], []);
+
+                const { where } = clientModel.findMany.mock.calls[0][0];
+                // 7th business day after 2026-03-17 is 2026-03-26: a start before it is inside the window.
+                expect(where.startDate).toEqual({ lt: new Date("2026-03-26T00:00:00.000Z") });
+                expect(where.eDocId).toBeUndefined();
+                expect(JSON.stringify(where)).not.toContain("eformsignDocByEDocId");
+                expect(where.OR).toEqual([
+                    { serviceStatus: "replacement_requested" },
+                    {
+                        AND: [
+                            {
+                                OR: [
+                                    { serviceStatus: null },
+                                    { serviceStatus: { notIn: ["terminated", "replacement_requested"] } },
+                                ],
+                            },
+                            { bookingConfirmedAt: { not: null } },
+                            { endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } },
+                        ],
+                    },
+                ]);
+            });
+
+            it("counts on the Korean date at 01:30 KST, one day after the UTC date", async () => {
+                // 2026-03-16T16:30Z is 2026-03-17 01:30 KST: business-day math starts from 03-17.
+                await find([], [], new Date("2026-03-16T16:30:00.000Z"));
+
+                const { where } = clientModel.findMany.mock.calls[0][0];
+                expect(where.startDate).toEqual({ lt: new Date("2026-03-26T00:00:00.000Z") });
+                expect(where.OR[1].AND[2]).toEqual({ endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } });
             });
         });
     });

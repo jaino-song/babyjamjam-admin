@@ -27,6 +27,7 @@ describe("FindEformsignDocsByClientIdUsecase.executeWithContractEndDates", () =>
     const repository = {
         findByClientId: jest.fn(),
         findContractEndDatesByDocumentIds: jest.fn(),
+        findVoidedByNames: jest.fn().mockResolvedValue(new Map()),
     };
 
     beforeEach(() => {
@@ -61,5 +62,30 @@ describe("FindEformsignDocsByClientIdUsecase.executeWithContractEndDates", () =>
         expect(branch.map((doc) => doc.displayStatus)).toEqual(["review", "review"]);
         expect(branchStub.forBranch).toHaveBeenCalledTimes(1);
         expect(branchStub.forBranch).toHaveBeenCalledWith("branch-1");
+        expect(builtin[0]).toMatchObject({ voidedAt: null, voidedByName: null });
+        expect(repository.findVoidedByNames).not.toHaveBeenCalled();
+    });
+
+    it("batches distinct actor ids once and never returns the actor id or email", async () => {
+        const voidedAt = new Date("2026-10-14T00:00:00Z");
+        const voided = (id: string, actor: string) => EformsignDocEntity.reconstitute({
+            ...providerReviewDoc(id).toJSON(), voidedAt, voidedBy: actor,
+        });
+        repository.findByClientId.mockResolvedValue([
+            voided("a", "actor-1"), voided("b", "actor-1"), voided("c", "actor-2"),
+            voided("d", "deleted-actor"), providerReviewDoc("live"),
+        ]);
+        repository.findVoidedByNames.mockResolvedValue(new Map([["actor-1", "담당자"], ["actor-2", null]]));
+        const result = await new FindEformsignDocsByClientIdUsecase(repository as never, createHolidayCalendarStub())
+            .executeWithContractEndDates("branch-1", 10);
+        expect(repository.findVoidedByNames).toHaveBeenCalledTimes(1);
+        expect(repository.findVoidedByNames).toHaveBeenCalledWith(["actor-1", "actor-2", "deleted-actor"]);
+        expect(result.map((doc) => doc.voidedByName)).toEqual(["담당자", "담당자", null, null, null]);
+        expect(result.slice(0, 4).every((doc) => doc.displayStatus === "voided" && doc.voidedAt === voidedAt.toISOString())).toBe(true);
+        expect(result[4]).toMatchObject({ voidedAt: null, voidedByName: null });
+        for (const doc of result) {
+            expect(doc).not.toHaveProperty("voidedBy");
+            expect(doc).not.toHaveProperty("email");
+        }
     });
 });

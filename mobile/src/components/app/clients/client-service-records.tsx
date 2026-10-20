@@ -18,6 +18,7 @@ import {
 import type {
     ServiceRecordAssignment,
     ServiceRecordCase,
+    ServiceRecordHeader,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
     ServiceRecordSession,
@@ -33,6 +34,7 @@ import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/serv
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
@@ -149,27 +151,41 @@ function ClientServiceRecordsContent({
         return <ServiceRecordsSkeleton />;
     }
 
-    if (isError) {
+    // A failed load is not an empty result: with nothing cached, show the error with a retry.
+    // With cached data, the data stays visible and a notice above it says the refresh failed.
+    if (isError && !overview) {
         return (
-            <div
-                data-component={`${dataComponent}_error`}
-                data-slot="client-service-records"
-                className="detail-empty-state"
-            >
-                제공기록지 정보를 불러오지 못했습니다.
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponent}_error`}
+                title="제공기록지 정보를 불러오지 못했습니다"
+                onRetry={() => onRefresh?.()}
+                isRetrying={isRefreshing}
+            />
         );
     }
 
+    const staleNotice = isError ? (
+        <QueryErrorState
+            dataComponent={`${dataComponent}_stale-error`}
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={() => onRefresh?.()}
+            isRetrying={isRefreshing}
+        />
+    ) : null;
+
     if (assignments.length === 0 && !record) {
         return (
-            <div
-                data-component={`${dataComponent}_empty`}
-                data-slot="client-service-records"
-                className="detail-empty-state"
-            >
-                제공기록지 배정 정보가 없습니다.
-            </div>
+            <>
+                {staleNotice}
+                <div
+                    data-component={`${dataComponent}_empty`}
+                    data-slot="client-service-records"
+                    className="detail-empty-state"
+                >
+                    제공기록지 배정 정보가 없습니다.
+                </div>
+            </>
         );
     }
 
@@ -182,6 +198,7 @@ function ClientServiceRecordsContent({
                 data-slot="client-service-records"
                 data-source-component="ClientServiceRecords"
             >
+                {staleNotice}
                 <ServiceRecordSessionDetail
                     record={selectedSession ?? null}
                     sessionIndex={selectedEntry.sessionIndex}
@@ -199,7 +216,9 @@ function ClientServiceRecordsContent({
             data-source-component="ClientServiceRecords"
             className="detail-column"
         >
+            {staleNotice}
             {record ? <RecordStatusCard record={record} /> : null}
+            {record ? <ServiceHeaderCard header={record.header} delay={60} /> : null}
             {assignments.map((assignment, assignmentIndex) => (
                 <div
                     key={assignment.scheduleId}
@@ -213,7 +232,7 @@ function ClientServiceRecordsContent({
                         delay={assignmentIndex * 180}
                         showStatus={!record}
                     />
-                    <ServiceHeaderCard assignment={assignment} delay={assignmentIndex * 180 + 60} />
+                    {!record ? <ServiceHeaderCard header={assignment.header} delay={assignmentIndex * 180 + 60} /> : null}
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
@@ -491,14 +510,13 @@ function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocSta
 }
 
 function ServiceHeaderCard({
-    assignment,
+    header,
     delay,
 }: {
-    assignment: ServiceRecordAssignment;
+    header: ServiceRecordHeader | null;
     delay: number;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("header-card");
-    const header = assignment.header;
 
     return (
         <InfoCard data-component={dataComponent} title="서비스 기본정보" delay={delay}>
@@ -852,16 +870,14 @@ function assignmentCalendarYears(assignments: ServiceRecordAssignment[]): number
     return [...years];
 }
 
-// Mirrors SERVICE_RECORD_LINK_GRACE_DAYS in backend/domain/constants/service-record-link-message.ts
-const SERVICE_RECORD_LINK_GRACE_DAYS = 7;
-
+// Mirrors getServiceRecordTokenExpiresAt in backend/domain/constants/service-record-link-message.ts.
 function endDateExpiry(endDate: string): string | null {
     const datePart = datePartOf(endDate);
     if (!datePart) return null;
-    const graceDate = new Date(`${datePart}T00:00:00.000Z`);
-    graceDate.setUTCDate(graceDate.getUTCDate() + SERVICE_RECORD_LINK_GRACE_DAYS);
-    const graceDatePart = graceDate.toISOString().slice(0, 10);
-    return `${graceDatePart}T20:00:00+09:00`;
+    const nextDate = new Date(`${datePart}T00:00:00.000Z`);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    const nextDatePart = nextDate.toISOString().slice(0, 10);
+    return `${nextDatePart}T00:00:00+09:00`;
 }
 
 function isPastDate(value: string | null): boolean {

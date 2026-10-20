@@ -1,6 +1,8 @@
 import {
   SMS_TRIGGER_TEMPLATE_KEYS,
   type MessageLogRecord,
+  type MessageResendBlockedBy,
+  type MessageResendBlockedRecipient,
   type MessageLogStatus,
   type MessageTriggerEventType,
   type MessageTriggerJobStatus,
@@ -59,7 +61,29 @@ export const MESSAGE_HISTORY_STATUS_LABELS: Readonly<Record<MessageLogStatus, st
   failed: "발송 실패",
   pending: "재시도 대기",
   canceled: "발송 취소",
+  needs_setup: "추가 정보 필요",
 };
+
+/** Detail-only provider-history state; list badges retain the stored status. */
+export function getMessageHistoryDetailStatusLabel(record: {
+  status: string;
+  variables?: Record<string, unknown> | null;
+}): string {
+  if (record.status !== "sent") {
+    if (record.variables?.["historyLookup"] === "checking") return "확인 중";
+    if (record.variables?.["historyLookup"] === "exhausted") return "확인 필요";
+  }
+  switch (record.status) {
+    case "sent":
+    case "failed":
+    case "pending":
+    case "canceled":
+    case "needs_setup":
+      return MESSAGE_HISTORY_STATUS_LABELS[record.status];
+    default:
+      return record.status || "-";
+  }
+}
 
 export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus, string>> = {
   pending: "발송 대기",
@@ -68,6 +92,7 @@ export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus,
   sent: "발송 완료",
   failed: "발송 실패",
   canceled: "발송 취소",
+  needs_setup: "추가 정보 필요",
 };
 
 // Single source of truth for message-status -> StatusBadge variant. Both
@@ -81,6 +106,7 @@ export const MESSAGE_LOG_STATUS_BADGE_VARIANT: Readonly<Record<MessageLogStatus,
   failed: "danger",
   pending: "warning",
   canceled: "neutral",
+  needs_setup: "warning",
 };
 
 export const MESSAGE_JOB_STATUS_BADGE_VARIANT: Readonly<Record<MessageTriggerJobStatus, MessageStatusBadgeVariant>> = {
@@ -90,6 +116,7 @@ export const MESSAGE_JOB_STATUS_BADGE_VARIANT: Readonly<Record<MessageTriggerJob
   sent: "success",
   failed: "danger",
   canceled: "neutral",
+  needs_setup: "warning",
 };
 
 // Copy for the merged 발송 기록 screen, which shows upcoming sends and past
@@ -129,6 +156,132 @@ export const MESSAGE_JOB_CANCEL_COPY = {
 } as const;
 
 export const MESSAGE_RECORD_REASON_LABEL = "사유";
+
+/** Reason label for a `needs_setup` row, where "사유" alone reads as a failure. */
+export const MESSAGE_SETUP_REASON_LABEL = "추가 필요 정보";
+
+// Copy for re-sending a `needs_setup` job after the operator fixed the setup.
+export const MESSAGE_JOB_RESEND_COPY = {
+  action: "재발송",
+  pending: "재발송 중",
+  success: "재발송했습니다.",
+  stillNeedsSetup: "아직 추가 정보가 필요합니다. 사유를 확인해 주세요.",
+  notSent: "재발송하지 않았습니다.",
+  conflict: "지금은 재발송할 수 없습니다. 자동 전송 설정과 받는 사람의 자동 문자 설정을 확인해 주세요.",
+  failure: "재발송하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+} as const;
+
+/**
+ * Why the 재발송 button is disabled on a `needs_setup` job: the server would
+ * refuse the resend at this SMS automation safeguard level. Everything the
+ * hover card needs to say which switch is off and to point at it.
+ */
+export interface MessageResendBlock {
+  level: MessageResendBlockedBy;
+  /** Set for a `recipient` block when the server named the entity. */
+  recipient: MessageResendBlockedRecipient | null;
+  /** The recipient's display name, null when the row has none. */
+  recipientName: string | null;
+  ruleId: string | null;
+  ruleName: string | null;
+}
+
+export type MessageResendBlockPlatform = "desktop" | "mobile";
+
+export interface MessageResendBlockCard {
+  title: string;
+  /** Bold lead of the description (a person or rule name), when there is one. */
+  emphasis: string | null;
+  /** The rest of the description, after `emphasis`. */
+  description: string;
+  /** Where the admin can turn it back on; null when no screen is sensible. */
+  action: { label: string; href: string } | null;
+}
+
+const MESSAGE_RESEND_BLOCK_RECIPIENT_NOUN = {
+  client: "고객",
+  employee: "관리사",
+  user: "사용자",
+} as const satisfies Record<MessageResendBlockedRecipient["kind"], string>;
+
+const MESSAGE_RESEND_BLOCK_RECIPIENT_ACTION_LABEL = {
+  client: "고객 정보에서 켜기 →",
+  employee: "관리사 정보에서 켜기 →",
+  user: "계정 관리에서 켜기 →",
+} as const satisfies Record<MessageResendBlockedRecipient["kind"], string>;
+
+export interface MessageResendBlockCardOptions {
+  /** Only an owner can open /system-admin; for anyone else a user recipient gets no link. */
+  canOpenOwnerAdmin: boolean;
+}
+
+function messageResendBlockRecipientHref(
+  recipient: MessageResendBlockedRecipient,
+  platform: MessageResendBlockPlatform,
+): string {
+  switch (recipient.kind) {
+    case "client":
+      return `/clients?id=${encodeURIComponent(String(recipient.id))}`;
+    case "employee":
+      // Neither app deep-links to one employee; the list is where the switch lives.
+      return "/employees";
+    case "user":
+      return platform === "mobile"
+        ? `/system-admin?section=accounts&item=${encodeURIComponent(recipient.id)}`
+        : "/system-admin?section=accounts";
+  }
+}
+
+/** Copy and link of the hover card on a disabled 재발송 button, per safeguard level. */
+export function getMessageResendBlockCard(
+  block: MessageResendBlock,
+  platform: MessageResendBlockPlatform,
+  options: MessageResendBlockCardOptions = { canOpenOwnerAdmin: false },
+): MessageResendBlockCard {
+  if (block.level === "branch") {
+    return {
+      title: "지점 자동 전송이 꺼져 있어요",
+      emphasis: null,
+      description: "이 지점의 ‘자동 전송 실행’이 꺼져 있어 재발송할 수 없어요.",
+      action: {
+        label: "자동화 설정 열기 →",
+        href: platform === "mobile" ? "/messages/settings?item=trigger-dispatch" : "/messages?section=settings",
+      },
+    };
+  }
+
+  if (block.level === "rule") {
+    const ruleName = block.ruleName?.trim() || null;
+    const ruleHref = platform === "mobile"
+      ? (block.ruleId ? `/messages/automation?item=${encodeURIComponent(block.ruleId)}` : "/messages/automation")
+      : "/messages?section=triggers";
+    return {
+      title: "자동화 규칙이 꺼져 있어요",
+      emphasis: ruleName,
+      description: ruleName
+        ? "규칙이 꺼져 있어 재발송할 수 없어요."
+        : "자동화 규칙이 꺼져 있어 재발송할 수 없어요.",
+      action: { label: "규칙 보기 →", href: ruleHref },
+    };
+  }
+
+  const kind = block.recipient?.kind ?? null;
+  const noun = kind ? MESSAGE_RESEND_BLOCK_RECIPIENT_NOUN[kind] : null;
+  const name = block.recipientName?.trim() || null;
+  return {
+    title: "자동 문자가 꺼져 있어요",
+    emphasis: name,
+    description: name
+      ? `${noun ? `${noun}의` : "님의"} ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`
+      : `받는 ${noun ?? "사람"}의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`,
+    action: block.recipient && kind && (kind !== "user" || options.canOpenOwnerAdmin)
+      ? {
+        label: MESSAGE_RESEND_BLOCK_RECIPIENT_ACTION_LABEL[kind],
+        href: messageResendBlockRecipientHref(block.recipient, platform),
+      }
+      : null,
+  };
+}
 
 export const MESSAGE_EVENT_LABELS: Readonly<Record<MessageTriggerEventType, string>> = {
   CLIENT_CREATED: "고객 등록",
@@ -270,14 +423,26 @@ export function formatMessageDateTimeDetail(dateString: string | null): string {
   });
 }
 
+const CARRIER_FAILURE_REASON_PREFIX = "통신사 전달 실패:";
+
 export function formatMessageFailureReason(reason: string | null | undefined): string {
   if (!reason) return "";
 
-  return reason
-    .replace(/[^\uAC00-\uD7A3\u3131-\u318E\s.]/g, "")
+  const permanentFailure = reason.trim().startsWith("발송 실패:");
+  const body = permanentFailure ? reason.trim().slice("발송 실패:".length) : reason;
+
+  // Carrier-check failures ("통신사 전달 실패: 1234 가입자없음, 5678 결번") carry the
+  // last four digits of the receiver; keep digits, colon and commas for them.
+  const keepPattern = body.trimStart().startsWith(CARRIER_FAILURE_REASON_PREFIX)
+    ? /[^\uAC00-\uD7A3\u3131-\u318E\s.0-9:,]/g
+    : /[^\uAC00-\uD7A3\u3131-\u318E\s.]/g;
+
+  const sanitizedReason = body
+    .replace(keepPattern, "")
     .replace(/\s+/g, " ")
     .replace(/\s+\./g, ".")
     .trim();
+  return permanentFailure && sanitizedReason ? `발송 실패: ${sanitizedReason}` : sanitizedReason;
 }
 
 export interface NormalizeMessageHistoryPresentationOptions {
@@ -297,6 +462,10 @@ export interface NormalizedMessageHistoryPresentation {
   status: MessageLogStatus;
   messagePreview: string;
   failureReason?: string;
+  /** Why a `needs_setup` row cannot be sent; `failureReason` stays unset for it. */
+  setupReason?: string;
+  /** Only for `needs_setup` rows the server would refuse to resend: why, and where to fix it. */
+  resendBlock?: MessageResendBlock;
 }
 
 export function normalizeMessageHistoryPresentation(
@@ -323,6 +492,9 @@ export function normalizeMessageHistoryPresentation(
   const failureReason = record.status === "failed"
     ? formatMessageFailureReason(record.errorMessage)
     : "";
+  const setupReason = record.status === "needs_setup"
+    ? formatMessageFailureReason(record.errorMessage)
+    : "";
 
   return {
     id: record.id,
@@ -336,5 +508,15 @@ export function normalizeMessageHistoryPresentation(
     status: record.status,
     messagePreview: record.messageBody,
     failureReason: failureReason || undefined,
+    setupReason: setupReason || undefined,
+    resendBlock: record.status === "needs_setup" && record.resendBlockedBy
+      ? {
+        level: record.resendBlockedBy,
+        recipient: record.resendBlockedRecipient ?? null,
+        recipientName: resolvedRecipientName || null,
+        ruleId: record.ruleId,
+        ruleName: record.ruleName,
+      }
+      : undefined,
   };
 }

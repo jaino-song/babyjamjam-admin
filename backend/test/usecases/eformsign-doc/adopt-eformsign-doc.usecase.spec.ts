@@ -1,6 +1,9 @@
 import { Logger } from "@nestjs/common";
 
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
+import { CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
+import { EformsignDocOwnershipConflictError } from "domain/repositories/eformsign-doc.repository.interface";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 const TEST_PRINCIPAL = {
     userId: "test-user",
@@ -37,6 +40,7 @@ describe("AdoptEformsignDocUsecase", () => {
             create as never,
             clients as never,
             mirror as never,
+            { findByDocumentId: jest.fn().mockResolvedValue(null) } as never,
         );
 
         await expect(usecase.execute("branch-1", { documentId: "doc-foreign", clientId: 999 }, TEST_PRINCIPAL))
@@ -49,16 +53,263 @@ describe("AdoptEformsignDocUsecase", () => {
         expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
     });
 
-    it("adopts a branch-scoped phone match when no explicit client is supplied", async () => {
-        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-phone" }) };
-        const clients = {
-            findById: jest.fn(),
-            findByPhone: jest.fn().mockResolvedValue({ id: 7 }),
+    describe("without an explicit client (inferred from the recipient phone)", () => {
+        const CLIENT_PHONE = "01012345678";
+
+        const remoteFor = (
+            overrides: {
+                name?: string | null;
+                birthday?: string | null;
+                customerSms?: string;
+                statusType?: string;
+            } = {},
+        ) => ({
+            id: "doc-phone",
+            document_name: "계약서",
+            current_status: {
+                status_type: overrides.statusType ?? "060", expired_date: 0,
+                step_recipients: [{ id: CLIENT_PHONE, name: "고객", recipient_type: "02" }],
+            },
+            recipients: [{ recipient_type: "02", name: "김고객", sms: overrides.customerSms ?? "010-1234-5678" }],
+            fields: [
+                ...(overrides.name === null ? [] : [{ id: "이용자 성명", value: overrides.name ?? "김고객", type: "text" }]),
+                ...(overrides.birthday === null
+                    ? []
+                    : [{ id: "이용자 생년월일", value: overrides.birthday ?? "1992-03-04", type: "date" }]),
+            ],
+        });
+
+        const setup = (options: {
+            remote?: unknown;
+            client?: { id: number; name: string; birthday: string | null; phoneNormalized?: string | null } | null;
+            localRow?: { clientId: number | null } | null;
+        } = {}) => {
+            const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-phone" }) };
+            const mirror = { syncDocumentWithToken: jest.fn().mockResolvedValue(undefined) };
+            const clients = {
+                findById: jest.fn(),
+                findByPhone: jest.fn().mockResolvedValue(
+                    options.client === undefined
+                        ? { id: 7, name: "김고객", birthday: "1992-03-04", phoneNormalized: CLIENT_PHONE }
+                        : options.client,
+                ),
+            };
+            const docs = {
+                findByDocumentId: jest.fn().mockResolvedValue(options.localRow ?? null),
+            };
+            const usecase = new AdoptEformsignDocUsecase(
+                createCredentialBoundary() as never,
+                { execute: jest.fn().mockResolvedValue(options.remote ?? remoteFor()) } as never,
+                create as never,
+                clients as never,
+                mirror as never,
+                docs as never,
+            );
+            return { usecase, create, mirror, clients, docs };
         };
+
+        it.each([
+            ["no local row", null],
+            ["an unlinked local row", { clientId: null }],
+            ["a local row already linked to this client", { clientId: 7 }],
+        ])("adopts a phone, name and birthday match with %s", async (_label, localRow) => {
+            const { usecase, create, clients, docs } = setup({ localRow });
+
+            await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+            expect(clients.findByPhone).toHaveBeenCalledWith("branch-1", CLIENT_PHONE);
+            expect(clients.findById).not.toHaveBeenCalled();
+            expect(docs.findByDocumentId).toHaveBeenCalledWith("branch-1", "doc-phone");
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+                clientId: 7, expectedOwnerClientId: 7, preserveExistingMirrorProjection: true,
+            }));
+        });
+
+        it("accepts a document customer phone written without hyphens when it equals the client's", async () => {
+            const { usecase, create } = setup({ remote: remoteFor({ customerSms: CLIENT_PHONE }) });
+
+            await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+        });
+
+        it("reports a raced inferred ownership conflict as the usual missing-client error", async () => {
+            const { usecase, create, mirror } = setup({ localRow: { clientId: null } });
+            create.execute.mockRejectedValueOnce(new EformsignDocOwnershipConflictError("doc-phone"));
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toEqual(new Error("clientId가 필요합니다."));
+            expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+        });
+
+        it("leaves the client pointer untouched when the real create path encounters a raced claim", async () => {
+            const client = {
+                id: 7, name: "김고객", birthday: "1992-03-04", phoneNormalized: CLIENT_PHONE,
+                eDocId: null, update: jest.fn(),
+            };
+            const clients = {
+                findByPhone: jest.fn().mockResolvedValue(client),
+                findById: jest.fn().mockResolvedValue(client),
+                update: jest.fn(), updateIfTargetVersion: jest.fn(),
+            };
+            const docs = {
+                findByDocumentId: jest.fn().mockResolvedValue({ clientId: null }),
+                upsertByDocumentId: jest.fn().mockRejectedValue(new EformsignDocOwnershipConflictError("doc-phone")),
+            };
+            const mirror = { syncDocumentWithToken: jest.fn() };
+            const create = new CreateEformsignDocUsecase(docs as never, clients as never, createHolidayCalendarStub());
+            const usecase = new AdoptEformsignDocUsecase(
+                createCredentialBoundary() as never,
+                { execute: jest.fn().mockResolvedValue(remoteFor()) } as never,
+                create, clients as never, mirror as never, docs as never,
+            );
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toEqual(new Error("clientId가 필요합니다."));
+            expect(docs.upsertByDocumentId).toHaveBeenCalledWith("branch-1", expect.anything(), {
+                preserveExistingMirrorProjection: true, expectedOwnerClientId: 7,
+            });
+            expect(client.eDocId).toBeNull();
+            expect(client.update).not.toHaveBeenCalled();
+            expect(clients.update).not.toHaveBeenCalled();
+            expect(clients.updateIfTargetVersion).not.toHaveBeenCalled();
+            expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+        });
+
+        it("does not translate unrelated create failures", async () => {
+            const { usecase, create } = setup();
+            const error = new Error("storage failed");
+            create.execute.mockRejectedValueOnce(error);
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toBe(error);
+        });
+
+        it("accepts the same name and birthday in a different written form", async () => {
+            const { usecase, create } = setup({
+                remote: remoteFor({ birthday: "1992. 3. 4." }),
+                client: { id: 7, name: " 김 고객 ", birthday: "920304", phoneNormalized: CLIENT_PHONE },
+            });
+
+            await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+        });
+
+        it("refuses a full match when the local document is already linked to another client", async () => {
+            const { usecase, create, mirror } = setup({ localRow: { clientId: 99 } });
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toThrow("clientId가 필요합니다.");
+            expect(create.execute).not.toHaveBeenCalled();
+            expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+        });
+
+        const matched = { id: 7, name: "김고객", birthday: "1992-03-04", phoneNormalized: CLIENT_PHONE };
+
+        it.each([
+            ["a different name", { name: "박고객" }, matched],
+            ["a different birthday", { birthday: "1992-03-05" }, matched],
+            ["a client without a stored birthday", {}, { ...matched, birthday: null }],
+            ["a document without a customer name", { name: null }, matched],
+            ["a document without a birthday", { birthday: null }, matched],
+            ["a document customer phone different from the client's", { customerSms: "010-9999-8888" }, matched],
+            ["a client without a normalized phone", {}, { ...matched, phoneNormalized: null }],
+        ])("refuses a phone match with %s", async (_label, remoteOverrides, client) => {
+            const { usecase, create, mirror, docs } = setup({
+                remote: remoteFor(remoteOverrides),
+                client,
+            });
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toThrow("clientId가 필요합니다.");
+            expect(create.execute).not.toHaveBeenCalled();
+            expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+            expect(docs.findByDocumentId).not.toHaveBeenCalled();
+        });
+
+        it.each(["080", "001", "011", "042"])(
+            "refuses a full match when the document is in status %s",
+            async (statusType) => {
+                const { usecase, create, mirror, clients, docs } = setup({
+                    remote: remoteFor({ statusType }),
+                });
+
+                await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                    .rejects.toThrow("clientId가 필요합니다.");
+                expect(clients.findByPhone).not.toHaveBeenCalled();
+                expect(docs.findByDocumentId).not.toHaveBeenCalled();
+                expect(create.execute).not.toHaveBeenCalled();
+                expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(["060", "040", "045", "071"])(
+            "adopts a full match when the document is in status %s",
+            async (statusType) => {
+                const { usecase, create } = setup({ remote: remoteFor({ statusType }) });
+
+                await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+                expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+                    clientId: 7, statusType,
+                }));
+            },
+        );
+
+        it.each([
+            ["doc_request_participant", "060"],
+            ["50", "050"],
+        ])("judges the normalized form of vendor status %s", async (rawStatus, expectedStatus) => {
+            const { usecase, create } = setup({ remote: remoteFor({ statusType: rawStatus }) });
+
+            await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+                clientId: 7, statusType: expectedStatus,
+            }));
+        });
+
+        it("refuses a full match whose vendor status name normalizes to an ineligible code", async () => {
+            const { usecase, create, clients } = setup({ remote: remoteFor({ statusType: "doc_expired" }) });
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toThrow("clientId가 필요합니다.");
+            expect(clients.findByPhone).not.toHaveBeenCalled();
+            expect(create.execute).not.toHaveBeenCalled();
+        });
+
+        it("refuses when no client has the recipient phone", async () => {
+            const { usecase, create, docs } = setup({ client: null });
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toThrow("clientId가 필요합니다.");
+            expect(create.execute).not.toHaveBeenCalled();
+            expect(docs.findByDocumentId).not.toHaveBeenCalled();
+        });
+
+        it("refuses when the document has no recipient phone to look up", async () => {
+            const remote = remoteFor();
+            remote.current_status.step_recipients = [];
+            const { usecase, create, clients } = setup({ remote });
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toThrow("clientId가 필요합니다.");
+            expect(clients.findByPhone).not.toHaveBeenCalled();
+            expect(create.execute).not.toHaveBeenCalled();
+        });
+    });
+
+    it("keeps an explicitly chosen client without comparing identity or the local row", async () => {
+        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-chosen" }) };
+        const clients = {
+            findById: jest.fn().mockResolvedValue({ id: 7, name: "전혀 다른 이름", birthday: null }),
+            findByPhone: jest.fn(),
+        };
+        const docs = { findByDocumentId: jest.fn().mockResolvedValue({ clientId: 99 }) };
         const usecase = new AdoptEformsignDocUsecase(
             createCredentialBoundary() as never,
             { execute: jest.fn().mockResolvedValue({
-                id: "doc-phone",
+                id: "doc-chosen",
                 current_status: {
                     status_type: "060", expired_date: 0,
                     step_recipients: [{ id: "01012345678", name: "고객", recipient_type: "01" }],
@@ -67,13 +318,40 @@ describe("AdoptEformsignDocUsecase", () => {
             create as never,
             clients as never,
             { syncDocumentWithToken: jest.fn() } as never,
+            docs as never,
         );
 
-        await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+        await usecase.execute("branch-1", { documentId: "doc-chosen", clientId: 7 }, TEST_PRINCIPAL);
 
-        expect(clients.findByPhone).toHaveBeenCalledWith("branch-1", "01012345678");
-        expect(clients.findById).not.toHaveBeenCalled();
+        expect(clients.findByPhone).not.toHaveBeenCalled();
+        expect(docs.findByDocumentId).not.toHaveBeenCalled();
         expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+        expect(create.execute.mock.calls[0][1]).not.toHaveProperty("expectedOwnerClientId");
+        const conflict = new EformsignDocOwnershipConflictError("doc-chosen");
+        create.execute.mockRejectedValueOnce(conflict);
+        await expect(usecase.execute("branch-1", { documentId: "doc-chosen", clientId: 7 }, TEST_PRINCIPAL))
+            .rejects.toBe(conflict);
+    });
+
+    it("adopts an explicitly chosen client whatever the document status", async () => {
+        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-expired" }) };
+        const usecase = new AdoptEformsignDocUsecase(
+            createCredentialBoundary() as never,
+            { execute: jest.fn().mockResolvedValue({
+                id: "doc-expired",
+                current_status: { status_type: "080", expired_date: 0, step_recipients: [] },
+            }) } as never,
+            create as never,
+            { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
+            { syncDocumentWithToken: jest.fn() } as never,
+            { findByDocumentId: jest.fn() } as never,
+        );
+
+        await usecase.execute("branch-1", { documentId: "doc-expired", clientId: 7 }, TEST_PRINCIPAL);
+
+        expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+            clientId: 7, statusType: "080",
+        }));
     });
 
     it("uses document-id upsert semantics on repeated adoption", async () => {
@@ -107,6 +385,7 @@ describe("AdoptEformsignDocUsecase", () => {
             create as never,
             { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             mirror as never,
+            { findByDocumentId: jest.fn().mockResolvedValue(null) } as never,
         );
 
         await usecase.execute("branch-1", { documentId: "doc-1", clientId: 7 }, TEST_PRINCIPAL);
@@ -160,6 +439,7 @@ describe("AdoptEformsignDocUsecase", () => {
             create as never,
             { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             mirror as never,
+            { findByDocumentId: jest.fn().mockResolvedValue(null) } as never,
         );
 
         await usecase.execute("branch-1", { documentId: "doc-status", clientId: 7 }, TEST_PRINCIPAL);
@@ -193,6 +473,7 @@ describe("AdoptEformsignDocUsecase", () => {
             create as never,
             { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             mirror as never,
+            { findByDocumentId: jest.fn().mockResolvedValue(null) } as never,
         );
 
         await usecase.execute("branch-1", { documentId: "doc-no-expiry", clientId: 7 }, TEST_PRINCIPAL);
@@ -232,6 +513,7 @@ describe("AdoptEformsignDocUsecase", () => {
             { execute: jest.fn().mockResolvedValue(createResult) } as never,
             { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             { syncDocumentWithToken: jest.fn().mockRejectedValue(mirrorError) } as never,
+            { findByDocumentId: jest.fn().mockResolvedValue(null) } as never,
         );
 
         await expect(usecase.execute("branch-1", {

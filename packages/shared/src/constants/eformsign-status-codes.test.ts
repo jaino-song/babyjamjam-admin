@@ -6,8 +6,14 @@ import {
     getEformsignStatusCategory,
     getEformsignStatusLabel,
     EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES,
+    EFORMSIGN_REVOKED_STATUS_CODES,
+    IN_PROGRESS_STATUS_CODES,
     isDeletedEformsignStatusCode,
+    EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
+    isRevokedEformsignStatus,
     normalizeEformsignStatusCode,
     REJECTED_STATUS_CODES,
 } from "./eformsign-status-codes";
@@ -23,7 +29,7 @@ describe("COMPLETED_STATUS_CODES", () => {
 describe("EXPIRED_STATUS_CODES", () => {
     it("matches the canonical (backend semantics + 090) snapshot", () => {
         expect(EXPIRED_STATUS_CODES).toEqual([
-            "011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080", "090",
+            "011", "021", "031", "040", "042", "045", "047", "049", "061", "080", "090",
         ]);
     });
 
@@ -65,6 +71,9 @@ describe("canonical eformsign status semantics", () => {
         ["049", "expired"],
         ["090", "expired"],
         ["001", "in-progress"],
+        ["070", "in-progress"],
+        ["071", "in-progress"],
+        ["080", "expired"],
         ["099", "unknown"],
         ["", "unknown"],
         [null, "unknown"],
@@ -91,6 +100,25 @@ describe("canonical eformsign status semantics", () => {
     });
 });
 
+describe("071 (doc_reject_reviewer)", () => {
+    it("is recognised by code, name and number, and only 071", () => {
+        expect(EFORMSIGN_REVIEWER_REJECTED_STATUS_CODE).toBe("071");
+        expect(isReviewerRejectedEformsignStatus("071")).toBe(true);
+        expect(isReviewerRejectedEformsignStatus(71)).toBe(true);
+        expect(isReviewerRejectedEformsignStatus("doc_reject_reviewer")).toBe(true);
+        for (const other of ["070", "072", "061", "080", null, undefined, ""]) {
+            expect(isReviewerRejectedEformsignStatus(other)).toBe(false);
+        }
+    });
+
+    it("is in-progress (not terminal): out of the expired list, in the in-progress list", () => {
+        expect((EXPIRED_STATUS_CODES as readonly string[]).includes("071")).toBe(false);
+        expect((IN_PROGRESS_STATUS_CODES as readonly string[]).includes("071")).toBe(true);
+        expect(getEformsignStatusCategory("071")).toBe("in-progress");
+        expect(getEformsignStatusCategory("080")).toBe("expired");
+    });
+});
+
 describe("040 (doc_request_revoke)", () => {
     it("is recognised by code, name and number, and only 040", () => {
         expect(EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE).toBe("040");
@@ -104,5 +132,47 @@ describe("040 (doc_request_revoke)", () => {
 
     it("keeps the expired category (filtering/tabs/stats are unchanged); only the display layer differs", () => {
         expect(getEformsignStatusCategory("040")).toBe("expired");
+    });
+});
+
+describe("045 (doc_request_reject) is treated exactly like 040", () => {
+    it("is part of the revoke-requested set, by code, name and number", () => {
+        expect([...EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES]).toEqual(["040", "045"]);
+        expect(isRevokeRequestedEformsignStatus("045")).toBe(true);
+        expect(isRevokeRequestedEformsignStatus(45)).toBe(true);
+        expect(isRevokeRequestedEformsignStatus("doc_request_reject")).toBe(true);
+        expect(getEformsignStatusCategory("045")).toBe("expired");
+    });
+});
+
+describe("042 (doc_revoke) and 090 (withdrawal) are revoked", () => {
+    it("is exactly 042 and 090, by code, name and number", () => {
+        expect([...EFORMSIGN_REVOKED_STATUS_CODES]).toEqual(["042", "090"]);
+        expect(isRevokedEformsignStatus("042")).toBe(true);
+        expect(isRevokedEformsignStatus(42)).toBe(true);
+        expect(isRevokedEformsignStatus("doc_revoke")).toBe(true);
+        expect(isRevokedEformsignStatus("090")).toBe(true);
+        expect(isRevokedEformsignStatus("doc_withdraw")).toBe(true);
+        for (const other of ["040", "045", "041", "080", "060", "003", null, undefined, ""]) {
+            expect(isRevokedEformsignStatus(other)).toBe(false);
+        }
+    });
+
+    it("keeps the expired category (tabs/filters/stats unchanged)", () => {
+        expect(getEformsignStatusCategory("042")).toBe("expired");
+        expect(getEformsignStatusCategory("090")).toBe("expired");
+        expect(EXPIRED_STATUS_CODES).toEqual(expect.arrayContaining(["042", "090"]));
+    });
+});
+
+describe("041 (doc_refuse_revoke) is the document's live in-progress state, like 060", () => {
+    it("normalizes the event name and is in progress, not expired and not a revoke request", () => {
+        expect(normalizeEformsignStatusCode("doc_refuse_revoke")).toBe("041");
+        expect(normalizeEformsignStatusCode(41)).toBe("041");
+        expect(IN_PROGRESS_STATUS_CODES).toContain("041");
+        expect(getEformsignStatusCategory("041")).toBe(getEformsignStatusCategory("060"));
+        expect(getEformsignStatusCategory("041")).toBe("in-progress");
+        expect(isRevokeRequestedEformsignStatus("041")).toBe(false);
+        expect(EXPIRED_STATUS_CODES as readonly string[]).not.toContain("041");
     });
 });

@@ -20,10 +20,11 @@ import {
 } from "lucide-react";
 
 import { NotificationTestSection } from "@/components/app/settings/NotificationTestSection";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { SystemAdminAccountEditDialog } from "@/components/app/ui/SystemAdminAccountEditDialog";
 import { SystemAdminBranchForm } from "@/components/app/system-admin/SystemAdminBranchForm";
 import { SystemTemplatesManager } from "@/components/app/system-admin/SystemTemplatesManager";
-import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { FormNativeSelect, FormSwitchRow } from "@/components/app/ui/form-section";
 import { TagPill } from "@/components/app/ui/tag-pill";
 import {
   AnimatedSlotList,
@@ -45,6 +46,7 @@ import {
 } from "@/components/app/v3";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
 import {
   approveSystemAdminMessageSenderApproval,
   createSystemAdminBranch,
@@ -58,9 +60,10 @@ import {
   getSystemAdminUsers,
   rejectUser,
   updateSystemAdminUserAccount,
+  updateUserSmsAutomation,
   type SystemAdminUser,
 } from "@/lib/api/users";
-import { REGISTERABLE_ROLE_OPTIONS, ROLES } from "@/lib/constants/roles";
+import { REGISTERABLE_ROLE_OPTIONS, ROLE_LABELS, ROLES, type Role } from "@/lib/constants/roles";
 import { cn } from "@/lib/utils";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 
@@ -87,6 +90,8 @@ interface AdminRequest {
   action?: AdminRequestAction;
 }
 
+const SMS_AUTOMATION_HELPER = "끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요.";
+
 interface PendingAccountApproval {
   userId: string;
   branchId?: string;
@@ -112,6 +117,7 @@ interface AdminRecord {
   pendingAccountApproval?: PendingAccountApproval;
   accountApprovalStatus?: SystemAdminUser["approvalStatus"];
   accountRole?: string | null;
+  accountSmsAutomationEnabled?: boolean;
 }
 
 interface AdminSection {
@@ -181,20 +187,20 @@ const OWNER_ADMIN_SECTIONS = [
         indicatorClassName: "bg-amber-600",
       },
       {
-        label: "지점장",
+        label: ROLE_LABELS.admin,
         value: "branch-manager",
         activeClassName: "text-amber-700",
         indicatorClassName: "bg-amber-600",
       },
       {
-        label: "매니저",
+        label: ROLE_LABELS.manager,
         value: "manager",
         activeClassName: "text-sky-700",
         indicatorClassName: "bg-sky-600",
       },
-      { label: "직원", value: "user" },
+      { label: ROLE_LABELS.user, value: "user" },
       {
-        label: "오너",
+        label: ROLE_LABELS.owner,
         value: "owner",
         activeClassName: "text-emerald-700",
         indicatorClassName: "bg-emerald-600",
@@ -364,18 +370,9 @@ function formatBirthDate(value: string | null): string {
 }
 
 function getAccountRoleLabel(role: string | null): string {
-  switch (role) {
-    case "owner":
-      return "오너";
-    case "admin":
-      return "지점장";
-    case "manager":
-      return "매니저";
-    case "user":
-      return "직원";
-    default:
-      return "미지정";
-  }
+  return role !== null && Object.prototype.hasOwnProperty.call(ROLE_LABELS, role)
+    ? ROLE_LABELS[role as Role]
+    : "미지정";
 }
 
 function getDefaultPendingApprovalRole(user: SystemAdminUser): string {
@@ -517,6 +514,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
       pendingAccountApproval,
       accountApprovalStatus: user.approvalStatus,
       accountRole: user.role,
+      accountSmsAutomationEnabled: user.smsAutomationEnabled !== false,
     };
   });
 }
@@ -637,9 +635,7 @@ function buildOwnerAdminSections(
   users: readonly SystemAdminUser[],
   branches: readonly SystemAdminBranchRequest[],
   options: {
-    isAccountsLoading: boolean;
     hasAccountsError: boolean;
-    isBranchesLoading: boolean;
     hasBranchesError: boolean;
   },
 ): readonly AdminSection[] {
@@ -649,13 +645,7 @@ function buildOwnerAdminSections(
         ...section,
         stats: buildBranchStats(branches),
         records: buildBranchRecords(branches),
-        emptyMessage: options.hasBranchesError
-          ? "지점 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
-          : options.isBranchesLoading
-            ? "지점 정보를 불러오는 중…"
-            : branches.length === 0
-              ? "등록된 지점이 없습니다."
-              : section.emptyMessage,
+        emptyMessage: branches.length === 0 ? "등록된 지점이 없습니다." : section.emptyMessage,
         detailEmptyMessage: options.hasBranchesError
           ? "지점 정보를 불러오지 못했습니다."
           : section.detailEmptyMessage,
@@ -667,13 +657,7 @@ function buildOwnerAdminSections(
         ...section,
         stats: buildAccountStats(users),
         records: buildAccountRecords(users),
-        emptyMessage: options.hasAccountsError
-          ? "계정 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
-          : options.isAccountsLoading
-            ? "계정 정보를 불러오는 중…"
-            : users.length === 0
-              ? "등록된 계정이 없습니다."
-              : section.emptyMessage,
+        emptyMessage: users.length === 0 ? "등록된 계정이 없습니다." : section.emptyMessage,
         detailEmptyMessage: options.hasAccountsError
           ? "계정 정보를 불러오지 못했습니다."
           : section.detailEmptyMessage,
@@ -754,18 +738,29 @@ export function OwnerAdminConsole({
   const queryClient = useQueryClient();
 
   const {
-    data: systemAdminUsers = [],
+    data: systemAdminUsersData,
     isLoading: isSystemAdminUsersLoading,
-    error: systemAdminUsersError,
+    isPaused: isSystemAdminUsersPaused,
+    isError: systemAdminUsersError,
+    isFetching: isSystemAdminUsersFetching,
+    refetch: refetchSystemAdminUsers,
   } = useQuery({ queryKey: ["systemAdminUsers"], queryFn: getSystemAdminUsers });
   const {
-    data: systemAdminBranchRequests = [],
+    data: systemAdminBranchRequestsData,
     isLoading: isSystemAdminBranchRequestsLoading,
-    error: systemAdminBranchRequestsError,
+    isPaused: isSystemAdminBranchRequestsPaused,
+    isError: systemAdminBranchRequestsError,
+    isFetching: isSystemAdminBranchRequestsFetching,
+    refetch: refetchSystemAdminBranchRequests,
   } = useQuery({
     queryKey: ["systemAdminBranchRequests"],
     queryFn: getSystemAdminBranchRequests,
   });
+  const systemAdminUsers = useMemo(() => systemAdminUsersData ?? [], [systemAdminUsersData]);
+  const systemAdminBranchRequests = useMemo(
+    () => systemAdminBranchRequestsData ?? [],
+    [systemAdminBranchRequestsData],
+  );
   const approveMessageSenderMutation = useMutation({
     mutationFn: approveSystemAdminMessageSenderApproval,
     onSuccess: async () => {
@@ -804,18 +799,24 @@ export function OwnerAdminConsole({
   const [pendingOwnerBranchSelections, setPendingOwnerBranchSelections] = useState<
     Record<string, string>
   >({});
+  const [pendingSmsAutomationSelections, setPendingSmsAutomationSelections] = useState<
+    Record<string, boolean>
+  >({});
+  const { toast } = useToast();
   const approveUserMutation = useMutation({
     mutationFn: ({
       id,
       role,
       branchId,
       ownerBranchId,
+      smsAutomationEnabled,
     }: {
       id: string;
       role: string;
       branchId: string;
       ownerBranchId?: string;
-    }) => approveUser(id, role, branchId, ownerBranchId),
+      smsAutomationEnabled?: boolean;
+    }) => approveUser(id, role, branchId, ownerBranchId, smsAutomationEnabled),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
@@ -890,21 +891,38 @@ export function OwnerAdminConsole({
       }
     },
   });
+  const updateUserSmsAutomationMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      updateUserSmsAutomation(id, enabled),
+    onMutate: async ({ id, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: ["systemAdminUsers"] });
+      const previousUsers = queryClient.getQueryData<SystemAdminUser[]>(["systemAdminUsers"]);
+      queryClient.setQueryData<SystemAdminUser[]>(["systemAdminUsers"], (current) =>
+        current?.map((user) => (user.id === id ? { ...user, smsAutomationEnabled: enabled } : user)),
+      );
+      return { previousUsers };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousUsers) {
+        queryClient.setQueryData(["systemAdminUsers"], context.previousUsers);
+      }
+      toast({ variant: "destructive", description: "자동 문자 설정을 바꾸지 못했어요" });
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
+    },
+  });
 
   const sections = useMemo(
     () =>
       buildOwnerAdminSections(systemAdminUsers, systemAdminBranchRequests, {
-        isAccountsLoading: isSystemAdminUsersLoading,
         hasAccountsError: Boolean(systemAdminUsersError),
-        isBranchesLoading: isSystemAdminBranchRequestsLoading,
         hasBranchesError: Boolean(systemAdminBranchRequestsError),
       }),
     [
       systemAdminUsers,
       systemAdminBranchRequests,
-      isSystemAdminUsersLoading,
       systemAdminUsersError,
-      isSystemAdminBranchRequestsLoading,
       systemAdminBranchRequestsError,
     ],
   );
@@ -918,11 +936,31 @@ export function OwnerAdminConsole({
   );
   const isActiveSectionLoading =
     (activeSection.id === "accounts" &&
-      isSystemAdminUsersLoading &&
-      !systemAdminUsersError) ||
+      (isSystemAdminUsersLoading ||
+        (isSystemAdminUsersPaused && systemAdminUsersData === undefined))) ||
     (activeSection.id === "branches" &&
-      isSystemAdminBranchRequestsLoading &&
-      !systemAdminBranchRequestsError);
+      (isSystemAdminBranchRequestsLoading ||
+        (isSystemAdminBranchRequestsPaused && systemAdminBranchRequestsData === undefined)));
+  const activeSectionQuery = activeSection.id === "accounts"
+    ? {
+        data: systemAdminUsersData,
+        isError: systemAdminUsersError,
+        isFetching: isSystemAdminUsersFetching,
+        refetch: refetchSystemAdminUsers,
+        errorTitle: "계정 정보를 불러오지 못했습니다",
+      }
+    : activeSection.id === "branches"
+      ? {
+          data: systemAdminBranchRequestsData,
+          isError: systemAdminBranchRequestsError,
+          isFetching: isSystemAdminBranchRequestsFetching,
+          refetch: refetchSystemAdminBranchRequests,
+          errorTitle: "지점 정보를 불러오지 못했습니다",
+        }
+      : null;
+  const activeSectionStats = activeSectionQuery && activeSectionQuery.data === undefined
+    ? activeSection.stats.map((stat) => ({ ...stat, value: "—" }))
+    : activeSection.stats;
   const shouldAutoSelectFirstRecord =
     splitLayoutMode === "desktop" && autoSelectionSuppressedSectionId !== activeSection.id;
   const resolvedSelectedRecordId = resolveSelectedRecordId(
@@ -973,7 +1011,7 @@ export function OwnerAdminConsole({
       <h1 className="sr-only">관리자</h1>
 
       {activeSection.stats.length > 0 ? (
-        <StatsBar name="desktop_system-admin_sections_sections" items={activeSection.stats} />
+        <StatsBar name="desktop_system-admin_sections_sections" items={activeSectionStats} />
       ) : null}
 
       <div
@@ -1081,7 +1119,24 @@ export function OwnerAdminConsole({
                 ) : undefined
               }
             >
-              {!isActiveSectionLoading && filteredRecords.length === 0 ? (
+              {activeSectionQuery?.isError && activeSectionQuery.data !== undefined ? (
+                <QueryErrorState
+                  dataComponent="desktop_system-admin_sections_split-layout_list-panel_load-error"
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => void activeSectionQuery.refetch()}
+                  isRetrying={activeSectionQuery.isFetching}
+                />
+              ) : null}
+              {!isActiveSectionLoading && activeSectionQuery?.isError && activeSectionQuery.data === undefined ? (
+                <QueryErrorState
+                  dataComponent="desktop_system-admin_sections_split-layout_list-panel_load-error"
+                  size="panel"
+                  title={activeSectionQuery.errorTitle}
+                  onRetry={() => void activeSectionQuery.refetch()}
+                  isRetrying={activeSectionQuery.isFetching}
+                />
+              ) : !isActiveSectionLoading && filteredRecords.length === 0 ? (
                 <ListEmptyState message={activeSection.emptyMessage} />
               ) : (
                 <AnimatedSlotList<AdminRecord>
@@ -1332,6 +1387,9 @@ export function OwnerAdminConsole({
                         ? (pendingOwnerBranchSelections[pendingAccountApproval.userId] ?? "")
                         : "";
                       const isPendingRoleAdmin = selectedPendingRole === ROLES.admin;
+                      const selectedPendingSmsAutomation = pendingAccountApproval
+                        ? (pendingSmsAutomationSelections[pendingAccountApproval.userId] ?? true)
+                        : true;
                       const isApprovedAccount =
                         activeSection.id === "accounts" &&
                         selectedRecord.accountApprovalStatus === "approved";
@@ -1395,6 +1453,21 @@ export function OwnerAdminConsole({
                               <InfoRow key={row.label} label={row.label} value={row.value} />
                             ))}
                           </InfoCard>
+                          {isApprovedAccount ? (
+                            <FormSwitchRow
+                              data-component="desktop_system-admin_sections_account-detail_sms-automation-field"
+                              title="메시지 자동 전송"
+                              description={SMS_AUTOMATION_HELPER}
+                              checked={selectedRecord.accountSmsAutomationEnabled !== false}
+                              onToggle={() =>
+                                updateUserSmsAutomationMutation.mutate({
+                                  id: selectedRecord.id,
+                                  enabled: selectedRecord.accountSmsAutomationEnabled === false,
+                                })
+                              }
+                              buttonAriaLabel={`${selectedRecord.listTitle} 메시지 자동 전송`}
+                            />
+                          ) : null}
                           {pendingAccountApproval && selectedPendingRole ? (
                             <div className="space-y-2">
                               <div
@@ -1460,6 +1533,21 @@ export function OwnerAdminConsole({
                                   />
                                 ) : null}
 
+                                <FormSwitchRow
+                                  data-component="desktop_system-admin_sections_pending-approval_sms-automation-field"
+                                  title="메시지 자동 전송"
+                                  description={SMS_AUTOMATION_HELPER}
+                                  checked={selectedPendingSmsAutomation}
+                                  onToggle={() =>
+                                    setPendingSmsAutomationSelections((previousSelections) => ({
+                                      ...previousSelections,
+                                      [pendingAccountApproval.userId]: !selectedPendingSmsAutomation,
+                                    }))
+                                  }
+                                  disabled={isPendingApprovalActionRunning}
+                                  buttonAriaLabel={`${selectedRecord.listTitle} 메시지 자동 전송`}
+                                />
+
                                 <Button
                                   type="button"
                                   size="sm"
@@ -1474,6 +1562,7 @@ export function OwnerAdminConsole({
                                       id: pendingAccountApproval.userId,
                                       role: selectedPendingRole,
                                       branchId: selectedPendingBranchId,
+                                      smsAutomationEnabled: selectedPendingSmsAutomation,
                                       ...(isPendingRoleAdmin
                                         ? { ownerBranchId: selectedPendingOwnerBranchId }
                                         : {}),

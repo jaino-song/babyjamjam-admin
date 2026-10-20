@@ -27,7 +27,9 @@ import {
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   normalizeEformsignStatusCode,
   type EformsignStatusCategory,
   type EformsignStatusInput,
@@ -36,7 +38,8 @@ import {
   CONTRACT_DOC_DISPLAY_STATUS_LABELS,
   isContractDocDisplayStatus,
   isContractReviewWindowOpen,
-  resolveContractDocStatusLabel,
+  resolveContractDocDisplayStatus,
+  type ContractDocDisplayStatus,
   type ContractDocDisplayStatusLabel,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
@@ -114,18 +117,34 @@ export function mapDocStatusLabel(
   displayStatus?: string | null,
   calendar?: KrBusinessDayCalendar,
 ): DocumentStatusLabel {
+  return CONTRACT_DOC_DISPLAY_STATUS_LABELS[
+    resolveDocDisplayStatus(currentStatus, contractEndDate, displayStatus, calendar)
+  ];
+}
+
+/**
+ * The display status behind {@link mapDocStatusLabel}: the backend's serve-time `display_status`
+ * when the payload carries one, otherwise the shared resolver over the eformsign status code.
+ * Callers that must DECIDE something (a stepper, an action) read this, never the label text.
+ */
+export function resolveDocDisplayStatus(
+  currentStatus: EformsignWorkflowStatus | null | undefined,
+  contractEndDate?: string | null,
+  displayStatus?: string | null,
+  calendar?: KrBusinessDayCalendar,
+): ContractDocDisplayStatus {
   // The backend's serve-time display_status is authoritative when present.
-  if (isContractDocDisplayStatus(displayStatus)) {
-    return CONTRACT_DOC_DISPLAY_STATUS_LABELS[displayStatus];
-  }
-  // 040 (cancellation requested) sits in the "expired" category for filtering/stats, but it
-  // is not expired — payloads that predate display_status must not label it 기간 만료.
-  if (isRevokeRequestedEformsignStatus(currentStatus?.status_type)) {
-    return CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoke_requested;
-  }
+  if (isContractDocDisplayStatus(displayStatus)) return displayStatus;
+  // 040/045 (cancellation requested) sit in the "expired" category for filtering/stats, but
+  // they are not expired — payloads that predate display_status must not label them 기간 만료.
+  if (isRevokeRequestedEformsignStatus(currentStatus?.status_type)) return "revoke_requested";
+  // 042/090 (revoked) likewise sit in the "expired" category: terminal, but not expired.
+  if (isRevokedEformsignStatus(currentStatus?.status_type)) return "revoked";
+  // 071 (reviewer rejection, 계약-04) is in the in-progress category but is its own display status.
+  if (isReviewerRejectedEformsignStatus(currentStatus?.status_type)) return "rejected_by_reviewer";
   const category = getEformsignStatusCategory(currentStatus?.status_type);
-  if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;
-  return resolveContractDocStatusLabel({
+  if (category === "unknown") return "unknown";
+  return resolveContractDocDisplayStatus({
     category,
     currentStatus,
     contractEndDate: contractEndDate ?? null,
@@ -133,16 +152,39 @@ export function mapDocStatusLabel(
   });
 }
 
+/**
+ * Whether the customer has signed, read from the display status (which already encodes the
+ * status code and the workflow step) rather than from the label text. "unassigned" is a
+ * customer-signed document waiting at the provider review step for the client to be registered,
+ * so it counts. So does "rejected_by_reviewer" (반려됨): the reviewer rejected the document, but the
+ * customer's signature stays valid (계약-04).
+ */
+export function isCustomerSignedDisplayStatus(status: ContractDocDisplayStatus): boolean {
+  return status === "signed"
+    || status === "review"
+    || status === "unassigned"
+    || status === "completed"
+    || status === "rejected_by_reviewer";
+}
+
 /** Badge status token key for a contract document's display label. */
 export function contractStatusBadgeType(
   label: DocumentStatusLabel,
-): "pending" | "signed" | "review" | "completed" | "expired" {
+): "pending" | "signed" | "review" | "completed" | "expired" | "rejected_by_reviewer" {
   switch (label) {
     case "계약 완료":
       return "completed";
     case "기간 만료":
       return "expired";
-    // 철회 요청됨 (040): cancellation asked, not done — a pending decision, so it takes the
+    // 철회됨 (042/090): terminal revocation — the danger tone, same token as 기간 만료. The
+    // label text is what tells them apart.
+    case "철회됨":
+      return "expired";
+    // 반려됨 (071): not terminal and not expired — its own solid burgundy badge, distinct from the soft
+    // danger tone of 기간 만료 / 철회됨.
+    case "반려됨":
+      return "rejected_by_reviewer";
+    // 철회 요청됨 (040/045): cancellation asked, not done — a pending decision, so it takes the
     // warning (review) tone like 검토 필요. The label text is what tells them apart.
     case "철회 요청됨":
       return "review";
@@ -155,6 +197,10 @@ export function contractStatusBadgeType(
       return "review";
     case "서명 완료":
       return "signed";
+    // 파기됨 (계약 파기): inactive, not an error — the pending badge status is the neutral tone.
+    // Explicit rather than left to the default so a later change to the default cannot recolour it.
+    case "파기됨":
+      return "pending";
     default:
       return "pending";
   }
@@ -174,6 +220,10 @@ export type BadgeVariant = "success" | "warning" | "destructive" | "info" | "sec
 export function getStatusColor(status: string): BadgeVariant {
   const lowerStatus = status.toLowerCase();
 
+  // 파기됨 (계약 파기) reads neutral; checked first so no keyword below can recolour it.
+  if (lowerStatus.includes("파기됨")) {
+    return "secondary";
+  }
   if (lowerStatus.includes("서명 완료")) {
     return "info";
   }
@@ -183,7 +233,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject") || lowerStatus.includes("expired")) {
+  if (lowerStatus.includes("반려됨") || lowerStatus.includes("철회됨") || lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject") || lowerStatus.includes("expired")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {
@@ -207,6 +257,7 @@ export interface ContractStatsBuckets {
  * it mirrors the per-doc rule that used to live in contracts/page.tsx:
  *   - completed (003 등)           → counted nowhere
  *   - expired category, only 080   → expired (반려/취소 등은 제외)
+ *   - 071 (반려됨, 계약-04)          → in-progress이며 070과 같은 칸에 센다(기간 만료·계약 완료로는 세지 않는다).
  *   - draft (001)                  → drafting
  *   - 그 외 in-progress            → 현재 단계가 제공기관 검토/확인이면
  *                                     검토 창(종료일 영업일 1일 전~) 열림 여부에 따라
@@ -223,11 +274,15 @@ export function foldContractStats(
     step_recipient_types?: ReadonlyArray<string | null>;
     contract_end_date?: string | null;
     display_status?: string | null;
+    unassigned?: boolean;
   }>,
   calendar?: KrBusinessDayCalendar,
 ): ContractStatsBuckets {
   const buckets: ContractStatsBuckets = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
   for (const doc of docs) {
+    // A voided contract (계약 파기) is in no live bucket: eformsign keeps reporting its code, so
+    // this must run before any category check below.
+    if (doc.display_status === "voided") continue;
     const normalized = normalizeStatusCode(doc.status_type);
     const category = getEformsignStatusCategory(doc.status_type);
 
@@ -251,7 +306,15 @@ export function foldContractStats(
     // sign — and is the only honest option among the existing buckets: it is
     // not a review anyone can perform, so counting it under 검토 필요 would
     // send the operator back to the button this change just removed.
-    const isReviewDue = isContractDocDisplayStatus(doc.display_status)
+    // 071 (반려됨, 계약-04) is in progress and counts exactly where a 070 does. Its display_status
+    // ("rejected_by_reviewer") says nothing about the review window or the assignment, so it takes the
+    // window rule, and an unassigned one (the separate `unassigned` flag) counts as 서명 완료 like
+    // the unassigned 070 whose display_status is "unassigned".
+    if (doc.display_status === "rejected_by_reviewer" && doc.unassigned === true) {
+      buckets.signed++;
+      continue;
+    }
+    const isReviewDue = isContractDocDisplayStatus(doc.display_status) && doc.display_status !== "rejected_by_reviewer"
       ? doc.display_status === "review"
       : isContractReviewWindowOpen(
         doc.contract_end_date,

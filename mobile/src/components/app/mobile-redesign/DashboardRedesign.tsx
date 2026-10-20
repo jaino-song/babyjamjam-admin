@@ -5,6 +5,7 @@ import type { ReactNode, RefObject } from "react";
 import type { DashboardAnalytic, SectionRows } from "./mockup-data";
 import { ListCard, ListRowsSkeleton, SectionedList } from "./primitives";
 import { ListEmptyState, StatsBar } from "@/components/app/v3";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -38,6 +39,10 @@ export interface DashboardRedesignProps {
   loading?: boolean;
   isError?: boolean;
   isAnalyticsError?: boolean;
+  /** A refetch failed but earlier rows are still on screen: keep them and show the inline notice above them. */
+  isStale?: boolean;
+  /** A refetch failed but earlier summary numbers are still on screen: keep them and show the inline notice above them. */
+  isAnalyticsStale?: boolean;
   isRetrying?: boolean;
   isRetryingAnalytics?: boolean;
   onRetry?: () => void;
@@ -62,6 +67,8 @@ export function DashboardRedesign({
   loading = false,
   isError = false,
   isAnalyticsError = false,
+  isStale = false,
+  isAnalyticsStale = false,
   isRetrying = false,
   isRetryingAnalytics = false,
   onRetry,
@@ -85,6 +92,15 @@ export function DashboardRedesign({
       data-source-component={DASHBOARD_SOURCE_COMPONENT}
       className="flex h-full min-h-0 flex-col"
     >
+      {isAnalyticsStale && !isAnalyticsError ? (
+        <QueryErrorState
+          dataComponent={`${DASHBOARD_ANALYTICS_BASE}_stale-error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          isRetrying={isRetryingAnalytics}
+          onRetry={() => onRetryAnalytics?.()}
+        />
+      ) : null}
       {isAnalyticsError ? (
         <div className="stats-grid" data-component={DASHBOARD_ANALYTICS_BASE} data-slot="stats-grid">
           <Alert
@@ -121,6 +137,15 @@ export function DashboardRedesign({
           filters={isError ? filters.map((filter) => ({ ...filter, count: "—" })) : filters}
           activeFilter={activeFilter}
           onFilterChange={onFilterChange}
+          beforeScroll={isStale && !isError ? (
+            <QueryErrorState
+              dataComponent={`${DASHBOARD_LIST_CARD_BASE}_stale-error`}
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              isRetrying={isRetrying}
+              onRetry={() => onRetry?.()}
+            />
+          ) : undefined}
           scrollRef={scrollRef}
           loadMore={isError || loading ? false : loadMore}
           onLoadMore={onLoadMore}

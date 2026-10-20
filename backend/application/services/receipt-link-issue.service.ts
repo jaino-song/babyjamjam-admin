@@ -5,6 +5,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
     TERMINAL_STATUS_CODES,
+    isReviewerRejectedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode, isProviderReviewWorkflowStep } from "domain/utils/eformsign-status-code";
 import {
@@ -36,6 +37,7 @@ export type ReceiptLinkSkipReason =
     | "not_voucher_client"
     | "missing_birthday"
     | "contract_not_signed"
+    | "contract_voided"
     | "no_contract_document"
     | "pdf_unavailable"
     | "render_failed"
@@ -45,6 +47,7 @@ export const RECEIPT_LINK_SKIP_MESSAGES: Record<ReceiptLinkSkipReason, string> =
     not_voucher_client: "바우처 이용 산모가 아닙니다",
     missing_birthday: "산모 생년월일이 등록되지 않았습니다",
     contract_not_signed: "계약서 서명이 완료된 후 발송할 수 있습니다.",
+    contract_voided: "파기된 계약서입니다.",
     no_contract_document: "연결된 계약서가 없습니다",
     pdf_unavailable: "계약서 PDF를 아직 불러올 수 없습니다",
     render_failed: "영수증 이미지 생성에 실패했습니다",
@@ -140,9 +143,8 @@ export class ReceiptLinkIssueService {
         if (!client) throw new ReceiptLinkSkipError("no_contract_document");
         if (!client.voucherClient) throw new ReceiptLinkSkipError("not_voucher_client");
 
-        // normalizeBirthdayInput accepts both 6-digit (YYMMDD) and 8-digit (YYYYMMDD) input and
-        // returns the canonical 6-digit form — the same normalization issue() relies on, so a
-        // birthday that would fail there must be caught here instead, not just an empty one.
+        // 8자리(YYYYMMDD)는 전체를 보존하고, 기존 6자리(YYMMDD)는 세기를 추론하지 않는다.
+        // issue()와 같은 정규화로 사용할 수 없는 생년월일은 발급 전에 건너뛴다.
         const birthday = normalizeBirthdayInput(client.birthday ?? "");
         if (!birthday) throw new ReceiptLinkSkipError("missing_birthday");
 
@@ -187,7 +189,8 @@ export class ReceiptLinkIssueService {
      * minted. True either when the mirrored status is a completed code or
      * when the current workflow step is the provider's review/confirmation
      * step (only current after the client signature). Terminal codes are
-     * excluded BEFORE the step check: a rejected/expired document keeps the
+     * excluded BEFORE the step check (071, a reviewer rejection, is not terminal and is allowed
+     * outright — the customer's signature stays valid): a rejected/expired document keeps the
      * provider-review step as its last step, so the step alone cannot prove
      * a live signature. Anything earlier (drafting, participant request),
      * any unprovable state, and terminal codes fall closed to
@@ -198,6 +201,10 @@ export class ReceiptLinkIssueService {
         const currentStatus = state?.detailPayload?.current_status ?? null;
         const statusType = normalizeEformsignStatusCode(currentStatus?.status_type);
         if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) return;
+        // 071 (reviewer rejection, 계약-04): the review stage only exists after the customer signed
+        // and the signature stays valid, so the receipt link may be issued. Allowed explicitly
+        // rather than by falling through to the step check below.
+        if (isReviewerRejectedStatus(statusType)) return;
         // Terminal-but-not-completed here means rejected/revoked/deleted/expired.
         if (TERMINAL_STATUS_CODES.has(statusType)) throw new ReceiptLinkSkipError("contract_not_signed");
         const signedOrLater = isProviderReviewWorkflowStep(
@@ -231,6 +238,10 @@ export class ReceiptLinkIssueService {
     ): Promise<void> {
         try {
             let documentId: string | null = typeof target === "string" ? target : null;
+            if (typeof target === "string") {
+                const local = await this.eformsignDocRepository.findByDocumentIdUnscoped(target);
+                if (local?.document.isVoided) throw new ReceiptLinkSkipError("contract_voided");
+            }
             if (typeof target !== "string") {
                 const client = await this.clientRepository.findById(target.branchId, target.clientId);
                 const doc = client
@@ -362,6 +373,7 @@ export class ReceiptLinkIssueService {
             rows,
             configuredServiceRecordTemplateIds(this.configService),
         );
+        if (current?.voidedAt != null) throw new ReceiptLinkSkipError("contract_voided");
         if (!current || current.permanentPurgeRequestedAt != null) return null;
         return { id: current.id, documentId: current.documentId };
     }
@@ -382,6 +394,7 @@ export class ReceiptLinkIssueService {
         if (!doc || doc.id === undefined || doc.documentKind !== "contract" || doc.clientId !== clientId) {
             return null;
         }
+        if (doc.isVoided) throw new ReceiptLinkSkipError("contract_voided");
         return { id: doc.id, documentId: doc.documentId };
     }
 

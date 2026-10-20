@@ -120,6 +120,7 @@ const createClient = (overrides: Partial<Client> = {}): Client => ({
     voucherClient: false,
     breastPump: false,
     serviceStatus: "waiting",
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,

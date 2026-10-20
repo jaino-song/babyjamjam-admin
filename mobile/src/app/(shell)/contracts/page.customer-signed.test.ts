@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
@@ -7,11 +8,17 @@ import {
   getStatusCategory,
   isContractReviewWindowOpen,
   isProviderReviewWorkflowStep,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
-import { isContractDocDisplayStatus } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  isContractDocDisplayStatus,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { MESSAGE_HISTORY_STATUS_LABELS } from "@babyjamjam/shared";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -25,6 +32,11 @@ const HELPER_CONSTANTS = new Set([
   "CONTRACT_SEND_EVENT_KEYWORDS",
   "CONTRACT_EVENT_TYPE_KEYS",
   "CATEGORY_BY_DISPLAY_STATUS",
+  "FILTER_LABELS",
+  "FILTER_TO_STATUS_CATEGORY",
+  "FILTER_TO_DISPLAY_STATUS",
+  "FILTER_BY_CATEGORY",
+  "SERVICE_RECORD_REVIEWER_REJECTED_LABEL",
 ]);
 const parsedPage = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const helperSource = parsedPage.statements
@@ -39,22 +51,34 @@ const helperSource = parsedPage.statements
   .map((statement) => statement.getText(parsedPage))
   .join("\n");
 
-type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "expired" | "unknown";
+type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "voided" | "unknown";
 interface StageItem {
   text: string;
+}
+interface StatusSignal {
+  status_type: string | null;
+  step_type: string | null;
+  step_name: string | null;
+  step_recipient_types: Array<string | null>;
+  contract_end_date?: string | null;
+  display_status?: string | null;
 }
 const helpers = vm.runInNewContext(
   ts.transpileModule(helperSource, {
     fileName: "helpers.tsx",
     compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React },
-  }).outputText + "\n({ categorize, progressLabel, contractStageItems });",
+  }).outputText + "\n({ categorize, progressLabel, contractStageItems, countSignalsByFilter, detailHeaderStatusBadge, notificationStatusLabel, notificationStatusTone, FILTER_LABELS, FILTER_TO_STATUS_CATEGORY, FILTER_TO_DISPLAY_STATUS, FILTER_BY_CATEGORY });",
   {
     getStatusCategory,
     isContractReviewWindowOpen,
     isProviderReviewWorkflowStep,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
+    isRevokedEformsignStatus,
     normalizeStatusCode,
     isContractDocDisplayStatus,
+    CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+    MESSAGE_HISTORY_STATUS_LABELS,
     KR_BUILTIN_CALENDAR,
     ...Object.fromEntries(
       ["FileText", "Send", "X", "Eye", "FileSignature", "CheckCircle2", "AlertTriangle"].map((name) => [name, name]),
@@ -64,6 +88,14 @@ const helpers = vm.runInNewContext(
   categorize: (doc: EformsignDocument, calendar: typeof KR_BUILTIN_CALENDAR) => Category;
   progressLabel: (doc: EformsignDocument, calendar: typeof KR_BUILTIN_CALENDAR) => string;
   contractStageItems: (doc: EformsignDocument, category: Category, calendar: typeof KR_BUILTIN_CALENDAR) => StageItem[];
+  countSignalsByFilter: (signals: StatusSignal[], calendar: typeof KR_BUILTIN_CALENDAR) => Record<string, number>;
+  detailHeaderStatusBadge: (category: Category, isServiceRecord: boolean) => { label: string; tone: string };
+  notificationStatusLabel: (status: string) => string;
+  notificationStatusTone: (status: string) => string;
+  FILTER_LABELS: string[];
+  FILTER_TO_STATUS_CATEGORY: Record<string, string | null>;
+  FILTER_TO_DISPLAY_STATUS: Record<string, string>;
+  FILTER_BY_CATEGORY: Record<Category, string | null>;
 };
 
 const SIGNED_PROGRESS = "4/6 - 이용자 서명 완료";
@@ -216,18 +248,391 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
     expect(stages).not.toContain("문서 기간이 만료됐어요");
   });
 
-  it("leaves 042 / 080 as expired and keeps 040 files under the 기간 만료 filter pill", () => {
-    for (const statusType of ["042", "080"]) {
-      const { category, progress } = view(makeDoc({ statusType, stepType: "05", stepName: "이용자", displayStatus: "expired" }));
-      expect(category).toBe("expired");
-      expect(progress).toBe("기간 만료");
-    }
+  it.each([
+    ["with display_status revoke_requested", "revoke_requested"],
+    ["without display_status (legacy payload)", undefined],
+  ])("shows 045 exactly like 040: its own revoke-requested category, never expired or signed — %s", (_label, displayStatus) => {
+    const doc = makeDoc({ statusType: "045", stepType: "06", stepName: "제공기관 검토", displayStatus });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("revoke-requested");
+    expect(progress).toBe("철회 요청됨");
+    expect(stages).toContain("철회가 요청됐어요 — 아직 철회가 완료되지 않았어요");
+    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+  });
+
+  it("reads 041 (a refused revoke) exactly like 060: customer not signed on the customer step", () => {
+    const doc041 = makeDoc({ statusType: "041", stepType: "05", stepName: "이용자" });
+    const doc060 = makeDoc({ statusType: "060", stepType: "05", stepName: "이용자" });
+
+    expect(view(doc041)).toEqual(view(doc060));
+    expect(view(doc041).category).toBe("drafting");
+    expect(view(doc041).stages).not.toContain(SIGNED_STAGE);
+  });
+
+  it("reads 041 at the provider review step exactly like 060: customer signed, review needed", () => {
+    const doc041 = makeDoc({ statusType: "041", stepType: "06", stepName: "제공기관 검토" });
+    const doc060 = makeDoc({ statusType: "060", stepType: "06", stepName: "제공기관 검토" });
+
+    expect(view(doc041)).toEqual(view(doc060));
+    expect(view(doc041).progress).toBe("5/6 - 제공기관 검토 필요");
+    expect(view(doc041).stages).toContain(SIGNED_STAGE);
+  });
+
+  it.each([
+    ["042", "with display_status revoked", "revoked"],
+    ["090", "with display_status revoked", "revoked"],
+    ["042", "without display_status (legacy payload)", undefined],
+    ["090", "without display_status (legacy payload)", undefined],
+  ])("shows %s (revoked) as its own category, never expired or signed — %s", (statusType, _label, displayStatus) => {
+    const doc = makeDoc({ statusType, stepType: "06", stepName: "제공기관 검토", displayStatus });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("revoked");
+    expect(progress).toBe("철회됨");
+    expect(stages).toContain("문서가 철회됐어요");
+    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+  });
+
+  it("leaves 080 as expired and keeps 040 and 042/090 filed under the 기간 만료 filter pill", () => {
+    const { category, progress } = view(makeDoc({ statusType: "080", stepType: "05", stepName: "이용자", displayStatus: "expired" }));
+    expect(category).toBe("expired");
+    expect(progress).toBe("기간 만료");
+    expect(helpers.categorize(makeDoc({ statusType: "080", stepType: "05", stepName: "이용자" }), KR_BUILTIN_CALENDAR)).toBe("expired");
+    // The tab/pill is unchanged: revoked files under 기간 만료 like revoke-requested.
+    expect(/revoked: "기간 만료"/.test(source)).toBe(true);
+    // 철회됨 takes the danger (burgundy) tone, not the muted 만료 one.
+    expect(/case "revoked":\s*return \{\s*badge: "철회됨",\s*badgeTone: "burgundy"/.test(source)).toBe(true);
     // FILTER_BY_CATEGORY / categoryTones live beside the helpers in page.tsx; pin them in source.
     expect(/"revoke-requested": "기간 만료"/.test(source)).toBe(true);
     expect(/case "revoke-requested":\s*return \{\s*badge: "철회 요청됨",\s*badgeTone: "orange"/.test(source)).toBe(true);
   });
 
+  it.each([
+    ["with display_status", "rejected_by_reviewer"],
+    ["without display_status (legacy payload)", undefined],
+  ])("files 071 (반려됨, 계약-04) as its own category, not expired, not 검토 필요 — %s", (_label, displayStatus) => {
+    for (const [stepType, stepName] of [
+      ["06", "제공기관 검토"],
+      ["05", "이용자"],
+    ] as const) {
+      const doc = makeDoc({ statusType: "071", stepType, stepName, displayStatus });
+      const { category, progress, stages } = view(doc);
+
+      expect(category).toBe("rejected-by-reviewer");
+      expect(progress).toBe("반려됨 - 제공기관 재검토 대기");
+      expect(progress).not.toBe("5/6 - 제공기관 검토 필요");
+      // The customer's signature stays valid, and the rejection is stated.
+      expect(stages).toContain(SIGNED_STAGE);
+      expect(stages).toContain("제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요");
+      expect(stages).not.toContain("문서 기간이 만료됐어요");
+    }
+  });
+
+  it("returns a document to a signed reading after a later 070, and completes it on 072", () => {
+    expect(view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).category).toBe("signed");
+    expect(view(makeDoc({ statusType: "072", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).category).toBe("completed");
+  });
+
+  it("gives 반려됨 its own pill that the server displayStatus filter can select", () => {
+    expect(helpers.FILTER_LABELS).toContain("반려됨");
+    // Placed with the in-progress pills, before 계약 완료.
+    expect(helpers.FILTER_LABELS.indexOf("반려됨")).toBe(helpers.FILTER_LABELS.indexOf("검토 필요") + 1);
+    expect(helpers.FILTER_BY_CATEGORY["rejected-by-reviewer"]).toBe("반려됨");
+    expect(helpers.FILTER_TO_DISPLAY_STATUS["반려됨"]).toBe("rejected_by_reviewer");
+    expect(helpers.FILTER_TO_STATUS_CATEGORY["반려됨"]).toBeNull();
+    // The pill label is the shared canonical one, not a hand-written copy.
+    expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer).toBe("반려됨");
+    expect(/badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS\.rejected_by_reviewer/.test(source)).toBe(true);
+    expect(/badge: "반려됨"/.test(source)).toBe(false);
+    expect(/rejected_by_reviewer: "rejected-by-reviewer"/.test(source)).toBe(true);
+  });
+
+  const signalOf = (statusType: string, displayStatus?: string): StatusSignal => ({
+    status_type: statusType,
+    step_type: "06",
+    step_name: "제공기관 검토",
+    step_recipient_types: [],
+    display_status: displayStatus,
+  });
+
+  it.each([
+    ["with display_status", "rejected_by_reviewer"],
+    ["without display_status (legacy payload)", undefined],
+  ])("counts a 071 contract once, under 반려됨 only, and keeps it in 전체 — %s", (_label, displayStatus) => {
+    const counts = helpers.countSignalsByFilter([signalOf("071", displayStatus)], KR_BUILTIN_CALENDAR);
+
+    expect(counts["반려됨"]).toBe(1);
+    expect(counts["전체"]).toBe(1);
+    for (const label of helpers.FILTER_LABELS.filter((l) => l !== "전체" && l !== "반려됨")) {
+      expect(counts[label]).toBe(0);
+    }
+  });
+
+  it("leaves a 070 contract out of the 반려됨 pill", () => {
+    const counts = helpers.countSignalsByFilter(
+      [signalOf("070", "signed"), signalOf("071", "rejected_by_reviewer")],
+      KR_BUILTIN_CALENDAR,
+    );
+
+    expect(counts["반려됨"]).toBe(1);
+    expect(counts["서명 완료"]).toBe(1);
+    expect(counts["전체"]).toBe(2);
+  });
+
+  it("shows the solid 반려됨 chip in the detail header of a contract at 071", () => {
+    const badge = helpers.detailHeaderStatusBadge("rejected-by-reviewer", false);
+
+    expect(badge).toEqual({ label: "반려됨", tone: "burgundy-solid" });
+    // The solid tone exists in the closed badge union and has a CSS rule.
+    const css = fs.readFileSync(
+      path.join(process.cwd(), "src/components/app/mobile-redesign/redesign.css"),
+      "utf8",
+    );
+    expect(/\.badge-mini\.burgundy-solid\s*\{[^}]*status-danger-solid-fg/.test(css)).toBe(true);
+  });
+
+  it("shows a 제공기록지 at 071 in the detail header exactly as its list row reads, never 반려됨", () => {
+    const badge = helpers.detailHeaderStatusBadge("rejected-by-reviewer", true);
+
+    expect(badge.label).toBe("거부·만료");
+    expect(badge.label).not.toBe("반려됨");
+    // Same tone the list row's Badge takes (tones.badgeTone).
+    expect(badge.tone).toBe("burgundy");
+    expect(/\? SERVICE_RECORD_REVIEWER_REJECTED_LABEL/.test(source)).toBe(true);
+    // The header and the list row both read the same constant, and the header renders through the helper.
+    expect(/detailHeaderStatusBadge\(category, isServiceRecord\),/.test(source)).toBe(true);
+    expect(/tones\.badgeMini as BadgeTone/.test(source)).toBe(false);
+  });
+
+  it("leaves the detail header of other statuses unchanged", () => {
+    expect(helpers.detailHeaderStatusBadge("signed", false)).toEqual({ label: "서명 완료", tone: "primary" });
+    expect(helpers.detailHeaderStatusBadge("signed", true)).toEqual({ label: "서명 완료", tone: "primary" });
+    expect(helpers.detailHeaderStatusBadge("revoked", false)).toEqual({ label: "철회됨", tone: "burgundy" });
+  });
+
   it("no longer scans histories for signature keywords", () => {
     expect(/hasCustomerSignatureDocument|CONTRACT_SIGNATURE_KEYWORDS/.test(source)).toBe(false);
+  });
+});
+
+describe("contract message-history status helpers (추가 정보 필요)", () => {
+  it("labels and tones a needs_setup message as 추가 정보 필요 in the warning tone, never as 완료", () => {
+    expect(helpers.notificationStatusLabel("needs_setup")).toBe(MESSAGE_HISTORY_STATUS_LABELS.needs_setup);
+    expect(helpers.notificationStatusLabel("needs_setup")).toBe("추가 정보 필요");
+    expect(helpers.notificationStatusTone("needs_setup")).toBe("orange");
+  });
+
+  it("keeps the other message statuses unchanged", () => {
+    expect(helpers.notificationStatusLabel("failed")).toBe("실패");
+    expect(helpers.notificationStatusTone("failed")).toBe("burgundy");
+    expect(helpers.notificationStatusLabel("pending")).toBe("대기");
+    expect(helpers.notificationStatusTone("pending")).toBe("orange");
+    expect(helpers.notificationStatusLabel("sent")).toBe("완료");
+    expect(helpers.notificationStatusTone("sent")).toBe("green");
+  });
+});
+
+describe("voided (계약 파기, BJJ-439): 파기됨 in the muted tone, filed under 기간 만료", () => {
+  const signalOf = (statusType: string, displayStatus?: string): StatusSignal => ({
+    status_type: statusType,
+    step_type: "06",
+    step_name: "제공기관 검토",
+    step_recipient_types: [],
+    display_status: displayStatus,
+  });
+
+  it.each(["003", "060", "070", "042", "080"])("gives a voided document the voided category over eformsign code %s", (statusType) => {
+    const doc = makeDoc({ statusType, stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("voided");
+    expect(progress).toBe("파기됨");
+    expect(stages[stages.length - 1]).toBe("계약이 파기됐어요");
+    expect(stages).not.toContain("제공기관 검토 필요");
+    expect(stages.some((text) => text.includes("대기중"))).toBe(false);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+    expect(stages).not.toContain("문서가 철회됐어요");
+  });
+
+  it("reads 파기됨 in the muted tone in the list row and the detail header", () => {
+    expect(helpers.detailHeaderStatusBadge("voided", false)).toEqual({ label: "파기됨", tone: "muted" });
+    expect(/case "voided":\s*return \{\s*badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS\.voided,\s*badgeTone: "muted"/.test(source)).toBe(true);
+  });
+
+  it("files voided under the 기간 만료 filter with no pill of its own", () => {
+    expect(helpers.FILTER_BY_CATEGORY.voided).toBe("기간 만료");
+    expect(helpers.FILTER_LABELS).not.toContain("파기됨");
+
+    const counts = helpers.countSignalsByFilter([signalOf("060", "voided"), signalOf("070", "voided")], KR_BUILTIN_CALENDAR);
+    expect(counts["기간 만료"]).toBe(2);
+    expect(counts["전체"]).toBe(2);
+    for (const label of helpers.FILTER_LABELS.filter((l) => l !== "전체" && l !== "기간 만료")) {
+      expect(counts[label]).toBe(0);
+    }
+  });
+
+  it("keeps the voided stage, last, when the history also records a send failure (plan D2)", () => {
+    const doc = makeDoc({
+      statusType: "060",
+      stepType: "05",
+      stepName: "이용자",
+      displayStatus: "voided",
+      histories: [{ action: "send_failed" }],
+    });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("voided");
+    expect(progress).toBe("파기됨");
+    expect(stages).toEqual([
+      "문서가 생성되었습니다",
+      "이용자에게 문서 전송에 실패했어요.",
+      "계약이 파기됐어요",
+    ]);
+  });
+
+  it("still shows a voided document without any history as creation, send and void", () => {
+    const { stages } = view(makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "voided" }));
+    expect(stages[stages.length - 1]).toBe("계약이 파기됐어요");
+    expect(stages).not.toContain("이용자에게 문서 전송에 실패했어요.");
+  });
+
+  describe("stage list of a voided document keeps the real history and closes with the void (plan D2)", () => {
+    const VOID_STAGE = "계약이 파기됐어요";
+    const VOIDED_AT = "2026-03-05T06:30:00.000Z";
+    const UPDATED_AT = Date.UTC(2026, 2, 1, 1, 0, 0);
+    const stageView = (doc: EformsignDocument) => {
+      const category = helpers.categorize(doc, KR_BUILTIN_CALENDAR);
+      return helpers.contractStageItems(doc, category, KR_BUILTIN_CALENDAR) as Array<StageItem & { time: string }>;
+    };
+    const formatted = (value: string | number) =>
+      new Date(value).toLocaleString("ko-KR", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+    it("stamps the void stage with voided_at, never with the provider's updated_date", () => {
+      const doc = {
+        ...makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }),
+        updated_date: UPDATED_AT,
+        voided_at: VOIDED_AT,
+      } as unknown as EformsignDocument;
+      const items = stageView(doc);
+      const last = items[items.length - 1];
+
+      expect(last.text).toBe(VOID_STAGE);
+      expect(last.time).toBe(formatted(VOIDED_AT));
+      expect(last.time).not.toBe(formatted(UPDATED_AT));
+    });
+
+    it("shows no time on the void stage when voided_at is absent, and does not borrow updated_date", () => {
+      const doc = {
+        ...makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }),
+        updated_date: UPDATED_AT,
+      } as unknown as EformsignDocument;
+      const items = stageView(doc);
+      const last = items[items.length - 1];
+
+      expect(last.text).toBe(VOID_STAGE);
+      expect(last.time).toBe("-");
+      expect(last.time).not.toBe(formatted(UPDATED_AT));
+    });
+
+    it("keeps a completed (003) document's history, then ends with the void", () => {
+      const { stages } = view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }));
+
+      expect(stages).toEqual([
+        "문서가 생성되었습니다",
+        "이용자에게 문서가 발송되었습니다.",
+        "이용자가 문서를 열람했습니다",
+        SIGNED_STAGE,
+        "제공기관 검토 완료",
+        "계약서가 완료되었습니다",
+        VOID_STAGE,
+      ]);
+    });
+
+    it("keeps a completed (050) document's history, then ends with the void", () => {
+      const { stages } = view(makeDoc({ statusType: "050", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }));
+
+      expect(stages).toContain("제공기관 검토 완료");
+      expect(stages).toContain("계약서가 완료되었습니다");
+      expect(stages[stages.length - 1]).toBe(VOID_STAGE);
+    });
+
+    it("keeps a customer-signed document's signature, then ends with the void and no live entry", () => {
+      const doc = {
+        ...makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }),
+        contract_end_date: "2026-03-05",
+      } as unknown as EformsignDocument;
+      const { stages } = view(doc);
+
+      expect(stages).toContain(SIGNED_STAGE);
+      expect(stages[stages.length - 1]).toBe(VOID_STAGE);
+      expect(stages).not.toContain("제공기관 검토 필요");
+      expect(stages).not.toContain("제공기관 검토 완료");
+      expect(stages.some((text) => text.includes("대기중"))).toBe(false);
+      expect(stageView(doc).some((item) => item.time === "현재")).toBe(false);
+    });
+
+    it("draws an unsigned voided document as creation, send and void with no live entry", () => {
+      const doc = makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "voided" });
+      const { stages } = view(doc);
+
+      expect(stages).toEqual(["문서가 생성되었습니다", "이용자에게 문서가 발송되었습니다.", VOID_STAGE]);
+      expect(stages.some((text) => text.includes("대기중"))).toBe(false);
+      expect(stageView(doc).some((item) => item.time === "현재")).toBe(false);
+    });
+
+    it("drops the terminal entry of a pre-void revoked / revoke-requested / expired document and still ends with the void", () => {
+      for (const statusType of ["042", "040", "080"]) {
+        const { stages } = view(makeDoc({ statusType, stepType: "05", stepName: "이용자", displayStatus: "voided" }));
+
+        expect(stages[stages.length - 1]).toBe(VOID_STAGE);
+        expect(stages).not.toContain("문서가 철회됐어요");
+        expect(stages).not.toContain("문서 기간이 만료됐어요");
+        expect(stages.some((text) => text.startsWith("철회가 요청됐어요"))).toBe(false);
+      }
+    });
+
+    it("keeps the non-voided stage lists unchanged (controls)", () => {
+      const completed = view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).stages;
+      expect(completed.slice(-2)).toEqual(["제공기관 검토 완료", "계약서가 완료되었습니다"]);
+      expect(completed).not.toContain(VOID_STAGE);
+
+      const inProgress = stageView(makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "pending" }));
+      expect(inProgress[inProgress.length - 1].time).toBe("현재");
+      expect(inProgress.map((item) => item.text)).not.toContain(VOID_STAGE);
+
+      const signed = view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).stages;
+      expect(signed).toContain(SIGNED_STAGE);
+      expect(signed).not.toContain(VOID_STAGE);
+    });
+  });
+
+  it("leaves a non-voided send failure unchanged: it ends at the failure with no voided stage (control)", () => {
+    const doc = makeDoc({
+      statusType: "060",
+      stepType: "05",
+      stepName: "이용자",
+      displayStatus: "pending",
+      histories: [{ action: "send_failed" }],
+    });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("drafting");
+    expect(progress).toBe("이용자 문서 전송 실패");
+    expect(stages).toEqual(["문서가 생성되었습니다", "이용자에게 문서 전송에 실패했어요."]);
+  });
+
+  it("does not change how the same live codes are categorized without the void (control)", () => {
+    expect(view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).category).toBe("signed");
+    expect(view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).category).toBe("completed");
   });
 });

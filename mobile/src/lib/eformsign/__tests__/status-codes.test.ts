@@ -137,10 +137,103 @@ describe("040 (doc_request_revoke) 철회 요청됨", () => {
     expect(mapDocStatusLabel({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
   });
 
-  it("keeps the expired category and leaves 042/090/080 labelled 기간 만료", () => {
+  it("keeps the expired category and leaves 080 labelled 기간 만료", () => {
     expect(getStatusCategory("040")).toBe("expired");
-    for (const code of ["042", "090", "080"]) {
-      expect(mapDocStatusLabel({ status_type: code })).toBe("기간 만료");
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
+  });
+});
+
+describe("042 (doc_revoke) / 090 (withdrawal) 철회됨", () => {
+  it("is labelled 철회됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "042" }, null, "revoked")).toBe("철회됨");
+    for (const code of ["042", "090", "doc_revoke"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("철회됨");
     }
+    expect(mapDocStatusLabel({ status_type: "042", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회됨");
+  });
+
+  it("keeps the expired category for filtering, tabs and stats", () => {
+    expect(getStatusCategory("042")).toBe("expired");
+    expect(getStatusCategory("090")).toBe("expired");
+  });
+
+  it("uses the destructive variant, distinct from the 철회 요청됨 one", () => {
+    expect(getStatusColor("철회됨")).toBe("destructive");
+    expect(getStatusColor("철회 요청됨")).not.toBe("destructive");
+  });
+});
+
+describe("071 (doc_reject_reviewer) 반려됨, 계약-04", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 반려됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "071" }, null, "rejected_by_reviewer")).toBe("반려됨");
+    for (const code of ["071", "doc_reject_reviewer"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("반려됨");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2027-12-31")).toBe("반려됨");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2025-01-01")).toBe("반려됨");
+    }
+  });
+
+  it("is in progress, never expired; 080 stays 기간 만료", () => {
+    expect(getStatusCategory("071")).toBe("in-progress");
+    expect(getStatusCategory("080")).toBe("expired");
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
+    expect(mapDocStatusLabel({ status_type: "061" })).toBe("기간 만료");
+  });
+
+  it("is destructive-toned in the badge colour helper", () => {
+    expect(getStatusColor("반려됨")).toBe("destructive");
+  });
+});
+
+describe("045 (doc_request_reject) is treated exactly like 040", () => {
+  it("is labelled 철회 요청됨 with the expired category kept for the filter tab", () => {
+    expect(mapDocStatusLabel({ status_type: "045" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "doc_request_reject" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "045", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
+    expect(getStatusCategory("045")).toBe("expired");
+  });
+});
+
+describe("041 (doc_refuse_revoke) reads exactly like 060", () => {
+  const customerStep = { step_type: "05", step_name: "이용자 서명" };
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is in progress and labelled by step and review window like 060", () => {
+    expect(getStatusCategory("041")).toBe("in-progress");
+    expect(getStatusCategory("doc_refuse_revoke")).toBe("in-progress");
+    for (const step of [customerStep, reviewStep]) {
+      for (const endDate of [null, "2027-12-31", "2025-01-01"]) {
+        expect(mapDocStatusLabel({ status_type: "041", ...step }, endDate)).toBe(
+          mapDocStatusLabel({ status_type: "060", ...step }, endDate),
+        );
+      }
+    }
+    expect(mapDocStatusLabel({ status_type: "041", ...customerStep })).toBe("서명 대기");
+  });
+});
+
+describe("voided (계약 파기, BJJ-439) 파기됨", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 파기됨 from display_status whatever the provider code says", () => {
+    for (const code of ["003", "060", "070", "042", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, null, "voided")).toBe("파기됨");
+    }
+  });
+
+  it("uses the neutral (secondary) variant, not a danger tone", () => {
+    expect(getStatusColor("파기됨")).toBe("secondary");
+    expect(getStatusColor("파기됨")).not.toBe("destructive");
+  });
+
+  it("is never receipt-sendable", () => {
+    expect(isReceiptSendableOnCalendar({
+      category: "completed",
+      displayStatus: "voided",
+      currentStatus: { status_type: "003", ...reviewStep },
+      contractEndDate: null,
+    })).toBe(false);
   });
 });

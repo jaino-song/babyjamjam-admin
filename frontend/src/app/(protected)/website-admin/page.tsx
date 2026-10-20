@@ -18,6 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { settingsApi, type RibbonConfig } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -148,12 +149,28 @@ export default function WebsiteAdminPage() {
           compactBackLabel="홈페이지 관리 목록으로 돌아가기"
         >
           <div data-component="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon">
-                {ribbonQuery.isLoading ? (
+                {ribbonQuery.isLoading || (ribbonQuery.isPaused && ribbonQuery.data === undefined) ? (
                   <div data-component="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon_loading">
                     <RibbonConfigSkeleton />
                   </div>
+                ) : ribbonQuery.isError && ribbonQuery.data === undefined ? (
+                  <QueryErrorState
+                    dataComponent="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon_load-error"
+                    title="리본 설정을 불러오지 못했습니다"
+                    onRetry={() => { void ribbonQuery.refetch(); }}
+                    isRetrying={ribbonQuery.isFetching}
+                  />
                 ) : (
                   <div className="space-y-6">
+                    {ribbonQuery.isError && ribbonQuery.data !== undefined ? (
+                      <QueryErrorState
+                        dataComponent="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon_refetch-error"
+                        size="inline"
+                        title="최신 정보를 불러오지 못했습니다"
+                        onRetry={() => { void ribbonQuery.refetch(); }}
+                        isRetrying={ribbonQuery.isFetching}
+                      />
+                    ) : null}
                     {/* Enable toggle */}
                     <div className="flex items-center justify-between p-3 rounded-xl hover:bg-muted/50 transition-colors">
                       <div className="space-y-0.5">

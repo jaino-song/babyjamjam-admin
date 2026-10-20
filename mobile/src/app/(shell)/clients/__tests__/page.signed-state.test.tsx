@@ -174,6 +174,7 @@ function clientFixture(overrides: Partial<Client> = {}): Client {
     voucherClient: true,
     breastPump: false,
     serviceStatus: "active",
+    bookingConfirmedAt: null,
     eDocId: "legacy-document-060",
     hasSigned: false,
     documentStatus: "requested",

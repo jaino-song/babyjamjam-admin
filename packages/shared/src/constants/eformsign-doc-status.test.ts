@@ -1,11 +1,22 @@
 import {
     CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+    CONTRACT_VOID_COPY,
+    CONTRACT_VOID_ROW_LABEL,
+    CONTRACT_VOIDED_BY_UNKNOWN_LABEL,
     isContractDocDisplayStatus,
     isContractReceiptSendable,
     isContractReviewWindowOpen,
+    isContractVoidable,
     resolveContractDocDisplayStatus,
     resolveContractDocStatusLabel,
 } from "./eformsign-doc-status";
+import {
+    COMPLETED_STATUS_CODES,
+    DELETED_STATUS_CODES,
+    EXPIRED_STATUS_CODES,
+    getEformsignStatusCategory,
+    IN_PROGRESS_STATUS_CODES,
+} from "./eformsign-status-codes";
 import {
     createKrBusinessDayCalendar,
     KR_BUILTIN_HOLIDAYS,
@@ -169,8 +180,34 @@ describe("revoke_requested (eformsign 040)", () => {
         })).toBe("revoke_requested");
     });
 
-    it("leaves other expired-bucket codes alone (042/090 revoked, 080 expired)", () => {
-        for (const statusType of ["042", "090", "080", "011", undefined, null]) {
+    it("labels 045 (doc_request_reject) exactly like 040", () => {
+        for (const statusType of ["045", "doc_request_reject"]) {
+            expect(resolveContractDocDisplayStatus({
+                category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-07", statusType, now: kstNoon("2026-08-06"),
+            })).toBe("revoke_requested");
+            expect(resolveContractDocStatusLabel({
+                category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            })).toBe("철회 요청됨");
+        }
+    });
+
+    it("resolves 041 (a refused revoke) exactly like 060, by step and review window", () => {
+        for (const [currentStatus, contractEndDate] of [
+            [CUSTOMER_STEP_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+        ] as const) {
+            const params = { category: "in-progress" as const, currentStatus, contractEndDate, now: kstNoon("2026-08-06") };
+            expect(resolveContractDocDisplayStatus({ ...params, statusType: "041" }))
+                .toBe(resolveContractDocDisplayStatus({ ...params, statusType: "060" }));
+        }
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress", currentStatus: CUSTOMER_STEP_STATUS, contractEndDate: null, statusType: "041",
+        })).toBe("pending");
+    });
+
+    it("leaves other expired-bucket codes alone (080 expired)", () => {
+        for (const statusType of ["080", "011", undefined, null]) {
             expect(resolveContractDocStatusLabel({
                 category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
             })).toBe("기간 만료");
@@ -181,6 +218,100 @@ describe("revoke_requested (eformsign 040)", () => {
         expect(isContractDocDisplayStatus("revoke_requested")).toBe(true);
         expect(isContractReceiptSendable({
             category: "expired", displayStatus: "revoke_requested", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+    });
+});
+
+/**
+ * 042 (doc_revoke) and 090 (synthesized withdrawal): the document was revoked — terminal. The
+ * category stays "expired" for tabs/filters/stats; only the label and tone differ.
+ */
+describe("revoked (eformsign 042 / 090)", () => {
+    it("labels 042 and 090 철회됨, checked before the expired category", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoked).toBe("철회됨");
+        for (const statusType of ["042", "090", 42, 90, "doc_revoke", "doc_withdraw"]) {
+            const params = {
+                category: "expired" as const, currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            };
+            expect(resolveContractDocDisplayStatus(params)).toBe("revoked");
+            expect(resolveContractDocStatusLabel(params)).toBe("철회됨");
+        }
+    });
+
+    it("ignores step and end date", () => {
+        expect(resolveContractDocDisplayStatus({
+            category: "expired",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "042",
+            now: kstNoon("2026-08-06"),
+        })).toBe("revoked");
+    });
+
+    it("keeps 080 기간 만료 and 040/045 철회 요청됨 distinct from 철회됨", () => {
+        const base = { category: "expired" as const, currentStatus: null, contractEndDate: null, now: kstNoon("2026-08-01") };
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "080" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "040" })).toBe("철회 요청됨");
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "045" })).toBe("철회 요청됨");
+    });
+
+    it("is recognised as a wire display status but never receipt-sendable", () => {
+        expect(isContractDocDisplayStatus("revoked")).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "expired", displayStatus: "revoked", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+        expect(isContractReceiptSendable({
+            category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+    });
+});
+
+/**
+ * 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document. Shown "반려됨",
+ * NOT terminal: category in-progress, the customer's signature stays valid. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("rejected_by_reviewer (eformsign 071)", () => {
+    it("labels 071 반려됨, checked before the category, whatever the step or end date", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer).toBe("반려됨");
+        for (const statusType of ["071", 71, "doc_reject_reviewer"]) {
+            for (const [currentStatus, contractEndDate] of [
+                [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+                [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+                [CUSTOMER_STEP_STATUS, null],
+                [null, null],
+            ] as const) {
+                const params = {
+                    category: "in-progress" as const, currentStatus, contractEndDate, statusType, now: kstNoon("2026-08-06"),
+                };
+                expect(resolveContractDocDisplayStatus(params)).toBe("rejected_by_reviewer");
+                expect(resolveContractDocStatusLabel(params)).toBe("반려됨");
+            }
+        }
+    });
+
+    it("is in the in-progress category, never expired or unknown", () => {
+        expect(getEformsignStatusCategory("071")).toBe("in-progress");
+    });
+
+    it("does not change 080 (기간 만료), 061 (거절) or 070 (서명 완료)", () => {
+        const base = { currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-20", now: kstNoon("2026-08-06") };
+        expect(resolveContractDocStatusLabel({ ...base, category: "expired", statusType: "080" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, category: "expired", statusType: "061" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, category: "in-progress", statusType: "070" })).toBe("서명 완료");
+    });
+
+    it("is a wire display status and is receipt-sendable (the customer signature is still valid)", () => {
+        expect(isContractDocDisplayStatus("rejected_by_reviewer")).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "in-progress", displayStatus: "rejected_by_reviewer", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(true);
+        // 080 (expired) and 061 (rejected by the participant) stay unsendable.
+        expect(isContractReceiptSendable({
+            category: "expired", displayStatus: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+        expect(isContractReceiptSendable({
+            category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
         })).toBe(false);
     });
 });
@@ -244,9 +375,14 @@ describe("isContractReceiptSendable", () => {
     };
 
     it("allows signed, review, and completed display statuses", () => {
-        for (const displayStatus of ["signed", "review", "completed", "unassigned", "pending", "expired", "unknown"] as const) {
+        for (const displayStatus of ["signed", "review", "completed", "rejected_by_reviewer", "unassigned", "pending", "expired", "unknown"] as const) {
             expect(isContractReceiptSendable({ ...providerReviewParams, displayStatus }))
-                .toBe(displayStatus === "signed" || displayStatus === "review" || displayStatus === "completed");
+                .toBe(
+                    displayStatus === "signed"
+                    || displayStatus === "review"
+                    || displayStatus === "completed"
+                    || displayStatus === "rejected_by_reviewer",
+                );
         }
     });
 
@@ -307,6 +443,142 @@ describe("isContractReceiptSendable", () => {
             currentStatus: CUSTOMER_STEP_STATUS,
         })).toBe(false);
     });
+
+    // 계약-04: a reviewer rejection (071) keeps the customer's signature, so the receipt link may
+    // send even on a legacy payload that carries only the status code (no display_status, and no
+    // workflow step to prove the customer signed).
+    it("allows 071 without display_status even when the payload carries no workflow step", () => {
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: { status_type: "071", step_type: null, step_name: null },
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: { status_type: 71, step_type: null, step_name: null },
+            displayStatus: undefined,
+        })).toBe(true);
+    });
+
+    it("keeps 070 without a workflow step and without display_status not sendable (unchanged)", () => {
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: { status_type: "070", step_type: null, step_name: null },
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(false);
+    });
+
+    it("agrees with the 반려됨 label for the same payload", () => {
+        const payload = { status_type: "071", step_type: null, step_name: null };
+        expect(resolveContractDocStatusLabel({
+            category: "in-progress",
+            currentStatus: payload,
+            contractEndDate: null,
+            statusType: payload.status_type,
+        })).toBe("반려됨");
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: payload,
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(true);
+    });
+
+    describe("status code table (expected values written out)", () => {
+        // Every status code the shared constants define. `true` = the customer-signed
+        // receipt gate is open for a payload WITHOUT display_status and WITHOUT a workflow step.
+        const SENDABLE_WITHOUT_STEP: Record<string, boolean> = {
+            // completed category
+            "003": true, "012": true, "022": true, "032": true,
+            "050": true, "062": true, "072": true, "092": true,
+            // expired category (040/045 revoke-requested, 042/090 revoked, 047/049 deleted included)
+            "011": false, "021": false, "031": false, "040": false,
+            "042": false, "045": false, "047": false, "049": false,
+            "061": false, "080": false, "090": false,
+            // in-progress category: no step proves the customer signed ...
+            "001": false, "002": false, "010": false, "020": false,
+            "030": false, "041": false, "043": false, "060": false,
+            "063": false, "064": false, "070": false,
+            // ... except 071, whose code alone says the customer signed and the reviewer rejected.
+            "071": true,
+            // deleted-only bucket: 099 (legacy webhook tombstone) is in no category list.
+            "099": false,
+        };
+        // Same codes, but the payload sits at the provider review step (customer signed).
+        const SENDABLE_AT_REVIEW_STEP: Record<string, boolean> = {
+            "003": true, "012": true, "022": true, "032": true,
+            "050": true, "062": true, "072": true, "092": true,
+            "011": false, "021": false, "031": false, "040": false,
+            "042": false, "045": false, "047": false, "049": false,
+            "061": false, "080": false, "090": false,
+            "001": true, "002": true, "010": true, "020": true,
+            "030": true, "041": true, "043": true, "060": true,
+            "063": true, "064": true, "070": true, "071": true,
+            // a deleted document is never sendable, even parked at the provider review step.
+            "099": false,
+        };
+        const DISPLAY_STATUS_SENDABLE: Record<string, boolean> = {
+            pending: false,
+            signed: true,
+            review: true,
+            completed: true,
+            revoke_requested: false,
+            revoked: false,
+            rejected_by_reviewer: true,
+            expired: false,
+            unassigned: false,
+            unknown: false,
+        };
+
+        it("covers exactly the status codes the shared constants define", () => {
+            const defined = [...new Set<string>([
+                ...COMPLETED_STATUS_CODES,
+                ...EXPIRED_STATUS_CODES,
+                ...IN_PROGRESS_STATUS_CODES,
+                ...DELETED_STATUS_CODES,
+            ])].sort();
+            expect(Object.keys(SENDABLE_WITHOUT_STEP).sort()).toEqual(defined);
+            expect(Object.keys(SENDABLE_AT_REVIEW_STEP).sort()).toEqual(defined);
+        });
+
+        it("resolves every status code without display_status as written out", () => {
+            for (const [code, expected] of Object.entries(SENDABLE_WITHOUT_STEP)) {
+                expect([code, isContractReceiptSendable({
+                    category: getEformsignStatusCategory(code),
+                    currentStatus: { status_type: code, step_type: null, step_name: null },
+                    contractEndDate: null,
+                    displayStatus: null,
+                })]).toEqual([code, expected]);
+            }
+        });
+
+        it("resolves every status code at the provider review step without display_status as written out", () => {
+            for (const [code, expected] of Object.entries(SENDABLE_AT_REVIEW_STEP)) {
+                expect([code, isContractReceiptSendable({
+                    category: getEformsignStatusCategory(code),
+                    currentStatus: { status_type: code, step_type: "06", step_name: "제공기관 확인" },
+                    contractEndDate: null,
+                    displayStatus: undefined,
+                    now: kstNoon("2026-08-06"),
+                })]).toEqual([code, expected]);
+            }
+        });
+
+        it("lets an authoritative display_status win for every status code and every value", () => {
+            for (const code of Object.keys(SENDABLE_WITHOUT_STEP)) {
+                for (const [displayStatus, expected] of Object.entries(DISPLAY_STATUS_SENDABLE)) {
+                    expect([code, displayStatus, isContractReceiptSendable({
+                        category: getEformsignStatusCategory(code),
+                        currentStatus: { status_type: code, step_type: null, step_name: null },
+                        contractEndDate: null,
+                        displayStatus,
+                    })]).toEqual([code, displayStatus, expected]);
+                }
+            }
+        });
+    });
 });
 
 /**
@@ -336,5 +608,117 @@ describe("unassigned display status (backend-stamped only)", () => {
                 }
             }
         }
+    });
+});
+
+/**
+ * 계약 파기 (BJJ-439): an app-only state. eformsign keeps reporting codes for a voided document, so
+ * `voidedAt` must win over every code and category. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("voided display status (BJJ-439 계약 파기)", () => {
+    const VOIDED_AT = "2026-10-13T01:02:03.000Z";
+    const base = { currentStatus: null, contractEndDate: null, now: kstNoon("2026-08-01") };
+
+    it("is a wire display status labelled 파기됨", () => {
+        expect(isContractDocDisplayStatus("voided")).toBe(true);
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided).toBe("파기됨");
+    });
+
+    it.each([
+        ["a completed code", "completed" as const, "003"],
+        ["an in-progress code", "in-progress" as const, "060"],
+        ["042 (revoked)", "expired" as const, "042"],
+        ["080 (expired)", "expired" as const, "080"],
+        ["040 (revoke requested)", "expired" as const, "040"],
+        ["071 (reviewer rejected)", "in-progress" as const, "071"],
+    ])("resolves to voided before %s", (_name, category, statusType) => {
+        const params = { ...base, category, statusType, voidedAt: VOIDED_AT };
+        expect(resolveContractDocDisplayStatus(params)).toBe("voided");
+        expect(resolveContractDocStatusLabel(params)).toBe("파기됨");
+    });
+
+    it("is also checked before the provider review step and end date", () => {
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "070",
+            voidedAt: VOIDED_AT,
+            now: kstNoon("2026-08-06"),
+        })).toBe("voided");
+    });
+
+    it("leaves every resolution unchanged when voidedAt is absent, null or empty", () => {
+        for (const voidedAt of [undefined, null, ""]) {
+            expect(resolveContractDocDisplayStatus({ ...base, category: "completed", statusType: "003", voidedAt })).toBe("completed");
+            expect(resolveContractDocDisplayStatus({ ...base, category: "in-progress", statusType: "060", voidedAt })).toBe("pending");
+            expect(resolveContractDocDisplayStatus({ ...base, category: "expired", statusType: "042", voidedAt })).toBe("revoked");
+            expect(resolveContractDocDisplayStatus({ ...base, category: "expired", statusType: "080", voidedAt })).toBe("expired");
+        }
+    });
+
+    it("is never receipt-sendable, by display status or by voidedAt", () => {
+        expect(isContractReceiptSendable({
+            category: "completed", displayStatus: "voided", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+        // The fallback path (no display_status) sees the column too.
+        expect(isContractReceiptSendable({
+            category: "completed",
+            currentStatus: { status_type: "003", step_type: "06", step_name: "제공기관 확인" },
+            contractEndDate: null,
+            voidedAt: VOIDED_AT,
+        })).toBe(false);
+        // Control: the same completed document without voidedAt is sendable.
+        expect(isContractReceiptSendable({
+            category: "completed",
+            currentStatus: { status_type: "003", step_type: "06", step_name: "제공기관 확인" },
+            contractEndDate: null,
+        })).toBe(true);
+    });
+});
+
+describe("isContractVoidable (BJJ-439 D4, UI side)", () => {
+    it.each(["completed", "signed", "review", "pending", "revoke_requested", "rejected_by_reviewer", "unassigned", "unknown"])(
+        "is true for a %s document",
+        (displayStatus) => {
+            expect(isContractVoidable({ displayStatus })).toBe(true);
+            expect(isContractVoidable({ displayStatus, voidedAt: null })).toBe(true);
+        },
+    );
+
+    it.each(["voided", "revoked", "expired"])("is false for a %s document", (displayStatus) => {
+        expect(isContractVoidable({ displayStatus })).toBe(false);
+    });
+
+    it("is false once voidedAt is set, whatever the display status says", () => {
+        expect(isContractVoidable({ displayStatus: "completed", voidedAt: "2026-10-13T01:02:03.000Z" })).toBe(false);
+        expect(isContractVoidable({ displayStatus: "pending", voidedAt: "2026-10-13T01:02:03.000Z" })).toBe(false);
+    });
+
+    it("looks the refused members up by label, so the label map stays the single source", () => {
+        const refused = Object.entries(CONTRACT_DOC_DISPLAY_STATUS_LABELS)
+            .filter(([displayStatus]) => !isContractVoidable({ displayStatus }))
+            .map(([, label]) => label)
+            .sort();
+        expect(refused).toEqual(["기간 만료", "철회됨", "파기됨"].sort());
+    });
+});
+
+describe("contract void copy (BJJ-439)", () => {
+    it("pins the row labels and every copy key", () => {
+        expect(CONTRACT_VOID_ROW_LABEL).toBe("파기");
+        expect(CONTRACT_VOIDED_BY_UNKNOWN_LABEL).toBe("알 수 없음");
+        expect(CONTRACT_VOID_COPY).toEqual({
+            action: "계약 파기",
+            confirmTitle: "계약을 파기할까요?",
+            confirmDescription: "파기하면 되돌릴 수 없습니다. 서명 전 계약서는 서명 링크도 함께 취소됩니다.",
+            confirm: "파기",
+            cancel: "취소",
+            pending: "파기 중",
+            success: "계약을 파기했습니다.",
+            conflict: "이미 파기되었거나 파기할 수 없는 계약서입니다.",
+            failure: "계약을 파기하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        });
     });
 });

@@ -2,7 +2,10 @@ import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/bus
 import {
   contractStatusBadgeType,
   getStatusCategory,
+  getStatusColor,
+  isCustomerSignedDisplayStatus,
   mapDocStatusLabel,
+  resolveDocDisplayStatus,
   mapStatusToLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
@@ -124,14 +127,156 @@ describe("040 (doc_request_revoke) 철회 요청됨", () => {
     expect(getStatusCategory("040")).toBe("expired");
   });
 
-  it("does not change 042/090 (revoked) or 080 (expired) labels", () => {
-    for (const code of ["042", "090", "080"]) {
-      expect(mapDocStatusLabel({ status_type: code })).toBe("기간 만료");
-    }
+  it("does not change the 080 (expired) label", () => {
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
   });
 
   it("uses the warning (review) badge tone, distinct from the expired one", () => {
     expect(contractStatusBadgeType("철회 요청됨")).toBe("review");
     expect(contractStatusBadgeType("기간 만료")).toBe("expired");
+  });
+});
+
+describe("042 (doc_revoke) / 090 (withdrawal) 철회됨", () => {
+  it("is labelled 철회됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "042" }, null, "revoked")).toBe("철회됨");
+    for (const code of ["042", "090", "doc_revoke"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("철회됨");
+      expect(resolveDocDisplayStatus({ status_type: code })).toBe("revoked");
+    }
+    expect(mapDocStatusLabel({ status_type: "042", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회됨");
+  });
+
+  it("keeps the expired category for filtering, tabs and stats", () => {
+    expect(getStatusCategory("042")).toBe("expired");
+    expect(getStatusCategory("090")).toBe("expired");
+  });
+
+  it("uses the danger (expired) badge token and the destructive variant, distinct from the 철회 요청됨 warning", () => {
+    expect(contractStatusBadgeType("철회됨")).toBe("expired");
+    expect(contractStatusBadgeType("철회 요청됨")).toBe("review");
+    expect(getStatusColor("철회됨")).toBe("destructive");
+    expect(getStatusColor("철회 요청됨")).not.toBe("destructive");
+  });
+
+  it("never counts as a customer signature", () => {
+    expect(isCustomerSignedDisplayStatus("revoked")).toBe(false);
+  });
+});
+
+describe("071 (doc_reject_reviewer) 반려됨, 계약-04", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 반려됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "071" }, null, "rejected_by_reviewer")).toBe("반려됨");
+    for (const code of ["071", "doc_reject_reviewer"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("반려됨");
+      expect(resolveDocDisplayStatus({ status_type: code })).toBe("rejected_by_reviewer");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2027-12-31")).toBe("반려됨");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2025-01-01")).toBe("반려됨");
+    }
+  });
+
+  it("is in progress (the 대기 tab), never expired or unknown; 080 stays 기간 만료", () => {
+    expect(getStatusCategory("071")).toBe("in-progress");
+    expect(getStatusCategory("080")).toBe("expired");
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
+    expect(mapDocStatusLabel({ status_type: "061" })).toBe("기간 만료");
+  });
+
+  it("uses its own solid badge status, distinct from the soft danger of 기간 만료 / 철회됨", () => {
+    expect(contractStatusBadgeType("반려됨")).toBe("rejected_by_reviewer");
+    expect(contractStatusBadgeType("기간 만료")).toBe("expired");
+    expect(contractStatusBadgeType("철회됨")).toBe("expired");
+    expect(getStatusColor("반려됨")).toBe("destructive");
+  });
+
+  it("counts as a customer signature (the signature stays valid)", () => {
+    expect(isCustomerSignedDisplayStatus("rejected_by_reviewer")).toBe(true);
+  });
+});
+
+describe("045 (doc_request_reject) is treated exactly like 040", () => {
+  it("is labelled 철회 요청됨 with the warning tone and keeps the expired category", () => {
+    expect(mapDocStatusLabel({ status_type: "045" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "doc_request_reject" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "045", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "045" }, null, "revoke_requested")).toBe("철회 요청됨");
+    expect(getStatusCategory("045")).toBe("expired");
+    expect(contractStatusBadgeType(mapDocStatusLabel({ status_type: "045" }))).toBe("review");
+  });
+});
+
+describe("041 (doc_refuse_revoke) reads exactly like 060", () => {
+  const customerStep = { step_type: "05", step_name: "이용자 서명" };
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is in progress and labelled by step and review window like 060", () => {
+    expect(getStatusCategory("041")).toBe("in-progress");
+    expect(getStatusCategory("doc_refuse_revoke")).toBe("in-progress");
+    for (const step of [customerStep, reviewStep]) {
+      for (const endDate of [null, "2027-12-31", "2025-01-01"]) {
+        expect(mapDocStatusLabel({ status_type: "041", ...step }, endDate)).toBe(
+          mapDocStatusLabel({ status_type: "060", ...step }, endDate),
+        );
+      }
+    }
+    expect(mapDocStatusLabel({ status_type: "041", ...customerStep })).toBe("서명 대기");
+    expect(mapDocStatusLabel({ status_type: "041", ...reviewStep }, "2025-01-01")).toBe("검토 필요");
+  });
+});
+
+describe("customer-signed (contracts stepper) is decided from the display status, not the label text", () => {
+  const customerStep = { step_type: "05", step_name: "이용자 서명" };
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+  const signedFor = (status: Parameters<typeof resolveDocDisplayStatus>[0], endDate: string | null, displayStatus?: string | null) =>
+    isCustomerSignedDisplayStatus(resolveDocDisplayStatus(status, endDate, displayStatus));
+
+  it("060 on the customer step is not signed; 062 / 070 at review / 050 / 003 are", () => {
+    expect(signedFor({ status_type: "060", ...customerStep }, null)).toBe(false);
+    expect(signedFor({ status_type: "062", ...customerStep }, null)).toBe(true);
+    expect(signedFor({ status_type: "070", ...reviewStep }, "2027-12-31")).toBe(true);
+    expect(signedFor({ status_type: "070", ...reviewStep }, "2025-01-01")).toBe(true);
+    expect(signedFor({ status_type: "072", ...reviewStep }, null)).toBe(true);
+    expect(signedFor({ status_type: "050", ...reviewStep }, null)).toBe(true);
+    expect(signedFor({ status_type: "003", ...reviewStep }, null)).toBe(true);
+  });
+
+  it("an unassigned document (고객 등록 필요) at the review step counts as customer-signed", () => {
+    // The label is 고객 등록 필요, which the old label comparison did not recognise.
+    expect(mapDocStatusLabel({ status_type: "070", ...reviewStep }, null, "unassigned")).toBe("고객 등록 필요");
+    expect(signedFor({ status_type: "070", ...reviewStep }, null, "unassigned")).toBe(true);
+  });
+
+  it("040 / 045 / expired statuses claim no signature, and 041 follows 060", () => {
+    for (const code of ["040", "045", "042", "080"]) {
+      expect(signedFor({ status_type: code, ...reviewStep }, null)).toBe(false);
+    }
+    expect(signedFor({ status_type: "041", ...customerStep }, null)).toBe(false);
+    expect(signedFor({ status_type: "041", ...reviewStep }, "2025-01-01")).toBe(true);
+  });
+});
+
+describe("voided (계약 파기, BJJ-439) 파기됨", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 파기됨 from display_status whatever the provider code says", () => {
+    for (const code of ["003", "060", "070", "042", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, null, "voided")).toBe("파기됨");
+      expect(resolveDocDisplayStatus({ status_type: code, ...reviewStep }, null, "voided")).toBe("voided");
+    }
+  });
+
+  it("uses the neutral pending badge token and the neutral (secondary) variant, not a danger tone", () => {
+    expect(contractStatusBadgeType("파기됨")).toBe("pending");
+    expect(getStatusColor("파기됨")).toBe("secondary");
+    expect(getStatusColor("파기됨")).not.toBe("destructive");
+  });
+
+  it("never counts as a customer signature, even though the document may have been signed", () => {
+    expect(isCustomerSignedDisplayStatus("voided")).toBe(false);
+    expect(isCustomerSignedDisplayStatus(resolveDocDisplayStatus({ status_type: "003", ...reviewStep }, null, "voided"))).toBe(false);
+    // Control: the same completed document without the void is customer-signed.
+    expect(isCustomerSignedDisplayStatus(resolveDocDisplayStatus({ status_type: "003", ...reviewStep }, null, "completed"))).toBe(true);
   });
 });

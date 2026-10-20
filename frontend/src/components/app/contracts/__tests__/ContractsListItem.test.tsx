@@ -49,7 +49,11 @@ describe("ContractsListItem", () => {
     ["review", "검토 필요", "bg-v3-orange-light", "text-v3-orange"],
     ["completed", "계약 완료", "bg-v3-green-light", "text-v3-green"],
     ["revoke_requested", "철회 요청됨", "bg-v3-orange-light", "text-v3-orange"],
+    ["revoked", "철회됨", "bg-v3-burgundy-light", "text-v3-burgundy"],
+    ["rejected_by_reviewer", "반려됨", "bg-v3-burgundy-light", "text-v3-burgundy"],
     ["expired", "기간 만료", "bg-v3-burgundy-light", "text-v3-burgundy"],
+    // 계약 파기 (BJJ-439): neutral, the same avatar as the pending badge.
+    ["voided", "파기됨", "bg-v3-dim-white", "text-v3-text-muted"],
   ] as const)(
     "matches the avatar tone to the %s status badge",
     (displayStatus, statusLabel, avatarBackgroundClass, avatarIconClass) => {
@@ -75,10 +79,12 @@ describe("ContractsListItem", () => {
 
   it.each([
     ["040", "철회 요청됨", "bg-v3-orange-light"],
-    ["042", "기간 만료", "bg-v3-burgundy-light"],
+    ["045", "철회 요청됨", "bg-v3-orange-light"],
+    ["042", "철회됨", "bg-v3-burgundy-light"],
+    ["090", "철회됨", "bg-v3-burgundy-light"],
     ["080", "기간 만료", "bg-v3-burgundy-light"],
   ] as const)(
-    "without display_status, labels status code %s as %s (040 is not 기간 만료)",
+    "without display_status, labels status code %s as %s (040 is not 기간 만료, 042/090 are 철회됨)",
     (statusType, statusLabel, avatarBackgroundClass) => {
       const base = documentFixture();
       const { container } = render(
@@ -94,6 +100,30 @@ describe("ContractsListItem", () => {
       expect(container.querySelector('[data-component="desktop_contracts_tests_list-item_icon"]')).toHaveClass(avatarBackgroundClass);
     },
   );
+
+  it("renders a 071 contract as 반려됨 with the solid burgundy badge, while 기간 만료 keeps its soft danger classes", () => {
+    const base = documentFixture();
+    const render071 = (statusType: string) => render(
+      <ContractsListItem
+        data-component="desktop_contracts_tests_list-item"
+        document={{ ...base, current_status: { ...base.current_status, status_type: statusType, step_type: "06", step_name: "제공기관 확인" } }}
+        customerName="송진호"
+        isLoading={false}
+      />,
+    );
+
+    const rejected = render071("071").container.querySelector('[data-component="desktop_contracts_tests_list-item_status"]');
+    expect(rejected).toHaveTextContent("반려됨");
+    const rejectedBadge = rejected?.querySelector('[data-slot="status-badge"]');
+    expect(rejectedBadge).toHaveClass("bg-status-danger-solid", "border-status-danger-solid", "text-status-danger-solid-fg");
+    expect(rejectedBadge).not.toHaveClass("bg-status-danger", "text-status-danger-fg");
+
+    const expired = render071("080").container.querySelector('[data-component="desktop_contracts_tests_list-item_status"]');
+    expect(expired).toHaveTextContent("기간 만료");
+    const expiredBadge = expired?.querySelector('[data-slot="status-badge"]');
+    expect(expiredBadge).toHaveClass("bg-status-danger", "border-status-danger-line", "text-status-danger-fg");
+    expect(expiredBadge).not.toHaveClass("bg-status-danger-solid");
+  });
 
   it.each([null, "", "   ", "-"])(
     "shows 이름 없음 when the recipient name is unresolved (%p)",

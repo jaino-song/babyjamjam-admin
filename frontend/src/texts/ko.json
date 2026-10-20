@@ -3,7 +3,7 @@
     "owner": "오너",
     "admin": "지점장",
     "manager": "매니저",
-    "user": "유저",
+    "user": "회원",
     "unknown": "사용자"
   },
   "common": {
@@ -395,6 +395,7 @@
       "care-center": "산후조리원",
       "breast-pump": "유축기 대여",
       "message-automation": "메시지 자동 전송",
+      "message-automation-helper": "끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요.",
       "error-name-required": "이름을 입력해 주세요.",
       "error-birthday-required": "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
       "error-due-date-required": "출산 예정일을 입력해 주세요.",
@@ -427,6 +428,7 @@
       "doc-revoked": "철회됨",
       "doc-revoke-requested": "철회 요청됨",
       "doc-deleted": "삭제됨",
+      "doc-voided": "파기됨",
       "add-description": "새로운 고객을 등록하기 위해 양식을 작성하세요",
       "edit-description": "고객 정보를 수정합니다"
     },
@@ -463,6 +465,8 @@
       "work-area": "근무 지역",
       "grade": "등급",
       "open-to-next-work": "다음 배정 가능 여부",
+      "message-automation": "메시지 자동 전송",
+      "message-automation-helper": "끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요.",
       "registered-date": "등록일",
       "registered-date-unknown": "알 수 없음",
       "work-area-required": "근무 지역을 선택해 주세요",

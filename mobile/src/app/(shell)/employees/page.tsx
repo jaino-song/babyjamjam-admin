@@ -11,6 +11,7 @@ import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { EmployeeDetailContent, type EmployeeDetailTabId } from "@/components/app/employees/EmployeeDetailContent";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useToast } from "@/hooks/use-toast";
 import { t } from "@/lib/i18n/translations";
@@ -68,7 +69,7 @@ export default function EmployeesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
-  const { allEmployees, filteredEmployees, isLoading } = useInfiniteEmployees({
+  const { allEmployees, filteredEmployees, isLoading, isError, refetch, isFetching } = useInfiniteEmployees({
     filter: "all",
     search: searchQuery,
   });
@@ -149,14 +150,15 @@ export default function EmployeesPage() {
       ];
     }
 
+    const hideCounts = isError && allEmployees.length === 0;
     const items: Array<{ label: string; count: string }> = [
-      { label: ALL_FILTER, count: String(filteredEmployees.length) },
+      { label: ALL_FILTER, count: hideCounts ? "" : String(filteredEmployees.length) },
     ];
     for (const g of GROUPS) {
-      items.push({ label: g.title, count: String(grouped.counts[g.key]) });
+      items.push({ label: g.title, count: hideCounts ? "" : String(grouped.counts[g.key]) });
     }
     return items;
-  }, [filteredEmployees.length, grouped.counts, isEmployeesFetching]);
+  }, [allEmployees.length, filteredEmployees.length, grouped.counts, isEmployeesFetching, isError]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -230,7 +232,7 @@ export default function EmployeesPage() {
                   ? <ListCountSkeleton
                       data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_header_count-skeleton"
                     />
-                  : `${filteredEmployees.length}명`
+                  : isError && allEmployees.length === 0 ? null : `${filteredEmployees.length}명`
               }
               actionLabel="+ 추가"
               actionHref="/employees/new"
@@ -250,9 +252,25 @@ export default function EmployeesPage() {
                 />
               }
             >
+              {isError && allEmployees.length > 0 && (
+                <QueryErrorState
+                  dataComponent="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_cached-error"
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => void refetch()}
+                  isRetrying={isFetching}
+                />
+              )}
               {isEmployeesFetching ? (
                 <ListRowsSkeleton
                   data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton"
+                />
+              ) : isError && allEmployees.length === 0 ? (
+                <QueryErrorState
+                  dataComponent="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_error"
+                  size="panel"
+                  onRetry={() => void refetch()}
+                  isRetrying={isFetching}
                 />
               ) : visibleSections.length === 0 ? (
                 <div

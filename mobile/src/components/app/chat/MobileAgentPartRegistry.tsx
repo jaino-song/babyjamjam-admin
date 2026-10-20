@@ -20,7 +20,8 @@ import {
     type ClientInputOperation,
 } from "@babyjamjam/shared";
 
-import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
+import { AgentActionApprovalCard, omitMaskedContactKeys } from "@/components/app/ui/AgentActionApprovalCard";
+import { AgentContactCard } from "./AgentContactCard";
 import { AgentMarkdownText } from "./AgentMarkdownText";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -139,9 +140,17 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
     if (part.type === "data-action-proposal") {
         const parsed = AgentActionProposalPartSchema.safeParse(part.data);
         if (!parsed.success) return <Fallback />;
+        const candidates = [
+            { clientId: contactId(parsed.data.target?.clientId) },
+            { employeeId: contactId(parsed.data.target?.employeeId) },
+            { clientId: contactId(parsed.data.changes.clientId) },
+            { employeeId: contactId(parsed.data.changes.employeeId) },
+        ];
+        const contact = candidates.find((candidate) => candidate.clientId !== undefined || candidate.employeeId !== undefined);
         return <AgentActionApprovalCard
             data-component={dataComponent}
             {...parsed.data}
+            contact={contact ? <AgentContactCard data-component={`${dataComponent}_content_contact`} {...contact} /> : undefined}
             terminal={terminalActionIds?.has(parsed.data.actionId) ?? false}
             onApprove={onApproveAction}
             onReject={onRejectAction}
@@ -150,7 +159,7 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
     if (part.type === "data-action-result") {
         const parsed = AgentActionResultPartSchema.safeParse(part.data);
         const label = parsed.success ? parsed.data.status === "succeeded" ? "완료" : parsed.data.status === "uncertain" ? "확인 필요" : parsed.data.status === "rejected" ? "거절됨" : parsed.data.status === "expired" ? "만료됨" : parsed.data.status === "cancelled" ? "취소됨" : "실패" : "";
-        return parsed.success ? <section data-slot="action-result" className="rounded-xl border p-3"><p className="font-semibold">{label}</p><p className="text-sm">{parsed.data.summary}</p>{parsed.data.result && <details data-slot="action-result-details" className="mt-2"><summary className="text-sm font-medium">처리 상세</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(parsed.data.result, null, 2)?.slice(0, 4000)}</pre></details>}{parsed.data.href && <a href={parsed.data.href} className="text-sm underline">결과 열기</a>}</section> : <Fallback />;
+        return parsed.success ? <section data-slot="action-result" className="rounded-xl border p-3"><p className="font-semibold">{label}</p><p className="text-sm">{parsed.data.summary}</p>{parsed.data.result && <details data-slot="action-result-details" className="mt-2"><summary className="text-sm font-medium">처리 상세</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(omitMaskedContactKeys(parsed.data.result), null, 2)?.slice(0, 4000)}</pre></details>}{parsed.data.href && <a href={parsed.data.href} className="text-sm underline">결과 열기</a>}</section> : <Fallback />;
     }
     if (part.type === "data-form") {
         const parsed = AgentFormPartSchema.safeParse(part.data);
@@ -172,6 +181,12 @@ function MobileAgentForm({ "data-component": dataComponent, formId, title, field
     const [values, setValues] = useState<Record<string, unknown>>({});
     const sub = (suffix: string) => `${dataComponent}_${suffix}`;
     return <form data-component={dataComponent} data-slot="form" data-source-component="MobileAgentForm" className="flex flex-col gap-3 rounded-xl border p-3" onSubmit={(event) => { event.preventDefault(); if (!event.currentTarget.checkValidity()) return; onSubmit(formId, normalizeFormValues(fields, values)); }}><p data-component={sub("title")} data-slot="title" className="font-semibold">{title}</p>{fields.map((field) => <div key={field.name} data-component={sub("field")} className="flex flex-col gap-1"><Label data-component={sub("field_label")} htmlFor={`${formId}-${field.name}`}>{field.label}</Label>{field.type === "textarea" ? <Textarea data-component={sub("field_control")} id={`${formId}-${field.name}`} required={field.required} inputMode={field.inputMode} maxLength={field.maxLength} placeholder={field.placeholder ?? field.label} value={String(values[field.name] ?? "")} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} /> : field.type === "boolean" ? <Checkbox data-component={sub("field_control")} id={`${formId}-${field.name}`} checked={values[field.name] === true} onCheckedChange={(checked) => setValues((current) => ({ ...current, [field.name]: checked === true }))} /> : <Input data-component={sub("field_control")} id={`${formId}-${field.name}`} type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} inputMode={field.inputMode} maxLength={field.maxLength} required={field.required} placeholder={field.placeholder ?? field.label} value={String(values[field.name] ?? "")} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} />}</div>)}<Button data-component={sub("submit")} type="submit">제출</Button></form>;
+}
+
+function contactId(value: unknown): number | undefined {
+    const id = typeof value === "number" ? value
+        : typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
+    return Number.isSafeInteger(id) && id > 0 ? id : undefined;
 }
 
 function Fallback() {

@@ -158,6 +158,44 @@ describe("ClientServiceRecords", () => {
         });
     });
 
+    it("shows just the latest case header, not stale assignment headers", () => {
+        const record = createRecord("COMPLETED");
+        record.header = { momName: "최신 산모" } as NonNullable<ServiceRecordCase["header"]>;
+        const assignment = createAssignment(1, "sent");
+        assignment.header = { momName: "이전 산모" } as NonNullable<ServiceRecordAssignment["header"]>;
+        renderComponent({ record, assignments: [assignment, { ...assignment, scheduleId: 2 }] });
+        expect(screen.getByText("최신 산모")).toBeInTheDocument();
+        expect(screen.queryByText("이전 산모")).not.toBeInTheDocument();
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(1);
+    });
+
+    it("keeps a null case header empty rather than falling back to assignments", () => {
+        const assignment = createAssignment(1, "sent");
+        assignment.header = { momName: "이전 산모" } as NonNullable<ServiceRecordAssignment["header"]>;
+        renderComponent({ record: createRecord("COMPLETED"), assignments: [assignment] });
+        expect(screen.queryByText("이전 산모")).not.toBeInTheDocument();
+        expect(screen.getByText(/아직 작성된 기본정보가 없습니다/)).toBeInTheDocument();
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(1);
+    });
+
+    it("shows a case header even without assignments", () => {
+        const record = createRecord("COMPLETED");
+        record.header = { momName: "최신 산모" } as NonNullable<ServiceRecordCase["header"]>;
+        renderComponent({ record, assignments: [] });
+        expect(screen.getByText("최신 산모")).toBeInTheDocument();
+    });
+
+    it("keeps per-assignment headers when there is no case", () => {
+        const first = createAssignment(1, "sent");
+        first.header = { momName: "첫 배정" } as NonNullable<ServiceRecordAssignment["header"]>;
+        const second = createAssignment(2, "sent");
+        second.header = { momName: "다음 배정" } as NonNullable<ServiceRecordAssignment["header"]>;
+        renderComponent({ record: null, assignments: [first, second] });
+        expect(screen.getByText("첫 배정")).toBeInTheDocument();
+        expect(screen.getByText("다음 배정")).toBeInTheDocument();
+        expect(screen.getAllByText("서비스 기본정보")).toHaveLength(2);
+    });
+
     it("renders the main link states", () => {
         renderComponent({
             assignments: [
@@ -205,18 +243,15 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
     });
 
-    it("adds the 7-day grace period to the fallback link-expiry shown before a link is issued", () => {
+    it("shows midnight after the end date as fallback expiry before a link is issued", () => {
         // Assignment 1 has status "none" (link.token is null), so the
         // displayed expiry falls back to endDateExpiry(assignment.endDate).
-        // endDate is TEST_END_DATE = 2026-07-30; endDateExpiry must add the
-        // SERVICE_RECORD_LINK_GRACE_DAYS grace period (7 calendar days,
-        // mirroring the backend constant) -> 2026-08-06 20:00 KST, not the
-        // pre-grace 2026-07-30 20:00 KST.
+        // Mirrors getServiceRecordTokenExpiresAt: 2026-07-31 00:00 KST.
         renderComponent({
             assignments: [createAssignment(1, "none")],
         });
 
-        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.08.06 20:00");
+        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.07.31 00:00");
     });
 
     it("formats the newborn birth date instead of exposing raw YYMMDD", () => {
@@ -607,5 +642,108 @@ describe("ClientServiceRecords", () => {
         ]);
         // The hook is asked for the years of the assignment's own dates.
         expect(mockUseBusinessDayCalendar).toHaveBeenCalledWith({ extraYears: expect.arrayContaining([2026, 2027]) });
+    });
+});
+
+describe("ClientServiceRecords: loading, failed and empty are different states", () => {
+    const ERROR_TITLE = "제공기록지 정보를 불러오지 못했습니다";
+    const EMPTY_TEXT = "제공기록지 배정 정보가 없습니다.";
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockResendModalRenders.length = 0;
+        mockUseBusinessDayCalendar.mockImplementation(() => builtinCalendarResult);
+        mockMutateAsync.mockResolvedValue(undefined);
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "user", branchRole: "manager" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
+    });
+
+    function renderState(props: {
+        overview?: ServiceRecordOverview;
+        isLoading?: boolean;
+        isError?: boolean;
+        isRefreshing?: boolean;
+        onRefresh?: () => void;
+    }) {
+        return render(
+            <ClientServiceRecords
+                data-component={TEST_COMPONENT}
+                client={client}
+                activeTab="serviceRecords"
+                overview={props.overview}
+                isLoading={props.isLoading ?? false}
+                isError={props.isError ?? false}
+                isRefreshing={props.isRefreshing}
+                onRefresh={props.onRefresh}
+            />,
+        );
+    }
+
+    it("shows the skeleton while loading, and neither the error panel nor the empty state", () => {
+        renderState({ isLoading: true });
+
+        expect(document.querySelector(`[data-component="${TEST_COMPONENT}_skeleton"]`)).not.toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByText(ERROR_TITLE)).not.toBeInTheDocument();
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+    });
+
+    it("shows the error panel with a retry button when the load failed with no data, and retry calls onRefresh", async () => {
+        const onRefresh = jest.fn();
+        renderState({ isError: true, onRefresh });
+
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent(ERROR_TITLE);
+        expect(alert).toHaveAttribute("data-component", `${TEST_COMPONENT}_error`);
+        // The error must not wear the empty state's class or text.
+        expect(alert).not.toHaveClass("detail-empty-state");
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables the retry button while a refresh is in flight", () => {
+        renderState({ isError: true, isRefreshing: true, onRefresh: jest.fn() });
+
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    });
+
+    it("keeps the cached data visible and shows a notice with retry when a refetch failed", async () => {
+        const onRefresh = jest.fn();
+        renderState({ overview: { assignments: [createAssignment(1, "sent")] }, isError: true, onRefresh });
+
+        expect(screen.getByText("발송됨")).toBeInTheDocument();
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        // The notice sits above the cached rows.
+        expect(
+            alert.compareDocumentPosition(screen.getByText("발송됨")) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(screen.queryByText(ERROR_TITLE)).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the notice, not only the empty text, when a refetch failed over a cached empty result", () => {
+        renderState({ overview: { assignments: [] }, isError: true, onRefresh: jest.fn() });
+
+        expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    });
+
+    it("shows the existing empty state, and no retry button, for a successful empty result", () => {
+        renderState({ overview: { assignments: [] } });
+
+        expect(screen.getByText(EMPTY_TEXT)).toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
     });
 });

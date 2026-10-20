@@ -156,6 +156,13 @@ export interface ServiceRecordEditPreviewVector {
     sessions: ServiceRecordPlannedSession[];
 }
 
+export interface ServiceRecordEditPreviewImpactedAssignment {
+    assignmentId: string;
+    employeeName: string | null;
+    startDate: string | null;
+    endDate: string | null;
+}
+
 /**
  * Server-owned preview contract. The identifier is bound to every value that
  * a later atomic confirm will recheck; clients cannot supply provenance or
@@ -174,6 +181,8 @@ export interface ServiceRecordEditPreviewResponse {
     provenance: ServiceRecordEditPreviewAssignmentRange[];
     contentChanges: ServiceRecordEditPreviewContentChanges;
     impactedAssignments: string[];
+    /** Display details for `impactedAssignments`, in the same order. */
+    impactedAssignmentDetails?: ServiceRecordEditPreviewImpactedAssignment[];
     blockingReasons: ServiceRecordEditPreviewBlockingReason[];
     signatureMetadata: ServiceRecordEditSignatureMetadata;
     documentScope: ServiceRecordEditDocumentScope;
@@ -333,6 +342,35 @@ export interface ServiceRecordRevisionHistoryResponse {
     currentRevisionId: string | null;
     currentUsableRevisionId: string | null;
     revisions: ServiceRecordRevisionHistoryEntry[];
+}
+
+export type ServiceRecordRevisionChangeValue = string | number | boolean | null | string[];
+
+export interface ServiceRecordRevisionFieldChange {
+    /** "period.startDate" | "period.endDate" | "header.<key>" | "session.serviceDate"
+     *  | "session.answers.<key>" | "session.etcService" | "session.notes"
+     *  | "session.paymentConfirmed" | "session.employee" | "session.clientSignature" */
+    path: string;
+    before: ServiceRecordRevisionChangeValue;
+    after: ServiceRecordRevisionChangeValue;
+}
+
+export interface ServiceRecordRevisionSessionChange {
+    sessionIndex: number;
+    kind: "added" | "removed" | "changed";
+    serviceDateBefore: string | null; // YYYY-MM-DD
+    serviceDateAfter: string | null;
+    changes: ServiceRecordRevisionFieldChange[];
+}
+
+export interface ServiceRecordRevisionChangesResponse {
+    revisionId: string;
+    revisionNumber: number;
+    confirmedAt: string; // ISO 8601
+    formVersion: number;
+    beforeAvailable: boolean;
+    basicInfo: ServiceRecordRevisionFieldChange[];
+    sessions: ServiceRecordRevisionSessionChange[];
 }
 
 export interface ServiceRecordRevisionDocumentRetryRequest {

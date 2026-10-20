@@ -68,16 +68,289 @@ describe("SbEformsignDocRepository", () => {
 
     let eformsignDocModel: ReturnType<typeof createMockPrismaEformsignDoc>;
     let repository: SbEformsignDocRepository;
+    let userModel: { findMany: jest.Mock };
 
     beforeEach(() => {
         eformsignDocModel = createMockPrismaEformsignDoc();
+        userModel = { findMany: jest.fn() };
         repository = new SbEformsignDocRepository({
             eformsign_doc: eformsignDocModel,
+            user: userModel,
         } as unknown as PrismaService);
     });
 
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    it("findVoidCandidate uses the exact branch-scoped projection and includes purge pending", async () => {
+        const row = { documentId: "doc-1", permanentPurgeRequestedAt: new Date() };
+        eformsignDocModel.findFirst.mockResolvedValue(row);
+        await expect(repository.findVoidCandidate("branch-1", "doc-1")).resolves.toBe(row);
+        expect(eformsignDocModel.findFirst).toHaveBeenCalledWith({
+            where: { documentId: "doc-1", branchId: "branch-1" },
+            select: {
+                documentId: true, clientId: true, documentKind: true, serviceRecordCaseId: true,
+                statusType: true, stepType: true, stepName: true, voidedAt: true, permanentPurgeRequestedAt: true,
+            },
+        });
+    });
+    it.each(["branch-2", null])("findVoidCandidate cannot return a row owned by %s", async (branchId) => {
+        const row = { documentId: "doc-1", branchId };
+        eformsignDocModel.findFirst.mockImplementation(async ({ where }) =>
+            row.documentId === where.documentId && row.branchId === where.branchId ? row : null);
+        await expect(repository.findVoidCandidate("branch-1", "doc-1")).resolves.toBeNull();
+        expect(eformsignDocModel.findFirst).toHaveBeenCalledTimes(1);
+        expect(eformsignDocModel.findUnique).not.toHaveBeenCalled();
+    });
+    it("findVoidCandidate requires voided_at without a deploy-window fallback", async () => {
+        const error = Object.assign(new Error("column voided_at missing"), { code: "P2022" });
+        eformsignDocModel.findFirst.mockRejectedValue(error);
+        await expect(repository.findVoidCandidate("branch-1", "doc-1")).rejects.toBe(error);
+        expect(eformsignDocModel.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("findVoidedByNames queries distinct ids once and selects only id and name", async () => {
+        userModel.findMany.mockResolvedValue([
+            { id: "actor-1", name: "담당자" },
+            { id: "actor-2", name: null },
+        ]);
+
+        const names = await repository.findVoidedByNames(["actor-1", "actor-1", "actor-2", "missing"]);
+
+        expect(userModel.findMany).toHaveBeenCalledTimes(1);
+        expect(userModel.findMany).toHaveBeenCalledWith({
+            where: { id: { in: ["actor-1", "actor-2", "missing"] } },
+            select: { id: true, name: true },
+        });
+        expect(names).toEqual(new Map([["actor-1", "담당자"], ["actor-2", null]]));
+        expect(names.has("missing")).toBe(false);
+    });
+
+    it("findVoidedByNames returns an empty map without querying for empty input", async () => {
+        await expect(repository.findVoidedByNames([])).resolves.toEqual(new Map());
+        expect(userModel.findMany).not.toHaveBeenCalled();
+    });
+
+    describe("markVoided (BJJ-439 D3: serialised with phone-link pointer writers through the client row lock)", () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+        const voidedAt = new Date("2026-10-14T00:00:00Z");
+
+        /**
+         * A transaction double that answers by SQL shape and records the order of every statement,
+         * so a mock cannot pass without the client lock (and write) coming before the document lock.
+         */
+        function voidTransaction(options: {
+            peek: Array<{ clientId: number | null }>;
+            locked?: Array<{ clientId: number | null }>;
+            lockedClients?: Array<{ id: number }>;
+            count?: number;
+        }) {
+            const order: string[] = [];
+            const $queryRaw = jest.fn().mockImplementation(async (query: { strings: string[] }) => {
+                const sql = query.strings.join(" ");
+                if (/FROM client\b/.test(sql)) {
+                    order.push("CLIENT_LOCK");
+                    expect(sql).toContain("FOR UPDATE");
+                    return options.lockedClients ?? [{ id: 55 }];
+                }
+                if (/FROM eformsign_doc\b/.test(sql) && sql.includes("FOR UPDATE")) {
+                    order.push("DOCUMENT_LOCK");
+                    expect(sql).toContain("voided_at IS NULL");
+                    expect(sql).toContain("permanent_purge_requested_at IS NULL");
+                    return options.locked ?? [{ clientId: 55 }];
+                }
+                if (/FROM eformsign_doc\b/.test(sql)) {
+                    order.push("PEEK");
+                    expect(sql).toContain("voided_at IS NULL");
+                    expect(sql).toContain("permanent_purge_requested_at IS NULL");
+                    return options.peek;
+                }
+                throw new Error(`unexpected query: ${sql}`);
+            });
+            const $executeRaw = jest.fn().mockImplementation(async (query: { strings: string[] }) => {
+                order.push(`EXECUTE ${query.strings.join(" ").replace(/\s+/g, " ").trim()}`);
+                return 1;
+            });
+            const updateMany = jest.fn().mockImplementation(async () => {
+                order.push("DOCUMENT_WRITE");
+                return { count: options.count ?? 1 };
+            });
+            return { $queryRaw, $executeRaw, eformsign_doc: { updateMany }, order };
+        }
+
+        function repositoryFor(transactions: Array<ReturnType<typeof voidTransaction>>) {
+            const queue = [...transactions];
+            const $transaction = jest.fn(async (callback: (tx: unknown) => unknown) => {
+                const next = queue.length > 1 ? queue.shift()! : queue[0]!;
+                return callback(next);
+            });
+            return {
+                $transaction,
+                repository: new SbEformsignDocRepository({
+                    eformsign_doc: eformsignDocModel,
+                    $transaction,
+                } as unknown as PrismaService),
+            };
+        }
+
+        it("locks the client row, writes it with no value change, then locks the document and voids it", async () => {
+            const transaction = voidTransaction({ peek: [{ clientId: 55 }] });
+            const { repository: repo, $transaction } = repositoryFor([transaction]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(true);
+
+            expect($transaction).toHaveBeenCalledTimes(1);
+            expect(transaction.order).toEqual([
+                "PEEK",
+                "CLIENT_LOCK",
+                expect.stringMatching(/^EXECUTE UPDATE client SET e_doc_id = e_doc_id WHERE id =/),
+                "DOCUMENT_LOCK",
+                "DOCUMENT_WRITE",
+            ]);
+            expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledWith({
+                where: { documentId: "doc-1", branchId, voidedAt: null, permanentPurgeRequestedAt: null },
+                data: { voidedAt, voidedBy: "actor" },
+            });
+            // The client lock and write target the owner that was read, nothing else.
+            expect(transaction.$queryRaw.mock.calls[1]![0].values).toContain(55);
+            expect(transaction.$executeRaw.mock.calls[0]![0].values).toContain(55);
+            expect(eformsignDocModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["already voided or purge-requested (no row passes the unlocked read)", []],
+            ["without an owner", [{ clientId: null }]],
+        ])("returns false and locks nothing when the document is %s", async (_label, peek) => {
+            const transaction = voidTransaction({ peek });
+            const { repository: repo } = repositoryFor([transaction]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect(transaction.order).toEqual(["PEEK"]);
+            expect(transaction.$executeRaw).not.toHaveBeenCalled();
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("returns false and writes nothing when the document was voided or purge-requested before its lock", async () => {
+            const transaction = voidTransaction({ peek: [{ clientId: 55 }], locked: [] });
+            const { repository: repo } = repositoryFor([transaction]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect(transaction.order).toEqual(["PEEK", "CLIENT_LOCK", expect.stringMatching(/^EXECUTE/), "DOCUMENT_LOCK"]);
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("rolls back and retries with the new owner when the peeked owner row is gone (reassigned, then deleted)", async () => {
+            // The vendor cancel already happened: a vanished observed owner is an owner change, not a refusal.
+            const vanished = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
+            const settled = voidTransaction({
+                peek: [{ clientId: 77 }], locked: [{ clientId: 77 }], lockedClients: [{ id: 77 }],
+            });
+            const { repository: repo, $transaction } = repositoryFor([vanished, settled]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(true);
+
+            expect($transaction).toHaveBeenCalledTimes(2);
+            expect(vanished.order).toEqual(["PEEK", "CLIENT_LOCK"]);
+            expect(vanished.$executeRaw).not.toHaveBeenCalled();
+            expect(vanished.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(settled.$queryRaw.mock.calls[1]![0].values).toContain(77);
+            expect(settled.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it("returns false only when the re-peek after a vanished owner finds no owner", async () => {
+            const vanished = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
+            const unowned = voidTransaction({ peek: [{ clientId: null }] });
+            const { repository: repo, $transaction } = repositoryFor([vanished, unowned]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect($transaction).toHaveBeenCalledTimes(2);
+            expect(vanished.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(unowned.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("gives up with false after the bounded number of vanished owners", async () => {
+            const vanished = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
+            const { repository: repo, $transaction } = repositoryFor([vanished]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect($transaction).toHaveBeenCalledTimes(3);
+            expect(vanished.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("returns false when the update matches no row", async () => {
+            const transaction = voidTransaction({ peek: [{ clientId: 55 }], count: 0 });
+            const { repository: repo } = repositoryFor([transaction]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+        });
+
+        it("rolls back and retries with the new owner when the owner moved between the read and the lock", async () => {
+            // Attempt 1 read owner 55 but the locked row belongs to 77; attempt 2 sees 77 throughout.
+            const moved = voidTransaction({ peek: [{ clientId: 55 }], locked: [{ clientId: 77 }] });
+            const settled = voidTransaction({
+                peek: [{ clientId: 77 }], locked: [{ clientId: 77 }], lockedClients: [{ id: 77 }],
+            });
+            const { repository: repo, $transaction } = repositoryFor([moved, settled]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(true);
+
+            expect($transaction).toHaveBeenCalledTimes(2);
+            expect(moved.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(settled.$queryRaw.mock.calls[1]![0].values).toContain(77);
+            expect(settled.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it("returns false and writes nothing when the owner is cleared under the lock", async () => {
+            // The retry reads no owner and refuses; the first attempt wrote nothing to the document.
+            const cleared = voidTransaction({ peek: [{ clientId: 55 }], locked: [{ clientId: null }] });
+            const gone = voidTransaction({ peek: [{ clientId: null }] });
+            const { repository: repo, $transaction } = repositoryFor([cleared, gone]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect($transaction).toHaveBeenCalledTimes(2);
+            expect(cleared.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(gone.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("gives up with false after the bounded number of owner changes", async () => {
+            const forever = voidTransaction({ peek: [{ clientId: 55 }], locked: [{ clientId: 77 }] });
+            const { repository: repo, $transaction } = repositoryFor([forever]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect($transaction).toHaveBeenCalledTimes(3);
+            expect(forever.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("rejects a database failure without any compatibility retry", async () => {
+            const error = Object.assign(new Error("column voided_at does not exist"), { code: "P2010", meta: { code: "42703" } });
+            const transaction = voidTransaction({ peek: [{ clientId: 55 }] });
+            transaction.$queryRaw.mockRejectedValue(error);
+            const { repository: repo, $transaction } = repositoryFor([transaction]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).rejects.toBe(error);
+
+            expect($transaction).toHaveBeenCalledTimes(1);
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("rejects a failing audit-column write without any compatibility retry", async () => {
+            const error = Object.assign(new Error("column voided_at does not exist"), { code: "P2022", meta: { column: "voided_at" } });
+            const transaction = voidTransaction({ peek: [{ clientId: 55 }] });
+            transaction.eformsign_doc.updateMany.mockRejectedValue(error);
+            const { repository: repo, $transaction } = repositoryFor([transaction]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).rejects.toBe(error);
+
+            expect($transaction).toHaveBeenCalledTimes(1);
+            expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+        });
     });
 
     it("retries client document reads with legacy columns when classification columns are pending", async () => {
@@ -155,6 +428,12 @@ describe("SbEformsignDocRepository", () => {
     });
 
     describe("findContractCandidatesByClientId", () => {
+        it.each([null, new Date("2026-10-13")])("carries voidedAt=%s without filtering or fallback", async (voidedAt) => {
+            const rows = [{ id: 1, documentId: "doc-1", voidedAt }];
+            eformsignDocModel.findMany.mockResolvedValue(rows);
+            await expect(repository.findContractCandidatesByClientId(55)).resolves.toEqual(rows);
+            expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ voidedAt: true }) }));
+        });
         it("asks the database for newest-first order (createdDate desc, id desc) at full precision", async () => {
             eformsignDocModel.findMany.mockResolvedValueOnce([]);
 
@@ -199,6 +478,7 @@ describe("SbEformsignDocRepository", () => {
                     stepType: true,
                     stepName: true,
                     permanentPurgeRequestedAt: true,
+                    voidedAt: true,
                 },
             });
             const where = eformsignDocModel.findMany.mock.calls[0][0].where;
@@ -208,6 +488,14 @@ describe("SbEformsignDocRepository", () => {
     });
 
     describe("findRecentContracts", () => {
+        it.each([null, new Date("2026-10-13")])("exposes voidedAt=%s as a boolean only", async (voidedAt) => {
+            eformsignDocModel.findMany.mockResolvedValue([{ ...recentRow(), voidedAt }]);
+            const [doc] = await repository.findRecentContracts("branch-1", 10);
+            expect(doc).toMatchObject({ isVoided: voidedAt !== null });
+            expect(doc).not.toHaveProperty("voidedBy");
+            expect(doc).not.toHaveProperty("voidedAt");
+            expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ voidedAt: true }) }));
+        });
         function recentRow({
             documentId = "doc-1",
             documentName = "계약서",
@@ -218,6 +506,7 @@ describe("SbEformsignDocRepository", () => {
             stepName = "이용자",
             updatedDate = new Date("2026-09-20T00:00:00.000Z"),
             expired = false,
+            voidedAt = null,
             client = { name: "산모" },
         }: Partial<{
             documentId: string;
@@ -229,11 +518,12 @@ describe("SbEformsignDocRepository", () => {
             stepName: string;
             updatedDate: Date;
             expired: boolean;
+            voidedAt: Date | null;
             client: { name: string } | null;
         }> = {}) {
             // Default *parameters* (not `??`) so an explicit `null` override (e.g. an
             // unassigned document) is not mistaken for "not provided".
-            return { documentId, documentName, clientId, statusType, statusDetail, stepType, stepName, updatedDate, expired, client };
+            return { documentId, documentName, clientId, statusType, statusDetail, stepType, stepName, updatedDate, expired, voidedAt, client };
         }
 
         it("scopes to the branch, excludes purged/deleted rows, keeps contract-or-unclassified kinds, orders newest first, and takes the given count", async () => {
@@ -264,6 +554,7 @@ describe("SbEformsignDocRepository", () => {
                     updatedDate: true,
                     expired: true,
                     client: { select: { name: true } },
+                    voidedAt: true,
                 },
             });
             expect(result).toEqual([{
@@ -277,6 +568,7 @@ describe("SbEformsignDocRepository", () => {
                 stepName: "이용자",
                 updatedDate: new Date("2026-09-20T00:00:00.000Z"),
                 expired: false,
+                isVoided: false,
             }]);
         });
 
@@ -289,6 +581,18 @@ describe("SbEformsignDocRepository", () => {
         });
     });
 
+    it("review query excludes voided rows while keeping live review contracts", async () => {
+        eformsignDocModel.findMany.mockImplementation(async ({ where }) => [
+            { documentId: "live", branchId: "branch-1", detailPayload: null, stepRecipientName: "산모", voidedAt: null },
+            { documentId: "voided", branchId: "branch-1", detailPayload: null, stepRecipientName: "산모", voidedAt: new Date() },
+        ].filter((doc) => where.voidedAt === undefined || doc.voidedAt === where.voidedAt));
+        const docs = await repository.findReviewStageContracts();
+        expect(docs.map((doc) => doc.documentId)).toEqual(["live"]);
+        expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+            documentKind: "contract", statusType: { in: ["070", "70", "doc_request_reviewer"] }, permanentPurgeRequestedAt: null, voidedAt: null,
+            OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }],
+        } }));
+    });
     it("excludes purge-pending rows from the headquarters list", async () => {
         eformsignDocModel.findMany.mockResolvedValue([legacyRow]);
 
@@ -962,6 +1266,128 @@ describe("SbEformsignDocRepository", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
     });
 
+    describe("voided contract fence under the document row lock (BJJ-439)", () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+
+        /**
+         * A transaction double whose locked `eformsign_doc` selects behave like PostgreSQL for the
+         * `voided_at` predicate: the candidate lock (the one that selects document_kind) hides a
+         * voided row only when the SQL filters it, so a missing predicate is observable. The
+         * pointed-document lock never filters voided rows in the double, because production must
+         * keep matching a voided pointer.
+         */
+        function fakeTransaction(options: { candidateVoided: boolean; pointer: string | null }) {
+            const candidate = {
+                id: 2,
+                documentId: "doc-new",
+                clientId: 55,
+                branchId,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                revisionId: null,
+                updatedDate: new Date("2026-08-02T00:00:00.000Z"),
+                createdDate: new Date("2026-07-02T00:00:00.000Z"),
+            };
+            const pointed = {
+                id: 1,
+                documentId: "doc-old-voided",
+                clientId: 55,
+                branchId,
+                serviceRecordCaseId: null,
+                revisionId: null,
+                updatedDate: new Date("2026-07-01T00:00:00.000Z"),
+                createdDate: new Date("2026-07-01T00:00:00.000Z"),
+            };
+            const queries: string[] = [];
+            const $queryRaw = jest.fn().mockImplementation(async (query: { strings: string[] }) => {
+                const sql = query.strings.join(" ");
+                queries.push(sql);
+                if (sql.includes("FROM eformsign_doc") && !sql.includes("FOR UPDATE")) return [{ clientId: 55 }];
+                if (sql.includes("FROM client")) {
+                    return [{ id: 55, eDocId: options.pointer, branchId }];
+                }
+                if (sql.includes("FROM eformsign_doc") && sql.includes("document_kind")) {
+                    return options.candidateVoided && sql.includes("voided_at IS NULL") ? [] : [candidate];
+                }
+                if (sql.includes("FROM eformsign_doc")) return [pointed];
+                if (sql.includes("FROM service_record_case")) return [];
+                return [];
+            });
+            return {
+                $queryRaw,
+                queries,
+                client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                eformsign_doc: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            };
+        }
+
+        const repositoryFor = (transaction: ReturnType<typeof fakeTransaction>) =>
+            new SbEformsignDocRepository({
+                eformsign_doc: eformsignDocModel,
+                $transaction: jest.fn((callback) => callback(transaction)),
+            } as unknown as PrismaService);
+
+        it("linkClientIfActive refuses a document that was voided after the caller's unlocked read", async () => {
+            const transaction = fakeTransaction({ candidateVoided: true, pointer: null });
+
+            await expect(repositoryFor(transaction).linkClientIfActive(branchId, "doc-new", 55))
+                .resolves.toBe(false);
+
+            const documentLock = transaction.queries.find((sql) =>
+                sql.includes("FROM eformsign_doc") && sql.includes("document_kind"));
+            expect(documentLock).toContain("voided_at IS NULL");
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("linkClientIfActive still links a document that is not voided", async () => {
+            const transaction = fakeTransaction({ candidateVoided: false, pointer: null });
+
+            await expect(repositoryFor(transaction).linkClientIfActive(branchId, "doc-new", 55))
+                .resolves.toBe(true);
+
+            expect(transaction.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 55, branchId },
+                data: { eDocId: "doc-new" },
+            });
+        });
+
+        it("a newer contract still relinks when the client's pointer is a voided document", async () => {
+            const transaction = fakeTransaction({ candidateVoided: false, pointer: "doc-old-voided" });
+
+            await expect(repositoryFor(transaction).linkClientIfActive(branchId, "doc-new", 55))
+                .resolves.toBe(true);
+
+            // markVoided never clears the pointer, so the pointed-document lock must keep matching it.
+            const pointedLock = transaction.queries.find((sql) =>
+                sql.includes("FROM eformsign_doc") && sql.includes("FOR UPDATE") && !sql.includes("document_kind"));
+            expect(pointedLock).toBeDefined();
+            expect(pointedLock).not.toContain("voided_at");
+            expect(transaction.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 55, branchId },
+                data: { eDocId: "doc-new" },
+            });
+        });
+
+        it("isCurrentContractDocument refuses a document that was voided after the caller's unlocked read", async () => {
+            const transaction = fakeTransaction({ candidateVoided: true, pointer: "doc-new" });
+
+            await expect(repositoryFor(transaction).isCurrentContractDocument(branchId, "doc-new"))
+                .resolves.toBe(false);
+
+            const documentLock = transaction.queries.find((sql) =>
+                sql.includes("FROM eformsign_doc") && sql.includes("document_kind"));
+            expect(documentLock).toContain("voided_at IS NULL");
+        });
+
+        it("isCurrentContractDocument still answers true for the pointed document that is not voided", async () => {
+            const transaction = fakeTransaction({ candidateVoided: false, pointer: "doc-new" });
+
+            await expect(repositoryFor(transaction).isCurrentContractDocument(branchId, "doc-new"))
+                .resolves.toBe(true);
+        });
+    });
+
     it("starts over when the document owner moved between the unlocked read and the row lock", async () => {
         const branchId = "44444444-4444-4444-4444-444444444444";
         const transaction = {
@@ -1039,6 +1465,60 @@ describe("SbEformsignDocRepository", () => {
         );
         expect(eformsignDocModel.create).not.toHaveBeenCalled();
         expect(result.documentName).toBe("기존 문서명");
+    });
+
+    it.each(["updateIfSourceNewer", "updateWithOutcome"] as const)(
+        "%s withholds ownership/identity only when requested", async (method) => {
+            eformsignDocModel.updateMany.mockResolvedValue({ count: 1 });
+            eformsignDocModel.findFirst.mockResolvedValue(legacyRow);
+            const doc = createEntity();
+            await repository[method]("branch-1", doc, { updateOwnershipIdentity: false });
+            const withheld = eformsignDocModel.updateMany.mock.calls[0][0].data;
+            for (const key of ["clientId", "documentKind", "employeeScheduleId", "templateId"]) {
+                expect(withheld).not.toHaveProperty(key);
+            }
+            await repository[method]("branch-1", doc);
+            const defaultData = eformsignDocModel.updateMany.mock.calls[1][0].data;
+            expect(defaultData).toEqual({
+                ...withheld, clientId: 55, documentKind: null, employeeScheduleId: null, templateId: null,
+            });
+        },
+    );
+
+    it.each([null, 55])("allows inferred adoption when the current owner is %s", async (clientId) => {
+        const row = { ...legacyRow, branchId: "branch-1", clientId };
+        eformsignDocModel.updateMany.mockImplementation(async ({ where, data }) => {
+            expect(where).toEqual({
+                documentId: "doc-1",
+                OR: [{ branchId: null }, { branchId: "branch-1" }],
+                AND: [{ OR: [{ clientId: null }, { clientId: 55 }] }],
+            });
+            Object.assign(row, data);
+            return { count: 1 };
+        });
+        eformsignDocModel.findFirst.mockImplementation(async () => row);
+
+        await repository.upsertByDocumentId("branch-1", createEntity(), { expectedOwnerClientId: 55 });
+        expect(row.clientId).toBe(55);
+        expect(eformsignDocModel.create).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite a client linked after inference, including the unique-create retry", async () => {
+        const row = { ...legacyRow, branchId: "branch-1", clientId: 99 };
+        eformsignDocModel.updateMany.mockImplementation(async ({ where, data }) => {
+            const owners = where.AND?.[0]?.OR;
+            const matches = !owners || owners.some((owner: { clientId: number | null }) => owner.clientId === row.clientId);
+            if (matches) Object.assign(row, data);
+            return { count: matches ? 1 : 0 };
+        });
+        eformsignDocModel.create.mockRejectedValue({ code: "P2002" });
+        eformsignDocModel.findFirst.mockImplementation(async () => row);
+
+        await expect(repository.upsertByDocumentId("branch-1", createEntity(), {
+            preserveExistingMirrorProjection: true, expectedOwnerClientId: 55,
+        })).rejects.toBeInstanceOf(EformsignDocOwnershipConflictError);
+        expect(row.clientId).toBe(99);
+        expect(eformsignDocModel.updateMany).toHaveBeenCalledTimes(2);
     });
 
     it("preserves stored document metadata when adopting without a name or number", async () => {

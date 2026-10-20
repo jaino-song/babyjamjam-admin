@@ -15,7 +15,8 @@ export type ClientDocumentStatus =
     | "completed"
     | "rejected"
     | "revoked"
-    | "deleted";
+    | "deleted"
+    | "voided";
 
 export interface ClientDocumentStatusMeta {
     label: string;
@@ -28,11 +29,14 @@ export const CLIENT_DOCUMENT_STATUS_META = {
     opened: { label: "열람됨", variant: "warning" },
     completed: { label: "계약 완료", variant: "success" },
     rejected: { label: "거부됨", variant: "danger" },
-    // 040 (doc_request_revoke): cancellation requested, not done. eformsign may refuse it and the
+    // 040 (doc_request_revoke) / 045 (doc_request_reject): cancellation requested, not done. eformsign may refuse it and the
     // signer may continue, so it is a warning, not the terminal danger of 철회됨.
     revoke_requested: { label: "철회 요청됨", variant: "warning" },
     revoked: { label: "철회됨", variant: "danger" },
     deleted: { label: "삭제됨", variant: "danger" },
+    // BJJ-439 계약 파기: the client's newest contract document was voided in the app. Same neutral
+    // tone as the 미발급 / pending states — a voided contract is inactive, not an error.
+    voided: { label: "파기됨", variant: "neutral" },
 } as const satisfies Record<ClientDocumentStatus, ClientDocumentStatusMeta>;
 
 /** Meta for a client that has no contract document at all. */

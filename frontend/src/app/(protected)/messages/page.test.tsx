@@ -3,6 +3,8 @@ import fs from "node:fs";
 import { fireEvent, render as renderView, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createContext, useContext, type ReactElement, type ReactNode } from "react";
+import { AxiosError, AxiosHeaders } from "axios";
+import { MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
 
 import MessagesPage from "./page";
 
@@ -84,6 +86,7 @@ describe("MessagesPage sender approval gating", () => {
 import {
   useCancelUpcomingMessageTriggerJob,
   useMessageHistory,
+  useResendMessageTriggerJob,
   useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -92,6 +95,7 @@ import type { MessageLogRecord, UpcomingMessageTriggerJob } from "@/features/mes
 const mockToast = jest.fn();
 const mockCancelMutateAsync = jest.fn();
 const mockRetryMutateAsync = jest.fn();
+const mockResendMutateAsync = jest.fn();
 // A jest.fn() (rather than the hardcoded object the mock used to return)
 // so a single test can flip approval status via mockReturnValue and prove
 // the render-level gate itself reacts, not just the nav's disabled flag.
@@ -112,12 +116,36 @@ function mockAuthUser(data: Record<string, unknown> | null) {
   });
 }
 
+let mockSearchParams = new URLSearchParams();
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useSearchParams: () => mockSearchParams,
+}));
+
+// Radix Popper (the hover card) measures with ResizeObserver, which jsdom lacks.
+if (!("ResizeObserver" in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => mockUseGetAuthUser(),
+}));
+
+// The deep-link tests only need to know which section rendered; their own
+// data hooks are not part of this page's fixtures.
+jest.mock("@/components/app/messages/MessageTenantApplicationSettings", () => ({
+  MessageTenantApplicationSettings: () => null,
+}));
+jest.mock("@/components/app/messages/TriggerRulesManager", () => ({
+  TriggerRulesManager: () => null,
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -170,6 +198,7 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useRetryMessageHistory: jest.fn(),
   useUpcomingMessageTriggerJobs: jest.fn(),
   useCancelUpcomingMessageTriggerJob: jest.fn(),
+  useResendMessageTriggerJob: jest.fn(),
 }));
 
 // Mirrors the SplitLayout mock in TriggerRulesManager.test.tsx: forces compact
@@ -283,6 +312,7 @@ const mockedUseMessageHistory = jest.mocked(useMessageHistory);
 const mockedUseUpcomingMessageTriggerJobs = jest.mocked(useUpcomingMessageTriggerJobs);
 const mockedUseRetryMessageHistory = jest.mocked(useRetryMessageHistory);
 const mockedUseCancelUpcomingMessageTriggerJob = jest.mocked(useCancelUpcomingMessageTriggerJob);
+const mockedUseResendMessageTriggerJob = jest.mocked(useResendMessageTriggerJob);
 
 function buildUpcomingJob(overrides: Partial<UpcomingMessageTriggerJob> = {}): UpcomingMessageTriggerJob {
   return {
@@ -434,6 +464,7 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  mockSearchParams = new URLSearchParams();
   document.cookie = "selected_branch_id=branch-test; path=/";
   mockAuthUser({ id: "user-1", role: "user", branchRole: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
@@ -442,6 +473,8 @@ beforeEach(() => {
   mockCancelMutateAsync.mockResolvedValue({ id: "job-1", status: "canceled" });
   mockRetryMutateAsync.mockReset();
   mockRetryMutateAsync.mockResolvedValue({ id: 101, status: "sent" });
+  mockResendMutateAsync.mockReset();
+  mockResendMutateAsync.mockResolvedValue({ id: "job-uuid", status: "sent", reason: null });
   mockUseMessageSenderApproval.mockReset();
   mockUseMessageSenderApproval.mockReturnValue({
     data: {
@@ -465,6 +498,10 @@ beforeEach(() => {
     mutateAsync: mockCancelMutateAsync,
     isPending: false,
   } as unknown as ReturnType<typeof useCancelUpcomingMessageTriggerJob>);
+  mockedUseResendMessageTriggerJob.mockReturnValue({
+    mutateAsync: mockResendMutateAsync,
+    isPending: false,
+  } as unknown as ReturnType<typeof useResendMessageTriggerJob>);
 
   mockData();
 });
@@ -1173,5 +1210,295 @@ describe("messages page — merged 발송 기록 section", () => {
     expect(getZoneContainer("upcoming")).toBeNull();
     expect(getZoneContainer("past")).toBeNull();
     expect(screen.getByText("표시할 메시지가 없습니다.")).toBeInTheDocument();
+  });
+});
+
+describe("messages page — ?section= deep link", () => {
+  it("opens the requested section on arrival", async () => {
+    mockSearchParams = new URLSearchParams("section=history");
+    mockData({ history: [] });
+    render(<MessagesPage />);
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).not.toBeNull();
+    });
+  });
+
+  it.each(["settings", "triggers"] as const)(
+    "follows a link to ?section=%s from the history section the viewer reached via the nav",
+    async (value) => {
+      mockData({ history: [] });
+      const { rerender } = render(<MessagesPage />);
+      goToHistorySection();
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).not.toBeNull();
+
+      mockSearchParams = new URLSearchParams(`section=${value}`);
+      rerender(<MessagesPage />);
+
+      await waitFor(() => {
+        expect(document.querySelector(`[data-component="desktop_messages_sections_section-content_${value}-section"]`)).not.toBeNull();
+      });
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_history-section"]')).toBeNull();
+    },
+  );
+
+  it("writes the nav pick into ?section= with a null history state so Next's router syncs useSearchParams", () => {
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    try {
+      mockData({ history: [] });
+      render(<MessagesPage />);
+      goToHistorySection();
+
+      expect(replaceState).toHaveBeenCalled();
+      const [state, , url] = replaceState.mock.calls[replaceState.mock.calls.length - 1];
+      expect(state).toBeNull();
+      expect(new URL(String(url)).searchParams.get("section")).toBe("history");
+    } finally {
+      replaceState.mockRestore();
+    }
+  });
+
+  it("stays on the default section for a section the viewer cannot open or that does not exist", async () => {
+    mockAuthUser({ id: "user-2", role: "user", branchRole: "user" });
+    for (const value of ["triggers", "nope", "scheduled"]) {
+      mockSearchParams = new URLSearchParams(`section=${value}`);
+      const { unmount } = render(<MessagesPage />);
+      await act(async () => {});
+      expect(document.querySelector('[data-component="desktop_messages_sections_section-content_send-section"]')).not.toBeNull();
+      unmount();
+    }
+  });
+});
+
+describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () => {
+  const jobUuid = "6f0c7a52-6d41-4c63-9d0e-3a5b8a5f2b11";
+
+  function buildNeedsSetupJobRow(overrides: Partial<MessageLogRecord> = {}): MessageLogRecord {
+    return buildHistoryRecord({
+      id: `job:${jobUuid}` as unknown as number,
+      provider: "message_job",
+      triggerJobId: jobUuid,
+      status: "needs_setup",
+      errorMessage: "수신자 연락처가 필요합니다.",
+      recipientName: "설정고객",
+      ...overrides,
+    });
+  }
+
+  function openNeedsSetupRow() {
+    mockData({ history: [buildNeedsSetupJobRow()] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+  }
+
+  function getRetryButton() {
+    return document.querySelector('[data-component$="_detail-retry"]') as HTMLButtonElement | null;
+  }
+
+  it("shows the 추가 필요 정보 row for a needs_setup job row", () => {
+    openNeedsSetupRow();
+
+    expect(screen.getByText("추가 필요 정보")).toBeInTheDocument();
+    expect(within(getDetailPanel() as HTMLElement).getByText("수신자 연락처가 필요합니다.")).toBeInTheDocument();
+  });
+
+  it("offers no 재발송 button to a user who cannot manage the branch", () => {
+    mockAuthUser({ id: "user-2", role: "user", branchRole: "user" });
+    openNeedsSetupRow();
+
+    expect(getRetryButton()).not.toBeInTheDocument();
+    expect(mockResendMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("offers no 재발송 button for a needs_setup log row that is not a trigger job row", () => {
+    mockData({
+      history: [
+        buildHistoryRecord({ id: 303, status: "needs_setup", errorMessage: "사유", recipientName: "로그고객" }),
+      ],
+    });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("로그고객"));
+
+    expect(getRetryButton()).not.toBeInTheDocument();
+  });
+
+  it("resends once with the bare job uuid and never calls the failed-log retry", async () => {
+    openNeedsSetupRow();
+
+    const button = getRetryButton();
+    expect(button).toBeInTheDocument();
+    fireEvent.click(button as HTMLButtonElement);
+
+    await waitFor(() => expect(mockResendMutateAsync).toHaveBeenCalledTimes(1));
+    expect(mockResendMutateAsync).toHaveBeenCalledWith(jobUuid);
+    expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { level: "rule", title: "자동화 규칙이 꺼져 있어요", linkName: "규칙 보기 →", href: "/messages?section=triggers" },
+    { level: "recipient", title: "자동 문자가 꺼져 있어요", linkName: "고객 정보에서 켜기 →", href: "/clients?id=10" },
+    { level: "branch", title: "지점 자동 전송이 꺼져 있어요", linkName: "자동화 설정 열기 →", href: "/messages?section=settings" },
+  ] as const)(
+    "disables the 재발송 button and explains the $level block in a hover card with a link; never resends",
+    async ({ level, title, linkName, href }) => {
+      mockData({
+        history: [buildNeedsSetupJobRow({
+          resendBlockedBy: level,
+          ...(level === "recipient" ? { resendBlockedRecipient: { kind: "client", id: 10 } } : {}),
+        })],
+      });
+      render(<MessagesPage />);
+      goToHistorySection();
+      fireEvent.click(screen.getByText("설정고객"));
+
+      const button = getRetryButton();
+      expect(button).toBeDisabled();
+      expect(screen.queryByText(title)).not.toBeInTheDocument();
+
+      fireEvent.click(button as HTMLButtonElement);
+      expect(mockResendMutateAsync).not.toHaveBeenCalled();
+      expect(mockRetryMutateAsync).not.toHaveBeenCalled();
+
+      fireEvent.focus((button as HTMLButtonElement).closest('[data-slot="hover-card-trigger"]') as HTMLElement);
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: linkName })).toHaveAttribute("href", href);
+    },
+  );
+
+  it.each([
+    { role: "user", label: "a non-owner", hasLink: false },
+    { role: "owner", label: "an owner", hasLink: true },
+  ] as const)("links a blocked user recipient to the accounts screen for $label only", async ({ role, hasLink }) => {
+    mockAuthUser({ id: "viewer-1", role, branchRole: "manager" });
+    mockData({
+      history: [buildNeedsSetupJobRow({
+        resendBlockedBy: "recipient",
+        resendBlockedRecipient: { kind: "user", id: "u-1" },
+      })],
+    });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+
+    const trigger = getRetryButton()?.closest('[data-slot="hover-card-trigger"]') as HTMLElement;
+    fireEvent.focus(trigger);
+    expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
+    const link = screen.queryByRole("link", { name: "계정 관리에서 켜기 →" });
+    if (hasLink) {
+      expect(link).toHaveAttribute("href", "/system-admin?section=accounts");
+    } else {
+      expect(link).toBeNull();
+    }
+  });
+
+  it("keeps the 재발송 button enabled, without a hover card, when the safeguard would pass", () => {
+    mockData({ history: [buildNeedsSetupJobRow({ resendBlockedBy: null })] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("설정고객"));
+
+    expect(getRetryButton()).toBeEnabled();
+    expect(getRetryButton()?.closest('[data-slot="hover-card-trigger"]')).toBeNull();
+  });
+
+  it.each([
+    {
+      label: "sent",
+      response: { id: jobUuid, status: "sent", reason: null },
+      variant: "success",
+      description: MESSAGE_JOB_RESEND_COPY.success,
+    },
+    {
+      label: "needs_setup",
+      response: { id: jobUuid, status: "needs_setup", reason: "수신자 연락처가 필요합니다." },
+      variant: "destructive",
+      description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup,
+    },
+    {
+      label: "canceled without a reason",
+      response: { id: jobUuid, status: "canceled", reason: null },
+      variant: "destructive",
+      description: MESSAGE_JOB_RESEND_COPY.notSent,
+    },
+    {
+      label: "canceled with a reason",
+      response: { id: jobUuid, status: "canceled", reason: "고객 상태가 대상이 아닙니다." },
+      variant: "destructive",
+      description: `${MESSAGE_JOB_RESEND_COPY.notSent} 고객 상태가 대상이 아닙니다.`,
+    },
+    {
+      label: "failed",
+      response: { id: jobUuid, status: "failed", reason: "발송 오류" },
+      variant: "destructive",
+      description: MESSAGE_JOB_RESEND_COPY.failure,
+    },
+  ])("shows the right copy when the resend answers $label", async ({ response, variant, description }) => {
+    mockResendMutateAsync.mockResolvedValue(response);
+    openNeedsSetupRow();
+
+    fireEvent.click(getRetryButton() as HTMLButtonElement);
+
+    await waitFor(() => expect(mockToast).toHaveBeenCalledTimes(1));
+    expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant, description }));
+  });
+
+  it("shows the conflict copy when the resend is rejected with a real 409 problem", async () => {
+    const problem = createProblemDetails({ code: "REQUEST_CONFLICT", requestId: "req-resend-1" });
+    mockResendMutateAsync.mockRejectedValue(
+      new AxiosError("Conflict", "ERR_BAD_REQUEST", undefined, undefined, {
+        status: 409,
+        statusText: "Conflict",
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: problem,
+      }),
+    );
+    openNeedsSetupRow();
+
+    fireEvent.click(getRetryButton() as HTMLButtonElement);
+
+    await waitFor(() => expect(mockToast).toHaveBeenCalledTimes(1));
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "destructive", description: MESSAGE_JOB_RESEND_COPY.conflict }),
+    );
+  });
+
+  it("shows the failure copy when the resend is rejected without a problem body", async () => {
+    mockResendMutateAsync.mockRejectedValue(new Error("network down"));
+    openNeedsSetupRow();
+
+    fireEvent.click(getRetryButton() as HTMLButtonElement);
+
+    await waitFor(() => expect(mockToast).toHaveBeenCalledTimes(1));
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "destructive", description: MESSAGE_JOB_RESEND_COPY.failure }),
+    );
+  });
+
+  it("labels the button 재발송 중 while the resend is pending", () => {
+    mockedUseResendMessageTriggerJob.mockReturnValue({
+      mutateAsync: mockResendMutateAsync,
+      isPending: true,
+    } as unknown as ReturnType<typeof useResendMessageTriggerJob>);
+    openNeedsSetupRow();
+
+    expect(getRetryButton()).toHaveTextContent(MESSAGE_JOB_RESEND_COPY.pending);
+    expect(getRetryButton()).toBeDisabled();
+  });
+
+  it("still retries a failed log through the old API", async () => {
+    mockData({ history: [buildHistoryRecord({ status: "failed", errorMessage: "발송 오류" })] });
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByText("이하은"));
+
+    expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
+    fireEvent.click(getRetryButton() as HTMLButtonElement);
+
+    await waitFor(() => expect(mockRetryMutateAsync).toHaveBeenCalledTimes(1));
+    expect(mockRetryMutateAsync).toHaveBeenCalledWith(101);
+    expect(mockResendMutateAsync).not.toHaveBeenCalled();
   });
 });

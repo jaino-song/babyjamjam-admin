@@ -9,6 +9,8 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 
 describe("PwaNotificationSchedulerService", () => {
     const testFrontendUrl = "https://admin.babyjamjam.com";
@@ -77,6 +79,7 @@ describe("PwaNotificationSchedulerService", () => {
             messageTriggerJobRepository as unknown as IMessageTriggerJobRepository,
             systemSettingService as unknown as SystemSettingService,
             createSchedulerLeaseMock(),
+            createHolidayCalendarStub(),
         );
 
         branchRepository.findAllActive.mockResolvedValue([{ id: "branch-1", name: "인천점" }]);
@@ -226,6 +229,22 @@ describe("PwaNotificationSchedulerService", () => {
         ]);
     });
 
+    it("notifies managers about needs_setup with its reason", async () => {
+        messageTriggerJobRepository.findRecentUndeliveredByBranch.mockResolvedValue([{
+            id: "job-setup", status: "needs_setup", recipientType: MessageTriggerRecipientType.CLIENT,
+            payload: { recipientName: "김민지" }, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            cancelReason: "필수 정보 누락 (name)",
+        }]);
+        messageTriggerJobRepository.countRecentUndeliveredByBranch.mockResolvedValue(1);
+        await service.sendDailySummaryNotifications();
+        const section = digestCall()[2].find((item) => item.key === "undeliveredMessages");
+        expect(section?.details?.[0]).toContain("필수 정보 누락 (name)");
+        expect(section?.notificationItems?.[0]).toMatchObject({
+            title: "메시지 추가 정보 필요", data: { jobId: "job-setup" },
+            body: expect.stringContaining("메시지에 추가 정보가 필요합니다."),
+        });
+    });
+
     it("should not send anything when every query comes back empty", async () => {
         clientRepository.findStartingWithinDays.mockResolvedValue([]);
         clientRepository.findEndingWithinDays.mockResolvedValue([]);
@@ -267,8 +286,46 @@ describe("PwaNotificationSchedulerService", () => {
         expect(digestCall(1)[0]).toBe("branch-2");
         expect(digestCall(0)[1]).toBe("인천점");
         expect(digestCall(1)[1]).toBe("부천점");
-        expect(clientRepository.findStartingWithinDays).toHaveBeenCalledWith("branch-1", 7);
-        expect(clientRepository.findStartingWithinDays).toHaveBeenCalledWith("branch-2", 7);
+        expect(clientRepository.findStartingWithinDays).toHaveBeenCalledWith("branch-1", 7, expect.any(Date));
+        expect(clientRepository.findStartingWithinDays).toHaveBeenCalledWith("branch-2", 7, expect.any(Date));
+    });
+
+    // The digest must count the same clients as the dashboard and /clients/filtered, on the
+    // Korean calendar date of the run instant (the cron fires at 09:00 KST = 00:00 UTC).
+    it("asks every client list for the run instant and the branch calendar", async () => {
+        const runInstant = new Date("2026-09-30T16:30:00.000Z");
+        jest.spyOn(Date, "now").mockReturnValue(runInstant.getTime());
+
+        await service.sendDailySummaryNotifications();
+
+        expect(clientRepository.findStartingWithinDays).toHaveBeenCalledWith("branch-1", 7, runInstant);
+        expect(clientRepository.findEndingWithinDays).toHaveBeenCalledWith("branch-1", 7, runInstant);
+        expect(clientRepository.findWithIncompleteContractsStartingWithinDays)
+            .toHaveBeenCalledWith("branch-1", 7, runInstant);
+        // "계약서 미발송" is the repository's dashboard rule (current contract, 발송 필요), given the
+        // branch's own business-day calendar — not a stand-alone eDocId check.
+        expect(clientRepository.findWithoutContractSentStartingWithinDays)
+            .toHaveBeenCalledWith("branch-1", KR_BUILTIN_CALENDAR, runInstant);
+    });
+
+    it("omits the contracts-not-sent section when the calendar cannot be read, keeping the others", async () => {
+        const failingCalendar = createHolidayCalendarStub();
+        (failingCalendar.forBranch as jest.Mock).mockRejectedValue(new Error("calendar down"));
+        service = new PwaNotificationSchedulerServiceClass(
+            notificationService as unknown as NotificationService,
+            clientRepository as unknown as IClientRepository,
+            branchRepository as unknown as IBranchRepository,
+            messageTriggerJobRepository as unknown as IMessageTriggerJobRepository,
+            systemSettingService as unknown as SystemSettingService,
+            createSchedulerLeaseMock(),
+            failingCalendar,
+        );
+
+        await service.sendDailySummaryNotifications();
+
+        const [, , sections] = digestCall();
+        expect(sections.map((section) => section.key)).not.toContain("contractsNotSent");
+        expect(sections.map((section) => section.key)).toContain("upcoming");
     });
 
     it("should allow only one overlapping replica to dispatch a branch/date digest", async () => {
@@ -582,6 +639,7 @@ describe("PwaNotificationSchedulerService", () => {
             messageTriggerJobRepository as unknown as IMessageTriggerJobRepository,
             systemSettingService as unknown as SystemSettingService,
             createSchedulerLeaseMock(false),
+            createHolidayCalendarStub(),
         );
 
         await service.sendDailySummaryNotifications();

@@ -12,7 +12,7 @@ import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.servi
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
-const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "revoke_requested", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
+const DISPLAY_STATUS_VALUES = ["voided", "pending", "signed", "review", "unassigned", "completed", "revoke_requested", "revoked", "rejected_by_reviewer", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
 
 const InputSchema = z.object({
     clientId: z.number().int().positive().describe(
@@ -58,11 +58,16 @@ const RECENT_CONTRACTS_FILTERED_WINDOW = 200;
 function resolveRecentContractDisplayStatus(doc: RecentContractRow, calendar: KrBusinessDayCalendar): EformsignDocDisplayStatus {
     const resolved = resolveEformsignDocDisplayStatus({
         id: doc.documentId,
+        isVoided: doc.isVoided,
         current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName },
         ...(doc.clientId === null ? { [MIRROR_UNASSIGNED_KEY]: true } : {}),
         ...(doc.contractEndDate ? { contract_end_date: doc.contractEndDate } : {}),
     }, new Date(), calendar);
-    return doc.expired && resolved !== "completed" ? "expired" : resolved;
+    // The revocation states (040/045 requested, 042/090 revoked) also sit in the expired bucket and
+    // can carry the expired column; like "completed" they are never downgraded to 기간 만료.
+    return doc.expired && resolved !== "voided" && resolved !== "completed" && resolved !== "revoke_requested" && resolved !== "revoked"
+        ? "expired"
+        : resolved;
 }
 
 @Injectable()
@@ -83,7 +88,7 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                     const docs = await this.findDocs.execute(context.principal.branchId, InputSchema.parse(rawInput).clientId);
                     // Display only, for the principal's own branch; fetched once for all rows.
                     const calendar = await this.holidayCalendar.forBranch(context.principal.branchId);
-                    return { documents: docs.filter((doc) => !DELETED_DOCUMENT_STATUS_TYPES.has(normalizeEformsignStatusCode(doc.statusType))).map((doc) => ({ documentId: doc.documentId, documentName: doc.documentName, status: resolveEformsignDocDisplayStatus({ id: doc.documentId, current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName } }, new Date(), calendar), statusDetail: doc.statusDetail, updatedDate: doc.updatedDate.toISOString(), expired: doc.expired })) };
+                    return { documents: docs.filter((doc) => !DELETED_DOCUMENT_STATUS_TYPES.has(normalizeEformsignStatusCode(doc.statusType))).map((doc) => ({ documentId: doc.documentId, documentName: doc.documentName, status: resolveEformsignDocDisplayStatus({ id: doc.documentId, isVoided: doc.isVoided, current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName } }, new Date(), calendar), statusDetail: doc.isVoided ? "파기됨" : doc.statusDetail, updatedDate: doc.updatedDate.toISOString(), expired: doc.expired })) };
                 },
             },
             {
@@ -91,7 +96,7 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                     name: "contracts.recent",
                     domain: "contracts",
                     version: "1.0.0",
-                    description: "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: pending/signed/review/unassigned/completed/revoke_requested/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
+                    description: "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: voided/pending/signed/review/unassigned/completed/revoke_requested/revoked/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
                     risk: "read", requiredRoles: ["owner", "admin", "manager", "user"], renderer: "activity", flagKey: "agent.capability.contracts.recent", sideEffect: false,
                 },
                 inputSchema: RecentInputSchema, outputSchema: RecentOutputSchema,
@@ -119,7 +124,7 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                             clientId: doc.clientId,
                             clientName: doc.clientName,
                             status: doc.displayStatus,
-                            statusDetail: doc.statusDetail,
+                            statusDetail: doc.isVoided ? "파기됨" : doc.statusDetail,
                             updatedDate: doc.updatedDate.toISOString(),
                             expired: doc.expired,
                         })),

@@ -16,6 +16,13 @@ export interface UpdateEformsignDocStatusParams {
     stepIndex?: string;
     stepName?: string;
     expired?: boolean;
+    /**
+     * The event reports an action (a document was opened), not a status. `statusType` is
+     * then the mirror's own code, and the detail and expiry are not the event's to set:
+     * a "서명 페이지 열림" or `expired: false` written over a terminal row would erase
+     * "만료"/"거부" and un-expire it. Both are kept as stored.
+     */
+    actionOnly?: boolean;
     sourceUpdatedDate?: Date;
     documentName?: string;
     templateName?: string;
@@ -88,7 +95,7 @@ export class UpdateEformsignDocStatusUsecase {
             createdDate: existing.createdDate,
             updatedDate,
             statusType: params.statusType,
-            statusDetail: params.statusDetail,
+            statusDetail: params.actionOnly ? existing.statusDetail : params.statusDetail,
             stepType: params.stepType ?? existing.stepType,
             stepIndex: params.stepIndex ?? existing.stepIndex,
             stepName: params.stepName ?? existing.stepName,
@@ -96,32 +103,42 @@ export class UpdateEformsignDocStatusUsecase {
             stepRecipientName: existing.stepRecipientName,
             stepRecipientSms: existing.stepRecipientSms,
             expiredDate: existing.expiredDate,
-            expired: params.expired ?? existing.expired,
+            expired: params.actionOnly ? existing.expired : params.expired ?? existing.expired,
             clientId: existing.clientId,
             documentKind: existing.documentKind,
             employeeScheduleId: existing.employeeScheduleId,
             templateId: existing.templateId,
         });
 
-        // A step the caller did not supply is carried over from the row read above, so
-        // writing it back could revert a newer step stored between that read and this
+        // Anything this usecase does not set is carried over from the row read above, so
+        // writing it back could revert a newer value stored between that read and this
         // write. Tell the repository to leave those columns out of the UPDATE instead.
+        // The recipient, document number and expiry are never an input here, so they are
+        // always withheld; the step columns only when the caller did not supply them.
         const stepWriteOptions: EformsignDocStepWriteOptions = {
             ...(params.stepType === undefined ? { updateStepType: false } : {}),
             ...(params.stepIndex === undefined ? { updateStepIndex: false } : {}),
+            ...(params.stepName === undefined ? { updateStepName: false } : {}),
+            // The terminal fence above ran against `existing`, which another webhook may have
+            // moved to a terminal status since; pin the UPDATE to the status that was read.
+            ...(params.actionOnly
+                ? {
+                    updateStatusDetail: false,
+                    updateExpired: false,
+                    expectedStatusType: existing.statusType,
+                }
+                : {}),
+            updateStepRecipient: false,
+            updateDocumentNumber: false,
+            updateExpiredDate: false,
+            updateOwnershipIdentity: false,
         };
-        const hasStepWriteOptions = Object.keys(stepWriteOptions).length > 0;
 
         if (params.sourceUpdatedDate) {
-            return hasStepWriteOptions
-                ? this.eformsignDocRepository.updateIfSourceNewer(branchid, updated, stepWriteOptions)
-                : this.eformsignDocRepository.updateIfSourceNewer(branchid, updated);
+            return this.eformsignDocRepository.updateIfSourceNewer(branchid, updated, stepWriteOptions);
         }
-        return {
-            document: hasStepWriteOptions
-                ? await this.eformsignDocRepository.update(branchid, updated, stepWriteOptions)
-                : await this.eformsignDocRepository.update(branchid, updated),
-            applied: true,
-        };
+        // No timestamp predicate here, but an `actionOnly` write is still pinned to the
+        // status it read: report whether that UPDATE actually matched.
+        return this.eformsignDocRepository.updateWithOutcome(branchid, updated, stepWriteOptions);
     }
 }

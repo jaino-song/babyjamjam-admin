@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import {
+    BadRequestException,
     ConflictException,
     ExecutionContext,
     INestApplication,
@@ -26,6 +27,7 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { SmsRetryService } from "application/services/sms-retry.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 describe("MessageTriggerController (Integration)", () => {
     type RuleOverrides = Partial<{
@@ -51,6 +53,8 @@ describe("MessageTriggerController (Integration)", () => {
         listHistoryPage: jest.Mock;
         listClientHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
+        resendNeedsSetupJob: jest.Mock;
+        rescheduleJobForDebug: jest.Mock;
         createRule: jest.Mock;
         getRule: jest.Mock;
         updateRule: jest.Mock;
@@ -169,6 +173,8 @@ describe("MessageTriggerController (Integration)", () => {
             listHistoryPage: jest.fn(),
             listClientHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
+            resendNeedsSetupJob: jest.fn(),
+            rescheduleJobForDebug: jest.fn(),
             createRule: jest.fn(),
             getRule: jest.fn(),
             updateRule: jest.fn(),
@@ -221,7 +227,7 @@ describe("MessageTriggerController (Integration)", () => {
 
         app = moduleFixture.createNestApplication();
         app.useGlobalPipes(new ValidationPipe({ transform: true }));
-        await app.init();
+        await app.listen(0, "127.0.0.1");
     });
 
     afterEach(async () => {
@@ -231,6 +237,7 @@ describe("MessageTriggerController (Integration)", () => {
     it("requires branch-manager guard on every message-trigger mutation while leaving reads tenant-only", () => {
         const mutationHandlers = [
             "cancelJob",
+            "resendJob",
             "retryHistory",
             "reconcileHistory",
             "createRule",
@@ -261,6 +268,52 @@ describe("MessageTriggerController (Integration)", () => {
             expect(response.status).toBe(200);
             expect(response.body.sendTime).toBe("23:59");
             expect(triggerService.updateRule).toHaveBeenCalledWith(branchId, "rule-1", expect.objectContaining({ sendTime: "23:59" }));
+        });
+    });
+
+    describe("rule target client status / retry-on-failure validation (규칙 메시지-04)", () => {
+        it.each(["completed", "terminated", "ALL", "", null, 1])(
+            "rejects targetClientStatus %p on update before persistence",
+            async (targetClientStatus) => {
+                const response = await request(app.getHttpServer())
+                    .patch("/message-trigger-rules/rule-1").send({ targetClientStatus });
+                expect(response.status).toBe(400);
+                expect(triggerService.updateRule).not.toHaveBeenCalled();
+            },
+        );
+        it.each(["yes", 1, null, "false"])("rejects retryOnFailure %p on update before persistence", async (retryOnFailure) => {
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ retryOnFailure });
+            expect(response.status).toBe(400);
+            expect(triggerService.updateRule).not.toHaveBeenCalled();
+        });
+        it("rejects an unknown status on create before persistence", async () => {
+            const response = await request(app.getHttpServer()).post("/message-trigger-rules").send({
+                name: "신규", eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE, recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, targetClientStatus: "completed",
+            });
+            expect(response.status).toBe(400);
+            expect(triggerService.createRule).not.toHaveBeenCalled();
+        });
+        it.each(["all", "pre_booking", "waiting", "active"])("passes %s and retryOnFailure=false to the tenant service and returns both", async (targetClientStatus) => {
+            const rule = createMockRule();
+            rule.targetClientStatus = targetClientStatus as never;
+            rule.retryOnFailure = false;
+            triggerService.updateRule.mockResolvedValue(rule);
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ targetClientStatus, retryOnFailure: false });
+            expect(response.status).toBe(200);
+            expect(response.body).toMatchObject({ targetClientStatus, retryOnFailure: false });
+            expect(triggerService.updateRule).toHaveBeenCalledWith(
+                branchId, "rule-1", expect.objectContaining({ targetClientStatus, retryOnFailure: false }),
+            );
+        });
+        it("returns the default 전체 / 켬 for a rule payload", async () => {
+            triggerService.getRule.mockResolvedValue(createMockRule());
+            const response = await request(app.getHttpServer()).get("/message-trigger-rules/rule-1");
+            expect(response.status).toBe(200);
+            expect(response.body).toMatchObject({ targetClientStatus: "all", retryOnFailure: true });
         });
     });
 
@@ -359,6 +412,173 @@ describe("MessageTriggerController (Integration)", () => {
             authRole = "user";
             expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/cancel")).status).toBe(403);
             expect(triggerService.cancelJobByUser).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("POST /message-trigger-jobs/:id/reschedule (owner-only debug tool)", () => {
+        const scheduledFor = "2099-01-01T00:05:00.000Z";
+
+        it("lets the owner move a job and passes the new time, branch and actor to the service", async () => {
+            authRole = "owner";
+            triggerService.rescheduleJobForDebug.mockResolvedValue({ id: "job-1", status: "pending", scheduledFor });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ id: "job-1", status: "pending", scheduledFor });
+            expect(triggerService.rescheduleJobForDebug).toHaveBeenCalledWith(
+                branchId,
+                "job-1",
+                new Date(scheduledFor),
+                "user-1",
+            );
+        });
+
+        it.each(["admin", "manager", "user"])("denies %s with 403 before service execution", async (role) => {
+            authRole = role;
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor });
+
+            expect(response.status).toBe(403);
+            expect(triggerService.rescheduleJobForDebug).not.toHaveBeenCalled();
+        });
+
+        it.each([undefined, "", "not-a-date", "2099-01-01", 12345])("rejects an invalid scheduledFor %p with 400", async (value) => {
+            authRole = "owner";
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor: value });
+
+            expect(response.status).toBe(400);
+            expect(triggerService.rescheduleJobForDebug).not.toHaveBeenCalled();
+        });
+
+        it.each(["2099-01-01T00:05", "2099-01-01T00:05:00", "2099-01-01T00:05:00.000", "2099-01-01T00:05:00+0900"])(
+            "rejects a scheduledFor with no usable time zone %p with 400",
+            async (value) => {
+                authRole = "owner";
+                const response = await request(app.getHttpServer())
+                    .post("/message-trigger-jobs/job-1/reschedule")
+                    .send({ scheduledFor: value });
+
+                expect(response.status).toBe(400);
+                expect(triggerService.rescheduleJobForDebug).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each([
+            ["2099-01-01T00:05:00Z", "2099-01-01T00:05:00.000Z"],
+            ["2099-01-01T00:05:00.000Z", "2099-01-01T00:05:00.000Z"],
+            ["2099-01-01T09:05:00+09:00", "2099-01-01T00:05:00.000Z"],
+            ["2099-01-01T00:05:00-05:00", "2099-01-01T05:05:00.000Z"],
+        ])("accepts a scheduledFor with an explicit zone %p", async (value, expectedIso) => {
+            authRole = "owner";
+            triggerService.rescheduleJobForDebug.mockResolvedValue({ id: "job-1", status: "pending", scheduledFor: expectedIso });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor: value });
+
+            expect(response.status).toBe(200);
+            expect(triggerService.rescheduleJobForDebug).toHaveBeenCalledWith(
+                expect.anything(), "job-1", new Date(expectedIso), expect.anything(),
+            );
+        });
+
+        it("surfaces the service's 400 for a time that is not in the future", async () => {
+            authRole = "owner";
+            triggerService.rescheduleJobForDebug.mockRejectedValue(new BadRequestException("past"));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor: "2000-01-01T00:00:00.000Z" });
+
+            expect(response.status).toBe(400);
+        });
+
+        it("surfaces the 409 problem body when the job is not pending", async () => {
+            authRole = "owner";
+            triggerService.rescheduleJobForDebug.mockRejectedValue(new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT")));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/reschedule")
+                .send({ scheduledFor });
+
+            expect(response.status).toBe(409);
+            expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT" });
+        });
+
+        it("surfaces the 404 problem body for an unknown job", async () => {
+            authRole = "owner";
+            triggerService.rescheduleJobForDebug.mockRejectedValue(new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND")));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/missing/reschedule")
+                .send({ scheduledFor });
+
+            expect(response.status).toBe(404);
+            expect(response.body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+        });
+    });
+
+    describe("POST /message-trigger-jobs/:id/resend", () => {
+        it("resends one needs_setup job for the authenticated tenant and answers 200 with the outcome", async () => {
+            triggerService.resendNeedsSetupJob.mockResolvedValue({ id: "job-1", status: "sent", reason: null });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/resend");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ id: "job-1", status: "sent", reason: null });
+            expect(triggerService.resendNeedsSetupJob).toHaveBeenCalledWith(branchId, "job-1");
+        });
+
+        it("passes a still-broken outcome through as 200 with its reason", async () => {
+            triggerService.resendNeedsSetupJob.mockResolvedValue({ id: "job-1", status: "needs_setup", reason: "필수 정보 누락 (name)" });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/resend");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ id: "job-1", status: "needs_setup", reason: "필수 정보 누락 (name)" });
+        });
+
+        it("surfaces the 404 problem body for an unknown job", async () => {
+            triggerService.resendNeedsSetupJob.mockRejectedValue(new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND")));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/missing/resend");
+
+            expect(response.status).toBe(404);
+            expect(response.body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+        });
+
+        it("surfaces the 409 problem body when the job cannot be resent", async () => {
+            triggerService.resendNeedsSetupJob.mockRejectedValue(new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT")));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/resend");
+
+            expect(response.status).toBe(409);
+            expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT" });
+        });
+
+        it("allows a branch manager and denies staff before service execution", async () => {
+            triggerService.resendNeedsSetupJob.mockResolvedValue({ id: "job-1", status: "sent", reason: null });
+            authRole = "manager";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/resend")).status).toBe(200);
+            authRole = "user";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/resend")).status).toBe(403);
+            expect(triggerService.resendNeedsSetupJob).toHaveBeenCalledTimes(1);
+        });
+
+        it("has no bulk form", async () => {
+            const response = await request(app.getHttpServer()).post("/message-trigger-jobs/resend");
+            expect(response.status).toBe(404);
+            expect(triggerService.resendNeedsSetupJob).not.toHaveBeenCalled();
         });
     });
 
