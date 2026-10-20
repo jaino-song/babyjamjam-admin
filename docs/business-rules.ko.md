@@ -50,7 +50,7 @@
 | 고객-03 | **종료일은 파생값이다.** 회차가 미뤄지면 회차 수를 채울 수 있도록 종료일만 자동 연장한다. 관리자 승인 불필요. | `backend/application/services/schedule-change.service.ts:250-251`, `service-record-entry.service.ts:534-546` | 확정 |
 | 고객-04 | 서비스 상태: **`예약 전 → 대기`는 관리자가 [예약 확정]을 눌러야 바뀐다**(예약 전 = 상담만 하고 이용이 정해지지 않은 상태, 날짜를 넣어도 저절로 바뀌지 않는다). `대기 → 진행 → 완료`는 **날짜로 자동 계산**. `중도 종료(terminated)`, `교체 요청(replacement_requested)`은 **수동 상태**이며 날짜 재계산이 덮어쓰지 않는다. 수동 상태는 다른 데이터에 연쇄 변경을 일으키지 않는다. 저장만으로는 예약 전과 대기·진행·완료 사이를 넘나들 수 없다. | `backend/domain/value-objects/service-status.vo.ts`, `backend/application/services/client.service.ts`(`confirmBooking`), `backend/application/usecases/client/client-write-validation.ts`(`resolveSavedServiceStatus`) | 확정 (사용자 결정 2026-10-12) · 구현됨: BJJ-438(통합 브랜치, 미배포) · 남은 것: 예약 확정 취소, AI 채팅 예약 확정 · 위반: P18 BJJ-380 |
 | 고객-05 | **현재 계약 = 그 고객의 계약서(제공기록지 스냅샷 제외) 중 `createdDate`가 가장 최근인 것**(동률이면 id 큰 것). 상태 배지·영수증 링크·알림 요약 모두 이 하나를 쓴다(S1). | `backend/application/utils/current-contract-document.ts:43-50, 77-138` | 확정 · 위반: P17 BJJ-379 |
-| 고객-06 | 고객 삭제: 연결된 기록이 없으면 영구 삭제하고, 기록이 있으면 행을 남긴 채(tombstone) 모든 목록·검색·상세에서 숨긴다. 이때 남은 배정을 종료하고, 대기 중인 문자를 취소하고, 제공기록지 링크를 끊는다. tombstone 삭제는 `CLIENT_TOMBSTONE_DELETE_ENABLED=true`일 때만 적용되며, 그 외에는 기록이 있는 고객을 삭제할 수 없다(409 `CLIENT_RETENTION_BLOCKED`). | `backend/application/usecases/client/delete-client.usecase.ts`, `backend/infrastructure/database/repositories/sb.client.repository.ts`(`delete`), `backend/application/services/client.service.ts`(`delete`) | 확정 (사용자 결정 2026-10-19) |
+| 고객-06 | 고객 삭제: 연결된 기록이 없으면 영구 삭제하고, 기록이 있으면 행을 남긴 채(tombstone) 모든 목록·검색·상세에서 숨긴다. 이때 남은 배정을 종료하고, 대기 중인 문자를 취소하고, 제공기록지 링크를 끊는다. tombstone 삭제는 `CLIENT_TOMBSTONE_DELETE_ENABLED=true`이거나, 값이 없고 `NODE_ENV=production`일 때 적용되며, 그 외에는 기록이 있는 고객을 삭제할 수 없다(409 `CLIENT_RETENTION_BLOCKED`). | `backend/application/usecases/client/delete-client.usecase.ts`, `backend/infrastructure/database/repositories/sb.client.repository.ts`(`delete`), `backend/application/services/client.service.ts`(`delete`) | 확정 (사용자 결정 2026-10-19) |
 | 고객-07 | 기존 고객 정보와 다른 값으로 연결·등록하려 하면 비교(diff) 다이얼로그로 사람이 확인한다(S3). | — | 확정 (c4 결정) · 위반: P09 BJJ-371, P50 BJJ-420 |
 | 고객-08 | 고객 기간(시작·종료일) 저장은 버전 비교로 울타리를 친다(S2). | — | 위반: P19 BJJ-381 |
 
@@ -200,6 +200,7 @@
 | 2026-10-16 | 기록-07 | 판을 확정할 때 고치기 전 내용을 새 칸에 함께 저장해 변경 내용을 보여 준다. 그 전에 확정된 판은 변경 전 내용 없음으로 표시. |
 | 2026-10-19 | 고객-06 | 삭제된 고객은 tombstone을 남기지만 UI 목록에는 없는 게 정상이다. 기록이 있어도 삭제가 막히지 않는다. (사용자 결정) |
 | 2026-10-20 | 고객-06 | 운영 main이 `client.deleted_at`을 읽는 빌드로 배포되어 운영·preview에서 `CLIENT_TOMBSTONE_DELETE_ENABLED=true`로 켜기로 한다. preview는 배포로 바로 켜진다. 운영(LightNode)은 compose 파일이 배포로 전달되지 않으므로, root로 `install.sh`를 다시 실행하고 replace해야 켜진다. (사용자 결정) |
+| 2026-10-21 | 고객-06 | LightNode 서버에 접근할 계정이 없어, `CLIENT_TOMBSTONE_DELETE_ENABLED`가 비어 있으면 `NODE_ENV=production`에서 켜진 것으로 본다(그 외 환경은 꺼짐, `"false"`로 끌 수 있음). 이미지 배포만으로 운영에 적용된다. (사용자 결정) |
 
 현재 결정 대기 항목 없음.
 

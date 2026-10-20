@@ -644,14 +644,18 @@ export class SbClientRepository implements IClientRepository {
     }
 
     /**
-     * CLIENT_TOMBSTONE_DELETE_ENABLED stays off until production main runs a build that
-     * reads `client.deleted_at`; an older build would revive the canceled jobs of a
-     * tombstoned client. Only the exact string "true" enables it. Read per call.
+     * CLIENT_TOMBSTONE_DELETE_ENABLED: the exact string "true" enables the tombstone
+     * delete and any other set value disables it. Unset means on under
+     * NODE_ENV=production and off elsewhere: production main reads `client.deleted_at`
+     * since 2026-10-20, and the LightNode host's compose file is not shipped by a
+     * deploy, so the image carries the default. Read per call.
      */
     private isTombstoneDeleteEnabled(): boolean {
-        const raw = this.configService
-            ? this.configService.get<string>("CLIENT_TOMBSTONE_DELETE_ENABLED")
-            : process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+        const read = (key: string) => this.configService
+            ? this.configService.get<string>(key)
+            : process.env[key];
+        const raw = read("CLIENT_TOMBSTONE_DELETE_ENABLED");
+        if (raw === undefined) return read("NODE_ENV") === "production";
         return raw === "true";
     }
 
