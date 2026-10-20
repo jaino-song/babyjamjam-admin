@@ -65,6 +65,14 @@ export function isRetryFamilyBlocker(log: MessageLogEntity): boolean {
         || log.providerAcceptanceState === "reconciled_delivered";
 }
 
+/** Whether a retry attempt landed, independently of whether it fences another retry. */
+export function isLandedRetryAttempt(log: MessageLogEntity): boolean {
+    return log.status === "sent"
+        && !log.isPartialProviderOutcome()
+        && !log.isProviderOutcomeUncertain()
+        && log.variables["retrySafety"] !== "uncertain";
+}
+
 export class MessageLogEntity {
     constructor(
         public readonly id: number,

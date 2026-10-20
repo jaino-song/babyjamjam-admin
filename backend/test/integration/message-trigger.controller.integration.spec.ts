@@ -131,6 +131,7 @@ describe("MessageTriggerController (Integration)", () => {
         variables: overrides.variables ?? { clientName: "김고객" },
         status: overrides.status ?? "sent",
         resentByLogId: overrides.resentByLogId ?? null,
+        retryBlockedByLogId: overrides.retryBlockedByLogId ?? null,
         aligoMid: overrides.aligoMid ?? "mid-1",
         errorMessage: overrides.errorMessage ?? null,
         attempts: overrides.attempts ?? 1,
@@ -585,7 +586,7 @@ describe("MessageTriggerController (Integration)", () => {
 
     describe("GET /message-logs", () => {
         it("returns history for the authenticated tenant", async () => {
-            triggerService.listHistory.mockResolvedValue([createMockHistoryRecord()]);
+            triggerService.listHistory.mockResolvedValue([createMockHistoryRecord({ status: "failed", resentByLogId: 20, retryBlockedByLogId: 20 })]);
 
             const response = await request(app.getHttpServer())
                 .get("/message-logs")
@@ -593,6 +594,7 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toHaveLength(1);
+            expect(response.body[0]).toMatchObject({ resentByLogId: 20, retryBlockedByLogId: 20 });
             expect(triggerService.listHistory).toHaveBeenCalledWith(branchId, 25, 0);
         });
 
@@ -611,7 +613,7 @@ describe("MessageTriggerController (Integration)", () => {
     describe("GET /message-logs/page", () => {
         it("uses the bounded default page size and forwards a cursor", async () => {
             triggerService.listHistoryPage.mockResolvedValue({
-                items: [createMockHistoryRecord()],
+                items: [createMockHistoryRecord({ status: "failed", retryBlockedByLogId: 20 })],
                 page: {
                     snapshotAt: "2026-09-17T00:00:00.000Z",
                     nextCursor: "cursor-v1",
@@ -625,6 +627,7 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body.page).toEqual(expect.objectContaining({ hasMore: true }));
+            expect(response.body.items[0]).toMatchObject({ resentByLogId: null, retryBlockedByLogId: 20 });
             expect(triggerService.listHistoryPage).toHaveBeenCalledWith(branchId, 500, "cursor-v1");
         });
 
@@ -651,6 +654,7 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(response.body.items).toHaveLength(1);
+            expect(response.body.items[0]).toMatchObject({ resentByLogId: null, retryBlockedByLogId: null });
             expect(triggerService.listClientHistoryPage).toHaveBeenCalledWith(branchId, 42, 50, "opaque-cursor");
         });
 

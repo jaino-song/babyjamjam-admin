@@ -61,7 +61,7 @@ import {
 } from "domain/constants/message-automation-policy";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
-import { MessageLogEntity, isRetryFamilyBlocker } from "domain/entities/message-log.entity";
+import { MessageLogEntity, isLandedRetryAttempt, isRetryFamilyBlocker } from "domain/entities/message-log.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { agentAutomationSourcePayload } from "./agent-automation-job-binding";
@@ -338,6 +338,7 @@ export interface ClientUpcomingMessageTriggerJobView {
 
 export interface MessageLogRecordView {
     resentByLogId: number | null;
+    retryBlockedByLogId: number | null;
     id: number | string;
     provider: string;
     templateKey: string;
@@ -852,6 +853,7 @@ export class MessageTriggerService {
                 variables: log.variables,
                 status: log.status,
                 resentByLogId: null,
+                retryBlockedByLogId: null,
                 aligoMid: log.aligoMid,
                 errorMessage: log.errorMessage,
                 attempts: log.attempts,
@@ -899,6 +901,7 @@ export class MessageTriggerService {
                     },
                     status: job.status === "needs_setup" ? "needs_setup" : job.status === "canceled" ? "canceled" : "failed",
                     resentByLogId: null,
+                    retryBlockedByLogId: null,
                     aligoMid: null,
                     errorMessage: job.cancelReason,
                     attempts: job.attempts,
@@ -1016,6 +1019,7 @@ export class MessageTriggerService {
                 variables: log.variables,
                 status: log.status,
                 resentByLogId: null,
+                retryBlockedByLogId: null,
                 aligoMid: log.aligoMid,
                 errorMessage: log.errorMessage,
                 attempts: log.attempts,
@@ -1070,6 +1074,7 @@ export class MessageTriggerService {
                     },
                     status: job.status === "needs_setup" ? "needs_setup" : job.status === "canceled" ? "canceled" : "failed",
                     resentByLogId: null,
+                    retryBlockedByLogId: null,
                     aligoMid: null,
                     errorMessage: job.cancelReason,
                     attempts: job.attempts,
@@ -1233,6 +1238,7 @@ export class MessageTriggerService {
                     variables: log.variables,
                     status: log.status,
                     resentByLogId: null,
+                    retryBlockedByLogId: null,
                     aligoMid: log.aligoMid,
                     errorMessage: log.errorMessage,
                     attempts: log.attempts,
@@ -1283,6 +1289,7 @@ export class MessageTriggerService {
                         },
                         status: job.status === "needs_setup" ? "needs_setup" : job.status === "canceled" ? "canceled" : "failed",
                         resentByLogId: null,
+                        retryBlockedByLogId: null,
                         aligoMid: null,
                         errorMessage: job.cancelReason,
                         attempts: job.attempts,
@@ -1823,9 +1830,11 @@ export class MessageTriggerService {
         return await fetchJob() ?? job;
     }
 
-    /** Stamps retry-family blockers only for failed SMS rows on the returned page. */
+    /** Stamps landed newer attempts and retry-family blockers for failed SMS rows. */
     private async attachResentByLogId(branchId: string, items: MessageLogRecordView[]): Promise<MessageLogRecordView[]> {
-        const page = items.map((item) => ({ ...item, resentByLogId: null as number | null }));
+        const page = items.map((item) => ({
+            ...item, resentByLogId: null as number | null, retryBlockedByLogId: null as number | null,
+        }));
         const candidates = page.filter((item) => item.provider === "aligo_sms"
             && typeof item.id === "number" && item.status === "failed");
         if (candidates.length === 0) return page;
@@ -1836,6 +1845,10 @@ export class MessageTriggerService {
             for (const item of candidates) {
                 for (const member of families.get(item.id as number) ?? []) {
                     if (member.id !== item.id && isRetryFamilyBlocker(member)
+                        && (item.retryBlockedByLogId === null || member.id > item.retryBlockedByLogId)) {
+                        item.retryBlockedByLogId = member.id;
+                    }
+                    if (member.id > (item.id as number) && isLandedRetryAttempt(member)
                         && (item.resentByLogId === null || member.id > item.resentByLogId)) {
                         item.resentByLogId = member.id;
                     }
@@ -1844,7 +1857,7 @@ export class MessageTriggerService {
             return page;
         } catch {
             this.logger.warn("Failed to resolve retry families for message history");
-            return items.map((item) => ({ ...item, resentByLogId: null }));
+            return items.map((item) => ({ ...item, resentByLogId: null, retryBlockedByLogId: null }));
         }
     }
 
