@@ -86,6 +86,7 @@ import {
   getScheduledRecipientBadge,
   matchesMessageHistoryQuery as matchesHistoryQuery,
   MessageHistoryDetailPanel,
+  MESSAGE_HISTORY_STATUS_META,
   normalizeMessageHistoryRecord as normalizeHistoryRecord,
   formatMessageHistoryDate as formatHistoryDate,
   type MessageHistoryFilter,
@@ -1251,7 +1252,7 @@ function MessageHistorySection() {
               render={({ item: record }) => {
                 if (!record) return null;
                 const statusMeta = getMessageHistoryListStatusMeta(record);
-                const ItemIcon = record.icon;
+                const ItemIcon = record.isResent ? MESSAGE_HISTORY_STATUS_META.sent.icon : record.icon;
                 const inlineReason = record.status === "failed"
                   ? record.failureReason
                   : record.status === "canceled"
@@ -1262,7 +1263,7 @@ function MessageHistorySection() {
                   <AnimatedSlotListItemContent
                     dataComponent="desktop_messages_sections_history-list-item"
                     icon={ItemIcon}
-                    iconContainerClassName={getMessageHistoryAvatarClassName(record.status)}
+                    iconContainerClassName={getMessageHistoryAvatarClassName(record.isResent ? "sent" : record.status)}
                     title={record.title}
                     subtitle={record.recipientListLabel}
                     meta={inlineReason ? (

@@ -344,7 +344,7 @@ export function MessageHistoryDetailPanel({
           data-component={`${dataComponentPrefix}_detail-avatar`}
           className={cn(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
-            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
+            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.isResent ? "sent" : selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
           )}
         >
           <History className="h-5 w-5" />

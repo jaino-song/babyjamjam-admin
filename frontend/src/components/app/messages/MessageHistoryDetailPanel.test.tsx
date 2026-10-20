@@ -139,6 +139,10 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
       />,
     );
     const badge = container.querySelector(`[data-component="${prefix}_detail-status"]`);
+    const avatar = container.querySelector(`[data-component="${prefix}_detail-avatar"]`);
+    const avatarStatus = resentByLogId === null ? "failed" : "sent";
+    expect(avatar).toHaveClass(...MESSAGE_HISTORY_STATUS_META[avatarStatus].avatarClass.split(" "));
+    expect(avatar?.querySelector(".lucide-history")).toBeInTheDocument();
     expect(badge).toHaveTextContent(resentByLogId === null ? "발송 실패" : "재발송됨");
     expect(screen.getByText("실패 사유")).toBeInTheDocument();
     const button = screen.getByRole("button", { name: "재발송" });

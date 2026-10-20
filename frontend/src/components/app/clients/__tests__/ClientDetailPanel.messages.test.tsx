@@ -69,7 +69,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
     getMessageHistoryTimestamp: (record: MessageLogRecord) => record.lastAttemptAt ?? record.updatedAt,
     formatMessageHistoryDate: (value: string) => `날짜 ${value}`,
     MESSAGE_HISTORY_STATUS_META: {
-        sent: { avatarClass: "status-avatar-sent" },
+        sent: { avatarClass: "status-avatar-sent", icon: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").MESSAGE_HISTORY_STATUS_META.sent.icon },
         failed: { avatarClass: "status-avatar-failed" },
         pending: { avatarClass: "status-avatar-pending" },
         canceled: { avatarClass: "status-avatar-canceled" },
@@ -92,7 +92,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
         recipientType: record.recipientType,
         resendBlock: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).resendBlock,
-        icon: () => <span aria-hidden="true">아이콘</span>,
+        icon: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).icon,
     }),
     MessageHistoryDetailPanel: (props: ComponentProps<typeof MessageHistoryDetailPanel>) => {
         mockDetailRetry = props.onRetry;
@@ -142,6 +142,7 @@ jest.mock("@/components/app/v3", () => ({
         meta,
         status,
         iconContainerClassName,
+        icon: Icon,
         "data-component": dataComponent,
     }: {
         title: ReactNode;
@@ -149,10 +150,11 @@ jest.mock("@/components/app/v3", () => ({
         meta?: ReactNode;
         status?: ReactNode;
         iconContainerClassName?: string;
+        icon: import("lucide-react").LucideIcon;
         "data-component"?: string;
     }) => (
         <article data-component={dataComponent}>
-            <div data-slot="icon" className={iconContainerClassName} />
+            <div data-slot="icon" className={iconContainerClassName}><Icon /></div>
             <h4>{title}</h4>
             {subtitle ? <div data-slot="subtitle">{subtitle}</div> : null}
             {meta ? <div data-slot="meta">{meta}</div> : null}
@@ -416,6 +418,20 @@ describe("ClientDetailPanel messages tab", () => {
         openMessagesTab();
         fireEvent.click(screen.getByRole("heading", { name: record.ruleName! }).closest('[role="button"]')!);
     }
+
+    it.each([
+        { resentByLogId: 12, retryBlockedByLogId: null, success: true },
+        { resentByLogId: null, retryBlockedByLogId: 12, success: false },
+        { resentByLogId: null, retryBlockedByLogId: null, success: false },
+    ])("uses success avatars only for resent logs (%j)", ({ resentByLogId, retryBlockedByLogId, success }) => {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([{ ...failedHistoryRecord, resentByLogId, retryBlockedByLogId }]));
+        openMessagesTab();
+        const row = screen.getByRole("heading", { name: "실패 안내" }).closest('[role="button"]');
+        const avatar = row?.querySelector('[data-slot="icon"]');
+        expect(avatar).toHaveClass(success ? "status-avatar-sent" : "status-avatar-failed");
+        expect(avatar?.querySelector(success ? ".lucide-circle-check" : ".lucide-calendar-range")).toBeInTheDocument();
+        expect(avatar?.querySelector(success ? ".lucide-calendar-range" : ".lucide-circle-check")).toBeNull();
+    });
 
     it("retries a failed client log using its log id, not its trigger job id", async () => {
         openRecord({ ...failedHistoryRecord, resentByLogId: null, retryBlockedByLogId: null });

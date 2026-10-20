@@ -395,7 +395,8 @@ function ClientMessageHistoryList({
                         recipientNameFallback: clientName,
                         recipientListLabelFallback: clientName,
                     });
-                    const ItemIcon = normalizedRecord.icon;
+                    const avatarStatus = normalizedRecord.isResent ? "sent" : normalizedRecord.status;
+                    const ItemIcon = normalizedRecord.isResent ? MESSAGE_HISTORY_STATUS_META.sent.icon : normalizedRecord.icon;
                     const recipientLabel = normalizedRecord.recipientType
                         ? MESSAGE_RECIPIENT_LABELS[normalizedRecord.recipientType]
                         : "수신자";
@@ -412,7 +413,7 @@ function ClientMessageHistoryList({
                         <AnimatedSlotListItemContent
                             dataComponent={`${dataComponentPrefix}_history-list_item_content`}
                             icon={ItemIcon}
-                            iconContainerClassName={MESSAGE_HISTORY_STATUS_META[normalizedRecord.status].avatarClass}
+                            iconContainerClassName={MESSAGE_HISTORY_STATUS_META[avatarStatus].avatarClass}
                             title={normalizedRecord.title}
                             subtitle={`${recipientLabel}: ${recipientName}`}
                             meta={inlineReason ? (
