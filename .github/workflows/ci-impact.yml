@@ -1,0 +1,118 @@
+name: CI impact
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+    outputs:
+      backend:
+        value: ${{ jobs.classify.outputs.backend }}
+      frontend:
+        value: ${{ jobs.classify.outputs.frontend }}
+      mobile:
+        value: ${{ jobs.classify.outputs.mobile }}
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.validated.outputs.backend }}
+      frontend: ${{ steps.validated.outputs.frontend }}
+      mobile: ${{ steps.validated.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Protected-base routing (or conservative FULL bootstrap)
+        id: impact
+        env:
+          IMPACT_MODE: classify
+          IMPACT_ARTIFACT: ${{ runner.temp }}/impact.json
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const env = process.env;
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+          const exact = sha => {
+            if (!/^[0-9a-f]{40}$/.test(sha ?? '') || /^0+$/.test(sha)) throw new Error('Invalid exact event commit');
+            try { git('cat-file', '-e', `${sha}^{commit}`); }
+            catch { git('fetch', '--no-tags', 'origin', sha); }
+            if (git('rev-parse', '--verify', `${sha}^{commit}`).trim() !== sha) throw new Error('Unresolved event commit');
+            return sha;
+          };
+          const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
+          const compared = ['pull_request', 'merge_group'].includes(env.GITHUB_EVENT_NAME);
+          const base = compared ? exact(env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.base?.sha : event.merge_group?.base_sha) : null;
+          const head = compared ? exact(env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.head?.sha : event.merge_group?.head_sha) : exact(env.GITHUB_SHA);
+          const sha = exact(env.GITHUB_SHA);
+          const helper = 'scripts/ci/impact.mjs';
+          // A successful tree listing distinguishes absence from git/read failure.
+          const entries = base ? git('ls-tree', base, '--', helper).trim() : '';
+          if (entries) {
+            if (!/^100644 blob [0-9a-f]{40}\t/.test(entries)) throw new Error('Trusted helper is not a regular blob');
+            const directory = mkdtempSync(join(env.RUNNER_TEMP, 'protected-impact-'));
+            const executable = join(directory, 'impact.mjs');
+            writeFileSync(executable, git('show', `${base}:${helper}`), { mode: 0o600 });
+            // No candidate module path, imports, packages or fallback helpers are executed.
+            const artifact = join(directory, 'impact.json');
+            const proof = join(directory, 'completed');
+            execFileSync(process.execPath, [executable], { env: { ...env, IMPACT_ARTIFACT: artifact, IMPACT_COMPLETION_PROOF: proof }, stdio: 'inherit' });
+            if (env.IMPACT_MODE === 'gate') {
+              if (readFileSync(proof, 'utf8') !== 'protected-complete\n') throw new Error('Missing protected completion proof');
+            } else {
+              const routing = JSON.parse(readFileSync(artifact, 'utf8'));
+              if (routing.schemaVersion !== 1 || routing.candidate?.sha !== sha || routing.candidate?.base !== base || routing.candidate?.head !== head || !['backend', 'frontend', 'mobile'].every(app => typeof routing.selected?.[app] === 'boolean')) throw new Error('Missing/invalid protected routing artifact');
+              writeFileSync(env.IMPACT_ARTIFACT, JSON.stringify(routing, null, 2) + '\n');
+            }
+          } else {
+            // Workflow-owned bootstrap also handles push/manual: FULL only, never exemptions.
+            const reason = compared ? 'Protected base predates impact helper: bootstrap FULL' : `${env.GITHUB_EVENT_NAME}: FULL; no exemptions`;
+            const selected = { backend: true, frontend: true, mobile: true };
+            if (env.IMPACT_MODE === 'gate') {
+              if (!Object.hasOwn(selected, env.COMPONENT) || env.IMPACT_RESULT !== 'success' || env.REPORTED_SELECTION !== 'true' || env.CHECKS_RESULT !== 'success') throw new Error('FULL completion requires successful selected checks and impact');
+            } else {
+              const routing = { schemaVersion: 1, candidate: { event: env.GITHUB_EVENT_NAME, sha, base, head, mergeBase: null }, comparison: { kind: 'full', reason }, paths: [], categories: { ...selected, shared: true, native: true, infra: true, docs: false, dependencies: true, config: true, uncertain: true }, selected, reasons: [reason], qa: { status: 'assessment-required', reasons: ['Full/unknown impact requires Main browser-impact assessment'] } };
+              writeFileSync(env.IMPACT_ARTIFACT, JSON.stringify(routing, null, 2) + '\n');
+              for (const app of Object.keys(selected)) appendFileSync(env.GITHUB_OUTPUT, `${app}=true\n`);
+              appendFileSync(env.GITHUB_STEP_SUMMARY, `## CI impact\n\n\`\`\`json\n${JSON.stringify(routing, null, 2)}\n\`\`\`\n`);
+            }
+          }
+          NODE
+      - name: Validate protected routing exports
+        id: validated
+        env:
+          IMPACT_ARTIFACT: ${{ runner.temp }}/impact.json
+          BACKEND: ${{ steps.impact.outputs.backend }}
+          FRONTEND: ${{ steps.impact.outputs.frontend }}
+          MOBILE: ${{ steps.impact.outputs.mobile }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const routing = JSON.parse(readFileSync(process.env.IMPACT_ARTIFACT, 'utf8'));
+          const apps = ['backend', 'frontend', 'mobile'];
+          // Transport only: classification and fresh artifact validation already
+          // happened in the protected loader. Never evaluate candidate rules here.
+          for (const app of apps) {
+            const value = process.env[app.toUpperCase()];
+            if (!['true', 'false'].includes(value) || typeof routing.selected?.[app] !== 'boolean' || value !== String(routing.selected[app])) {
+              throw new Error(`Missing/invalid/inconsistent protected routing export: ${app}`);
+            }
+          }
+          for (const app of apps) appendFileSync(process.env.GITHUB_OUTPUT, `${app}=${process.env[app.toUpperCase()]}\n`);
+          NODE
+      - name: Upload impact handoff (no QA execution)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: impact-${{ inputs.component }}
+          path: ${{ runner.temp }}/impact.json
+          if-no-files-found: error
+          retention-days: 14
