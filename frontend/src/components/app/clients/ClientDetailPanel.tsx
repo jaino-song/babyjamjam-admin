@@ -15,6 +15,7 @@ import {
     MESSAGE_LOG_STATUS_BADGE_VARIANT,
     MESSAGE_JOB_RESEND_COPY,
     MESSAGE_HISTORY_STATUS_LABELS,
+    MESSAGE_RESENT_LABEL,
     MESSAGE_RECORD_REASON_LABEL,
     MESSAGE_RECIPIENT_LABELS,
     getMessageTemplateLabel,
@@ -429,10 +430,10 @@ function ClientMessageHistoryList({
                                 >
                                     <MessageStatusBadge
                                         data-component={`${dataComponentPrefix}_history-list_item_status`}
-                                        variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[normalizedRecord.status]}
+                                        variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[normalizedRecord.isResent ? "sent" : normalizedRecord.status]}
                                         size="sm"
                                     >
-                                        {MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
+                                        {normalizedRecord.isResent ? MESSAGE_RESENT_LABEL : MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
                                     </MessageStatusBadge>
                                     <span
                                         data-component={`${dataComponentPrefix}_history-list_item_date`}
@@ -1380,7 +1381,7 @@ function ClientDetailPanelBody({
     const canRetryMessage = canRetryFailedHistory(selectedClientMessageRecord, canManageMessages) || canResendMessage;
     const retryBlock = canResendMessage ? selectedClientMessageDetailRecord?.resendBlock : undefined;
     const handleRetryMessage = async () => {
-        if (retryBlock) return;
+        if (retryBlock || selectedClientMessageDetailRecord?.isResent) return;
         if (!selectedClientMessageRecord || !canRetryMessage || retryMessageMutation.isPending || resendMessageMutation.isPending) return;
         if (canResendMessage && selectedClientMessageRecord.triggerJobId) {
             toast(await resendMessageTriggerJob(resendMessageMutation.mutateAsync, selectedClientMessageRecord.triggerJobId));

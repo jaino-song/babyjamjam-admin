@@ -85,6 +85,7 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         channelLabel: "메시지",
         sentAt: record.lastAttemptAt ?? record.updatedAt,
         status: record.status,
+        isResent: jest.requireActual("@/components/app/messages/MessageHistoryDetailPanel").normalizeMessageHistoryRecord(record, options).isResent,
         messagePreview: record.messageBody,
         failureReason: record.status === "failed" ? record.errorMessage ?? undefined : undefined,
         cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
@@ -158,7 +159,7 @@ jest.mock("@/components/app/v3", () => ({
         </article>
     ),
     DetailEmptyState: ({ message }: { message: string }) => <p>{message}</p>,
-    DetailPanel: ({ children, tabs, trailing }: { children: ReactNode; tabs?: ReactNode; trailing?: ReactNode }) => <main>{tabs}{trailing}{children}</main>,
+    DetailPanel: ({ children, tabs, trailing, badges }: { children: ReactNode; tabs?: ReactNode; trailing?: ReactNode; badges?: ReactNode }) => <main>{tabs}{badges}{trailing}{children}</main>,
     DetailTabPanels: ({ activeTab, panels }: { activeTab: string; panels: Array<{ key: string; children: ReactNode }> }) => (
         <>{panels.find((panel) => panel.key === activeTab)?.children}</>
     ),
@@ -416,11 +417,25 @@ describe("ClientDetailPanel messages tab", () => {
     }
 
     it("retries a failed client log using its log id, not its trigger job id", async () => {
-        openRecord(failedHistoryRecord);
+        openRecord({ ...failedHistoryRecord, resentByLogId: null });
+        expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
         fireEvent.click(screen.getByRole("button", { name: "재발송" }));
         await waitFor(() => expect(mockRetryHistory).toHaveBeenCalledWith(11));
         expect(mockResendJob).not.toHaveBeenCalled();
         await waitFor(() => expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "재발송 요청을 접수했어요" }));
+    });
+
+    it("replaces failed badges with 재발송됨 and blocks both the button and retry callback", () => {
+        openRecord({ ...failedHistoryRecord, resentByLogId: 12 });
+        expect(screen.getAllByText("재발송됨")).toHaveLength(2);
+        screen.getAllByText("재발송됨").forEach(badge => expect(badge).toHaveClass("bg-status-success"));
+        expect(screen.queryByText("발송 실패")).not.toBeInTheDocument();
+        const retry = screen.getByRole("button", { name: "재발송" });
+        expect(retry).toBeDisabled();
+        fireEvent.click(retry);
+        mockDetailRetry?.();
+        expect(mockRetryHistory).not.toHaveBeenCalled();
+        expect(mockResendJob).not.toHaveBeenCalled();
     });
 
     it("resends a needs_setup job with its trigger job id", async () => {
