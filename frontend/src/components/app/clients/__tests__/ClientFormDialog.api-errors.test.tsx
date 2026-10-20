@@ -151,7 +151,10 @@ describe("ClientFormDialog API errors", () => {
     });
 
     it("sends the chosen status on create", async () => {
-      const prefill = { name: "예약고객", birthday: "1990-01-01", address: "서울시 강남구", phone: "01012345678" };
+      const prefill = {
+        name: "예약고객", birthday: "1990-01-01", address: "서울시 강남구", phone: "01012345678",
+        startDate: "2026-11-02", endDate: "2026-11-13",
+      };
       if (surface === "dialog") render(<ClientFormDialog open prefill={prefill} onClose={jest.fn()} />);
       else render(<ClientFormPanel open activeStep={3} prefill={prefill} onClose={jest.fn()} />);
       await flushOpenEffect();
@@ -160,6 +163,24 @@ describe("ClientFormDialog API errors", () => {
       await waitFor(() => expect(submit).toBeEnabled());
       fireEvent.click(submit);
       await waitFor(() => expect(mockCreateClientMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ serviceStatus: "active" })));
+    });
+
+    it("asks for both service dates before creating as a dated status", async () => {
+      const prefill = { name: "예약고객", birthday: "1990-01-01", address: "서울시 강남구", phone: "01012345678" };
+      if (surface === "dialog") render(<ClientFormDialog open prefill={prefill} onClose={jest.fn()} />);
+      else render(<ClientFormPanel open activeStep={3} prefill={prefill} onClose={jest.fn()} />);
+      await flushOpenEffect();
+      const status = screen.getByLabelText("계약 상태");
+      fireEvent.change(status, { target: { value: "waiting" } });
+      const submit = screen.getByRole("button", { name: "생성" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      const message = await screen.findByText("대기·진행·완료로 등록하려면 서비스 시작일과 종료일을 먼저 입력해 주세요.");
+      expect(status).toHaveAttribute("aria-invalid", "true");
+      expect(status.getAttribute("aria-describedby")?.split(" ")).toContain(message.id);
+      expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
+      fireEvent.change(status, { target: { value: "pre_booking" } });
+      expect(screen.queryByText(message.textContent as string)).not.toBeInTheDocument();
     });
 
     it("puts /serviceStatus refusal on the select with authored copy", async () => {
