@@ -450,7 +450,10 @@ export interface NormalizeMessageHistoryPresentationOptions {
   recipientListLabelFallback?: string | null;
 }
 
+export const MESSAGE_RESENT_LABEL = "재발송됨";
+
 export interface NormalizedMessageHistoryPresentation {
+  isResent: boolean;
   id: number | string;
   title: string;
   templateLabel: string;
@@ -498,6 +501,7 @@ export function normalizeMessageHistoryPresentation(
 
   return {
     id: record.id,
+    isResent: record.status === "failed" && record.resentByLogId != null,
     title,
     templateLabel,
     recipientName: resolvedRecipientName || "-",

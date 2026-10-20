@@ -56,6 +56,15 @@ export const SMS_PARTIAL_RETRY_SAFETY = "partial";
 /** Manual delivery attempts may be retried deliberately, but never by the worker. */
 export const SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY = "manual-provider-rejected";
 
+/** Whether another member of a retry family fences a manual retry. */
+export function isRetryFamilyBlocker(log: MessageLogEntity): boolean {
+    return log.status !== "failed"
+        || log.isPartialProviderOutcome()
+        || log.isProviderOutcomeUncertain()
+        || log.variables["retrySafety"] === "uncertain"
+        || log.providerAcceptanceState === "reconciled_delivered";
+}
+
 export class MessageLogEntity {
     constructor(
         public readonly id: number,
