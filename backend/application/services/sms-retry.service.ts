@@ -15,6 +15,7 @@ import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "appl
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import {
     MessageLogEntity,
+    isRetryFamilyBlocker,
     withoutAligoHistoryBookkeeping,
     SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
     SMS_DELIVERY_RETRY_DELAY_MS,
@@ -136,13 +137,7 @@ export class SmsRetryService {
         }
 
         const family = await this.logRepository.findRetryFamilyInBranch(branchId, sourceLog.id);
-        if (family.some((log) => log.id !== sourceLog.id && (
-            log.status !== "failed"
-            || log.isPartialProviderOutcome()
-            || log.isProviderOutcomeUncertain()
-            || log.variables["retrySafety"] === "uncertain"
-            || log.providerAcceptanceState === "reconciled_delivered"
-        ))) {
+        if (family.some((log) => log.id !== sourceLog.id && isRetryFamilyBlocker(log))) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 

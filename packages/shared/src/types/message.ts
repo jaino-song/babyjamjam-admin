@@ -393,6 +393,7 @@ export interface MessageLogRecord {
   recipientName: string | null;
   clientName: string | null;
   employeeName: string | null;
+  resentByLogId?: number | string | null;
   /** Set only on `needs_setup` rows: the safeguard level that would refuse a resend, or null when it would pass. */
   resendBlockedBy?: MessageResendBlockedBy | null;
   /** With a `recipient` block: who has the flag off, when the server could tell. */

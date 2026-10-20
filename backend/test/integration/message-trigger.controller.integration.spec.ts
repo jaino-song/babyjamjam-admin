@@ -130,6 +130,7 @@ describe("MessageTriggerController (Integration)", () => {
         messageBody: overrides.messageBody ?? "고객 등록 안내 메시지",
         variables: overrides.variables ?? { clientName: "김고객" },
         status: overrides.status ?? "sent",
+        resentByLogId: overrides.resentByLogId ?? null,
         aligoMid: overrides.aligoMid ?? "mid-1",
         errorMessage: overrides.errorMessage ?? null,
         attempts: overrides.attempts ?? 1,

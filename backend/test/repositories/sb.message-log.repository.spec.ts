@@ -56,6 +56,35 @@ describe("SbMessageLogRepository", () => {
             new Date("2026-10-01"), new Date("2026-10-01"),
         );
 
+        it("batches branch-pinned families, carries seeds and groups shared members", async () => {
+            queryRaw.mockResolvedValue([
+                { seed_id: 77, id: 77 }, { seed_id: 77, id: 79 },
+                { seed_id: 79, id: 77 }, { seed_id: 79, id: 79 },
+            ]);
+            messageLogModel.findMany.mockResolvedValue([{ ...source() }, { ...source(), id: 79 }]);
+            const families = await repository.findRetryFamiliesInBranch(branchId, [77, 79]);
+            expect([...families].map(([seed, logs]) => [seed, logs.map((log) => log.id)])).toEqual([
+                [77, [77, 79]], [79, [77, 79]],
+            ]);
+            const sql = queryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
+            expect(sql.values).toEqual([branchId, [77, 79], branchId, branchId]);
+            expect(sql.sql).toContain("SELECT id AS seed_id, id, variables");
+            expect(sql.sql).toContain("SELECT ancestors.seed_id, parent.id, parent.variables");
+            expect(sql.sql).toContain("SELECT family.seed_id, child.id");
+            expect(sql.sql.match(/branch_id = \?::uuid/g)).toHaveLength(3);
+            expect(sql.sql).not.toContain("UNION ALL");
+            expect(messageLogModel.findMany).toHaveBeenCalledTimes(1);
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({ where: { branchId, id: { in: [77, 79] } } });
+        });
+
+        it("returns an empty map for missing seeds or empty ids without loading rows", async () => {
+            await expect(repository.findRetryFamiliesInBranch(branchId, [])).resolves.toEqual(new Map());
+            expect(queryRaw).not.toHaveBeenCalled();
+            queryRaw.mockResolvedValue([]);
+            await expect(repository.findRetryFamiliesInBranch(branchId, [77])).resolves.toEqual(new Map());
+            expect(messageLogModel.findMany).not.toHaveBeenCalled();
+        });
+
         it("walks ancestors then all descendants using branch-pinned JSON edges and cycle-safe UNION", async () => {
             queryRaw.mockResolvedValue([{ id: 76 }, { id: 77 }, { id: 78 }, { id: 79 }]);
             messageLogModel.findMany.mockResolvedValue([{ ...source(), id: 79, status: "sent" }]);
