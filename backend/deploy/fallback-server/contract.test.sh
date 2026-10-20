@@ -78,7 +78,8 @@ for key in \
     SERVICE_RECORD_AUTO_FINALIZE_ENABLED \
     CONTRACT_AUTO_FINALIZE_ENABLED \
     EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED \
-    EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED; do
+    EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED \
+    CLIENT_TOMBSTONE_DELETE_ENABLED; do
     assert_contains "$ACTIVE_COMPOSE_FILE" "$key:[[:space:]]+\"true\"" \
         "$key must be enabled only in the temporary-active runtime"
 done
