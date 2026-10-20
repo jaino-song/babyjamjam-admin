@@ -1381,7 +1381,7 @@ function ClientDetailPanelBody({
     const canRetryMessage = canRetryFailedHistory(selectedClientMessageRecord, canManageMessages) || canResendMessage;
     const retryBlock = canResendMessage ? selectedClientMessageDetailRecord?.resendBlock : undefined;
     const handleRetryMessage = async () => {
-        if (retryBlock || selectedClientMessageDetailRecord?.isResent) return;
+        if (retryBlock || selectedClientMessageDetailRecord?.isRetryBlocked) return;
         if (!selectedClientMessageRecord || !canRetryMessage || retryMessageMutation.isPending || resendMessageMutation.isPending) return;
         if (canResendMessage && selectedClientMessageRecord.triggerJobId) {
             toast(await resendMessageTriggerJob(resendMessageMutation.mutateAsync, selectedClientMessageRecord.triggerJobId));
