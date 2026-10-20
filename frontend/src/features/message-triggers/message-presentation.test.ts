@@ -97,6 +97,7 @@ describe("shared message presentation contract", () => {
       messagePreview: "제공기록지 링크",
       failureReason: undefined,
       isResent: false,
+      isRetryBlocked: false,
     });
   });
 

@@ -454,6 +454,8 @@ export const MESSAGE_RESENT_LABEL = "재발송됨";
 
 export interface NormalizedMessageHistoryPresentation {
   isResent: boolean;
+  /** True when a manual retry would be refused because of the retry family (includes every resent row). */
+  isRetryBlocked: boolean;
   id: number | string;
   title: string;
   templateLabel: string;
@@ -502,6 +504,7 @@ export function normalizeMessageHistoryPresentation(
   return {
     id: record.id,
     isResent: record.status === "failed" && record.resentByLogId != null,
+    isRetryBlocked: record.status === "failed" && (record.resentByLogId != null || record.retryBlockedByLogId != null),
     title,
     templateLabel,
     recipientName: resolvedRecipientName || "-",

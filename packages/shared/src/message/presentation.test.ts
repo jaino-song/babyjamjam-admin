@@ -54,6 +54,16 @@ describe("resent presentation", () => {
     expect(normalizeMessageHistoryPresentation(historyRecord({ status, resentByLogId })).isResent).toBe(expected);
     expect(MESSAGE_RESENT_LABEL).toBe("재발송됨");
   });
+
+  it.each([
+    ["failed", null, 7, false, true], ["failed", 12, 12, true, true], ["failed", 12, null, true, true],
+    ["failed", null, null, false, false], ["failed", undefined, undefined, false, false],
+    ["sent", null, 7, false, false], ["needs_setup", null, 7, false, false],
+  ] as const)("normalizes %s with resentByLogId=%s retryBlockedByLogId=%s", (status, resentByLogId, retryBlockedByLogId, resent, blocked) => {
+    const view = normalizeMessageHistoryPresentation(historyRecord({ status, resentByLogId, retryBlockedByLogId }));
+    expect(view.isResent).toBe(resent);
+    expect(view.isRetryBlocked).toBe(blocked);
+  });
 });
 
 describe("needs_setup presentation", () => {
