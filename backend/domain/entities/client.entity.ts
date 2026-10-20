@@ -48,6 +48,8 @@ interface CreateClientProps {
     dueDate: Date | null;
     birthDate: Date | null;
     serviceStatus: string | null;
+    /** Set only when the creator confirmed the booking at creation. */
+    bookingConfirmedAt?: Date | null;
     breastPump: boolean;
     eDocId: string | null;
     areaId?: string | null;
@@ -211,7 +213,7 @@ export class ClientEntity {
             props.careCenter,
             props.voucherClient,
             props.birthday,
-            computeServiceStatus(props.serviceStatus, props.startDate, props.endDate, null),
+            computeServiceStatus(props.serviceStatus, props.startDate, props.endDate, props.bookingConfirmedAt ?? null),
             props.breastPump,
             props.eDocId,
             props.dueDate,
@@ -221,7 +223,7 @@ export class ClientEntity {
             props.suppressGreetingSms ?? false,
             props.birthDate,
             phoneNormalized,
-            null,
+            props.bookingConfirmedAt ?? null,
             props.smsAutomationEnabled ?? true,
         );
     }

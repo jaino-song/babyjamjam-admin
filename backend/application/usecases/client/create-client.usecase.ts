@@ -28,6 +28,7 @@ type CreateClientParams = {
     dueDate: Date | null;
     birthDate: Date | null;
     serviceStatus: string | null;
+    bookingConfirmedAt?: Date | null;
     breastPump: boolean;
     eDocId?: string | null;
     areaId?: string | null;

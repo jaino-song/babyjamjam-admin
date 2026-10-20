@@ -1184,8 +1184,7 @@ function ClientDetailPanelBody({
     const bookingConfirmationInFlightRef = useRef(false);
     const hasBookingDates = Boolean(client.startDate && client.endDate);
     const canConfirmBooking = client.bookingConfirmedAt == null
-        && client.serviceStatus !== "terminated"
-        && client.serviceStatus !== "replacement_requested";
+        && (client.serviceStatus ?? "pre_booking") === "pre_booking";
     const bookingDatesHelpId = `${dataComponentPrefix}_header_confirm-booking_help`;
 
     const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
@@ -1529,6 +1528,7 @@ function ClientDetailPanelBody({
                 type="button"
                 variant="positive"
                 size="sm"
+                className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 disabled={!hasBookingDates || isConfirmingBooking}
                 title={!hasBookingDates ? "서비스 시작일과 종료일을 먼저 입력해 주세요." : undefined}
                 aria-describedby={!hasBookingDates ? bookingDatesHelpId : undefined}
