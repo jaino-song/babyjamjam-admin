@@ -1492,6 +1492,9 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
     mockData({ history: [buildHistoryRecord({ status: "failed", resentByLogId: null, retryBlockedByLogId: null, errorMessage: "발송 오류" })] });
     render(<MessagesPage />);
     goToHistorySection();
+    const avatar = document.querySelector('[data-component="desktop_messages_sections_history-list-item-icon"]');
+    expect(avatar).toHaveClass("bg-[hsl(355,40%,94%)]");
+    expect(avatar?.querySelector(".lucide-message-circle")).toBeInTheDocument();
     fireEvent.click(screen.getByText("이하은"));
 
     expect(screen.queryByText("추가 필요 정보")).not.toBeInTheDocument();
@@ -1507,6 +1510,9 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
     mockData({ history: [buildHistoryRecord({ status: "failed", resentByLogId: null, retryBlockedByLogId: 102, errorMessage: "발송 오류" })] });
     render(<MessagesPage />);
     goToHistorySection();
+    const avatar = document.querySelector('[data-component="desktop_messages_sections_history-list-item-icon"]');
+    expect(avatar).toHaveClass("bg-[hsl(355,40%,94%)]");
+    expect(avatar?.querySelector(".lucide-message-circle")).toBeInTheDocument();
     fireEvent.click(screen.getByText("이하은"));
 
     expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
@@ -1523,6 +1529,10 @@ describe("messages page — 추가 정보 필요 job 재발송 (BJJ-444)", () =>
     mockData({ history: [buildHistoryRecord({ status: "failed", resentByLogId: 102, errorMessage: "발송 오류" })] });
     render(<MessagesPage />);
     goToHistorySection();
+    const avatar = document.querySelector('[data-component="desktop_messages_sections_history-list-item-icon"]');
+    expect(avatar).toHaveClass("bg-[hsl(137,60%,94%)]", "text-v3-green");
+    expect(avatar?.querySelector(".lucide-circle-check")).toBeInTheDocument();
+    expect(avatar?.querySelector(".lucide-message-circle")).toBeNull();
     fireEvent.click(screen.getByText("이하은"));
 
     expect(screen.getAllByText("재발송됨")).toHaveLength(2);
