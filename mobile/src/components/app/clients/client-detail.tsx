@@ -500,6 +500,7 @@ export type DetailTabId = "scheduleChange" | "basic" | "contracts" | "message" |
 export interface ClientNotificationLogRecord {
   id: number | string;
   resentByLogId?: number | string | null;
+  retryBlockedByLogId?: number | string | null;
   triggerJobId?: string | null;
   provider: string;
   templateKey: string;
@@ -631,6 +632,10 @@ function visibleNotificationLogs(logs: ClientNotificationLogRecord[]): ClientNot
 
 function isResentNotification(log: ClientNotificationLogRecord): boolean {
   return log.status === "failed" && log.resentByLogId != null;
+}
+
+function isRetryBlockedNotification(log: ClientNotificationLogRecord): boolean {
+  return log.status === "failed" && (log.resentByLogId != null || log.retryBlockedByLogId != null);
 }
 
 function notificationStatusLabel(log: ClientNotificationLogRecord): string {
@@ -785,7 +790,7 @@ export function ClientDetailContent({
     }
     : undefined;
   const handleConfirmMessageRetry = async () => {
-    if (!retryLog || isResentNotification(retryLog) || !canManageBranchFeatures || isRetryingMessage) return;
+    if (!retryLog || isRetryBlockedNotification(retryLog) || !canManageBranchFeatures || isRetryingMessage) return;
     const jobId = getResendableJobId(retryLog);
     if (jobId !== null) {
       if (retryLog.resendBlockedBy) return;
@@ -1695,6 +1700,7 @@ export function ClientDetailContent({
             data-component={`${dataComponent}_tab-panel_message_history-detail`}
             view={{
               isResent: isResentNotification(selectedLog),
+              isRetryBlocked: isRetryBlockedNotification(selectedLog),
               title: notificationTitle(selectedLog),
               templateLabel: notificationTitle(selectedLog),
               channelLabel: notificationChannelLabel(selectedLog),
@@ -1721,7 +1727,7 @@ export function ClientDetailContent({
             isRetrying={isRetryingMessage}
             retryBlock={retryBlock}
             canOpenOwnerAdmin={canOpenOwnerAdmin}
-            onRetry={() => { if (selectedLog && !isResentNotification(selectedLog) && canRetryMessage && !retryBlock) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
+            onRetry={() => { if (selectedLog && !isRetryBlockedNotification(selectedLog) && canRetryMessage && !retryBlock) setMessageRetryTarget({ key: detailKey, log: selectedLog }); }}
           />
           </>
         ) : (

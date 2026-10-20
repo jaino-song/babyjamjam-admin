@@ -759,7 +759,7 @@ export function MessagesHistoryPage() {
   };
 
   const handleRequestRetry = () => {
-    if (selectedRecord && normalizeMessageHistoryPresentation(selectedRecord).isResent) return;
+    if (selectedRecord && normalizeMessageHistoryPresentation(selectedRecord).isRetryBlocked) return;
     // A resend the server would refuse is disabled in the detail; never open
     // the confirm dialog for it.
     if (getResendableJobId(selectedRecord) !== null && selectedRecord?.resendBlockedBy) return;
@@ -831,7 +831,7 @@ export function MessagesHistoryPage() {
   };
 
   const handleConfirmRetry = async () => {
-    if (!retryTarget || normalizeMessageHistoryPresentation(retryTarget).isResent) return;
+    if (!retryTarget || normalizeMessageHistoryPresentation(retryTarget).isRetryBlocked) return;
 
     const resendJobId = getResendableJobId(retryTarget);
     if (resendJobId !== null) {
@@ -1108,6 +1108,7 @@ export function MessagesHistoryPage() {
                       showBackAction={false}
                       view={{
                         isResent: normalizedSelectedRecord.isResent,
+                        isRetryBlocked: normalizedSelectedRecord.isRetryBlocked,
                         title: normalizedSelectedRecord.title,
                         templateLabel: normalizedSelectedRecord.templateLabel,
                         channelLabel: normalizedSelectedRecord.channelLabel,

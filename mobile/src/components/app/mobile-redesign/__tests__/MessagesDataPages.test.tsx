@@ -831,6 +831,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
       id: 77,
       status: "failed" as const,
       resentByLogId: null,
+      retryBlockedByLogId: null,
       errorMessage: "등록되지 않은 발신번호입니다.",
     };
     const mutateAsync = jest.fn().mockResolvedValue({ ...failedRecord, status: "pending" });
@@ -844,6 +845,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     render(<MessagesHistoryPage />);
 
     await user.click(screen.getByRole("button", { name: /김문자/ }));
+    expect(screen.getByRole("button", { name: "재발송" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "재발송" }));
     expect(screen.getByRole("dialog", { name: "메시지를 다시 보낼까요?" })).toBeInTheDocument();
 
@@ -878,6 +880,28 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(header).toHaveClass("bg-status-success", "text-status-success-fg");
     expect(screen.queryByText(historyLookup === "checking" ? "확인 중" : "확인 필요")).not.toBeInTheDocument();
     expect(screen.getByText("실패 사유")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "재발송" });
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "checking", "exhausted"])("keeps a retry-blocked failure's normal label for %s lookup without retrying", async historyLookup => {
+    const user = userEvent.setup();
+    const mutateAsync = jest.fn();
+    mockUseRetryMessageHistory.mockReturnValue({ mutateAsync, isPending: false });
+    mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [{
+      ...sentRecord, id: 77, status: "failed", resentByLogId: null, retryBlockedByLogId: 78,
+      variables: { historyLookup },
+    }] });
+    const { container } = render(<MessagesHistoryPage />);
+    expect(container.querySelector('[data-component$="_body_item_status"]')).toHaveTextContent("발송 실패");
+    await user.click(screen.getByRole("button", { name: /김문자/ }));
+    expect(container.querySelector('[data-component$="_detail-pane_header_status"]')).toHaveTextContent(
+      historyLookup === "checking" ? "확인 중" : historyLookup === "exhausted" ? "확인 필요" : "발송 실패",
+    );
+    expect(screen.queryByText("재발송됨")).not.toBeInTheDocument();
     const retry = screen.getByRole("button", { name: "재발송" });
     expect(retry).toBeDisabled();
     await user.click(retry);
