@@ -182,6 +182,8 @@ export function ClientMessageHistoryDetail({
           {retryBlockCard ? (
             <HoverCard
               data-component={sub("retry-blocked-hover-card")}
+              // Above the mobile detail sheet (z-70), like the sheet's other popups.
+              className="z-[200]"
               triggerClassName="w-full rounded-2xl"
               side="top"
               align="center"

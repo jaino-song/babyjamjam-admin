@@ -134,7 +134,11 @@ describe("ClientMessageHistoryDetail", () => {
     expect(screen.getByText("지점 자동 전송이 꺼져 있어요")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "자동화 설정 열기 →" }))
       .toHaveAttribute("href", "/messages/settings?item=trigger-dispatch");
-    expect(document.querySelector('[data-component="test_detail_retry-blocked-hover-card"]')).not.toBeNull();
+    const card = document.querySelector('[data-component="test_detail_retry-blocked-hover-card"]');
+    expect(card).not.toBeNull();
+    // The card must paint above the customer detail sheet (z-70), not at the shared z-50.
+    expect(card).toHaveClass("z-[200]");
+    expect(card).not.toHaveClass("z-50");
   });
 
   it.each([
