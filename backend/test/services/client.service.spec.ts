@@ -427,27 +427,38 @@ describe("ClientService", () => {
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
             });
 
-            it.each(["waiting", "active", "completed"])("confirms the booking after creating a %s client", async (serviceStatus) => {
-                const created = createClientEntity();
-                const confirmed = createClientEntity();
-                createClientUsecase.execute.mockResolvedValue(created);
-                const confirmBooking = jest.spyOn(service, "confirmBooking").mockResolvedValue(confirmed);
+            const confirmationWritten = () => createClientUsecase.execute.mock.calls[0]![1].bookingConfirmedAt;
 
-                await expect(service.create(branchId, {
-                    ...baseParams, serviceStatus, startDate: "2026-11-02", endDate: "2026-11-13",
-                })).resolves.toBe(confirmed);
-
-                expect(confirmBooking).toHaveBeenCalledWith(branchId, created.id);
-            });
-
-            it.each(["pre_booking", "terminated", undefined])("does not confirm a %s client", async (serviceStatus) => {
+            it.each(["waiting", "active", "completed"])("confirms the booking in the create transaction for a %s client", async (serviceStatus) => {
                 const created = createClientEntity();
                 createClientUsecase.execute.mockResolvedValue(created);
                 const confirmBooking = jest.spyOn(service, "confirmBooking");
 
-                await expect(service.create(branchId, { ...baseParams, serviceStatus })).resolves.toBe(created);
+                await expect(service.create(branchId, {
+                    ...baseParams, serviceStatus, startDate: "2026-11-02", endDate: "2026-11-13",
+                })).resolves.toBe(created);
 
+                expect(confirmationWritten()).toBeInstanceOf(Date);
                 expect(confirmBooking).not.toHaveBeenCalled();
+            });
+
+            it.each(["pre_booking", "terminated", undefined])("does not confirm a %s client", async (serviceStatus) => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, { ...baseParams, serviceStatus });
+
+                expect(confirmationWritten()).toBeNull();
+            });
+
+            it("does not confirm a contract auto-registration that sends waiting", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, {
+                    ...baseParams, serviceStatus: "waiting", startDate: "2026-11-02", endDate: "2026-11-13",
+                    source: "contract_auto_registration",
+                });
+
+                expect(confirmationWritten()).toBeNull();
             });
         });
 
@@ -5938,18 +5949,30 @@ describe("ClientService", () => {
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         });
 
-        it("service create stores dated waiting input as unconfirmed 예약 전 in the shared create layer, then confirms through confirmBooking", async () => {
+        it("service create stores dated waiting input as a confirmed booking in the same create write", async () => {
             clientRepository.create.mockImplementation(async (_branch, client) => client);
             const realCreate = new CreateClientUsecase(clientRepository, holidayCalendar);
             createClientUsecase.execute.mockImplementation(realCreate.execute.bind(realCreate));
-            const confirmBooking = jest.spyOn(service, "confirmBooking").mockImplementation(async () => createClientEntity());
-            await service.create(branchId, {
+            const result = await service.create(branchId, {
                 name: "상담 고객", phone: null, careCenter: false, voucherClient: false, breastPump: false,
                 startDate: "2026-11-02", endDate: "2026-11-13", serviceStatus: "waiting",
             });
-            const stored = clientRepository.create.mock.calls[0]![1];
-            expect(ClientMapper.toPrismaCreate(stored)).toMatchObject({ serviceStatus: "pre_booking", bookingConfirmedAt: null });
-            expect(confirmBooking).toHaveBeenCalledWith(branchId, stored.id);
+            const row = ClientMapper.toPrismaCreate(result);
+            // Date-derived from the real clock: 대기 before the start, 진행/완료 later.
+            expect(["waiting", "active", "completed"]).toContain(row.serviceStatus);
+            expect(row.bookingConfirmedAt).toBeInstanceOf(Date);
+        });
+
+        it("contract auto-registration create stores dated waiting input as unconfirmed 예약 전", async () => {
+            clientRepository.create.mockImplementation(async (_branch, client) => client);
+            const realCreate = new CreateClientUsecase(clientRepository, holidayCalendar);
+            createClientUsecase.execute.mockImplementation(realCreate.execute.bind(realCreate));
+            const result = await service.create(branchId, {
+                name: "상담 고객", phone: null, careCenter: false, voucherClient: false, breastPump: false,
+                startDate: "2026-11-02", endDate: "2026-11-13", serviceStatus: "waiting",
+                source: "contract_auto_registration",
+            });
+            expect(ClientMapper.toPrismaCreate(result)).toMatchObject({ serviceStatus: "pre_booking", bookingConfirmedAt: null });
         });
 
         it("client.service.update never writes the confirmation column", async () => {
