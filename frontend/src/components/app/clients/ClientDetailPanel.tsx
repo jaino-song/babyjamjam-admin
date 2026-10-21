@@ -15,6 +15,7 @@ import {
     MESSAGE_LOG_STATUS_BADGE_VARIANT,
     MESSAGE_JOB_RESEND_COPY,
     MESSAGE_HISTORY_STATUS_LABELS,
+    MESSAGE_RESENT_LABEL,
     MESSAGE_RECORD_REASON_LABEL,
     MESSAGE_RECIPIENT_LABELS,
     getMessageTemplateLabel,
@@ -394,7 +395,8 @@ function ClientMessageHistoryList({
                         recipientNameFallback: clientName,
                         recipientListLabelFallback: clientName,
                     });
-                    const ItemIcon = normalizedRecord.icon;
+                    const avatarStatus = normalizedRecord.isResent ? "sent" : normalizedRecord.status;
+                    const ItemIcon = normalizedRecord.isResent ? MESSAGE_HISTORY_STATUS_META.sent.icon : normalizedRecord.icon;
                     const recipientLabel = normalizedRecord.recipientType
                         ? MESSAGE_RECIPIENT_LABELS[normalizedRecord.recipientType]
                         : "수신자";
@@ -411,7 +413,7 @@ function ClientMessageHistoryList({
                         <AnimatedSlotListItemContent
                             dataComponent={`${dataComponentPrefix}_history-list_item_content`}
                             icon={ItemIcon}
-                            iconContainerClassName={MESSAGE_HISTORY_STATUS_META[normalizedRecord.status].avatarClass}
+                            iconContainerClassName={MESSAGE_HISTORY_STATUS_META[avatarStatus].avatarClass}
                             title={normalizedRecord.title}
                             subtitle={`${recipientLabel}: ${recipientName}`}
                             meta={inlineReason ? (
@@ -429,10 +431,10 @@ function ClientMessageHistoryList({
                                 >
                                     <MessageStatusBadge
                                         data-component={`${dataComponentPrefix}_history-list_item_status`}
-                                        variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[normalizedRecord.status]}
+                                        variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[normalizedRecord.isResent ? "sent" : normalizedRecord.status]}
                                         size="sm"
                                     >
-                                        {MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
+                                        {normalizedRecord.isResent ? MESSAGE_RESENT_LABEL : MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
                                     </MessageStatusBadge>
                                     <span
                                         data-component={`${dataComponentPrefix}_history-list_item_date`}
@@ -1182,8 +1184,7 @@ function ClientDetailPanelBody({
     const bookingConfirmationInFlightRef = useRef(false);
     const hasBookingDates = Boolean(client.startDate && client.endDate);
     const canConfirmBooking = client.bookingConfirmedAt == null
-        && client.serviceStatus !== "terminated"
-        && client.serviceStatus !== "replacement_requested";
+        && (client.serviceStatus ?? "pre_booking") === "pre_booking";
     const bookingDatesHelpId = `${dataComponentPrefix}_header_confirm-booking_help`;
 
     const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
@@ -1380,7 +1381,7 @@ function ClientDetailPanelBody({
     const canRetryMessage = canRetryFailedHistory(selectedClientMessageRecord, canManageMessages) || canResendMessage;
     const retryBlock = canResendMessage ? selectedClientMessageDetailRecord?.resendBlock : undefined;
     const handleRetryMessage = async () => {
-        if (retryBlock) return;
+        if (retryBlock || selectedClientMessageDetailRecord?.isRetryBlocked) return;
         if (!selectedClientMessageRecord || !canRetryMessage || retryMessageMutation.isPending || resendMessageMutation.isPending) return;
         if (canResendMessage && selectedClientMessageRecord.triggerJobId) {
             toast(await resendMessageTriggerJob(resendMessageMutation.mutateAsync, selectedClientMessageRecord.triggerJobId));
@@ -1527,6 +1528,7 @@ function ClientDetailPanelBody({
                 type="button"
                 variant="positive"
                 size="sm"
+                className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 disabled={!hasBookingDates || isConfirmingBooking}
                 title={!hasBookingDates ? "서비스 시작일과 종료일을 먼저 입력해 주세요." : undefined}
                 aria-describedby={!hasBookingDates ? bookingDatesHelpId : undefined}

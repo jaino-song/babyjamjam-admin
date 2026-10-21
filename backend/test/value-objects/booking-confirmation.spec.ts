@@ -61,11 +61,22 @@ describe("booking confirmation status", () => {
 
     it.each(["waiting", "active", "completed", "terminated", "replacement_requested"])("creates supplied %s unconfirmed and preserves only manual states", (serviceStatus) => {
         const client = ClientEntity.create({
-            ...ClientFactory.create(), serviceStatus,
+            ...ClientFactory.create(), serviceStatus, bookingConfirmedAt: null,
             startDate: new Date("2026-11-02"), endDate: new Date("2026-11-13"), duration: 10,
         }, KR_BUILTIN_CALENDAR);
         const expected = serviceStatus === "terminated" || serviceStatus === "replacement_requested" ? serviceStatus : "pre_booking";
         expect(client.bookingConfirmedAt).toBeNull();
         expect(ClientMapper.toPrismaCreate(client)).toMatchObject({ serviceStatus: expected, bookingConfirmedAt: null });
+    });
+
+    it("creates a confirmed booking when the creator supplies the confirmation", () => {
+        const confirmedAt = new Date("2026-10-20T00:00:00.000Z");
+        const client = ClientEntity.create({
+            ...ClientFactory.create(), serviceStatus: "waiting", bookingConfirmedAt: confirmedAt,
+            startDate: new Date("2026-11-02"), endDate: new Date("2026-11-13"), duration: 10,
+        }, KR_BUILTIN_CALENDAR);
+        expect(client.bookingConfirmedAt).toBe(confirmedAt);
+        expect(ClientMapper.toPrismaCreate(client).bookingConfirmedAt).toBe(confirmedAt);
+        expect(ClientMapper.toPrismaCreate(client).serviceStatus).not.toBe("pre_booking");
     });
 });

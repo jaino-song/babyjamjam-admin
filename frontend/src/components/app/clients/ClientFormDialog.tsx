@@ -708,10 +708,12 @@ function ClientFormContent({
         }));
     }, [availableDurations, formData.voucherClient, outOfPocketPriceInfos]);
 
-    const isBookingUnconfirmed = !isEditMode || client?.bookingConfirmedAt == null;
+    // A new client's status is chosen freely; only an existing unconfirmed
+    // client waits for [예약 확정] to leave 예약 전.
+    const isBookingUnconfirmed = isEditMode && client?.bookingConfirmedAt == null;
     const serviceStatusOptions = useMemo(
         () => SERVICE_STATUS_OPTIONS.filter((status) => {
-            if (!isEditMode) return status.value === "pre_booking";
+            if (!isEditMode) return true;
             if (status.value === client?.serviceStatus) return true;
             return isBookingUnconfirmed
                 ? status.value === "pre_booking" || status.value === "terminated"
@@ -1135,7 +1137,7 @@ function ClientFormContent({
     const serverFieldMessages: Partial<Record<ClientFormField, FieldMessageView>> = {};
     for (const { fieldError, field } of formErrorEntries) {
         if (field && !editedServerErrorFields.includes(field) && !serverFieldMessages[field]) {
-            serverFieldMessages[field] = { tone: "error", text: field === "serviceStatus" ? SERVICE_STATUS_SAVE_ERROR : fieldError.detail };
+            serverFieldMessages[field] = { tone: "error", text: field === "serviceStatus" && isEditMode ? SERVICE_STATUS_SAVE_ERROR : fieldError.detail };
         }
     }
     const serverEmployeeMessages = {
@@ -1451,7 +1453,7 @@ function ClientFormContent({
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
-                    serviceStatus: "pre_booking",
+                    serviceStatus: formData.serviceStatus || "pre_booking",
                     applyMessageAutomation: formData.applyMessageAutomation,
                     smsAutomationEnabled: formData.applyMessageAutomation,
                     areaId: formData.areaId || null,
@@ -1972,9 +1974,8 @@ function ClientFormContent({
                         >
                             <FormNativeSelect
                                 id="clients-form-contract-status"
-                                value={isEditMode ? formData.serviceStatus || "" : "pre_booking"}
+                                value={formData.serviceStatus || "pre_booking"}
                                 options={serviceStatusOptions}
-                                disabled={!isEditMode}
                                 aria-invalid={serviceStatusMessage ? true : undefined}
                                 aria-describedby={serviceStatusDescribedBy}
                                 onValueChange={(value) => handleChange("serviceStatus", value)}
@@ -2373,9 +2374,8 @@ function ClientFormContent({
                 >
                     <FormNativeSelect
                         id="clients-form-panel-contract-status"
-                        value={isEditMode ? formData.serviceStatus || "" : "pre_booking"}
+                        value={formData.serviceStatus || "pre_booking"}
                         options={serviceStatusOptions}
-                        disabled={!isEditMode}
                         aria-invalid={serviceStatusMessage ? true : undefined}
                         aria-describedby={serviceStatusDescribedBy}
                         onValueChange={(value) => handleChange("serviceStatus", value)}

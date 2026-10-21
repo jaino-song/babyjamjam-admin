@@ -199,6 +199,7 @@ describe("MessageTriggerService", () => {
     );
 
     const createMessageLogRepository = () => ({
+        findRetryFamiliesInBranch: jest.fn().mockResolvedValue(new Map()),
         findSentTriggerJobIdsSystemScope: jest.fn<Promise<Set<string>>, [string[]]>().mockResolvedValue(
             new Set<string>(),
         ),
@@ -3140,6 +3141,161 @@ describe("MessageTriggerService", () => {
             expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
             expect(fx.deliveryService.sendJob).toHaveBeenCalledWith(eligible);
             expect(eligible.status).toBe("sent");
+        });
+    });
+
+    describe("history resentByLogId", () => {
+        const fixture = () => {
+            const fx = createDispatchService();
+            const failed = createLog({ id: 10 });
+            failed.status = "failed";
+            const sent = createLog({ id: 20 });
+            Object.assign(fx.jobRepository, {
+                findTerminalByBranch: jest.fn().mockResolvedValue([]),
+                findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
+                findClientHistoryPageByBranch: jest.fn().mockResolvedValue([]),
+            });
+            (fx.prisma.client.findFirst as jest.Mock).mockResolvedValue({ id: 1, phone: "010-1234-5678" });
+            Object.assign(fx.messageLogRepository, {
+                findRecentByBranch: jest.fn().mockResolvedValue([failed, sent]),
+                findHistoryPageByBranch: jest.fn().mockResolvedValue([failed, sent]),
+                findClientHistoryPageByBranch: jest.fn().mockResolvedValue([failed, sent]),
+            });
+            Object.assign(fx.ruleRepository, { findAll: jest.fn().mockResolvedValue([]) });
+            return { ...fx, failed, sent };
+        };
+        const allPages = async (fx: ReturnType<typeof fixture>) => [
+            await fx.service.listHistory(branchId),
+            (await fx.service.listHistoryPage(branchId)).items,
+            (await fx.service.listClientHistoryPage(branchId, 1)).items,
+        ];
+
+        it("marks sent retry children on all three endpoints, never non-failed rows", async () => {
+            const fx = fixture();
+            fx.sent.variables = { retryOfLogId: "10" };
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(new Map([[10, [fx.failed, fx.sent]]]));
+            for (const rows of await allPages(fx)) {
+                expect(rows.find((row) => row.id === 10)).toMatchObject({ resentByLogId: 20, retryBlockedByLogId: 20 });
+                expect(rows.find((row) => row.id === 20)).toMatchObject({ resentByLogId: null, retryBlockedByLogId: null });
+            }
+            expect(fx.messageLogRepository.findRetryFamiliesInBranch.mock.calls).toEqual([
+                [branchId, [10]], [branchId, [10]], [branchId, [10]],
+            ]);
+        });
+
+        it("chooses the largest blocker across siblings and grandchildren despite a failed direct child", async () => {
+            const fx = fixture();
+            const child = createLog({ id: 30 });
+            child.status = "failed";
+            child.variables = { retryOfLogId: "10" };
+            const grandchild = createLog({ id: 40 });
+            grandchild.variables = { retryOfLogId: "30" };
+            const sibling = createLog({ id: 50 });
+            sibling.variables = { retryOfLogId: "10" };
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(
+                new Map([[10, [sibling, child, fx.failed, grandchild]]]),
+            );
+            for (const rows of await allPages(fx)) {
+                expect(rows.find((row) => row.id === 10)).toMatchObject({ resentByLogId: 50, retryBlockedByLogId: 50 });
+            }
+        });
+
+        it("allows another retry when every other family member failed", async () => {
+            const fx = fixture();
+            fx.sent.status = "failed";
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(new Map([
+                [10, [fx.failed, fx.sent]], [20, [fx.failed, fx.sent]],
+            ]));
+            for (const rows of await allPages(fx)) {
+                expect(rows.every((row) => row.resentByLogId === null && row.retryBlockedByLogId === null)).toBe(true);
+            }
+        });
+
+        it.each(["partial", "uncertain", "started", "provider_uncertain", "reconciled_delivered", "pending"])("disables without a resent label for blocker %s", async (kind) => {
+            const fx = fixture();
+            const blocker = createLog({ id: 30 });
+            blocker.status = kind === "pending" ? "pending" : "failed";
+            if (kind === "reconciled_delivered" || kind === "started") blocker.providerAcceptanceState = kind;
+            else if (kind === "provider_uncertain") blocker.providerAcceptanceState = "uncertain";
+            else if (kind !== "pending") blocker.variables = { retrySafety: kind };
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(new Map([[10, [fx.failed, blocker]]]));
+            for (const rows of await allPages(fx)) {
+                expect(rows.find((row) => row.id === 10)).toMatchObject({ resentByLogId: null, retryBlockedByLogId: 30 });
+            }
+        });
+
+        it.each(["reconciled_delivered", "partial", "uncertain", "started", "provider_uncertain"])("checks landed safety even for sent attempts: %s", async (kind) => {
+            const fx = fixture();
+            if (kind === "reconciled_delivered" || kind === "started") fx.sent.providerAcceptanceState = kind;
+            else if (kind === "provider_uncertain") fx.sent.providerAcceptanceState = "uncertain";
+            else fx.sent.variables = { retrySafety: kind };
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(new Map([[10, [fx.failed, fx.sent]]]));
+            for (const rows of await allPages(fx)) {
+                expect(rows.find((row) => row.id === 10)).toMatchObject({
+                    resentByLogId: kind === "reconciled_delivered" ? 20 : null,
+                    retryBlockedByLogId: 20,
+                });
+            }
+        });
+
+        it.each(["partial", "sent"])("does not label a newer failed row resent when an older %s ancestor blocks", async (kind) => {
+            const fx = fixture();
+            fx.failed.status = kind === "sent" ? "sent" : "failed";
+            fx.failed.variables = kind === "partial" ? { retrySafety: "partial" } : {};
+            fx.sent.status = "failed";
+            fx.sent.variables = { retryOfLogId: "10", retrySafety: "partial" };
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(new Map([
+                [10, [fx.failed, fx.sent]], [20, [fx.failed, fx.sent]],
+            ]));
+            for (const rows of await allPages(fx)) {
+                expect(rows.find((row) => row.id === 20)).toMatchObject({ resentByLogId: null, retryBlockedByLogId: 10 });
+            }
+        });
+
+        it("chooses landed and blocker maxima independently of family ordering", async () => {
+            const fx = fixture();
+            const landed = createLog({ id: 30 });
+            const pending = createLog({ id: 40 });
+            pending.status = "pending";
+            const uncertain = createLog({ id: 50 });
+            uncertain.variables = { retrySafety: "uncertain" };
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockResolvedValue(new Map([
+                [10, [uncertain, landed, fx.failed, pending, fx.sent]],
+            ]));
+            for (const rows of await allPages(fx)) {
+                expect(rows.find((row) => row.id === 10)).toMatchObject({ resentByLogId: 30, retryBlockedByLogId: 50 });
+            }
+        });
+
+        it("keeps non-SMS rows unstamped even when failed", async () => {
+            const fx = fixture();
+            fx.failed.provider = "other";
+            for (const rows of await allPages(fx)) {
+                expect(rows.every((row) => row.resentByLogId === null && row.retryBlockedByLogId === null)).toBe(true);
+            }
+            expect(fx.messageLogRepository.findRetryFamiliesInBranch).not.toHaveBeenCalled();
+        });
+
+        it("keeps failed job rows out of the batch on merged client history", async () => {
+            const fx = fixture();
+            Object.assign(fx.jobRepository, {
+                findClientHistoryPageByBranch: jest.fn().mockResolvedValue([createJob({ id: "failed-job", status: "failed", clientId: 1 })]),
+            });
+            const page = await fx.service.listClientHistoryPage(branchId, 1);
+            expect(page.items.find((row) => row.id === "job:failed-job")).toMatchObject({ resentByLogId: null, retryBlockedByLogId: null, status: "failed" });
+            expect(fx.messageLogRepository.findRetryFamiliesInBranch).toHaveBeenCalledWith(branchId, [10]);
+        });
+
+        it("preserves every page with null stamps and a warning when lookup fails", async () => {
+            const fx = fixture();
+            const warning = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+            fx.messageLogRepository.findRetryFamiliesInBranch.mockRejectedValue(new Error("db down"));
+            for (const rows of await allPages(fx)) {
+                expect(rows).toHaveLength(2);
+                expect(rows.every((row) => row.resentByLogId === null && row.retryBlockedByLogId === null)).toBe(true);
+            }
+            expect(warning).toHaveBeenCalledWith("Failed to resolve retry families for message history");
+            warning.mockRestore();
         });
     });
 

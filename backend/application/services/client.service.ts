@@ -1293,6 +1293,23 @@ export class ClientService {
         // only a fallback when the caller does not supply one.
         const duration = params.duration ?? derivedDuration ?? null;
         assertAllowedServiceStatus(params.serviceStatus);
+        // A new client may start in any status. 대기/진행/완료 are date-derived
+        // and only hold for a confirmed booking, so choosing one at creation
+        // confirms the booking in the same create transaction. Contract
+        // auto-registration sends a date-derived hint, not an admin's choice,
+        // so it stays unconfirmed.
+        const confirmBookingOnCreate = params.source !== CONTRACT_AUTO_REGISTRATION_SOURCE
+            && (params.serviceStatus === SERVICE_STATUS.WAITING
+                || params.serviceStatus === SERVICE_STATUS.ACTIVE
+                || params.serviceStatus === SERVICE_STATUS.COMPLETED);
+        if (confirmBookingOnCreate && (!startDate || !endDate)) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/serviceStatus",
+                code: "INVALID_VALUE",
+                detail: "대기·진행·완료로 등록하려면 서비스 시작일과 종료일을 먼저 입력해 주세요.",
+                location: "body",
+            }));
+        }
         await assertAllowedClientArea(this.prismaService, branchid, params.areaId);
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
@@ -1403,6 +1420,7 @@ export class ClientService {
             dueDate,
             birthDate,
             serviceStatus: params.serviceStatus ?? null,
+            bookingConfirmedAt: confirmBookingOnCreate ? new Date() : null,
             breastPump: params.breastPump,
             eDocId: params.eDocId ?? null,
             areaId: params.areaId ?? null,
@@ -1574,6 +1592,17 @@ export class ClientService {
             }).catch((error) => {
                 this.logger.error(`Failed to fulfill assignment message intent: ${error}`);
             });
+        }
+        // A booking confirmed at creation gets the same service-record link
+        // SMS that [예약 확정] schedules, whatever the automation choice.
+        if (confirmBookingOnCreate) {
+            await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                branchid,
+                client.id,
+                { serviceStatus: SERVICE_STATUS.PRE_BOOKING, startDate: client.startDate, endDate: client.endDate, bookingConfirmedAt: null },
+                client,
+                applyMessageAutomation ? createdScheduleId : null,
+            );
         }
 
         return client;
