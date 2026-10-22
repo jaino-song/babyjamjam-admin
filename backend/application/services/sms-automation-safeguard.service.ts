@@ -75,7 +75,7 @@ export function isAdminDirectSendJob(
 /** Bound on user rows read for the phone-match path (users with the flag turned off are staff-scale). */
 const PHONE_MATCH_USER_LIMIT = 500;
 
-function hyphenatedForms(digits: string): string[] {
+export function hyphenatedForms(digits: string): string[] {
     if (!digits.startsWith("0")) return [];
     if (digits.length === 11) return [`${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`];
     if (digits.length === 10) {
