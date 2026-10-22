@@ -256,6 +256,31 @@ describe("SmsAutomationSafeguardService", () => {
             }
         });
 
+        describe("an agent job that carries its client's id", () => {
+            it("is blocked when that client is off", async () => {
+                const { service } = harness({ client: { smsAutomationEnabled: false } });
+                await expect(service.check(agentJob({ clientId: 7 })))
+                    .resolves.toMatchObject({ allowed: false, level: "recipient", recipient: { kind: "client", id: 7 } });
+            });
+
+            it("is blocked when that client is deleted", async () => {
+                const { service } = harness({ client: { smsAutomationEnabled: true, deletedAt: new Date() } });
+                await expect(service.check(agentJob({ clientId: 7 })))
+                    .resolves.toMatchObject({ allowed: false, level: "recipient" });
+            });
+
+            it("still goes through the phone path, so another off owner of the phone blocks", async () => {
+                const { service } = harness({ disabledClientPhones: ["01012345678"] });
+                await expect(service.check(agentJob({ clientId: 7 })))
+                    .resolves.toMatchObject({ allowed: false, level: "recipient", recipient: { kind: "client", id: 1 } });
+            });
+
+            it("passes when the client and every phone owner are on", async () => {
+                const { service } = harness();
+                await expect(service.check(agentJob({ clientId: 7 }))).resolves.toEqual({ allowed: true });
+            });
+        });
+
         describe("tombstoned clients that still carry the phone", () => {
             const tomb = (smsAutomationEnabled: boolean, phone = "+82 10-1234-5678") => ({ id: 31, phone, smsAutomationEnabled });
 
