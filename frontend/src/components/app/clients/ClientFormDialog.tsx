@@ -237,6 +237,10 @@ const isUnstructuredLegacyClientError = (
 const CLIENT_FORM_FIELDS: readonly ClientFormField[] = ["name", "phone", "primaryEmployeeId", "secondaryEmployeeId", "serviceStatus"];
 const SERVICE_STATUS_SAVE_ERROR = "이 상태로는 저장할 수 없습니다. 예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
 const BOOKING_STATUS_GUIDANCE = "대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다.";
+// Mirrors the backend refusal, whose detail the shared problem parser replaces
+// with generic catalog text.
+const SERVICE_STATUS_DATES_REQUIRED = "대기·진행·완료로 등록하려면 서비스 시작일과 종료일을 먼저 입력해 주세요.";
+const DATED_SERVICE_STATUSES: readonly string[] = ["waiting", "active", "completed"];
 
 const isClientFormField = (field: string): field is ClientFormField =>
     (CLIENT_FORM_FIELDS as readonly string[]).includes(field);
@@ -1180,7 +1184,12 @@ function ClientFormContent({
             </FieldMessageText>
         ) : null;
 
-    const serviceStatusMessage = serverFieldMessages.serviceStatus ?? null;
+    // A new client created as 대기·진행·완료 is a confirmed booking, which needs both service dates.
+    const needsServiceDatesForStatus = !isEditMode
+        && DATED_SERVICE_STATUSES.includes(formData.serviceStatus ?? "")
+        && (!formData.startDate || !formData.endDate);
+    const serviceStatusMessage = serverFieldMessages.serviceStatus
+        ?? (fields.submitted && needsServiceDatesForStatus ? { tone: "error", text: SERVICE_STATUS_DATES_REQUIRED } as const : null);
     const serviceStatusMessageId = `clients-form-${surface}-service-status-error`;
     const serviceStatusGuidanceId = `clients-form-${surface}-service-status-guidance`;
     const serviceStatusDescribedBy = combineAriaDescribedBy(
@@ -1351,6 +1360,10 @@ function ClientFormContent({
         const firstProblemField = getFirstProblemField(CLIENT_INPUT_FIELDS);
         if (firstProblemField) {
             focusField(firstProblemField);
+            return;
+        }
+        if (needsServiceDatesForStatus) {
+            focusField("serviceStatus");
             return;
         }
         if (!isUsingOriginalPhone) {
