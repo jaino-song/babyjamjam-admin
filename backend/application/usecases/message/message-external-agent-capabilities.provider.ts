@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { AgentActionCertainFailureError, AgentActionUncertainError } from "application/agent/action-coordinator.service";
@@ -14,6 +15,12 @@ import {
     SMS_DELIVERY_SNAPSHOT_VARIABLE,
     SmsTriggerDeliveryService,
 } from "application/services/sms-trigger-delivery.service";
+import { hyphenatedForms } from "application/services/sms-automation-safeguard.service";
+import {
+    koreanPhoneStoredDigitCandidates,
+    normalizeKoreanPhoneLookupKey,
+    storedPhoneMatchesSql,
+} from "infrastructure/database/repositories/stored-phone-lookup";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
     AGENT_SMS_RULE_ID_PREFIX,
@@ -31,6 +38,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHash } from "node:crypto";
 import { readAgentActionEffect, recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
 
+const CLIENT_SMS_OFF_MESSAGE = "이 고객은 자동 발송이 꺼져 있어 예약할 수 없습니다.";
 const IMMEDIATE_SMS_TITLE = "AI 문자 발송";
 const SCHEDULED_SMS_TITLE = "AI 예약 문자";
 const SmsReceiverSchema = z.string()
@@ -568,45 +576,100 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         const recipient = await this.resolveSmsRecipient(context.principal.branchId, input.receiver);
         this.ensureApprovedRecipient(context, recipient);
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
-        const ruleId = `${AGENT_SMS_RULE_ID_PREFIX}${context.principal.branchId}`;
-        await this.prisma.message_trigger_rule.upsert({
-            where: { id: ruleId },
-            create: {
-                id: ruleId,
-                branchId: context.principal.branchId,
-                name: ruleName,
-                isActive: false,
-                eventType: "CLIENT_CREATED",
-                offsetType: "IMMEDIATE",
-                offsetDays: 0,
-                recipientType: MessageTriggerRecipientType.CLIENT,
-                templateKey: MessageTriggerTemplateKey.INFO,
-                isDefault: false,
-                jobsStale: false,
-            },
-            update: { isActive: false },
-        });
-        await this.ensureSmsApprovedForExecution(context.principal.branchId);
-        return this.jobRepository.upsertPending(MessageTriggerJobEntity.create({
-            branchId: context.principal.branchId,
-            ruleId,
-            scheduledFor,
-            recipientType: MessageTriggerRecipientType.CLIENT,
-            recipientPhone: recipient.phone,
-            templateKey: MessageTriggerTemplateKey.INFO,
-            dedupeKey: `agent-sms:${context.actionId}`,
-            payload: {
-                memberId: `agent-action:${context.actionId}`,
-                recipientName: recipient.name ?? "수신자",
-                recipientPhone: recipient.phone,
-                messageBody: input.message,
-                templateVariables: {
-                    triggerType: "agent_scheduled",
-                    title: input.title,
-                    msgType: AGENT_SMS_DELIVERY_TYPE,
+        return this.withClientSmsAutomationOn(context.principal.branchId, recipient, async () => {
+            const ruleId = `${AGENT_SMS_RULE_ID_PREFIX}${context.principal.branchId}`;
+            await this.prisma.message_trigger_rule.upsert({
+                where: { id: ruleId },
+                create: {
+                    id: ruleId,
+                    branchId: context.principal.branchId,
+                    name: ruleName,
+                    isActive: false,
+                    eventType: "CLIENT_CREATED",
+                    offsetType: "IMMEDIATE",
+                    offsetDays: 0,
+                    recipientType: MessageTriggerRecipientType.CLIENT,
+                    templateKey: MessageTriggerTemplateKey.INFO,
+                    isDefault: false,
+                    jobsStale: false,
                 },
-            },
-        }));
+                update: { isActive: false },
+            });
+            await this.ensureSmsApprovedForExecution(context.principal.branchId);
+            return this.jobRepository.upsertPending(MessageTriggerJobEntity.create({
+                branchId: context.principal.branchId,
+                ruleId,
+                scheduledFor,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                recipientPhone: recipient.phone,
+                templateKey: MessageTriggerTemplateKey.INFO,
+                dedupeKey: `agent-sms:${context.actionId}`,
+                payload: {
+                    memberId: `agent-action:${context.actionId}`,
+                    recipientName: recipient.name ?? "수신자",
+                    recipientPhone: recipient.phone,
+                    messageBody: input.message,
+                    templateVariables: {
+                        triggerType: "agent_scheduled",
+                        title: input.title,
+                        msgType: AGENT_SMS_DELIVERY_TYPE,
+                    },
+                },
+            }));
+        });
+    }
+
+    /**
+     * Agent SMS is automatic, so a client whose automatic sending is off must never get a queued
+     * job (the send-time safeguard stays as the second gate). The flag is read and the job written
+     * under one FOR SHARE hold on the matching client rows, so a concurrent OFF update (which takes
+     * the client row FOR UPDATE) either lands first and is seen here, or waits until the job is
+     * committed and then sees it. The matching mirrors `SmsAutomationSafeguardService`'s phone path
+     * (agent jobs carry no clientId): any live client owning the phone, or a deleted one keeping it,
+     * with the flag off blocks. Employee recipients are not checked here.
+     *
+     * The job repository takes no transaction client, so its write runs on its own connection while
+     * this transaction holds the share lock; the lock is released only after the write returns.
+     */
+    private async withClientSmsAutomationOn<T>(
+        branchId: string,
+        recipient: { phone: string; clientId?: number },
+        operation: () => Promise<T>,
+    ): Promise<T> {
+        if (recipient.clientId === undefined) return operation();
+        const clientId = recipient.clientId;
+        try {
+            return await this.prisma.$transaction(async (transaction) => {
+                await transaction.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '1s'`);
+                const key = normalizeKoreanPhoneLookupKey(recipient.phone);
+                const digitCandidates = koreanPhoneStoredDigitCandidates(key);
+                const candidates = [...new Set([...digitCandidates, ...hyphenatedForms(key)])];
+                const clients = await transaction.$queryRaw<Array<{ id: number; smsAutomationEnabled: boolean }>>(Prisma.sql`
+                    SELECT id, sms_automation_enabled AS "smsAutomationEnabled"
+                    FROM client
+                    WHERE branch_id = ${branchId}::uuid
+                      AND (
+                          id = ${clientId}
+                          OR (deleted_at IS NULL AND (phone_normalized = ANY(${candidates}::text[]) OR phone = ANY(${candidates}::text[])))
+                          OR (deleted_at IS NOT NULL AND ${storedPhoneMatchesSql(Prisma.sql`phone`, digitCandidates)})
+                      )
+                    ORDER BY id
+                    FOR SHARE
+                `);
+                if (clients.some((client) => !client.smsAutomationEnabled)) {
+                    throw new AgentActionCertainFailureError(CLIENT_SMS_OFF_MESSAGE);
+                }
+                return operation();
+            }, { timeout: 15_000 });
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError
+                && error.code === "P2010"
+                && (error.meta as { code?: unknown } | undefined)?.code === "55P03") {
+                // Nothing was written: the client row was busy, so the proposal can be approved again.
+                throw new AgentActionCertainFailureError("고객 정보가 수정 중이라 문자를 예약할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+            }
+            throw error;
+        }
     }
 
     private async resolveSmsRecipient(
@@ -714,14 +777,15 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             },
         });
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
-        const retry = await this.jobRepository.claimProviderRejectedForRetry(
-            context.principal.branchId,
-            source.id,
-            expectedTargetVersion,
-            canonical.snapshotHash,
-            source,
-            retryCandidate,
-        );
+        const retry = await this.withClientSmsAutomationOn(context.principal.branchId, recipient, () =>
+            this.jobRepository.claimProviderRejectedForRetry(
+                context.principal.branchId,
+                source.id,
+                expectedTargetVersion,
+                canonical.snapshotHash,
+                source,
+                retryCandidate,
+            ));
         if (retry.kind === "lock_timeout") {
             // The claim aborted on a lock held by another transaction (e.g. a
             // large rule normalisation): nothing was written, so this is a

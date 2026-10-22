@@ -1,5 +1,6 @@
 import { createLegacyAutomationDeliveryGate } from "../../../test/fixtures/legacy-automation-delivery-gate";
 import { NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 
 import { AligoService } from "application/services/aligo.service";
 import { SendAligoSmsUsecase } from "application/usecases/aligo/send-sms.usecase";
@@ -83,6 +84,9 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         let effectReceipt: unknown = null;
         const prisma = {
             $transaction: jest.fn(),
+            $executeRaw: jest.fn().mockResolvedValue(0),
+            // FOR SHARE read of the matching client rows' automation flag; no row means nothing is off.
+            $queryRaw: jest.fn().mockResolvedValue([]),
             agent_action: {
                 updateMany: jest.fn().mockImplementation(async ({ data }) => {
                     effectReceipt = data.effectReceipt;
@@ -507,6 +511,113 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         await expect(send.execute(context, input)).resolves.toEqual(expect.objectContaining({ status: "sent", msgType: "LMS" }));
     });
 
+    describe("client automatic-sending-off rule at enqueue time", () => {
+        const offClient = [{ id: 1, smsAutomationEnabled: false }];
+
+        it.each(smsCases)("%s refuses a client whose automatic sending is off and writes no rule or job", async (name) => {
+            const { capabilities, prisma, repository, delivery } = setup();
+            prisma.$queryRaw.mockResolvedValue(offClient);
+            const capability = capabilities.find((entry) => entry.meta.name === name)!;
+
+            await expect(capability.execute(context, inputFor(name))).rejects.toMatchObject({
+                name: "AgentActionCertainFailureError",
+                message: "이 고객은 자동 발송이 꺼져 있어 예약할 수 없습니다.",
+            });
+            expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            expect(repository.upsertPending).not.toHaveBeenCalled();
+            expect(delivery.dispatchPendingJobNow).not.toHaveBeenCalled();
+        });
+
+        it.each(smsCases)("%s still queues for a client whose automatic sending is on", async (name) => {
+            const { capabilities, prisma, repository } = setup();
+            prisma.$queryRaw.mockResolvedValue([{ id: 1, smsAutomationEnabled: true }]);
+            const capability = capabilities.find((entry) => entry.meta.name === name)!;
+
+            await expect(capability.execute(context, inputFor(name))).resolves.toEqual(
+                expect.objectContaining({ status: name === "messages.sendSms" ? "sent" : "scheduled" }),
+            );
+            expect(repository.upsertPending).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(smsCases)("%s refuses when another client owning the same phone (e.g. a deleted one) is off, even if the resolved client is on", async (name) => {
+            const { capabilities, prisma, repository } = setup();
+            prisma.$queryRaw.mockResolvedValue([
+                { id: 1, smsAutomationEnabled: true },
+                { id: 7, smsAutomationEnabled: false },
+            ]);
+
+            await expect(capabilities.find((entry) => entry.meta.name === name)!.execute(context, inputFor(name)))
+                .rejects.toMatchObject({ name: "AgentActionCertainFailureError" });
+            expect(repository.upsertPending).not.toHaveBeenCalled();
+        });
+
+        it("reads the flag FOR SHARE inside the transaction that holds the job write, matching the safeguard's phone forms", async () => {
+            const { capabilities, prisma, repository } = setup();
+            const order: string[] = [];
+            prisma.$transaction.mockImplementation(async (operation: (tx: typeof prisma) => Promise<unknown>) => {
+                order.push("begin");
+                const result = await operation(prisma);
+                order.push("commit");
+                return result;
+            });
+            prisma.$queryRaw.mockImplementation(async () => { order.push("lock-read"); return []; });
+            repository.upsertPending.mockImplementation(async (candidate: MessageTriggerJobEntity) => {
+                order.push("insert");
+                return Object.assign(candidate, { id: "job-x" });
+            });
+
+            await capabilities.find((entry) => entry.meta.name === "messages.scheduleSms")!.execute(context, smsInput);
+
+            expect(order).toEqual(["begin", "lock-read", "insert", "commit"]);
+            const statement = prisma.$queryRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
+            expect(statement.sql).toContain("FOR SHARE");
+            expect(statement.sql).toContain("sms_automation_enabled");
+            expect(statement.values).toEqual(expect.arrayContaining([principal.branchId, 1]));
+            expect(statement.values.flat()).toEqual(expect.arrayContaining(["01012345678", "010-1234-5678"]));
+        });
+
+        it("does not check the flag for an employee recipient", async () => {
+            const { capabilities, prisma, repository } = setup();
+            prisma.client.findFirst.mockResolvedValue(null);
+            prisma.employee.findFirst.mockResolvedValue({ id: 9, name: "테스트 직원", phone: smsInput.receiver } as never);
+
+            await capabilities.find((entry) => entry.meta.name === "messages.scheduleSms")!.execute(context, smsInput);
+
+            expect(prisma.$queryRaw).not.toHaveBeenCalled();
+            expect(repository.upsertPending).toHaveBeenCalledTimes(1);
+        });
+
+        it("reports a busy client row as a definite not-created failure", async () => {
+            const { capabilities, prisma, repository } = setup();
+            prisma.$queryRaw.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("lock not available", {
+                code: "P2010", clientVersion: "test", meta: { code: "55P03" },
+            }));
+
+            await expect(capabilities.find((entry) => entry.meta.name === "messages.scheduleSms")!.execute(context, smsInput))
+                .rejects.toMatchObject({ name: "AgentActionCertainFailureError", message: expect.stringContaining("다시 시도") });
+            expect(repository.upsertPending).not.toHaveBeenCalled();
+        });
+
+        it("refuses an approved retry whose client is now off and claims nothing", async () => {
+            const { capabilities, prisma, repository, delivery } = setup();
+            const capability = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+            const inspection = await capability.inspect!(context, { jobId: "job-a" });
+            prisma.$queryRaw.mockResolvedValue(offClient);
+
+            await expect(capability.execute({
+                ...context,
+                approvedTargetVersion: inspection.targetVersion,
+                approvedTargetSnapshot: inspection.targetSnapshot,
+            }, { jobId: "job-a" })).rejects.toMatchObject({
+                name: "AgentActionCertainFailureError",
+                message: "이 고객은 자동 발송이 꺼져 있어 예약할 수 없습니다.",
+            });
+            expect(repository.claimProviderRejectedForRetry).not.toHaveBeenCalled();
+            expect(delivery.dispatchPendingJobNow).not.toHaveBeenCalled();
+        });
+    });
+
     it("rejects an arbitrary agent SMS recipient before creating a rule or job", async () => {
         const { capabilities, repository, prisma, delivery } = setup();
         prisma.client.findFirst.mockResolvedValue(null);
@@ -875,6 +986,9 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                     })),
             } as never, undefined));
         const recipientPrisma = {
+            $executeRaw: jest.fn().mockResolvedValue(0),
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            $transaction: jest.fn(),
             client: {
                 findFirst: jest.fn().mockResolvedValue({ id: 1, name: "테스트 고객", phone: "01012345678" }),
             },
@@ -882,6 +996,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                 findFirst: jest.fn().mockResolvedValue(null),
             },
         };
+        recipientPrisma.$transaction.mockImplementation(async (operation: (tx: typeof recipientPrisma) => Promise<unknown>) => operation(recipientPrisma));
         const provider = new MessageExternalAgentCapabilitiesProvider(
             recipientPrisma as never,
             triggerService,
