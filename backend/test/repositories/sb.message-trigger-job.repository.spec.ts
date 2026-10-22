@@ -1143,6 +1143,7 @@ describe("SbMessageTriggerJobRepository", () => {
                 jobs_stale: false,
                 updated_at: expectedUpdatedAt,
             }])
+            .mockResolvedValueOnce([{ sms_automation_enabled: true }])
             .mockResolvedValueOnce([{
                 id: "job-1",
                 branch_id: "branch-1",
@@ -1172,10 +1173,94 @@ describe("SbMessageTriggerJobRepository", () => {
         );
 
         expect(result?.status).toBe("pending");
-        expect(queryRaw).toHaveBeenCalledTimes(2);
+        expect(queryRaw).toHaveBeenCalledTimes(3);
         expect(getSqlText(queryRaw.mock.calls[0][0])).toContain('FROM "message_trigger_rule"');
         expect(getSqlText(queryRaw.mock.calls[0][0])).toContain("FOR UPDATE");
-        expect(getSqlText(queryRaw.mock.calls[1][0])).toContain('INSERT INTO "message_trigger_job"');
+        // The client's current flag is re-read under a row lock after the rule lock, before the write.
+        const clientSql = getSqlText(queryRaw.mock.calls[1][0]).replace(/\s+/g, " ");
+        expect(clientSql).toContain('FROM "client"');
+        expect(clientSql).toContain("deleted_at IS NULL");
+        expect(clientSql).toContain("FOR SHARE");
+        expect(getSqlText(queryRaw.mock.calls[2][0])).toContain('INSERT INTO "message_trigger_job"');
+    });
+
+    it.each([
+        { name: "OFF", rows: [{ sms_automation_enabled: false }] },
+        { name: "deleted or missing", rows: [] },
+    ])("upsertPendingForRuleGeneration writes nothing when the client is $name at write time", async ({ rows }) => {
+        const job = createJob();
+        const expectedUpdatedAt = new Date("2026-07-09T00:00:00.123Z");
+        queryRaw
+            .mockResolvedValueOnce([{ id: "rule-1", branch_id: "branch-1", jobs_stale: false, updated_at: expectedUpdatedAt }])
+            .mockResolvedValueOnce(rows);
+
+        await expect(repository.upsertPendingForRuleGeneration(job, expectedUpdatedAt, false)).resolves.toBeNull();
+
+        expect(queryRaw).toHaveBeenCalledTimes(2);
+        expect(queryRaw.mock.calls.map(([query]) => getSqlText(query)).join("\n")).not.toContain("INSERT INTO");
+        expect(messageTriggerJobModel.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("upsertPendingForRuleGeneration does not recheck a client for an employee-recipient job", async () => {
+        const base = createJob();
+        const employeeJob = MessageTriggerJobEntity.create({
+            branchId: "branch-1",
+            ruleId: "rule-1",
+            scheduledFor: base.scheduledFor,
+            clientId: 1,
+            employeeScheduleId: 5,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01099998888",
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            dedupeKey: "rule-1:employee:5",
+            payload: base.payload,
+        });
+        const expectedUpdatedAt = new Date("2026-07-09T00:00:00.123Z");
+        queryRaw
+            .mockResolvedValueOnce([{ id: "rule-1", branch_id: "branch-1", jobs_stale: false, updated_at: expectedUpdatedAt }])
+            .mockResolvedValueOnce([createRow({ dedupeKey: employeeJob.dedupeKey, status: "pending" })]);
+
+        await repository.upsertPendingForRuleGeneration(employeeJob, expectedUpdatedAt, false);
+
+        const sqls = queryRaw.mock.calls.map(([query]) => getSqlText(query));
+        expect(sqls.some((sql) => sql.includes('FROM "client"'))).toBe(false);
+    });
+
+    it("cancelAutomaticClientJobsForClient cancels queued ordinary client jobs without any rule generation fence", async () => {
+        queryRaw.mockResolvedValueOnce([{ id: "job-1" }, { id: "job-2" }]);
+
+        await expect(repository.cancelAutomaticClientJobsForClient(
+            "branch-1", 7, "SMS automation disabled for client",
+        )).resolves.toBe(2);
+
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+        const query = queryRaw.mock.calls[0][0] as { values?: readonly unknown[] };
+        const sql = getSqlText(query).replace(/\s+/g, " ");
+        // No rule row is read or locked, so a stale or moved rule cannot refuse the cancellation.
+        expect(sql).not.toContain('FROM "message_trigger_rule" WHERE id =');
+        expect(sql).not.toContain("jobs_stale");
+        expect(sql).toContain("ORDER BY id FOR UPDATE");
+        expect(sql).toContain("status IN ('pending', 'processing')");
+        expect(sql).toContain("branch_id =");
+        expect(sql).toContain("client_id =");
+        expect(sql).toContain("recipient_type =");
+        expect(sql).toContain("claim_token = NULL");
+        expect(sql).toContain("job.status IN ('pending', 'processing', 'needs_setup')");
+        // dispatching and sent jobs are never selected or updated.
+        expect(sql).not.toContain("'dispatching'");
+        expect(sql).not.toContain("'sent'");
+        // Ordinary-automation and not-manual predicates are kept.
+        expect(sql).toContain("AND NOT (");
+        expect(query.values).toEqual(expect.arrayContaining([7, MessageTriggerRecipientType.CLIENT, "SMS automation disabled for client"]));
+    });
+
+    it("cancelAutomaticClientJobsForClient uses the caller's transaction when given one", async () => {
+        const txQueryRaw = jest.fn().mockResolvedValueOnce([]);
+        await expect(repository.cancelAutomaticClientJobsForClient(
+            "branch-1", 7, "reason", { $queryRaw: txQueryRaw } as never,
+        )).resolves.toBe(0);
+        expect(txQueryRaw).toHaveBeenCalledTimes(1);
+        expect(queryRaw).not.toHaveBeenCalled();
     });
 
     it("preserves an existing intent-generated job while narrowly reactivating approval cancellation", async () => {
@@ -1193,6 +1278,7 @@ describe("SbMessageTriggerJobRepository", () => {
                 jobs_stale: false,
                 updated_at: expectedUpdatedAt,
             }])
+            .mockResolvedValueOnce([{ sms_automation_enabled: true }])
             .mockResolvedValueOnce([]);
         messageTriggerJobModel.findUnique.mockResolvedValue(existingPending);
 
@@ -1205,7 +1291,7 @@ describe("SbMessageTriggerJobRepository", () => {
 
         expect(result?.id).toBe("existing-job");
         expect(result?.status).toBe("pending");
-        const conflictQuery = queryRaw.mock.calls[1][0] as {
+        const conflictQuery = queryRaw.mock.calls[2][0] as {
             strings?: readonly string[];
             values?: readonly unknown[];
         };

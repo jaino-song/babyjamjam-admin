@@ -2074,12 +2074,7 @@ export class MessageTriggerService {
         // Automatic sending off: nothing may be queued, and anything already
         // queued (for example before the flag was turned off) is cancelled.
         if (client.smsAutomationEnabled === false) {
-            await this.cancelPendingJobsForClient(
-                branchId,
-                rules,
-                clientId,
-                "SMS automation disabled for client",
-            );
+            await this.cancelAutomaticJobsForDisabledClient(branchId, clientId);
             return;
         }
 
@@ -3110,6 +3105,26 @@ export class MessageTriggerService {
             `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time.slice(0, 2)}:${time.slice(2, 4)}:00+09:00`,
         );
         return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    /**
+     * Cancel every queued automatic client job of a client whose automatic
+     * sending is off. Unlike the rule-generation-fenced cancellations this never
+     * depends on a rule's jobs_stale / updated_at (a refused fence would leave the
+     * jobs queued while the caller reports success), and it runs under the branch
+     * automation lock every producer takes, so a producer holding a stale ON
+     * snapshot either wrote before this runs (and is cancelled) or re-reads OFF.
+     */
+    private async cancelAutomaticJobsForDisabledClient(branchId: string, clientId: number): Promise<void> {
+        const reason = "SMS automation disabled for client";
+        if (this.messageAutomationBranchLockService) {
+            await this.messageAutomationBranchLockService.runExclusive(
+                branchId,
+                (transaction) => this.jobRepository.cancelAutomaticClientJobsForClient(branchId, clientId, reason, transaction),
+            );
+            return;
+        }
+        await this.jobRepository.cancelAutomaticClientJobsForClient(branchId, clientId, reason);
     }
 
     private async cancelPendingJobsForClient(
