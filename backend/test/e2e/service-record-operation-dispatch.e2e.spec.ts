@@ -181,6 +181,8 @@ describeE2E("service-record revision operation dispatch authorization (actual Po
             eformsignDocRepository as never,
             clientRepository as never,
             schedulerLease as never,
+            { supersede: jest.fn() } as never,
+            { sendToBranchUsers: jest.fn() } as never,
             undefined,
             coordinator as never,
         );

@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 import { ContractDataDto } from "application/dto/contract.dto";
+import type { StaffCompletionPrefillAmounts } from "application/services/eformsign.service";
 import {
     EformsignDocumentJobPayload,
     EformsignDocumentJobSource,
@@ -29,6 +30,8 @@ export interface EnqueueCreateDocumentParams {
     source?: EformsignDocumentJobSource;
     progressId?: string;
     force?: boolean;
+    /** The contract this re-issue replaces; the worker cancels it once the new one is sent. */
+    supersedeDocumentId?: string;
     createdByUserId?: string | null;
 }
 
@@ -37,6 +40,7 @@ export interface EnqueueFinalizeDocumentParams {
     documentId: string;
     requestKey: string;
     prefillEndDate?: string;
+    prefillAmounts?: StaffCompletionPrefillAmounts;
     progressId?: string;
     source: EformsignDocumentJobSource;
     createdByUserId?: string | null;
@@ -63,6 +67,37 @@ export interface EnqueueEformsignDocumentJobInTransactionParams {
     payload: EformsignDocumentJobPayload;
     payloadFingerprint: string;
     createdByUserId?: string | null;
+}
+
+const MAX_SERVICE_PERIOD_LENGTH = 64;
+
+/**
+ * The one rule set for a staff-completion prefill, shared by enqueue and the
+ * worker's payload parser so a value accepted at enqueue is never rejected by
+ * the worker. `undefined` when absent, `null` when present but malformed.
+ */
+export function parsePrefillAmounts(raw: unknown): StaffCompletionPrefillAmounts | undefined | null {
+    if (raw === undefined) return undefined;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const a = raw as Record<string, unknown>;
+    const isAmount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+    if (!isAmount(a["fullPrice"]) || !isAmount(a["grant"]) || !isAmount(a["actualPrice"])) return null;
+    const servicePeriod = a["servicePeriod"];
+    if (servicePeriod !== undefined) {
+        if (
+            typeof servicePeriod !== "string"
+            || servicePeriod.trim().length === 0
+            || servicePeriod.length > MAX_SERVICE_PERIOD_LENGTH
+        ) {
+            return null;
+        }
+    }
+    return {
+        fullPrice: a["fullPrice"],
+        grant: a["grant"],
+        actualPrice: a["actualPrice"],
+        ...(servicePeriod !== undefined ? { servicePeriod: servicePeriod as string } : {}),
+    };
 }
 
 function assertContractDataPhones(contractData: ContractDataDto): void {
@@ -122,6 +157,7 @@ export class EformsignDocumentJobService {
             contractData: params.contractData,
             ...(params.progressId ? { progressId: params.progressId } : {}),
             ...(params.force === true ? { force: true } : {}),
+            ...(params.supersedeDocumentId ? { supersedeDocumentId: params.supersedeDocumentId } : {}),
         };
 
         return this.repository.enqueue({
@@ -148,9 +184,18 @@ export class EformsignDocumentJobService {
         // A voided (파기) contract is never finalized. A job queued before the void is stopped by
         // FinalizeDocumentHeadlessUsecase.assertOwnedTarget when it runs.
         if (document.isVoided) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (params.prefillAmounts !== undefined && parsePrefillAmounts(params.prefillAmounts) === null) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/prefillAmounts",
+                code: "INVALID_VALUE",
+                detail: "금액은 0 이상의 정수여야 하고, 이용기간은 비어 있지 않은 64자 이하 문자열이어야 해요",
+                location: "body",
+            }));
+        }
         const payload: EformsignDocumentJobPayload = {
             documentId: params.documentId,
             ...(params.prefillEndDate ? { prefillEndDate: params.prefillEndDate } : {}),
+            ...(params.prefillAmounts ? { prefillAmounts: params.prefillAmounts } : {}),
             ...(params.progressId ? { progressId: params.progressId } : {}),
         };
 

@@ -27,8 +27,12 @@ import {
     CLIENT_REPOSITORY,
     IClientRepository,
 } from "domain/repositories/client.repository.interface";
+import type { StaffCompletionPrefillAmounts } from "application/services/eformsign.service";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
+import { NotificationService } from "application/services/notification.service";
+import { parsePrefillAmounts } from "application/services/eformsign-document-job.service";
 import type {
     ServiceRecordRevisionGenerationInput,
     ServiceRecordRevisionDispatchContext,
@@ -68,11 +72,16 @@ interface CreateDocumentJobPayload {
     contractData: ContractDataDto;
     progressId?: string;
     force?: boolean;
+    /** The contract this re-issue replaces; cancelled once the new one is sent. */
+    supersedeDocumentId?: string;
 }
+
+export const CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE = "contract-supersede-failed";
 
 interface FinalizeDocumentJobPayload {
     documentId?: string;
     prefillEndDate?: string;
+    prefillAmounts?: StaffCompletionPrefillAmounts;
     progressId?: string;
 }
 
@@ -348,6 +357,8 @@ export class EformsignDocumentJobWorkerService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         private readonly schedulerLease: SchedulerLeaseService,
+        private readonly contractSupersedeService: ContractSupersedeService,
+        private readonly notificationService: NotificationService,
         @Optional()
         @Inject(SERVICE_RECORD_REVISION_GENERATION)
         private readonly revisionGenerator?: ServiceRecordRevisionGenerationPort,
@@ -662,7 +673,10 @@ export class EformsignDocumentJobWorkerService {
         );
 
         if (result.ok) {
-            await this.repository.markCompleted(job.id, leaseToken, result.documentId);
+            const completed = await this.repository.markCompleted(job.id, leaseToken, result.documentId);
+            // Only the holder of the lease may act on the completion; a lost lease
+            // means another run owns this job's outcome.
+            if (completed) await this.supersedeAfterReissue(job, result.documentId);
             return;
         }
         if (isTemplateWorkflowFailure(result.reason)) {
@@ -687,6 +701,63 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
         await this.handlePreSendFailure(job, "HEADLESS_CREATE_PRE_SEND_FAILURE");
+    }
+
+    /**
+     * Cancel the contract a server-side re-issue replaced, after the new one
+     * exists. Shared by the normal success branch and the reconciliation
+     * completion so an ambiguous send never leaves the old contract live
+     * silently. A failure here never fails or retries the create job (the new
+     * contract was already sent): it notifies the branch and logs ids only.
+     */
+    private async supersedeAfterReissue(
+        job: EformsignDocumentJobEntity,
+        newDocumentId: string | undefined,
+    ): Promise<void> {
+        const payload = parseCreatePayload(job.payload ?? {});
+        const oldDocumentId = payload?.supersedeDocumentId;
+        if (!payload || !oldDocumentId || !newDocumentId || oldDocumentId === newDocumentId) return;
+        try {
+            // `job.clientId` is the value ownsTarget verified against the job's
+            // branch; the payload's copy is only a cross-check.
+            if (job.clientId === null || payload.clientId !== job.clientId) {
+                throw new Error("SUPERSEDE_CLIENT_MISMATCH");
+            }
+            // The same branch visibility the HTTP route enforces; the document lookup
+            // inside the service is not branch-scoped.
+            if (!(await this.contractSupersedeService.isDocumentVisibleToBranch(job.branchId, oldDocumentId))) {
+                throw new Error("SUPERSEDE_DOCUMENT_NOT_VISIBLE");
+            }
+            // The replacement is only safe to rely on once the client points at it. The
+            // create flow swallows a failed client link (warning only), so a fresh
+            // branch-scoped read must confirm it before the old contract is cancelled
+            // and purged (the purge would otherwise leave the client with no contract).
+            const client = await this.clientRepository.findById(job.branchId, job.clientId);
+            if (!client || client.eDocId !== newDocumentId) {
+                throw new Error("SUPERSEDE_REPLACEMENT_NOT_LINKED");
+            }
+            await this.contractSupersedeService.supersede({
+                branchId: job.branchId,
+                clientId: job.clientId,
+                documentId: oldDocumentId,
+                principal: createEformsignWorkerPrincipal(job.branchId),
+            });
+        } catch (error) {
+            this.logger.warn(
+                `[Service Stop] could not supersede oldDocumentId=${oldDocumentId} newDocumentId=${newDocumentId}: ${errorClassName(error)}`,
+            );
+            await this.notificationService.sendToBranchUsers(
+                job.branchId,
+                "기존 계약서 취소 실패",
+                "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
+                {
+                    type: CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE,
+                    documentId: oldDocumentId,
+                    url: `/contracts?documentId=${encodeURIComponent(oldDocumentId)}`,
+                },
+                { dedupe: { type: CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE, documentId: oldDocumentId } },
+            ).catch(() => undefined);
+        }
     }
 
     /**
@@ -774,6 +845,7 @@ export class EformsignDocumentJobWorkerService {
                     branchId: job.branchId,
                     documentId,
                     prefillEndDate: payload.prefillEndDate,
+                    prefillAmounts: payload.prefillAmounts,
                     progressId: payload.progressId,
                     onProgress: async (progressStep) => {
                         latestProgressStep = progressStep;
@@ -897,6 +969,13 @@ export class EformsignDocumentJobWorkerService {
             createEformsignWorkerPrincipal(job.branchId),
         );
         if (
+            result.status === "completed"
+            && result.completionRecorded === true
+            && job.jobType === "create_document"
+        ) {
+            await this.supersedeAfterReissue(job, result.documentId);
+        }
+        if (
             result.status === "requires_attention"
             && job.source === "auto_finalize"
             && job.documentId
@@ -989,6 +1068,9 @@ function parseCreatePayload(payload: Record<string, unknown>): CreateDocumentJob
         contractData,
         ...(readOptionalString(payload["progressId"]) ? { progressId: readOptionalString(payload["progressId"]) } : {}),
         ...(payload["force"] === true ? { force: true } : {}),
+        ...(readOptionalString(payload["supersedeDocumentId"])
+            ? { supersedeDocumentId: readOptionalString(payload["supersedeDocumentId"]) }
+            : {}),
     };
 }
 
@@ -999,9 +1081,12 @@ function parseFinalizePayload(payload: Record<string, unknown>): FinalizeDocumen
     if (payload["documentId"] !== undefined && !documentId) return null;
     if (payload["prefillEndDate"] !== undefined && !prefillEndDate) return null;
     if (payload["progressId"] !== undefined && !progressId) return null;
+    const prefillAmounts = parsePrefillAmounts(payload["prefillAmounts"]);
+    if (prefillAmounts === null) return null;
     return {
         ...(documentId ? { documentId } : {}),
         ...(prefillEndDate ? { prefillEndDate } : {}),
+        ...(prefillAmounts ? { prefillAmounts } : {}),
         ...(progressId ? { progressId } : {}),
     };
 }
@@ -1022,4 +1107,8 @@ function isContractData(value: unknown): value is ContractDataDto {
 
 function readOptionalString(value: unknown): string | undefined {
     return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function errorClassName(error: unknown): string {
+    return error instanceof Error ? error.constructor.name : typeof error;
 }

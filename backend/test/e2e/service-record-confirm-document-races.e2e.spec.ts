@@ -25,6 +25,7 @@ function authorize(prisma: unknown, job: EformsignDocumentJobEntity) {
     const worker = new EformsignDocumentJobWorkerService(forbidden as never,
         new SbEformsignDocumentJobRepository(prisma as never), forbidden as never, forbidden as never,
         forbidden as never, forbidden as never, forbidden as never, forbidden as never, forbidden as never,
+        forbidden as never, forbidden as never,
     );
     return (worker as unknown as {
         authorizeRevisionJob(job: EformsignDocumentJobEntity): Promise<{ kind: string }>;
