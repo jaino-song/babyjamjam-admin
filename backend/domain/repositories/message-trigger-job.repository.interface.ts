@@ -263,6 +263,20 @@ export interface IMessageTriggerJobRepository {
         scope?: MessageTriggerJobCancellationScope,
         transaction?: Prisma.TransactionClient,
     ): Promise<number | null>;
+    /**
+     * Cancel every queued ordinary automatic CLIENT-recipient job of one client
+     * (pending, processing, and needs_setup inside the grace window for
+     * non-immediate rules), independent of any rule generation fence. Manual,
+     * agent and reserved records, dispatching and sent jobs are never touched;
+     * a processing claim is invalidated by clearing its token. The caller should
+     * hold the branch automation lock. Returns the number of cancelled rows.
+     */
+    cancelAutomaticClientJobsForClient(
+        branchId: string,
+        clientId: number,
+        reason: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<number>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     /**
      * Atomically replace every `pending` job of the replacement's rule and
