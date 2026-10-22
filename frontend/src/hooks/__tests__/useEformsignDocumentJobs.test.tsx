@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { eformsignApi } from "@/services/api";
+import type { EformsignDocumentJobSummary } from "@/services/api";
 
 import {
   eformsignDocumentJobsQueryKeys,
@@ -26,6 +27,9 @@ const DOCUMENT_JOBS_A: EformsignDocumentJobList = {
     completedAt: null,
     createdAt: "2026-09-29T00:00:00.000Z",
     updatedAt: "2026-09-29T00:00:00.000Z",
+    clientName: null,
+    recoveryKind: null,
+    lastErrorCode: null,
   }],
   requiresAttention: [],
   recent: [],
@@ -48,10 +52,10 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
   });
 
   it("does not reuse a cached count after the selected branch changes", async () => {
-    let resolveBranchB: ((summary: { activeCount: number; requiresAttentionCount: number }) => void) | undefined;
+    let resolveBranchB: ((summary: EformsignDocumentJobSummary) => void) | undefined;
     const getSummary = jest
       .spyOn(eformsignApi, "getDocumentJobSummary")
-      .mockResolvedValueOnce({ activeCount: 3, requiresAttentionCount: 1 })
+      .mockResolvedValueOnce({ activeCount: 3, requiresAttentionCount: 1, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] })
       .mockImplementationOnce(
         () => new Promise((resolve) => {
           resolveBranchB = resolve;
@@ -68,6 +72,9 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
     expect(queryClient.getQueryData(eformsignDocumentJobsQueryKeys.summary("branch-a"))).toEqual({
       activeCount: 3,
       requiresAttentionCount: 1,
+      failedCount: 0,
+      unresolvedCount: 0,
+      unresolvedJobIds: [],
     });
 
     act(() => {
@@ -80,7 +87,7 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
     expect(queryClient.getQueryData(eformsignDocumentJobsQueryKeys.summary("branch-b"))).toBeUndefined();
 
     await act(async () => {
-      resolveBranchB?.({ activeCount: 8, requiresAttentionCount: 0 });
+      resolveBranchB?.({ activeCount: 8, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] });
     });
     await waitFor(() => expect(result.current.data?.activeCount).toBe(8));
   });
@@ -90,6 +97,9 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
     queryClient.setQueryData(eformsignDocumentJobsQueryKeys.summary("branch-a"), {
       activeCount: 5,
       requiresAttentionCount: 0,
+      failedCount: 0,
+      unresolvedCount: 0,
+      unresolvedJobIds: [],
     });
 
     const { result } = renderHook(() => useEformsignDocumentJobsSummary(false), {
@@ -103,7 +113,7 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
     let resolveBranchB: ((jobs: typeof DOCUMENT_JOBS_A) => void) | undefined;
     const getSummary = jest
       .spyOn(eformsignApi, "getDocumentJobSummary")
-      .mockResolvedValue({ activeCount: 0, requiresAttentionCount: 0 });
+      .mockResolvedValue({ activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] });
     const getJobs = jest
       .spyOn(eformsignApi, "getDocumentJobs")
       .mockResolvedValueOnce(DOCUMENT_JOBS_A)
