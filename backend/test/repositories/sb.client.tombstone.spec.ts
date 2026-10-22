@@ -235,6 +235,25 @@ describe("client tombstone (고객-06)", () => {
             });
         });
 
+        it("is on by default only under NODE_ENV=production", async () => {
+            const originalNodeEnv = process.env["NODE_ENV"];
+            try {
+                delete process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"];
+                process.env["NODE_ENV"] = "production";
+                const kept = db.addClient();
+                db.messageLogClientIds.add(kept.id);
+                await expect(usecase.execute(BRANCH, kept.id)).resolves.toBe("tombstoned");
+
+                process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "false";
+                const refused = db.addClient({ phone: "010-2222-3333", phoneNormalized: "01022223333" });
+                db.messageLogClientIds.add(refused.id);
+                await expect(usecase.execute(BRANCH, refused.id)).rejects.toBeInstanceOf(ConflictException);
+            } finally {
+                if (originalNodeEnv === undefined) delete process.env["NODE_ENV"];
+                else process.env["NODE_ENV"] = originalNodeEnv;
+            }
+        });
+
         it("still hard deletes a client without history", async () => {
             process.env["CLIENT_TOMBSTONE_DELETE_ENABLED"] = "false";
             const client = db.addClient();
