@@ -12,10 +12,13 @@ import {
 } from "domain/entities/eformsign-document-job.entity";
 import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
+    ClaimRecoveryResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
     IEformsignDocumentJobRepository,
+    ManualRecoveryInput,
+    ResolveManuallyResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -271,6 +274,25 @@ export class EformsignDocumentJobService {
         terminalLimit?: number,
     ): Promise<EformsignDocumentJobList> {
         return this.repository.listForBranch(branchId, terminalSince, terminalLimit);
+    }
+
+    /** Take the manual-recovery claim on a failed/requires_attention staff contract job. */
+    async claimRecovery(input: ManualRecoveryInput): Promise<ClaimRecoveryResult> {
+        return this.repository.claimRecovery(input);
+    }
+
+    /** Record that staff finished a stuck staff contract job by hand. */
+    async resolveManually(input: ManualRecoveryInput): Promise<ResolveManuallyResult> {
+        return this.repository.resolveManually(input);
+    }
+
+    /** Drop the retained payload of contract jobs that stayed in requires_attention for 7 days. */
+    async purgeExpiredAttentionPayloads(now: Date): Promise<number> {
+        return this.repository.purgeExpiredAttentionPayloads(now);
+    }
+
+    async listRecentStaffFailures(since: Date) {
+        return this.repository.listRecentStaffFailures(since);
     }
 }
 

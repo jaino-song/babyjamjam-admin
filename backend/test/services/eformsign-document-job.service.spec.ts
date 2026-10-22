@@ -34,6 +34,11 @@ function buildService() {
         enqueue: jest.fn(),
         enqueueInTransaction: jest.fn(),
         authorizeForDispatchInTransaction: jest.fn(),
+        getSummary: jest.fn(),
+        claimRecovery: jest.fn(),
+        resolveManually: jest.fn(),
+        purgeExpiredAttentionPayloads: jest.fn(),
+        listRecentStaffFailures: jest.fn(),
     };
     const documents = { findByDocumentId: jest.fn() };
     const clients = { findById: jest.fn() };
@@ -256,4 +261,42 @@ describe("EformsignDocumentJobService", () => {
             expect(repository.enqueue).not.toHaveBeenCalled();
         },
     );
+
+    it("passes the recovery claim, manual resolve, purge and failure queries straight to the repository", async () => {
+        const { service, repository } = buildService();
+        const input = {
+            jobId: "00000000-0000-4000-8000-000000000001",
+            branchId,
+            userId: "11111111-1111-4111-8111-111111111111",
+            now: new Date("2026-10-22T03:00:00.000Z"),
+        };
+        repository.claimRecovery.mockResolvedValue({ kind: "not_found" });
+        repository.resolveManually.mockResolvedValue({ kind: "invalid_state", status: "queued" });
+        repository.purgeExpiredAttentionPayloads.mockResolvedValue(2);
+        repository.listRecentStaffFailures.mockResolvedValue([]);
+
+        await expect(service.claimRecovery(input)).resolves.toEqual({ kind: "not_found" });
+        await expect(service.resolveManually(input)).resolves.toEqual({ kind: "invalid_state", status: "queued" });
+        await expect(service.purgeExpiredAttentionPayloads(input.now)).resolves.toBe(2);
+        await expect(service.listRecentStaffFailures(input.now)).resolves.toEqual([]);
+
+        expect(repository.claimRecovery).toHaveBeenCalledWith(input);
+        expect(repository.resolveManually).toHaveBeenCalledWith(input);
+        expect(repository.purgeExpiredAttentionPayloads).toHaveBeenCalledWith(input.now);
+        expect(repository.listRecentStaffFailures).toHaveBeenCalledWith(input.now);
+    });
+
+    it("exposes the failed and unresolved summary fields", async () => {
+        const { service, repository } = buildService();
+        const summary = {
+            activeCount: 1,
+            requiresAttentionCount: 2,
+            failedCount: 3,
+            unresolvedCount: 5,
+            unresolvedJobIds: ["job-1"],
+        };
+        repository.getSummary.mockResolvedValue(summary);
+
+        await expect(service.getSummary(branchId)).resolves.toEqual(summary);
+    });
 });

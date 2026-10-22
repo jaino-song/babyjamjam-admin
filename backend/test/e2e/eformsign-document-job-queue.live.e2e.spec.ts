@@ -216,6 +216,9 @@ const buildContract = (employeeName: string, employeePhone: string): ContractDat
         await expect(jobService.getSummary(branchId)).resolves.toEqual({
             activeCount: 1,
             requiresAttentionCount: 0,
+            failedCount: 0,
+            unresolvedCount: 0,
+            unresolvedJobIds: [],
         });
 
         await worker.processDueJobs();
@@ -231,6 +234,9 @@ const buildContract = (employeeName: string, employeePhone: string): ContractDat
         await expect(jobService.getSummary(branchId)).resolves.toEqual({
             activeCount: 0,
             requiresAttentionCount: 0,
+            failedCount: 0,
+            unresolvedCount: 0,
+            unresolvedJobIds: [],
         });
 
         const listed = await jobService.listForBranch(branchId, new Date(Date.now() - 60_000), 50);
@@ -244,5 +250,124 @@ const buildContract = (employeeName: string, employeePhone: string): ContractDat
                 payload: null,
             }),
         ]);
+    });
+
+    it("lets staff claim, resolve and purge stuck contract jobs without touching the provider", async () => {
+        const userA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const userB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const start = new Date();
+        const at = (minutes: number) => new Date(start.getTime() + minutes * 60_000);
+        const claimTtlMs = 10 * 60_000;
+        const create = (suffix: string, data: Record<string, unknown>) => prisma.eformsign_document_job.create({
+            data: {
+                branchId,
+                clientId,
+                jobType: "create_document",
+                source: "staff",
+                status: "failed",
+                requestKey: `queue-live-recovery:${RUN_ID}:${suffix}`,
+                payload: { clientId },
+                payloadFingerprint: "a".repeat(64),
+                progressStep: "preparing",
+                completedAt: start,
+                lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED",
+                ...data,
+            },
+        });
+        const failed = await create("failed", {});
+        const baseInput = { jobId: failed.id, branchId };
+
+        await expect(jobService.getSummary(branchId)).resolves.toMatchObject({
+            failedCount: 1,
+            unresolvedCount: 1,
+            unresolvedJobIds: [failed.id],
+        });
+        const listedBefore = await jobService.listForBranch(branchId, new Date(start.getTime() - 60_000), 50);
+        expect(listedBefore.requiresAttention.map((job) => job.id)).toEqual([failed.id]);
+        expect(listedBefore.requiresAttention[0]?.clientName).toBe(CUSTOMER_NAME);
+        expect(listedBefore.recent.map((job) => job.id)).not.toContain(failed.id);
+
+        // A takes the claim; B is held off until it expires; A may renew its own claim.
+        const first = await jobService.claimRecovery({ ...baseInput, userId: userA, now: start });
+        expect(first).toMatchObject({ kind: "claimed", job: { payload: { clientId } } });
+        await expect(jobService.claimRecovery({ ...baseInput, userId: userB, now: at(1) })).resolves.toEqual({
+            kind: "claimed_by_other",
+            expiresAt: new Date(start.getTime() + claimTtlMs),
+        });
+        await expect(jobService.claimRecovery({ ...baseInput, userId: userA, now: at(2) }))
+            .resolves.toMatchObject({ kind: "claimed" });
+        await expect(jobService.claimRecovery({ ...baseInput, userId: userB, now: at(13) }))
+            .resolves.toMatchObject({ kind: "claimed" });
+
+        // A cannot resolve under B's live claim; B can, and a replay is a success.
+        await expect(jobService.resolveManually({ ...baseInput, userId: userA, now: at(14) }))
+            .resolves.toMatchObject({ kind: "claimed_by_other" });
+        await expect(jobService.resolveManually({ ...baseInput, userId: userB, now: at(14) }))
+            .resolves.toMatchObject({ kind: "resolved", job: { status: "completed", progressStep: "manual_resolved" } });
+        await expect(jobService.resolveManually({ ...baseInput, userId: userB, now: at(15) }))
+            .resolves.toMatchObject({ kind: "already_resolved" });
+        await expect(jobService.claimRecovery({ ...baseInput, userId: userA, now: at(16) }))
+            .resolves.toEqual({ kind: "invalid_state", status: "completed" });
+        const resolved = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: failed.id } });
+        expect(resolved).toMatchObject({
+            status: "completed",
+            progressStep: "manual_resolved",
+            payload: null,
+            activeKey: null,
+            leaseToken: null,
+            lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED",
+        });
+        await expect(jobService.getSummary(branchId)).resolves.toMatchObject({ failedCount: 0, unresolvedCount: 0 });
+
+        // Another branch's job is never reachable.
+        await expect(jobService.claimRecovery({
+            jobId: failed.id,
+            branchId: "00000000-0000-4000-8000-0000000000aa",
+            userId: userA,
+            now: start,
+        })).resolves.toEqual({ kind: "not_found" });
+
+        // Purge nulls only an old contract requires_attention payload and keeps its active key.
+        const eightDaysAgo = new Date(start.getTime() - 8 * 24 * 60 * 60_000);
+        const oldAttention = await create("old-attention", {
+            status: "requires_attention",
+            activeKey: `queue-live-recovery:${RUN_ID}:old-attention`,
+            completedAt: eightDaysAgo,
+            lastErrorCode: "AMBIGUOUS_PROVIDER_STATE",
+        });
+        const freshAttention = await create("fresh-attention", {
+            status: "requires_attention",
+            activeKey: `queue-live-recovery:${RUN_ID}:fresh-attention`,
+            lastErrorCode: "AMBIGUOUS_PROVIDER_STATE",
+        });
+        const oldRevision = await prisma.eformsign_document_job.create({
+            data: {
+                branchId,
+                clientId,
+                jobType: "create_document",
+                source: "staff",
+                status: "requires_attention",
+                requestKey: `service-record-queue-live-recovery:${RUN_ID}`,
+                activeKey: `service-record-queue-live-recovery:${RUN_ID}`,
+                payload: { kind: "service_record_revision_operations" },
+                payloadFingerprint: "b".repeat(64),
+                completedAt: eightDaysAgo,
+                lastErrorCode: "AMBIGUOUS_PROVIDER_STATE",
+            },
+        });
+        await expect(jobService.purgeExpiredAttentionPayloads(start)).resolves.toBeGreaterThanOrEqual(1);
+        const [purged, fresh, revision] = await Promise.all([
+            prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: oldAttention.id } }),
+            prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: freshAttention.id } }),
+            prisma.eformsign_document_job.findUniqueOrThrow({ where: { id: oldRevision.id } }),
+        ]);
+        expect(purged.payload).toBeNull();
+        expect(purged.activeKey).toBe(`queue-live-recovery:${RUN_ID}:old-attention`);
+        expect(fresh.payload).toEqual({ clientId });
+        expect(revision.payload).toEqual({ kind: "service_record_revision_operations" });
+
+        const failures = await jobService.listRecentStaffFailures(new Date(start.getTime() - 60_000));
+        expect(failures.map((job) => job.id)).toEqual(expect.arrayContaining([freshAttention.id]));
+        expect(failures.map((job) => job.id)).not.toContain(oldRevision.id);
     });
 });
