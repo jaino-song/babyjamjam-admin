@@ -108,6 +108,7 @@ export class ClientAutomationSourceReader {
                 startDate: true,
                 endDate: true,
                 serviceEndNoticeSentAt: true,
+                smsAutomationEnabled: true,
                 duration: true,
                 fullPrice: true,
                 grant: true,

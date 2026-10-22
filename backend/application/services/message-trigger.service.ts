@@ -2071,6 +2071,18 @@ export class MessageTriggerService {
             MessageTriggerEventType.SERVICE_END,
         ]);
 
+        // Automatic sending off: nothing may be queued, and anything already
+        // queued (for example before the flag was turned off) is cancelled.
+        if (client.smsAutomationEnabled === false) {
+            await this.cancelPendingJobsForClient(
+                branchId,
+                rules,
+                clientId,
+                "SMS automation disabled for client",
+            );
+            return;
+        }
+
         if (includePast) {
             if (!intentOptions?.preserveExisting) {
                 await this.cancelPendingJobsForClient(
@@ -2461,7 +2473,8 @@ export class MessageTriggerService {
         // Prisma's type inference does not correctly narrow the `area` relation type when
         // the select key is inside a conditional spread; cast to ClientTriggerSource[] explicitly.
         const clients = await (transaction ?? this.prisma).client.findMany({
-            where: { branchId, deletedAt: null },
+            // A client with automatic sending off never gets an automatic job queued.
+            where: { branchId, deletedAt: null, smsAutomationEnabled: true },
             select: {
                 id: true,
                 name: true,

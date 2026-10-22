@@ -5687,6 +5687,7 @@ describe("MessageTriggerService", () => {
         startDate: Date | null;
         endDate: Date | null;
         serviceEndNoticeSentAt: Date | null;
+        smsAutomationEnabled: boolean;
         createdAt: Date | null;
     }> = {}) => {
         const ruleRepository = {
@@ -6221,6 +6222,23 @@ describe("MessageTriggerService", () => {
         await dispatch.service.dispatchDueJobs();
         expect(dispatch.deliveryService.sendJob).toHaveBeenCalledTimes(1);
         expect(waiting.status).toBe("sent");
+    });
+
+    it("queues nothing and cancels pending client jobs when the client's automatic sending is off", async () => {
+        const startRule = createRule({ id: "rule-start-before", eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 7 });
+        const greetingRule = createRule({ id: "rule-greeting-active", eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING });
+        const sync = createSyncService({ smsAutomationEnabled: false,
+            startDate: new Date("2026-12-01T00:00:00.000Z"), endDate: new Date("2026-12-12T00:00:00.000Z") });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([startRule, greetingRule]);
+        await sync.service.syncClientRulesForClient(branchId, 1, false);
+        for (const rule of [startRule, greetingRule]) {
+            expect(sync.jobRepository.cancelPendingForRuleGeneration).toHaveBeenCalledWith(
+                branchId, rule.id, rule.updatedAt, false, "SMS automation disabled for client", expect.objectContaining({ clientId: 1 }),
+            );
+        }
+        expect(sync.jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
     });
 
     it("leaves an immediate needs_setup job alone on repeated unchanged client resync", async () => {
