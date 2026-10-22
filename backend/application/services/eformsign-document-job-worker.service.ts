@@ -728,6 +728,14 @@ export class EformsignDocumentJobWorkerService {
             if (!(await this.contractSupersedeService.isDocumentVisibleToBranch(job.branchId, oldDocumentId))) {
                 throw new Error("SUPERSEDE_DOCUMENT_NOT_VISIBLE");
             }
+            // The replacement is only safe to rely on once the client points at it. The
+            // create flow swallows a failed client link (warning only), so a fresh
+            // branch-scoped read must confirm it before the old contract is cancelled
+            // and purged (the purge would otherwise leave the client with no contract).
+            const client = await this.clientRepository.findById(job.branchId, job.clientId);
+            if (!client || client.eDocId !== newDocumentId) {
+                throw new Error("SUPERSEDE_REPLACEMENT_NOT_LINKED");
+            }
             await this.contractSupersedeService.supersede({
                 branchId: job.branchId,
                 clientId: job.clientId,

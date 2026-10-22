@@ -118,6 +118,7 @@ function buildWorker(overrides: {
     revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort;
     contractSupersede?: Record<string, jest.Mock> | ContractSupersedeService;
     notification?: Record<string, jest.Mock>;
+    client?: Record<string, jest.Mock>;
 } = {}) {
     const repository = {
         recoverStale: jest.fn().mockResolvedValue([]),
@@ -150,8 +151,11 @@ function buildWorker(overrides: {
     const eformsignDocRepository = {
         findByDocumentId: jest.fn().mockResolvedValue({ documentId: "doc" }),
     };
+    // The default client is already linked to the replacement ("new-doc"), which the
+    // supersede path requires before it cancels the old contract.
     const clientRepository = {
-        findById: jest.fn().mockResolvedValue({ id: 7 }),
+        findById: jest.fn().mockResolvedValue({ id: 7, eDocId: "new-doc" }),
+        ...overrides.client,
     };
     const schedulerLease = overrides.schedulerLease ?? createSchedulerLeaseMock();
     const contractSupersedeService = (overrides.contractSupersede instanceof ContractSupersedeService
@@ -1191,6 +1195,67 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
         });
 
+        it.each([
+            ["the client still points at the old contract (link failed)", { id: 7, eDocId: "old-doc" }],
+            ["the client has no linked contract", { id: 7, eDocId: null }],
+            ["the client is not found in the branch", null],
+        ])("skips the cancel and notifies once when %s", async (_label, client) => {
+            const claimed = reissueJob("old-doc");
+            const findById = jest.fn()
+                // ownsTarget runs first and must still see the client to dispatch.
+                .mockResolvedValueOnce({ id: 7, eDocId: "old-doc" })
+                .mockResolvedValue(client);
+            const { worker, repository, contractSupersedeService, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markCompleted: jest.fn().mockResolvedValue(completedJob()),
+                },
+                dispatch: { execute: jest.fn().mockResolvedValue({ ok: true, documentId: "new-doc", durationMs: 1 }) },
+                client: { findById },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.markCompleted).toHaveBeenCalledTimes(1);
+            expect(findById).toHaveBeenLastCalledWith(branchId, 7);
+            expect(contractSupersedeService.supersede).not.toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                branchId,
+                "기존 계약서 취소 실패",
+                expect.any(String),
+                expect.objectContaining({ type: "contract-supersede-failed", documentId: "old-doc" }),
+                expect.objectContaining({ dedupe: { type: "contract-supersede-failed", documentId: "old-doc" } }),
+            );
+        });
+
+        it("applies the same replacement-link guard after reconciliation completes an ambiguous send", async () => {
+            const claimed = reissueJob("old-doc");
+            const { worker, contractSupersedeService, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("creating");
+                        return { ok: false, reason: "browser disconnected", durationMs: 10 };
+                    }),
+                },
+                reconciliation: {
+                    reconcile: jest.fn().mockResolvedValue({
+                        status: "completed", documentId: "adopted-doc", completionRecorded: true,
+                    }),
+                },
+                // Default client is linked to "new-doc", not the adopted replacement.
+            });
+
+            await worker.processDueJobs();
+
+            expect(contractSupersedeService.supersede).not.toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+        });
+
         it("cancels the old contract when reconciliation later completes an ambiguous send", async () => {
             const claimed = reissueJob("old-doc");
             const { worker, contractSupersedeService, reconciliation } = buildWorker({
@@ -1209,6 +1274,7 @@ describe("EformsignDocumentJobWorkerService", () => {
                         status: "completed", documentId: "adopted-doc", completionRecorded: true,
                     }),
                 },
+                client: { findById: jest.fn().mockResolvedValue({ id: 7, eDocId: "adopted-doc" }) },
             });
 
             await worker.processDueJobs();
