@@ -44,6 +44,8 @@ export interface EformsignDocumentJobProps {
     createdByUserId: string | null;
     createdAt: Date;
     updatedAt: Date;
+    /** Display name from the joined client row; only the list/recovery queries fill it. */
+    clientName?: string | null;
 }
 
 export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
@@ -75,4 +77,67 @@ export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
     declare readonly createdByUserId: string | null;
     declare readonly createdAt: Date;
     declare readonly updatedAt: Date;
+    declare readonly clientName?: string | null;
+}
+
+/** `progress_step` value of a job that staff resolved by hand in the eformsign iframe. */
+export const MANUAL_RESOLVED_PROGRESS_STEP = "manual_resolved";
+
+const MANUAL_CLAIM_PREFIX = "manual_in_progress";
+export const MANUAL_CLAIM_TTL_MS = 10 * 60_000;
+// Mirrors the regex the repository applies in SQL before it casts the expiry.
+const MANUAL_CLAIM_PATTERN = /^manual_in_progress:([^:]+):([0-9]{1,15})$/;
+
+export interface ManualRecoveryClaim {
+    userId: string;
+    expiresAtMs: number;
+}
+
+/** The one place that renders a manual-recovery claim into `progress_step`. */
+export function buildManualClaimStep(userId: string, nowMs: number): string {
+    return `${MANUAL_CLAIM_PREFIX}:${userId}:${nowMs + MANUAL_CLAIM_TTL_MS}`;
+}
+
+/** The one place that reads a manual-recovery claim back; `null` for any other value. */
+export function parseManualClaim(progressStep: string | null | undefined): ManualRecoveryClaim | null {
+    if (!progressStep) return null;
+    const match = MANUAL_CLAIM_PATTERN.exec(progressStep);
+    if (!match) return null;
+    const expiresAtMs = Number(match[2]);
+    return Number.isSafeInteger(expiresAtMs) ? { userId: match[1]!, expiresAtMs } : null;
+}
+
+export type ContractJobShape = Pick<
+    EformsignDocumentJobProps,
+    "source" | "jobType" | "requestKey" | "payload"
+>;
+
+/**
+ * A staff contract job: the create/finalize jobs a staff member started from the
+ * contract flow. Service-record revision jobs share the table and the job types
+ * but are not contract jobs. Keep in step with the SQL fragment of the same name
+ * in the repository.
+ */
+export function isContractJob(job: ContractJobShape): boolean {
+    return job.source === "staff"
+        && (job.jobType === "create_document" || job.jobType === "finalize_document")
+        && !job.requestKey.startsWith("service-record-")
+        && (job.payload === null || !Object.prototype.hasOwnProperty.call(job.payload, "kind"));
+}
+
+export type RecoveryClassification = "manual_send" | "verify_result";
+
+/**
+ * What staff may do with a stuck contract job. `failed` is only reached before
+ * anything was sent, so a manual send is safe. `requires_attention` can follow a
+ * send that may have happened, so staff verify the result instead of resending.
+ */
+export function classifyRecovery(
+    job: ContractJobShape & Pick<EformsignDocumentJobProps, "status" | "progressStep">,
+): RecoveryClassification | null {
+    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP) return null;
+    if (!isContractJob(job)) return null;
+    if (job.status === "failed") return "manual_send";
+    if (job.status === "requires_attention") return "verify_result";
+    return null;
 }
