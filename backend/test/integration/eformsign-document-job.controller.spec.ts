@@ -17,6 +17,7 @@ import { TenantGuard } from "infrastructure/tenant";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 import type { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
 
 const validContractData = {
     customerName: "산모",
@@ -73,7 +74,22 @@ const job = (overrides: Partial<EformsignDocumentJobEntity> = {}): EformsignDocu
     ...overrides,
 });
 
+const JOB_ID = "22222222-2222-4222-8222-222222222222";
+const CLAIM_EXPIRES_MS = Date.parse("2026-08-13T00:10:00.000Z");
+const claimStep = (userId = "user-a") => `manual_in_progress:${userId}:${CLAIM_EXPIRES_MS}`;
+const failedJob = (overrides: Partial<EformsignDocumentJobEntity> = {}) =>
+    job({
+        id: JOB_ID,
+        status: "failed",
+        progressStep: claimStep(),
+        lastErrorCode: "SEND_FAILED",
+        clientName: "산모",
+        ...overrides,
+    });
+
 let authRole = "admin";
+let authUserId: string | undefined = "user-a";
+let acceptingEnabled = "true";
 
 describe("EformsignDocumentJobController (Integration)", () => {
     let app: INestApplication;
@@ -82,15 +98,18 @@ describe("EformsignDocumentJobController (Integration)", () => {
         enqueueFinalizeDocument: jest.Mock;
         getSummary: jest.Mock;
         listForBranch: jest.Mock;
+        claimRecovery: jest.Mock;
+        resolveManually: jest.Mock;
     };
+    let supersedeService: { isDocumentVisibleToBranch: jest.Mock } | undefined;
     let dispatchBoundary: { reconcile: jest.Mock; findById?: jest.Mock };
 
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
             const req = context.switchToHttp().getRequest();
-            req.user = { userId: "user-a", branchId: "branch-a", role: authRole, branchRole: authRole };
+            req.user = { userId: authUserId, branchId: "branch-a", role: authRole, branchRole: authRole };
             req.tenant = {
-                userId: "user-a",
+                userId: authUserId,
                 branchId: "branch-a",
                 globalRole: authRole,
                 branchRole: authRole,
@@ -101,11 +120,16 @@ describe("EformsignDocumentJobController (Integration)", () => {
 
     beforeEach(async () => {
         authRole = "admin";
+        authUserId = "user-a";
+        acceptingEnabled = "true";
+        supersedeService = { isDocumentVisibleToBranch: jest.fn().mockResolvedValue(true) };
         documentJobService = {
             enqueueCreateDocument: jest.fn(),
             enqueueFinalizeDocument: jest.fn(),
             getSummary: jest.fn(),
             listForBranch: jest.fn(),
+            claimRecovery: jest.fn(),
+            resolveManually: jest.fn(),
         };
         dispatchBoundary = {
             reconcile: jest.fn().mockResolvedValue({
@@ -116,6 +140,10 @@ describe("EformsignDocumentJobController (Integration)", () => {
             }),
         };
 
+        await buildApp();
+    });
+
+    const buildApp = async (): Promise<void> => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignDocController],
             providers: [
@@ -132,12 +160,15 @@ describe("EformsignDocumentJobController (Integration)", () => {
                     provide: ConfigService,
                     useValue: {
                         get: jest.fn((key: string) =>
-                            key === "EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED" ? "true" : undefined,
+                            key === "EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED" ? acceptingEnabled : undefined,
                         ),
                     },
                 },
                 { provide: EformsignDocumentJobService, useValue: documentJobService },
                 { provide: EformsignDispatchBoundaryService, useValue: dispatchBoundary },
+                ...(supersedeService
+                    ? [{ provide: ContractSupersedeService, useValue: supersedeService }]
+                    : []),
             ],
         })
             .overrideGuard(JwtGuard)
@@ -153,7 +184,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
             forbidNonWhitelisted: true,
         }));
         await app.listen(0, "127.0.0.1");
-    });
+    };
 
     afterEach(async () => {
         await app.close();
@@ -338,7 +369,13 @@ describe("EformsignDocumentJobController (Integration)", () => {
     });
 
     it("returns branch-scoped summary and list with a 24-hour/50 terminal bound", async () => {
-        documentJobService.getSummary.mockResolvedValue({ activeCount: 2, requiresAttentionCount: 1 });
+        documentJobService.getSummary.mockResolvedValue({
+            activeCount: 2,
+            requiresAttentionCount: 1,
+            failedCount: 3,
+            unresolvedCount: 4,
+            unresolvedJobIds: ["job-a", "job-b"],
+        });
         documentJobService.listForBranch.mockResolvedValue({
             active: [job()],
             requiresAttention: [job({ status: "requires_attention", lastErrorCode: "RAW_ERROR" })],
@@ -349,7 +386,13 @@ describe("EformsignDocumentJobController (Integration)", () => {
         const list = await request(app.getHttpServer()).get("/eformsign-docs/jobs");
 
         expect(summary.status).toBe(200);
-        expect(summary.body).toEqual({ activeCount: 2, requiresAttentionCount: 1 });
+        expect(summary.body).toEqual({
+            activeCount: 2,
+            requiresAttentionCount: 1,
+            failedCount: 3,
+            unresolvedCount: 4,
+            unresolvedJobIds: ["job-a", "job-b"],
+        });
         expect(documentJobService.getSummary).toHaveBeenCalledWith("branch-a");
         expect(list.status).toBe(200);
         expect(list.body.active[0]).toEqual(expect.objectContaining({
@@ -359,7 +402,11 @@ describe("EformsignDocumentJobController (Integration)", () => {
         }));
         expect(list.body.active[0]).not.toHaveProperty("payload");
         expect(list.body.active[0]).not.toHaveProperty("payloadFingerprint");
-        expect(list.body.requiresAttention[0]).not.toHaveProperty("lastErrorCode");
+        // A staff contract job exposes its error code and recovery kind; internals stay hidden.
+        expect(list.body.requiresAttention[0]).toEqual(expect.objectContaining({
+            lastErrorCode: "RAW_ERROR",
+            recoveryKind: "verify_result",
+        }));
         expect(list.body.active[0]).not.toHaveProperty("requestKey");
         expect(documentJobService.listForBranch).toHaveBeenCalledWith(
             "branch-a",
@@ -369,5 +416,365 @@ describe("EformsignDocumentJobController (Integration)", () => {
         const terminalSince = documentJobService.listForBranch.mock.calls[0][1] as Date;
         expect(Date.now() - terminalSince.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 - 1000);
         expect(Date.now() - terminalSince.getTime()).toBeLessThan(24 * 60 * 60 * 1000 + 1000);
+    });
+    describe("creation reissue (supersedeDocumentId)", () => {
+        const post = (extra: Record<string, unknown> = {}) =>
+            request(app.getHttpServer())
+                .post("/eformsign-docs/jobs/creation")
+                .send({ requestKey: "request-reissue-1", clientId: 42, contractData: validContractData, ...extra });
+
+        beforeEach(() => {
+            documentJobService.enqueueCreateDocument.mockResolvedValue({
+                job: job({ status: "queued", documentId: null }),
+                existing: false,
+            });
+        });
+
+        it("passes a branch-visible document on to the job service", async () => {
+            const response = await post({ supersedeDocumentId: "doc-old-1" });
+
+            expect(response.status).toBe(202);
+            expect(supersedeService!.isDocumentVisibleToBranch).toHaveBeenCalledWith("branch-a", "doc-old-1");
+            expect(documentJobService.enqueueCreateDocument).toHaveBeenCalledWith(
+                expect.objectContaining({ supersedeDocumentId: "doc-old-1", branchId: "branch-a" }),
+            );
+        });
+
+        it("returns 403 and does not enqueue when the document is not visible to the branch", async () => {
+            supersedeService!.isDocumentVisibleToBranch.mockResolvedValue(false);
+
+            const response = await post({ supersedeDocumentId: "doc-other-branch" });
+
+            expect(response.status).toBe(403);
+            expect(response.body.code).toBe("ACCESS_DENIED");
+            expect(documentJobService.enqueueCreateDocument).not.toHaveBeenCalled();
+        });
+
+        it("returns 403 and does not enqueue when the supersede service is not available", async () => {
+            await app.close();
+            supersedeService = undefined;
+            await buildApp();
+
+            const response = await post({ supersedeDocumentId: "doc-old-1" });
+
+            expect(response.status).toBe(403);
+            expect(documentJobService.enqueueCreateDocument).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["whitespace", "doc old"],
+            ["blank", ""],
+            ["oversized", "d".repeat(256)],
+            ["non-string", 42],
+        ])("rejects a malformed id (%s) with 400 before any lookup", async (_label, value) => {
+            const response = await post({ supersedeDocumentId: value });
+
+            expect(response.status).toBe(400);
+            expect(supersedeService!.isDocumentVisibleToBranch).not.toHaveBeenCalled();
+            expect(documentJobService.enqueueCreateDocument).not.toHaveBeenCalled();
+        });
+
+        it("leaves the enqueue payload unchanged and skips the check when the id is absent", async () => {
+            const response = await post();
+
+            expect(response.status).toBe(202);
+            expect(supersedeService!.isDocumentVisibleToBranch).not.toHaveBeenCalled();
+            const params = documentJobService.enqueueCreateDocument.mock.calls[0][0];
+            expect(params).not.toHaveProperty("supersedeDocumentId");
+        });
+    });
+
+    describe("job response mapping", () => {
+        it("maps clientName, recoveryKind and lastErrorCode, and hides the claimer behind manual_in_progress", async () => {
+            documentJobService.listForBranch.mockResolvedValue({
+                active: [],
+                requiresAttention: [
+                    failedJob({ id: "job-failed", status: "failed", progressStep: "provider_submit" }),
+                    failedJob({
+                        id: "job-attn",
+                        status: "requires_attention",
+                        lastErrorCode: "OUTCOME_UNKNOWN",
+                        progressStep: claimStep("claimer-uuid-1234"),
+                    }),
+                ],
+                recent: [
+                    job({ id: "job-done", status: "completed", lastErrorCode: null, clientName: null }),
+                    job({
+                        id: "job-revision",
+                        status: "failed",
+                        requestKey: "service-record-abc",
+                        lastErrorCode: "free-text coordinator reason",
+                    }),
+                ],
+            });
+
+            const response = await request(app.getHttpServer()).get("/eformsign-docs/jobs");
+
+            expect(response.status).toBe(200);
+            const [failed, attention] = response.body.requiresAttention;
+            const [done, revision] = response.body.recent;
+            expect(failed).toEqual(expect.objectContaining({
+                clientName: "산모",
+                recoveryKind: "manual_send",
+                lastErrorCode: "SEND_FAILED",
+                progressStep: "provider_submit",
+            }));
+            expect(attention).toEqual(expect.objectContaining({
+                recoveryKind: "verify_result",
+                lastErrorCode: "OUTCOME_UNKNOWN",
+                progressStep: "manual_in_progress",
+            }));
+            expect(done).toEqual(expect.objectContaining({
+                clientName: null,
+                recoveryKind: null,
+                lastErrorCode: null,
+            }));
+            expect(revision).toEqual(expect.objectContaining({ recoveryKind: null, lastErrorCode: null }));
+            const raw = JSON.stringify(response.body);
+            expect(raw).not.toContain("claimer-uuid-1234");
+            expect(raw).not.toContain("user-a");
+            expect(raw).not.toContain(String(CLAIM_EXPIRES_MS));
+        });
+    });
+
+    describe("POST /eformsign-docs/jobs/:jobId/recovery", () => {
+        const claim = () => request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/recovery`);
+        const originalPayload = { clientId: 42, contractData: validContractData };
+
+        it("returns the prefill payload and claim expiry for a failed (manual_send) job", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed",
+                job: failedJob({ status: "failed", payload: originalPayload }),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(200);
+            expect(response.body.recoveryKind).toBe("manual_send");
+            expect(response.body.payload).toEqual(originalPayload);
+            expect(response.body.claimExpiresAt).toBe(new Date(CLAIM_EXPIRES_MS).toISOString());
+            expect(response.body.job).toEqual(expect.objectContaining({
+                jobId: JOB_ID,
+                progressStep: "manual_in_progress",
+                clientName: "산모",
+            }));
+            expect(response.body.job).not.toHaveProperty("payload");
+            expect(JSON.stringify(response.body)).not.toContain(claimStep());
+            const input = documentJobService.claimRecovery.mock.calls[0][0];
+            expect(input).toEqual({
+                jobId: JOB_ID,
+                branchId: "branch-a",
+                userId: "user-a",
+                now: expect.any(Date),
+            });
+            expect(documentJobService.resolveManually).not.toHaveBeenCalled();
+        });
+
+        it("returns 410 with the claim expiry when a manual_send job has lost its payload", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed",
+                job: failedJob({ status: "failed", payload: null }),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(410);
+            expect(response.body).toEqual(expect.objectContaining({
+                code: "RECOVERY_PAYLOAD_EXPIRED",
+                claimExpiresAt: new Date(CLAIM_EXPIRES_MS).toISOString(),
+            }));
+        });
+
+        it("never returns the payload for a verify_result job", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed",
+                job: failedJob({ status: "requires_attention", payload: originalPayload }),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(200);
+            expect(response.body.recoveryKind).toBe("verify_result");
+            expect(response.body.payload).toBeNull();
+        });
+
+        it("hides provider error text of a non-contract (revision) job", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed",
+                job: failedJob({
+                    status: "failed",
+                    requestKey: "service-record-abc",
+                    lastErrorCode: "free-text coordinator reason",
+                }),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(200);
+            expect(response.body.recoveryKind).toBeNull();
+            expect(response.body.payload).toBeNull();
+            expect(response.body.job.lastErrorCode).toBeNull();
+        });
+
+        it("maps not_found to 404", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({ kind: "not_found" });
+
+            const response = await claim();
+
+            expect(response.status).toBe(404);
+            expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
+        });
+
+        it("maps claimed_by_other to 409 with the expiry", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed_by_other",
+                expiresAt: new Date(CLAIM_EXPIRES_MS),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(409);
+            expect(response.body).toEqual(expect.objectContaining({
+                code: "MANUAL_RECOVERY_CLAIMED",
+                expiresAt: new Date(CLAIM_EXPIRES_MS).toISOString(),
+            }));
+        });
+
+        it("maps invalid_state to 409 with the job status", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({ kind: "invalid_state", status: "processing" });
+
+            const response = await claim();
+
+            expect(response.status).toBe(409);
+            expect(response.body).toEqual(expect.objectContaining({
+                code: "JOB_NOT_RECOVERABLE",
+                status: "processing",
+            }));
+        });
+
+        it("returns 401 without a user id and never reaches the service", async () => {
+            authUserId = undefined;
+
+            const response = await claim();
+
+            expect(response.status).toBe(401);
+            expect(documentJobService.claimRecovery).not.toHaveBeenCalled();
+        });
+
+        it("returns 401 (not 500) when the service rejects the user id", async () => {
+            documentJobService.claimRecovery.mockRejectedValue(new Error("INVALID_MANUAL_CLAIM_USER"));
+
+            const response = await claim();
+
+            expect(response.status).toBe(401);
+        });
+
+        it("rejects a non-UUID job id with 400", async () => {
+            const response = await request(app.getHttpServer()).post("/eformsign-docs/jobs/not-a-uuid/recovery");
+
+            expect(response.status).toBe(400);
+            expect(documentJobService.claimRecovery).not.toHaveBeenCalled();
+        });
+
+        it("denies branch staff without the dispatch capability", async () => {
+            authRole = "user";
+
+            const response = await claim();
+
+            expect(response.status).toBe(403);
+            expect(documentJobService.claimRecovery).not.toHaveBeenCalled();
+        });
+
+        it("works while new enqueues are paused", async () => {
+            await app.close();
+            acceptingEnabled = "false";
+            await buildApp();
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed",
+                job: failedJob({ status: "failed", payload: originalPayload }),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(200);
+        });
+    });
+
+    describe("POST /eformsign-docs/jobs/:jobId/resolve", () => {
+        const resolve = () => request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/resolve`);
+
+        it("returns alreadyResolved false for a fresh resolution", async () => {
+            documentJobService.resolveManually.mockResolvedValue({
+                kind: "resolved",
+                job: failedJob({ status: "completed", progressStep: "manual_resolved", lastErrorCode: null }),
+            });
+
+            const response = await resolve();
+
+            expect(response.status).toBe(200);
+            expect(response.body.alreadyResolved).toBe(false);
+            expect(response.body.job).toEqual(expect.objectContaining({
+                jobId: JOB_ID,
+                progressStep: "manual_resolved",
+                recoveryKind: null,
+            }));
+            expect(documentJobService.resolveManually.mock.calls[0][0]).toEqual({
+                jobId: JOB_ID,
+                branchId: "branch-a",
+                userId: "user-a",
+                now: expect.any(Date),
+            });
+            expect(documentJobService.claimRecovery).not.toHaveBeenCalled();
+        });
+
+        it("returns alreadyResolved true when the job was resolved before", async () => {
+            documentJobService.resolveManually.mockResolvedValue({
+                kind: "already_resolved",
+                job: failedJob({ status: "completed", progressStep: "manual_resolved", lastErrorCode: null }),
+            });
+
+            const response = await resolve();
+
+            expect(response.status).toBe(200);
+            expect(response.body.alreadyResolved).toBe(true);
+        });
+
+        it.each([
+            [{ kind: "not_found" }, 404, "RESOURCE_NOT_FOUND"],
+            [{ kind: "claimed_by_other", expiresAt: new Date(CLAIM_EXPIRES_MS) }, 409, "MANUAL_RECOVERY_CLAIMED"],
+            [{ kind: "invalid_state", status: "queued" }, 409, "JOB_NOT_RECOVERABLE"],
+        ])("maps %j to %i", async (result, status, code) => {
+            documentJobService.resolveManually.mockResolvedValue(result);
+
+            const response = await resolve();
+
+            expect(response.status).toBe(status);
+            expect(response.body.code).toBe(code);
+        });
+
+        it("returns 401 without a user id and when the service rejects the user id", async () => {
+            authUserId = undefined;
+            const missing = await resolve();
+            authUserId = "user-a";
+            documentJobService.resolveManually.mockRejectedValue(new Error("INVALID_MANUAL_CLAIM_USER"));
+            const invalid = await resolve();
+
+            expect(missing.status).toBe(401);
+            expect(invalid.status).toBe(401);
+        });
+
+        it("works while new enqueues are paused", async () => {
+            await app.close();
+            acceptingEnabled = "false";
+            await buildApp();
+            documentJobService.resolveManually.mockResolvedValue({
+                kind: "resolved",
+                job: failedJob({ status: "completed", progressStep: "manual_resolved" }),
+            });
+
+            const response = await resolve();
+
+            expect(response.status).toBe(200);
+        });
     });
 });

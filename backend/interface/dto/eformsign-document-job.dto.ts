@@ -14,11 +14,17 @@ import {
 import { ContractDataDto } from "application/dto/contract.dto";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { IsCanonicalPhone } from "./canonical-phone.validator";
+import {
+    classifyRecovery,
+    isContractJob,
+    parseManualClaim,
+} from "domain/entities/eformsign-document-job.entity";
 import type {
     EformsignDocumentJobSource,
     EformsignDocumentJobStatus,
     EformsignDocumentJobType,
     EformsignDocumentJobEntity,
+    RecoveryClassification,
 } from "domain/entities/eformsign-document-job.entity";
 
 const EFORMSIGN_DOCUMENT_JOB_REQUEST_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/;
@@ -115,6 +121,16 @@ export class CreateEformsignDocumentJobDto {
     @ValidateNested()
     @Type(() => EformsignDocumentJobContractDataDto)
     contractData!: EformsignDocumentJobContractDataDto;
+
+    /** Unsigned contract this job replaces (reissue); the controller checks branch visibility. */
+    @IsOptional()
+    @IsString()
+    @IsNotEmpty()
+    @MaxLength(EFORMSIGN_DOCUMENT_JOB_TEXT_MAX_LENGTH)
+    @Matches(EFORMSIGN_DOCUMENT_JOB_IDENTIFIER_PATTERN, {
+        message: "supersedeDocumentId must not contain whitespace",
+    })
+    supersedeDocumentId?: string;
 }
 
 /** Request for durable asynchronous eformsign document finalization. */
@@ -155,6 +171,32 @@ export interface EformsignDocumentJobResponseDto {
     completedAt: string | null;
     createdAt: string;
     updatedAt: string;
+    clientName: string | null;
+    /** What staff may do with a stuck contract job; `null` for every other job. */
+    recoveryKind: RecoveryClassification | null;
+    /** Contract jobs only; revision jobs can carry free-text coordinator reasons. */
+    lastErrorCode: string | null;
+}
+
+export interface EformsignDocumentJobSummaryResponseDto {
+    activeCount: number;
+    requiresAttentionCount: number;
+    failedCount: number;
+    unresolvedCount: number;
+    unresolvedJobIds: string[];
+}
+
+export interface EformsignDocumentJobRecoveryResponseDto {
+    job: EformsignDocumentJobResponseDto;
+    recoveryKind: RecoveryClassification | null;
+    /** The original create/finalize payload; only for `manual_send`. */
+    payload: Record<string, unknown> | null;
+    claimExpiresAt: string | null;
+}
+
+export interface EformsignDocumentJobResolveResponseDto {
+    job: EformsignDocumentJobResponseDto;
+    alreadyResolved: boolean;
 }
 
 export interface EnqueueEformsignDocumentJobResponseDto {
@@ -182,11 +224,15 @@ export const toEformsignDocumentJobResponse = (
     status: job.status,
     clientId: job.clientId,
     documentId: job.documentId,
-    progressStep: job.progressStep,
+    // A claim step embeds the claimer's user id and expiry; neither may leave the server.
+    progressStep: parseManualClaim(job.progressStep) ? "manual_in_progress" : job.progressStep,
     attempts: job.attempts,
     nextAttemptAt: job.nextAttemptAt.toISOString(),
     startedAt: job.startedAt?.toISOString() ?? null,
     completedAt: job.completedAt?.toISOString() ?? null,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),
+    clientName: job.clientName ?? null,
+    recoveryKind: classifyRecovery(job),
+    lastErrorCode: isContractJob(job) ? job.lastErrorCode : null,
 });

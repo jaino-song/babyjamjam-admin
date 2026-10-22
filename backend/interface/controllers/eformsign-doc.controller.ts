@@ -9,6 +9,7 @@ import {
     GoneException,
     Logger,
     MessageEvent,
+    NotFoundException,
     Post,
     Param,
     ParseUUIDPipe,
@@ -17,6 +18,7 @@ import {
     Optional,
     ServiceUnavailableException,
     Sse,
+    UnauthorizedException,
     UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -31,6 +33,7 @@ import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/efor
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
 import type { CreateEformsignDocResult } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
 import { SERVICE_RECORD_TEMPLATE_TIER_ENV_KEYS } from "application/usecases/eformsign-doc/service-record-field-ids";
@@ -51,8 +54,16 @@ import {
     FinalizeEformsignDocumentJobDto,
     EnqueueEformsignDocumentJobResponseDto,
     EformsignDocumentJobListResponseDto,
+    EformsignDocumentJobSummaryResponseDto,
+    EformsignDocumentJobRecoveryResponseDto,
+    EformsignDocumentJobResolveResponseDto,
     toEformsignDocumentJobResponse,
 } from "interface/dto/eformsign-document-job.dto";
+import { classifyRecovery, parseManualClaim } from "domain/entities/eformsign-document-job.entity";
+import type {
+    ClaimRecoveryResult,
+    ResolveManuallyResult,
+} from "domain/repositories/eformsign-document-job.repository.interface";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -63,6 +74,11 @@ import {
 } from "application/services/eformsign-credential-boundary.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+
+type RecoveryRejection = Exclude<
+    ClaimRecoveryResult | ResolveManuallyResult,
+    { kind: "claimed" | "resolved" | "already_resolved" }
+>;
 
 @Controller("eformsign-docs")
 @UseGuards(JwtGuard, TenantGuard)
@@ -82,6 +98,7 @@ export class EformsignDocController {
         private readonly documentJobService: EformsignDocumentJobService,
         private readonly listEformsignLinkConfirmationsUsecase: ListEformsignLinkConfirmationsUsecase,
         @Optional() private readonly dispatchBoundary?: EformsignDispatchBoundaryService,
+        @Optional() private readonly contractSupersedeService?: ContractSupersedeService,
     ) {}
 
     /**
@@ -527,6 +544,17 @@ export class EformsignDocController {
     ): Promise<EnqueueEformsignDocumentJobResponseDto> {
         assertEformsignProviderCapability(tenant, "contract.dispatch");
         this.assertDocumentJobsAccepting();
+        if (dto.supersedeDocumentId !== undefined) {
+            // A reissue cancels the named contract once the new one is sent, so the
+            // caller must be allowed to see it. Never skip this check.
+            const visible = this.contractSupersedeService
+                ? await this.contractSupersedeService.isDocumentVisibleToBranch(
+                    tenant.branchId ?? "",
+                    dto.supersedeDocumentId,
+                )
+                : false;
+            if (!visible) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
         const result = await this.enqueueDocumentJob(() =>
             this.documentJobService.enqueueCreateDocument({
                 branchId: tenant.branchId ?? "",
@@ -534,6 +562,9 @@ export class EformsignDocController {
                 requestKey: dto.requestKey,
                 clientId: dto.clientId,
                 contractData: dto.contractData,
+                ...(dto.supersedeDocumentId !== undefined
+                    ? { supersedeDocumentId: dto.supersedeDocumentId }
+                    : {}),
             }),
         );
         return {
@@ -576,11 +607,16 @@ export class EformsignDocController {
 
     /** GET /eformsign-docs/jobs/summary */
     @Get("jobs/summary")
-    async getDocumentJobSummary(@CurrentTenant() tenant: { branchId?: string }) {
+    async getDocumentJobSummary(
+        @CurrentTenant() tenant: { branchId?: string },
+    ): Promise<EformsignDocumentJobSummaryResponseDto> {
         const summary = await this.documentJobService.getSummary(tenant.branchId ?? "");
         return {
             activeCount: summary.activeCount,
             requiresAttentionCount: summary.requiresAttentionCount,
+            failedCount: summary.failedCount,
+            unresolvedCount: summary.unresolvedCount,
+            unresolvedJobIds: summary.unresolvedJobIds,
         };
     }
 
@@ -604,6 +640,93 @@ export class EformsignDocController {
             requiresAttention: result.requiresAttention.map(toEformsignDocumentJobResponse),
             recent: result.recent.map(toEformsignDocumentJobResponse),
         };
+    }
+
+    /**
+     * POST /eformsign-docs/jobs/:jobId/recovery
+     * Take the 10-minute manual-recovery claim on a failed / requires_attention
+     * contract job. Works even when new enqueues are paused.
+     */
+    @Post("jobs/:jobId/recovery")
+    @HttpCode(HttpStatus.OK)
+    async claimDocumentJobRecovery(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Req() request: { user?: { userId?: string } },
+        @Param("jobId", new ParseUUIDPipe()) jobId: string,
+    ): Promise<EformsignDocumentJobRecoveryResponseDto> {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        const result = await this.runManualRecovery(tenant, request, (input) =>
+            this.documentJobService.claimRecovery(input), jobId);
+        if (result.kind !== "claimed") return this.throwRecoveryRejection(result);
+        const claim = parseManualClaim(result.job.progressStep);
+        const claimExpiresAt = claim ? new Date(claim.expiresAtMs).toISOString() : null;
+        const recoveryKind = classifyRecovery(result.job);
+        if (recoveryKind === "manual_send" && !result.job.payload) {
+            // The claim stays so the same user can still resolve the job by hand.
+            throw new GoneException({ code: "RECOVERY_PAYLOAD_EXPIRED", claimExpiresAt });
+        }
+        return {
+            job: toEformsignDocumentJobResponse(result.job),
+            recoveryKind,
+            // A verify_result job may already have been sent, so it never gets a prefilled resend.
+            payload: recoveryKind === "manual_send" ? result.job.payload : null,
+            claimExpiresAt,
+        };
+    }
+
+    /**
+     * POST /eformsign-docs/jobs/:jobId/resolve
+     * Record that staff finished a stuck contract job by hand. Idempotent.
+     */
+    @Post("jobs/:jobId/resolve")
+    @HttpCode(HttpStatus.OK)
+    async resolveDocumentJob(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Req() request: { user?: { userId?: string } },
+        @Param("jobId", new ParseUUIDPipe()) jobId: string,
+    ): Promise<EformsignDocumentJobResolveResponseDto> {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        const result = await this.runManualRecovery(tenant, request, (input) =>
+            this.documentJobService.resolveManually(input), jobId);
+        if (result.kind !== "resolved" && result.kind !== "already_resolved") {
+            return this.throwRecoveryRejection(result);
+        }
+        return {
+            job: toEformsignDocumentJobResponse(result.job),
+            alreadyResolved: result.kind === "already_resolved",
+        };
+    }
+
+    private async runManualRecovery<T>(
+        tenant: EformsignProviderPrincipal,
+        request: { user?: { userId?: string } },
+        operation: (input: { jobId: string; branchId: string; userId: string; now: Date }) => Promise<T>,
+        jobId: string,
+    ): Promise<T> {
+        const userId = tenant.userId ?? request.user?.userId;
+        if (!userId) throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        try {
+            return await operation({ jobId, branchId: tenant.branchId ?? "", userId, now: new Date() });
+        } catch (error) {
+            if (error instanceof Error && error.message === "INVALID_MANUAL_CLAIM_USER") {
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+            }
+            throw error;
+        }
+    }
+
+    private throwRecoveryRejection(result: RecoveryRejection): never {
+        switch (result.kind) {
+            case "not_found":
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            case "claimed_by_other":
+                throw new ConflictException({
+                    code: "MANUAL_RECOVERY_CLAIMED",
+                    expiresAt: result.expiresAt.toISOString(),
+                });
+            case "invalid_state":
+                throw new ConflictException({ code: "JOB_NOT_RECOVERABLE", status: result.status });
+        }
     }
 
     private assertDocumentJobsAccepting(): void {
