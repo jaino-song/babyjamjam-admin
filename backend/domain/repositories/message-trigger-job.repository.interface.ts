@@ -264,12 +264,15 @@ export interface IMessageTriggerJobRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<number | null>;
     /**
-     * Cancel every queued ordinary automatic CLIENT-recipient job of one client
+     * Cancel every queued automatic CLIENT-recipient job of one client
      * (pending, processing, and needs_setup inside the grace window for
-     * non-immediate rules), independent of any rule generation fence. Manual,
-     * agent and reserved records, dispatching and sent jobs are never touched;
-     * a processing claim is invalidated by clearing its token. The caller should
-     * hold the branch automation lock. Returns the number of cancelled rows.
+     * non-immediate rules), independent of any rule generation fence. That
+     * includes the client's agent-scheduled SMS (pending/processing) - jobs
+     * carrying the client's id, plus legacy agent jobs with no client id whose
+     * recipient phone is the client's. Admin-manual and reserved records,
+     * dispatching and sent jobs are never touched; a processing claim is
+     * invalidated by clearing its token. The caller should hold the branch
+     * automation lock. Returns the number of cancelled rows.
      */
     cancelAutomaticClientJobsForClient(
         branchId: string,
@@ -277,7 +280,11 @@ export interface IMessageTriggerJobRepository {
         reason: string,
         transaction?: Prisma.TransactionClient,
     ): Promise<number>;
-    upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
+    /**
+     * Upsert a pending job. With `transaction` the write joins the caller's
+     * transaction (and its locks); otherwise it runs on its own.
+     */
+    upsertPending(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity>;
     /**
      * Atomically replace every `pending` job of the replacement's rule and
      * employee schedule with the replacement, unless one is already claimed.
@@ -320,7 +327,10 @@ export interface IMessageTriggerJobRepository {
      * retry job in the same transaction. `not_claimable` means the approved
      * source target drifted or is no longer retryable. The transaction waits
      * at most one second for any lock; past that nothing is written and
-     * `lock_timeout` is returned.
+     * `lock_timeout` is returned. With `transaction` the claim joins the
+     * caller's transaction instead: it opens none of its own, a lock wait
+     * past the caller's `lock_timeout` is thrown (aborting that transaction)
+     * rather than returned, and the caller owns commit and rollback.
      */
     claimProviderRejectedForRetry(
         branchId: string,
@@ -329,6 +339,7 @@ export interface IMessageTriggerJobRepository {
         expectedSnapshotHash: string,
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
+        transaction?: Prisma.TransactionClient,
     ): Promise<ClaimProviderRejectedForRetryResult>;
     /**
      * Debug/testing only: move one `pending` job in this branch to a new send

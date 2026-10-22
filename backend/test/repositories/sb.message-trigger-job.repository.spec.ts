@@ -1227,15 +1227,19 @@ describe("SbMessageTriggerJobRepository", () => {
     });
 
     it("cancelAutomaticClientJobsForClient cancels queued ordinary client jobs without any rule generation fence", async () => {
-        queryRaw.mockResolvedValueOnce([{ id: "job-1" }, { id: "job-2" }]);
+        queryRaw
+            .mockResolvedValueOnce([{ phone: "010-1234-5678", phone_normalized: "01012345678" }])
+            .mockResolvedValueOnce([{ id: "job-1" }, { id: "job-2" }]);
 
         await expect(repository.cancelAutomaticClientJobsForClient(
             "branch-1", 7, "SMS automation disabled for client",
         )).resolves.toBe(2);
 
-        expect(queryRaw).toHaveBeenCalledTimes(1);
-        const query = queryRaw.mock.calls[0][0] as { values?: readonly unknown[] };
-        const sql = getSqlText(query).replace(/\s+/g, " ");
+        // The client's own phone is read first (for legacy agent jobs), then one cancelling statement.
+        expect(queryRaw).toHaveBeenCalledTimes(2);
+        expect(getSqlText(queryRaw.mock.calls[0][0])).toContain('FROM "client"');
+        const query = queryRaw.mock.calls[1][0] as Prisma.Sql;
+        const sql = query.sql.replace(/\s+/g, " ");
         // No rule row is read or locked, so a stale or moved rule cannot refuse the cancellation.
         expect(sql).not.toContain('FROM "message_trigger_rule" WHERE id =');
         expect(sql).not.toContain("jobs_stale");
@@ -1249,18 +1253,94 @@ describe("SbMessageTriggerJobRepository", () => {
         // dispatching and sent jobs are never selected or updated.
         expect(sql).not.toContain("'dispatching'");
         expect(sql).not.toContain("'sent'");
-        // Ordinary-automation and not-manual predicates are kept.
+        // Ordinary-automation and not-manual predicates are kept for the rule-generated arm.
         expect(sql).toContain("AND NOT (");
         expect(query.values).toEqual(expect.arrayContaining([7, MessageTriggerRecipientType.CLIENT, "SMS automation disabled for client"]));
     });
 
+    describe("cancelAutomaticClientJobsForClient agent SMS", () => {
+        const cancelStatement = async (owner: Array<{ phone: string | null; phone_normalized: string | null }>) => {
+            queryRaw.mockResolvedValueOnce(owner).mockResolvedValueOnce([]);
+            await repository.cancelAutomaticClientJobsForClient("branch-1", 7, "reason");
+            const query = queryRaw.mock.calls[1][0] as Prisma.Sql;
+            return { query, sql: query.sql.replace(/\s+/g, " "), values: query.values.flat() };
+        };
+
+        it("also cancels the client's agent jobs (rule prefix and approved-retry dedupe prefix) that are pending or processing", async () => {
+            const { sql, values } = await cancelStatement([{ phone: "010-1234-5678", phone_normalized: "01012345678" }]);
+
+            expect(sql).toContain("left(rule_id, ?::integer) = ?");
+            expect(sql).toContain("left(dedupe_key, ?::integer) = ?");
+            expect(values).toEqual(expect.arrayContaining(["agent-sms:", "agent-sms-retry:"]));
+            // The agent arm is limited to pending/processing and keyed on the client id.
+            expect(sql).toMatch(/\) AND status IN \('pending', 'processing'\) AND \(client_id = \? OR /);
+            // The not-manual predicate stays on the other arm only, so admin-manual jobs are never reached.
+            expect(sql.match(/AND NOT \(/g)).toHaveLength(1);
+            expect(sql.indexOf("AND NOT (")).toBeLessThan(sql.indexOf("left(rule_id, ?::integer) = ? OR"));
+        });
+
+        it("matches legacy agent jobs with no client id by the client's own phone spellings", async () => {
+            const { sql, values } = await cancelStatement([{ phone: "010-1234-5678", phone_normalized: "01012345678" }]);
+
+            expect(sql).toContain("client_id IS NULL AND");
+            expect(sql).toContain("COALESCE(recipient_phone, payload->>'recipientPhone')");
+            expect(sql).toContain("regexp_split_to_array");
+            expect(values.flat()).toEqual(expect.arrayContaining(["01012345678", "821012345678"]));
+        });
+
+        it("matches a deleted client's raw phone when its normalized phone is cleared", async () => {
+            const { values } = await cancelStatement([{ phone: "+82 10-1234-5678", phone_normalized: null }]);
+
+            expect(values.flat()).toEqual(expect.arrayContaining(["01012345678"]));
+        });
+
+        it("never phone-matches legacy agent jobs when the client has no phone", async () => {
+            const { sql } = await cancelStatement([{ phone: null, phone_normalized: null }]);
+
+            expect(sql).not.toContain("client_id IS NULL AND");
+            expect(sql).toContain("client_id = ? OR FALSE");
+        });
+    });
+
     it("cancelAutomaticClientJobsForClient uses the caller's transaction when given one", async () => {
-        const txQueryRaw = jest.fn().mockResolvedValueOnce([]);
+        const txQueryRaw = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         await expect(repository.cancelAutomaticClientJobsForClient(
             "branch-1", 7, "reason", { $queryRaw: txQueryRaw } as never,
         )).resolves.toBe(0);
+        expect(txQueryRaw).toHaveBeenCalledTimes(2);
+        expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("upsertPending joins the caller's transaction and uses the shared client otherwise", async () => {
+        const job = createJob();
+        const row = createRow({ dedupeKey: job.dedupeKey, status: "pending" });
+        const txQueryRaw = jest.fn().mockResolvedValueOnce([row]);
+        await repository.upsertPending(job, { $queryRaw: txQueryRaw } as never);
         expect(txQueryRaw).toHaveBeenCalledTimes(1);
         expect(queryRaw).not.toHaveBeenCalled();
+
+        queryRaw.mockResolvedValueOnce([row]);
+        await repository.upsertPending(job);
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("claimProviderRejectedForRetry joins the caller's transaction: no own transaction, no lock_timeout setting, a lock error is thrown", async () => {
+        const source = createJob();
+        const lockError = new Prisma.PrismaClientKnownRequestError("lock not available", {
+            code: "P2010", clientVersion: "test", meta: { code: "55P03" },
+        });
+        const transaction = {
+            $executeRaw: jest.fn(),
+            $queryRaw: jest.fn().mockRejectedValue(lockError),
+            message_trigger_job: createMockPrismaMessageTriggerJob(),
+        };
+        const snapshotHash = "snapshot-hash";
+
+        await expect(repository.claimProviderRejectedForRetry(
+            "branch-1", source.id, targetVersion(source, snapshotHash), snapshotHash, source, createJob(), transaction as never,
+        )).rejects.toBe(lockError);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(transaction.$executeRaw).not.toHaveBeenCalled();
     });
 
     it("preserves an existing intent-generated job while narrowly reactivating approval cancellation", async () => {
