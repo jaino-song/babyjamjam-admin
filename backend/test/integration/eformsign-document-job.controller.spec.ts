@@ -763,6 +763,19 @@ describe("EformsignDocumentJobController (Integration)", () => {
             expect(invalid.status).toBe(401);
         });
 
+        it("denies branch staff without the dispatch capability", async () => {
+            authRole = "user";
+            documentJobService.resolveManually.mockResolvedValue({
+                kind: "resolved",
+                job: failedJob({ status: "completed", progressStep: "manual_resolved", lastErrorCode: null }),
+            });
+
+            const response = await resolve();
+
+            expect(response.status).toBe(403);
+            expect(documentJobService.resolveManually).not.toHaveBeenCalled();
+        });
+
         it("works while new enqueues are paused", async () => {
             await app.close();
             acceptingEnabled = "false";
