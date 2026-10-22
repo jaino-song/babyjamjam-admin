@@ -36,6 +36,12 @@ export interface EformsignDocumentJobReconciliationResult {
      * lease, so the completion is this run's to act on. Absent for other results.
      */
     completionRecorded?: boolean;
+    /**
+     * Set by a `requires_attention` result: the row this run moved, or null when
+     * the lease was lost and another process owns it. Undefined when nothing was
+     * attempted (no lease). Status alone is not proof of a transition.
+     */
+    transitioned?: EformsignDocumentJobEntity | null;
 }
 
 /**
@@ -209,6 +215,7 @@ export class EformsignDocumentJobReconciliationService {
             status: "requires_attention",
             reason,
             recordedAttempts: transitioned?.autoFinalizeOutcomeAttempts ?? null,
+            transitioned,
         };
     }
 }

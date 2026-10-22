@@ -14,7 +14,11 @@ import {
     FinalizeHeadlessResult,
 } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
-import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
+import {
+    classifyRecovery,
+    EformsignDocumentJobEntity,
+    isContractJob,
+} from "domain/entities/eformsign-document-job.entity";
 import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     IEformsignDocumentJobRepository,
@@ -57,6 +61,9 @@ const MAX_CONSECUTIVE_FINALIZE_STEPS = 3;
 const WORKER_ENABLED_ENV = "EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED";
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60_000;
+const RECOVERY_SWEEP_INTERVAL_MS = 60 * 60_000;
+const RECOVERY_RENOTIFY_WINDOW_MS = 24 * 60 * 60_000;
+const FALLBACK_CLIENT_NAME = "고객";
 const TEMPLATE_WORKFLOW_FAILURE_REASONS = new Set([
     "template_workflow_config_invalid",
     "template_workflow_unsupported",
@@ -77,6 +84,7 @@ interface CreateDocumentJobPayload {
 }
 
 export const CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE = "contract-supersede-failed";
+export const EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE = "eformsign-document-job-failed";
 
 interface FinalizeDocumentJobPayload {
     documentId?: string;
@@ -343,6 +351,7 @@ export class EformsignDocumentJobWorkerService {
     private readonly logger = new Logger(EformsignDocumentJobWorkerService.name);
     private running = false;
     private lastRetentionSweepAt = 0;
+    private lastRecoverySweepAt = 0;
 
     constructor(
         private readonly configService: ConfigService,
@@ -376,6 +385,7 @@ export class EformsignDocumentJobWorkerService {
         this.running = true;
         try {
             this.sweepExpiredTerminalJobs();
+            void this.sweepStaffFailureRecovery();
             const stale = await this.repository.recoverStale(
                 new Date(Date.now() - STALE_CUTOFF_MS),
             );
@@ -410,6 +420,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "JOB_TARGET_NOT_OWNED_BY_BRANCH",
             );
+            this.notifyTransition(attention);
             return;
         }
         if (!job.payload) {
@@ -419,6 +430,7 @@ export class EformsignDocumentJobWorkerService {
                 "MISSING_JOB_PAYLOAD",
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, "MISSING_JOB_PAYLOAD");
+            this.notifyTransition(attention);
             return;
         }
 
@@ -440,6 +452,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
             );
+            this.notifyTransition(attention);
             return;
         }
         if (revisionAuthorization.irreversible) {
@@ -482,6 +495,7 @@ export class EformsignDocumentJobWorkerService {
                     "UNSUPPORTED_JOB_TYPE",
                 );
                 await this.recordAutoFinalizeTerminalOutcome(job, failed, "UNSUPPORTED_JOB_TYPE");
+                this.notifyTransition(failed);
             }
         } catch {
             this.logger.warn(`Eformsign document job ${job.id} failed`);
@@ -513,6 +527,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -536,6 +551,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_FAILURE",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -550,6 +566,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "INVALID_SERVICE_RECORD_REVISION_OPERATION_RESULT",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -562,6 +579,7 @@ export class EformsignDocumentJobWorkerService {
             || `SERVICE_RECORD_REVISION_OPERATION_${result.status.toUpperCase()}`;
         const attention = await this.repository.markRequiresAttention(job.id, leaseToken, reason);
         await this.recordAutoFinalizeTerminalOutcome(job, attention, reason);
+        this.notifyTransition(attention);
     }
 
     /**
@@ -593,6 +611,7 @@ export class EformsignDocumentJobWorkerService {
                     ? "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD"
                     : "SERVICE_RECORD_REVISION_RENDERER_UNAVAILABLE",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -647,6 +666,7 @@ export class EformsignDocumentJobWorkerService {
                 "INVALID_CREATE_JOB_PAYLOAD",
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, "INVALID_CREATE_JOB_PAYLOAD");
+            this.notifyTransition(attention);
             return;
         }
 
@@ -835,6 +855,7 @@ export class EformsignDocumentJobWorkerService {
                 "INVALID_FINALIZE_JOB_PAYLOAD",
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, "INVALID_FINALIZE_JOB_PAYLOAD");
+            this.notifyTransition(attention);
             return;
         }
 
@@ -915,6 +936,7 @@ export class EformsignDocumentJobWorkerService {
             "PRE_SEND_RETRY_EXHAUSTED",
         );
         await this.recordAutoFinalizeTerminalOutcome(job, failed, "PRE_SEND_RETRY_EXHAUSTED");
+        this.notifyTransition(failed);
     }
 
     private async markAndReconcile(
@@ -952,15 +974,17 @@ export class EformsignDocumentJobWorkerService {
                 revisionBlockReason,
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, revisionBlockReason);
+            this.notifyTransition(attention);
             return;
         }
         if (!(await this.ownsTarget(job))) {
             if (job.leaseToken) {
-                await this.repository.markRequiresAttention(
+                const attention = await this.repository.markRequiresAttention(
                     job.id,
                     job.leaseToken,
                     "JOB_TARGET_NOT_OWNED_BY_BRANCH",
                 );
+                this.notifyTransition(attention);
             }
             return;
         }
@@ -986,6 +1010,9 @@ export class EformsignDocumentJobWorkerService {
                 result.recordedAttempts ?? null,
             );
         }
+        // `result.status` alone is not proof of a transition: only a row this run
+        // actually moved (lease still held) may be announced.
+        if (result.status === "requires_attention") this.notifyTransition(result.transitioned);
     }
 
     private startHeartbeat(
@@ -1040,6 +1067,108 @@ export class EformsignDocumentJobWorkerService {
         void this.repository
             .deleteExpiredTerminal(new Date(now - TERMINAL_RETENTION_MS))
             .catch(() => this.logger.warn("Eformsign document job retention sweep failed"));
+    }
+
+    /**
+     * Hourly: drop the payloads of aged `requires_attention` contract jobs, then
+     * re-announce the staff contract failures of the last day. Each half has its
+     * own catch so one failing never stops the other, and nothing here can throw
+     * into the tick (which would skip `claimDue`).
+     *
+     * Accepted behaviour: notification dedupe is per recipient over their latest
+     * 100 notifications and is check-then-send, so a rare duplicate is possible.
+     * The first sweep after a deploy notifies every unresolved staff contract
+     * failure of the past 24 h; that is intended, staff were never told about them.
+     */
+    private async sweepStaffFailureRecovery(): Promise<void> {
+        try {
+            const now = Date.now();
+            if (now - this.lastRecoverySweepAt < RECOVERY_SWEEP_INTERVAL_MS) return;
+            this.lastRecoverySweepAt = now;
+            try {
+                await this.repository.purgeExpiredAttentionPayloads(new Date(now));
+            } catch (error) {
+                this.logger.warn(
+                    `Eformsign document job attention payload purge failed: ${errorClassName(error)}`,
+                );
+            }
+            try {
+                const failures = await this.repository.listRecentStaffFailures(
+                    new Date(now - RECOVERY_RENOTIFY_WINDOW_MS),
+                );
+                for (const job of failures) await this.notifyStaffFailure(job);
+            } catch (error) {
+                this.logger.warn(
+                    `Eformsign document job failure re-notification failed: ${errorClassName(error)}`,
+                );
+            }
+        } catch (error) {
+            this.logger.warn(`Eformsign document job recovery sweep failed: ${errorClassName(error)}`);
+        }
+    }
+
+    /** Fire-and-forget: `sendToBranchUsers` also emails and must not stall the tick. */
+    private notifyTransition(transitioned: EformsignDocumentJobEntity | null | undefined): void {
+        if (!transitioned) return;
+        void this.notifyStaffFailure(transitioned);
+    }
+
+    /**
+     * Tell every user of the branch that a staff contract job ended in `failed` or
+     * `requires_attention`. Never throws; logs ids and the error class only.
+     */
+    private async notifyStaffFailure(job: EformsignDocumentJobEntity): Promise<void> {
+        try {
+            if (!isContractJob(job)) return;
+            const recoveryKind = classifyRecovery(job);
+            if (!recoveryKind) return;
+
+            const clientName = await this.resolveClientName(job);
+            const copy = recoveryKind === "verify_result"
+                ? {
+                    title: `전자문서 결과 확인 필요 · ${clientName}`,
+                    body: "전송 여부를 확인하지 못했어요. 눌러서 결과를 확인해 주세요.",
+                }
+                : job.jobType === "finalize_document"
+                    ? {
+                        title: `검토완료 자동 처리 실패 · ${clientName}`,
+                        body: "자동 처리에 실패했어요. 눌러서 직접 처리해 주세요.",
+                    }
+                    : {
+                        title: `계약서 자동 전송 실패 · ${clientName}`,
+                        body: "자동 전송에 실패했어요. 눌러서 직접 작성해 주세요.",
+                    };
+            const documentId = `eformsign-document-job:${job.id}`;
+            await this.notificationService.sendToBranchUsers(
+                job.branchId,
+                copy.title,
+                copy.body,
+                {
+                    type: EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE,
+                    documentId,
+                    jobId: job.id,
+                    recoveryKind,
+                    url: `/contracts?recoverJobId=${encodeURIComponent(job.id)}`,
+                },
+                { dedupe: { type: EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE, documentId } },
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Eformsign document job ${job.id} failure notification failed: ${errorClassName(error)}`,
+            );
+        }
+    }
+
+    private async resolveClientName(job: EformsignDocumentJobEntity): Promise<string> {
+        const joined = job.clientName?.trim();
+        if (joined) return joined;
+        if (job.clientId === null) return FALLBACK_CLIENT_NAME;
+        try {
+            const client = await this.clientRepository.findById(job.branchId, job.clientId);
+            return client?.name?.trim() || FALLBACK_CLIENT_NAME;
+        } catch {
+            return FALLBACK_CLIENT_NAME;
+        }
     }
 
     private isEnabled(): boolean {
