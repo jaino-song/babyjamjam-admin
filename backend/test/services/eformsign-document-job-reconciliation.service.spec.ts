@@ -130,6 +130,7 @@ describe("EformsignDocumentJobReconciliationService", () => {
             status: "requires_attention",
             reason: "AMBIGUOUS_PROVIDER_STATE",
             recordedAttempts: null,
+            transitioned: null,
         });
         expect(repository.markRequiresAttention).toHaveBeenCalledWith(
             job().id,
@@ -155,6 +156,7 @@ describe("EformsignDocumentJobReconciliationService", () => {
             status: "requires_attention",
             reason: "PROVIDER_STATE_UNAVAILABLE",
             recordedAttempts: null,
+            transitioned: null,
         });
         expect(repository.markRequiresAttention).toHaveBeenCalledWith(
             job().id,
@@ -231,5 +233,52 @@ describe("EformsignDocumentJobReconciliationService", () => {
             expect.objectContaining({ status: "requires_attention", reason }),
         );
         expect(repository.markCompleted).not.toHaveBeenCalled();
+    });
+
+    describe("transitioned", () => {
+        function ambiguousService(markRequiresAttention: jest.Mock) {
+            return new EformsignDocumentJobReconciliationService(
+                { markCompleted: jest.fn(), markRequiresAttention } as never,
+                createCredentialBoundary() as never,
+                {
+                    execute: jest.fn().mockResolvedValue([
+                        { id: "doc-1", created_date: Date.now(), document_name: "고객 계약서" },
+                        { id: "doc-2", created_date: Date.now(), document_name: "고객 계약서" },
+                    ]),
+                } as never,
+                { execute: jest.fn() } as never,
+                { execute: jest.fn() } as never,
+            );
+        }
+
+        it("carries the entity markRequiresAttention returned", async () => {
+            const moved = job({ status: "requires_attention" });
+            const service = ambiguousService(jest.fn().mockResolvedValue(moved));
+
+            const result = await service.reconcile(job(), TEST_PRINCIPAL);
+
+            expect(result.status).toBe("requires_attention");
+            expect(result.transitioned).toBe(moved);
+        });
+
+        it("is null when the lease was lost and nothing transitioned", async () => {
+            const service = ambiguousService(jest.fn().mockResolvedValue(null));
+
+            const result = await service.reconcile(job(), TEST_PRINCIPAL);
+
+            expect(result.status).toBe("requires_attention");
+            expect(result.transitioned).toBeNull();
+        });
+
+        it("stays undefined for the MISSING_JOB_LEASE early return", async () => {
+            const markRequiresAttention = jest.fn();
+            const service = ambiguousService(markRequiresAttention);
+
+            const result = await service.reconcile(job({ leaseToken: null }), TEST_PRINCIPAL);
+
+            expect(result).toEqual({ status: "requires_attention", reason: "MISSING_JOB_LEASE" });
+            expect(result.transitioned).toBeUndefined();
+            expect(markRequiresAttention).not.toHaveBeenCalled();
+        });
     });
 });

@@ -131,6 +131,8 @@ function buildWorker(overrides: {
         markFailed: jest.fn().mockResolvedValue(null),
         markRequiresAttention: jest.fn().mockResolvedValue(null),
         deleteExpiredTerminal: jest.fn().mockResolvedValue(0),
+        purgeExpiredAttentionPayloads: jest.fn().mockResolvedValue(0),
+        listRecentStaffFailures: jest.fn().mockResolvedValue([]),
         ...overrides.repository,
     };
     const dispatch = {
@@ -1445,5 +1447,416 @@ describe("EformsignDocumentJobWorkerService", () => {
         await worker.processDueJobs();
 
         expect(repository.recoverStale).not.toHaveBeenCalled();
+    });
+
+    describe("staff contract failure notifications", () => {
+        const JOB_ID = "00000000-0000-0000-0000-000000000001";
+        const FAILED_TYPE = "eformsign-document-job-failed";
+        const HOUR_MS = 60 * 60_000;
+        const flush = async () => {
+            for (let tick = 0; tick < 5; tick += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+        };
+        const named = { findById: jest.fn().mockResolvedValue({ id: 7, name: "김산모" }) };
+
+        function expectedCall(title: string, body: string, recoveryKind: string, id = JOB_ID) {
+            const documentId = `eformsign-document-job:${id}`;
+            return [
+                branchId,
+                title,
+                body,
+                {
+                    type: FAILED_TYPE,
+                    documentId,
+                    jobId: id,
+                    recoveryKind,
+                    url: `/contracts?recoverJobId=${id}`,
+                },
+                { dedupe: { type: FAILED_TYPE, documentId } },
+            ];
+        }
+
+        function exhaustedCreate() {
+            return {
+                claimed: job({ attempts: 4 }),
+                failed: job({ attempts: 4, status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED" }),
+                dispatch: {
+                    execute: jest.fn().mockResolvedValue({
+                        ok: false,
+                        reason: "template_workflow_config_invalid",
+                        durationMs: 1,
+                    }),
+                },
+            };
+        }
+
+        it("notifies the branch when a staff create job exhausts its pre-send retries", async () => {
+            const { claimed, failed, dispatch } = exhaustedCreate();
+            const { worker, repository, notificationService, clientRepository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markFailed: jest.fn().mockResolvedValue(failed),
+                },
+                dispatch,
+                client: { findById: jest.fn().mockResolvedValue({ id: 7, name: "김산모" }) },
+            });
+
+            await worker.processDueJobs();
+            await flush();
+
+            expect(repository.markFailed).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "PRE_SEND_RETRY_EXHAUSTED");
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                ...expectedCall(
+                    "계약서 자동 전송 실패 · 김산모",
+                    "자동 전송에 실패했어요. 눌러서 직접 작성해 주세요.",
+                    "manual_send",
+                ),
+            );
+            expect(clientRepository.findById).toHaveBeenCalledWith(branchId, 7);
+        });
+
+        it("uses the 검토완료 copy for a failed finalize job", async () => {
+            const claimed = job({
+                jobType: "finalize_document",
+                documentId: "doc-1",
+                payload: { documentId: "doc-1" },
+                attempts: 4,
+            });
+            const failed = job({
+                jobType: "finalize_document",
+                documentId: "doc-1",
+                payload: { documentId: "doc-1" },
+                attempts: 4,
+                status: "failed",
+            });
+            const { worker, repository, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markFailed: jest.fn().mockResolvedValue(failed),
+                },
+                finalize: { execute: jest.fn().mockResolvedValue({ ok: false, reason: "boom", durationMs: 1 }) },
+                client: named,
+            });
+
+            await worker.processDueJobs();
+            await flush();
+
+            expect(repository.markFailed).toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                ...expectedCall(
+                    "검토완료 자동 처리 실패 · 김산모",
+                    "자동 처리에 실패했어요. 눌러서 직접 처리해 주세요.",
+                    "manual_send",
+                ),
+            );
+        });
+
+        it("asks staff to verify the result when a payload-less create job needs attention", async () => {
+            const claimed = job({ payload: {} });
+            const attention = job({ payload: {}, status: "requires_attention" });
+            const { worker, repository, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markRequiresAttention: jest.fn().mockResolvedValue(attention),
+                },
+                client: named,
+            });
+
+            await worker.processDueJobs();
+            await flush();
+
+            expect(repository.markRequiresAttention).toHaveBeenCalledWith(
+                claimed.id,
+                claimed.leaseToken,
+                "INVALID_CREATE_JOB_PAYLOAD",
+            );
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                ...expectedCall(
+                    "전자문서 결과 확인 필요 · 김산모",
+                    "전송 여부를 확인하지 못했어요. 눌러서 결과를 확인해 주세요.",
+                    "verify_result",
+                ),
+            );
+        });
+
+        it("does not notify when the lease was lost and the transition returned null", async () => {
+            const exhausted = exhaustedCreate();
+            const lostFailed = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([exhausted.claimed]),
+                    markFailed: jest.fn().mockResolvedValue(null),
+                },
+                dispatch: exhausted.dispatch,
+            });
+            await lostFailed.worker.processDueJobs();
+            await flush();
+            expect(lostFailed.repository.markFailed).toHaveBeenCalled();
+            expect(lostFailed.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+
+            const lostAttention = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([job({ payload: {} })]),
+                    markRequiresAttention: jest.fn().mockResolvedValue(null),
+                },
+            });
+            await lostAttention.worker.processDueJobs();
+            await flush();
+            expect(lostAttention.repository.markRequiresAttention).toHaveBeenCalled();
+            expect(lostAttention.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+        });
+
+        it("never notifies for auto_finalize or service-record revision jobs", async () => {
+            const autoFinalize = job({
+                source: "auto_finalize",
+                payload: {},
+                status: "requires_attention",
+            });
+            const autoRun = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([job({ source: "auto_finalize", payload: {} })]),
+                    markRequiresAttention: jest.fn().mockResolvedValue(autoFinalize),
+                },
+            });
+            await autoRun.worker.processDueJobs();
+            await flush();
+            expect(autoRun.repository.markRequiresAttention).toHaveBeenCalled();
+            expect(autoRun.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+
+            const revisionFields = {
+                requestKey: "service-record-revision-operations:abc",
+                payload: { kind: "service_record_revision_operations" },
+            };
+            const revisionRun = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([job(revisionFields)]),
+                    markRequiresAttention: jest.fn().mockResolvedValue(
+                        job({ ...revisionFields, status: "requires_attention" }),
+                    ),
+                },
+            });
+            await revisionRun.worker.processDueJobs();
+            await flush();
+            expect(revisionRun.repository.markRequiresAttention).toHaveBeenCalled();
+            expect(revisionRun.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+
+            const sweepRun = buildWorker({
+                repository: {
+                    listRecentStaffFailures: jest.fn().mockResolvedValue([
+                        autoFinalize,
+                        job({ ...revisionFields, status: "failed" }),
+                    ]),
+                },
+            });
+            await sweepRun.worker.processDueJobs();
+            await flush();
+            expect(sweepRun.repository.listRecentStaffFailures).toHaveBeenCalled();
+            expect(sweepRun.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+        });
+
+        it("keeps the transition and the tick alive when the notification send rejects", async () => {
+            const { claimed, failed, dispatch } = exhaustedCreate();
+            const { worker, repository, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markFailed: jest.fn().mockResolvedValue(failed),
+                },
+                dispatch,
+                notification: { sendToBranchUsers: jest.fn().mockRejectedValue(new Error("mail down")) },
+                client: named,
+            });
+
+            await expect(worker.processDueJobs()).resolves.toBeUndefined();
+            await flush();
+
+            expect(repository.markFailed).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ["the client lookup throws", { findById: jest.fn().mockRejectedValue(new Error("db down")) }],
+            ["the client is missing", { findById: jest.fn().mockResolvedValue(null) }],
+        ])("falls back to 고객 when %s", async (_label, client) => {
+            const exhausted = exhaustedCreate();
+            // The ownership check also reads the client; let it pass, then fail the name lookup.
+            const findById = jest.fn()
+                .mockResolvedValueOnce({ id: 7 })
+                .mockImplementation(client.findById);
+            const { worker, repository, notificationService } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([exhausted.claimed]),
+                    markFailed: jest.fn().mockResolvedValue(exhausted.failed),
+                },
+                dispatch: exhausted.dispatch,
+                client: { findById },
+            });
+
+            await expect(worker.processDueJobs()).resolves.toBeUndefined();
+            await flush();
+
+            expect(repository.markFailed).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                ...expectedCall(
+                    "계약서 자동 전송 실패 · 고객",
+                    "자동 전송에 실패했어요. 눌러서 직접 작성해 주세요.",
+                    "manual_send",
+                ),
+            );
+        });
+
+        describe("reconciliation transitions", () => {
+            function reconcilingRun(result: Record<string, unknown>) {
+                const stale = job({ status: "reconciling" });
+                return buildWorker({
+                    repository: { recoverStale: jest.fn().mockResolvedValue([stale]) },
+                    reconciliation: { reconcile: jest.fn().mockResolvedValue(result) },
+                    client: named,
+                });
+            }
+
+            it("notifies from the entity the reconciliation service transitioned", async () => {
+                const transitioned = job({ status: "requires_attention" });
+                const { worker, reconciliation, notificationService } = reconcilingRun({
+                    status: "requires_attention",
+                    reason: "AMBIGUOUS_PROVIDER_STATE",
+                    transitioned,
+                });
+
+                await worker.processDueJobs();
+                await flush();
+
+                expect(reconciliation.reconcile).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                    ...expectedCall(
+                        "전자문서 결과 확인 필요 · 김산모",
+                        "전송 여부를 확인하지 못했어요. 눌러서 결과를 확인해 주세요.",
+                        "verify_result",
+                    ),
+                );
+            });
+
+            it("does not notify when the reconciliation lost the lease (transitioned null)", async () => {
+                const { worker, reconciliation, notificationService } = reconcilingRun({
+                    status: "requires_attention",
+                    reason: "AMBIGUOUS_PROVIDER_STATE",
+                    transitioned: null,
+                });
+
+                await worker.processDueJobs();
+                await flush();
+
+                expect(reconciliation.reconcile).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            });
+
+            it("does not notify for the MISSING_JOB_LEASE result that never transitions", async () => {
+                const { worker, reconciliation, notificationService } = reconcilingRun({
+                    status: "requires_attention",
+                    reason: "MISSING_JOB_LEASE",
+                });
+
+                await worker.processDueJobs();
+                await flush();
+
+                expect(reconciliation.reconcile).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("hourly recovery sweep", () => {
+            const T0 = 1_800_000_000_000;
+            let nowSpy: jest.SpyInstance<number, []>;
+
+            beforeEach(() => {
+                nowSpy = jest.spyOn(Date, "now").mockReturnValue(T0);
+            });
+            afterEach(() => {
+                nowSpy.mockRestore();
+            });
+
+            it("purges and re-notifies once per hour, using the joined client name", async () => {
+                const failure = job({ status: "failed", clientName: "이산모" });
+                const { worker, repository, notificationService, clientRepository } = buildWorker({
+                    repository: { listRecentStaffFailures: jest.fn().mockResolvedValue([failure]) },
+                });
+
+                await worker.processDueJobs();
+                await flush();
+
+                expect(repository.purgeExpiredAttentionPayloads).toHaveBeenCalledTimes(1);
+                expect(repository.purgeExpiredAttentionPayloads).toHaveBeenCalledWith(new Date(T0));
+                expect(repository.listRecentStaffFailures).toHaveBeenCalledTimes(1);
+                expect(repository.listRecentStaffFailures).toHaveBeenCalledWith(new Date(T0 - 24 * HOUR_MS));
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                    ...expectedCall(
+                        "계약서 자동 전송 실패 · 이산모",
+                        "자동 전송에 실패했어요. 눌러서 직접 작성해 주세요.",
+                        "manual_send",
+                    ),
+                );
+                expect(clientRepository.findById).not.toHaveBeenCalled();
+
+                nowSpy.mockReturnValue(T0 + HOUR_MS - 1);
+                await worker.processDueJobs();
+                await flush();
+                expect(repository.purgeExpiredAttentionPayloads).toHaveBeenCalledTimes(1);
+                expect(repository.listRecentStaffFailures).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+
+                nowSpy.mockReturnValue(T0 + HOUR_MS);
+                await worker.processDueJobs();
+                await flush();
+                expect(repository.purgeExpiredAttentionPayloads).toHaveBeenCalledTimes(2);
+                expect(repository.listRecentStaffFailures).toHaveBeenCalledTimes(2);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(2);
+            });
+
+            it("still re-notifies when the purge throws, and still purges when the listing throws", async () => {
+                const failure = job({ status: "requires_attention", clientName: "이산모" });
+                const purgeFails = buildWorker({
+                    repository: {
+                        purgeExpiredAttentionPayloads: jest.fn().mockRejectedValue(new Error("db")),
+                        listRecentStaffFailures: jest.fn().mockResolvedValue([failure]),
+                    },
+                });
+                await expect(purgeFails.worker.processDueJobs()).resolves.toBeUndefined();
+                await flush();
+                expect(purgeFails.repository.claimDue).toHaveBeenCalled();
+                expect(purgeFails.notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+
+                const listFails = buildWorker({
+                    repository: {
+                        listRecentStaffFailures: jest.fn().mockRejectedValue(new Error("db")),
+                    },
+                });
+                await expect(listFails.worker.processDueJobs()).resolves.toBeUndefined();
+                await flush();
+                expect(listFails.repository.claimDue).toHaveBeenCalled();
+                expect(listFails.repository.purgeExpiredAttentionPayloads).toHaveBeenCalledTimes(1);
+                expect(listFails.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            });
+
+            it("keeps going through the listing when one notification fails", async () => {
+                const first = job({ id: "00000000-0000-0000-0000-0000000000a1", status: "failed", clientName: "가" });
+                const second = job({ id: "00000000-0000-0000-0000-0000000000a2", status: "failed", clientName: "나" });
+                const { worker, notificationService } = buildWorker({
+                    repository: { listRecentStaffFailures: jest.fn().mockResolvedValue([first, second]) },
+                    notification: {
+                        sendToBranchUsers: jest.fn()
+                            .mockRejectedValueOnce(new Error("mail down"))
+                            .mockResolvedValue({ sent: 1, failed: 0 }),
+                    },
+                });
+
+                await worker.processDueJobs();
+                await flush();
+
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(2);
+            });
+        });
     });
 });
