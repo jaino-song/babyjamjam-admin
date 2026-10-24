@@ -75,7 +75,7 @@ export function isAdminDirectSendJob(
 /** Bound on user rows read for the phone-match path (users with the flag turned off are staff-scale). */
 const PHONE_MATCH_USER_LIMIT = 500;
 
-function hyphenatedForms(digits: string): string[] {
+export function hyphenatedForms(digits: string): string[] {
     if (!digits.startsWith("0")) return [];
     if (digits.length === 11) return [`${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`];
     if (digits.length === 10) {
@@ -195,7 +195,9 @@ export class SmsAutomationSafeguardService {
             if (!client.smsAutomationEnabled) {
                 return recipientBlock("client SMS automation is off", { kind: "client", id: job.clientId });
             }
-            return null;
+            // An agent job names its client but is addressed by phone: any other entity owning that
+            // phone with the flag off still blocks, as it did before agent jobs carried a client id.
+            return isAgentSmsJob(job) ? this.checkRecipientByPhone(db, job) : null;
         }
 
         const employeeRecipient = job.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE

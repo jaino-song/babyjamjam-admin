@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { AgentActionCertainFailureError, AgentActionUncertainError } from "application/agent/action-coordinator.service";
@@ -14,6 +15,12 @@ import {
     SMS_DELIVERY_SNAPSHOT_VARIABLE,
     SmsTriggerDeliveryService,
 } from "application/services/sms-trigger-delivery.service";
+import { hyphenatedForms } from "application/services/sms-automation-safeguard.service";
+import {
+    koreanPhoneStoredDigitCandidates,
+    normalizeKoreanPhoneLookupKey,
+    storedPhoneMatchesSql,
+} from "infrastructure/database/repositories/stored-phone-lookup";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
     AGENT_SMS_RULE_ID_PREFIX,
@@ -31,6 +38,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHash } from "node:crypto";
 import { readAgentActionEffect, recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
 
+const CLIENT_SMS_OFF_MESSAGE = "이 고객은 자동 발송이 꺼져 있어 예약할 수 없습니다.";
 const IMMEDIATE_SMS_TITLE = "AI 문자 발송";
 const SCHEDULED_SMS_TITLE = "AI 예약 문자";
 const SmsReceiverSchema = z.string()
@@ -160,6 +168,22 @@ function mergedAutomationRuleValidationInput(
         recipientType: updates.recipientType ?? rule.recipientType,
         templateKey: updates.templateKey ?? rule.templateKey,
     };
+}
+
+/**
+ * PostgreSQL `lock_not_available` (55P03) from a statement that waited past `lock_timeout`. A raw
+ * statement reports it as P2010 with the SQLSTATE in `meta.code`; a model query (the rule upsert)
+ * carries it only in the driver message, so that is matched too. Either way the transaction is
+ * aborted, which is proof that nothing was written.
+ */
+function isLockNotAvailable(error: unknown): boolean {
+    if (error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === "P2010"
+        && (error.meta as { code?: unknown } | undefined)?.code === "55P03") {
+        return true;
+    }
+    const message = error instanceof Error ? error.message : "";
+    return /55P03|due to lock timeout/.test(message);
 }
 
 function throwCertainValidationFailure(error: unknown): void {
@@ -569,44 +593,119 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         this.ensureApprovedRecipient(context, recipient);
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
         const ruleId = `${AGENT_SMS_RULE_ID_PREFIX}${context.principal.branchId}`;
-        await this.prisma.message_trigger_rule.upsert({
-            where: { id: ruleId },
-            create: {
-                id: ruleId,
-                branchId: context.principal.branchId,
-                name: ruleName,
-                isActive: false,
-                eventType: "CLIENT_CREATED",
-                offsetType: "IMMEDIATE",
-                offsetDays: 0,
-                recipientType: MessageTriggerRecipientType.CLIENT,
-                templateKey: MessageTriggerTemplateKey.INFO,
-                isDefault: false,
-                jobsStale: false,
-            },
-            update: { isActive: false },
-        });
-        await this.ensureSmsApprovedForExecution(context.principal.branchId);
-        return this.jobRepository.upsertPending(MessageTriggerJobEntity.create({
-            branchId: context.principal.branchId,
-            ruleId,
-            scheduledFor,
-            recipientType: MessageTriggerRecipientType.CLIENT,
-            recipientPhone: recipient.phone,
-            templateKey: MessageTriggerTemplateKey.INFO,
-            dedupeKey: `agent-sms:${context.actionId}`,
-            payload: {
-                memberId: `agent-action:${context.actionId}`,
-                recipientName: recipient.name ?? "수신자",
-                recipientPhone: recipient.phone,
-                messageBody: input.message,
-                templateVariables: {
-                    triggerType: "agent_scheduled",
-                    title: input.title,
-                    msgType: AGENT_SMS_DELIVERY_TYPE,
+        return this.withClientSmsAutomationOn(context.principal.branchId, recipient, async (transaction, assertClientSmsAutomationOn) => {
+            // Lock order matches the client-rule producers: rule row -> client row (FOR SHARE) -> job.
+            await assertClientSmsAutomationOn([ruleId]);
+            await transaction.message_trigger_rule.upsert({
+                where: { id: ruleId },
+                create: {
+                    id: ruleId,
+                    branchId: context.principal.branchId,
+                    name: ruleName,
+                    isActive: false,
+                    eventType: "CLIENT_CREATED",
+                    offsetType: "IMMEDIATE",
+                    offsetDays: 0,
+                    recipientType: MessageTriggerRecipientType.CLIENT,
+                    templateKey: MessageTriggerTemplateKey.INFO,
+                    isDefault: false,
+                    jobsStale: false,
                 },
-            },
-        }));
+                update: { isActive: false },
+            });
+            await this.ensureSmsApprovedForExecution(context.principal.branchId);
+            return this.jobRepository.upsertPending(MessageTriggerJobEntity.create({
+                branchId: context.principal.branchId,
+                ruleId,
+                scheduledFor,
+                // Owned by the client when the recipient is one, so turning the client's automatic
+                // sending off cancels this job like any other automatic client job.
+                ...(recipient.clientId !== undefined ? { clientId: recipient.clientId } : {}),
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                recipientPhone: recipient.phone,
+                templateKey: MessageTriggerTemplateKey.INFO,
+                dedupeKey: `agent-sms:${context.actionId}`,
+                payload: {
+                    memberId: `agent-action:${context.actionId}`,
+                    recipientName: recipient.name ?? "수신자",
+                    recipientPhone: recipient.phone,
+                    messageBody: input.message,
+                    templateVariables: {
+                        triggerType: "agent_scheduled",
+                        title: input.title,
+                        msgType: AGENT_SMS_DELIVERY_TYPE,
+                    },
+                },
+            }), transaction);
+        });
+    }
+
+    /**
+     * Agent SMS is automatic, so a client whose automatic sending is off must never get a queued
+     * job (the send-time safeguard stays as the second gate). Everything that decides or writes the
+     * job runs in ONE transaction: the lock on the rule rows, the FOR SHARE read of the matching
+     * client rows' flag, the synthetic rule upsert and the job write (or retry claim). A concurrent
+     * OFF update (which takes the client row FOR UPDATE) therefore either commits first and is seen
+     * by the guard, or waits until this transaction commits and its cancellation then finds the job
+     * (the job carries the client's id). Any lock wait past `lock_timeout`, or the transaction
+     * timeout, aborts the whole transaction, so no rule or job write can survive a refusal.
+     * The matching mirrors `SmsAutomationSafeguardService`'s phone path: any live client owning the
+     * phone, or a deleted one keeping it, with the flag off blocks. Employee recipients are not
+     * checked here.
+     */
+    private async withClientSmsAutomationOn<T>(
+        branchId: string,
+        recipient: { phone: string; clientId?: number },
+        work: (
+            transaction: Prisma.TransactionClient,
+            assertClientSmsAutomationOn: (lockRuleIds?: string[]) => Promise<void>,
+        ) => Promise<T>,
+    ): Promise<T> {
+        try {
+            return await this.prisma.$transaction(async (transaction) => {
+                await transaction.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '1s'`);
+                const assertClientSmsAutomationOn = async (lockRuleIds: string[] = []): Promise<void> => {
+                    if (recipient.clientId === undefined) return;
+                    const clientId = recipient.clientId;
+                    if (lockRuleIds.length > 0) {
+                        // Rule rows first (the producers' order). A row that does not exist yet is
+                        // created, and so locked, by the upsert that follows.
+                        await transaction.$queryRaw(Prisma.sql`
+                            SELECT id
+                            FROM message_trigger_rule
+                            WHERE id IN (${Prisma.join([...new Set(lockRuleIds)].sort())})
+                            ORDER BY id
+                            FOR UPDATE
+                        `);
+                    }
+                    const key = normalizeKoreanPhoneLookupKey(recipient.phone);
+                    const digitCandidates = koreanPhoneStoredDigitCandidates(key);
+                    const candidates = [...new Set([...digitCandidates, ...hyphenatedForms(key)])];
+                    const clients = await transaction.$queryRaw<Array<{ id: number; smsAutomationEnabled: boolean }>>(Prisma.sql`
+                        SELECT id, sms_automation_enabled AS "smsAutomationEnabled"
+                        FROM client
+                        WHERE branch_id = ${branchId}::uuid
+                          AND (
+                              id = ${clientId}
+                              OR (deleted_at IS NULL AND (phone_normalized = ANY(${candidates}::text[]) OR phone = ANY(${candidates}::text[])))
+                              OR (deleted_at IS NOT NULL AND ${storedPhoneMatchesSql(Prisma.sql`phone`, digitCandidates)})
+                          )
+                        ORDER BY id
+                        FOR SHARE
+                    `);
+                    if (clients.some((client) => !client.smsAutomationEnabled)) {
+                        throw new AgentActionCertainFailureError(CLIENT_SMS_OFF_MESSAGE);
+                    }
+                };
+                return work(transaction, assertClientSmsAutomationOn);
+            }, { timeout: 15_000 });
+        } catch (error) {
+            if (isLockNotAvailable(error)) {
+                // The whole transaction aborted: nothing was written, so the proposal can be approved again.
+                throw new AgentActionCertainFailureError("고객 정보가 수정 중이라 문자를 예약할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+            }
+            throw error;
+        }
     }
 
     private async resolveSmsRecipient(
@@ -697,7 +796,8 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             branchId: context.principal.branchId,
             ruleId: source.ruleId,
             scheduledFor: new Date(),
-            clientId: source.clientId,
+            // A legacy agent job was written without its client; the retry belongs to the resolved client.
+            clientId: source.clientId ?? (source.recipientType === MessageTriggerRecipientType.CLIENT ? recipient.clientId ?? null : null),
             employeeScheduleId: source.employeeScheduleId,
             recipientType: source.recipientType,
             recipientPhone: source.recipientPhone,
@@ -714,14 +814,18 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             },
         });
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
-        const retry = await this.jobRepository.claimProviderRejectedForRetry(
-            context.principal.branchId,
-            source.id,
-            expectedTargetVersion,
-            canonical.snapshotHash,
-            source,
-            retryCandidate,
-        );
+        const retry = await this.withClientSmsAutomationOn(context.principal.branchId, recipient, async (transaction, assertClientSmsAutomationOn) => {
+            await assertClientSmsAutomationOn([source.ruleId, retryCandidate.ruleId]);
+            return this.jobRepository.claimProviderRejectedForRetry(
+                context.principal.branchId,
+                source.id,
+                expectedTargetVersion,
+                canonical.snapshotHash,
+                source,
+                retryCandidate,
+                transaction,
+            );
+        });
         if (retry.kind === "lock_timeout") {
             // The claim aborted on a lock held by another transaction (e.g. a
             // large rule normalisation): nothing was written, so this is a

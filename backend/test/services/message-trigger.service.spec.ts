@@ -5687,6 +5687,7 @@ describe("MessageTriggerService", () => {
         startDate: Date | null;
         endDate: Date | null;
         serviceEndNoticeSentAt: Date | null;
+        smsAutomationEnabled: boolean;
         createdAt: Date | null;
     }> = {}) => {
         const ruleRepository = {
@@ -5703,6 +5704,7 @@ describe("MessageTriggerService", () => {
             findPendingByRuleIdsAndClientId: jest.fn().mockResolvedValue([]),
             cancelPendingByClientContext: jest.fn().mockResolvedValue(0),
             cancelProcessingClaim: jest.fn().mockResolvedValue(true),
+            cancelAutomaticClientJobsForClient: jest.fn().mockResolvedValue(0),
             cancelPendingForRuleGeneration: jest.fn().mockImplementation(async (
                 _branchId: string,
                 ruleId: string,
@@ -6221,6 +6223,103 @@ describe("MessageTriggerService", () => {
         await dispatch.service.dispatchDueJobs();
         expect(dispatch.deliveryService.sendJob).toHaveBeenCalledTimes(1);
         expect(waiting.status).toBe("sent");
+    });
+
+    it("queues nothing and cancels queued client jobs when the client's automatic sending is off", async () => {
+        const startRule = createRule({ id: "rule-start-before", eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 7 });
+        const greetingRule = createRule({ id: "rule-greeting-active", eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING });
+        const sync = createSyncService({ smsAutomationEnabled: false,
+            startDate: new Date("2026-12-01T00:00:00.000Z"), endDate: new Date("2026-12-12T00:00:00.000Z") });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([startRule, greetingRule]);
+        await sync.service.syncClientRulesForClient(branchId, 1, false);
+        expect(sync.jobRepository.cancelAutomaticClientJobsForClient).toHaveBeenCalledTimes(1);
+        expect(sync.jobRepository.cancelAutomaticClientJobsForClient).toHaveBeenCalledWith(
+            branchId, 1, "SMS automation disabled for client", expect.anything(),
+        );
+        expect(sync.messageAutomationBranchLockService.runExclusive).toHaveBeenCalledWith(
+            branchId, expect.any(Function),
+        );
+        expect(sync.jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
+    it("cancels pending and processing client jobs of a jobs_stale rule when the client is turned off, without the rule generation fence", async () => {
+        // The rule is mid-rebuild (jobs_stale) and its updated_at moved, so a
+        // generation-fenced cancel refuses (null) and would leave the jobs queued.
+        const staleRule = createRule({ id: "rule-start-before", eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 7, jobsStale: true });
+        const sync = createSyncService({ smsAutomationEnabled: false,
+            startDate: new Date("2026-12-01T00:00:00.000Z"), endDate: new Date("2026-12-12T00:00:00.000Z") });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([staleRule]);
+        sync.jobRepository.cancelPendingForRuleGeneration.mockResolvedValue(null);
+        const store = new Map<string, { status: string; clientId: number; recipientType: string; claimToken: string | null }>([
+            ["pending", { status: "pending", clientId: 1, recipientType: "CLIENT", claimToken: null }],
+            ["processing", { status: "processing", clientId: 1, recipientType: "CLIENT", claimToken: "claim-1" }],
+            ["dispatching", { status: "dispatching", clientId: 1, recipientType: "CLIENT", claimToken: "claim-2" }],
+            ["sent", { status: "sent", clientId: 1, recipientType: "CLIENT", claimToken: null }],
+            ["other-client", { status: "pending", clientId: 2, recipientType: "CLIENT", claimToken: null }],
+            ["employee", { status: "pending", clientId: 1, recipientType: "PRIMARY_EMPLOYEE", claimToken: null }],
+        ]);
+        sync.jobRepository.cancelAutomaticClientJobsForClient.mockImplementation(async (
+            _branchId: string, clientId: number,
+        ) => {
+            let count = 0;
+            for (const job of store.values()) {
+                if (job.clientId !== clientId || job.recipientType !== "CLIENT") continue;
+                if (job.status !== "pending" && job.status !== "processing") continue;
+                job.status = "canceled";
+                job.claimToken = null;
+                count += 1;
+            }
+            return count;
+        });
+
+        await expect(sync.service.syncClientRulesForClient(branchId, 1, false)).resolves.toBeUndefined();
+
+        expect(store.get("pending")?.status).toBe("canceled");
+        expect(store.get("processing")).toMatchObject({ status: "canceled", claimToken: null });
+        expect(store.get("dispatching")?.status).toBe("dispatching");
+        expect(store.get("sent")?.status).toBe("sent");
+        expect(store.get("other-client")?.status).toBe("pending");
+        expect(store.get("employee")?.status).toBe("pending");
+        expect(sync.jobRepository.cancelPendingForRuleGeneration).not.toHaveBeenCalled();
+        expect(sync.jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
+    it("propagates a failed OFF cancellation instead of reporting the sync as done", async () => {
+        const rule = createRule({ id: "rule-start-before", eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 7 });
+        const sync = createSyncService({ smsAutomationEnabled: false });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([rule]);
+        sync.jobRepository.cancelAutomaticClientJobsForClient.mockRejectedValue(new Error("db unavailable"));
+        await expect(sync.service.syncClientRulesForClient(branchId, 1, false)).rejects.toThrow("db unavailable");
+    });
+
+    it("does not queue a client job when the client is OFF at write time although the pre-read saw ON", async () => {
+        const rule = createRule({ id: "rule-start-before", eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 7 });
+        const sync = createSyncService({ smsAutomationEnabled: true,
+            startDate: new Date("2026-12-01T00:00:00.000Z"), endDate: new Date("2026-12-12T00:00:00.000Z") });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([rule]);
+        // The pre-read above returned ON; by the time the write transaction takes
+        // the client row lock another producer has committed OFF, so the
+        // repository's in-transaction recheck refuses the write.
+        const stored: MessageTriggerJobEntity[] = [];
+        sync.jobRepository.upsertPendingForRuleGeneration.mockImplementation(async (
+            job: MessageTriggerJobEntity, _updatedAt: Date, _stale: boolean, _preserve: boolean, transaction?: unknown,
+        ) => {
+            expect(transaction).toBeDefined();
+            const clientOffAtWriteTime = true;
+            if (clientOffAtWriteTime) return null;
+            stored.push(job);
+            return job;
+        });
+
+        await expect(sync.service.syncClientRulesForClient(branchId, 1, false)).resolves.toBeUndefined();
+
+        expect(sync.jobRepository.upsertPendingForRuleGeneration).toHaveBeenCalled();
+        expect(stored).toHaveLength(0);
     });
 
     it("leaves an immediate needs_setup job alone on repeated unchanged client resync", async () => {

@@ -40,6 +40,8 @@ export interface ClientTriggerSource {
     startDate: Date | null;
     endDate: Date | null;
     serviceEndNoticeSentAt: Date | null;
+    /** Off means no automatic message is queued for this client at all. */
+    smsAutomationEnabled?: boolean;
     createdAt?: Date | null;
     duration?: number | null;
     fullPrice?: string | null;
