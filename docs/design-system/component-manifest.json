@@ -1318,6 +1318,23 @@
         ]
       },
       {
+        "name": "DocumentJobsStatMini",
+        "layer": "organism",
+        "import": "@/components/app/contracts/DocumentJobsStatMini",
+        "file": "frontend/src/components/app/contracts/DocumentJobsStatMini.tsx",
+        "exports": [
+          "DocumentJobsStatMini",
+          "useDocumentJobsStatVisible"
+        ],
+        "replaces": [
+          "per-page document job status tiles",
+          "contract document job status tiles"
+        ],
+        "requiredFor": [
+          "first-slot document jobs card of every stats bar"
+        ]
+      },
+      {
         "name": "ContractDocumentJobsPopover",
         "layer": "organism",
         "import": "@/components/app/contracts/ContractDocumentJobsPopover",
@@ -1474,6 +1491,37 @@
         "file": "frontend/src/components/app/ui/automation-status-notice.tsx",
         "exports": [
           "AutomationStatusNotice"
+        ]
+      },
+      {
+        "name": "DocumentJobFailurePopup",
+        "layer": "molecule",
+        "import": "@/components/app/ui/DocumentJobFailurePopup",
+        "file": "frontend/src/components/app/ui/DocumentJobFailurePopup.tsx",
+        "exports": [
+          "DocumentJobFailurePopup"
+        ],
+        "replaces": [
+          "persistent failure toasts",
+          "custom bottom-right failure notice cards"
+        ],
+        "requiredFor": [
+          "document job failure notices"
+        ]
+      },
+      {
+        "name": "DocumentJobFailurePopupStack",
+        "layer": "organism",
+        "import": "@/components/app/ui/DocumentJobFailurePopupStack",
+        "file": "frontend/src/components/app/ui/DocumentJobFailurePopupStack.tsx",
+        "exports": [
+          "DocumentJobFailurePopupStack"
+        ],
+        "replaces": [
+          "custom bottom-right notice stacks"
+        ],
+        "requiredFor": [
+          "app-wide document job failure popups"
         ]
       },
       {
