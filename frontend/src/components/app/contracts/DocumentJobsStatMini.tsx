@@ -107,7 +107,7 @@ export function DocumentJobsStatMini({
         }
       />
 
-      {mode === "always" && hasSummaryError ? (
+      {hasSummaryError ? (
         <Alert
           data-component={`${base}-summary-alert`}
           className="order-last basis-full"
