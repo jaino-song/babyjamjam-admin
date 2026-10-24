@@ -153,4 +153,39 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
     });
     await waitFor(() => expect(result.current.data?.active[0]?.jobId).toBe("job-b"));
   });
+
+  it("fetches the list for active jobs by default but not when fetchWhenActive is off", async () => {
+    jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockResolvedValue({ activeCount: 2, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] });
+    const getJobs = jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(DOCUMENT_JOBS_A);
+
+    const quiet = renderHook(() => useEformsignDocumentJobs({ isAuthenticated: true, fetchWhenActive: false }), {
+      wrapper: createWrapper(new QueryClient({ defaultOptions: { queries: { retry: false } } })),
+    });
+    await waitFor(() => expect(quiet.result.current.summary?.activeCount).toBe(2));
+    expect(getJobs).not.toHaveBeenCalled();
+    quiet.unmount();
+
+    const eager = renderHook(() => useEformsignDocumentJobs({ isAuthenticated: true }), {
+      wrapper: createWrapper(new QueryClient({ defaultOptions: { queries: { retry: false } } })),
+    });
+    await waitFor(() => expect(eager.result.current.data?.active[0]?.jobId).toBe("job-a"));
+    expect(getJobs).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches the list on demand even with fetchWhenActive off", async () => {
+    jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockResolvedValue({ activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] });
+    const getJobs = jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(DOCUMENT_JOBS_A);
+
+    const { result } = renderHook(
+      () => useEformsignDocumentJobs({ isAuthenticated: true, isPopoverOpen: true, fetchWhenActive: false }),
+      { wrapper: createWrapper(new QueryClient({ defaultOptions: { queries: { retry: false } } })) },
+    );
+
+    await waitFor(() => expect(result.current.data?.active[0]?.jobId).toBe("job-a"));
+    expect(getJobs).toHaveBeenCalled();
+  });
 });

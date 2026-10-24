@@ -1,11 +1,29 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Clock3 } from "lucide-react";
+
+import {
+  createTestQueryClient,
+  JobsTestWrapper,
+  makeJob,
+  makeJobList,
+  makeSummary,
+  setBranchCookie,
+} from "@/features/document-jobs/testing/jobs-test-utils";
+import { eformsignDocumentJobsQueryKeys } from "@/hooks/useEformsignDocumentJobs";
+import { eformsignApi } from "@/services/api";
 
 import {
   ContractDocumentJobsPopover,
   type ContractDocumentJobsData,
 } from "./ContractDocumentJobsPopover";
 import { ContractStatsBar } from "./ContractStatsBar";
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/contracts",
+}));
+
+const PROCESSING_TILE = { name: "전자문서 처리중 작업 보기" };
 
 const JOBS: ContractDocumentJobsData = {
   active: [
@@ -50,7 +68,35 @@ function renderOpenPopover(overrides: Partial<React.ComponentProps<typeof Contra
   );
 }
 
+const STAT_ITEMS = Array.from({ length: 5 }, (_, index) => ({
+  icon: Clock3,
+  value: index + 1,
+  label: `통계 ${index + 1}`,
+  counter: "건",
+}));
+
+function renderBar(props: Partial<React.ComponentProps<typeof ContractStatsBar>> = {}) {
+  const queryClient = createTestQueryClient();
+  render(
+    <JobsTestWrapper queryClient={queryClient}>
+      <ContractStatsBar name="desktop_contracts" items={STAT_ITEMS} {...props} />
+    </JobsTestWrapper>,
+  );
+  return queryClient;
+}
+
 describe("ContractDocumentJobsPopover", () => {
+  beforeEach(() => {
+    setBranchCookie("branch-a");
+    window.sessionStorage.clear();
+    jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(makeJobList());
+  });
+
+  afterEach(() => {
+    setBranchCookie(null);
+    jest.restoreAllMocks();
+  });
+
   it("renders the three read-only sections and deep-links rows with a document id", () => {
     renderOpenPopover();
 
@@ -91,130 +137,130 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.queryByRole("link", { name: /전자문서 최종 처리/ })).not.toBeInTheDocument();
   });
 
-  it("uses only the summary active count in the far-right processing tile", () => {
-    render(
-      <ContractStatsBar
-        name="desktop_contracts"
-        items={Array.from({ length: 5 }, (_, index) => ({
-          icon: Clock3,
-          value: index + 1,
-          label: `통계 ${index + 1}`,
-          counter: "건",
-        }))}
-        summary={{ activeCount: 7, requiresAttentionCount: 99 }}
-        documentJobs={{ active: JOBS.active.slice(0, 1), requiresAttention: JOBS.requiresAttention, recent: [] }}
-      />,
-    );
+  it("renders the processing tile first in the row, without ms-auto, from active + unresolved only", async () => {
+    jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockResolvedValue(makeSummary({ activeCount: 7, requiresAttentionCount: 99 }));
+    renderBar({ items: STAT_ITEMS });
 
-    const stats = document.querySelector('[data-component="desktop_contracts_stats"]');
-    expect(stats).toBeInTheDocument();
-    const statLabels = Array.from(stats?.querySelectorAll("p") ?? []).map((node) => node.textContent);
-    expect(statLabels).toContain("전자문서 처리중");
-    expect(statLabels).toContain("7");
-    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
-    expect(processingTile).toHaveTextContent("7");
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("7"));
     expect(processingTile).not.toHaveTextContent("99");
+    expect(processingTile).not.toHaveClass("ms-auto");
 
-    expect(processingTile).toHaveClass("ms-auto");
-    expect(processingTile.compareDocumentPosition(stats?.querySelector('[data-component="desktop_contracts_stats_stat-4"]') as Node)).toBe(
-      Node.DOCUMENT_POSITION_PRECEDING,
-    );
+    const stats = document.querySelector('[data-component="desktop_contracts_stats"]') as HTMLElement;
+    expect(stats.firstElementChild).toBe(processingTile);
+    expect(
+      processingTile.compareDocumentPosition(
+        stats.querySelector('[data-component="desktop_contracts_stats_stat-0"]') as Node,
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("shows an unavailable processing count and retries the summary after an initial failure", () => {
-    const onRetrySummary = jest.fn();
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={undefined}
-        summaryError={new Error("summary unavailable")}
-        onRetrySummary={onRetrySummary}
-      />,
-    );
+  it("shows an unavailable processing count and retries the summary after an initial failure", async () => {
+    const getSummary = jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockRejectedValueOnce(new Error("summary unavailable"))
+      .mockResolvedValue(makeSummary());
+    renderBar();
 
-    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    expect(await screen.findByRole("alert")).toHaveTextContent("전자문서 처리 현황을 불러오지 못했어요");
     expect(processingTile).toHaveTextContent("—");
-    expect(screen.getByRole("alert")).toHaveTextContent("전자문서 처리 현황을 불러오지 못했어요");
+
     fireEvent.click(screen.getByRole("button", { name: "전자문서 처리 현황 다시 시도" }));
-    expect(onRetrySummary).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps a successful zero distinct from an unavailable summary", () => {
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 0, requiresAttentionCount: 0 }}
-      />,
-    );
-
-    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+    await waitFor(() => expect(getSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(processingTile).toHaveTextContent("0");
+  });
+
+  it("keeps a successful zero distinct from an unavailable summary", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary());
+    renderBar();
+
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("0"));
+    expect(processingTile).not.toHaveTextContent("—");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("retains a cached summary count and offers a stale retry after refresh failure", () => {
-    const onRetrySummary = jest.fn();
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 4, requiresAttentionCount: 1 }}
-        summaryError={new Error("summary refresh failed")}
-        summaryHasData
-        onRetrySummary={onRetrySummary}
-      />,
-    );
+  it("retains a cached summary count and offers a stale retry after a refresh failure", async () => {
+    const getSummary = jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockResolvedValueOnce(makeSummary({ activeCount: 4 }))
+      .mockRejectedValue(new Error("summary refresh failed"));
+    const queryClient = renderBar();
 
-    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("4");
-    expect(screen.getByRole("alert")).toHaveTextContent("최근 성공한 처리 현황을 표시하고 있어요");
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("4"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.summary("branch-a") });
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("최근 성공한 처리 현황을 표시하고 있어요");
+    expect(processingTile).toHaveTextContent("4");
+
+    getSummary.mockResolvedValue(makeSummary({ activeCount: 5 }));
     fireEvent.click(screen.getByRole("button", { name: "전자문서 처리 현황 다시 시도" }));
-    expect(onRetrySummary).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(processingTile).toHaveTextContent("5"));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
 
-  it("clears the summary warning and renders the recovered count", () => {
-    const onRetrySummary = jest.fn();
-    const view = render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={undefined}
-        summaryError={new Error("summary unavailable")}
-        onRetrySummary={onRetrySummary}
-      />,
-    );
+  it("keeps list errors and retries independent from the summary tile", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 4 }));
+    const getJobs = jest.spyOn(eformsignApi, "getDocumentJobs").mockRejectedValue(new Error("list unavailable"));
+    renderBar();
 
-    view.rerender(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 0, requiresAttentionCount: 0 }}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("0");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("keeps list errors and retries independent from the summary tile", () => {
-    const onRetryJobs = jest.fn();
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 4, requiresAttentionCount: 0 }}
-        jobsError={new Error("list unavailable")}
-        onRetryJobs={onRetryJobs}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("4");
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("4"));
     expect(screen.queryByText("전자문서 처리 현황을 불러오지 못했어요")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
-    expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3);
+    fireEvent.click(processingTile);
+    await waitFor(() => expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3));
+    const callsBefore = getJobs.mock.calls.length;
     fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
-    expect(onRetryJobs).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getJobs.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it("lists active jobs from the list endpoint in the card's popover", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 1 }));
+    jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(
+      makeJobList({ active: [makeJob({ jobId: "job-x", status: "processing", jobType: "finalize_document", documentId: "doc-9" })] }),
+    );
+    renderBar();
+
+    fireEvent.click(await screen.findByRole("button", PROCESSING_TILE));
+
+    expect(await screen.findByRole("link", { name: /전자문서 최종 처리/ })).toHaveAttribute(
+      "href",
+      "/contracts?documentId=doc-9",
+    );
+  });
+
+  it("renders no jobs card and touches neither provider nor react-query with showDocumentJobs={false}", () => {
+    const getSummary = jest.spyOn(eformsignApi, "getDocumentJobSummary");
+    render(<ContractStatsBar name="contracts" items={STAT_ITEMS} showDocumentJobs={false} />);
+
+    expect(screen.queryByRole("button", PROCESSING_TILE)).not.toBeInTheDocument();
+    expect(screen.getByText("통계 1")).toBeInTheDocument();
+    expect(getSummary).not.toHaveBeenCalled();
+  });
+
+  it("still accepts the deprecated job-data props and ignores them", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 2 }));
+    renderBar({
+      items: [],
+      summary: { activeCount: 50, requiresAttentionCount: 50 },
+      summaryError: new Error("ignored"),
+      summaryHasData: true,
+      documentJobs: JOBS,
+      jobsError: new Error("ignored"),
+      onRetrySummary: jest.fn(),
+      onRetryJobs: jest.fn(),
+    });
+
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("2"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
