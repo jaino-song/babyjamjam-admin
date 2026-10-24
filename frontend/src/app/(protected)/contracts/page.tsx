@@ -490,7 +490,6 @@ export default function ContractsPage() {
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
   const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
   const [isDocumentJobsPopoverOpen, setIsDocumentJobsPopoverOpen] = useState(false);
-  const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     requireAccessToken: false,
     syncOnWindowFocus: false,
@@ -501,7 +500,7 @@ export default function ContractsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const documentJobsQuery = useEformsignDocumentJobs({
-    isAuthenticated: isAuthenticated && documentJobsEnabled,
+    isAuthenticated,
     isPopoverOpen: isDocumentJobsPopoverOpen,
   });
   const deleteDocument = useDeleteEformsignDocument();
@@ -744,7 +743,7 @@ export default function ContractsPage() {
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <ContractStatsBar
         name="contracts" density="responsive-square"
-        showDocumentJobs={documentJobsEnabled} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
+        showDocumentJobs={true} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
         isLoading={isStatsLoading} onRetryStats={isAuthenticated && isStatsBranchContextReady ? () => void statusCountsQuery.refetch() : undefined}
         items={[
           { icon: CheckCircle2, value: stats?.reviewNeeded ?? "—", label: "검토 필요", counter: "건", colorIndex: 0 },
@@ -753,13 +752,13 @@ export default function ContractsPage() {
           { icon: FileText, value: stats?.drafting ?? "—", label: "작성 대기중", counter: "건" },
           { icon: AlertTriangle, value: stats?.expired ?? "—", label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
-        summary={documentJobsEnabled ? documentJobsQuery.summary : null} summaryError={documentJobsEnabled ? documentJobsQuery.summaryQuery.error : null} summaryHasData={documentJobsEnabled && documentJobsQuery.summary !== undefined}
-        isSummaryRefreshing={documentJobsEnabled && documentJobsQuery.summaryQuery.isFetching} onRetrySummary={documentJobsEnabled ? () => void documentJobsQuery.summaryQuery.refetch() : undefined} documentJobs={documentJobsEnabled ? (documentJobsQuery.data ?? null) : null}
-        isJobsLoading={documentJobsEnabled && (
+        summary={documentJobsQuery.summary} summaryError={documentJobsQuery.summaryQuery.error} summaryHasData={documentJobsQuery.summary !== undefined}
+        isSummaryRefreshing={documentJobsQuery.summaryQuery.isFetching} onRetrySummary={() => void documentJobsQuery.summaryQuery.refetch()} documentJobs={documentJobsQuery.data ?? null}
+        isJobsLoading={(
           documentJobsQuery.summaryQuery.isLoading || documentJobsQuery.isLoading
         )}
-        jobsError={documentJobsEnabled ? documentJobsQuery.error : null}
-        onRetryJobs={documentJobsEnabled ? () => void documentJobsQuery.refetch() : undefined}
+        jobsError={documentJobsQuery.error}
+        onRetryJobs={() => void documentJobsQuery.refetch()}
         onJobsPopoverOpenChange={setIsDocumentJobsPopoverOpen}
       />
 
@@ -1217,7 +1216,6 @@ export function ContractDetail({
   const { toast } = useToast();
   // Display-only (status label, receipt gate): the built-in calendar stands in while it loads.
   const { calendar } = useBusinessDayCalendar();
-  const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
   const enqueueFinalizationMutation = useEnqueueEformsignDocumentFinalization();
   const detailQuery = useQuery<EformsignDocument>({
     queryKey: ["eformsign-documents", "detail", doc.id],
@@ -1538,12 +1536,12 @@ export function ContractDetail({
   });
 
   const openStaffCompletionMutation = useMutation({
-    mutationFn: async (endDate?: string): Promise<
+    mutationFn: async ({ endDate, path = "queue" }: { endDate?: string; path?: "queue" | "direct" } = {}): Promise<
       | { kind: "queued" }
       | { kind: "headless" }
       | { kind: "iframe"; option: EformsignDocumentOption }
     > => {
-      if (documentJobsEnabled) {
+      if (path === "queue") {
         await enqueueFinalizationMutation.mutateAsync({
           requestKey: createFinalizeProgressId(),
           documentId: doc.id,
@@ -1719,6 +1717,8 @@ export function ContractDetail({
     closeStaffCompletionModal();
   };
 
+  // Retained for Unit 5.1's explicit failed-job recovery; ordinary approvals queue.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const startFinalizeFlow = (endDate?: string) => {
     if (isFinalizePending) {
       return;
@@ -1766,16 +1766,12 @@ export function ContractDetail({
       );
     });
 
-    openStaffCompletionMutation.mutate(endDate);
+    openStaffCompletionMutation.mutate({ endDate, path: "direct" });
   };
 
   const handleFinalizeSubmit = () => {
-    if (documentJobsEnabled) {
-      if (!isFinalizeEndDateValid) return;
-      openStaffCompletionMutation.mutate(finalizeEndDate);
-      return;
-    }
-    startFinalizeFlow(finalizeEndDate);
+    if (!isFinalizeEndDateValid) return;
+    openStaffCompletionMutation.mutate({ endDate: finalizeEndDate, path: "queue" });
   };
 
   const handleServiceRecordReviewConfirm = () => {
@@ -1785,12 +1781,7 @@ export function ContractDetail({
 
   const handleServiceRecordFinalizeApprove = () => {
     setIsServiceRecordFinalizeConfirmOpen(false);
-    if (documentJobsEnabled) {
-      openStaffCompletionMutation.mutate(undefined);
-      return;
-    }
-    setIsFinalizeOpen(true);
-    startFinalizeFlow();
+    openStaffCompletionMutation.mutate({ path: "queue" });
   };
 
   const activityItems: {
