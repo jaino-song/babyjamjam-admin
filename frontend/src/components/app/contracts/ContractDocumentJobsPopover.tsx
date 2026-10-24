@@ -13,11 +13,9 @@ import {
 } from "lucide-react";
 
 import { StatusBadge } from "@/components/app/ui/status-badge";
-import {
-  AnimatedSlotList,
-  AnimatedSlotListItemContent,
-  EmptyState,
-} from "@/components/app/v3";
+import { AnimatedSlotList } from "@/components/app/v3/AnimatedSlotList";
+import { AnimatedSlotListItemContent } from "@/components/app/v3/AnimatedSlotListItemContent";
+import { EmptyState } from "@/components/app/v3/EmptyState";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
