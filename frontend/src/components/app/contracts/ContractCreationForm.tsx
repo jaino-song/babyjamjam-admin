@@ -641,6 +641,7 @@ export const ContractCreationForm = ({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [canCreateManually, setCanCreateManually] = useState(false);
   const creationRequestRef = useRef<{ fingerprint: string; key: string } | null>(null);
+  const hadUncertainEnqueueRef = useRef(false);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
   const [dueDateInput, setDueDateInput] = useState("");
   const [birthDateInput, setBirthDateInput] = useState("");
@@ -902,6 +903,7 @@ export const ContractCreationForm = ({
     setSubmitError(null);
     setCanCreateManually(false);
     creationRequestRef.current = null;
+    hadUncertainEnqueueRef.current = false;
     setCreationProgress(INITIAL_CREATION_PROGRESS);
     contractOnlyChoiceRef.current = null;
     resetFieldStates();
@@ -1402,9 +1404,14 @@ export const ContractCreationForm = ({
           try {
             accepted = await enqueueCreationMutation.mutateAsync({ ...request, requestKey });
           } catch (error) {
-            // Gateway/transport failures do not prove that intake was rejected.
+            // An earlier uncertain enqueue remains unsafe even if a later request is rejected.
             const status = isAxiosError(error) ? error.response?.status : undefined;
-            setCanCreateManually(status !== undefined && ((status >= 400 && status < 500) || status === 503));
+            const wasRejected = status !== undefined && ((status >= 400 && status < 500) || status === 503);
+            if (!wasRejected) hadUncertainEnqueueRef.current = true;
+            setCanCreateManually(!hadUncertainEnqueueRef.current && wasRejected);
+            if (hadUncertainEnqueueRef.current) {
+              throw new AuthoredSubmissionError("전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인해 주세요.");
+            }
             throw error;
           }
           if (accepted.existing && !isRetry) {
@@ -2415,17 +2422,22 @@ export const ContractCreationForm = ({
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
           <>
             {canCreateManually && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-component="desktop_contracts_creation_form_manual"
-                data-testid="contract-creation-manual"
-                onClick={handleManualContractCreation}
-                disabled={isSubmitting}
-              >
-                수동 입력
-              </Button>
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-component="desktop_contracts_creation_form_manual"
+                  data-testid="contract-creation-manual"
+                  onClick={handleManualContractCreation}
+                  disabled={isSubmitting}
+                >
+                  수동 입력
+                </Button>
+                <p data-component="desktop_contracts_creation_form_footer_manual-help">
+                  직접 작성 전에 처리중 목록에 같은 고객의 작업이 없는지 확인해 주세요.
+                </p>
+              </div>
             )}
             <Button
               type="button"
