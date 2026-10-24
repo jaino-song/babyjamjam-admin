@@ -23,7 +23,7 @@ interface PopupState {
   summary: EformsignDocumentJobSummary | undefined;
   /** False until the first summary of this scope has been seen. */
   initialized: boolean;
-  /** Ids already announced, pruned to the ones the server still lists. */
+  /** Ids already announced, pruned to the ones the server still lists or that have an open popup. */
   seen: ReadonlySet<string>;
   popups: readonly FailurePopupEntry[];
   nextKey: number;
@@ -68,17 +68,21 @@ function reduceSummary(
     }
   }
 
-  // Keep only ids the server still lists, so the stored set cannot grow without bound,
-  // and drop popups of jobs that are no longer unresolved (acting on them leads nowhere).
-  const currentIds = new Set(ids);
-  const kept = base.popups.filter((entry) => entry.kind === "session" || currentIds.has(entry.jobId));
+  // Popups persist until the user closes them (or the scope resets): a job missing from this
+  // summary may merely have fallen outside the capped id window, so absence never removes one.
+  const popups = [...base.popups, ...additions];
+
+  // Prune the seen-set to what the server still lists so the stored set cannot grow without
+  // bound, but keep every id that still has an open popup so it is never announced twice.
+  const seen = new Set(ids);
+  for (const entry of popups) if (entry.kind === "job") seen.add(entry.jobId);
 
   return {
     scope,
     summary,
     initialized: true,
-    seen: currentIds,
-    popups: [...kept, ...additions],
+    seen,
+    popups,
     nextKey,
   };
 }
@@ -97,8 +101,9 @@ interface UseDocumentJobFailurePopupsOptions {
  * - First summary of a page load with ids this session has not seen: ONE popup
  *   summarising them, instead of a burst of per-job popups.
  * - Any id that shows up later: one popup for that job.
- * - A popup stays until closed, except that a job the server no longer lists as
- *   unresolved (someone resolved it elsewhere) drops its popup.
+ * - A popup stays until the user closes it or the user/branch scope changes; a job
+ *   missing from a later summary (resolved elsewhere, or pushed out of the capped id
+ *   window) never removes its popup.
  *
  * The state is derived while rendering, from the summary and the scope, so a
  * branch or user change can never show one render of the previous scope's popups.

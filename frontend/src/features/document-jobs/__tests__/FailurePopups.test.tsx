@@ -201,7 +201,7 @@ describe("document job failure popups", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("drops the popup of a job the server no longer lists as unresolved", async () => {
+  it("keeps the popup of a job the server no longer lists until the user closes it", async () => {
     const getSummary = mockSummaries(makeSummary());
     const queryClient = renderStack();
     await settleFirstSummary(queryClient);
@@ -211,9 +211,31 @@ describe("document job failure popups", () => {
 
     getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: ["j-finalize"] }));
     await refetchSummary(queryClient);
+    await settleFirstSummary(queryClient);
 
-    await waitFor(() => expect(screen.queryByText("계약서 자동 전송 실패")).not.toBeInTheDocument());
+    expect(screen.getByText("계약서 자동 전송 실패")).toBeInTheDocument();
     expect(screen.getByText("검토완료 자동 처리 실패")).toBeInTheDocument();
+  });
+
+  it("keeps an announced popup when its id falls outside the newest-50 window of a later summary", async () => {
+    const getSummary = mockSummaries(makeSummary());
+    const queryClient = renderStack();
+    await settleFirstSummary(queryClient);
+    getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: ["j-create"] }));
+    await refetchSummary(queryClient);
+    await screen.findByText("계약서 자동 전송 실패");
+
+    const newer = Array.from({ length: 50 }, (_, index) => `newer-${index}`);
+    getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: newer, unresolvedCount: 51 }));
+    await refetchSummary(queryClient);
+    await settleFirstSummary(queryClient);
+
+    expect(screen.getByText("계약서 자동 전송 실패")).toBeInTheDocument();
+    // j-create keeps its seen entry while its popup is open, so it is not announced a second time.
+    getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: ["j-create", ...newer.slice(0, 49)], unresolvedCount: 51 }));
+    await refetchSummary(queryClient);
+    await settleFirstSummary(queryClient);
+    expect(screen.getAllByText("계약서 자동 전송 실패")).toHaveLength(1);
   });
 
   it("prunes the stored seen-set to the ids the server still lists", async () => {
