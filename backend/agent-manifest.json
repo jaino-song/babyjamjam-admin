@@ -54,7 +54,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "automation.delete",
@@ -73,7 +73,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "automation.list",
@@ -91,7 +91,7 @@
       "flagKey": "agent.capability.automation.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "automation.setActive",
@@ -110,7 +110,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "automation.update",
@@ -129,7 +129,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "bank.accounts",
@@ -663,7 +663,7 @@
       "flagKey": "agent.capability.messages.deliveryHistory",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "messages.previewSms",
@@ -681,7 +681,7 @@
       "flagKey": "agent.capability.messages.previewSms",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "messages.retrySms",
@@ -700,7 +700,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "messages.scheduleSms",
@@ -719,7 +719,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "messages.sendSms",
@@ -738,7 +738,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "500fb49794da5a240263353594bf709a6011420d842e417ae2f6e5558f39e377"
+      "sourceDigest": "4fdfc38d47b20eb640051c8d2e252305b023d95df685bd20242b79051ab4e6e7"
     },
     {
       "name": "messages.updateTemplate",
