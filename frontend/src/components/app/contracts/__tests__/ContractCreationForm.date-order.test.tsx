@@ -374,7 +374,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     renderRetryableForm();
     fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
-    await screen.findByText("계약서 생성 중 오류가 발생했어요.");
+    await screen.findByText("전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인해 주세요.");
     expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockEnqueueCreation).toHaveBeenCalledTimes(1);
 
