@@ -928,9 +928,6 @@ export const ContractCreationForm = ({
   };
 
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
-    persistedClientIdRef.current = null;
-    persistedClientSnapshotRef.current = null;
-    retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
     // 다른 고객의 값으로 바뀌므로 이전 입력 이력과 메시지는 비워요.
     resetFieldStates();
@@ -1285,7 +1282,7 @@ export const ContractCreationForm = ({
             // 중복 판별은 공개 계약 코드로 하고, 배포 전환 구간에는 레거시
             // clientId 페이로드도 받아든다.
             const isDuplicatePhone = conflict.code === "CLIENT_PHONE_ALREADY_REGISTERED" || Boolean(conflict.clientId);
-                        if (!isDuplicatePhone) {
+            if (!isDuplicatePhone) {
               // Locally authored copy — the upstream conflict body is never
               // stringified into the error.
               throw new AuthoredSubmissionError("고객 자동 등록에 실패했어요.");
@@ -1397,8 +1394,9 @@ export const ContractCreationForm = ({
             ...(supersedeDocumentId ? { supersedeDocumentId } : {}),
           };
           const fingerprint = JSON.stringify(request);
-          const isRetry = creationRequestRef.current?.fingerprint === fingerprint;
-          const requestKey = isRetry ? creationRequestRef.current!.key : createHeadlessProgressId();
+          const previousRequest = creationRequestRef.current;
+          const isRetry = previousRequest?.fingerprint === fingerprint;
+          const requestKey = isRetry ? previousRequest.key : createHeadlessProgressId();
           creationRequestRef.current = { fingerprint, key: requestKey };
           let accepted;
           try {
@@ -1777,6 +1775,7 @@ export const ContractCreationForm = ({
 
   const handleWizardComplete = async () => {
     if (isSubmittingRef.current || !isCalendarReady || isEndDateUnsupported) return;
+    setCanCreateManually(false);
     const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (problemTarget) {
       requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
@@ -2415,27 +2414,29 @@ export const ContractCreationForm = ({
           </Button>
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
           <>
-          {canCreateManually && <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-component="desktop_contracts_creation_form_manual"
-            data-testid="contract-creation-manual"
-            onClick={handleManualContractCreation}
-            disabled={isSubmitting}
-          >
-            수동 입력
-          </Button>}
-          <Button
-            type="button"
-            size="sm"
-            data-testid="contract-creation-submit"
-            onClick={handleWizardComplete}
-            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady || isEndDateUnsupported}
-            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
-          >
-            {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
-          </Button>
+            {canCreateManually && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-component="desktop_contracts_creation_form_manual"
+                data-testid="contract-creation-manual"
+                onClick={handleManualContractCreation}
+                disabled={isSubmitting}
+              >
+                수동 입력
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              data-testid="contract-creation-submit"
+              onClick={handleWizardComplete}
+              disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady || isEndDateUnsupported}
+              className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
+            >
+              {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
+            </Button>
           </>
         ) : hasProcessingSuccess ? (
           <Button

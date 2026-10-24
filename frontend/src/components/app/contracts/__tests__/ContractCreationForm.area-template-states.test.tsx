@@ -77,6 +77,8 @@ jest.mock("@/hooks/useClients", () => ({
 
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({ data: [], isLoading: false }),
+  useCreateEmployee: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useUpdateEmployee: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 jest.mock("@/hooks", () => ({
@@ -288,6 +290,10 @@ describe("ContractCreationForm — contract template query states", () => {
 
       fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
+      expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+      for (let step = 0; step < 3; step += 1) {
+        fireEvent.click(screen.getByTestId("contract-creation-back"));
+      }
       await waitFor(() => {
         expect(screen.getByRole("combobox", { name: "계약서 선택" })).toBeDisabled();
       });

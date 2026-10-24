@@ -5,19 +5,20 @@
  * and that the pre-existing default (no `initialClient`) client-select path
  * is unaffected.
  *
- * Rendering-based (behavioral), mirroring
- * ContractCreationForm.iframe-fallback.test.tsx rather than the source-string
- * assertions in ContractCreationForm.test.tsx.
+ * Rendering-based coverage also checks queue acceptance, retry identity and
+ * the explicit manual fallback rather than source-string assertions.
  */
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { useFormStore } from "@/stores/form-store";
 import type { Client } from "@/lib/client/types";
 import { ContractCreationForm } from "../ContractCreationForm";
 
 const mockOpenDocument = jest.fn();
+const mockToast = jest.fn();
+jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }) }));
 const mockDispatchHeadless = jest.fn();
 const mockEnqueueDocumentCreation = jest.fn().mockResolvedValue({ jobId: "job-1", status: "queued", existing: false });
 const mockGenerateDocument = jest.fn();
@@ -231,6 +232,119 @@ describe("ContractCreationForm — initialClient mode", () => {
     mockGenerateDocument.mockResolvedValue({ document: { id: "tpl-1" }, user_data: {} });
     mockClients = [];
     useFormStore.getState().resetAll();
+  });
+
+  function renderQueueForm(supersedeDocumentId?: string) {
+    seedValidContract();
+    const onSuccess = jest.fn();
+    const onClose = jest.fn();
+    renderWithProviders(<ContractCreationForm activeStep={3} onActiveStepChange={jest.fn()} onSuccess={onSuccess} onClose={onClose} supersedeDocumentId={supersedeDocumentId} />);
+    return { onSuccess, onClose };
+  }
+
+  async function submitQueue() {
+    const previousCalls = mockEnqueueDocumentCreation.mock.calls.length;
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+    await waitFor(() => expect(mockEnqueueDocumentCreation).toHaveBeenCalledTimes(previousCalls + 1));
+    await waitFor(() => expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled());
+  }
+
+  function expectNoDirectSend() {
+    expect(mockGenerateDocument).not.toHaveBeenCalled();
+    expect(mockOpenDocument).not.toHaveBeenCalled();
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+  }
+
+  it.each([
+    [undefined, "전자문서 생성을 시작했어요"],
+    ["old-contract", "계약서 재발행을 시작했어요"],
+  ])("accepts queued creation/re-issue %s before closing", async (supersedeDocumentId, description) => {
+    let accept!: (value: { jobId: string; status: string; existing: boolean }) => void;
+    mockEnqueueDocumentCreation.mockImplementationOnce(() => new Promise((resolve) => { accept = resolve; }));
+    const { onSuccess, onClose } = renderQueueForm(supersedeDocumentId);
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+    await waitFor(() => expect(mockEnqueueDocumentCreation).toHaveBeenCalledTimes(1));
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(mockEnqueueDocumentCreation.mock.calls[0][0]).toEqual(expect.objectContaining({
+      clientId: 42,
+      ...(supersedeDocumentId ? { supersedeDocumentId } : {}),
+    }));
+    await act(async () => accept({ jobId: "job-1", status: "queued", existing: false }));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockToast).toHaveBeenCalledWith({ description });
+    expectNoDirectSend();
+  });
+
+  it.each([503, 400, 409, 500, 502, 504, undefined])("retains inputs after rejection %s and only exposes safe manual fallback", async (status) => {
+    mockEnqueueDocumentCreation.mockRejectedValueOnce({ isAxiosError: true, ...(status ? { response: { status, data: {} } } : {}) });
+    const { onSuccess, onClose } = renderQueueForm();
+    await submitQueue();
+    expect(screen.getByRole("alert")).toHaveTextContent(/.+/);
+    expect(screen.getByLabelText("계약 시작일")).toHaveValue("2026-08-05");
+    expect(useFormStore.getState()).toEqual(expect.objectContaining({ name: "송진호", phone: "010-6621-1878", address: "인천시 강다", actualPrice: "200000" }));
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expectNoDirectSend();
+    if (status === 503 || (status !== undefined && status >= 400 && status < 500)) {
+      fireEvent.click(screen.getByTestId("contract-creation-manual"));
+      await waitFor(() => expect(mockGenerateDocument).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockOpenDocument).toHaveBeenCalledTimes(1));
+      expect(mockEnqueueDocumentCreation).toHaveBeenCalledTimes(1);
+    } else {
+      expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
+    }
+  });
+
+  it("reuses a rejected request key only while submission content is unchanged", async () => {
+    mockEnqueueDocumentCreation.mockRejectedValue(new Error("Network Error"));
+    renderQueueForm();
+    await submitQueue();
+    await submitQueue();
+    const first = mockEnqueueDocumentCreation.mock.calls[0][0].requestKey;
+    expect(mockEnqueueDocumentCreation.mock.calls[1][0].requestKey).toBe(first);
+    fireEvent.change(screen.getByLabelText("계약 시작일"), { target: { value: "2026-08-06" } });
+    await submitQueue();
+    expect(mockEnqueueDocumentCreation.mock.calls[2][0].requestKey).not.toBe(first);
+    expectNoDirectSend();
+  });
+
+  it("never retries a fresh-key collision or treats dropped request data as accepted", async () => {
+    mockEnqueueDocumentCreation.mockResolvedValue({ jobId: "other-job", status: "queued", existing: true });
+    const { onSuccess } = renderQueueForm();
+    await submitQueue();
+    const message = "이 고객의 전자문서 작업이 이미 진행 중이에요. 처리중 목록에서 확인해 주세요.";
+    expect(screen.getByText(message)).toBeVisible();
+    await submitQueue();
+    expect(screen.getByText(message)).toBeVisible();
+    expect(mockEnqueueDocumentCreation.mock.calls[1][0].requestKey).not.toBe(mockEnqueueDocumentCreation.mock.calls[0][0].requestKey);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
+    expectNoDirectSend();
+  });
+
+  it("clears the request key after confirmed acceptance", async () => {
+    const { onSuccess } = renderQueueForm();
+    await submitQueue();
+    await submitQueue();
+    expect(onSuccess).toHaveBeenCalledTimes(2);
+    expect(mockEnqueueDocumentCreation.mock.calls[1][0].requestKey).not.toBe(mockEnqueueDocumentCreation.mock.calls[0][0].requestKey);
+  });
+
+  it.each(["failed", "requires_attention", "queued", "completed"])("handles same-key existing retry with status %s", async (status) => {
+    mockEnqueueDocumentCreation.mockRejectedValueOnce(new Error("Network Error"))
+      .mockResolvedValueOnce({ jobId: "job-1", status, existing: true });
+    const { onSuccess } = renderQueueForm();
+    await submitQueue();
+    await submitQueue();
+    expect(mockEnqueueDocumentCreation.mock.calls[1][0].requestKey).toBe(mockEnqueueDocumentCreation.mock.calls[0][0].requestKey);
+    if (status === "failed" || status === "requires_attention") {
+      expect(screen.getByText("전자문서 작업을 완료하지 못했어요. 처리중 목록에서 확인해 주세요.")).toBeVisible();
+      expect(onSuccess).not.toHaveBeenCalled();
+    } else {
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+    }
+    expectNoDirectSend();
   });
 
   it("prefills step-1 fields and area in the store, leaving paymentDate empty despite startDate", () => {

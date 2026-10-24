@@ -1717,6 +1717,8 @@ export function ContractDetail({
     closeStaffCompletionModal();
   };
 
+  // Retained for Unit 5.1's explicit failed-job recovery; ordinary approvals queue.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const startFinalizeFlow = (endDate?: string) => {
     if (isFinalizePending) {
       return;
