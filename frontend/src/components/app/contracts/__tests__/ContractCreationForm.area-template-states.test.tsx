@@ -21,7 +21,7 @@ interface AreaTemplatesQueryState {
 }
 
 const mockOpenDocument = jest.fn();
-const mockDispatchHeadless = jest.fn();
+const mockEnqueueCreation = jest.fn();
 const mockGenerateDocument = jest.fn();
 const mockAuthenticate = jest.fn();
 const mockRefetchAreaTemplates = jest.fn();
@@ -61,7 +61,7 @@ jest.mock("@/hooks/useEformsign", () => ({
 jest.mock("@/services/api", () => ({
   eformsignApi: {
     authenticate: (...args: unknown[]) => mockAuthenticate(...args),
-    dispatchHeadless: (...args: unknown[]) => mockDispatchHeadless(...args),
+    enqueueDocumentCreation: (...args: unknown[]) => mockEnqueueCreation(...args),
     generateDocument: (...args: unknown[]) => mockGenerateDocument(...args),
     createDocRecord: jest.fn().mockResolvedValue({}),
     adoptDocument: jest.fn().mockResolvedValue({}),
@@ -266,13 +266,13 @@ describe("ContractCreationForm — contract template query states", () => {
     async (_stateName, unavailableState) => {
       seedValidContractDraft();
       Object.assign(mockAreaTemplatesQuery, { data: [areaTemplate] });
-      mockDispatchHeadless.mockResolvedValue({ ok: false, reason: "manual_check" });
+      mockEnqueueCreation.mockRejectedValue(new Error("Network Error"));
 
       const { Harness, queryClient, rerender } = renderProcessingForm();
       fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
-      await waitFor(() => expect(screen.getByTestId("contract-creation-retry")).toBeInTheDocument());
-      expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+      await screen.findByText("계약서 생성 중 오류가 발생했어요.");
+      expect(mockEnqueueCreation).toHaveBeenCalledTimes(1);
       expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
 
       Object.assign(mockAreaTemplatesQuery, {
@@ -286,13 +286,13 @@ describe("ContractCreationForm — contract template query states", () => {
         </QueryClientProvider>,
       );
 
-      fireEvent.click(screen.getByTestId("contract-creation-retry"));
+      fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
       await waitFor(() => {
         expect(screen.getByRole("combobox", { name: "계약서 선택" })).toBeDisabled();
       });
       expect(screen.getByText(/(계약서 유형을 불러오지 못했어요|설정된 계약서 유형이 없어요)/)).toBeInTheDocument();
-      expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+      expect(mockEnqueueCreation).toHaveBeenCalledTimes(1);
       expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
       expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
       expect(mockGenerateDocument).not.toHaveBeenCalled();

@@ -7,47 +7,32 @@ const readSource = (...segments: string[]) =>
   fs.readFileSync(path.join(frontendRoot, ...segments), "utf8");
 
 test.describe("contract document jobs wiring", () => {
-  test("keeps the queue flag opt-in and uses the exact public env name", () => {
-    const source = readSource("src", "lib", "feature-flags.ts");
-
-    expect(source).toContain('"eformsignDocumentJobs"');
-    expect(source).toContain("process.env.NEXT_PUBLIC_FEATURE_EFORMSIGN_DOCUMENT_JOBS");
-    expect(source).toContain("eformsignDocumentJobs: false");
-  });
-
-  test("preserves synchronous and manual creation paths when queue mode is off", () => {
+  test("always queues non-manual creation including re-issue", () => {
     const source = readSource("src", "components", "app", "contracts", "ContractCreationForm.tsx");
-
-    expect(source).toContain('mode !== "manual" && isFeatureEnabled("eformsignDocumentJobs")');
+    expect(source).toContain('const shouldEnqueueDocumentJob = mode !== "manual"');
     expect(source).toContain("useEnqueueEformsignDocumentCreation");
-    expect(source).toContain("requestKey: createHeadlessProgressId()");
-    expect(source).toContain('toast({ description: "전자문서 작업을 시작했어요" })');
-    expect(source).toContain("if (mode !== \"manual\")");
+    expect(source).toContain("creationRequestRef");
+    expect(source).toContain("JSON.stringify(request)");
+    expect(source).toContain("{ supersedeDocumentId }");
+    expect(source).toContain('"전자문서 생성을 시작했어요"');
+    expect(source).toContain('"계약서 재발행을 시작했어요"');
+    expect(source).not.toContain("dispatchHeadless");
     expect(source).toContain("eformsignApi.generateDocument");
+    expect(source).toContain('mode: "manual"');
   });
 
-  test("queues finalization only in async mode and closes the modal with a toast", () => {
+  test("queues finalization by default and retains explicit direct recovery", () => {
     const source = readSource("src", "app", "(protected)", "contracts", "page.tsx");
-
     expect(source).toContain("useEnqueueEformsignDocumentFinalization");
-    expect(source).toContain('if (documentJobsEnabled)');
+    expect(source).toContain('path = "queue"');
+    expect(source).toContain('if (path === "queue")');
+    expect(source).toContain('path: "direct"');
     expect(source).toContain("requestKey: createFinalizeProgressId()");
     expect(source).toContain('return { kind: "queued" }');
     expect(source).toContain("setIsFinalizeOpen(false)");
-    expect(source).toContain('toast({ description: "전자문서 작업을 시작했어요" })');
     expect(source).toContain("generateStaffDocument");
-  });
-
-  test("renders the processing tile last and passes active-only queue summary data", () => {
-    const source = readSource("src", "app", "(protected)", "contracts", "page.tsx");
-    const statsSource = readSource("src", "components", "app", "contracts", "ContractStatsBar.tsx");
-
-    expect(source).toContain("<ContractStatsBar");
+    expect(source).toContain("showDocumentJobs={true}");
+    expect(source).not.toContain("documentJobsEnabled");
     expect(source).toContain("documentJobsQuery.summary");
-    expect(statsSource).toContain('label="전자문서 처리중"');
-    // Only the active count is shown; without summary data the tile reads "—" instead of a false 0.
-    expect(statsSource).toContain('hasSummaryData && summary ? summary.activeCount : "—"');
-    expect(statsSource).toContain("value={activeCount}");
-    expect(statsSource).toContain("className=\"ms-auto max-lg:ms-0\"");
   });
 });

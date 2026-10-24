@@ -19,6 +19,7 @@ import { ContractCreationForm } from "../ContractCreationForm";
 
 const mockOpenDocument = jest.fn();
 const mockDispatchHeadless = jest.fn();
+const mockEnqueueDocumentCreation = jest.fn().mockResolvedValue({ jobId: "job-1", status: "queued", existing: false });
 const mockGenerateDocument = jest.fn();
 const mockAuthenticate = jest.fn();
 const mockCreateClientMutateAsync = jest.fn().mockResolvedValue({ id: 999 });
@@ -71,6 +72,7 @@ jest.mock("@/hooks/useEformsign", () => ({
 
 jest.mock("@/services/api", () => ({
   eformsignApi: {
+    enqueueDocumentCreation: (...args: unknown[]) => mockEnqueueDocumentCreation(...args),
     authenticate: (...args: unknown[]) => mockAuthenticate(...args),
     dispatchHeadless: (...args: unknown[]) => mockDispatchHeadless(...args),
     generateDocument: (...args: unknown[]) => mockGenerateDocument(...args),
@@ -224,6 +226,7 @@ describe("ContractCreationForm — initialClient mode", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockEnqueueDocumentCreation.mockReset().mockResolvedValue({ jobId: "job-1", status: "queued", existing: false });
     mockAuthenticate.mockResolvedValue({ success: true });
     mockGenerateDocument.mockResolvedValue({ document: { id: "tpl-1" }, user_data: {} });
     mockClients = [];
@@ -389,9 +392,9 @@ describe("ContractCreationForm — initialClient mode", () => {
     expect(onSubmissionStateChange.mock.calls[0]).toEqual([true]);
   });
 
-  it("signals onSubmissionStateChange(false) even when the headless dispatch rejects", async () => {
+  it("signals onSubmissionStateChange(false) even when enqueue rejects", async () => {
     seedValidContract();
-    mockDispatchHeadless.mockRejectedValue(new Error("timeout of 180000ms exceeded"));
+    mockEnqueueDocumentCreation.mockRejectedValue(new Error("Network Error"));
     const onSubmissionStateChange = jest.fn();
 
     renderWithProviders(

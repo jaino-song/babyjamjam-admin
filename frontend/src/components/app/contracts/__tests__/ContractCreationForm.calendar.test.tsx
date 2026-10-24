@@ -26,6 +26,7 @@ jest.mock("@/hooks/useEformsign", () => ({
 }));
 jest.mock("@/services/api", () => ({
   eformsignApi: {
+    enqueueDocumentCreation: jest.fn().mockResolvedValue({ jobId: "job-1", status: "queued", existing: false }),
     dispatchHeadless: jest.fn(),
     generateDocument: jest.fn(),
     createDocRecord: jest.fn().mockResolvedValue({}),

@@ -96,14 +96,17 @@ The queue is intentionally fail-closed and must be enabled in dependency order:
    accepted only after a worker is ready to drain them.
 4. For contract auto-finalization, enable `CONTRACT_AUTO_FINALIZE_ENABLED=true`
    with a valid `CONTRACT_AUTO_FINALIZE_SINCE=YYYY-MM-DD` backlog fence.
-5. Set `NEXT_PUBLIC_FEATURE_EFORMSIGN_DOCUMENT_JOBS=true` for the Production
-   frontend and rebuild it. This public flag is inlined at build time; changing
-   it without a new deployment does not expose the StatMini or asynchronous path.
 
-Rollback reverses the intake first: disable the frontend flag and rebuild, then
-set `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED=false`. Keep the worker enabled
-until already accepted jobs reach a terminal state, then disable it. Preview's
-global scheduler remains disabled, so it is not a valid worker-drain environment.
+Contract creation (including re-issue) and staff finalization always enqueue.
+A running worker is required in every environment where accepting is enabled.
+
+Rollback stops intake first: set `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED=false`.
+Creation fails closed with HTTP 503, preserving the form and offering manual
+iframe entry after that definite rejection. Transport failures and gateway
+timeouts do not offer manual entry because a job may already have been accepted.
+Keep the worker enabled until already accepted jobs reach a terminal state, then
+disable it. Preview's global scheduler remains disabled, so it is not a valid
+worker-drain environment.
 
 ## Amendment 2026-10-22: failed staff job payload retention
 

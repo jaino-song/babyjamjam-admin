@@ -59,22 +59,12 @@ jest.mock("@/hooks/useEformsign", () => ({
 
 jest.mock("@/services/api", () => ({
   eformsignApi: {
+    enqueueDocumentCreation: (...args: unknown[]) => mockEnqueueMutateAsync(...args),
     dispatchHeadless: (...args: unknown[]) => mockDispatchHeadless(...args),
     generateDocument: jest.fn(),
     createDocRecord: jest.fn().mockResolvedValue({}),
     adoptDocument: jest.fn().mockResolvedValue({}),
   },
-}));
-
-jest.mock("@/lib/feature-flags", () => ({
-  isFeatureEnabled: (flag: string) => flag === "eformsignDocumentJobs",
-}));
-
-jest.mock("@/hooks/useEformsignDocumentJobs", () => ({
-  useEnqueueEformsignDocumentCreation: () => ({
-    mutateAsync: (...args: unknown[]) => mockEnqueueMutateAsync(...args),
-    isPending: false,
-  }),
 }));
 
 jest.mock("@/hooks/useClients", () => ({

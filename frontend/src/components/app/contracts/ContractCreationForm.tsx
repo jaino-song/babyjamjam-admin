@@ -1,6 +1,5 @@
 "use client";
 import { formatBirthdayInput, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import dayjs from "dayjs";
 import { isAxiosError } from "axios";
@@ -10,11 +9,9 @@ import { Check, X } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
-import { createReconnectingEventSource } from "@/lib/sse/reconnecting-event-source";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
-import { isFeatureEnabled } from "@/lib/feature-flags";
 import { Button } from "@/components/ui/button";
 import { Input, V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,13 +47,10 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
-import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import {
   HeadlessProgressStepper,
-  type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
-  type HeadlessProgressStepKey,
 } from "@/components/app/eformsign/HeadlessProgressStepper";
 
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
@@ -273,59 +267,11 @@ const INITIAL_CREATION_PROGRESS: HeadlessProgressState = {
   failed: false,
 };
 
-function isHeadlessProgressStepKey(value: string): value is HeadlessProgressStepKey {
-  return CONTRACT_CREATION_PROGRESS_STEPS.some((item) => item.key === value);
-}
-
 function createHeadlessProgressId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
   return `contract-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function getSafeHeadlessFailureMessage(reason: string | undefined): string {
-  const knownProviderFailureMessage = getKnownHeadlessProviderFailureMessage(reason);
-  if (knownProviderFailureMessage) return knownProviderFailureMessage;
-  if (!reason) {
-    return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
-  }
-  if (reason === "CLIENT_ASSIGNMENT_REQUIRED") {
-    return "고객의 제공인력 배정을 먼저 저장한 뒤 다시 시도해 주세요.";
-  }
-  if (reason === "DOCUMENT_PROVIDER_MISMATCH") {
-    return "전자문서의 제공인력과 고객 배정 정보가 일치하지 않아요. 배정을 확인해 주세요.";
-  }
-  if (reason === "CLIENT_SERVICE_TERMINATED") {
-    return "해지된 고객에게는 전자문서를 발송할 수 없어요.";
-  }
-  if (/timed out|timeout/i.test(reason)) {
-    return "백엔드 자동 처리 시간이 초과되었습니다. 재시도하거나 수동 입력을 사용해 주세요.";
-  }
-  if (/chromium|browser|executable/i.test(reason)) {
-    return "백엔드 브라우저 실행에 실패했어요. 수동 입력으로 진행해 주세요.";
-  }
-  if (/missing document_id/i.test(reason)) {
-    return "전자문서 전송 응답에서 문서 ID를 받지 못했습니다. 재시도하거나 수동 입력을 사용해 주세요.";
-  }
-  return "백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.";
-}
-
-function getKnownHeadlessProviderFailureMessage(reason: string | undefined): string | null {
-  switch (reason) {
-    case "template_workflow_config_invalid":
-      return "이번 요청에서 계약서를 발송하지 않았어요. 계약서 템플릿 설정이 올바르지 않아요. 관리자에게 템플릿 설정을 확인하고 수정해 달라고 요청한 뒤 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.";
-    case "template_workflow_unsupported":
-      return "이번 요청에서 계약서를 발송하지 않았어요. 현재 계약서 템플릿에서 지원하지 않는 항목이 있어요. 관리자에게 템플릿 설정을 확인하고 항목을 수정해 달라고 요청한 뒤 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.";
-    case "template_workflow_config_unavailable":
-      return "이번 요청에서 계약서를 발송하지 않았어요. 계약서 템플릿 설정을 잠시 불러오지 못했어요. 잠시 후 다시 시도해 주세요. 입력한 고객 정보와 날짜는 그대로 남아 있어요.";
-    default:
-      return null;
-  }
-}
-
-function serializeClientPersistencePayload(payload: Record<string, unknown>): string {
-  return JSON.stringify(payload);
 }
 
 // 저장된 고객과 계약서 입력값을 비교하기 위한 정규화 값. value는 비교용, display는 안내창 표시용이에요.
@@ -693,16 +639,9 @@ export const ContractCreationForm = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [allowIframeFallback, setAllowIframeFallback] = useState(false);
-  // Kept out of `submitError` on purpose: opening the iframe fallback re-enters
-  // handleContractCreation, which clears submitError. This warning has to outlive
-  // that, because it is the only thing standing between staff and a duplicate
-  // contract when the dispatch outcome is unknown.
-  const [unverifiedDispatchNotice, setUnverifiedDispatchNotice] = useState<string | null>(null);
+  const [canCreateManually, setCanCreateManually] = useState(false);
+  const creationRequestRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
-  const persistedClientIdRef = useRef<number | null>(null);
-  const persistedClientSnapshotRef = useRef<string | null>(null);
-  const retryWithPersistedClientRef = useRef(false);
   const [dueDateInput, setDueDateInput] = useState("");
   const [birthDateInput, setBirthDateInput] = useState("");
   const [startDateInput, setStartDateInput] = useState("");
@@ -961,12 +900,9 @@ export const ContractCreationForm = ({
     setIsDialogOpen(false);
     setIsSubmitting(false);
     setSubmitError(null);
-    setAllowIframeFallback(false);
-    setUnverifiedDispatchNotice(null);
+    setCanCreateManually(false);
+    creationRequestRef.current = null;
     setCreationProgress(INITIAL_CREATION_PROGRESS);
-    persistedClientIdRef.current = null;
-    persistedClientSnapshotRef.current = null;
-    retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
     resetFieldStates();
     setAttemptedSteps([]);
@@ -1110,6 +1046,7 @@ export const ContractCreationForm = ({
 
   // Re-issue: the replaced contract is cancelled only after the new one was sent,
   // so abandoning or failing the send leaves the client's current contract intact.
+  // The queue path supersedes server-side; this effect handles manual creation only.
   const supersededRef = useRef(false);
   useEffect(() => {
     if (!isCreationSuccessOpen || !supersedeDocumentId || supersededRef.current) return;
@@ -1204,6 +1141,7 @@ export const ContractCreationForm = ({
 
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
+    setCanCreateManually(false);
     const dateProblem = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (dateProblem) {
       requestFieldFocus(dateProblem, CONTRACT_INFO_STEP_INDEX);
@@ -1218,15 +1156,7 @@ export const ContractCreationForm = ({
     isSubmittingRef.current = true;
     onSubmissionStateChange?.(true);
     try {
-      // A re-issue must cancel the contract it replaces once this one is sent, which
-      // only the synchronous paths observe (they open the success modal), so a
-      // re-issue never goes to the background job queue.
-      const shouldEnqueueDocumentJob = mode !== "manual"
-        && !supersedeDocumentId
-        && isFeatureEnabled("eformsignDocumentJobs");
-      const shouldAttemptHeadless = !shouldEnqueueDocumentJob
-        && mode !== "manual"
-        && isFeatureEnabled("headlessDispatch");
+      const shouldEnqueueDocumentJob = mode !== "manual";
 
       if (employeeId === null || (showEmployee2 && employee2Id === null)) {
         // 문제는 제공인력 선택 필드의 라벨 줄 메시지로 보여줘요.
@@ -1235,7 +1165,7 @@ export const ContractCreationForm = ({
         return;
       }
 
-      if (!shouldEnqueueDocumentJob && !shouldAttemptHeadless && !isEformsignLoaded) {
+      if (!shouldEnqueueDocumentJob && !isEformsignLoaded) {
         setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
         setActiveStep(CONTRACT_INFO_STEP_INDEX);
         return;
@@ -1243,10 +1173,6 @@ export const ContractCreationForm = ({
 
       setIsSubmitting(true);
       setSubmitError(null);
-      // A manual run is usually the automatic iframe fallback re-entering after a
-      // failure, so it must not wipe the warning that failure just raised. Only a
-      // genuinely fresh attempt clears it.
-      if (mode !== "manual") setUnverifiedDispatchNotice(null);
       setIsDialogOpen(false);
       // A manual run is the same creation session re-entering after the automatic run
       // failed, so progress must never drop to "no session" in between: that would
@@ -1260,36 +1186,13 @@ export const ContractCreationForm = ({
       let autoRegisteredClientId: number | null = null;
       let keepSubmittingUntilDialogCloses = false;
       try {
-        const reusePersistedClient = retryWithPersistedClientRef.current;
-        retryWithPersistedClientRef.current = false;
-        let finalClientId = reusePersistedClient
-          ? persistedClientIdRef.current ?? clientId
-          : clientId;
+        let finalClientId = clientId;
         const normalizedDueDate = toRealIsoDate(dueDateInput) ?? "";
         const normalizedBirthDate = toRealIsoDate(birthDateInput) ?? "";
         const assignment = {
           primaryEmployeeId: employeeId,
           secondaryEmployeeId: showEmployee2 ? employee2Id : null,
         };
-        const clientPersistenceSnapshot = serializeClientPersistencePayload({
-          ...assignment,
-          name,
-          phone,
-          birthday: birthday || null,
-          address: address || null,
-          dueDate: normalizedDueDate || null,
-          birthDate: normalizedBirthDate || null,
-          type: voucherType || null,
-          duration: parseOptionalInteger(voucherDuration),
-          fullPrice: fullPrice || null,
-          grant: grant || null,
-          actualPrice: actualPrice || null,
-          startDate: startDate || null,
-          endDate: endDate || null,
-          voucherClient: hasPositivePrice(grant),
-          areaId: area || null,
-        });
-
         // 기존 고객을 골랐고 입력값이 저장된 고객 정보와 다르면 어떻게 반영할지 먼저 물어봐요.
         // 자동 등록·새로 만든 고객은 이 확인을 거치지 않아요.
         const loadedBaseline = clientId !== null && loadedClientBaselineRef.current?.id === clientId
@@ -1349,7 +1252,7 @@ export const ContractCreationForm = ({
           }
         }
 
-        if (!reusePersistedClient && !clientId) {
+        if (!clientId) {
           const autoRegistrationPayload = {
             name,
             phone,
@@ -1396,11 +1299,7 @@ export const ContractCreationForm = ({
           if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
           setClientId(newClient.id);
         }
-        const shouldUpdatePersistedClient = clientUpdateMode === "skip"
-          ? false
-          : reusePersistedClient
-            ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
-            : clientId !== null;
+        const shouldUpdatePersistedClient = clientUpdateMode !== "skip" && clientId !== null;
         if (shouldUpdatePersistedClient) {
           if (finalClientId === null) {
             throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
@@ -1449,11 +1348,6 @@ export const ContractCreationForm = ({
         if (finalClientId === null) {
           throw new AuthoredSubmissionError("고객 정보를 먼저 선택하거나 등록해 주세요.");
         }
-        if (!reusePersistedClient || shouldUpdatePersistedClient) {
-          persistedClientIdRef.current = finalClientId;
-          persistedClientSnapshotRef.current = clientPersistenceSnapshot;
-        }
-
         const start = dayjs(startDate);
         const end = endDate ? dayjs(endDate) : null;
         const payment = dayjs(paymentDate);
@@ -1494,210 +1388,39 @@ export const ContractCreationForm = ({
         };
 
         if (shouldEnqueueDocumentJob) {
-          await enqueueCreationMutation.mutateAsync({
-            requestKey: createHeadlessProgressId(),
+          // An accepted job may exist even if its response was lost. Retain the
+          // persisted client and request key until acceptance is confirmed.
+          autoRegisteredClientId = null;
+          const request = {
             clientId: finalClientId,
             contractData,
-          });
-          toast({ description: "전자문서 작업을 시작했어요" });
+            ...(supersedeDocumentId ? { supersedeDocumentId } : {}),
+          };
+          const fingerprint = JSON.stringify(request);
+          const isRetry = creationRequestRef.current?.fingerprint === fingerprint;
+          const requestKey = isRetry ? creationRequestRef.current!.key : createHeadlessProgressId();
+          creationRequestRef.current = { fingerprint, key: requestKey };
+          let accepted;
+          try {
+            accepted = await enqueueCreationMutation.mutateAsync({ ...request, requestKey });
+          } catch (error) {
+            // Gateway/transport failures do not prove that intake was rejected.
+            const status = isAxiosError(error) ? error.response?.status : undefined;
+            setCanCreateManually(status !== undefined && ((status >= 400 && status < 500) || status === 503));
+            throw error;
+          }
+          if (accepted.existing && !isRetry) {
+            creationRequestRef.current = null;
+            throw new AuthoredSubmissionError("이 고객의 전자문서 작업이 이미 진행 중이에요. 처리중 목록에서 확인해 주세요.");
+          }
+          if (accepted.existing && (accepted.status === "failed" || accepted.status === "requires_attention")) {
+            throw new AuthoredSubmissionError("전자문서 작업을 완료하지 못했어요. 처리중 목록에서 확인해 주세요.");
+          }
+          creationRequestRef.current = null;
+          toast({ description: supersedeDocumentId ? "계약서 재발행을 시작했어요" : "전자문서 생성을 시작했어요" });
           if (onSuccess) onSuccess();
           else onClose?.();
           return;
-        }
-
-        // BJJ-90: when the flag is on, drive the iframe gate sequence on the
-        // backend via Playwright. Failures stay on the processing step so the
-        // user can retry the backend run or choose the manual iframe fallback.
-        if (shouldAttemptHeadless) {
-          const progressId = createHeadlessProgressId();
-          let progressSource: ReturnType<typeof createReconnectingEventSource> | null = null;
-
-          // Reopen the eformsign editor so staff are never stranded on a failed
-          // automatic run. Deferred a tick so this run's `finally` (which clears
-          // isSubmitting) lands before the manual run sets it again.
-          const openIframeFallback = () => {
-            setTimeout(() => {
-              void handleContractCreation({ mode: "manual" });
-            }, 0);
-          };
-
-          try {
-            setCreationProgress({ step: "client-started", completed: false, failed: false });
-            progressSource = createReconnectingEventSource({
-              eventName: "progress",
-              url: `/api/eformsign-docs/dispatch-headless/progress?progressId=${encodeURIComponent(progressId)}`,
-              onEvent: (event) => {
-                let data: HeadlessProgressEvent;
-                try {
-                  data = JSON.parse(event.data) as HeadlessProgressEvent;
-                } catch {
-                  return;
-                }
-                if (data.step === "failed") {
-                  setSubmitError(getSafeHeadlessFailureMessage(data.reason));
-                  setCreationProgress((current) => ({
-                    step: data.failedStep && isHeadlessProgressStepKey(data.failedStep)
-                      ? data.failedStep
-                      : current.step ?? "client-started",
-                    completed: false,
-                    failed: true,
-                  }));
-                  return;
-                }
-                if (!isHeadlessProgressStepKey(data.step)) return;
-                const nextStep = data.step;
-                setCreationProgress((current) =>
-                  current.failed
-                    ? current
-                    : {
-                      step: nextStep,
-                      completed: nextStep === "sent",
-                      failed: false,
-                    },
-                );
-              },
-            });
-
-            const headless = await eformsignApi.dispatchHeadless(
-              contractData,
-              finalClientId,
-              progressId,
-            );
-
-            if (headless.ok) {
-              setCreationProgress({ step: "sent", completed: true, failed: false });
-              invalidateContractQueries(finalClientId);
-              setIsCreationSuccessOpen(true);
-              return;
-            }
-
-            // Dev: these exact backend reasons are guaranteed before the provider
-            // send boundary. Keep the existing client and allow a safe retry;
-            // the iframe fallback is not a valid recovery for this failure.
-            const knownHeadlessFailureMessage = getKnownHeadlessProviderFailureMessage(headless.reason);
-            if (knownHeadlessFailureMessage) {
-              setAllowIframeFallback(false);
-              setSubmitError(getUserErrorMessage(knownHeadlessFailureMessage));
-              retryWithPersistedClientRef.current = true;
-              setCreationProgress((current) => ({
-                step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep)
-                  ? headless.failedStep
-                  : current.step ?? "client-started",
-                completed: false,
-                failed: true,
-              }));
-              return;
-            }
-
-            // BJJ-319 5-4c: the structured outcome is the primary classification
-            // when the envelope carries it. An UNKNOWN verdict means the provider
-            // send boundary may already be crossed, so the only safe recovery is
-            // the durable 확인 필요 notice — no iframe, no automatic retry. A
-            // PARTIALLY_APPLIED verdict joins the local-persist adopt/check-list
-            // recovery below. Envelopes without the field keep the legacy
-            // reason/fallbackHint branches underneath.
-            const structuredOutcome = readHeadlessOutcome(headless.outcome);
-            if (structuredOutcome === "UNKNOWN") {
-              setAllowIframeFallback(false);
-              setUnverifiedDispatchNotice(
-                "자동 생성 결과를 확인하지 못했습니다. 전자문서 목록에서 생성 여부를 먼저 확인하시고, "
-                + "확인 전에는 새 계약서를 만들지 마세요.",
-              );
-              markCreationProgressFailed();
-              return;
-            }
-
-            if ((headless.reason === "local_persist_failed" || structuredOutcome === "PARTIALLY_APPLIED") && headless.remoteDocumentId) {
-              try {
-                const adopted = await eformsignApi.adoptDocument(
-                  headless.remoteDocumentId,
-                  finalClientId,
-                );
-                if (adopted.warnings?.includes("mirror_sync_failed")) {
-                  invalidateContractQueries(finalClientId);
-                  setSubmitError(
-                    "문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
-                    + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요.",
-                  );
-                  markCreationProgressFailed();
-                  return;
-                }
-                setCreationProgress({ step: "sent", completed: true, failed: false });
-                invalidateContractQueries(finalClientId);
-                setIsCreationSuccessOpen(true);
-              } catch {
-                setSubmitError("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.");
-                markCreationProgressFailed();
-              }
-              return;
-            }
-            if (structuredOutcome === "PARTIALLY_APPLIED") {
-              // The verdict says the document exists but could not be adopted
-              // here and no remote id was provided to retry the adoption with.
-              // Reuse the existing check-list copy: check the list, do not
-              // re-create the contract.
-              setSubmitError("문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
-                + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요.");
-              markCreationProgressFailed();
-              return;
-            }
-            if (headless.reason === "remote_unconfirmed" || headless.fallbackHint === "adopt-or-manual" || headless.fallbackHint === "manual_check") {
-              setSubmitError("문서 생성 상태를 확인할 수 없어요. 전자문서 목록에서 확인 후 다시 시도해 주세요.");
-              markCreationProgressFailed();
-              return;
-            }
-            if (headless.reason === "duplicate_pending_document") {
-              setSubmitError("최근 생성된 진행 중 문서가 있습니다.");
-              markCreationProgressFailed();
-              if (await requestConfirmation("최근 생성된 진행 중 문서가 있습니다. 그래도 새로 생성하시겠습니까?")) {
-                const forced = await eformsignApi.dispatchHeadless(contractData, finalClientId, progressId, true);
-                if (forced.ok) {
-                  setCreationProgress({ step: "sent", completed: true, failed: false });
-                  invalidateContractQueries(finalClientId);
-                  setIsCreationSuccessOpen(true);
-                }
-              }
-              return;
-            }
-
-            console.warn(
-              "[contract-creation] headless dispatch returned ok=false",
-              headless.reason,
-            );
-            const canFallBackToIframe = headless.fallbackHint === "iframe";
-            setAllowIframeFallback(canFallBackToIframe);
-            setSubmitError(getSafeHeadlessFailureMessage(headless.reason));
-            setCreationProgress((current) => ({
-              step: headless.failedStep && isHeadlessProgressStepKey(headless.failedStep)
-                ? headless.failedStep
-                : current.step ?? "client-started",
-              completed: false,
-              failed: true,
-            }));
-            if (canFallBackToIframe) {
-              // fallbackHint:"iframe" is the backend stating it got far enough to
-              // know nothing was sent, so reopening the editor cannot duplicate.
-              openIframeFallback();
-            }
-            return;
-          } catch (headlessError) {
-            console.warn(
-              "[contract-creation] headless dispatch threw",
-              headlessError,
-            );
-            // The backend's verdict never reached us, so whether the document was
-            // sent is genuinely unknown. Reopening the editor here can send a second
-            // contract; require a list check before any explicit retry.
-            setAllowIframeFallback(false);
-            setUnverifiedDispatchNotice(
-              "자동 생성 결과를 확인하지 못했습니다. 전자문서 목록에서 생성 여부를 먼저 확인하시고, "
-              + "확인 전에는 새 계약서를 만들지 마세요.",
-            );
-            markCreationProgressFailed();
-            return;
-          } finally {
-            progressSource?.close();
-          }
         }
 
         if (!isEformsignLoaded) {
@@ -2061,11 +1784,6 @@ export const ContractCreationForm = ({
     }
     if (isStepIncomplete(CONTRACT_INFO_STEP_INDEX)) {
       markStepAttempted(CONTRACT_INFO_STEP_INDEX);
-      return;
-    }
-    if (retryWithPersistedClientRef.current) {
-      setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
-      void handleContractCreation();
       return;
     }
     isSubmittingRef.current = true;
@@ -2642,16 +2360,6 @@ export const ContractCreationForm = ({
             </Alert>
           )}
 
-          {unverifiedDispatchNotice && (
-            <Alert
-              variant="destructive"
-              data-component="desktop_contracts_creation_unverified-dispatch-notice"
-              data-testid="contract-creation-unverified-notice"
-            >
-              <AlertDescription>{unverifiedDispatchNotice}</AlertDescription>
-            </Alert>
-          )}
-
           {isEformsignLoading && (
             <Alert data-component="desktop_messages_sections_contract-form-loading">
               <AlertDescription>eformsign SDK를 로드하는 중입니다...</AlertDescription>
@@ -2706,6 +2414,18 @@ export const ContractCreationForm = ({
             다음
           </Button>
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
+          <>
+          {canCreateManually && <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-component="desktop_contracts_creation_form_manual"
+            data-testid="contract-creation-manual"
+            onClick={handleManualContractCreation}
+            disabled={isSubmitting}
+          >
+            수동 입력
+          </Button>}
           <Button
             type="button"
             size="sm"
@@ -2716,6 +2436,7 @@ export const ContractCreationForm = ({
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
           </Button>
+          </>
         ) : hasProcessingSuccess ? (
           <Button
             type="button"
@@ -2729,17 +2450,6 @@ export const ContractCreationForm = ({
           </Button>
         ) : hasProcessingFailure ? (
           <>
-            {allowIframeFallback ? <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="contract-creation-manual"
-              onClick={handleManualContractCreation}
-              disabled={isSubmitting}
-              className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
-            >
-              수동 입력
-            </Button> : null}
             <Button
               type="button"
               size="sm"
