@@ -269,6 +269,9 @@ describe("ContractCreationForm — initialClient mode", () => {
       clientId: 42,
       ...(supersedeDocumentId ? { supersedeDocumentId } : {}),
     }));
+    if (!supersedeDocumentId) {
+      expect(mockEnqueueDocumentCreation.mock.calls[0][0]).not.toHaveProperty("supersedeDocumentId");
+    }
     await act(async () => accept({ jobId: "job-1", status: "queued", existing: false }));
     await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
     expect(onClose).not.toHaveBeenCalled();
@@ -287,6 +290,7 @@ describe("ContractCreationForm — initialClient mode", () => {
     expect(onClose).not.toHaveBeenCalled();
     expectNoDirectSend();
     if (status === 503 || (status !== undefined && status >= 400 && status < 500)) {
+      expect(screen.getByText("직접 작성 전에 처리중 목록에 같은 고객의 작업이 없는지 확인해 주세요.")).toBeVisible();
       fireEvent.click(screen.getByTestId("contract-creation-manual"));
       await waitFor(() => expect(mockGenerateDocument).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(mockOpenDocument).toHaveBeenCalledTimes(1));
@@ -294,6 +298,32 @@ describe("ContractCreationForm — initialClient mode", () => {
     } else {
       expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
     }
+  });
+
+  it.each([
+    ["network error with unchanged input", new Error("Network Error"), false],
+    ["504 with changed input", { isAxiosError: true, response: { status: 504, data: {} } }, true],
+  ])("keeps manual fallback blocked after %s then 503", async (_scenario, uncertainError, changeInput) => {
+    mockEnqueueDocumentCreation.mockRejectedValueOnce(uncertainError)
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503, data: {} } });
+    const { onSuccess, onClose } = renderQueueForm();
+    const uncertainCopy = "전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인해 주세요.";
+    await submitQueue();
+    expect(screen.getByRole("alert")).toHaveTextContent(uncertainCopy);
+    expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
+    if (changeInput) {
+      fireEvent.change(screen.getByLabelText("계약 시작일"), { target: { value: "2026-08-06" } });
+    }
+    await submitQueue();
+    expect(screen.getByRole("alert")).toHaveTextContent(uncertainCopy);
+    expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
+    const firstKey = mockEnqueueDocumentCreation.mock.calls[0][0].requestKey;
+    const secondKey = mockEnqueueDocumentCreation.mock.calls[1][0].requestKey;
+    if (changeInput) expect(secondKey).not.toBe(firstKey);
+    else expect(secondKey).toBe(firstKey);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expectNoDirectSend();
   });
 
   it("reuses a rejected request key only while submission content is unchanged", async () => {
