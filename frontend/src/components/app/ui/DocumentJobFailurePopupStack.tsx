@@ -4,6 +4,7 @@ import {
   DocumentJobFailurePopup,
   type DocumentJobFailurePopupProps,
 } from "@/components/app/ui/DocumentJobFailurePopup";
+import { useToasterClearance } from "@/components/app/ui/useToasterClearance";
 
 export interface DocumentJobFailurePopupStackItem
   extends Omit<DocumentJobFailurePopupProps, "data-component"> {
@@ -18,16 +19,19 @@ export interface DocumentJobFailurePopupStackProps {
 }
 
 /**
- * Bottom-right region for failure popups, on any page. It sits above the shared
- * Toaster (bottom-6, one toast of roughly 90px tall, plus an 8px gap) and, on phones,
- * above the floating bottom navigation, so none of the three ever overlap.
+ * Bottom-right region for failure popups, on any page. Its bottom offset follows the
+ * measured height of the shared Toaster (plus an 8px gap), never below a floor that
+ * clears the floating bottom navigation on phones, so none of the three overlap.
  */
 export function DocumentJobFailurePopupStack({
   items,
   overflow,
   "data-component": dataComponent,
 }: DocumentJobFailurePopupStackProps) {
-  if (items.length === 0 && !overflow) return null;
+  const visible = items.length > 0 || Boolean(overflow);
+  const bottom = useToasterClearance(visible);
+
+  if (!visible) return null;
 
   return (
     <div
@@ -35,7 +39,8 @@ export function DocumentJobFailurePopupStack({
       aria-label="전자문서 처리 실패 알림"
       data-component={dataComponent}
       data-slot="document-job-failure-popup-stack"
-      className="pointer-events-none fixed inset-x-4 bottom-[128px] z-[1000] flex flex-col gap-2 md:inset-x-auto md:right-6 md:w-[380px]"
+      style={{ bottom }}
+      className="pointer-events-none fixed inset-x-4 z-[1000] flex flex-col gap-2 md:inset-x-auto md:right-6 md:w-[380px]"
     >
       {items.map(({ key, ...popup }, index) => (
         <DocumentJobFailurePopup
