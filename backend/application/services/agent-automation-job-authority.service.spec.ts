@@ -74,7 +74,8 @@ function fixture(options: { serviceRecordUrl?: string; configBase?: string } = {
         serviceRecordCaseId: caseId,
         linkTokenHash: "efl_synthetic_token",
         expectedPhoneHash: createHash("sha256").update("01000000021").digest("hex"),
-        expiresAt: new Date("2026-10-22T11:00:00.000Z"),
+        // Far future: the check compares against the real clock.
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
         active: true,
         revokedAt: null,
         lockedAt: null,
