@@ -25,6 +25,7 @@ import { SendNotificationSection } from "@/components/app/notifications/SendNoti
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { SectionNav } from "@/components/app/v3";
+import { StatsBar } from "@/components/app/v3/StatsBar";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { usePushNotification } from "@/hooks/usePushNotification";
@@ -157,6 +158,7 @@ export default function SettingsPage() {
 
   return (
     <section data-component="desktop_settings_sections" className="space-y-6">
+      <StatsBar items={[]} showDocumentJobs="whenActive" name="desktop_settings_sections" />
       <KakaoLinkResultModal />
       <div
         data-slot="page-sections"
