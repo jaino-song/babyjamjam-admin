@@ -12,6 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
+import {
+  clearResendUncertain,
+  isResendUncertain,
+  markResendUncertain,
+} from "@/features/document-jobs/resend-uncertain-storage";
 import { useToast } from "@/hooks/use-toast";
 import {
   useEnqueueEformsignDocumentCreation,
@@ -147,8 +152,10 @@ export function DocumentJobRecoveryDialog({
   // The last resolve ended without an answer (network/5xx/other): offer it again, never a resend.
   const [resolveFailed, setResolveFailed] = useState(false);
   // A resend enqueue ended without a definite answer, so the first send may have been accepted. Once set it
-  // is never cleared: starting a fresh contract then needs the same "nothing was sent" confirmation as verify_result.
-  const [resendUncertain, setResendUncertain] = useState(false);
+  // is never cleared here: starting a fresh contract then needs the same "nothing was sent" confirmation as
+  // verify_result. The marker also lives in localStorage so closing and reopening the dialog cannot lose it;
+  // it fails closed when storage cannot be read.
+  const [resendUncertain, setResendUncertain] = useState(() => isResendUncertain(jobId));
 
   const busyRef = useRef(false);
   const claimStartedRef = useRef(false);
@@ -181,6 +188,12 @@ export function DocumentJobRecoveryDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The server's own id is the canonical one; it may spell the URL's id differently, so check it once known.
+  const canonicalJobId = claim?.job.jobId || null;
+  useEffect(() => {
+    if (canonicalJobId && isResendUncertain(canonicalJobId)) setResendUncertain(true);
+  }, [canonicalJobId]);
+
   const recoveryKind = claim?.recoveryKind ?? null;
   const job = claim?.job ?? null;
   const resendInput = useMemo(
@@ -198,6 +211,9 @@ export function DocumentJobRecoveryDialog({
     for (let attempt = 0; ; attempt += 1) {
       try {
         await eformsignApi.resolveDocumentJob(jobId);
+        // The job is no longer recoverable, so there is nothing left to be uncertain about.
+        clearResendUncertain(jobId);
+        if (canonicalJobId) clearResendUncertain(canonicalJobId);
         refreshProvider();
         return true;
       } catch (error) {
@@ -261,7 +277,13 @@ export function DocumentJobRecoveryDialog({
 
       // The URL may spell the same UUID in either case; the server's own id is the canonical one, and lower-casing
       // keeps the key identical for every spelling so the idempotency key can never fork.
-      const requestKey = `resend:${(claim.job.jobId || jobId).toLowerCase()}`;
+      const canonicalId = (claim.job.jobId || jobId).toLowerCase();
+      const requestKey = `resend:${canonicalId}`;
+      // Write-ahead: the marker exists before the request leaves, so a tab closed or a dialog unmounted while it is
+      // in flight still finds it. The in-memory latch is not touched here; the open dialog's 새로 작성 stays disabled
+      // while busy. A definite 4xx below takes back only a marker this attempt wrote.
+      const wasUncertain = resendUncertain || isResendUncertain(canonicalId);
+      markResendUncertain(canonicalId);
       let existing: boolean;
       try {
         const accepted =
@@ -273,6 +295,7 @@ export function DocumentJobRecoveryDialog({
         const status = isAxiosError(error) ? error.response?.status : undefined;
         // Only a 4xx is a definite rejection; a network error, timeout or any 5xx may still have been accepted.
         if (status === undefined || status >= 500) setResendUncertain(true);
+        else if (!wasUncertain) clearResendUncertain(canonicalId);
         if (status === 403) setNotice(COPY.forbidden);
         else if (status !== undefined && ((status >= 400 && status < 500) || status === 503)) setNotice(COPY.resendRejected);
         else setNotice(COPY.resendUncertain);
