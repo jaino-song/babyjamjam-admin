@@ -97,17 +97,55 @@ describe("ContractDocumentJobsPopover", () => {
     jest.restoreAllMocks();
   });
 
-  it("renders the three read-only sections and deep-links rows with a document id", () => {
+  it("renders the three sections; active rows are not links, failed rows open recovery, completed rows open the document", () => {
     renderOpenPopover();
 
     expect(screen.getByRole("heading", { name: "처리 중" })).toBeInTheDocument();
     expect(screen.getByText("확인 필요")).toBeInTheDocument();
     expect(screen.getByText("최근 처리")).toBeInTheDocument();
     expect(screen.getByText("전자문서 최종 확인중")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /전자문서 최종 처리/ })[0]).toHaveAttribute(
+
+    const links = screen.getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/contracts?recoverJobId=job-attention",
+      "/contracts?documentId=document-3",
+    ]);
+    expect(screen.queryByRole("link", { name: /전자문서 최종 확인중/ })).not.toBeInTheDocument();
+  });
+
+  it("links failed rows to recovery and titles rows with the client name", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job f/1", jobType: "create_document", status: "failed", clientName: "김하늘", recoveryKind: "manual_send" },
+          { jobId: "job-f2", jobType: "finalize_document", status: "failed", clientName: null, recoveryKind: "manual_send" },
+        ],
+        recent: [],
+      },
+    });
+
+    const first = screen.getByRole("link", { name: /김하늘 · 계약서 생성/ });
+    expect(first).toHaveAttribute("href", "/contracts?recoverJobId=job%20f%2F1");
+    expect(screen.getByRole("link", { name: /고객 · 검토완료/ })).toHaveAttribute(
       "href",
-      "/contracts?documentId=document-1",
+      "/contracts?recoverJobId=job-f2",
     );
+  });
+
+  it("shows a claimed job as ordinary progress, not its raw step name", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-claimed", jobType: "create_document", status: "failed", progressStep: "manual_in_progress", clientName: "김하늘" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText("manual_in_progress")).not.toBeInTheDocument();
+    expect(screen.getByText("처리 중", { selector: "p, span, div" })).toBeInTheDocument();
   });
 
   it("closes on Escape and mobile backdrop clicks", () => {
@@ -124,17 +162,17 @@ describe("ContractDocumentJobsPopover", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("shows safe copy and no navigation for a job without a document id", () => {
+  it("shows safe copy and no navigation for a completed job without a document id", () => {
     renderOpenPopover({
       documentJobs: {
-        active: [{ ...JOBS.active[0], documentId: null }],
+        active: [],
         requiresAttention: [],
-        recent: [],
+        recent: [{ jobId: "job-done", jobType: "create_document", status: "completed", documentId: null }],
       },
     });
 
     expect(screen.getByTitle("연결된 계약서가 없어 이동할 수 없어요.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /전자문서 최종 처리/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("renders the processing tile first in the row, without ms-auto, from active + unresolved only", async () => {
@@ -222,7 +260,7 @@ describe("ContractDocumentJobsPopover", () => {
     await waitFor(() => expect(getJobs.mock.calls.length).toBeGreaterThan(callsBefore));
   });
 
-  it("lists active jobs from the list endpoint in the card's popover", async () => {
+  it("lists active jobs from the list endpoint in the card's popover without linking them", async () => {
     jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 1 }));
     jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(
       makeJobList({ active: [makeJob({ jobId: "job-x", status: "processing", jobType: "finalize_document", documentId: "doc-9" })] }),
@@ -231,10 +269,8 @@ describe("ContractDocumentJobsPopover", () => {
 
     fireEvent.click(await screen.findByRole("button", PROCESSING_TILE));
 
-    expect(await screen.findByRole("link", { name: /전자문서 최종 처리/ })).toHaveAttribute(
-      "href",
-      "/contracts?documentId=doc-9",
-    );
+    expect(await screen.findByText("김하늘 · 검토완료")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /김하늘 · 검토완료/ })).not.toBeInTheDocument();
   });
 
   it("renders no jobs card and touches neither provider nor react-query with showDocumentJobs={false}", () => {

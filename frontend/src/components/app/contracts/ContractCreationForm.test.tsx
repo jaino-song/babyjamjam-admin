@@ -2,7 +2,7 @@ import fs from "node:fs";
 
 const source = fs.readFileSync(require.resolve("./ContractCreationForm"), "utf8");
 
-describe("ContractCreationForm manual and registration boundaries", () => {
+describe("ContractCreationForm registration boundaries", () => {
   it("keeps non-phone conflicts locally authored and provider authentication server-side", () => {
     expect(source).toContain('error.response?.status !== 409');
     expect(source).toContain('throw new AuthoredSubmissionError("고객 자동 등록에 실패했어요.")');
@@ -16,13 +16,11 @@ describe("ContractCreationForm manual and registration boundaries", () => {
     expect(source).toContain('dataComponent="desktop_contracts_creation_confirmation"');
   });
 
-  it("keeps manual iframe submission pending until the dialog closes", () => {
-    const handler = source.slice(source.indexOf("const handleContractCreation"), source.indexOf("const isStep1Valid"));
-    const close = source.slice(source.indexOf("const handleDialogClose"), source.indexOf("const resetCreationSession"));
-    expect(handler).toContain("let keepSubmittingUntilDialogCloses = false");
-    expect(handler).toContain("keepSubmittingUntilDialogCloses = true");
-    expect(handler).toContain("if (!keepSubmittingUntilDialogCloses)");
-    expect(handler).toContain("handleDialogClose()");
-    expect(close).toContain("setIsSubmitting(false)");
+  it("has no manual (iframe) creation path left", () => {
+    expect(source).not.toContain("handleManualContractCreation");
+    expect(source).not.toContain("canCreateManually");
+    expect(source).not.toContain("eformsignApi.generateDocument");
+    expect(source).not.toContain("openDocument");
+    expect(source).not.toContain('id="eformsign_iframe"');
   });
 });

@@ -101,9 +101,12 @@ Contract creation (including re-issue) and staff finalization always enqueue.
 A running worker is required in every environment where accepting is enabled.
 
 Rollback stops intake first: set `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED=false`.
-Creation fails closed with HTTP 503, preserving the form and offering manual
-iframe entry after that definite rejection. Transport failures and gateway
-timeouts do not offer manual entry because a job may already have been accepted.
+Creation fails closed with HTTP 503: the form shows the error and stays open
+with its input preserved. There is no manual iframe entry (the browser
+document-generation routes are retired); once intake is back, staff send again
+from the form, or recover a failed job from the jobs list. Transport failures and
+gateway timeouts show an "outcome unknown" message pointing at the jobs list,
+because a job may already have been accepted.
 Keep the worker enabled until already accepted jobs reach a terminal state, then
 disable it. Preview's global scheduler remains disabled, so it is not a valid
 worker-drain environment.

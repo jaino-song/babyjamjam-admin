@@ -6,7 +6,7 @@
  * is unaffected.
  *
  * Rendering-based coverage also checks queue acceptance, retry identity and
- * the explicit manual fallback rather than source-string assertions.
+ * that no rejection offers a manual (iframe) send, rather than source-string assertions.
  */
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -279,7 +279,7 @@ describe("ContractCreationForm — initialClient mode", () => {
     expectNoDirectSend();
   });
 
-  it.each([503, 400, 409, 500, 502, 504, undefined])("retains inputs after rejection %s and only exposes safe manual fallback", async (status) => {
+  it.each([503, 400, 409, 500, 502, 504, undefined])("retains inputs after rejection %s and never offers a manual send", async (status) => {
     mockEnqueueDocumentCreation.mockRejectedValueOnce({ isAxiosError: true, ...(status ? { response: { status, data: {} } } : {}) });
     const { onSuccess, onClose } = renderQueueForm();
     await submitQueue();
@@ -288,22 +288,31 @@ describe("ContractCreationForm — initialClient mode", () => {
     expect(useFormStore.getState()).toEqual(expect.objectContaining({ name: "송진호", phone: "010-6621-1878", address: "인천시 강다", actualPrice: "200000" }));
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
+    expect(screen.queryByText("수동 입력")).not.toBeInTheDocument();
+    expect(screen.queryByText("직접 작성 전에 처리중 목록에 같은 고객의 작업이 없는지 확인해 주세요.")).not.toBeInTheDocument();
+    // The form stays open on the contract-info step for another attempt.
+    expect(screen.getByTestId("contract-creation-submit")).toBeVisible();
     expectNoDirectSend();
-    if (status === 503 || (status !== undefined && status >= 400 && status < 500)) {
-      expect(screen.getByText("직접 작성 전에 처리중 목록에 같은 고객의 작업이 없는지 확인해 주세요.")).toBeVisible();
-      fireEvent.click(screen.getByTestId("contract-creation-manual"));
-      await waitFor(() => expect(mockGenerateDocument).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(mockOpenDocument).toHaveBeenCalledTimes(1));
-      expect(mockEnqueueDocumentCreation).toHaveBeenCalledTimes(1);
-    } else {
-      expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();
-    }
+  });
+
+  it("shows the rejection as an error and keeps the form open when intake is off (503)", async () => {
+    mockEnqueueDocumentCreation.mockRejectedValueOnce({ isAxiosError: true, response: { status: 503, data: {} } });
+    const { onSuccess, onClose } = renderQueueForm();
+    await submitQueue();
+    expect(screen.getByRole("alert")).toHaveTextContent(/.+/);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("전송 여부를 확인하지 못했어요");
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId("contract-creation-submit")).toBeVisible();
+    expect(mockEnqueueDocumentCreation).toHaveBeenCalledTimes(1);
+    expectNoDirectSend();
   });
 
   it.each([
     ["network error with unchanged input", new Error("Network Error"), false],
     ["504 with changed input", { isAxiosError: true, response: { status: 504, data: {} } }, true],
-  ])("keeps manual fallback blocked after %s then 503", async (_scenario, uncertainError, changeInput) => {
+  ])("keeps the uncertain-send copy after %s then 503", async (_scenario, uncertainError, changeInput) => {
     mockEnqueueDocumentCreation.mockRejectedValueOnce(uncertainError)
       .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503, data: {} } });
     const { onSuccess, onClose } = renderQueueForm();
