@@ -7,7 +7,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import type { EformsignDocument } from "@/lib/eformsign/types";
 import { eformsignApi } from "@/services/api";
+import { useFormStore } from "@/stores/form-store";
 
 import ContractsPage from "./page";
 
@@ -18,6 +20,7 @@ const mockReplace = jest.fn(() => {
   mockParams = new URLSearchParams();
 });
 let mockMountCount = 0;
+let mockDocuments: EformsignDocument[] = [];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: mockReplace, refresh: jest.fn() }),
@@ -35,7 +38,7 @@ jest.mock("@/hooks/useEformsignDocsLiveStream", () => ({
 }));
 jest.mock("@/hooks/useInfiniteContracts", () => ({
   useInfiniteContracts: () => ({
-    documents: [],
+    documents: mockDocuments,
     isLoading: false,
     isFetching: false,
     hasNextPage: false,
@@ -68,6 +71,7 @@ jest.mock("@/services/api", () => ({
     getDocumentStatusCounts: jest.fn().mockResolvedValue({ documents: [] }),
     claimDocumentJobRecovery: jest.fn(),
     resolveDocumentJob: jest.fn(),
+    getDocument: jest.fn(),
   },
   withEformsignReauth: jest.fn(),
 }));
@@ -110,6 +114,23 @@ jest.mock("@/components/app/contracts/ContractCreationForm", () => {
 });
 
 const claim = eformsignApi.claimDocumentJobRecovery as jest.Mock;
+
+const targetDocument: EformsignDocument = {
+  id: "doc-1", document_name: "복구 대상 계약서", document_number: "1",
+  created_date: 100, updated_date: 100,
+  template: { id: "template", name: "Contract" },
+  creator: { recipient_type: "01", name: "Test" },
+  last_editor: { recipient_type: "01", name: "Test" },
+  current_status: {
+    status_type: "003", status_doc_type: "", status_doc_detail: "",
+    step_type: "", step_index: "", step_name: "", step_recipients: [],
+    step_group: 0, expired_date: 0, _expired: false,
+  },
+  fields: [], next_status: [], previous_status: [], histories: [],
+  recipients: [], detail_template_info: [],
+};
+const DETAIL_SELECTOR =
+  '[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]';
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -159,6 +180,9 @@ describe("ContractsPage failed-job recovery", () => {
     jest.clearAllMocks();
     mockParams = new URLSearchParams();
     mockMountCount = 0;
+    mockDocuments = [targetDocument];
+    useFormStore.getState().resetAll();
+    (eformsignApi.getDocument as jest.Mock).mockResolvedValue(targetDocument);
     claim.mockResolvedValue(verifyResultClaim());
   });
 
@@ -234,5 +258,39 @@ describe("ContractsPage failed-job recovery", () => {
     await waitFor(() => expect(screen.getByTestId("stub-step")).toBeInTheDocument());
     expect(stubStep()).toBe("0");
     expect(screen.queryByText("작성 중인 계약서를 버리고 새로 작성할까요?")).not.toBeInTheDocument();
+  });
+
+  it("shows the document behind an open creation form and keeps the form's input", async () => {
+    const page = renderPage();
+    fireEvent.click(sendButton());
+    fireEvent.click(screen.getByText("stub-begin-session"));
+    useFormStore.getState().setName("김하늘");
+    const mountBefore = screen.getByTestId("stub-mount").textContent;
+    expect(document.querySelector(DETAIL_SELECTOR)).not.toBeInTheDocument();
+
+    page.followLink("recoverJobId=j1");
+    await screen.findByText("전자문서 결과 확인 필요");
+    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
+
+    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).toBeInTheDocument());
+    expect(screen.getAllByText(targetDocument.document_name).length).toBeGreaterThan(0);
+    expect(screen.queryByText("전자문서 결과 확인 필요")).not.toBeInTheDocument();
+    // The form is hidden, not discarded: same mount, same step, same store values, no prompt.
+    expect(screen.getByTestId("stub-mount").textContent).toBe(mountBefore);
+    expect(screen.getByTestId("stub-mount").closest(".hidden")).not.toBeNull();
+    expect(stubStep()).toBe(String(PROCESSING_STEP));
+    expect(useFormStore.getState().name).toBe("김하늘");
+    expect(screen.queryByText("작성 중인 계약서를 버리고 새로 작성할까요?")).not.toBeInTheDocument();
+  });
+
+  it("shows the document when no creation form is open", async () => {
+    mockParams = new URLSearchParams("recoverJobId=j1");
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
+
+    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).toBeInTheDocument());
+    expect(screen.getAllByText(targetDocument.document_name).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
   });
 });
