@@ -2058,7 +2058,6 @@ function ClientFormContent({
                     <FormSwitchRow
                         data-component={`${base}_field-message-automation`}
                         title={t(locale, "clients.form.message-automation")}
-                        description={t(locale, "clients.form.message-automation-helper")}
                         checked={smsAutomationChecked}
                         onToggle={toggleSmsAutomation}
                         buttonAriaLabel={t(locale, "clients.form.message-automation")}
