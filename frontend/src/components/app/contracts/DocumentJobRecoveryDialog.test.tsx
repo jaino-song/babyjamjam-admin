@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode, type ReactElement } from "react";
 
+import { resendUncertainStorageKey } from "@/features/document-jobs/resend-uncertain-storage";
 import { makeJob } from "@/features/document-jobs/testing/jobs-test-utils";
 import { eformsignApi, type ClaimEformsignDocumentJobRecoveryResponse } from "@/services/api";
 
@@ -99,6 +100,7 @@ async function openConfirmAndApprove(openLabel: string | RegExp, approveLabel: s
 describe("DocumentJobRecoveryDialog", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
     claimSpy = jest.spyOn(eformsignApi, "claimDocumentJobRecovery").mockResolvedValue(createClaim());
     resolveSpy = jest.spyOn(eformsignApi, "resolveDocumentJob").mockResolvedValue({
       job: makeJob({ jobId: "job-1" }),
@@ -114,6 +116,7 @@ describe("DocumentJobRecoveryDialog", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    window.localStorage.clear();
   });
 
   describe("claim", () => {
@@ -477,6 +480,125 @@ describe("DocumentJobRecoveryDialog", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "버리고 새로 작성" }));
         await waitFor(() => expect(onStartFresh).toHaveBeenCalledTimes(1));
+      });
+
+      describe("across closing and reopening the dialog", () => {
+        const MARKER_KEY = resendUncertainStorageKey("job-1");
+
+        async function resendIntoUncertainty() {
+          createSpy.mockReset().mockRejectedValue(networkError());
+          const first = renderDialog();
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await screen.findByText(/전송 여부를 확인하지 못했어요/);
+          first.unmount();
+        }
+
+        it.each([
+          ["the same spelling", "job-1"],
+          ["another casing", "JOB-1"],
+        ])("still asks for the confirmation after reopening with %s", async (_label, reopenedId) => {
+          await resendIntoUncertainty();
+          expect(window.localStorage.getItem(MARKER_KEY)).not.toBeNull();
+
+          const { onStartFresh, onClose } = renderDialog({ jobId: reopenedId });
+          fireEvent.click(await button("새로 작성"));
+
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+          expect(onClose).not.toHaveBeenCalled();
+
+          fireEvent.click(screen.getByRole("button", { name: "확인했어요" }));
+          await waitFor(() => expect(onStartFresh).toHaveBeenCalledTimes(1));
+        });
+
+        it("keeps the saved-input resend available after reopening", async () => {
+          await resendIntoUncertainty();
+
+          renderDialog();
+
+          expect(await button("저장된 내용으로 다시 보내기")).toBeEnabled();
+        });
+
+        it("applies a marker stored under the server's canonical id when the URL spells it differently", async () => {
+          window.localStorage.setItem(MARKER_KEY, String(Date.now()));
+          const { onStartFresh } = renderDialog({ jobId: "legacy-url-spelling" });
+
+          fireEvent.click(await button("새로 작성"));
+
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+        });
+
+        it("clears the marker once the old job is resolved, so a later reopen starts fresh at once", async () => {
+          createSpy.mockReset().mockRejectedValueOnce(networkError()).mockResolvedValue({ jobId: "job-2", status: "queued", existing: false });
+          const first = renderDialog();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await screen.findByText(/전송 여부를 확인하지 못했어요/);
+          expect(window.localStorage.getItem(MARKER_KEY)).not.toBeNull();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await waitFor(() => expect(resolveSpy).toHaveBeenCalledTimes(1));
+          await waitFor(() => expect(first.onClose).toHaveBeenCalledTimes(1));
+          expect(window.localStorage.getItem(MARKER_KEY)).toBeNull();
+          first.unmount();
+
+          const { onStartFresh } = renderDialog();
+          fireEvent.click(await button("새로 작성"));
+
+          expect(screen.queryByText(VERIFY_COPY)).not.toBeInTheDocument();
+          expect(onStartFresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the marker through a definite 400 on a retry", async () => {
+          createSpy.mockReset().mockRejectedValueOnce(networkError()).mockRejectedValueOnce(httpError(400));
+          const first = renderDialog();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await screen.findByText(/전송 여부를 확인하지 못했어요/);
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await screen.findByText("다시 보내지 못했어요. 잠시 후 다시 시도해 주세요.");
+          first.unmount();
+
+          expect(window.localStorage.getItem(MARKER_KEY)).not.toBeNull();
+          const { onStartFresh } = renderDialog();
+          fireEvent.click(await button("새로 작성"));
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+        });
+
+        it("requires the confirmation when storage cannot be read", async () => {
+          jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("storage blocked");
+          });
+          const { onStartFresh } = renderDialog();
+
+          fireEvent.click(await button("새로 작성"));
+
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+        });
+
+        it("ignores and removes a marker older than eight days", async () => {
+          window.localStorage.setItem(MARKER_KEY, String(Date.now() - 8 * 24 * 60 * 60 * 1000 - 60_000));
+          const { onStartFresh } = renderDialog();
+
+          fireEvent.click(await button("새로 작성"));
+
+          expect(screen.queryByText(VERIFY_COPY)).not.toBeInTheDocument();
+          expect(onStartFresh).toHaveBeenCalledTimes(1);
+          expect(window.localStorage.getItem(MARKER_KEY)).toBeNull();
+        });
+
+        it("is not affected by a marker for a different job", async () => {
+          window.localStorage.setItem(resendUncertainStorageKey("job-other"), String(Date.now()));
+          const { onStartFresh } = renderDialog();
+
+          fireEvent.click(await button("새로 작성"));
+
+          expect(screen.queryByText(VERIFY_COPY)).not.toBeInTheDocument();
+          expect(onStartFresh).toHaveBeenCalledTimes(1);
+        });
       });
 
       it("keeps the existing behaviour after a definite 400 with no prior uncertainty", async () => {
