@@ -1167,6 +1167,10 @@ export default function ContractsPage() {
           onStartFresh={handleStartFreshContractCreation}
           onViewDocument={(documentId) => {
             setActiveSection("maternity");
+            // Same switch as selecting a list row: leaving creation mode only hides the form —
+            // its session stays mounted, so the in-progress input is kept, not discarded.
+            setIsCreating(false);
+            setRegisterClientDocumentId(null);
             setSelectedDocId(documentId);
           }}
           onClose={() => setRecoverJobId(null)}
