@@ -146,6 +146,9 @@ export function DocumentJobRecoveryDialog({
   const [existingJob, setExistingJob] = useState(false);
   // The last resolve ended without an answer (network/5xx/other): offer it again, never a resend.
   const [resolveFailed, setResolveFailed] = useState(false);
+  // A resend enqueue ended without a definite answer, so the first send may have been accepted. Once set it
+  // is never cleared: starting a fresh contract then needs the same "nothing was sent" confirmation as verify_result.
+  const [resendUncertain, setResendUncertain] = useState(false);
 
   const busyRef = useRef(false);
   const claimStartedRef = useRef(false);
@@ -256,7 +259,9 @@ export function DocumentJobRecoveryDialog({
         return;
       }
 
-      const requestKey = `resend:${jobId}`;
+      // The URL may spell the same UUID in either case; the server's own id is the canonical one, and lower-casing
+      // keeps the key identical for every spelling so the idempotency key can never fork.
+      const requestKey = `resend:${(claim.job.jobId || jobId).toLowerCase()}`;
       let existing: boolean;
       try {
         const accepted =
@@ -266,6 +271,8 @@ export function DocumentJobRecoveryDialog({
         existing = accepted.existing;
       } catch (error) {
         const status = isAxiosError(error) ? error.response?.status : undefined;
+        // Only a 4xx is a definite rejection; a network error, timeout or any 5xx may still have been accepted.
+        if (status === undefined || status >= 500) setResendUncertain(true);
         if (status === 403) setNotice(COPY.forbidden);
         else if (status !== undefined && ((status >= 400 && status < 500) || status === 503)) setNotice(COPY.resendRejected);
         else setNotice(COPY.resendUncertain);
@@ -291,9 +298,14 @@ export function DocumentJobRecoveryDialog({
     onClose();
   };
 
-  const requestFresh = () => {
+  const proceedFresh = () => {
     if (hasCreationInProgress) setConfirm("discard");
     else startFresh();
+  };
+
+  const requestFresh = () => {
+    if (resendUncertain) setConfirm("verify-fresh");
+    else proceedFresh();
   };
 
   const handleConfirm = () => {
@@ -301,7 +313,7 @@ export function DocumentJobRecoveryDialog({
     setConfirm(null);
     if (kind === "resend") void handleResend();
     else if (kind === "resolve") void handleResolveOnly("처리됨으로 표시했어요");
-    else if (kind === "verify-fresh") requestFresh();
+    else if (kind === "verify-fresh") proceedFresh();
     else if (kind === "discard") startFresh();
   };
 

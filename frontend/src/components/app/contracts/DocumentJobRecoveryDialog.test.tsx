@@ -298,6 +298,20 @@ describe("DocumentJobRecoveryDialog", () => {
       expect(resolveSpy).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["an uppercase url id with a lowercase claim id", "5F2B6C1E-8A4D-4E0B-9C3A-1D7E2F4A6B80", "5f2b6c1e-8a4d-4e0b-9c3a-1d7e2f4a6b80"],
+      ["a lowercase url id", "5f2b6c1e-8a4d-4e0b-9c3a-1d7e2f4a6b80", "5f2b6c1e-8a4d-4e0b-9c3a-1d7e2f4a6b80"],
+      ["an uppercase url id and an uppercase claim id", "5F2B6C1E-8A4D-4E0B-9C3A-1D7E2F4A6B80", "5F2B6C1E-8A4D-4E0B-9C3A-1D7E2F4A6B80"],
+    ])("builds the same lowercase request key for %s", async (_label, urlId, claimId) => {
+      claimSpy.mockReset().mockResolvedValue(createClaim({}, { jobId: claimId }));
+      renderDialog({ jobId: urlId });
+
+      await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+
+      await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+      expect(createSpy.mock.calls[0][0].requestKey).toBe("resend:5f2b6c1e-8a4d-4e0b-9c3a-1d7e2f4a6b80");
+    });
+
     it("does not send twice when the confirm is clicked twice before the first send returns", async () => {
       let accept!: (value: { jobId: string; status: "queued"; existing: boolean }) => void;
       createSpy.mockReset().mockImplementation(() => new Promise((resolve) => { accept = resolve; }));
@@ -400,6 +414,84 @@ describe("DocumentJobRecoveryDialog", () => {
         await screen.findByText("전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인한 뒤 다시 시도해 주세요."),
       ).toBeInTheDocument();
       expect(resolveSpy).not.toHaveBeenCalled();
+    });
+
+    describe("uncertain enqueue outcome", () => {
+      const VERIFY_COPY = "eformsign에서 이 계약서가 전송되지 않은 것을 확인했나요?";
+
+      it.each([
+        ["502", () => httpError(502)],
+        ["a network error", () => networkError()],
+      ])("asks for the non-delivery confirmation before 새로 작성 after %s", async (_label, makeError) => {
+        createSpy.mockReset().mockRejectedValue(makeError());
+        const { onStartFresh, onClose } = renderDialog();
+
+        await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+        await screen.findByText(/전송 여부를 확인하지 못했어요/);
+
+        fireEvent.click(screen.getByRole("button", { name: "새로 작성" }));
+        expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+        expect(onStartFresh).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("button", { name: "취소" }));
+        await waitFor(() => expect(screen.queryByText(VERIFY_COPY)).not.toBeInTheDocument());
+        expect(onStartFresh).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("button", { name: "새로 작성" }));
+        fireEvent.click(await screen.findByRole("button", { name: "확인했어요" }));
+
+        await waitFor(() => expect(onStartFresh).toHaveBeenCalledTimes(1));
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(resolveSpy).not.toHaveBeenCalled();
+      });
+
+      it("keeps requiring the confirmation when a retry is later rejected with a definite 400", async () => {
+        createSpy.mockReset().mockRejectedValueOnce(networkError()).mockRejectedValueOnce(httpError(400));
+        const { onStartFresh } = renderDialog();
+
+        await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+        await screen.findByText(/전송 여부를 확인하지 못했어요/);
+        await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+        await screen.findByText("다시 보내지 못했어요. 잠시 후 다시 시도해 주세요.");
+        expect(createSpy).toHaveBeenCalledTimes(2);
+
+        fireEvent.click(screen.getByRole("button", { name: "새로 작성" }));
+        expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+        expect(onStartFresh).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("button", { name: "확인했어요" }));
+        await waitFor(() => expect(onStartFresh).toHaveBeenCalledTimes(1));
+      });
+
+      it("still asks about a form in progress after the non-delivery confirmation", async () => {
+        createSpy.mockReset().mockRejectedValue(httpError(502));
+        const { onStartFresh } = renderDialog({ hasCreationInProgress: true });
+
+        await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+        await screen.findByText(/전송 여부를 확인하지 못했어요/);
+
+        fireEvent.click(screen.getByRole("button", { name: "새로 작성" }));
+        fireEvent.click(await screen.findByRole("button", { name: "확인했어요" }));
+        expect(await screen.findByText("작성 중인 계약서를 버리고 새로 작성할까요?")).toBeInTheDocument();
+        expect(onStartFresh).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("button", { name: "버리고 새로 작성" }));
+        await waitFor(() => expect(onStartFresh).toHaveBeenCalledTimes(1));
+      });
+
+      it("keeps the existing behaviour after a definite 400 with no prior uncertainty", async () => {
+        createSpy.mockReset().mockRejectedValue(httpError(400));
+        const { onStartFresh, onClose } = renderDialog();
+
+        await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+        await screen.findByText("다시 보내지 못했어요. 잠시 후 다시 시도해 주세요.");
+
+        fireEvent.click(screen.getByRole("button", { name: "새로 작성" }));
+
+        expect(screen.queryByText(VERIFY_COPY)).not.toBeInTheDocument();
+        expect(onStartFresh).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledTimes(1);
+      });
     });
   });
 
