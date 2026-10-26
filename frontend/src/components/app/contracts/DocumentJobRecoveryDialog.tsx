@@ -279,6 +279,11 @@ export function DocumentJobRecoveryDialog({
       // keeps the key identical for every spelling so the idempotency key can never fork.
       const canonicalId = (claim.job.jobId || jobId).toLowerCase();
       const requestKey = `resend:${canonicalId}`;
+      // Write-ahead: the marker exists before the request leaves, so a tab closed or a dialog unmounted while it is
+      // in flight still finds it. The in-memory latch is not touched here; the open dialog's 새로 작성 stays disabled
+      // while busy. A definite 4xx below takes back only a marker this attempt wrote.
+      const wasUncertain = resendUncertain || isResendUncertain(canonicalId);
+      markResendUncertain(canonicalId);
       let existing: boolean;
       try {
         const accepted =
@@ -289,10 +294,8 @@ export function DocumentJobRecoveryDialog({
       } catch (error) {
         const status = isAxiosError(error) ? error.response?.status : undefined;
         // Only a 4xx is a definite rejection; a network error, timeout or any 5xx may still have been accepted.
-        if (status === undefined || status >= 500) {
-          markResendUncertain(canonicalId);
-          setResendUncertain(true);
-        }
+        if (status === undefined || status >= 500) setResendUncertain(true);
+        else if (!wasUncertain) clearResendUncertain(canonicalId);
         if (status === 403) setNotice(COPY.forbidden);
         else if (status !== undefined && ((status >= 400 && status < 500) || status === 503)) setNotice(COPY.resendRejected);
         else setNotice(COPY.resendUncertain);

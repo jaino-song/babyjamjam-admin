@@ -567,6 +567,74 @@ describe("DocumentJobRecoveryDialog", () => {
           expect(onStartFresh).not.toHaveBeenCalled();
         });
 
+        it("writes the marker before the request resolves, so unmounting mid-flight still requires the confirmation", async () => {
+          createSpy.mockReset().mockReturnValue(new Promise(() => {}));
+          const first = renderDialog();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+          expect(window.localStorage.getItem(MARKER_KEY)).not.toBeNull();
+          expect(screen.getByRole("button", { name: "새로 작성" })).toBeDisabled();
+          first.unmount();
+
+          const { onStartFresh } = renderDialog();
+          fireEvent.click(await button("새로 작성"));
+
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+        });
+
+        it("takes back the marker after a definite 400 with no prior uncertainty", async () => {
+          createSpy.mockReset().mockRejectedValue(httpError(400));
+          const first = renderDialog();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await screen.findByText("다시 보내지 못했어요. 잠시 후 다시 시도해 주세요.");
+          expect(window.localStorage.getItem(MARKER_KEY)).toBeNull();
+          first.unmount();
+
+          const { onStartFresh } = renderDialog();
+          fireEvent.click(await button("새로 작성"));
+
+          expect(screen.queryByText(VERIFY_COPY)).not.toBeInTheDocument();
+          expect(onStartFresh).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+          ["400", httpError(400)],
+          ["403", httpError(403)],
+        ])("keeps a marker that was already there when the attempt is rejected with %s", async (_label, error) => {
+          window.localStorage.setItem(MARKER_KEY, String(Date.now()));
+          createSpy.mockReset().mockRejectedValue(error);
+          const first = renderDialog();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+          await waitFor(() => expect(screen.getByRole("button", { name: "저장된 내용으로 다시 보내기" })).toBeEnabled());
+          expect(window.localStorage.getItem(MARKER_KEY)).not.toBeNull();
+          first.unmount();
+
+          const { onStartFresh } = renderDialog();
+          fireEvent.click(await button("새로 작성"));
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+        });
+
+        it("keeps the marker when the server already had a job under the key", async () => {
+          createSpy.mockReset().mockResolvedValue({ jobId: "job-2", status: "queued", existing: true });
+          const first = renderDialog();
+
+          await openConfirmAndApprove("저장된 내용으로 다시 보내기", "다시 보내기");
+          await screen.findByText(/이미 처리중 목록에 있어요/);
+          expect(window.localStorage.getItem(MARKER_KEY)).not.toBeNull();
+          first.unmount();
+
+          const { onStartFresh } = renderDialog();
+          fireEvent.click(await button("새로 작성"));
+          expect(await screen.findByText(VERIFY_COPY)).toBeInTheDocument();
+          expect(onStartFresh).not.toHaveBeenCalled();
+        });
+
         it("requires the confirmation when storage cannot be read", async () => {
           jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
             throw new Error("storage blocked");
