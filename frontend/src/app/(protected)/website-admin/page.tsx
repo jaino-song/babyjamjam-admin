@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { settingsApi, type RibbonConfig } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import { StatsBar } from "@/components/app/v3/StatsBar";
 
 const SECTIONS = [
   { id: "ribbon", label: "리본 배너", icon: Flag },
@@ -106,6 +107,7 @@ export default function WebsiteAdminPage() {
 
   return (
     <PageSection name="website-admin">
+      <StatsBar items={[]} showDocumentJobs="whenActive" name="website-admin" />
       <SplitLayout data-component="desktop_website-admin_split-layout"
         hasSelection={activeSection !== null}
         onBack={() => setActiveSection(null)}
