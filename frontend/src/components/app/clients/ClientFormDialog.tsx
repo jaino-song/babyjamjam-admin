@@ -69,6 +69,7 @@ import {
     FormNativeSelect,
     FormSection,
     FormSwitchRow,
+    FormSwitchGroupRow,
     FormTextInput,
     FormTextInputWithSuffix,
 } from "@/components/app/ui/form-section";
@@ -500,6 +501,9 @@ function ClientFormContent({
         careCenter: false,
         voucherClient: false,
         breastPump: false,
+        allowSaturdayService: false,
+        allowSundayService: false,
+        allowHolidayService: false,
         serviceStatus: "pre_booking",
         applyMessageAutomation: true,
         smsAutomationEnabled: true,
@@ -802,8 +806,20 @@ function ClientFormContent({
     const pendingAutoEndDateRef = useRef(false);
     const autoEndDateOwnedRef = useRef(false);
     const [calendarRefreshFailed, setCalendarRefreshFailed] = useState(false);
-    const businessDayCalendarRef = useRef(businessDayCalendar);
-    businessDayCalendarRef.current = businessDayCalendar;
+    // 고객이 허용한 토·일·공휴일을 서비스일로 보는 달력이에요. 종료일·회차 계산은 모두 이 달력으로 해요.
+    const allowSaturdayService = formData.allowSaturdayService ?? false;
+    const allowSundayService = formData.allowSundayService ?? false;
+    const allowHolidayService = formData.allowHolidayService ?? false;
+    const serviceCalendar = useMemo(
+        () => businessDayCalendar.withServiceDays({
+            saturday: allowSaturdayService,
+            sunday: allowSundayService,
+            holiday: allowHolidayService,
+        }),
+        [businessDayCalendar, allowSaturdayService, allowSundayService, allowHolidayService],
+    );
+    const businessDayCalendarRef = useRef(serviceCalendar);
+    businessDayCalendarRef.current = serviceCalendar;
 
     // 자동 계산이 달력이 지원하지 않는 연도에 닿아 종료일을 비웠는지. 안내를 보여 주고 저장을 막아요.
     const [isEndDateUnsupported, setIsEndDateUnsupported] = useState(false);
@@ -835,6 +851,22 @@ function ClientFormContent({
         // 입력(기간·시작일)이 바뀔 때만 다시 계산한다. 달력 준비 여부는 아래 effect가 따로 본다.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [formData.duration, formData.startDate]);
+
+    // 토·일·공휴일 서비스를 켜고 끄면 기간을 바꿀 때처럼 종료일을 다시 계산해요. 직접 입력한 종료일은 그대로 둬요.
+    const serviceDayKey = `${allowSaturdayService}|${allowSundayService}|${allowHolidayService}`;
+    const previousServiceDayKeyRef = useRef(serviceDayKey);
+    useEffect(() => {
+        if (previousServiceDayKeyRef.current === serviceDayKey) return;
+        previousServiceDayKeyRef.current = serviceDayKey;
+        if (!autoEndDateOwnedRef.current && !pendingAutoEndDateRef.current) return;
+        if (!isCalendarReady) {
+            pendingAutoEndDateRef.current = true;
+            return;
+        }
+        recalculateEndDate();
+        // 서비스일 선택이 바뀔 때만 다시 계산한다.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [serviceDayKey]);
 
     useEffect(() => {
         if (!isCalendarReady || !pendingAutoEndDateRef.current) return;
@@ -928,6 +960,9 @@ function ClientFormContent({
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
+                    allowSaturdayService: client.allowSaturdayService ?? false,
+                    allowSundayService: client.allowSundayService ?? false,
+                    allowHolidayService: client.allowHolidayService ?? false,
                     serviceStatus: client.serviceStatus || "pre_booking",
                     applyMessageAutomation: true,
                     smsAutomationEnabled: client.smsAutomationEnabled ?? true,
@@ -956,6 +991,9 @@ function ClientFormContent({
                     careCenter: false,
                     voucherClient: false,
                     breastPump: false,
+                    allowSaturdayService: false,
+                    allowSundayService: false,
+                    allowHolidayService: false,
                     serviceStatus: "pre_booking",
                     applyMessageAutomation: true,
                     smsAutomationEnabled: true,
@@ -1075,6 +1113,17 @@ function ClientFormContent({
             setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
         }
     };
+
+    const serviceDayOptions = ([
+        { key: "saturday", field: "allowSaturdayService", checked: allowSaturdayService, labelKey: "clients.form.service-days-saturday" },
+        { key: "sunday", field: "allowSundayService", checked: allowSundayService, labelKey: "clients.form.service-days-sunday" },
+        { key: "holiday", field: "allowHolidayService", checked: allowHolidayService, labelKey: "clients.form.service-days-holiday" },
+    ] as const).map(({ key, field, checked, labelKey }) => ({
+        key,
+        label: t(locale, labelKey),
+        checked,
+        onToggle: () => handleChange(field, !checked),
+    }));
 
     const inputValueOf = (field: ClientInputField): string => String(formData[field] ?? "");
 
@@ -1377,9 +1426,14 @@ function ClientFormContent({
             const fresh = await refreshForSave();
             setCalendarRefreshFailed(!fresh.ok);
             if (!fresh.ok) return;
+            const freshServiceCalendar = fresh.calendar.withServiceDays({
+                saturday: allowSaturdayService,
+                sunday: allowSundayService,
+                holiday: allowHolidayService,
+            });
             let recalculated = false;
             if (autoEndDateOwnedRef.current || pendingAutoEndDateRef.current) {
-                const next = resolveAutoEndDate(formData.duration, formData.startDate ?? "", fresh.calendar);
+                const next = resolveAutoEndDate(formData.duration, formData.startDate ?? "", freshServiceCalendar);
                 setIsEndDateUnsupported(next.unsupported);
                 recalculated = next.endDate !== (formData.endDate ?? "");
                 if (recalculated) setFormData(previous => ({ ...previous, endDate: next.endDate }));
@@ -1395,7 +1449,7 @@ function ClientFormContent({
             const normalizedStartDate = formData.startDate ?? "";
             const normalizedEndDate = formData.endDate ?? "";
             const businessDays = normalizedStartDate && normalizedEndDate
-                ? fresh.calendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
+                ? freshServiceCalendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
                 : null;
             // An edit that leaves the service period alone sends no period field, so a period whose
             // length differs from its business days (a delayed client) needs no confirmation to save,
@@ -1453,6 +1507,9 @@ function ClientFormContent({
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
+                    allowSaturdayService: formData.allowSaturdayService ?? false,
+                    allowSundayService: formData.allowSundayService ?? false,
+                    allowHolidayService: formData.allowHolidayService ?? false,
                     serviceStatus: formData.serviceStatus || "pre_booking",
                     applyMessageAutomation: formData.applyMessageAutomation,
                     smsAutomationEnabled: formData.applyMessageAutomation,
@@ -2062,6 +2119,13 @@ function ClientFormContent({
                         onToggle={toggleSmsAutomation}
                         buttonAriaLabel={t(locale, "clients.form.message-automation")}
                     />
+                    <FormSwitchGroupRow
+                        data-component={`${base}_field-service-days`}
+                        className="lg:col-span-3"
+                        title={t(locale, "clients.form.service-days")}
+                        description={t(locale, "clients.form.service-days-helper")}
+                        options={serviceDayOptions}
+                    />
                 </div>
             </ClientDialogSection>
         </>
@@ -2455,6 +2519,14 @@ function ClientFormContent({
                     checked={smsAutomationChecked}
                     onToggle={toggleSmsAutomation}
                     buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                />
+                <FormSwitchGroupRow
+                    data-component={`${base}_service-days-field`}
+                    size="control"
+                    className="col-span-full"
+                    title={t(locale, "clients.form.service-days")}
+                    description={t(locale, "clients.form.service-days-helper")}
+                    options={serviceDayOptions}
                 />
             </div>
         </>

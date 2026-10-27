@@ -75,6 +75,10 @@ export interface Client {
     areaId?: string | null;
     /** false이면 이 고객에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요. */
     smsAutomationEnabled?: boolean;
+    /** 토·일·공휴일에도 서비스하는 고객인지 (미지정이면 false). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
     /** ID of the same latest contract used for documentStatus. */
@@ -112,6 +116,10 @@ export interface CreateClientDto {
     applyMessageAutomation?: boolean;
     /** 명시하면 applyMessageAutomation보다 우선해요. */
     smsAutomationEnabled?: boolean;
+    /** 토·일·공휴일에도 서비스하는 고객인지 (미지정이면 false). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     areaId?: string | null;
     source?: "contract_auto_registration";
     reuseExistingClient?: boolean;
@@ -141,6 +149,10 @@ export interface UpdateClientDto {
     careCenter?: boolean | null;
     areaId?: string | null;
     smsAutomationEnabled?: boolean;
+    /** 토·일·공휴일에도 서비스하는 고객인지 (미지정이면 false). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
