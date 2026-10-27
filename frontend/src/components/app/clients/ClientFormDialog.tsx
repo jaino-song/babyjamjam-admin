@@ -29,6 +29,7 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientFormData } from "@/features/clients/types";
+import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
 import { buildClientUpdatePayload, hasServicePeriodChange } from "./client-update-payload";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -1320,6 +1321,20 @@ function ClientFormContent({
                 message: CLIENT_END_DATE_CHANGED_MESSAGE,
                 fieldErrors: [],
                 requestId: normalized.problem.requestId,
+                outcome: normalized.outcome,
+            });
+            return;
+        }
+
+        // Re-laying the remaining sessions would cross a caregiver handover: the dates must be set by hand.
+        if (
+            normalized.status === 409
+            && readServiceRecordScheduleCode(getErrorResponsePayload(cause)) === "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE"
+        ) {
+            setError({
+                message: t(locale, "clients.form.error-manual-schedule-required"),
+                fieldErrors: [],
+                requestId: normalized.problem?.requestId,
                 outcome: normalized.outcome,
             });
             return;

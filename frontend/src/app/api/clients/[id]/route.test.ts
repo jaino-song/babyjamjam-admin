@@ -88,6 +88,57 @@ describe("PATCH /api/clients/[id]", () => {
     });
 });
 
+describe("PATCH /api/clients/[id] manual-schedule refusal", () => {
+    beforeEach(() => {
+        mockPatch.mockReset();
+    });
+
+    function upstreamConflict(extra: Record<string, unknown>) {
+        const problem = createProblemDetails({
+            code: "REQUEST_CONFLICT",
+            requestId: "req-client-realign",
+            outcome: "NOT_APPLIED",
+        });
+        return {
+            response: {
+                status: 409,
+                data: { ...problem, statusCode: problem.status, message: problem.detail, error: problem.detail, ...extra },
+            },
+        };
+    }
+
+    it("keeps a known scheduleCode on a 409 and still drops unknown members", async () => {
+        mockPatch.mockRejectedValue(upstreamConflict({
+            scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE",
+            internalNote: "do not leak",
+            blockingReasons: [{ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 2 }],
+        }));
+
+        const response = await PATCH(createRequest("PATCH", {}), { params: Promise.resolve({ id: "75" }) });
+
+        expect(response.status).toBe(409);
+        const body = await response.json();
+        expect(body).toMatchObject({
+            code: "REQUEST_CONFLICT",
+            status: 409,
+            scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE",
+        });
+        expect(body).not.toHaveProperty("internalNote");
+        expect(body).not.toHaveProperty("blockingReasons");
+    });
+
+    it("drops a scheduleCode that is not on the allow-list", async () => {
+        mockPatch.mockRejectedValue(upstreamConflict({ scheduleCode: "SOMETHING_ELSE", other: 1 }));
+
+        const response = await PATCH(createRequest("PATCH", {}), { params: Promise.resolve({ id: "75" }) });
+
+        expect(response.status).toBe(409);
+        const body = await response.json();
+        expect(body).not.toHaveProperty("scheduleCode");
+        expect(body).not.toHaveProperty("other");
+    });
+});
+
 describe("GET /api/clients/[id]", () => {
     beforeEach(() => {
         mockGet.mockReset();

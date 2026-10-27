@@ -504,7 +504,7 @@ function draftMatchesBatch(
 type BlockingOperationName = "contract_period" | "receipt_refresh" | "record_snapshot";
 
 /** A 409 that says an earlier edit's follow-up work is still running (not a stale record). */
-function readBlockingOperation(body: unknown): BlockingOperationName | null {
+export function readBlockingOperation(body: unknown): BlockingOperationName | null {
     if (!isRecord(body) || !isRecord(body.blockingOperation)) return null;
     const { operation } = body.blockingOperation;
     return operation === "contract_period" || operation === "receipt_refresh" || operation === "record_snapshot"
@@ -517,7 +517,7 @@ function blockingOperationMessage(operation: BlockingOperationName): string {
     return "이전 수정의 기록 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요.";
 }
 
-function createIdempotencyKey(): string {
+export function createIdempotencyKey(): string {
     if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
     const bytes = new Uint8Array(16);
     if (typeof globalThis.crypto?.getRandomValues === "function") {
@@ -531,7 +531,7 @@ function createIdempotencyKey(): string {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function sameSource(left: AdminServiceRecordEditState | null, right: AdminServiceRecordEditState | null): boolean {
+export function sameSource(left: AdminServiceRecordEditState | null, right: AdminServiceRecordEditState | null): boolean {
     return Boolean(left?.sourceFingerprint && right?.sourceFingerprint
         && left.sourceFingerprint === right.sourceFingerprint
         && left.sourceCaseVersion === right.sourceCaseVersion);
@@ -1256,7 +1256,7 @@ type ViewerState =
     }
     | { kind: "error"; clientId: string; status: number };
 
-function parseOverview(payload: unknown): AdminServiceRecordEditorOverview | null {
+export function parseOverview(payload: unknown): AdminServiceRecordEditorOverview | null {
     if (!isRecord(payload) || !Array.isArray(payload.assignments)) return null;
     return payload as unknown as AdminServiceRecordEditorOverview;
 }
