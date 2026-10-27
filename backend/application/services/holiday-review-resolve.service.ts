@@ -12,6 +12,7 @@ import {
     ReviewItemRecord,
 } from "domain/repositories/holiday-review.repository.interface";
 import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 import { HolidayChange } from "domain/utils/holiday-review";
 
 /**
@@ -207,10 +208,12 @@ export class HolidayReviewResolveService {
             }
             // stillMatchesStoredEnd guarantees these.
             const { startDate, duration, facts } = snapshot as ReviewFixSnapshot;
+            // The end date is the CLIENT's service days.
+            const clientCalendar = withClientServiceDays(calendar, snapshot);
 
             let recalculatedEnd: string;
             try {
-                recalculatedEnd = calendar.calcEndDateBusinessDays(startDate as string, duration as number);
+                recalculatedEnd = clientCalendar.calcEndDateBusinessDays(startDate as string, duration as number);
             } catch (error) {
                 if (error instanceof UnsupportedKoreanHolidayYearError) {
                     this.logger.debug(`[Holiday Review] client ${item.clientId}: unsupported calendar year, not fixed`);

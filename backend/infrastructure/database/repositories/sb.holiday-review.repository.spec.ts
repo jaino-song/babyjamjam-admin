@@ -254,6 +254,63 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
         });
     });
 
+    it("findFixSnapshot carries the client's service-day flags", async () => {
+        jest.useFakeTimers({ now: new Date("2026-10-01T03:00:00.000Z") });
+        const { prisma, repository } = makeRepository();
+        prisma.client.findFirst.mockResolvedValue({
+            startDate: day("2026-11-02"),
+            endDate: day("2026-11-13"),
+            duration: 10,
+            serviceStatus: "active",
+            allowSaturdayService: true,
+            allowSundayService: false,
+            allowHolidayService: true,
+            serviceRecordCase: null,
+        });
+
+        await expect(repository.findFixSnapshot(BRANCH, 7)).resolves.toMatchObject({
+            allowSaturdayService: true,
+            allowSundayService: false,
+            allowHolidayService: true,
+        });
+        expect(prisma.client.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            select: expect.objectContaining({
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
+            }),
+        }));
+    });
+
+    it("findReviewCandidates carries each client's service-day flags", async () => {
+        const { prisma, repository } = makeRepository();
+        prisma.client.findMany.mockResolvedValue([{
+            id: 7,
+            branchId: BRANCH,
+            startDate: day("2026-11-02"),
+            endDate: day("2026-11-13"),
+            duration: 10,
+            allowSaturdayService: false,
+            allowSundayService: true,
+            allowHolidayService: false,
+            serviceRecordCase: null,
+        }]);
+
+        await expect(repository.findReviewCandidates(BRANCH, "2026-11-10")).resolves.toMatchObject([{
+            clientId: 7,
+            allowSaturdayService: false,
+            allowSundayService: true,
+            allowHolidayService: false,
+        }]);
+        expect(prisma.client.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            select: expect.objectContaining({
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
+            }),
+        }));
+    });
+
     describe("finished clients (stored end date before today, Asia/Seoul)", () => {
         beforeEach(() => {
             // 2026-09-30T20:00Z is already 2026-10-01 in Seoul.

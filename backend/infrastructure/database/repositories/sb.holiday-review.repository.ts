@@ -143,6 +143,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 startDate: true,
                 endDate: true,
                 duration: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
                 serviceRecordCase: {
                     select: {
                         status: true,
@@ -164,6 +167,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 startDate: fromDbDate(row.startDate),
                 endDate: fromDbDate(row.endDate),
                 duration: row.duration,
+                allowSaturdayService: row.allowSaturdayService,
+                allowSundayService: row.allowSundayService,
+                allowHolidayService: row.allowHolidayService,
                 facts: caseFacts(row.serviceRecordCase),
             });
         }
@@ -318,6 +324,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 endDate: true,
                 duration: true,
                 serviceStatus: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
                 serviceRecordCase: {
                     select: { status: true, days: { select: { serviceDate: true, locked: true } } },
                 },
@@ -330,6 +339,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             duration: row.duration,
             terminated: row.serviceStatus === SERVICE_STATUS.TERMINATED,
             finished: row.endDate !== null && row.endDate < toDbDate(isoDateInKorea()),
+            allowSaturdayService: row.allowSaturdayService,
+            allowSundayService: row.allowSundayService,
+            allowHolidayService: row.allowHolidayService,
             facts: caseFacts(row.serviceRecordCase),
         };
     }

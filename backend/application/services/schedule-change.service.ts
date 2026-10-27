@@ -18,6 +18,7 @@ import {
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     previousBusinessDay,
@@ -290,7 +291,7 @@ export class ScheduleChangeService {
 
     async preview(ctx: ServiceRecordTokenContext): Promise<{ sessionIndex: number; fromDate: string; toDate: string }> {
         // Display-only: the cached branch calendar is enough.
-        const calendar = await this.holidayCalendar.forBranch(ctx.branchId);
+        const branchCalendar = await this.holidayCalendar.forBranch(ctx.branchId);
         const record = ctx.serviceRecordCaseId
             ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
             : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
@@ -300,6 +301,8 @@ export class ScheduleChangeService {
         });
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        // The shifted dates are this client's service days.
+        const calendar = withClientServiceDays(branchCalendar, schedule.client);
 
         const days = await this.prisma.service_record_day.findMany({
             where: { serviceRecordCaseId: record.id },
@@ -320,7 +323,7 @@ export class ScheduleChangeService {
 
     async createRequest(ctx: ServiceRecordTokenContext): Promise<{ id: string; sessionIndex: number; fromDate: string; toDate: string }> {
         // Saved: the proposed dates are persisted, so read the calendar fresh.
-        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
+        const branchCalendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const record = ctx.serviceRecordCaseId
             ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
             : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
@@ -330,6 +333,8 @@ export class ScheduleChangeService {
         });
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        // The proposed dates are this client's service days.
+        const calendar = withClientServiceDays(branchCalendar, schedule.client);
 
         const existing = await this.prisma.schedule_change_request.findFirst({
             where: { scheduleId: ctx.scheduleId, status: "pending" },
@@ -385,12 +390,14 @@ export class ScheduleChangeService {
         scheduleId: number,
     ): Promise<{ sessionIndex: number; fromDate: string; minimumDate: string | null }> {
         // Display-only: the cached branch calendar is enough.
-        const calendar = await this.holidayCalendar.forBranch(branchId);
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
         const schedule = await this.prisma.employee_schedule.findFirst({
             where: { id: scheduleId, branchId },
             include: { client: true },
         });
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        // The shifted dates are this client's service days.
+        const calendar = withClientServiceDays(branchCalendar, schedule.client);
 
         const record = await this.prisma.service_record_case.findFirst({
             where: { branchId, clientId: schedule.clientId },
@@ -422,21 +429,35 @@ export class ScheduleChangeService {
     ) {
         const branchId = tenant.branchId ?? "";
         // Saved: the date is validated and the shifted plan persisted against
-        // the branch calendar, read fresh before the transaction opens.
-        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        // the branch calendar, read fresh before the transaction opens, under
+        // the client's own service days.
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        const preReadSchedule = await this.prisma.employee_schedule.findFirst({
+            where: { id: scheduleId, branchId },
+            select: {
+                client: {
+                    select: {
+                        allowSaturdayService: true,
+                        allowSundayService: true,
+                        allowHolidayService: true,
+                    },
+                },
+            },
+        });
         const selectedDateValue = toDbDate(selectedDate);
+        // `allowNonBusinessDay` bypasses the CLIENT's calendar. This early check
+        // uses the flags read outside the lock; the same check is repeated inside
+        // the transaction with the reread client.
         if (
             Number.isNaN(selectedDateValue.getTime())
             || toIso(selectedDateValue) !== selectedDate
-            || (!calendar.isBusinessDay(selectedDate) && !options.allowNonBusinessDay)
+            || (
+                !withClientServiceDays(branchCalendar, preReadSchedule?.client).isBusinessDay(selectedDate)
+                && !options.allowNonBusinessDay
+            )
         ) {
             throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
         }
-        // A confirmed weekend/holiday exception counts as the business day before
-        // it, so later sessions are pulled onto the following business days.
-        const cascadeAnchor = calendar.isBusinessDay(selectedDate)
-            ? selectedDate
-            : previousBusinessDay(selectedDate, calendar);
 
         let scheduleIdForSync: number | null = null;
         let clientIdForSync: number | null = null;
@@ -485,6 +506,19 @@ export class ScheduleChangeService {
                 }
                 schedule = rereadSchedule;
                 record = rereadRecord;
+
+                // The flags of the client reread under the lock decide the
+                // service days, so a flag change racing the early check above
+                // cannot slip a date through.
+                const calendar = withClientServiceDays(branchCalendar, schedule.client);
+                if (!calendar.isBusinessDay(selectedDate) && !options.allowNonBusinessDay) {
+                    throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
+                }
+                // A confirmed weekend/holiday exception counts as the business day before
+                // it, so later sessions are pulled onto the following business days.
+                const cascadeAnchor = calendar.isBusinessDay(selectedDate)
+                    ? selectedDate
+                    : previousBusinessDay(selectedDate, calendar);
 
                 const pendingRequest = await tx.schedule_change_request.findFirst({
                     where: { scheduleId, status: "pending" },
@@ -718,7 +752,7 @@ export class ScheduleChangeService {
         // Saved: approval persists shifted dates, so read the calendar fresh
         // before the transaction opens. The request lookup below is pinned to
         // this same branch.
-        const calendar = await this.holidayCalendar.forBranch(tenant.branchId, { fresh: true });
+        const branchCalendar = await this.holidayCalendar.forBranch(tenant.branchId, { fresh: true });
 
         try {
             const result = await this.prisma.$transaction(async (tx) => {
@@ -786,6 +820,9 @@ export class ScheduleChangeService {
                 }
                 schedule = rereadSchedule;
                 record = rereadRecord;
+                // The approved dates are the client's service days, judged on
+                // the flags of the client reread under the lock.
+                const calendar = withClientServiceDays(branchCalendar, schedule.client);
 
                 const days = await tx.service_record_day.findMany({
                     where: { serviceRecordCaseId: record.id },

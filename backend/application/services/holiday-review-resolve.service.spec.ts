@@ -394,6 +394,30 @@ describe("HolidayReviewResolveService", () => {
             expect(s.calendar.calcEndDateBusinessDays).toHaveBeenCalledWith("2026-11-02", 10);
         });
 
+        it("recomputes a service-day-enabled client's end date on the client's own calendar, the branch calendar for a default one", async () => {
+            const enabled = item({ clientId: 1, storedEnd: "2026-11-13", recalculatedEnd: "2026-11-13" });
+            const plain = item({ clientId: 2 });
+            const s = makeService({
+                items: [enabled, plain],
+                snapshots: {
+                    1: snapshot({ allowHolidayService: true }),
+                    2: snapshot(),
+                },
+                recalculated: "2026-11-16",
+            });
+            // The client's own calendar sits behind `withServiceDays`; it answers differently.
+            const clientCalendar = { calcEndDateBusinessDays: jest.fn(() => "2026-11-12") };
+            Object.assign(s.calendar, { withServiceDays: jest.fn(() => clientCalendar) });
+            await resolveFix(s, [enabled.id, plain.id]);
+
+            expect((s.calendar as unknown as { withServiceDays: jest.Mock }).withServiceDays)
+                .toHaveBeenCalledTimes(1);
+            expect((s.calendar as unknown as { withServiceDays: jest.Mock }).withServiceDays)
+                .toHaveBeenCalledWith({ saturday: false, sunday: false, holiday: true });
+            expect(clientCalendar.calcEndDateBusinessDays).toHaveBeenCalledWith("2026-11-02", 10);
+            expect(s.calendar.calcEndDateBusinessDays).toHaveBeenCalledTimes(1);
+        });
+
         it("fixes items one after another, in request order", async () => {
             const a = item({ clientId: 1 });
             const b = item({ clientId: 2 });

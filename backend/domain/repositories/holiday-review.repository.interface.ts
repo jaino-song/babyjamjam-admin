@@ -32,6 +32,10 @@ export interface ReviewCandidateClient {
     endDate: string;
     /** Business days. */
     duration: number;
+    /** The client's own service-day policy; absent means the weekday-only default. */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     facts: ReviewClientFacts;
 }
 
@@ -123,6 +127,10 @@ export interface ReviewFixSnapshot {
     terminated: boolean;
     /** The stored end date is before today (Asia/Seoul): the service period is over. */
     finished: boolean;
+    /** The client's own service-day policy; absent means the weekday-only default. */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     facts: ReviewClientFacts;
 }
 
