@@ -2043,6 +2043,17 @@ export class ClientService {
          * to update.
          */
         expectedEndDate?: string | null;
+        /**
+         * Companion of `expectedEndDate` for a date computed on the client's own
+         * service days: the locked client row's Saturday / Sunday / holiday flags
+         * must still equal these (a null flag counts as off); otherwise the write
+         * is rejected with 409 SERVICE_RECORD_WRITE_TARGET_CHANGED. Not a field to update.
+         */
+        expectedServiceDays?: {
+            allowSaturdayService: boolean;
+            allowSundayService: boolean;
+            allowHolidayService: boolean;
+        };
     }, beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>): Promise<ClientEntity> {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
@@ -2072,7 +2083,7 @@ export class ClientService {
         }
 
         const hasRequestedUpdate = Object.entries(params).some(
-            ([field, value]) => field !== "expectedEndDate" && value !== undefined,
+            ([field, value]) => field !== "expectedEndDate" && field !== "expectedServiceDays" && value !== undefined,
         );
         if (!hasRequestedUpdate) {
             const existingPhone = normalizePhone(existingClient.phone);
@@ -2256,6 +2267,16 @@ export class ClientService {
             if (
                 params.expectedEndDate !== undefined
                 && (currentClient.endDate?.toISOString().slice(0, 10) ?? null) !== params.expectedEndDate
+            ) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
+            if (
+                params.expectedServiceDays !== undefined
+                && (
+                    (currentClient.allowSaturdayService ?? false) !== params.expectedServiceDays.allowSaturdayService
+                    || (currentClient.allowSundayService ?? false) !== params.expectedServiceDays.allowSundayService
+                    || (currentClient.allowHolidayService ?? false) !== params.expectedServiceDays.allowHolidayService
+                )
             ) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
