@@ -1372,6 +1372,24 @@ export class ClientService {
                 });
                 existing.smsAutomationEnabled = params.smsAutomationEnabled;
             }
+            // Same rule for the service-day flags: only an explicitly supplied
+            // flag changes a reused client; omitted flags keep their stored values.
+            // Re-scheduling after a flag change is owned by later units.
+            const reusedServiceDayPatch: {
+                allowSaturdayService?: boolean;
+                allowSundayService?: boolean;
+                allowHolidayService?: boolean;
+            } = {};
+            if (params.allowSaturdayService !== undefined) reusedServiceDayPatch.allowSaturdayService = params.allowSaturdayService;
+            if (params.allowSundayService !== undefined) reusedServiceDayPatch.allowSundayService = params.allowSundayService;
+            if (params.allowHolidayService !== undefined) reusedServiceDayPatch.allowHolidayService = params.allowHolidayService;
+            if (Object.keys(reusedServiceDayPatch).length > 0) {
+                await this.prismaService.client.updateMany({
+                    where: { id: existing.id, branchId: branchid },
+                    data: reusedServiceDayPatch,
+                });
+                Object.assign(existing, reusedServiceDayPatch);
+            }
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
                 const assignment = await this.syncEmployeeAssignment(branchid, {
                     clientId: existing.id,

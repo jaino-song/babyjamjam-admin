@@ -536,6 +536,81 @@ describe("ClientService", () => {
             });
         });
 
+        describe("service-day flags on a reused client", () => {
+            const baseParams = {
+                name: "Service Day Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            };
+
+            it("applies an explicit true to a client stored false in one update", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = false;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                });
+
+                const dayUpdates = prismaService.client.updateMany.mock.calls
+                    .filter(([arg]) => "allowSaturdayService" in arg.data);
+                expect(dayUpdates).toHaveLength(1);
+                expect(dayUpdates[0]![0]).toEqual({
+                    where: { id: reused.id, branchId },
+                    data: { allowSaturdayService: true },
+                });
+                expect(result.allowSaturdayService).toBe(true);
+            });
+
+            it("applies an explicit false to a client stored true, touching only supplied flags", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowSundayService = true;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams, reuseExistingClient: true, allowSaturdayService: false, allowHolidayService: false,
+                });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: reused.id, branchId },
+                    data: { allowSaturdayService: false, allowHolidayService: false },
+                });
+                expect(result.allowSaturdayService).toBe(false);
+                expect(result.allowHolidayService).toBe(false);
+                expect(result.allowSundayService).toBe(true);
+            });
+
+            it("leaves stored flags untouched when the flags are omitted", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowSundayService = false;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, { ...baseParams, reuseExistingClient: true });
+
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(result.allowSaturdayService).toBe(true);
+                expect(result.allowSundayService).toBe(false);
+                expect(result.allowHolidayService).toBe(true);
+            });
+
+            it("persists false for a new client created with the flags omitted", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, baseParams);
+
+                const persisted = createClientUsecase.execute.mock.calls[0]![1];
+                expect(persisted.allowSaturdayService).toBe(false);
+                expect(persisted.allowSundayService).toBe(false);
+                expect(persisted.allowHolidayService).toBe(false);
+            });
+        });
+
         it("allows an explicit null phone clear on create", async () => {
             const client = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(client);
