@@ -381,6 +381,11 @@
       "forbidden": "You do not have permission to change the schedule",
       "blocked-generic": "Something prevents saving. Check the selected dates.",
       "blocked-session": "Session {order}: {reason}",
+      "blocking-operation": {
+        "contract_period": "The contract update from an earlier edit is still running, so this cannot be saved yet. Please try again shortly.",
+        "receipt_refresh": "The receipt update from an earlier edit is still running, so this cannot be saved yet. Please try again shortly.",
+        "record_snapshot": "The record update from an earlier edit is still running, so this cannot be saved yet. Please try again shortly."
+      },
       "schedule-code": {
         "SCHEDULE_COUNT_MISMATCH": "The number of dates does not match the session count",
         "SCHEDULE_WITH_DATE_MOVE": "This cannot be saved together with a date move. Please try again shortly.",

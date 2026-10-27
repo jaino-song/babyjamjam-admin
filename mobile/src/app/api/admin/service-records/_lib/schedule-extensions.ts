@@ -9,6 +9,8 @@ import { NextResponse } from "next/server";
  * - `scheduleCode` on a 400/409: why a whole-set schedule was rejected.
  * - `blockingReasons[]` on a 400/409, reduced to `{ code, sessionIndex }`: why a
  *   preview/confirm was blocked (a 409 `REQUEST_CONFLICT` carries them).
+ * - `blockingOperation` on a 409, reduced to a known operation and short safe tokens: an earlier
+ *   edit's follow-up work is still running, which is not a version conflict and must not be retried.
  */
 
 export const SCHEDULE_CODES: ReadonlySet<string> = new Set([
@@ -28,8 +30,17 @@ export const SCHEDULE_CODES: ReadonlySet<string> = new Set([
     "NON_BUSINESS_DATE",
 ]);
 
+export const BLOCKING_OPERATIONS: ReadonlySet<string> = new Set(["contract_period", "receipt_refresh", "record_snapshot"]);
+
 const SAFE_BLOCKING_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
+const SAFE_BLOCKING_TOKEN = /^[A-Za-z0-9_:.-]{1,80}$/;
 const MAX_BLOCKING_REASONS = 50;
+
+export interface ScheduleBlockingOperation {
+    operation: string;
+    status: string | null;
+    lastErrorCode: string | null;
+}
 
 export interface ScheduleBlockingReason {
     code: string;
@@ -39,6 +50,7 @@ export interface ScheduleBlockingReason {
 export interface ScheduleExtensions {
     scheduleCode?: string;
     blockingReasons?: ScheduleBlockingReason[];
+    blockingOperation?: ScheduleBlockingOperation;
 }
 
 function upstreamResponse(error: unknown): { status?: unknown; data?: unknown } | null {
@@ -62,20 +74,37 @@ function readBlockingReasons(value: unknown): ScheduleBlockingReason[] | undefin
     return reasons.length > 0 ? reasons : undefined;
 }
 
+function safeToken(value: unknown): string | null {
+    return typeof value === "string" && SAFE_BLOCKING_TOKEN.test(value) ? value : null;
+}
+
+function readBlockingOperation(value: unknown): ScheduleBlockingOperation | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const { operation, status, lastErrorCode } = value as Record<string, unknown>;
+    if (typeof operation !== "string" || !BLOCKING_OPERATIONS.has(operation)) return undefined;
+    return { operation, status: safeToken(status), lastErrorCode: safeToken(lastErrorCode) };
+}
+
 /** Reads the allow-listed extensions off an upstream 400/409; anything else yields `null`. */
 export function readScheduleExtensions(error: unknown): ScheduleExtensions | null {
     const response = upstreamResponse(error);
     if (!response || (response.status !== 400 && response.status !== 409)) return null;
     const data = response.data;
     if (typeof data !== "object" || data === null) return null;
-    const { scheduleCode, blockingReasons } = data as { scheduleCode?: unknown; blockingReasons?: unknown };
+    const { scheduleCode, blockingReasons, blockingOperation } = data as {
+        scheduleCode?: unknown;
+        blockingReasons?: unknown;
+        blockingOperation?: unknown;
+    };
     const extensions: ScheduleExtensions = {};
     if (typeof scheduleCode === "string" && SCHEDULE_CODES.has(scheduleCode)) {
         extensions.scheduleCode = scheduleCode;
     }
     const reasons = readBlockingReasons(blockingReasons);
     if (reasons) extensions.blockingReasons = reasons;
-    return extensions.scheduleCode !== undefined || extensions.blockingReasons !== undefined ? extensions : null;
+    const operation = response.status === 409 ? readBlockingOperation(blockingOperation) : undefined;
+    if (operation) extensions.blockingOperation = operation;
+    return Object.keys(extensions).length > 0 ? extensions : null;
 }
 
 /** Re-attaches the validated extensions to the already sanitized problem response. */

@@ -409,6 +409,11 @@
       "forbidden": "일정을 변경할 권한이 없어요",
       "blocked-generic": "저장할 수 없는 사유가 있어요. 선택한 날짜를 확인해 주세요",
       "blocked-session": "{order}회차: {reason}",
+      "blocking-operation": {
+        "contract_period": "이전 수정의 계약서 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요",
+        "receipt_refresh": "이전 수정의 영수증 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요",
+        "record_snapshot": "이전 수정의 기록 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요"
+      },
       "schedule-code": {
         "SCHEDULE_COUNT_MISMATCH": "선택한 날짜 수가 회차 수와 달라요",
         "SCHEDULE_WITH_DATE_MOVE": "다른 날짜 이동과 함께 저장할 수 없어요. 잠시 후 다시 시도해 주세요",

@@ -188,6 +188,34 @@ describe("saveServiceRecordSchedule", () => {
       expect(mocks.discardDraft).toHaveBeenCalledWith("draft-1", 2);
     });
 
+    it.each(["contract_period", "receipt_refresh", "record_snapshot"] as const)(
+      "never retries a 409 whose earlier edit is still running (%s)",
+      async (operation) => {
+        const { api, mocks } = makeApi();
+        mocks.confirmDraft.mockRejectedValue(
+          axiosError(409, {
+            code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+            blockingOperation: { operation, status: "PENDING", lastErrorCode: null },
+          }),
+        );
+
+        await expect(run(api)).rejects.toMatchObject({ response: { status: 409 } });
+
+        expect(mocks.confirmDraft).toHaveBeenCalledTimes(1);
+        expect(mocks.startDraft).toHaveBeenCalledTimes(1);
+        expect(mocks.getDraft).toHaveBeenCalledTimes(1);
+        expect(mocks.discardDraft).toHaveBeenCalledWith("draft-1", 2);
+      },
+    );
+
+    it("never retries a 409 that carries a schedule code", async () => {
+      const { api, mocks } = makeApi();
+      mocks.updateDraft.mockRejectedValue(axiosError(409, { code: "REQUEST_CONFLICT", scheduleCode: "SCHEDULE_WITH_DATE_MOVE" }));
+
+      await expect(run(api)).rejects.toMatchObject({ response: { status: 409 } });
+      expect(mocks.startDraft).toHaveBeenCalledTimes(1);
+    });
+
     it("does not retry other failures and cleans up the draft it started", async () => {
       const { api, mocks } = makeApi();
       mocks.updateDraft.mockRejectedValue(axiosError(400, { scheduleCode: "SCHEDULE_COUNT_MISMATCH" }));

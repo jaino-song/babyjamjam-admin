@@ -42,6 +42,7 @@ export function describeScheduleSaveError(locale: Locale, error: unknown): strin
     if (known) return known;
   }
   if (info.blockingReasons.length > 0) return describeBlockingReasons(locale, info.blockingReasons);
+  if (info.blockingOperation) return scheduleText(locale, `blocking-operation.${info.blockingOperation}`);
   if (info.status === 403) return scheduleText(locale, "forbidden");
   return scheduleText(locale, "save-failed");
 }

@@ -115,15 +115,22 @@ async function attemptSave({ api, clientId, source, schedule }: SaveInput): Prom
 }
 
 /**
- * Runs the save. A version conflict (409 without blocking reasons) is retried once from the top,
- * where the source check runs again: a record that changed in the meantime reloads instead.
+ * Runs the save. Only a version conflict is retried, once, from the top, where the source check
+ * runs again: a record that changed in the meantime reloads instead. A 409 that names blocking
+ * reasons, a still-running earlier edit (`blockingOperation`) or a schedule code is an answer about
+ * the request itself, so repeating it cannot help and it is surfaced as it is.
  */
 export async function saveServiceRecordSchedule(input: SaveInput): Promise<ScheduleSaveResult> {
   try {
     return await attemptSave(input);
   } catch (error) {
     const info = readScheduleEditError(error);
-    if (info.status === 409 && info.blockingReasons.length === 0) {
+    if (
+      info.status === 409
+      && info.blockingReasons.length === 0
+      && !info.blockingOperation
+      && info.scheduleCode === null
+    ) {
       return attemptSave(input);
     }
     throw error;

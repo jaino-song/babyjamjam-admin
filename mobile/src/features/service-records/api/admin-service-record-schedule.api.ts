@@ -57,7 +57,11 @@ export interface ScheduleEditErrorInfo {
   scheduleCode: string | null;
   /** `blockingReasons[]` of a 400/409 problem. */
   blockingReasons: ScheduleBlockingReason[];
+  /** A 409 that says an earlier edit's follow-up work is still running (not a version conflict). */
+  blockingOperation?: ScheduleBlockingOperationName;
 }
+
+export type ScheduleBlockingOperationName = "contract_period" | "receipt_refresh" | "record_snapshot";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -130,14 +134,24 @@ function draftPath(draftId: string): string {
 }
 
 /** Reads what a failed draft call says about itself, from an axios error or a bare `{ response }`. */
+function readBlockingOperation(value: unknown): ScheduleBlockingOperationName | null {
+  if (!isRecord(value)) return null;
+  const { operation } = value;
+  return operation === "contract_period" || operation === "receipt_refresh" || operation === "record_snapshot"
+    ? operation
+    : null;
+}
+
 export function readScheduleEditError(error: unknown): ScheduleEditErrorInfo {
   const response = isRecord(error) && isRecord(error.response) ? error.response : null;
   const status = response && typeof response.status === "number" ? response.status : null;
   const data = response && isRecord(response.data) ? response.data : null;
+  const blockingOperation = data ? readBlockingOperation(data.blockingOperation) : null;
   return {
     status,
     scheduleCode: data && typeof data.scheduleCode === "string" ? data.scheduleCode : null,
     blockingReasons: data ? normalizeBlockingReasons(data.blockingReasons) : [],
+    ...(blockingOperation ? { blockingOperation } : {}),
   };
 }
 

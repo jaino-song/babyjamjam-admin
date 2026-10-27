@@ -55,12 +55,16 @@ import {
   scheduleText,
 } from "./service-record-schedule-messages";
 import {
+  sameScheduleSource,
   saveServiceRecordSchedule,
   sourceIdentityOf,
   type ScheduleSourceIdentity,
 } from "./service-record-schedule-save";
 
 const SOURCE_COMPONENT = "ServiceRecordScheduleSheet";
+
+/** Reads of the overview that a concurrent change may tear; after this many the load error shows. */
+const MAX_SNAPSHOT_ATTEMPTS = 3;
 
 const SERVICE_DAY_FIELDS = [
   { key: "saturday", textKey: "clients.form.service-day-saturday" },
@@ -134,12 +138,20 @@ export function ServiceRecordScheduleSheet({
 
   const fetchSnapshot = useCallback(async (): Promise<Snapshot> => {
     try {
-      const [overview, draftState] = await Promise.all([api.getEditor(clientId), api.getDraft(clientId)]);
-      const result = readScheduleEditorModel(overview);
-      if (!result.ok) return { kind: "blocked" };
-      const source = sourceIdentityOf(draftState);
-      if (!source.sourceFingerprint) return { kind: "error" };
-      return { kind: "ready", model: result.model, source };
+      // The overview and the source identity are separate reads. Bracketing the overview with two
+      // identity reads proves nothing changed in between; otherwise old dates would be paired with a
+      // newer fingerprint and a save would silently overwrite the other admin's change.
+      for (let attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt += 1) {
+        const before = await api.getDraft(clientId);
+        if (!before.sourceFingerprint) return { kind: "error" };
+        const overview = await api.getEditor(clientId);
+        const after = await api.getDraft(clientId);
+        if (!sameScheduleSource(sourceIdentityOf(before), after)) continue;
+        const result = readScheduleEditorModel(overview);
+        if (!result.ok) return { kind: "blocked" };
+        return { kind: "ready", model: result.model, source: sourceIdentityOf(after) };
+      }
+      return { kind: "error" };
     } catch {
       return { kind: "error" };
     }
@@ -205,7 +217,8 @@ export function ServiceRecordScheduleSheet({
   };
 
   const handlePolicyChange = (key: keyof ServiceDayPolicy, checked: boolean) => {
-    if (!model || !picker || savingRef.current) return;
+    // Dropping dates needs the branch holiday calendar; before it is ready the classification is a guess.
+    if (!model || !picker || !calendarReady || savingRef.current) return;
     const { state, dropped } = changeSchedulePolicy(
       model,
       picker,
@@ -410,7 +423,7 @@ export function ServiceRecordScheduleSheet({
                       <Switch
                         id={`schedule-sheet-${key}`}
                         checked={picker.policy[key]}
-                        disabled={saving}
+                        disabled={saving || !calendarReady}
                         onCheckedChange={(checked) => handlePolicyChange(key, checked)}
                       />
                     </div>

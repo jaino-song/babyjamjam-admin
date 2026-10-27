@@ -63,8 +63,12 @@ function makeApi(options: FixtureOverviewOptions = {}) {
 
 const axiosError = (status: number, data: unknown = {}) => ({ response: { status, data } });
 
-async function openSheet(options: FixtureOverviewOptions = {}, handlers: { onClose?: jest.Mock; onSaved?: jest.Mock } = {}) {
+async function openSheet(
+  options: FixtureOverviewOptions = {},
+  handlers: { onClose?: jest.Mock; onSaved?: jest.Mock; prepare?: (mocks: ReturnType<typeof makeApi>["mocks"]) => void } = {},
+) {
   const { api, mocks } = makeApi(options);
+  handlers.prepare?.(mocks);
   const onClose = handlers.onClose ?? jest.fn();
   const onSaved = handlers.onSaved ?? jest.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -314,6 +318,60 @@ describe("ServiceRecordScheduleSheet", () => {
       expect(mocks.getEditor).toHaveBeenCalledTimes(2);
     });
 
+    it("keeps the service-day switches off until the holiday calendar is ready", async () => {
+      mockCalendarHook.ready = false;
+      const { user } = await openSheet();
+
+      for (const name of ["토요일", "일요일", "공휴일"]) expect(toggle(name)).toBeDisabled();
+      await user.click(toggle("토요일"));
+
+      expect(toggle("토요일")).not.toBeChecked();
+      expect(progressText()).toBe("10/10");
+      expect(cell("12/19(토)")).toBeDisabled();
+    });
+
+    it("reads the draft identity before and after the overview and retries a torn read", async () => {
+      const newer = { ...SOURCE, sourceFingerprint: "fp-2", sourceCaseVersion: 8 };
+      const { mocks } = await openSheet({}, {
+        prepare: (m) => {
+          // First attempt: identity moves while the overview is being read. Second attempt is stable.
+          m.getDraft
+            .mockResolvedValueOnce(draftState())
+            .mockResolvedValueOnce(draftState(newer))
+            .mockResolvedValue(draftState(newer));
+        },
+      });
+
+      expect(mocks.getEditor).toHaveBeenCalledTimes(2);
+      expect(mocks.getDraft).toHaveBeenCalledTimes(4);
+    });
+
+    it("never saves from a snapshot whose identity moved during the read", async () => {
+      const { api, mocks } = makeApi();
+      // Every attempt sees the identity change between the two bracketing reads.
+      let version = 7;
+      mocks.getDraft.mockImplementation(async () => draftState({ sourceCaseVersion: (version += 1) }));
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ServiceRecordScheduleSheet
+            data-component="mobile_clients_detail_service-record-schedule-sheet"
+            clientId={12}
+            clientName="김하늘"
+            api={api}
+            onClose={jest.fn()}
+            onSaved={jest.fn()}
+          />
+        </QueryClientProvider>,
+      );
+
+      expect(await screen.findByText("일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요")).toBeInTheDocument();
+      expect(saveButton()).toBeDisabled();
+      expect(mocks.getEditor).toHaveBeenCalledTimes(3);
+      expect(mocks.updateDraft).not.toHaveBeenCalled();
+      expect(mocks.startDraft).not.toHaveBeenCalled();
+    });
+
     it("waits for the holiday calendar before the dates can be changed or saved", async () => {
       mockCalendarHook.ready = false;
       const { user } = await openSheet();
@@ -382,8 +440,8 @@ describe("ServiceRecordScheduleSheet", () => {
       await user.click(saveButton());
 
       expect(await screen.findByText("서비스 제공일을 모두 골라 주세요")).toBeInTheDocument();
-      // Only the read made when the sheet opened: the save never reached the draft API.
-      expect(mocks.getDraft).toHaveBeenCalledTimes(1);
+      // Only the two reads that bracket the overview when the sheet opened: the save never reached the draft API.
+      expect(mocks.getDraft).toHaveBeenCalledTimes(2);
       expect(mocks.startDraft).not.toHaveBeenCalled();
       expect(onSaved).not.toHaveBeenCalled();
     });
@@ -395,7 +453,7 @@ describe("ServiceRecordScheduleSheet", () => {
       await user.click(saveButton());
 
       expect(await screen.findByText("휴일 달력을 확인하지 못해 저장하지 못했어요. 잠시 후 다시 시도해 주세요")).toBeInTheDocument();
-      expect(mocks.getDraft).toHaveBeenCalledTimes(1);
+      expect(mocks.getDraft).toHaveBeenCalledTimes(2); // the two reads that bracket the overview on open
       expect(mocks.startDraft).not.toHaveBeenCalled();
     });
 
@@ -451,6 +509,23 @@ describe("ServiceRecordScheduleSheet", () => {
       await user.click(saveButton());
 
       expect(await screen.findByText("2회차: 이미 작성된 회차의 날짜는 바꿀 수 없어요")).toBeInTheDocument();
+      expect(mocks.confirmDraft).toHaveBeenCalledTimes(1);
+      expect(mocks.startDraft).toHaveBeenCalledTimes(1);
+      expect(onSaved).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("does not retry a 409 about an earlier edit that is still running, and says so", async () => {
+      const { user, mocks, onSaved } = await openSheet();
+      mocks.confirmDraft.mockRejectedValue(
+        axiosError(409, { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED", blockingOperation: { operation: "contract_period" } }),
+      );
+
+      await user.click(saveButton());
+
+      expect(
+        await screen.findByText("이전 수정의 계약서 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요"),
+      ).toBeInTheDocument();
       expect(mocks.confirmDraft).toHaveBeenCalledTimes(1);
       expect(mocks.startDraft).toHaveBeenCalledTimes(1);
       expect(onSaved).not.toHaveBeenCalled();

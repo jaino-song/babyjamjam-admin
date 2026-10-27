@@ -255,6 +255,48 @@ describe("mobile service-record draft proxies", () => {
             expect(JSON.stringify(body)).not.toContain("private wording");
         });
 
+        it("keeps a validated blockingOperation on a confirm 409 and drops its unknown members", async () => {
+            mockPost.mockRejectedValue({
+                response: {
+                    status: 409,
+                    data: {
+                        ...conflictProblem(),
+                        blockingOperation: {
+                            operation: "contract_period",
+                            status: "PENDING",
+                            lastErrorCode: "has spaces and <script>",
+                            internalNote: "do not leak",
+                        },
+                    },
+                },
+            });
+
+            const response = await confirmDraft(
+                createRequest("/x", "POST", { expectedDraftVersion: 1, previewId: "p", idempotencyKey: "k" }),
+                draftParams,
+            );
+
+            expect(response.status).toBe(409);
+            const body = await response.json();
+            expect(body.blockingOperation).toEqual({ operation: "contract_period", status: "PENDING", lastErrorCode: null });
+            expect(JSON.stringify(body)).not.toContain("do not leak");
+        });
+
+        it("drops an unknown blockingOperation, and one on a non-409", async () => {
+            mockPost.mockRejectedValue({
+                response: { status: 409, data: { ...conflictProblem(), blockingOperation: { operation: "something_else" } } },
+            });
+            const unknown = await confirmDraft(createRequest("/x", "POST", { expectedDraftVersion: 1 }), draftParams);
+            expect(await unknown.json()).not.toHaveProperty("blockingOperation");
+
+            mockPost.mockRejectedValue({
+                response: { status: 400, data: { ...validationProblem(), blockingOperation: { operation: "contract_period" } } },
+            });
+            const badRequest = await confirmDraft(createRequest("/x", "POST", { expectedDraftVersion: 1 }), draftParams);
+            expect(badRequest.status).toBe(400);
+            expect(await badRequest.json()).not.toHaveProperty("blockingOperation");
+        });
+
         it("does not invent blockingReasons for a plain version conflict", async () => {
             mockPost.mockRejectedValue({ response: { status: 409, data: conflictProblem() } });
 

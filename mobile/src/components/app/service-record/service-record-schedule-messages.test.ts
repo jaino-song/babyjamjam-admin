@@ -43,6 +43,12 @@ describe("service-record schedule messages", () => {
     );
   });
 
+  it("explains a 409 about an earlier edit that is still running", () => {
+    expect(
+      describeScheduleSaveError("ko", failure(409, { blockingOperation: { operation: "receipt_refresh" } })),
+    ).toBe("이전 수정의 영수증 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요");
+  });
+
   it("falls back from a schedule code to blocking reasons, then the status, then generic", () => {
     expect(describeScheduleSaveError("ko", failure(409, { blockingReasons: [{ code: "NON_SERVICE_DAY" }] }))).toBe(
       "서비스일이 아닌 날이 포함돼 있어요",

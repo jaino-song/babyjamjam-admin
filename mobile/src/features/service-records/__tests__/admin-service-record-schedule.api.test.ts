@@ -122,6 +122,15 @@ describe("readScheduleEditError", () => {
     });
   });
 
+  it("reads a known blockingOperation of a 409 and ignores an unknown one", () => {
+    expect(
+      readScheduleEditError({ response: { status: 409, data: { blockingOperation: { operation: "contract_period", status: "PENDING" } } } }),
+    ).toMatchObject({ status: 409, blockingOperation: "contract_period" });
+    expect(readScheduleEditError({ response: { status: 409, data: { blockingOperation: { operation: "other" } } } })).not.toHaveProperty(
+      "blockingOperation",
+    );
+  });
+
   it("returns an empty description for anything else", () => {
     expect(readScheduleEditError(new Error("boom"))).toEqual({ status: null, scheduleCode: null, blockingReasons: [] });
     expect(readScheduleEditError(undefined)).toEqual({ status: null, scheduleCode: null, blockingReasons: [] });
