@@ -665,9 +665,10 @@ export function resolveServiceRecordScheduleProjection(
 }
 
 /**
- * A session the caregiver already locked or submitted keeps its date: the
- * record exists, was signed against that date, and the confirm write has no
- * locked filter of its own.
+ * A schedule replacement leaves the date of a session the caregiver already
+ * locked or submitted alone: the record exists and was signed against that
+ * date. Applies to schedule drafts only; a single-session dateMove may still
+ * move a locked session.
  */
 function lockedSessionReasons(
     source: ServiceRecordEditSource,
@@ -968,11 +969,6 @@ export function normalizeServiceRecordEditChanges(
             }
         }
         sessions = [...normalizedByIndex.values()].sort((left, right) => left.sessionIndex - right.sessionIndex);
-        throwFirstReason(lockedSessionReasons(
-            source,
-            projection.entries,
-            currentDateOverrides(projection.entries, sessions),
-        ));
     }
     if (sessions.length > 0) output["sessions"] = sessions;
     return {
@@ -1137,9 +1133,10 @@ export function buildServiceRecordEditPreview(
             after = applyStoredDates(before, draftSessions);
             after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, pendingCalendar, { persisted: true });
             blockingReasons.push(...assignmentRangeReasons(input.source, after));
-            blockingReasons.push(...lockedSessionReasons(input.source, before, after));
-            // Only a schedule replacement (marked by its toggles) is held to the service-day rules.
+            // Only a schedule replacement (marked by its toggles) is held to the locked-session
+            // and service-day rules; a single-session dateMove keeps its pre-schedule behaviour.
             if (draftPolicy) {
+                blockingReasons.push(...lockedSessionReasons(input.source, before, after));
                 blockingReasons.push(...scheduleReplacementReasons(input.source, before, after, pendingCalendar));
             }
         } catch (error) {

@@ -1126,25 +1126,29 @@ describe("service-record-edit-preview.policy service-day schedule replacement", 
             .toBe("LOCKED_SESSION_DATE_CHANGED");
     });
 
-    it("keeps a locked or submitted session's date fixed for a date move", () => {
-        expect(codeOf(() => normalizeServiceRecordEditChanges(
+    it("lets a date move change a locked or submitted session, as before schedule replacement", () => {
+        expect(() => normalizeServiceRecordEditChanges(
             lockedSource([1]), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing: false },
-        ))).toBe("LOCKED_SESSION_DATE_CHANGED");
+        )).not.toThrow();
         // A suffix move drags every later session along, including a locked one.
-        expect(codeOf(() => normalizeServiceRecordEditChanges(
+        expect(() => normalizeServiceRecordEditChanges(
             lockedSource([4]), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 2, toDate: "2026-09-09" },
-        ))).toBe("LOCKED_SESSION_DATE_CHANGED");
-        // Moving only unlocked sessions around a locked one is fine.
+        )).not.toThrow();
         expect(() => normalizeServiceRecordEditChanges(
             lockedSource([1]), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 3, toDate: "2026-09-11" },
         )).not.toThrow();
     });
 
-    it("blocks the preview when a locked session's date was changed in the stored draft", () => {
-        const preview = previewOf(lockedSource([1]), { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-04" }] });
+    it("blocks the preview when a locked session's date was changed in a stored schedule draft", () => {
+        const preview = previewOf(lockedSource([1]), { serviceDays: off, sessions: [{ sessionIndex: 1, serviceDate: "2026-09-04" }] });
         expect(preview.blockingReasons).toEqual([
             expect.objectContaining({ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 1 }),
         ]);
+    });
+
+    it("does not block the preview of a date-move draft that changed a locked session's date", () => {
+        const preview = previewOf(lockedSource([1]), { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-04" }] });
+        expect(preview.blockingReasons.map(({ code }) => code)).not.toContain("LOCKED_SESSION_DATE_CHANGED");
     });
 
     it("carries the toggles through later saves and applies them to a later date move", () => {
