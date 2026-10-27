@@ -2159,10 +2159,6 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
             scheduleId: owner.scheduleId,
             employeeId: owner.employeeId,
             employeeNameSnapshot: owner.employeeName,
-            // A written row still being edited: locked/submitted sessions keep their dates, and
-            // these cases are about moving dates, not about the lock.
-            locked: false,
-            submittedAt: null,
         };
     }
 
@@ -3469,29 +3465,55 @@ describe("AdminServiceRecordEditService service-day schedule replacement", () =>
             expect(plan.dispatchContext).toBeNull();
         });
 
-        it("blocks a stored date change of a locked session at preview", async () => {
-            const source = previewSourceSnapshot();
-            const moved = { sessions: [{ sessionIndex: 1, serviceDate: "2026-08-31" }] };
+        async function previewOfStoredChanges(source: ServiceRecordEditSource, changes: Record<string, unknown>) {
             const harness = createHarness({ source });
             const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
-            const activeDraft = { ...started.draft!, changes: moved };
+            const activeDraft = { ...started.draft!, changes };
             (harness.repository as typeof harness.repository & { loadDraftWithSource: jest.Mock }).loadDraftWithSource =
                 jest.fn().mockResolvedValue({ draft: activeDraft, source });
-            const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            return harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
                 expectedDraftVersion: activeDraft.draftVersion,
+            });
+        }
+
+        it("blocks a stored date change of a locked session at preview, for a schedule draft", async () => {
+            const preview = await previewOfStoredChanges(previewSourceSnapshot(), {
+                serviceDays: off,
+                sessions: [{ sessionIndex: 1, serviceDate: "2026-08-31" }],
             });
             expect(preview.blockingReasons).toEqual([
                 expect.objectContaining({ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 1 }),
             ]);
         });
 
-        it("re-checks the locked rows read inside the confirm transaction", async () => {
+        it("does not hold a dateMove draft (no service days) to the locked-session guard at preview", async () => {
+            const preview = await previewOfStoredChanges(previewSourceSnapshot(), {
+                sessions: [{ sessionIndex: 1, serviceDate: "2026-08-31" }],
+            });
+            expect(preview.blockingReasons.map(({ code }) => code)).not.toContain("LOCKED_SESSION_DATE_CHANGED");
+        });
+
+        it("lets a dateMove move a locked session at PATCH and confirm exactly as before schedule replacement", async () => {
+            const source = previewSourceSnapshot();
+            const harness = createHarness({ source });
+            await patch(harness, { dateMove: { sessionIndex: 1, toDate: "2026-09-04" } });
+            const changes = savedChanges(harness);
+            expect(changes["serviceDays"]).toBeUndefined();
+            expect(changes["sessions"]).toEqual(expect.arrayContaining([{ sessionIndex: 1, serviceDate: "2026-09-04" }]));
+            const { preview, prepare } = await previewAndPrepare({ source, changes });
+            expect(preview.blockingReasons.map(({ code }) => code)).not.toContain("LOCKED_SESSION_DATE_CHANGED");
+            expect(() => prepare()).not.toThrow();
+        });
+
+        it("answers a session locked after the schedule preview with REQUEST_CONFLICT and LOCKED_SESSION_DATE_CHANGED", async () => {
             // The preview saw session 1 unlocked, so moving it was fine then.
             const source = unlockedSource();
             const changes = await savedScheduleChanges(source, {
                 serviceDays: off,
                 dates: ["2026-09-02", "2026-09-03", "2026-09-04"],
             });
+            // Then the caregiver locks/submits it: the source rows read inside the confirm
+            // transaction now differ from the ones the draft was bound to.
             const lockedLater: ServiceRecordEditSource = {
                 ...source,
                 sessions: source.sessions.map((session) => ({
@@ -3500,19 +3522,32 @@ describe("AdminServiceRecordEditService service-day schedule replacement", () =>
                     submittedAt: "2026-09-02T04:00:00.000Z",
                 })),
             };
-            const relocked = createHarness({ source: lockedLater });
-            await relocked.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
-            const lockedFingerprint = (relocked.repository.createOrResumeDraft.mock.calls[0]![0] as {
-                sourceFingerprint: string;
-            }).sourceFingerprint;
-
             const { prepare, activeDraft } = await previewAndPrepare({ source, changes, confirmSource: lockedLater });
-            expect(() => prepare({ ...activeDraft, sourceFingerprint: lockedFingerprint })).toThrow(
+            // The ORIGINAL draft, still bound to the unlocked source's fingerprint.
+            expect(() => prepare(activeDraft)).toThrow(
                 expect.objectContaining({
                     response: expect.objectContaining({
                         code: "REQUEST_CONFLICT",
                         blockingReasons: [expect.objectContaining({ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 1 })],
                     }),
+                }),
+            );
+        });
+
+        it("still reports a stale source for a non-schedule draft whose rows changed", async () => {
+            const source = unlockedSource();
+            const lockedLater: ServiceRecordEditSource = {
+                ...source,
+                sessions: source.sessions.map((session) => ({ ...session, locked: true, submittedAt: "2026-09-02T04:00:00.000Z" })),
+            };
+            const { prepare, activeDraft } = await previewAndPrepare({
+                source,
+                changes: { header: { momName: "수정" } },
+                confirmSource: lockedLater,
+            });
+            expect(() => prepare(activeDraft)).toThrow(
+                expect.objectContaining({
+                    response: expect.objectContaining({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED", sourceChanged: true }),
                 }),
             );
         });

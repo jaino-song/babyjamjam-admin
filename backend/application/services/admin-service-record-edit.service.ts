@@ -970,16 +970,7 @@ export class AdminServiceRecordEditService {
         }
 
         const fingerprint = sourceFingerprint(source);
-        if (draft.sourceFingerprint !== fingerprint) {
-            throw new ConflictException({
-                ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
-                sourceChanged: true,
-                sourceCaseVersion: source.caseVersion,
-                sourceFingerprint: fingerprint,
-            });
-        }
-
-        const provisional = buildServiceRecordEditPreview({
+        const buildProvisional = () => buildServiceRecordEditPreview({
             calendar,
             draftId,
             draftVersion: draft.draftVersion,
@@ -989,18 +980,34 @@ export class AdminServiceRecordEditService {
             changes: effectivePreviewChanges(source, draft.changes),
             previewId: "pending",
         });
-        const { previewId: _ignoredPreviewId, ...previewValues } = provisional;
-        void _ignoredPreviewId;
-        // A session locked or submitted since the preview must keep its date. This is a hard
-        // stop checked against the rows read inside the confirm transaction, before the
-        // preview id is compared, so it can never be reported as a merely stale preview.
-        const lockedReasons = provisional.blockingReasons.filter((entry) => entry.code === "LOCKED_SESSION_DATE_CHANGED");
-        if (lockedReasons.length > 0) {
+        // A schedule replacement must not move a session locked or submitted since the preview.
+        // Locking changes the source fingerprint, so this hard stop is judged against the rows
+        // read inside the confirm transaction BEFORE the stale-source rejection below, which
+        // would otherwise hide it behind the generic write-target response. A dateMove draft
+        // is not held to it.
+        const isScheduleDraft = draftServiceDays(draft.changes) !== null;
+        let provisional = isScheduleDraft ? buildProvisional() : null;
+        if (provisional) {
+            const lockedReasons = provisional.blockingReasons.filter((entry) => entry.code === "LOCKED_SESSION_DATE_CHANGED");
+            if (lockedReasons.length > 0) {
+                throw new ConflictException({
+                    ...codeOnlyProblemBody("REQUEST_CONFLICT"),
+                    blockingReasons: lockedReasons,
+                });
+            }
+        }
+        if (draft.sourceFingerprint !== fingerprint) {
             throw new ConflictException({
-                ...codeOnlyProblemBody("REQUEST_CONFLICT"),
-                blockingReasons: lockedReasons,
+                ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
+                sourceChanged: true,
+                sourceCaseVersion: source.caseVersion,
+                sourceFingerprint: fingerprint,
             });
         }
+
+        provisional ??= buildProvisional();
+        const { previewId: _ignoredPreviewId, ...previewValues } = provisional;
+        void _ignoredPreviewId;
         const computedPreviewId = `srp_${createHash("sha256")
             .update(stableStringify(jsonValue(previewValues)))
             .digest("hex")}`;
