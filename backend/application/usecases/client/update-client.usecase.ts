@@ -26,6 +26,9 @@ export type UpdateClientParams = {
     breastPump?: boolean;
     eDocId?: string | null;
     areaId?: string | null;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
 };
 
 export class ClientTargetVersionMismatchError extends Error {
@@ -100,7 +103,14 @@ export class UpdateClientUsecase {
 }
 
 function assertNonNullableClientPatch(updates: UpdateClientParams): void {
-    for (const field of ["name", "voucherClient", "breastPump"] as const) {
+    for (const field of [
+        "name",
+        "voucherClient",
+        "breastPump",
+        "allowSaturdayService",
+        "allowSundayService",
+        "allowHolidayService",
+    ] as const) {
         if (Object.prototype.hasOwnProperty.call(updates, field) && updates[field] === null) {
             throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
                 pointer: `/${field}`,
