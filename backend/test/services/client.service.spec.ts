@@ -643,6 +643,41 @@ describe("ClientService", () => {
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
             });
 
+            describe("per-client service days", () => {
+                // 2026-12-14 is a Monday: 10 sessions end 12-28 on weekdays, 12-24 with Saturday service.
+                const saturdayPeriod = { startDate: "2026-12-14", endDate: "2026-12-24" };
+
+                it("counts a Saturday toward the derived duration only when the client allows it", async () => {
+                    createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                    await service.create(branchId, { ...baseParams, ...saturdayPeriod, allowSaturdayService: true });
+                    expect(createdDuration()).toBe(10);
+
+                    createClientUsecase.execute.mockClear();
+                    await service.create(branchId, { ...baseParams, ...saturdayPeriod });
+                    expect(createdDuration()).toBe(9);
+                });
+
+                it("rejects 10 sessions over the Saturday-inclusive period when Saturday service is off", async () => {
+                    await expect(service.create(branchId, {
+                        ...baseParams, ...saturdayPeriod, duration: 10,
+                    })).rejects.toMatchObject({ status: 400 });
+                    expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                });
+
+                it("passes the flags to the create usecase, defaulting each to false, and keeps the plain branch calendar", async () => {
+                    createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                    await service.create(branchId, { ...baseParams, ...saturdayPeriod, allowSundayService: true });
+
+                    expect(createClientUsecase.execute).toHaveBeenCalledWith(branchId, expect.objectContaining({
+                        allowSaturdayService: false,
+                        allowSundayService: true,
+                        allowHolidayService: false,
+                    }), expect.anything(), KR_BUILTIN_CALENDAR);
+                });
+            });
+
             it("leaves the duration null when no service period was submitted", async () => {
                 const client = createClientEntity();
                 createClientUsecase.execute.mockResolvedValue(client);
@@ -2308,6 +2343,76 @@ describe("ClientService", () => {
             expect(clientRepository.findByPhone).not.toHaveBeenCalled();
             expect(prismaService.$transaction).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        describe("per-client service days", () => {
+            // 2026-12-14 is a Monday: 10 sessions end 12-28 on weekdays, 12-24 with Saturday service.
+            const shorten = { endDate: "2026-12-24", duration: 10 };
+            const ofClient = (allowSaturdayService: boolean) => {
+                const client = createClientEntity();
+                client.startDate = new Date("2026-12-14T00:00:00Z");
+                client.endDate = new Date("2026-12-28T00:00:00Z");
+                client.duration = 10;
+                client.allowSaturdayService = allowSaturdayService;
+                return client;
+            };
+
+            it("accepts the Saturday-inclusive period for a Saturday-enabled client", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+
+                await service.update(branchId, 1, shorten);
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ endDate: new Date("2026-12-24"), duration: 10 }),
+                }));
+            });
+
+            it("rejects the same period for a client without Saturday service", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(false));
+
+                await expect(service.update(branchId, 1, shorten)).rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("judges the period on the flags of this same patch and persists them", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(false));
+
+                await service.update(branchId, 1, { ...shorten, allowSaturdayService: true });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ allowSaturdayService: true, endDate: new Date("2026-12-24") }),
+                }));
+                const data = prismaService.client.updateMany.mock.calls[0]![0].data;
+                expect(data.allowSundayService).toBeUndefined();
+                expect(data.allowHolidayService).toBeUndefined();
+            });
+
+            it("a patch that turns Saturday off rejects a period only Saturday service could hold", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+
+                await expect(service.update(branchId, 1, { ...shorten, allowSaturdayService: false }))
+                    .rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("re-checks the period against the locked row's flags, not the stale preflight copy", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+                prismaService.client.findUnique.mockResolvedValue({
+                    ...ofClient(false),
+                    branchId,
+                });
+
+                await expect(service.update(branchId, 1, shorten)).rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("rejects a null flag before reading the client write", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+
+                await expect(service.update(branchId, 1, { allowSundayService: null } as never))
+                    .rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
         });
 
         describe("smsAutomationEnabled", () => {

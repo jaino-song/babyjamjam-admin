@@ -62,7 +62,13 @@ import {
 import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
-import { ClientEntity, clientDurationOutOfRangeMessage, CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE } from "domain/entities/client.entity";
+import {
+    ClientEntity,
+    clientDurationOutOfRangeMessage,
+    CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE,
+    mergeServiceDayPolicy,
+    serviceDayPolicyOf,
+} from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import {
     CLIENT_REPOSITORY,
@@ -197,6 +203,9 @@ export interface ClientWithEmployees {
     serviceStatus: string | null;
     bookingConfirmedAt: string | null;
     breastPump: boolean;
+    allowSaturdayService: boolean;
+    allowSundayService: boolean;
+    allowHolidayService: boolean;
     eDocId: string | null;
     areaId: string | null;
     smsAutomationEnabled: boolean;
@@ -1264,6 +1273,10 @@ export class ClientService {
         birthDate?: string | null;
         serviceStatus?: string | null;
         breastPump: boolean;
+        /** Per-client service-day policy; omitted means weekday-only. */
+        allowSaturdayService?: boolean;
+        allowSundayService?: boolean;
+        allowHolidayService?: boolean;
         eDocId?: string | null;
         areaId?: string | null;
         suppressGreetingSms?: boolean;
@@ -1283,7 +1296,13 @@ export class ClientService {
         mergeAndValidateClientServicePeriod(null, { startDate, endDate });
         // SAVED computation: the derived duration is persisted.
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
-        const derivedDuration = deriveClientDuration(startDate, endDate, calendar);
+        // The client's own service days decide which days count toward the
+        // duration; the plain branch calendar still serves the lifecycle calls below.
+        const derivedDuration = deriveClientDuration(
+            startDate,
+            endDate,
+            calendar.withServiceDays(serviceDayPolicyOf(params)),
+        );
         // On create there is no prior duration to clear, so an explicit null
         // carries the same "no opinion" as an omitted field and the count is
         // derived from the dates. Only a supplied number is checked against
@@ -1422,6 +1441,9 @@ export class ClientService {
             serviceStatus: params.serviceStatus ?? null,
             bookingConfirmedAt: confirmBookingOnCreate ? new Date() : null,
             breastPump: params.breastPump,
+            allowSaturdayService: params.allowSaturdayService ?? false,
+            allowSundayService: params.allowSundayService ?? false,
+            allowHolidayService: params.allowHolidayService ?? false,
             eDocId: params.eDocId ?? null,
             areaId: params.areaId ?? null,
             suppressGreetingSms,
@@ -1819,6 +1841,9 @@ export class ClientService {
                     serviceStatus: computedStatus, // Return computed status, not stored one
                     bookingConfirmedAt: client.bookingConfirmedAt?.toISOString() ?? null,
                     breastPump: client.breastPump,
+                    allowSaturdayService: client.allowSaturdayService,
+                    allowSundayService: client.allowSundayService,
+                    allowHolidayService: client.allowHolidayService,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
                     smsAutomationEnabled: client.smsAutomationEnabled,
@@ -1986,6 +2011,9 @@ export class ClientService {
         birthDate?: string | null;
         serviceStatus?: string | null;
         breastPump?: boolean;
+        allowSaturdayService?: boolean;
+        allowSundayService?: boolean;
+        allowHolidayService?: boolean;
         eDocId?: string | null;
         areaId?: string | null;
         smsAutomationEnabled?: boolean;
@@ -2007,7 +2035,14 @@ export class ClientService {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
-        for (const field of ["name", "voucherClient", "breastPump"] as const) {
+        for (const field of [
+            "name",
+            "voucherClient",
+            "breastPump",
+            "allowSaturdayService",
+            "allowSundayService",
+            "allowHolidayService",
+        ] as const) {
             if (Object.prototype.hasOwnProperty.call(params, field) && params[field] === null) {
                 throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
                     pointer: `/${field}`,
@@ -2082,10 +2117,13 @@ export class ClientService {
         // SAVED computation: validates and persists the duration. The same
         // calendar instance is reused for the locked re-check below.
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+        // Duration is judged on the client's effective service days (current
+        // flags with this patch applied); `calendar` itself stays the plain
+        // branch calendar for the lifecycle calls.
         const derivedDuration = deriveClientDuration(
             mergedServicePeriod.startDate,
             mergedServicePeriod.endDate,
-            calendar,
+            calendar.withServiceDays(mergeServiceDayPolicy(existingClient, params)),
         );
         assertClientDurationMatchesDates(params.duration, derivedDuration, params.allowBusinessDayMismatch);
         if (hasDateUpdate && params.duration === null && derivedDuration !== null) {
@@ -2169,6 +2207,9 @@ export class ClientService {
                         serviceStatus: true,
                         bookingConfirmedAt: true,
                         breastPump: true,
+                        allowSaturdayService: true,
+                        allowSundayService: true,
+                        allowHolidayService: true,
                         eDocId: true,
                         areaId: true,
                     },
@@ -2218,7 +2259,7 @@ export class ClientService {
             const lockedDerivedDuration = deriveClientDuration(
                 lockedMergedServicePeriod.startDate,
                 lockedMergedServicePeriod.endDate,
-                calendar,
+                calendar.withServiceDays(mergeServiceDayPolicy(currentClient, params)),
             );
             assertClientDurationMatchesDates(
                 params.duration,
@@ -2412,6 +2453,9 @@ export class ClientService {
                 birthDate: birthDateUpdate,
                 serviceStatus: savedServiceStatus,
                 breastPump: params.breastPump,
+                allowSaturdayService: params.allowSaturdayService,
+                allowSundayService: params.allowSundayService,
+                allowHolidayService: params.allowHolidayService,
                 eDocId: params.eDocId === undefined ? undefined : params.eDocId,
                 areaId: params.areaId === undefined ? undefined : params.areaId,
                 smsAutomationEnabled: params.smsAutomationEnabled,
