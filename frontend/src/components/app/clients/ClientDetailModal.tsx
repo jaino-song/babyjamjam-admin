@@ -115,6 +115,12 @@ export function ClientDetailModal({
 
     if (!client) return null;
 
+    const serviceDayLabels = [
+        client.allowSaturdayService ? t(locale, "clients.form.service-days-saturday") : null,
+        client.allowSundayService ? t(locale, "clients.form.service-days-sunday") : null,
+        client.allowHolidayService ? t(locale, "clients.form.service-days-holiday") : null,
+    ].filter((label): label is string => label !== null);
+
     const handleEdit = () => {
         onEdit(client);
         onClose();
@@ -260,7 +266,12 @@ export function ClientDetailModal({
                                     {t(locale, "clients.form.breast-pump")}
                                 </Badge>
                             )}
-                            {!client.voucherClient && !client.careCenter && !client.breastPump && (
+                            {serviceDayLabels.length > 0 && (
+                                <Badge variant="outline">
+                                    {t(locale, "clients.form.service-days")}: {serviceDayLabels.join(", ")}
+                                </Badge>
+                            )}
+                            {!client.voucherClient && !client.careCenter && !client.breastPump && serviceDayLabels.length === 0 && (
                                 <span className="text-sm text-muted-foreground">-</span>
                             )}
                         </div>
