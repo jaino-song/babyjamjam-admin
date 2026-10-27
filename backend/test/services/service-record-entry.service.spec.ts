@@ -1743,3 +1743,94 @@ describe("ServiceRecordEntryService branch calendar", () => {
         expect(harness.upsert).toHaveBeenCalled();
     });
 });
+
+describe("ServiceRecordEntryService client service days", () => {
+    const saturdayOnly = { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false };
+    const weekdayOnly = { allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
+
+    function contextServiceFor(record: ReturnType<typeof createRecord>, clientFlags: Record<string, unknown>) {
+        const prisma = createContextPrisma(record);
+        prisma.employee_schedule.findUnique.mockResolvedValue({
+            client: { id: 100, name: "고객", ...clientFlags },
+            primaryEmployee: { id: 20, name: "제공자" },
+        });
+        return new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+            createHolidayCalendarStub(),
+        );
+    }
+
+    // A legacy case with no stored N and no planned vector: 2026-12-14..2026-12-24
+    // holds nine weekdays, ten when Saturday 12-19 is a service day.
+    const legacyRecord = () => createRecord({
+        requiredSessionCount: null,
+        startDate: new Date("2026-12-14T00:00:00.000Z"),
+        endDate: new Date("2026-12-24T00:00:00.000Z"),
+        plannedSessions: null,
+    });
+
+    it("getContext derives a legacy N on a Saturday-enabled client's service days and reports serviceDays", async () => {
+        const result = await contextServiceFor(legacyRecord(), saturdayOnly).getContext(context);
+
+        expect(result.totalSessions).toBe(10);
+        expect(result.serviceDays).toEqual({ saturday: true, sunday: false, holiday: false });
+    });
+
+    it("getContext derives the same legacy N on weekdays only for a default client", async () => {
+        const result = await contextServiceFor(legacyRecord(), weekdayOnly).getContext(context);
+
+        expect(result.totalSessions).toBe(9);
+        expect(result.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
+    });
+
+    it("getContext reports false for service-day flags the client row does not carry", async () => {
+        const result = await contextServiceFor(legacyRecord(), { allowSundayService: null }).getContext(context);
+
+        expect(result.totalSessions).toBe(9);
+        expect(result.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
+    });
+
+    // Session 1 of 2 on Fri 2026-12-18, case ending that day: the last session is the
+    // next service day, Sat 12-19 for a Saturday-enabled client and Mon 12-21 otherwise.
+    it.each([
+        ["a Saturday-enabled client", saturdayOnly, "2026-12-19"],
+        ["a default client", weekdayOnly, "2026-12-21"],
+    ])("upsertSession auto-extend lands on %s's next service day", async (_label, flags, expectedEnd) => {
+        const record = createRecord({
+            requiredSessionCount: 2,
+            startDate: new Date("2026-12-14T00:00:00.000Z"),
+            endDate: new Date("2026-12-18T00:00:00.000Z"),
+        });
+        const schedule = {
+            id: 10,
+            clientId: 100,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-12-14T00:00:00.000Z"),
+            endDate: new Date("2026-12-18T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+            client: flags,
+        };
+        const harness = createHarness({ existing: null, transactionRecord: record, schedule });
+
+        await harness.service.upsertSession(
+            context,
+            1,
+            createDto({ serviceDate: "2026-12-18T00:00:00.000Z" }),
+            false,
+        );
+
+        expect(harness.scheduleUpdate).toHaveBeenCalledWith({
+            where: { id: 10, branchId: BRANCH_ID },
+            data: { endDate: new Date(`${expectedEnd}T00:00:00.000Z`) },
+        });
+        // The calendar handed to the lifecycle carries the client's policy.
+        const handedOn = harness.lifecycle.ensureForClient.mock.calls[0]![2] as {
+            isBusinessDay(iso: string): boolean;
+        };
+        expect(handedOn.isBusinessDay("2026-12-19")).toBe(expectedEnd === "2026-12-19");
+    });
+});

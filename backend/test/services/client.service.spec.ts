@@ -2676,6 +2676,61 @@ describe("ClientService", () => {
                 });
             });
 
+            describe("expectedServiceDays guard", () => {
+                const SATURDAY_ONLY = {
+                    allowSaturdayService: true,
+                    allowSundayService: false,
+                    allowHolidayService: false,
+                };
+
+                it("rejects with SERVICE_RECORD_WRITE_TARGET_CHANGED when the locked row's flags differ from the snapshot", async () => {
+                    const staleClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                    prismaService.client.findUnique.mockResolvedValue({
+                        ...staleClient,
+                        branchId,
+                        allowSaturdayService: false,
+                    });
+
+                    await expect(service.update(branchId, staleClient.id, {
+                        endDate: "2024-05-30",
+                        expectedServiceDays: SATURDAY_ONLY,
+                    })).rejects.toMatchObject({
+                        status: 409,
+                        response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+                    });
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+
+                it("writes normally when the locked flags still match, without persisting the guard", async () => {
+                    const staleClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                    prismaService.client.findUnique.mockResolvedValue({
+                        ...staleClient,
+                        branchId,
+                        allowSaturdayService: true,
+                    });
+
+                    await service.update(branchId, staleClient.id, {
+                        endDate: "2024-05-30",
+                        expectedServiceDays: SATURDAY_ONLY,
+                    });
+
+                    const { data } = prismaService.client.updateMany.mock.calls[0][0];
+                    expect(data.endDate).toEqual(new Date("2024-05-30"));
+                    expect(data).not.toHaveProperty("expectedServiceDays");
+                });
+
+                it("treats a guard on its own as no update", async () => {
+                    const existingClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, { expectedServiceDays: SATURDAY_ONLY }))
+                        .resolves.toBe(existingClient);
+                    expect(prismaService.$transaction).not.toHaveBeenCalled();
+                });
+            });
+
             it("should update client without creating new schedule", async () => {
                 // Arrange
                 const existingClient = createClientEntity();
