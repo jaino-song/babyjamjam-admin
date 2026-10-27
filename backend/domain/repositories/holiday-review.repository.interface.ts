@@ -48,6 +48,14 @@ export interface ReviewItemDraft {
     /** End date under the calendar the stored end was most likely saved with. */
     previousEnd: string;
     /**
+     * The client's service-day flags `recalculatedEnd`/`previousEnd` (and so whether an item is
+     * needed at all) were computed with. The transaction compares them with the locked row: a
+     * toggle in between makes the draft stale, so nothing is applied. Absent means not allowed.
+     */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
+    /**
      * Earliest change date behind the item: the event's date, or the older of it and
      * the open item this one replaces. `category`/`reason` were classified against it.
      */

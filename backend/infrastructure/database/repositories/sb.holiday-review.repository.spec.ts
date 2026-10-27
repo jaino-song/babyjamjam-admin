@@ -373,6 +373,9 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         storedEnd: "2026-11-13",
         recalculatedEnd: "2026-11-16",
         previousEnd: "2026-11-13",
+        allowSaturdayService: false,
+        allowSundayService: false,
+        allowHolidayService: false,
         affectedFrom: "2026-11-10",
         category: "safe" as const,
         reason: "no_sessions_after_date" as const,
@@ -384,7 +387,9 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         expectedUnprocessedEventIds: [EVENT],
     };
 
-    function makeTxRepository(currentEnd: Date | null | "missing") {
+    const NO_FLAGS = { allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
+
+    function makeTxRepository(currentEnd: Date | null | "missing", flags: Partial<typeof NO_FLAGS> = {}) {
         const tx = {
             $executeRaw: jest.fn<Promise<number>, [Prisma.Sql]>(async () => 1),
             $queryRaw: jest.fn<Promise<unknown[]>, [Prisma.Sql]>(async () => [{ id: CLIENT }]),
@@ -399,7 +404,7 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
                 upsert: jest.fn(async () => ({})),
             },
             client: {
-                findMany: jest.fn(async () => (currentEnd === "missing" ? [] : [{ id: CLIENT, endDate: currentEnd }])),
+                findMany: jest.fn(async () => (currentEnd === "missing" ? [] : [{ id: CLIENT, endDate: currentEnd, ...NO_FLAGS, ...flags }])),
             },
         };
         const prisma = { $transaction: jest.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) };
@@ -415,7 +420,13 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         expect(lock?.values).toEqual([HOLIDAY_REVIEW_LOCK_KEY]);
         expect(tx.client.findMany).toHaveBeenCalledWith({
             where: { id: { in: [CLIENT] }, branchId: { in: [BRANCH] }, deletedAt: null },
-            select: { id: true, endDate: true },
+            select: {
+                id: true,
+                endDate: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
+            },
         });
         expect(tx.end_date_review_item.upsert).toHaveBeenCalledTimes(1);
         expect(tx.holiday_change_event.update).toHaveBeenCalledTimes(1);
@@ -441,7 +452,7 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         const { tx, repository } = makeTxRepository(day("2026-11-13"));
         tx.$queryRaw.mockImplementation(async () => {
             // The row-lock wait ends only after the provider's extension commits.
-            tx.client.findMany.mockResolvedValue([{ id: CLIENT, endDate: day("2026-11-16") }]);
+            tx.client.findMany.mockResolvedValue([{ id: CLIENT, endDate: day("2026-11-16"), ...NO_FLAGS }]);
             return [{ id: CLIENT }];
         });
 
@@ -463,5 +474,63 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         expect(tx.end_date_review_item.updateMany).not.toHaveBeenCalled();
         // The event stays unprocessed so the next run recomputes it.
         expect(tx.holiday_change_event.update).not.toHaveBeenCalled();
+    });
+
+    describe("service-day flag fence", () => {
+        // Holiday service on when the draft was computed: the new weekday holiday moved nothing,
+        // so the draft is a "no item" one (ends equal the stored end).
+        const holidayOnDraft = {
+            ...draft,
+            recalculatedEnd: "2026-11-13",
+            allowHolidayService: true,
+        };
+        const holidayOnInput = { ...input, drafts: [holidayOnDraft] };
+
+        it.each([
+            ["holiday service was turned off", { allowHolidayService: false }],
+            ["Saturday service was turned on", { allowHolidayService: true, allowSaturdayService: true }],
+            ["Sunday service was turned on", { allowHolidayService: true, allowSundayService: true }],
+        ])("returns items_changed and marks nothing processed when %s after the draft was computed", async (_label, flags) => {
+            const { tx, repository } = makeTxRepository(day("2026-11-13"), flags);
+
+            await expect(repository.applyEventResult(holidayOnInput)).resolves.toEqual({ status: "items_changed" });
+
+            expect(tx.end_date_review_item.upsert).not.toHaveBeenCalled();
+            expect(tx.end_date_review_item.updateMany).not.toHaveBeenCalled();
+            expect(tx.holiday_change_event.update).not.toHaveBeenCalled();
+        });
+
+        it("returns items_changed instead of committing a false mismatch item when holiday service was turned on", async () => {
+            // The draft saw the default policy (item needed: ends differ); the locked row now allows holidays.
+            const { tx, repository } = makeTxRepository(day("2026-11-13"), { allowHolidayService: true });
+
+            await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "items_changed" });
+
+            expect(tx.end_date_review_item.upsert).not.toHaveBeenCalled();
+            expect(tx.holiday_change_event.update).not.toHaveBeenCalled();
+        });
+
+        it("behaves as before when the locked flags equal the draft's", async () => {
+            const { tx, repository } = makeTxRepository(day("2026-11-13"), { allowHolidayService: true });
+
+            await expect(repository.applyEventResult(holidayOnInput)).resolves.toEqual({
+                status: "applied",
+                created: 0,
+                obsoleted: 0,
+            });
+            expect(tx.end_date_review_item.upsert).not.toHaveBeenCalled();
+            expect(tx.holiday_change_event.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("reads the flags after the client lock, so a toggle that commits during the lock wait is caught", async () => {
+            const { tx, repository } = makeTxRepository(day("2026-11-13"), { allowHolidayService: true });
+            tx.$queryRaw.mockImplementation(async () => {
+                tx.client.findMany.mockResolvedValue([{ id: CLIENT, endDate: day("2026-11-13"), ...NO_FLAGS }]);
+                return [{ id: CLIENT }];
+            });
+
+            await expect(repository.applyEventResult(holidayOnInput)).resolves.toEqual({ status: "items_changed" });
+            expect(tx.holiday_change_event.update).not.toHaveBeenCalled();
+        });
     });
 });
