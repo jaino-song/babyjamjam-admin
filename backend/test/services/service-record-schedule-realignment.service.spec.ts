@@ -335,6 +335,120 @@ describe("ServiceRecordScheduleRealignmentService", () => {
             expect(persistClientMessageAutomationIntent).not.toHaveBeenCalled();
         });
 
+        describe("period reconciliation when no session moves", () => {
+            const SHORT_LAYOUT = ["2026-12-14", "2026-12-15"];
+            const expectNoSessionWork = (world: ReturnType<typeof createWorld>) => {
+                expect(world.tx.service_record_day.updateMany).not.toHaveBeenCalled();
+                expect(world.tx.service_record_assignment.updateMany).not.toHaveBeenCalled();
+                expect(world.tx.employee_schedule.updateMany).not.toHaveBeenCalled();
+                expect(world.store.appendScheduleWriteFence).not.toHaveBeenCalled();
+                expect(persistClientMessageAutomationIntent).not.toHaveBeenCalled();
+                expect(persistScheduleMessageAutomationIntent).not.toHaveBeenCalled();
+            };
+
+            it("ends the client, case and token on the vector's last date when a toggle moves nothing and the form sent a later end date", async () => {
+                // Both sessions are in the past, so nothing can move; the form recomputed the end to the 16th.
+                const world = createWorld({
+                    flags: { holiday: true },
+                    planned: vector(SHORT_LAYOUT),
+                    requiredSessionCount: 2,
+                    endDate: "2026-12-16",
+                    schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-14", endDate: "2026-12-15" }],
+                });
+
+                const result = await world.run({ callerSuppliedEndDate: true });
+
+                expect(result).toMatchObject({ changed: true, mode: "planned", endDate: "2026-12-15" });
+                expect(world.plannedDates()).toEqual(SHORT_LAYOUT);
+                expect(iso(world.client.endDate)).toBe("2026-12-15");
+                expect(iso(world.record["endDate"] as Date)).toBe("2026-12-15");
+                expect(world.record["version"]).toBe(4);
+                expect(world.tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                    where: { branchId: BRANCH, serviceRecordCaseId: CASE_ID, active: true, revokedAt: null },
+                    data: { expiresAt: new Date("2026-12-15T15:00:00.000Z") },
+                });
+                expectNoSessionWork(world);
+            });
+
+            it("reconciles a fully fixed vector (every session written) to its last date", async () => {
+                const world = createWorld({
+                    flags: { saturday: true },
+                    endDate: "2026-12-30",
+                    days: written(10),
+                });
+
+                const result = await world.run({ now: new Date("2026-12-14T03:00:00.000Z"), callerSuppliedEndDate: true });
+
+                expect(result).toMatchObject({ changed: true, endDate: "2026-12-28" });
+                expect(iso(world.client.endDate)).toBe("2026-12-28");
+                expect(iso(world.record["endDate"] as Date)).toBe("2026-12-28");
+                expect(world.tx.service_record_token.updateMany).toHaveBeenCalledTimes(1);
+                expectNoSessionWork(world);
+            });
+
+            it("reconciles when the re-lay yields the same dates but the supplied end date differs", async () => {
+                // Turning the holiday flag on moves nothing for a short run that holds no holiday.
+                const world = createWorld({
+                    flags: { holiday: true },
+                    planned: vector(["2026-12-14", "2026-12-15", "2026-12-16"]),
+                    requiredSessionCount: 3,
+                    endDate: "2026-12-17",
+                    schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-14", endDate: "2026-12-16" }],
+                });
+
+                const result = await world.run({ now: new Date("2026-12-14T03:00:00.000Z"), callerSuppliedEndDate: true });
+
+                expect(result).toMatchObject({ changed: true, endDate: "2026-12-16" });
+                expect(iso(world.client.endDate)).toBe("2026-12-16");
+                expect(iso(world.record["endDate"] as Date)).toBe("2026-12-16");
+                expectNoSessionWork(world);
+            });
+
+            it("writes only the side that differs and refreshes the token for it", async () => {
+                const clientOnly = createWorld({
+                    flags: { holiday: true },
+                    planned: vector(SHORT_LAYOUT),
+                    requiredSessionCount: 2,
+                    endDate: "2026-12-16",
+                });
+                clientOnly.record["endDate"] = date("2026-12-15");
+                await clientOnly.run();
+                expect(clientOnly.tx.service_record_case.update).not.toHaveBeenCalled();
+                expect(clientOnly.tx.client.updateMany).toHaveBeenCalledTimes(1);
+                expect(clientOnly.tx.service_record_token.updateMany).toHaveBeenCalledTimes(1);
+
+                const caseOnly = createWorld({
+                    flags: { holiday: true },
+                    planned: vector(SHORT_LAYOUT),
+                    requiredSessionCount: 2,
+                    endDate: "2026-12-15",
+                });
+                caseOnly.record["endDate"] = date("2026-12-16");
+                await caseOnly.run();
+                expect(caseOnly.tx.client.updateMany).not.toHaveBeenCalled();
+                expect(caseOnly.tx.service_record_case.update).toHaveBeenCalledTimes(1);
+                expect(iso(caseOnly.record["endDate"] as Date)).toBe("2026-12-15");
+                expect(caseOnly.tx.service_record_token.updateMany).toHaveBeenCalledTimes(1);
+            });
+
+            it("writes nothing when the period already ends on the vector's last date", async () => {
+                const world = createWorld({
+                    flags: { holiday: true },
+                    planned: vector(SHORT_LAYOUT),
+                    requiredSessionCount: 2,
+                    endDate: "2026-12-15",
+                });
+
+                const result = await world.run({ callerSuppliedEndDate: true });
+
+                expect(result.changed).toBe(false);
+                expect(world.tx.service_record_case.update).not.toHaveBeenCalled();
+                expect(world.tx.client.updateMany).not.toHaveBeenCalled();
+                expect(world.tx.service_record_token.updateMany).not.toHaveBeenCalled();
+                expectNoSessionWork(world);
+            });
+        });
+
         it("fences every moved schedule and persists the re-evaluation intents", async () => {
             const world = createWorld({ flags: { saturday: true }, days: written(3) });
 
