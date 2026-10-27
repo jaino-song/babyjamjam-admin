@@ -67,6 +67,7 @@ import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import type { ServiceDayPolicy } from "@/lib/date/business-days";
 import { CALENDAR_CHANGED_FOR_SAVE_MESSAGE } from "@/hooks/calendar-save-message";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
 import {
@@ -105,6 +106,9 @@ const VOUCHER_TYPE_SELECT_OPTIONS = Object.entries(voucherOptions.voucherOptions
   }),
 );
 const VOUCHER_TYPE_OPTIONS = VOUCHER_TYPE_SELECT_OPTIONS.flatMap((group) => group.options);
+
+const SERVICE_DAY_FIELDS = ["allowSaturdayService", "allowSundayService", "allowHolidayService"] as const;
+const isServiceDayField = (key: string): boolean => (SERVICE_DAY_FIELDS as readonly string[]).includes(key);
 
 type WizardValidatedField = "name" | "phone" | "birthday" | "dueDate" | "birthDate" | "address" | "startDate" | "endDate";
 
@@ -314,8 +318,20 @@ export default function NewClientPage() {
     retry: retryCalendar,
     refreshForSave,
   } = useBusinessDayCalendar({ extraYears: calendarYears });
-  const calendarRef = useRef(calendar);
-  calendarRef.current = calendar;
+  // The client's service-day switches (토/일/공휴일) widen what counts as a service day. Every
+  // end-date calculation and duration check below runs on this calendar, never the bare branch one.
+  const serviceDays = useMemo<ServiceDayPolicy>(
+    () => ({
+      saturday: store.allowSaturdayService,
+      sunday: store.allowSundayService,
+      holiday: store.allowHolidayService,
+    }),
+    [store.allowHolidayService, store.allowSaturdayService, store.allowSundayService],
+  );
+  const serviceDaysKey = `${serviceDays.saturday ? 1 : 0}${serviceDays.sunday ? 1 : 0}${serviceDays.holiday ? 1 : 0}`;
+  const serviceCalendar = useMemo(() => calendar.withServiceDays(serviceDays), [calendar, serviceDays]);
+  const calendarRef = useRef(serviceCalendar);
+  calendarRef.current = serviceCalendar;
   const endDateCalcSkippedRef = useRef(false);
   const autoEndDateRef = useRef<string | null>(null);
   const [calendarSaveFailed, setCalendarSaveFailed] = useState(false);
@@ -360,6 +376,9 @@ export default function NewClientPage() {
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
   const hasUserEditedServicePeriodRef = useRef(false);
+  // A service-day switch was flipped. It re-runs the auto end date like a duration change does, but it is
+  // not a price edit, so it must not flip `hasUserEditedServicePeriodRef` (which re-baselines the prices).
+  const serviceDaysEditedRef = useRef(false);
   // The client as the edit form was opened on it. An edit sends only what differs from it, so a field the
   // backend changed meanwhile (the end date, on a session delay) is not written back. Cleared with the form.
   const editBaselineRef = useRef<ClientUpdateFormFields | null>(null);
@@ -369,6 +388,7 @@ export default function NewClientPage() {
   const previousServicePeriodRef = useRef<{
     startDate: string;
     duration: number | null | undefined;
+    serviceDaysKey: string;
   } | null>(null);
   const submissionInFlightRef = useRef(false);
   const errorSummaryRef = useRef<HTMLDivElement>(null);
@@ -427,6 +447,7 @@ export default function NewClientPage() {
     lastHydratedIdRef.current = null;
     lastHydratedContractDocIdRef.current = null;
     hasUserEditedServicePeriodRef.current = false;
+    serviceDaysEditedRef.current = false;
     editBaselineRef.current = null;
     openingTablePricesRef.current = null;
     previousServicePeriodRef.current = null;
@@ -459,6 +480,7 @@ export default function NewClientPage() {
     }
 
     hasUserEditedServicePeriodRef.current = false;
+    serviceDaysEditedRef.current = false;
     previousServicePeriodRef.current = null;
     setPendingDurationConfirmation(null);
     reset();
@@ -485,6 +507,9 @@ export default function NewClientPage() {
     if (prefillClient.careCenter !== undefined) setField("careCenter", prefillClient.careCenter);
     if (prefillClient.voucherClient !== undefined) setField("voucherClient", prefillClient.voucherClient);
     if (prefillClient.breastPump !== undefined) setField("breastPump", prefillClient.breastPump);
+    if (prefillClient.allowSaturdayService !== undefined) setField("allowSaturdayService", prefillClient.allowSaturdayService);
+    if (prefillClient.allowSundayService !== undefined) setField("allowSundayService", prefillClient.allowSundayService);
+    if (prefillClient.allowHolidayService !== undefined) setField("allowHolidayService", prefillClient.allowHolidayService);
     if (prefillClient.serviceStatus !== undefined) setField("serviceStatus", prefillClient.serviceStatus);
     if (prefillClient.areaId !== undefined) setField("areaId", prefillClient.areaId ?? "");
 
@@ -506,6 +531,7 @@ export default function NewClientPage() {
     if (lastHydratedIdRef.current === editingClient.id) return;
     lastHydratedIdRef.current = editingClient.id;
     hasUserEditedServicePeriodRef.current = false;
+    serviceDaysEditedRef.current = false;
     previousServicePeriodRef.current = null;
     editBaselineRef.current = {
       name: editingClient.name,
@@ -527,6 +553,9 @@ export default function NewClientPage() {
       careCenter: editingClient.careCenter,
       voucherClient: editingClient.voucherClient,
       breastPump: editingClient.breastPump,
+      allowSaturdayService: editingClient.allowSaturdayService ?? false,
+      allowSundayService: editingClient.allowSundayService ?? false,
+      allowHolidayService: editingClient.allowHolidayService ?? false,
       serviceStatus: editingClient.serviceStatus ?? "pre_booking",
       areaId: editingClient.areaId ?? "",
     };
@@ -549,6 +578,9 @@ export default function NewClientPage() {
     setField("careCenter", editingClient.careCenter);
     setField("voucherClient", editingClient.voucherClient);
     setField("breastPump", editingClient.breastPump);
+    setField("allowSaturdayService", editingClient.allowSaturdayService ?? false);
+    setField("allowSundayService", editingClient.allowSundayService ?? false);
+    setField("allowHolidayService", editingClient.allowHolidayService ?? false);
     setField("serviceStatus", editingClient.serviceStatus ?? "pre_booking");
     setField("areaId", editingClient.areaId ?? "");
     setPricesManuallyEdited(Boolean(editingClient.fullPrice || editingClient.grant || editingClient.actualPrice));
@@ -776,9 +808,9 @@ export default function NewClientPage() {
       // current price list must still go through the business-day confirmation,
       // or the backend rejects it with CLIENT_DURATION_OUT_OF_RANGE.
       chosenDuration,
-      calendar,
+      serviceCalendar,
     ),
-    [calendar, chosenDuration, store.endDate, store.startDate],
+    [chosenDuration, serviceCalendar, store.endDate, store.startDate],
   );
 
   const selectedPriceInfo = useMemo(() => {
@@ -854,19 +886,23 @@ export default function NewClientPage() {
 
   // 시작일(YYYY-MM-DD) + 바우처 기간이 정해지면 평일(주말+지점 휴일 캘린더 기준 공휴일 제외)로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
+  // 재계산 시점은 가격표 기준 기간(effectiveDuration) 변화로 감지하고, 계산에는 저장될 기간(chosenDuration)을 쓴다:
+  // 현재 가격표에 없는 기존 기간도 서비스 요일 변경에 따라 재계산되어야 한다.
   // 종료일은 저장되는 값이라 지점 캘린더가 로드된 뒤에만 계산한다. 로드 중에 건너뛴 계산은
   // 캘린더가 준비되는 순간 한 번만 실행하고, 캘린더 객체/버전이 바뀌어도 다시 계산하지 않는다.
   useEffect(() => {
     const previousServicePeriod = previousServicePeriodRef.current;
     const servicePeriodChanged = previousServicePeriod === null
       || previousServicePeriod.startDate !== store.startDate
-      || previousServicePeriod.duration !== effectiveDuration;
+      || previousServicePeriod.duration !== effectiveDuration
+      || previousServicePeriod.serviceDaysKey !== serviceDaysKey;
     previousServicePeriodRef.current = {
       startDate: store.startDate,
       duration: effectiveDuration,
+      serviceDaysKey,
     };
     if (!servicePeriodChanged && !endDateCalcSkippedRef.current) return;
-    if (!store.startDate || !effectiveDuration) {
+    if (!store.startDate || !chosenDuration) {
       endDateCalcSkippedRef.current = false;
       setEndDateUnsupported(false);
       return;
@@ -880,7 +916,7 @@ export default function NewClientPage() {
     }
     // Existing and explicitly prefilled periods are authoritative until the
     // operator changes the start date or duration in this form.
-    if (!hasUserEditedServicePeriodRef.current && store.endDate) {
+    if (!hasUserEditedServicePeriodRef.current && !serviceDaysEditedRef.current && store.endDate) {
       endDateCalcSkippedRef.current = false;
       return;
     }
@@ -891,7 +927,7 @@ export default function NewClientPage() {
     endDateCalcSkippedRef.current = false;
     let endIso: string | null = null;
     try {
-      endIso = calendarRef.current.calcEndDateBusinessDays(store.startDate, effectiveDuration);
+      endIso = calendarRef.current.calcEndDateBusinessDays(store.startDate, chosenDuration);
     } catch {
       // A year the branch calendar does not cover: clear the end date instead of keeping the
       // previous one, and leave it to the user (the server validates a typed date).
@@ -904,7 +940,7 @@ export default function NewClientPage() {
     autoEndDateRef.current = endIso;
     if (store.endDate === endIso) return;
     setField("endDate", endIso);
-  }, [calendarReady, effectiveDuration, setField, store.endDate, store.startDate]);
+  }, [calendarReady, chosenDuration, effectiveDuration, serviceDaysKey, setField, store.endDate, store.startDate]);
 
   useEffect(() => {
     if (pendingDurationConfirmation === null) return;
@@ -1039,10 +1075,12 @@ export default function NewClientPage() {
         return;
       }
       let recalculatedEnd = store.endDate;
-      if (autoEndDateRef.current === store.endDate && hasUserEditedServicePeriodRef.current
-        && store.startDate && effectiveDuration) {
+      const freshServiceCalendar = fresh.calendar.withServiceDays(serviceDays);
+      if (autoEndDateRef.current === store.endDate
+        && (hasUserEditedServicePeriodRef.current || serviceDaysEditedRef.current)
+        && store.startDate && chosenDuration) {
         try {
-          recalculatedEnd = fresh.calendar.calcEndDateBusinessDays(store.startDate, effectiveDuration) ?? store.endDate;
+          recalculatedEnd = freshServiceCalendar.calcEndDateBusinessDays(store.startDate, chosenDuration) ?? store.endDate;
         } catch {
           setEndDateUnsupported(true);
           setPendingDurationConfirmation(null);
@@ -1079,6 +1117,9 @@ export default function NewClientPage() {
         careCenter: store.careCenter,
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
+        allowSaturdayService: store.allowSaturdayService,
+        allowSundayService: store.allowSundayService,
+        allowHolidayService: store.allowHolidayService,
         serviceStatus: store.serviceStatus || null,
         areaId: store.areaId,
       };
@@ -1097,7 +1138,7 @@ export default function NewClientPage() {
         return;
       }
       const { hasMismatch: periodMismatch, periodKey } = getServiceDateDurationCheck(
-        isoOrNull(store.startDate), isoOrNull(store.endDate), chosenDuration, fresh.calendar,
+        isoOrNull(store.startDate), isoOrNull(store.endDate), chosenDuration, freshServiceCalendar,
       );
       // An edit that leaves the service period alone sends no period field, so a period whose length
       // differs from its business days (a delayed client) needs no confirmation to save an address.
@@ -1133,6 +1174,9 @@ export default function NewClientPage() {
         careCenter: store.careCenter,
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
+        allowSaturdayService: store.allowSaturdayService,
+        allowSundayService: store.allowSundayService,
+        allowHolidayService: store.allowHolidayService,
         // 고객-04: creating always starts at 예약 전, whatever a prefill carried.
         serviceStatus: "pre_booking",
         areaId: store.areaId || null,
@@ -1252,6 +1296,9 @@ export default function NewClientPage() {
       careCenter: [],
       voucherClient: [],
       breastPump: [],
+      allowSaturdayService: [],
+      allowSundayService: [],
+      allowHolidayService: [],
       serviceStatus: [],
     };
     structuredErrors.forEach((problemError) => {
@@ -1723,12 +1770,20 @@ export default function NewClientPage() {
                       {([
                         { key: "careCenter" as const, label: "조리원 이용" },
                         { key: "breastPump" as const, label: "유축기 대여" },
+                        { key: "allowSaturdayService" as const, label: "토요일 서비스" },
+                        { key: "allowSundayService" as const, label: "일요일 서비스" },
+                        { key: "allowHolidayService" as const, label: "공휴일 서비스" },
                       ]).map(({ key, label }) => (
                         <button
                           key={key}
                           id={key}
                           type="button"
-                          onClick={() => setField(key, !store[key])}
+                          onClick={() => {
+                            // A service-day switch changes which days count, so the auto end date
+                            // is recalculated, same as when the duration changes.
+                            if (isServiceDayField(key)) serviceDaysEditedRef.current = true;
+                            setField(key, !store[key]);
+                          }}
                           className={cn(styles.toggleChip, store[key] && styles.selected)}
                           aria-describedby={fieldErrorMessageIds[key].join(" ") || undefined}
                         >

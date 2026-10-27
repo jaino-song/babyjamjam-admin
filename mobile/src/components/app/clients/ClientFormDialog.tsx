@@ -114,6 +114,12 @@ interface StructuredErrorPresentation {
 const CLIENT_FORM_DIALOG_BASE = "mobile_clients_form-dialog";
 const CLIENT_FORM_ERROR_SUMMARY_ID = `${CLIENT_FORM_DIALOG_BASE}_error-summary`;
 
+const SERVICE_DAY_FIELDS = [
+    { key: "allowSaturdayService", textKey: "clients.form.service-day-saturday", slot: "saturday" },
+    { key: "allowSundayService", textKey: "clients.form.service-day-sunday", slot: "sunday" },
+    { key: "allowHolidayService", textKey: "clients.form.service-day-holiday", slot: "holiday" },
+] as const;
+
 type ClientFormField = "name" | "birthday" | "dueDate" | "phone" | "address" | "startDate" | "endDate";
 
 // Top-to-bottom order of the validated fields; the first invalid one is focused on save.
@@ -244,6 +250,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         careCenter: false,
         voucherClient: false,
         breastPump: false,
+        allowSaturdayService: false,
+        allowSundayService: false,
+        allowHolidayService: false,
         serviceStatus: "pre_booking",
     });
 
@@ -443,6 +452,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 careCenter: client.careCenter,
                 voucherClient: client.voucherClient,
                 breastPump: client.breastPump,
+                allowSaturdayService: client.allowSaturdayService ?? false,
+                allowSundayService: client.allowSundayService ?? false,
+                allowHolidayService: client.allowHolidayService ?? false,
                 serviceStatus: client.serviceStatus || "pre_booking",
             }
             : {
@@ -463,6 +475,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 careCenter: false,
                 voucherClient: false,
                 breastPump: false,
+                allowSaturdayService: false,
+                allowSundayService: false,
+                allowHolidayService: false,
                 serviceStatus: "pre_booking" as const,
             };
         const nextPricesManuallyEdited = client
@@ -556,6 +571,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     careCenter: formData.careCenter,
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
+                    allowSaturdayService: formData.allowSaturdayService ?? false,
+                    allowSundayService: formData.allowSundayService ?? false,
+                    allowHolidayService: formData.allowHolidayService ?? false,
                     // 고객-04: creating always starts at 예약 전.
                     serviceStatus: "pre_booking",
                 };
@@ -1182,6 +1200,32 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 <Label htmlFor="breastPump" className="cursor-pointer">
                                     {t(locale, "clients.form.breast-pump")}
                                 </Label>
+                            </div>
+                        </div>
+
+                        <div
+                            data-component={`${CLIENT_FORM_DIALOG_BASE}_content_field-service-days`}
+                            className="space-y-2 pt-2"
+                        >
+                            <p className="text-sm font-medium">{t(locale, "clients.form.section-service-days")}</p>
+                            <p className="text-xs text-muted-foreground">{t(locale, "clients.form.service-days-help")}</p>
+                            <div role="group" className="flex flex-wrap gap-6">
+                                {SERVICE_DAY_FIELDS.map(({ key, textKey, slot }) => (
+                                    <div
+                                        key={key}
+                                        data-component={`${CLIENT_FORM_DIALOG_BASE}_content_field-service-days_${slot}`}
+                                        className="flex items-center gap-2"
+                                    >
+                                        <Switch
+                                            id={key}
+                                            checked={formData[key] ?? false}
+                                            onCheckedChange={(checked) => handleChange(key, checked)}
+                                        />
+                                        <Label htmlFor={key} className="cursor-pointer">
+                                            {t(locale, textKey)}
+                                        </Label>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>
