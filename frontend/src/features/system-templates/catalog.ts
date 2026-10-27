@@ -18,6 +18,7 @@ export const LEGACY_SYSTEM_TEMPLATE_IDS = {
   PRICE_INFO: "builtin:price-info",
   REMINDER: "builtin:reminder",
   THANKS: "builtin:thanks",
+  CONTRACT_REMINDER: "builtin:contract-reminder",
   SURVEY: "builtin:survey",
   INFO: "builtin:info",
 } as const;
@@ -31,6 +32,7 @@ export type LegacyBuiltinTemplateType =
   | "price-info"
   | "reminder"
   | "thanks"
+  | "contract-reminder"
   | "survey"
   | "info"
   | "service-end-notice";
@@ -42,6 +44,7 @@ const LEGACY_BUILTIN_TYPE_BY_KEY: Readonly<Record<LegacySystemTemplateKey, Legac
   PRICE_INFO: "price-info",
   REMINDER: "reminder",
   THANKS: "thanks",
+  CONTRACT_REMINDER: "contract-reminder",
   SURVEY: "survey",
   INFO: "info",
 };

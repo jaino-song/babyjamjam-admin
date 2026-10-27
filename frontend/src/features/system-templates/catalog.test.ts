@@ -86,6 +86,16 @@ describe("system template catalog", () => {
     expect(items.find((item) => item.id === "builtin:system:SERVICE_END_NOTICE")).toBeUndefined();
   });
 
+  it("routes CONTRACT_REMINDER to its legacy id and manual form type", () => {
+    const [item] = buildSystemTemplateCatalog([
+      template({ templateKey: "CONTRACT_REMINDER", name: "계약서 작성 요청" }),
+    ]);
+
+    expect(item.id).toBe("builtin:contract-reminder");
+    expect(item.legacyType).toBe("contract-reminder");
+    expect(item.manualSendAvailability).toBe("available");
+  });
+
   it("does not maintain a frontend-only template visibility list", () => {
     const items = buildSystemTemplateCatalog([
       template({ templateKey: "CLIENT_WELCOME", name: "고객 등록 안내", content: "등록 스냅샷" }),

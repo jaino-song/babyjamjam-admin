@@ -4,6 +4,7 @@ export enum SystemTemplateKey {
   PRICE_INFO = 'PRICE_INFO',
   GREETING = 'GREETING',
   THANKS = 'THANKS',
+  CONTRACT_REMINDER = 'CONTRACT_REMINDER',
   SURVEY = 'SURVEY',
   SERVICE_INFO = 'SERVICE_INFO',
   SERVICE_RECORD_LINK = 'SERVICE_RECORD_LINK',
@@ -182,6 +183,30 @@ blog.naver.com/imirae-incheon`,
 {{name}} 산모님 ~♡
 
 입금이 확인되어 예약이 완료되었습니다. 산모님의 서비스를 잘 준비하고 있겠습니다. 예쁜 아가 순산하시면 연락주세요 :)
+
+아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
+  },
+
+  [SystemTemplateKey.CONTRACT_REMINDER]: {
+    key: SystemTemplateKey.CONTRACT_REMINDER,
+    name: '계약서 작성 요청',
+    description: '서비스 계약서 미완료 산모에게 계약서 작성 및 서명 요청',
+    requiredVariables: [
+      {
+        key: 'name',
+        label: '산모님 성함',
+        type: 'string',
+        required: true,
+      },
+    ],
+    defaultContent: `[사회서비스 제공자 품질평가 A등급]
+안녕하세요, 인천 아이미래로 입니다 :)
+
+{{name}} 산모님~♡ 
+
+서비스 계약서가 아직 완료되지 않아 연락드립니다.
+
+서비스 계약서는 서비스 진행을 위해 꼭 필요합니다. 계약서가 작성되지 않으면 서비스 제공에 차질이 생길 수 있으니, 서비스 시작일 전에 꼭 작성 및 서명 완료를 부탁드립니다. 추가적으로, 본인부담금 환급 신청을 위한 영수증 발급도 계약서가 완료되어야만 발급이 가능하니 꼭 빠른 시간 내에 계약서 작성 및 서명 완료를 부탁드립니다 :)
 
 아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
   },

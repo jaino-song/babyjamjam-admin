@@ -143,6 +143,7 @@ import {
   Clock3,
   CreditCard,
   FilePen,
+  FileSignature,
   FileText,
   Heart,
   History,
@@ -161,6 +162,7 @@ import { ServiceRecordLinkMessageForm } from "@/components/app/messages/forms/Se
 import { PriceInfoMessageForm } from "@/components/app/messages/forms/PriceInfoMessageForm";
 import { ReminderMessageForm } from "@/components/app/messages/forms/ReminderMessageForm";
 import { ThanksMessageForm } from "@/components/app/messages/forms/ThanksMessageForm";
+import { ContractReminderMessageForm } from "@/components/app/messages/forms/ContractReminderMessageForm";
 import { SurveyMessageForm } from "@/components/app/messages/forms/SurveyMessageForm";
 import { InfoMessageForm } from "@/components/app/messages/forms/InfoMessageForm";
 import {
@@ -233,6 +235,7 @@ const SYSTEM_TEMPLATE_ICON_BY_KEY: Record<string, typeof MessageCircle> = {
   PRICE_INFO: CreditCard,
   REMINDER: Bell,
   THANKS: Heart,
+  CONTRACT_REMINDER: FileSignature,
   SURVEY: ClipboardList,
   INFO: Info,
   SERVICE_END_NOTICE: FileText,
@@ -435,6 +438,11 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
     subtitle: "후속 안내 메시지",
     buttons: ["후기 남기기"],
   },
+  "contract-reminder": {
+    headline: "서비스 계약서를 작성해 주세요",
+    subtitle: "계약서 작성 요청 메시지",
+    buttons: ["계약서 작성"],
+  },
   survey: {
     headline: "만족도 조사를 부탁드려요",
     subtitle: "설문 메시지",
@@ -551,6 +559,7 @@ const FormComponents: Record<
   "price-info": PriceInfoMessageForm,
   reminder: ReminderMessageForm,
   thanks: ThanksMessageForm,
+  "contract-reminder": ContractReminderMessageForm,
   survey: SurveyMessageForm,
   info: InfoMessageForm,
   "service-end-notice": ServiceRecordLinkMessageForm,
