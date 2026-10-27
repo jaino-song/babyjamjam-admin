@@ -775,6 +775,88 @@ describe("ClientService", () => {
                     expect(realignment.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
                 });
 
+                it("reconciles the period to the planned vector's last date when the flag change moves no session", async () => {
+                    // The real re-lay against a fake transaction: both planned sessions are in the
+                    // past, so nothing moves, yet the stored case/client end must follow the vector.
+                    const realService = new ServiceRecordScheduleRealignmentService();
+                    const realignment = {
+                        realignForServiceDayChangeInTransaction: jest.fn(
+                            (tx: Prisma.TransactionClient, params: Parameters<ServiceRecordScheduleRealignmentService["realignForServiceDayChangeInTransaction"]>[1]) =>
+                                realService.realignForServiceDayChangeInTransaction(tx, params),
+                        ),
+                    };
+                    const reused = reusedClient(false);
+                    const dbDate = (value: string) => new Date(`${value}T00:00:00.000Z`);
+                    const row = {
+                        id: reused.id,
+                        branchId,
+                        startDate: dbDate("2024-05-13"),
+                        endDate: dbDate("2024-05-16"),
+                        allowSaturdayService: false,
+                        allowSundayService: false,
+                        allowHolidayService: false,
+                    };
+                    prismaService.client.findUnique.mockImplementation(async () => ({ ...row }));
+                    prismaService.client.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+                        Object.assign(row, data);
+                        return { count: 1 };
+                    });
+                    const plannedSessions = ["2024-05-13", "2024-05-14"].map((serviceDate, index) => ({
+                        sessionIndex: index + 1,
+                        serviceDate,
+                        originalDate: serviceDate,
+                        assignmentId: "a-1",
+                        scheduleId: 11,
+                        employeeId: 7,
+                        provenanceVersion: "1",
+                    }));
+                    const caseUpdate = jest.fn().mockResolvedValue({});
+                    const tokenUpdate = jest.fn().mockResolvedValue({ count: 1 });
+                    // A case exists, so the write-set lock must find exactly that one row.
+                    prismaService.$queryRaw.mockResolvedValue([{ id: "case-1" }]);
+                    const dayUpdate = jest.fn();
+                    const assignmentUpdate = jest.fn();
+                    Object.assign(prismaService, {
+                        service_record_case: {
+                            findMany: jest.fn().mockResolvedValue([]),
+                            findUnique: jest.fn().mockResolvedValue({
+                                id: "case-1",
+                                branchId,
+                                clientId: reused.id,
+                                status: "IN_PROGRESS",
+                                startDate: dbDate("2024-05-13"),
+                                endDate: dbDate("2024-05-16"),
+                                requiredSessionCount: 2,
+                                plannedSessions,
+                                version: 1,
+                            }),
+                            update: caseUpdate,
+                        },
+                        service_record_day: { findMany: jest.fn().mockResolvedValue([]), updateMany: dayUpdate },
+                        service_record_assignment: { updateMany: assignmentUpdate },
+                        service_record_token: { updateMany: tokenUpdate },
+                    });
+
+                    await createServiceWithRealignment(realignment).create(branchId, {
+                        ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                    });
+
+                    expect(realignment.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+                    expect(caseUpdate).toHaveBeenCalledWith({
+                        where: { id: "case-1", branchId },
+                        data: { endDate: dbDate("2024-05-14"), version: { increment: 1 } },
+                    });
+                    expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: reused.id, branchId },
+                        data: { endDate: dbDate("2024-05-14") },
+                    });
+                    expect(row.endDate).toEqual(dbDate("2024-05-14"));
+                    expect(tokenUpdate).toHaveBeenCalledTimes(1);
+                    expect(dayUpdate).not.toHaveBeenCalled();
+                    expect(assignmentUpdate).not.toHaveBeenCalled();
+                    expect(prismaService.employee_schedule.updateMany).not.toHaveBeenCalled();
+                });
+
                 it("does not report the flags as written when the re-lay refuses", async () => {
                     const refusal = new ConflictException({ code: "REQUEST_CONFLICT", scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE" });
                     const realignment = realign();

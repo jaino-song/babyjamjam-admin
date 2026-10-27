@@ -298,7 +298,9 @@ export class ServiceRecordScheduleRealignmentService {
                 lastFixed = Math.max(lastFixed, entry.sessionIndex);
             }
         }
-        if (lastFixed >= total) return { ...NOT_CHANGED, mode: "planned" };
+        if (lastFixed >= total) {
+            return this.reconcilePlannedPeriod(tx, { branchId, clientId, client, record, endDate: vector[total - 1]!.serviceDate });
+        }
 
         // The effective period is the client's as written in this transaction; the case
         // still holds the previous start when the same update moved it.
@@ -326,9 +328,12 @@ export class ServiceRecordScheduleRealignmentService {
         const movedIndexes = entries
             .filter((entry) => entry.serviceDate !== vector[entry.sessionIndex - 1]!.serviceDate)
             .map((entry) => entry.sessionIndex);
-        if (movedIndexes.length === 0) return { ...NOT_CHANGED, mode: "planned" };
-
         const endDate = entries[entries.length - 1]!.serviceDate;
+        // Nothing moved, but the vector's last date is still the authority for the period:
+        // the same update may have supplied a different end date.
+        if (movedIndexes.length === 0) {
+            return this.reconcilePlannedPeriod(tx, { branchId, clientId, client, record, endDate });
+        }
         const schedules = await this.loadSchedules(tx, branchId, clientId);
         const storedAssignments = this.sourceAssignments(schedules);
         const ownerAssignmentIds = new Set(entries.map((entry) => entry.assignmentId));
@@ -373,10 +378,12 @@ export class ServiceRecordScheduleRealignmentService {
         // The re-laid vector is authoritative over an end date the same update supplied: the
         // client forms send a recomputed end date with every toggle change, and the case,
         // client and token must end on the date the sessions really end.
-        await tx.client.updateMany({
-            where: { id: clientId, branchId },
-            data: { endDate: endDateValue },
-        });
+        if (isoDate(client.endDate) !== endDate) {
+            await tx.client.updateMany({
+                where: { id: clientId, branchId },
+                data: { endDate: endDateValue },
+            });
+        }
         // Only unwritten rows move; a locked or submitted row is by definition at or before the split.
         for (const sessionIndex of movedIndexes) {
             const row = rowByIndex.get(sessionIndex);
@@ -408,6 +415,44 @@ export class ServiceRecordScheduleRealignmentService {
             intentAt: now,
         });
 
+        return { changed: true, mode: "planned", endDate, restoreRequiredSessionCount: null };
+    }
+
+    /**
+     * No session moves, yet the planned vector's last date is still authoritative for the
+     * client, case and token periods (a form-style end date sent with the toggle change may
+     * differ). Writes only what differs; assignment, schedule and re-evaluation work is for
+     * sessions that moved, so none happens here.
+     */
+    private async reconcilePlannedPeriod(
+        tx: Prisma.TransactionClient,
+        params: {
+            branchId: string;
+            clientId: number;
+            client: { endDate: Date | null };
+            record: Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
+            endDate: string;
+        },
+    ): Promise<ServiceRecordRealignmentResult> {
+        const { branchId, clientId, client, record, endDate } = params;
+        const endDateValue = toDbDate(endDate);
+        let wrote = false;
+        if (isoDate(record.endDate) !== endDate) {
+            await tx.service_record_case.update({
+                where: { id: record.id, branchId },
+                data: { endDate: endDateValue, version: { increment: 1 } },
+            });
+            wrote = true;
+        }
+        if (isoDate(client.endDate) !== endDate) {
+            await tx.client.updateMany({
+                where: { id: clientId, branchId },
+                data: { endDate: endDateValue },
+            });
+            wrote = true;
+        }
+        if (!wrote) return { ...NOT_CHANGED, mode: "planned" };
+        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
         return { changed: true, mode: "planned", endDate, restoreRequiredSessionCount: null };
     }
 
