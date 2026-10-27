@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.KR_BUILTIN_CALENDAR = exports.UnsupportedKoreanHolidayYearError = exports.KR_BUILTIN_HOLIDAYS = exports.KR_HOLIDAYS = exports.KOREAN_HOLIDAYS = exports.KOREAN_HOLIDAY_CALENDAR = exports.KOREAN_HOLIDAY_CALENDAR_VERSION = void 0;
+exports.KR_BUILTIN_CALENDAR = exports.DEFAULT_SERVICE_DAY_POLICY = exports.UnsupportedKoreanHolidayYearError = exports.KR_BUILTIN_HOLIDAYS = exports.KR_HOLIDAYS = exports.KOREAN_HOLIDAYS = exports.KOREAN_HOLIDAY_CALENDAR = exports.KOREAN_HOLIDAY_CALENDAR_VERSION = void 0;
 exports.getKoreanHolidays = getKoreanHolidays;
 exports.assertSupportedKoreanHolidayYear = assertSupportedKoreanHolidayYear;
 exports.isoDateInKorea = isoDateInKorea;
@@ -160,12 +160,40 @@ function isoDateInKorea(date = new Date()) {
     const day = parts.find((part) => part.type === "day")?.value ?? "";
     return `${year}-${month}-${day}`;
 }
+exports.DEFAULT_SERVICE_DAY_POLICY = Object.freeze({
+    saturday: false,
+    sunday: false,
+    holiday: false,
+});
+function isDefaultServiceDayPolicy(policy) {
+    return !policy.saturday && !policy.sunday && !policy.holiday;
+}
+function serviceDayVersionSuffix(policy) {
+    return `+sd-${policy.saturday ? 1 : 0}${policy.sunday ? 1 : 0}${policy.holiday ? 1 : 0}`;
+}
 // Ported from mobile/src/lib/date/business-days.ts, which has these two
 // helpers but frontend does not. Kept here so this module is a complete
 // superset of both call sites' business-day needs.
 const NEXT_BUSINESS_DAY_SEARCH_LIMIT = 30;
 function createKrBusinessDayCalendar(holidayDates, opts = {}) {
-    const version = opts.version ?? "custom";
+    const dates = [...holidayDates];
+    const supplied = opts.supportedYears ? [...opts.supportedYears] : undefined;
+    const base = buildCalendar(dates, supplied, opts.version ?? "custom", exports.DEFAULT_SERVICE_DAY_POLICY, null);
+    return opts.serviceDays ? base.withServiceDays(opts.serviceDays) : base;
+}
+/**
+ * Builds one calendar over normalized factory inputs. `root` is the policy-free
+ * calendar every wrapped calendar derives from; it is null only while building
+ * that root itself. Keeping the inputs (not a previous calendar) is what makes
+ * withServiceDays replace instead of compose.
+ */
+function buildCalendar(holidayDates, suppliedSupportedYears, baseVersion, policyInput, root) {
+    const policy = Object.freeze({
+        saturday: policyInput.saturday,
+        sunday: policyInput.sunday,
+        holiday: policyInput.holiday,
+    });
+    const version = isDefaultServiceDayPolicy(policy) ? baseVersion : `${baseVersion}${serviceDayVersionSuffix(policy)}`;
     const holidays = new Set();
     const datedYears = new Set();
     for (const date of holidayDates) {
@@ -175,7 +203,7 @@ function createKrBusinessDayCalendar(holidayDates, opts = {}) {
         datedYears.add(Number(date.slice(0, 4)));
     }
     const supportedYears = new Set();
-    for (const year of opts.supportedYears ?? datedYears) {
+    for (const year of suppliedSupportedYears ?? datedYears) {
         if (!Number.isInteger(year))
             throw new Error(`Invalid supported year: ${year}`);
         supportedYears.add(year);
@@ -199,9 +227,14 @@ function createKrBusinessDayCalendar(holidayDates, opts = {}) {
         // because it is a weekend.
         assertSupportedIsoYear(iso);
         const dayOfWeek = date.getUTCDay();
-        if (dayOfWeek === 0 || dayOfWeek === 6)
+        if (dayOfWeek === 6 && !policy.saturday)
             return false;
-        return !holidays.has(iso);
+        if (dayOfWeek === 0 && !policy.sunday)
+            return false;
+        // A Saturday/Sunday that is also a holiday needs BOTH flags, not either.
+        if (holidays.has(iso) && !policy.holiday)
+            return false;
+        return true;
     }
     function diffBusinessDays(targetISO, baseISO = isoDateInKorea()) {
         const target = parseIsoDate(targetISO);
@@ -317,7 +350,12 @@ function createKrBusinessDayCalendar(holidayDates, opts = {}) {
         }
         return count;
     }
-    return {
+    function withServiceDays(next) {
+        if (isDefaultServiceDayPolicy(next))
+            return root ?? calendar;
+        return buildCalendar(holidayDates, [...supportedYears], baseVersion, next, root ?? calendar);
+    }
+    const calendar = {
         version,
         assertSupportedYear,
         isBusinessDay,
@@ -327,7 +365,9 @@ function createKrBusinessDayCalendar(holidayDates, opts = {}) {
         countBusinessDays,
         diffBusinessDays,
         nextBusinessDay,
+        withServiceDays,
     };
+    return calendar;
 }
 exports.KR_BUILTIN_CALENDAR = createKrBusinessDayCalendar(exports.KR_BUILTIN_HOLIDAYS, {
     version: exports.KOREAN_HOLIDAY_CALENDAR_VERSION,
