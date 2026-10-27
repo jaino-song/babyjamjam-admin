@@ -23,6 +23,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { calendarWithServiceDays } from "@/lib/date/service-day-policy";
 import {
     adminServiceRecordEditApi,
 } from "@/features/service-records/api/admin-service-record-edit.api";
@@ -76,6 +77,8 @@ type EditorAssignment = Omit<ServiceRecordAssignment, "sessions"> & {
 export type AdminServiceRecordEditorOverview = Omit<ServiceRecordOverview, "record" | "assignments"> & {
     record?: EditorCase | null;
     assignments: EditorAssignment[];
+    /** Days this client accepts service on besides plain business days; absent means none. */
+    serviceDays?: { saturday: boolean; sunday: boolean; holiday: boolean };
 };
 
 const ADMIN_WIZARD_COMPONENT = "desktop_service-record-admin_wizard";
@@ -574,12 +577,22 @@ export function ServiceRecordAdminWizard({
         ...baseView.context.sessions.map((session) => session.serviceDate),
     ]), [baseView]);
     const {
-        calendar,
+        calendar: branchCalendar,
         ready: calendarReady,
         error: calendarError,
         retry: retryCalendar,
         refreshForSave,
     } = useBusinessDayCalendar({ extraYears: calendarYears });
+    // Date moves follow the days this client accepts service on, as the server does.
+    const serviceDayPolicy = useMemo(() => ({
+        saturday: overview.serviceDays?.saturday ?? false,
+        sunday: overview.serviceDays?.sunday ?? false,
+        holiday: overview.serviceDays?.holiday ?? false,
+    }), [overview.serviceDays?.saturday, overview.serviceDays?.sunday, overview.serviceDays?.holiday]);
+    const calendar = useMemo(
+        () => calendarWithServiceDays(branchCalendar, serviceDayPolicy),
+        [branchCalendar, serviceDayPolicy],
+    );
     const [sourceIdentity, setSourceIdentity] = useState(initialDraftState);
     // Nothing is saved until 수정 확정: confirmed edits wait here, in this tab only.
     const [pending, setPending] = useState<PendingEdits>(EMPTY_PENDING);
@@ -763,7 +776,7 @@ export function ServiceRecordAdminWizard({
                     return;
                 }
                 try {
-                    const next = moveServiceRecordSessionDate(vector, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), fresh.calendar).entries;
+                    const next = moveServiceRecordSessionDate(vector, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), calendarWithServiceDays(fresh.calendar, serviceDayPolicy)).entries;
                     const previous = dateMoveEntriesRef.current;
                     const recalculated = !previous || next.some((entry) =>
                         previous.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);

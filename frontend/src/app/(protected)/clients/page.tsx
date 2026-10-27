@@ -40,6 +40,7 @@ import { serviceRecordsApi } from "@/features/service-records/api/service-record
 import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
+import { serviceDayPolicyOfClient } from "@/lib/date/service-day-policy";
 import type { ClientListTab } from "@/features/clients/types";
 import {
     getClientBadgeAvatarClassName,
@@ -1317,6 +1318,7 @@ export default function ClientsPage() {
                         setSelectedScheduleChangeDate("");
                     }}
                     onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
+                    serviceDays={serviceDayPolicyOfClient(scheduleChangeTarget.client)}
                 />
             ) : null}
 
