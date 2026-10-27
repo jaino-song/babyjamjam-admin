@@ -72,6 +72,8 @@ interface WorldOptions {
     status?: string;
     withCase?: boolean;
     startDate?: string;
+    /** The case still holds this start when the same update moved the client's. */
+    caseStartDate?: string;
     endDate?: string;
     schedules?: ScheduleSpec[];
     days?: Array<{ index: number; date: string; locked?: boolean; submittedAt?: Date | null }>;
@@ -93,7 +95,7 @@ function createWorld(options: WorldOptions = {}) {
         branchId: BRANCH,
         clientId: CLIENT_ID,
         status: options.status ?? "IN_PROGRESS",
-        startDate: client.startDate,
+        startDate: options.caseStartDate ? date(options.caseStartDate) : client.startDate,
         endDate: client.endDate,
         requiredSessionCount: options.requiredSessionCount === undefined ? 10 : options.requiredSessionCount,
         plannedSessions: options.planned === undefined ? vector(WEEKDAY_LAYOUT) : options.planned,
@@ -358,15 +360,72 @@ describe("ServiceRecordScheduleRealignmentService", () => {
             }));
         });
 
-        it("leaves the client end date to the caller when the same update supplied one", async () => {
-            const world = createWorld({ flags: { saturday: true }, days: written(3) });
+        it("ends coherently on the re-laid vector even when the same update supplied an older end date", async () => {
+            // Saturday turned off with the form's end date still on the Saturday-enabled 24th.
+            const world = createWorld({
+                planned: vector(SATURDAY_LAYOUT),
+                endDate: "2026-12-24",
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-14", endDate: "2026-12-24" }],
+                days: written(3),
+            });
+
+            const result = await world.run({ callerSuppliedEndDate: true });
+
+            expect(result).toMatchObject({ changed: true, endDate: "2026-12-28" });
+            expect(world.plannedDates()).toEqual(WEEKDAY_LAYOUT);
+            expect(iso(world.client.endDate)).toBe("2026-12-28");
+            expect(iso(world.record["endDate"] as Date)).toBe("2026-12-28");
+            expect(iso(world.schedules[0]!.endDate)).toBe("2026-12-28");
+            expect(world.tx.service_record_token.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                data: { expiresAt: new Date("2026-12-28T15:00:00.000Z") },
+            }));
+        });
+
+        it("lets the vector win over a form-style recomputed end date that differs from it", async () => {
+            const world = createWorld({ flags: { saturday: true }, days: written(3), endDate: "2026-12-30" });
 
             await world.run({ callerSuppliedEndDate: true });
 
-            expect(world.plannedDates()).toEqual(SATURDAY_LAYOUT);
-            expect(world.tx.client.updateMany).not.toHaveBeenCalled();
-            expect(world.tx.service_record_token.updateMany).not.toHaveBeenCalled();
-            expect(world.record["endDate"]).toEqual(date("2026-12-28"));
+            expect(iso(world.client.endDate)).toBe("2026-12-24");
+            expect(iso(world.record["endDate"] as Date)).toBe("2026-12-24");
+        });
+
+        it("keeps the schedule's own start edge on the first planned date", async () => {
+            // A Saturday-enabled schedule beginning on Saturday the 12th, nothing written yet:
+            // turning Saturday off moves session 1 to Monday the 14th and the start edge with it.
+            const world = createWorld({
+                planned: vector(["2026-12-12", "2026-12-14", "2026-12-15", "2026-12-16", "2026-12-17", "2026-12-18", "2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24"]),
+                startDate: "2026-12-12",
+                endDate: "2026-12-24",
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-12", endDate: "2026-12-24" }],
+            });
+
+            await world.run({ now: new Date("2026-12-10T03:00:00.000Z") });
+
+            expect(world.plannedDates()[0]).toBe("2026-12-14");
+            expect(world.tx.service_record_assignment.updateMany).toHaveBeenCalledWith({
+                where: { id: "a-1", branchId: BRANCH, serviceRecordCaseId: CASE_ID },
+                data: { startDate: date("2026-12-14"), endDate: date("2026-12-28") },
+            });
+            expect(world.tx.employee_schedule.updateMany).toHaveBeenCalledWith({
+                where: { id: 11, branchId: BRANCH },
+                data: { startDate: date("2026-12-14"), endDate: date("2026-12-28") },
+            });
+        });
+
+        it("anchors the re-lay to the client's start written in this update, not the case's old start", async () => {
+            // The case still starts on Saturday the 12th; the update moved the client to Monday the 14th
+            // and enabled Sunday. Session 1 must not land on Sunday the 13th.
+            const world = createWorld({
+                flags: { sunday: true },
+                planned: vector(WEEKDAY_LAYOUT),
+                caseStartDate: "2026-12-12",
+                startDate: "2026-12-14",
+            });
+
+            await world.run({ now: new Date("2026-12-10T03:00:00.000Z") });
+
+            expect(world.plannedDates()[0]).toBe("2026-12-14");
         });
 
         it.each([
@@ -583,6 +642,43 @@ describe("ServiceRecordScheduleRealignmentService", () => {
             const result = await world.run();
 
             expect(result.endDate).toBe("2026-12-31");
+        });
+
+        it("does not let an unwritten draft row N pin the end date", async () => {
+            const world = legacy({
+                flags: { saturday: true },
+                days: [{ index: 10, date: "2026-12-28" }],
+            });
+
+            const result = await world.run();
+
+            expect(result.endDate).toBe("2026-12-24");
+            expect(iso(world.client.endDate)).toBe("2026-12-24");
+        });
+
+        it("takes a locked row N as the end itself", async () => {
+            const world = legacy({
+                flags: { saturday: true },
+                endDate: "2026-12-24",
+                days: [{ index: 10, date: "2026-12-28", locked: true }],
+            });
+
+            const result = await world.run();
+
+            expect(result.endDate).toBe("2026-12-28");
+        });
+
+        it("projects from the client's start written in this update, not the case's old start", async () => {
+            const world = legacy({
+                flags: { sunday: true },
+                caseStartDate: "2026-12-12",
+                startDate: "2026-12-14",
+            });
+
+            const result = await world.run();
+
+            // From Monday the 14th with Sunday on: 14-18, Sun 20, 21-24.
+            expect(result.endDate).toBe("2026-12-24");
         });
 
         it("writes nothing when the end date already matches", async () => {

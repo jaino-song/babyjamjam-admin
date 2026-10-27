@@ -49,9 +49,9 @@ export interface ServiceRecordRealignmentParams {
     /** Frozen clock for tests; defaults to the current instant. */
     now?: Date;
     /**
-     * The same client update also supplied `endDate`. The existing period logic
-     * wins: the client end date, the legacy end-date re-derivation and the token
-     * expiry are left to that update and to the lifecycle sync that follows.
+     * The same client update also supplied `endDate`. A legacy case keeps the caller's
+     * end date (nothing is re-derived). A case with a planned vector does not: the
+     * re-laid vector's last date is authoritative for the client, the case and the token.
      */
     callerSuppliedEndDate?: boolean;
 }
@@ -300,7 +300,9 @@ export class ServiceRecordScheduleRealignmentService {
         }
         if (lastFixed >= total) return { ...NOT_CHANGED, mode: "planned" };
 
-        const caseStart = isoDate(record.startDate) ?? isoDate(client.startDate);
+        // The effective period is the client's as written in this transaction; the case
+        // still holds the previous start when the same update moved it.
+        const caseStart = isoDate(client.startDate) ?? isoDate(record.startDate);
         const afterFixed = lastFixed > 0
             ? nextCalendarDay(vector[lastFixed - 1]!.serviceDate)
             : caseStart ?? today;
@@ -331,10 +333,10 @@ export class ServiceRecordScheduleRealignmentService {
         const storedAssignments = this.sourceAssignments(schedules);
         const ownerAssignmentIds = new Set(entries.map((entry) => entry.assignmentId));
 
-        // Same rule the admin edit confirm uses. The start edge is not ours to move.
+        // Same rule the admin edit confirm uses: the outer edges follow the first and last planned dates.
         let writes: ReturnType<typeof assignmentWrites>;
         try {
-            writes = assignmentWrites({ assignments: storedAssignments }, null, endDate, ownerAssignmentIds);
+            writes = assignmentWrites({ assignments: storedAssignments }, entries[0]!.serviceDate, endDate, ownerAssignmentIds);
         } catch (error) {
             if (error instanceof ServiceRecordEditConflictError) throw manualScheduleConflict();
             throw error;
@@ -364,16 +366,17 @@ export class ServiceRecordScheduleRealignmentService {
             where: { id: record.id, branchId },
             data: {
                 plannedSessions: entries as unknown as Prisma.InputJsonValue,
-                ...(params.callerSuppliedEndDate ? {} : { endDate: endDateValue }),
+                endDate: endDateValue,
                 version: { increment: 1 },
             },
         });
-        if (!params.callerSuppliedEndDate) {
-            await tx.client.updateMany({
-                where: { id: clientId, branchId },
-                data: { endDate: endDateValue },
-            });
-        }
+        // The re-laid vector is authoritative over an end date the same update supplied: the
+        // client forms send a recomputed end date with every toggle change, and the case,
+        // client and token must end on the date the sessions really end.
+        await tx.client.updateMany({
+            where: { id: clientId, branchId },
+            data: { endDate: endDateValue },
+        });
         // Only unwritten rows move; a locked or submitted row is by definition at or before the split.
         for (const sessionIndex of movedIndexes) {
             const row = rowByIndex.get(sessionIndex);
@@ -397,9 +400,7 @@ export class ServiceRecordScheduleRealignmentService {
                 });
             }
         }
-        if (!params.callerSuppliedEndDate) {
-            await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
-        }
+        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
         await this.persistReevaluationIntents(tx, {
             branchId,
             clientId,
@@ -427,18 +428,21 @@ export class ServiceRecordScheduleRealignmentService {
         if (params.callerSuppliedEndDate) return NOT_CHANGED;
         const total = record.requiredSessionCount;
         if (total === null || total < 1) return NOT_CHANGED;
-        const startDate = isoDate(record.startDate) ?? isoDate(client.startDate);
+        // The client's start as written in this transaction, not the case's previous one.
+        const startDate = isoDate(client.startDate) ?? isoDate(record.startDate);
         if (!startDate) return NOT_CHANGED;
 
         const records = days.map((day) => ({
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: isoDate(day.serviceDate)!,
         }));
-        // A written session N is the end itself; otherwise chain from the closest earlier
-        // row (or the start) on the client's service days. Never `startDate + duration`:
+        // A written (locked or submitted) session N is the end itself; otherwise chain from the
+        // closest earlier row (or the start) on the client's service days. An unwritten draft
+        // row N is only a date that moves with the schedule. Never `startDate + duration`:
         // that would roll back delay extensions already recorded in the rows.
-        const writtenLast = records.find((candidate) => candidate.sessionIndex === total);
-        const projected = writtenLast?.serviceDate
+        const writtenLast = days.find((day) =>
+            (day.caseSessionIndex ?? day.sessionIndex) === total && (day.locked || day.submittedAt));
+        const projected = (writtenLast ? isoDate(writtenLast.serviceDate) : null)
             ?? getExpectedSessionDateFromRecords(startDate, total, records, calendar);
         if (!projected) return NOT_CHANGED;
         let lastWritten: string | null = null;
