@@ -484,6 +484,14 @@ export interface ServiceRecordEditConfirmPlan {
      * change is not a "change" (no revision, no document) but must still be saved.
      */
     clientServiceDays?: { saturday: boolean; sunday: boolean; holiday: boolean };
+    /**
+     * Set only with `clientServiceDays` on a `no_changes` plan whose case has no stored
+     * `plannedSessions` (a legacy case whose dates are derived on read): the selected dates equal
+     * the old projection, but the new toggles would re-project them differently, so the vector is
+     * stored as-is. A narrow write — the case vector, version and end dates; never a revision,
+     * a document or a start-date change.
+     */
+    materializedPlannedSessions?: { plannedSessions: ServiceRecordEditJsonValue; endDate: string | null };
 }
 
 export interface ServiceRecordEditConfirmInput {

@@ -3236,6 +3236,44 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     allowHolidayService: plan.clientServiceDays.holiday,
                 },
             });
+            if (plan.materializedPlannedSessions && plan.status === "no_changes") {
+                // A legacy case derives its dates on read, so the new toggles would re-project
+                // the dates the admin kept. Store that vector, and move the stored end dates to
+                // its last date where they differ. No revision, document or start-date change.
+                const materialized = plan.materializedPlannedSessions;
+                const materializedEnd = dateValue(materialized.endDate);
+                const materializedCase = await tx.service_record_case.update({
+                    where: { id: source.caseId },
+                    data: {
+                        plannedSessions: toPrismaJson(materialized.plannedSessions),
+                        ...(materializedEnd && materialized.endDate !== source.endDate
+                            ? { endDate: materializedEnd }
+                            : {}),
+                        version: { increment: 1 },
+                    },
+                    select: { version: true },
+                });
+                caseVersion = materializedCase.version;
+                if (materializedEnd) {
+                    if (materialized.endDate !== source.client.endDate) {
+                        await tx.client.updateMany({
+                            where: { id: source.client.id, branchId: input.branchId },
+                            data: { endDate: materializedEnd },
+                        });
+                    }
+                    const expiresAt = getServiceRecordTokenExpiresAt(materializedEnd);
+                    await tx.service_record_token.updateMany({
+                        where: {
+                            branchId: input.branchId,
+                            serviceRecordCaseId: source.caseId,
+                            active: true,
+                            revokedAt: null,
+                            expiresAt: { not: expiresAt },
+                        },
+                        data: { expiresAt },
+                    });
+                }
+            }
         }
         if (plan.status === "confirmed") {
             if (plan.revision) {

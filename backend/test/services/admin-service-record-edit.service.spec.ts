@@ -3465,6 +3465,68 @@ describe("AdminServiceRecordEditService service-day schedule replacement", () =>
             expect(plan.dispatchContext).toBeNull();
         });
 
+        /**
+         * A legacy case: no stored vector, no written rows, so the dates are projected on read.
+         * Under the all-off policy the 3 sessions run Thu 09-03, Fri 09-04, Mon 09-07; with
+         * Saturday on the projection would put session 3 on Sat 09-05.
+         */
+        function legacySource(): ServiceRecordEditSource {
+            const base = unlockedSource();
+            return {
+                ...base,
+                plannedSessions: null,
+                sessions: [],
+                startDate: "2026-09-03",
+                endDate: "2026-09-07",
+                client: { ...base.client, startDate: "2026-09-03", endDate: "2026-09-07" },
+            };
+        }
+        const LEGACY_DATES = ["2026-09-03", "2026-09-04", "2026-09-07"];
+
+        it("stores the selected vector when a legacy case's toggles change under dates equal to its old projection", async () => {
+            const source = legacySource();
+            const changes = await savedScheduleChanges(source, { serviceDays: saturdayOn, dates: LEGACY_DATES });
+            const { preview, prepare } = await previewAndPrepare({ source, changes });
+            expect(preview.blockingReasons).toEqual([]);
+            const plan = prepare();
+            expect(plan.status).toBe("no_changes");
+            expect(plan.clientServiceDays).toEqual(saturdayOn);
+            expect(plan.materializedPlannedSessions).toEqual({
+                plannedSessions: expect.any(Array),
+                endDate: "2026-09-07",
+            });
+            expect((plan.materializedPlannedSessions!.plannedSessions as Array<{ serviceDate: string }>)
+                .map(({ serviceDate }) => serviceDate)).toEqual(LEGACY_DATES);
+            expect(plan.plannedSessions).toEqual(plan.materializedPlannedSessions!.plannedSessions);
+            expect(plan.revision).toBeNull();
+            expect(plan.documentJob).toBeNull();
+            expect(plan.dispatchContext).toBeNull();
+            expect(plan.startDate).toBe("2026-09-03");
+        });
+
+        it("keeps a legacy case with unchanged toggles at no_changes without a vector", async () => {
+            const source = legacySource();
+            const changes = await savedScheduleChanges(source, { serviceDays: off, dates: LEGACY_DATES });
+            const { prepare } = await previewAndPrepare({ source, changes });
+            const plan = prepare();
+            expect(plan.status).toBe("no_changes");
+            expect(plan.clientServiceDays).toBeUndefined();
+            expect("materializedPlannedSessions" in plan).toBe(false);
+        });
+
+        it("keeps a stored-vector case with changed toggles and the same dates at flags only", async () => {
+            const source = unlockedSource();
+            const changes = await savedScheduleChanges(source, {
+                serviceDays: saturdayOn,
+                dates: ["2026-09-01", "2026-09-02", "2026-09-03"],
+            });
+            const { prepare } = await previewAndPrepare({ source, changes });
+            const plan = prepare();
+            expect(plan.status).toBe("no_changes");
+            expect(plan.clientServiceDays).toEqual(saturdayOn);
+            expect("materializedPlannedSessions" in plan).toBe(false);
+        });
+
         async function previewOfStoredChanges(source: ServiceRecordEditSource, changes: Record<string, unknown>) {
             const harness = createHarness({ source });
             const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});

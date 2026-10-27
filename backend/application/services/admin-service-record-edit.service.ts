@@ -1398,6 +1398,17 @@ export class AdminServiceRecordEditService {
         const clientServiceDays = pendingServiceDays && !sameServiceDays(pendingServiceDays, storedServiceDays(source))
             ? pendingServiceDays
             : undefined;
+        // A legacy case (no stored vector) derives its dates on read, so flipping the toggles under
+        // dates that merely equal the old projection would re-project them. Store the selected
+        // vector next to the flags; a case that already stores a vector keeps flags-only.
+        const materializedPlannedSessions = clientServiceDays && !changed && source.plannedSessions == null
+            ? {
+                plannedSessions,
+                endDate: provisional.after.sessions
+                    .map((entry) => entry.serviceDate)
+                    .reduce<string | null>((latest, date) => (latest === null || date > latest ? date : latest), null),
+            }
+            : undefined;
 
         return {
             status: changed ? "confirmed" : "no_changes",
@@ -1454,6 +1465,7 @@ export class AdminServiceRecordEditService {
             contractOperation,
             receiptOperation,
             ...(clientServiceDays ? { clientServiceDays } : {}),
+            ...(materializedPlannedSessions ? { materializedPlannedSessions } : {}),
         };
     }
 

@@ -1013,6 +1013,127 @@ describe("ServiceRecordEditRepository", () => {
         });
     });
 
+    describe("legacy vector materialization", () => {
+        const vector = [
+            { sessionIndex: 1, serviceDate: "2026-09-01" },
+            { sessionIndex: 2, serviceDate: "2026-09-05" },
+        ];
+        const toggles = { saturday: true, sunday: false, holiday: false };
+
+        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }) {
+            const source = futureSource();
+            const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([]),
+                service_record_edit_draft: {
+                    findFirst: jest.fn().mockResolvedValue(activeDraft),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+                service_record_case: {
+                    update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
+                },
+                client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+                service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                service_record_assignment: { updateMany: jest.fn() },
+                employee_schedule: { updateMany: jest.fn() },
+                service_record_revision: { create: jest.fn() },
+                service_record_document_job: { create: jest.fn() },
+            };
+            const repository = new ServiceRecordEditRepository(transactionalPrisma(tx) as never);
+            const internals = repository as unknown as { findDraftByIdWithClient: jest.Mock; loadSourceWithClient: jest.Mock };
+            jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+            jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+            const plan: ServiceRecordEditConfirmPlan = {
+                status: "no_changes",
+                sourceFingerprint: "a".repeat(64),
+                caseId,
+                clientId: source.client.id,
+                formVersion: source.formVersion,
+                requiredSessionCount: source.requiredSessionCount,
+                startDate: source.startDate,
+                endDate: materialize.endDate,
+                header: source.header,
+                plannedSessions: materialize.plannedSessions as never,
+                sessions: [],
+                newSessions: [],
+                assignments: [],
+                revision: null,
+                dispatchContext: null,
+                documentStatus: "capability_unverified",
+                documentJob: null,
+                clientServiceDays: toggles,
+                materializedPlannedSessions: materialize as never,
+            };
+            const response = await repository.confirmDraft({
+                branchId,
+                draftId,
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: `srp_${"a".repeat(64)}`,
+                idempotencyKey: "77777777-7777-4777-8777-777777777777",
+                requestFingerprint: "b".repeat(64),
+                actorUserId: actorId,
+                prepare: () => plan,
+            });
+            return { tx, response, source };
+        }
+
+        it("stores the vector, the version bump and the new end date without a revision, document or start date", async () => {
+            const { tx, response, source } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-05" });
+            expect(response).toMatchObject({
+                status: "no_changes",
+                caseVersion: source.caseVersion + 1,
+                revisionId: null,
+                documentStatus: "not_required",
+            });
+            expect(tx.service_record_case.update).toHaveBeenCalledTimes(1);
+            expect(tx.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: caseId },
+                data: {
+                    plannedSessions: vector,
+                    endDate: new Date("2026-09-05T00:00:00.000Z"),
+                    version: { increment: 1 },
+                },
+                select: { version: true },
+            });
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(2);
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false },
+            });
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { endDate: new Date("2026-09-05T00:00:00.000Z") },
+            });
+            expect(tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                where: {
+                    branchId,
+                    serviceRecordCaseId: caseId,
+                    active: true,
+                    revokedAt: null,
+                    expiresAt: { not: expect.any(Date) },
+                },
+                data: { expiresAt: expect.any(Date) },
+            });
+            expect(tx.service_record_revision.create).not.toHaveBeenCalled();
+            expect(tx.service_record_document_job.create).not.toHaveBeenCalled();
+        });
+
+        it("leaves the end dates alone where they already match", async () => {
+            const { tx, source } = await confirmMaterialized({ plannedSessions: vector, endDate: futureSource().endDate });
+            expect(tx.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: caseId },
+                data: { plannedSessions: vector, version: { increment: 1 } },
+                select: { version: true },
+            });
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false },
+            });
+        });
+    });
+
     it("reads the client's service-day toggles into the source, defaulting a missing flag to false", async () => {
         const clientRows = [
             { allowSaturdayService: true, allowSundayService: null, allowHolidayService: true },
