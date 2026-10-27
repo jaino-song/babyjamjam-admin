@@ -704,9 +704,11 @@ function scheduleStartBound(source: ServiceRecordEditSource): string | null {
 }
 
 /**
- * Checks specific to a schedule replacement. Only dates that differ from the
- * stored vector are judged, and locked sessions (reported separately) never
- * are, so historical dates that predate the client's toggles stay valid.
+ * Checks specific to a schedule replacement. Locked sessions (reported
+ * separately) are never judged, and neither is an unchanged date up to the
+ * latest locked session's stored date, so written history that predates the
+ * client's toggles stays valid. Every other date, changed or not, is checked
+ * against the pending policy.
  * `calendar` must carry the PENDING toggles. May throw
  * `UnsupportedKoreanHolidayYearError` for a date in an unpopulated year.
  */
@@ -720,11 +722,20 @@ function scheduleReplacementReasons(
     const lockedIndexes = new Set(source.sessions
         .filter((session) => session.locked || Boolean(session.submittedAt))
         .map((session) => session.sessionIndex));
+    // Written (locked/submitted) sessions fix the schedule up to their latest stored date:
+    // an unchanged date inside that region keeps its history, everything else is judged.
+    let fixedUntil: string | null = null;
+    for (const entry of before) {
+        if (lockedIndexes.has(entry.sessionIndex) && (fixedUntil === null || entry.serviceDate > fixedUntil)) {
+            fixedUntil = entry.serviceDate;
+        }
+    }
     const start = scheduleStartBound(source);
     const reasons: ServiceRecordEditPreviewBlockingReason[] = [];
     for (const entry of after) {
         const previous = beforeByIndex.get(entry.sessionIndex);
-        if (!previous || previous.serviceDate === entry.serviceDate || lockedIndexes.has(entry.sessionIndex)) continue;
+        if (!previous || lockedIndexes.has(entry.sessionIndex)) continue;
+        if (previous.serviceDate === entry.serviceDate && fixedUntil !== null && entry.serviceDate <= fixedUntil) continue;
         if (start && entry.serviceDate < start) {
             reasons.push(reason(
                 "SCHEDULE_BEFORE_START",
@@ -1180,7 +1191,11 @@ export function buildServiceRecordEditPreview(
         sourceFingerprint: input.sourceFingerprint,
         requiredSessionCount: input.source.requiredSessionCount,
         calendarVersion: pendingCalendar.version,
-        serviceDays: { before: storedPolicy, after: pendingPolicy },
+        // Omitted for a non-schedule draft on an all-false client so the preview payload (and
+        // its hash) stays byte-identical to the pre-feature shape.
+        ...(draftPolicy || storedPolicy.saturday || storedPolicy.sunday || storedPolicy.holiday
+            ? { serviceDays: { before: storedPolicy, after: pendingPolicy } }
+            : {}),
         before: vectorDates(before),
         after: vectorDates(after),
         provenance: previewRanges(after),

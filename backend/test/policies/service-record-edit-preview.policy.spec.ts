@@ -1021,7 +1021,7 @@ describe("service-record-edit-preview.policy service-day schedule replacement", 
         ]);
         const plain = previewOf(source(), {});
         expect(plain.calendarVersion).toBe(KR_BUILTIN_CALENDAR.version);
-        expect(plain.serviceDays).toEqual({ before: off, after: off });
+        expect("serviceDays" in plain).toBe(false);
         expect(preview.previewId).toBe("preview-1");
         expect(preview.calendarVersion).not.toBe(plain.calendarVersion);
     });
@@ -1074,18 +1074,124 @@ describe("service-record-edit-preview.policy service-day schedule replacement", 
         expect(codeOf(() => replace(withSaturday, off, saturdayClient))).toBe("NON_SERVICE_DAY");
     });
 
-    it("does not judge dates the replacement leaves alone (historical dates stay valid)", () => {
+    it("does not judge a written session's date (historical dates stay valid)", () => {
         const base = source();
         const historic = source({
             sessions: base.sessions.map((session) => (session.sessionIndex === 5
-                ? { ...session, serviceDate: "2026-09-12" }
+                ? { ...session, serviceDate: "2026-09-12", locked: true, submittedAt: "2026-09-12T04:00:00.000Z" }
                 : session)),
             plannedSessions: (base.plannedSessions as Array<Record<string, unknown>>).map((entry) => (
                 entry["sessionIndex"] === 5 ? { ...entry, serviceDate: "2026-09-12" } : entry)) as ServiceRecordEditJsonValue,
         });
-        // Saturday 09-12 is unchanged at session 5 with Saturday off; only sessions 1-4 move.
+        // Saturday 09-12 is written at session 5 with Saturday off; only sessions 1-4 move.
         const normalized = replace(["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12"], off, historic);
         expect(previewOf(historic, normalized.changes).blockingReasons).toEqual([]);
+    });
+
+    describe("an unchanged date is judged against the pending policy unless written history fixes it", () => {
+        // Mon 2026-12-14 ... ; 2026-12-12 and 2026-12-19 are Saturdays.
+        const december = (dates: string[], writtenIndexes: number[], saturdayClient = false) => {
+            const days = source();
+            const decemberAssignment = {
+                ...assignment,
+                startDate: dates[0]!,
+                endDate: dates.at(-1)!,
+                scheduleStartDate: dates[0]!,
+                scheduleEndDate: dates.at(-1)!,
+            };
+            const result = source({
+                startDate: dates[0]!,
+                endDate: dates.at(-1)!,
+                assignments: [decemberAssignment],
+                sessions: days.sessions.map((session, index) => ({
+                    ...session,
+                    serviceDate: dates[index]!,
+                    ...(writtenIndexes.includes(session.sessionIndex)
+                        ? { locked: true, submittedAt: "2026-12-01T04:00:00.000Z" }
+                        : {}),
+                })),
+                plannedSessions: dates.map((serviceDate, index) => ({
+                    sessionIndex: index + 1,
+                    serviceDate,
+                    originalDate: serviceDate,
+                    assignmentId: assignment.id,
+                    scheduleId: assignment.scheduleId,
+                    employeeId: assignment.employeeId,
+                    provenanceVersion: "case-7",
+                })) as ServiceRecordEditJsonValue,
+            });
+            result.client.startDate = dates[0]!;
+            result.client.endDate = dates.at(-1)!;
+            if (saturdayClient) result.client.allowSaturdayService = true;
+            return result;
+        };
+        const unwrittenSaturday = ["2026-12-14", "2026-12-15", "2026-12-16", "2026-12-18", "2026-12-19"];
+        const keepAll = (dates: string[]) => dates.map((serviceDate, index) => ({ sessionIndex: index + 1, serviceDate }));
+
+        it("refuses to turn Saturday off while an unwritten session past the written ones is still on it", () => {
+            const src = december(unwrittenSaturday, [1, 2, 3], true);
+            expect(() => replace(unwrittenSaturday, saturdayOn, src)).not.toThrow();
+            expect(codeOf(() => replace(unwrittenSaturday, off, src))).toBe("NON_SERVICE_DAY");
+        });
+
+        it("blocks a stored draft that keeps a Saturday session after Saturday was switched off", () => {
+            const src = december(unwrittenSaturday, [1, 2, 3], true);
+            // Built directly from stored changes, not through a save helper that would throw first.
+            const preview = previewOf(src, { serviceDays: off, sessions: keepAll(unwrittenSaturday) });
+            expect(preview.blockingReasons).toEqual([
+                expect.objectContaining({ code: "NON_SERVICE_DAY", sessionIndex: 5 }),
+            ]);
+        });
+
+        it("keeps an unchanged Saturday date allowed up to the last written date", () => {
+            const dates = ["2026-12-09", "2026-12-10", "2026-12-11", "2026-12-12", "2026-12-14"];
+            const src = december(dates, [5], true);
+            const normalized = replace(dates, off, src);
+            expect(previewOf(src, normalized.changes).blockingReasons).toEqual([]);
+        });
+
+        it("refuses a changed date moved into the fixed region onto a day that is now off", () => {
+            const dates = ["2026-12-09", "2026-12-10", "2026-12-11", "2026-12-14", "2026-12-16"];
+            const src = december(dates, [5], true);
+            const moved = ["2026-12-09", "2026-12-10", "2026-12-11", "2026-12-12", "2026-12-16"];
+            expect(() => replace(moved, saturdayOn, src)).not.toThrow();
+            expect(codeOf(() => replace(moved, off, src))).toBe("NON_SERVICE_DAY");
+        });
+
+        it("reports nothing for an all-weekday schedule submitted unchanged with every toggle off", () => {
+            const normalized = replace(["2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"], off);
+            expect(previewOf(source(), normalized.changes).blockingReasons).toEqual([]);
+        });
+    });
+
+    describe("the preview payload for a default (all-false) client", () => {
+        // The pre-feature payload shape, in its original key order.
+        const baseKeys = [
+            "previewId", "draftId", "draftVersion", "sourceCaseVersion", "sourceFingerprint",
+            "requiredSessionCount", "calendarVersion", "before", "after", "provenance",
+            "contentChanges", "impactedAssignments", "impactedAssignmentDetails",
+            "blockingReasons", "signatureMetadata", "documentScope",
+        ];
+
+        it("omits serviceDays for a non-schedule draft so the hash matches the pre-feature build", () => {
+            const drafts: ServiceRecordEditJsonValue[] = [{}, { sessions: [{ sessionIndex: 5, serviceDate: "2026-09-12" }] }];
+            for (const changes of drafts) {
+                const plain = previewOf(source(), changes);
+                expect("serviceDays" in plain).toBe(false);
+                expect(Object.keys(plain)).toEqual(baseKeys);
+                expect(plain.calendarVersion).toBe(KR_BUILTIN_CALENDAR.version);
+                expect(JSON.stringify(plain)).toBe(JSON.stringify(Object.fromEntries(
+                    baseKeys.map((key) => [key, (plain as unknown as Record<string, unknown>)[key]]),
+                )));
+            }
+        });
+
+        it("still carries serviceDays for a schedule draft and for a client with stored toggles", () => {
+            expect(previewOf(source(), { serviceDays: off }).serviceDays).toEqual({ before: off, after: off });
+            const saturdayClient = source();
+            saturdayClient.client.allowSaturdayService = true;
+            expect(previewOf(saturdayClient, {}).serviceDays).toEqual({ before: saturdayOn, after: saturdayOn });
+        });
     });
 
     it("applies the non-service-day rule only to a schedule replacement draft", () => {
