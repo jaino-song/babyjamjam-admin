@@ -24,6 +24,7 @@ const FORM_HELPER_TEXT_SOURCE_COMPONENT = "FormHelperText";
 const FORM_NATIVE_SELECT_SOURCE_COMPONENT = "FormNativeSelect";
 const FORM_CHIP_SOURCE_COMPONENT = "FormChip";
 const FORM_SWITCH_ROW_SOURCE_COMPONENT = "FormSwitchRow";
+const FORM_SWITCH_GROUP_ROW_SOURCE_COMPONENT = "FormSwitchGroupRow";
 
 export interface FormSectionProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
   title: React.ReactNode;
@@ -471,6 +472,96 @@ function FormSwitchRow({
   );
 }
 
+export interface FormSwitchGroupOption {
+  key: string;
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+  ariaLabel?: string;
+  disabled?: boolean;
+}
+
+export interface FormSwitchGroupRowProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "title"> {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  size?: "default" | "control";
+  options: FormSwitchGroupOption[];
+  "data-component"?: string;
+}
+
+/**
+ * A full-width card with one title and a wrapping row of compact pills, each pill a label plus a
+ * switch. An enabled pill is marked by its border only: no tinted background, label stays dark.
+ */
+function FormSwitchGroupRow({
+  title,
+  description,
+  size = "default",
+  options,
+  className,
+  "data-component": dataComponent,
+  ...props
+}: FormSwitchGroupRowProps) {
+  const sub = (suffix: string) => dataComponent ? `${dataComponent}_${suffix}` : undefined;
+
+  return (
+    <div
+      {...props}
+      data-component={dataComponent}
+      data-source-component={FORM_SWITCH_GROUP_ROW_SOURCE_COMPONENT}
+      className={cn(
+        "flex min-h-[calc(54px*var(--glint-ui-scale,1))] flex-wrap items-center justify-between gap-x-[calc(14px*var(--glint-ui-scale,1))] gap-y-[calc(8px*var(--glint-ui-scale,1))] rounded-[14px] border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]",
+        size === "control" && "min-h-[calc(38px*var(--glint-ui-scale,1))] border-[1.35px] py-[calc(6px*var(--glint-ui-scale,1))]",
+        className,
+      )}
+    >
+      <div data-component={sub("copy")} className="min-w-0">
+        <strong
+          data-component={sub("title")}
+          className="block text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-[1.3] text-v3-dark"
+        >
+          {title}
+        </strong>
+        {description ? (
+          <span
+            data-component={sub("description")}
+            className="mt-[calc(3px*var(--glint-ui-scale,1))] block text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.35] text-v3-text-muted"
+          >
+            {description}
+          </span>
+        ) : null}
+      </div>
+      <div
+        data-component={sub("options")}
+        className="flex min-w-0 flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
+      >
+        {options.map((option) => (
+          <div
+            key={option.key}
+            data-component={sub(`option-${option.key}`)}
+            className={cn(
+              "flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] rounded-[11px] border-[1.35px] border-v3-border bg-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(5px*var(--glint-ui-scale,1))] transition-colors",
+              option.checked && "border-v3-primary/35",
+            )}
+          >
+            <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-none text-v3-dark">
+              {option.label}
+            </span>
+            <Switch
+              data-component={sub(`option-${option.key}_button`)}
+              thumbDataComponent={sub(`option-${option.key}_thumb`)}
+              checked={option.checked}
+              onCheckedChange={option.onToggle}
+              aria-label={option.ariaLabel ?? option.label}
+              disabled={option.disabled}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export {
   FormSection,
   FormGrid,
@@ -481,4 +572,5 @@ export {
   FormNativeSelect,
   FormChip,
   FormSwitchRow,
+  FormSwitchGroupRow,
 };

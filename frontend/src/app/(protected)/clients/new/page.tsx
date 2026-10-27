@@ -42,7 +42,7 @@ import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { FieldMessageText } from "@/components/app/ui/field-message";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import { FormField as AppFormField, FormNativeSelect, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
+import { FormField as AppFormField, FormNativeSelect, FormSwitchGroupRow, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
@@ -472,6 +472,9 @@ export default function NewClientPage() {
         careCenter: store.careCenter,
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
+        allowSaturdayService: store.allowSaturdayService,
+        allowSundayService: store.allowSundayService,
+        allowHolidayService: store.allowHolidayService,
         serviceStatus: store.serviceStatus || null,
         applyMessageAutomation: store.applyMessageAutomation, smsAutomationEnabled: store.applyMessageAutomation,
       };
@@ -790,6 +793,22 @@ export default function NewClientPage() {
               ))}
             </div>
           </div>
+
+          <FormSwitchGroupRow
+            data-component="desktop_clients-new_service_step_service-days-field"
+            title={t(locale, "clients.form.service-days")}
+            description={t(locale, "clients.form.service-days-helper")}
+            options={([
+              { key: "saturday", field: "allowSaturdayService" as const, label: t(locale, "clients.form.service-days-saturday") },
+              { key: "sunday", field: "allowSundayService" as const, label: t(locale, "clients.form.service-days-sunday") },
+              { key: "holiday", field: "allowHolidayService" as const, label: t(locale, "clients.form.service-days-holiday") },
+            ]).map(({ key, field, label }) => ({
+              key,
+              label,
+              checked: store[field],
+              onToggle: () => setField(field, !store[field]),
+            }))}
+          />
 
           {error && (
             <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
