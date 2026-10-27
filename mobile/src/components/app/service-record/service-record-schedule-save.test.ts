@@ -28,6 +28,9 @@ function state(overrides: Partial<ScheduleDraftState> = {}): ScheduleDraftState 
   return { draft: null, sourceChanged: false, ...SOURCE, ...overrides };
 }
 
+/** The one problem code the backend uses for a concurrent write that moved the case or the draft. */
+const VERSION_CONFLICT = "SERVICE_RECORD_WRITE_TARGET_CHANGED";
+
 const axiosError = (status: number, data: unknown = {}) => ({ response: { status, data } });
 
 function makeApi() {
@@ -144,7 +147,7 @@ describe("saveServiceRecordSchedule", () => {
     it("retries the whole sequence once on a 409 when the source is unchanged", async () => {
       const { api, mocks } = makeApi();
       mocks.confirmDraft
-        .mockRejectedValueOnce(axiosError(409, { code: "REQUEST_CONFLICT" }))
+        .mockRejectedValueOnce(axiosError(409, { code: VERSION_CONFLICT }))
         .mockResolvedValueOnce({ status: "confirmed", caseVersion: 9 });
 
       await expect(run(api)).resolves.toEqual({ kind: "saved", caseVersion: 9 });
@@ -156,7 +159,7 @@ describe("saveServiceRecordSchedule", () => {
 
     it("reloads instead of retrying when the source changed in the meantime", async () => {
       const { api, mocks } = makeApi();
-      mocks.updateDraft.mockRejectedValueOnce(axiosError(409));
+      mocks.updateDraft.mockRejectedValueOnce(axiosError(409, { code: VERSION_CONFLICT }));
       mocks.getDraft
         .mockResolvedValueOnce(state())
         .mockResolvedValueOnce(state({ sourceFingerprint: "fp-2" }));
@@ -167,7 +170,7 @@ describe("saveServiceRecordSchedule", () => {
 
     it("retries only once and then surfaces the error", async () => {
       const { api, mocks } = makeApi();
-      mocks.confirmDraft.mockRejectedValue(axiosError(409));
+      mocks.confirmDraft.mockRejectedValue(axiosError(409, { code: VERSION_CONFLICT }));
 
       await expect(run(api)).rejects.toMatchObject({ response: { status: 409 } });
       expect(mocks.confirmDraft).toHaveBeenCalledTimes(2);
@@ -207,6 +210,31 @@ describe("saveServiceRecordSchedule", () => {
         expect(mocks.discardDraft).toHaveBeenCalledWith("draft-1", 2);
       },
     );
+
+    it.each([
+      ["a draft that is no longer open", { code: "REQUEST_NOT_PENDING" }],
+      ["a preview that no longer matches", { code: "REQUEST_STALE" }],
+      ["a conflict without extensions", { code: "REQUEST_CONFLICT" }],
+      ["an unknown code", { code: "SOMETHING_NEW" }],
+      ["a body without a code", {}],
+    ])("confirms exactly once for a 409 that is %s, not a version conflict", async (_name, body) => {
+      const { api, mocks } = makeApi();
+      mocks.confirmDraft.mockRejectedValue(axiosError(409, body));
+
+      await expect(run(api)).rejects.toMatchObject({ response: { status: 409 } });
+
+      expect(mocks.confirmDraft).toHaveBeenCalledTimes(1);
+      expect(mocks.startDraft).toHaveBeenCalledTimes(1);
+      expect(mocks.getDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry a version-conflict code on a status other than 409", async () => {
+      const { api, mocks } = makeApi();
+      mocks.confirmDraft.mockRejectedValue(axiosError(500, { code: VERSION_CONFLICT }));
+
+      await expect(run(api)).rejects.toMatchObject({ response: { status: 500 } });
+      expect(mocks.confirmDraft).toHaveBeenCalledTimes(1);
+    });
 
     it("never retries a 409 that carries a schedule code", async () => {
       const { api, mocks } = makeApi();

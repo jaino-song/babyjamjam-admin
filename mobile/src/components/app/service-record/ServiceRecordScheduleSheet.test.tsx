@@ -490,7 +490,7 @@ describe("ServiceRecordScheduleSheet", () => {
     it("retries once automatically on a version conflict", async () => {
       const { user, mocks, onSaved } = await openSheet();
       mocks.confirmDraft
-        .mockRejectedValueOnce(axiosError(409, { code: "REQUEST_CONFLICT" }))
+        .mockRejectedValueOnce(axiosError(409, { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" }))
         .mockResolvedValueOnce({ status: "confirmed", caseVersion: 9 });
 
       await user.click(saveButton());

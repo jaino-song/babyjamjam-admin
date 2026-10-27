@@ -131,6 +131,14 @@ describe("readScheduleEditError", () => {
     );
   });
 
+  it("reads the problem code of a failed call", () => {
+    expect(readScheduleEditError({ response: { status: 409, data: { code: "REQUEST_STALE" } } })).toMatchObject({
+      status: 409,
+      code: "REQUEST_STALE",
+    });
+    expect(readScheduleEditError({ response: { status: 409, data: {} } })).not.toHaveProperty("code");
+  });
+
   it("returns an empty description for anything else", () => {
     expect(readScheduleEditError(new Error("boom"))).toEqual({ status: null, scheduleCode: null, blockingReasons: [] });
     expect(readScheduleEditError(undefined)).toEqual({ status: null, scheduleCode: null, blockingReasons: [] });

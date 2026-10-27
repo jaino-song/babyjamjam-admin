@@ -53,6 +53,8 @@ export interface ScheduleConfirmResult {
 
 export interface ScheduleEditErrorInfo {
   status: number | null;
+  /** The problem `code` of the failed call (e.g. `SERVICE_RECORD_WRITE_TARGET_CHANGED`), when the body names one. */
+  code?: string;
   /** A validated `scheduleCode` extension of a 400/409 problem. */
   scheduleCode: string | null;
   /** `blockingReasons[]` of a 400/409 problem. */
@@ -147,8 +149,10 @@ export function readScheduleEditError(error: unknown): ScheduleEditErrorInfo {
   const status = response && typeof response.status === "number" ? response.status : null;
   const data = response && isRecord(response.data) ? response.data : null;
   const blockingOperation = data ? readBlockingOperation(data.blockingOperation) : null;
+  const code = data && typeof data.code === "string" && data.code.length > 0 ? data.code : null;
   return {
     status,
+    ...(code ? { code } : {}),
     scheduleCode: data && typeof data.scheduleCode === "string" ? data.scheduleCode : null,
     blockingReasons: data ? normalizeBlockingReasons(data.blockingReasons) : [],
     ...(blockingOperation ? { blockingOperation } : {}),

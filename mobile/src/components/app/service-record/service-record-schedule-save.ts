@@ -115,24 +115,39 @@ async function attemptSave({ api, clientId, source, schedule }: SaveInput): Prom
 }
 
 /**
+ * The problem codes that mean a concurrent write moved the case or the draft under this save, so a
+ * second pass over fresh state can succeed. The backend (`admin-service-record-edit.service.ts`)
+ * answers every such case with this one code:
+ * - :1496 a stale draft version (`throwConflictWithLatest`) and :932 a repository write conflict;
+ * - :824 and :1001 the source fingerprint moved since the draft was opened.
+ * Other 409s are answers about the request itself and a repeat gets the same answer:
+ * `REQUEST_NOT_PENDING` (:811, :969 the draft is no longer open), `REQUEST_STALE` (:1017 the preview
+ * no longer matches), `REQUEST_CONFLICT` (:542, :993, :1025, :1072 blocking reasons or a session
+ * that no longer exists). An unknown or missing code is treated the same way.
+ */
+const VERSION_CONFLICT_CODES: ReadonlySet<string> = new Set(["SERVICE_RECORD_WRITE_TARGET_CHANGED"]);
+
+function isRetryableVersionConflict(error: unknown): boolean {
+  const info = readScheduleEditError(error);
+  return info.status === 409
+    && info.code !== undefined
+    && VERSION_CONFLICT_CODES.has(info.code)
+    && info.blockingReasons.length === 0
+    && !info.blockingOperation
+    && info.scheduleCode === null;
+}
+
+/**
  * Runs the save. Only a version conflict is retried, once, from the top, where the source check
- * runs again: a record that changed in the meantime reloads instead. A 409 that names blocking
- * reasons, a still-running earlier edit (`blockingOperation`) or a schedule code is an answer about
- * the request itself, so repeating it cannot help and it is surfaced as it is.
+ * runs again: a record that changed in the meantime reloads instead. Everything else (blocking
+ * reasons, a still-running earlier edit, a schedule code, a closed draft, a stale preview, an
+ * unknown 409) is an answer about the request itself and is surfaced as it is.
  */
 export async function saveServiceRecordSchedule(input: SaveInput): Promise<ScheduleSaveResult> {
   try {
     return await attemptSave(input);
   } catch (error) {
-    const info = readScheduleEditError(error);
-    if (
-      info.status === 409
-      && info.blockingReasons.length === 0
-      && !info.blockingOperation
-      && info.scheduleCode === null
-    ) {
-      return attemptSave(input);
-    }
+    if (isRetryableVersionConflict(error)) return attemptSave(input);
     throw error;
   }
 }
