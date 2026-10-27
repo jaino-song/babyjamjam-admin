@@ -114,6 +114,9 @@ interface StructuredErrorPresentation {
 const CLIENT_FORM_DIALOG_BASE = "mobile_clients_form-dialog";
 const CLIENT_FORM_ERROR_SUMMARY_ID = `${CLIENT_FORM_DIALOG_BASE}_error-summary`;
 
+/** Extension a client update's 409 carries when re-laying the remaining sessions needs hand-picked dates. */
+const MANUAL_SCHEDULE_REQUIRED_CODE = "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE";
+
 const SERVICE_DAY_FIELDS = [
     { key: "allowSaturdayService", textKey: "clients.form.service-day-saturday", slot: "saturday" },
     { key: "allowSundayService", textKey: "clients.form.service-day-sunday", slot: "sunday" },
@@ -599,6 +602,16 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
             ) {
                 setErrorAndScroll(CLIENT_END_DATE_CHANGED_MESSAGE);
+                return;
+            }
+            // A handover the server cannot re-lay on its own: send the admin to the schedule editor.
+            if (
+                normalized.status === 409
+                && responseData !== null
+                && typeof responseData === "object"
+                && (responseData as { scheduleCode?: unknown }).scheduleCode === MANUAL_SCHEDULE_REQUIRED_CODE
+            ) {
+                setErrorAndScroll(t(locale, "clients.form.error-manual-schedule"));
                 return;
             }
             const shouldUseNormalized = !isLegacyClientError;
