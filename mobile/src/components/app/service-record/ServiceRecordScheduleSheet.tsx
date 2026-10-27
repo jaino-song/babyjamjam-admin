@@ -360,9 +360,10 @@ export function ServiceRecordScheduleSheet({
     >
       <SheetContent
         side="bottom"
+        overlayClassName="z-[200]"
         data-component={dataComponent}
         data-source-component={SOURCE_COMPONENT}
-        className="flex max-h-[94dvh] w-full min-w-0 flex-col gap-0 overflow-hidden rounded-t-[28px] bg-white p-0"
+        className="z-[201] flex max-h-[94dvh] w-full min-w-0 flex-col gap-0 overflow-hidden rounded-t-[28px] bg-white p-0"
       >
         <div aria-hidden="true" data-slot="schedule-sheet-handle" className="mx-auto mt-3 h-1 w-9 shrink-0 rounded-full bg-v3-border" />
         <SheetHeader data-component={part("header")} className="gap-0.5 px-[22px] pb-2 pt-3 pr-16">

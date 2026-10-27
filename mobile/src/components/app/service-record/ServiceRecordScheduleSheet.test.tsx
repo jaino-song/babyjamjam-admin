@@ -138,6 +138,19 @@ describe("ServiceRecordScheduleSheet", () => {
       expect(screen.getByRole("button", { name: "닫기" })).toHaveClass("h-11", "w-11");
     });
 
+    it("stacks above the client detail sheet (z-70/z-100): scrim z-[200], sheet z-[201]", async () => {
+      await openSheet();
+
+      const dialog = screen.getByRole("dialog", { name: "제공기록지 일정 변경" });
+      expect(dialog).toHaveAttribute("data-slot", "sheet-content");
+      expect(dialog).toHaveClass("z-[201]");
+      expect(dialog).not.toHaveClass("z-50");
+      const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+      expect(overlay).not.toBeNull();
+      expect(overlay).toHaveClass("z-[200]");
+      expect(overlay).not.toHaveClass("z-50");
+    });
+
     it("shows the legend and hides session numbers inside the cells", async () => {
       await openSheet();
 
