@@ -1,6 +1,6 @@
 # BabyJamJam Admin – Backend
 
-NestJS service powering the BabyJamJam Admin operations platform. The project follows **Clean Architecture** principles with clear separation of concerns across domain, application, infrastructure, and interface layers.
+NestJS service powering BabyJamJam, an **AI-powered Postpartum Care Operations Platform**. The project follows **Clean Architecture** principles with clear separation of concerns across domain, application, infrastructure, and interface layers.
 
 ---
 
