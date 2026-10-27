@@ -904,6 +904,177 @@ describe("ServiceRecordEditRepository", () => {
         });
     });
 
+    describe("client service-day toggles", () => {
+        async function confirmWith(planOverrides: Partial<ServiceRecordEditConfirmPlan>) {
+            const source = futureSource();
+            const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+            const order: string[] = [];
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([]),
+                service_record_edit_draft: {
+                    findFirst: jest.fn().mockResolvedValue(activeDraft),
+                    updateMany: jest.fn().mockImplementation(async () => {
+                        order.push("draft");
+                        return { count: 1 };
+                    }),
+                },
+                service_record_case: {
+                    update: jest.fn().mockImplementation(async () => {
+                        order.push("case");
+                        return { version: source.caseVersion + 1 };
+                    }),
+                },
+                client: {
+                    updateMany: jest.fn().mockImplementation(async (args: { data: Record<string, unknown> }) => {
+                        order.push("allowSaturdayService" in args.data ? "flags" : "period");
+                        return { count: 1 };
+                    }),
+                },
+                service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+                service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+                service_record_assignment: { updateMany: jest.fn() },
+                employee_schedule: { updateMany: jest.fn() },
+            };
+            const prisma = transactionalPrisma(tx);
+            const repository = new ServiceRecordEditRepository(prisma as never);
+            const internals = repository as unknown as {
+                findDraftByIdWithClient: jest.Mock;
+                loadSourceWithClient: jest.Mock;
+            };
+            jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+            jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+            const plan: ServiceRecordEditConfirmPlan = {
+                status: "confirmed",
+                sourceFingerprint: "a".repeat(64),
+                caseId,
+                clientId: source.client.id,
+                formVersion: source.formVersion,
+                requiredSessionCount: source.requiredSessionCount,
+                startDate: source.startDate,
+                endDate: source.endDate,
+                header: source.header,
+                plannedSessions: source.plannedSessions,
+                sessions: [],
+                newSessions: [],
+                assignments: [],
+                revision: null,
+                dispatchContext: null,
+                documentStatus: "capability_unverified",
+                documentJob: null,
+                ...planOverrides,
+            };
+            const response = await repository.confirmDraft({
+                branchId,
+                draftId,
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: `srp_${"a".repeat(64)}`,
+                idempotencyKey: "66666666-6666-4666-8666-666666666666",
+                requestFingerprint: "b".repeat(64),
+                actorUserId: actorId,
+                prepare: () => plan,
+            });
+            return { tx, prisma, order, response, source };
+        }
+
+        const toggles = { saturday: true, sunday: false, holiday: true };
+        const flagWrite = (source: ServiceRecordEditSource) => ({
+            where: { id: source.client.id, branchId },
+            data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: true },
+        });
+
+        it("writes the three flags inside the confirm transaction together with the confirmed dates", async () => {
+            const { tx, prisma, order, source } = await confirmWith({ clientServiceDays: toggles });
+            expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith(flagWrite(source));
+            // The period write of the confirmed branch is untouched.
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { startDate: new Date("2026-09-01T00:00:00.000Z"), endDate: new Date("2026-09-02T00:00:00.000Z") },
+            });
+            expect(order.indexOf("flags")).toBeLessThan(order.indexOf("draft"));
+        });
+
+        it("writes the flags of a toggle-only change without any case, revision or period write", async () => {
+            const { tx, order, response, source } = await confirmWith({ status: "no_changes", clientServiceDays: toggles });
+            expect(response).toMatchObject({ status: "no_changes", revisionId: null, revisionNumber: null, documentStatus: "not_required" });
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith(flagWrite(source));
+            expect(tx.service_record_case.update).not.toHaveBeenCalled();
+            expect(order).toEqual(["flags", "draft"]);
+        });
+
+        it("leaves the client alone when the plan carries no toggles", async () => {
+            const noChanges = await confirmWith({ status: "no_changes" });
+            expect(noChanges.tx.client.updateMany).not.toHaveBeenCalled();
+            const confirmed = await confirmWith({});
+            expect(confirmed.tx.client.updateMany.mock.calls.map(([call]) => Object.keys(call.data))).toEqual([
+                ["startDate", "endDate"],
+            ]);
+        });
+    });
+
+    it("reads the client's service-day toggles into the source, defaulting a missing flag to false", async () => {
+        const clientRows = [
+            { allowSaturdayService: true, allowSundayService: null, allowHolidayService: true },
+            {},
+        ];
+        const sources: ServiceRecordEditSource[] = [];
+        const selects: Array<Record<string, unknown>> = [];
+        for (const flags of clientRows) {
+            const client = {
+                findFirst: jest.fn()
+                    .mockResolvedValueOnce({ id: 101 })
+                    .mockImplementationOnce(async (args: { select: Record<string, unknown> }) => {
+                        selects.push(args.select);
+                        return {
+                            id: 101,
+                            branchId,
+                            name: "산모",
+                            duration: 2,
+                            startDate: new Date("2026-09-01T00:00:00.000Z"),
+                            endDate: new Date("2026-09-02T00:00:00.000Z"),
+                            serviceStatus: "in_progress",
+                            ...flags,
+                        };
+                    }),
+            };
+            const service_record_case = {
+                findFirst: jest.fn().mockResolvedValue({
+                    id: caseId,
+                    clientId: 101,
+                    version: 4,
+                    formVersion: 3,
+                    status: "IN_PROGRESS",
+                    completedAt: null,
+                    finalizationDueAt: null,
+                    finalizationStartedAt: null,
+                    finalizedAt: null,
+                    documentsCompletedAt: null,
+                    requiredSessionCount: 2,
+                    startDate: new Date("2026-09-01T00:00:00.000Z"),
+                    endDate: new Date("2026-09-02T00:00:00.000Z"),
+                    momName: "산모",
+                    momBirth: "900101",
+                    babyName: "아기",
+                    babyBirth: "260901",
+                    deliveryType: "자연분만",
+                    babyWeight: "3.2",
+                    plannedSessions: null,
+                    days: [],
+                }),
+            };
+            const employee_schedule = { findMany: jest.fn().mockResolvedValue([]) };
+            const repository = new ServiceRecordEditRepository(
+                transactionalPrisma({ client, service_record_case, employee_schedule }) as never,
+            );
+            const snapshot = await repository.loadSource(branchId, { clientId: 101 });
+            sources.push(snapshot!);
+        }
+        expect(selects[0]).toMatchObject({ allowSaturdayService: true, allowSundayService: true, allowHolidayService: true });
+        expect(sources[0]!.client).toMatchObject({ allowSaturdayService: true, allowSundayService: false, allowHolidayService: true });
+        expect(sources[1]!.client).toMatchObject({ allowSaturdayService: false, allowSundayService: false, allowHolidayService: false });
+    });
+
     it("allocates the next revision number under a case lock and never updates a prior revision", async () => {
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),

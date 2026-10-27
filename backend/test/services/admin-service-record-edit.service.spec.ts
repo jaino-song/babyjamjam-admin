@@ -7,13 +7,20 @@ import {
     ServiceRecordEditConflictError,
     ServiceRecordRevisionOperationUnresolvedError,
 } from "domain/errors/service-record-edit.error";
-import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar, type KrBusinessDayCalendar } from "domain/utils/business-days";
+import {
+    KOREAN_HOLIDAY_CALENDAR,
+    KR_BUILTIN_CALENDAR,
+    createKrBusinessDayCalendar,
+    type KrBusinessDayCalendar,
+} from "domain/utils/business-days";
 import type {
     ServiceRecordEditRevisionFactsSource,
     ServiceRecordEditSource,
     ServiceRecordEditConfirmPlan,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { mapHttpProblem } from "infrastructure/filters/problem-response";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+import type { Request, Response } from "express";
 
 const BRANCH_ID = "11111111-1111-4111-8111-111111111111";
 const CASE_ID = "22222222-2222-4222-8222-222222222222";
@@ -2152,6 +2159,10 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
             scheduleId: owner.scheduleId,
             employeeId: owner.employeeId,
             employeeNameSnapshot: owner.employeeName,
+            // A written row still being edited: locked/submitted sessions keep their dates, and
+            // these cases are about moving dates, not about the lock.
+            locked: false,
+            submittedAt: null,
         };
     }
 
@@ -3097,5 +3108,413 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         expect(plan.assignments).toEqual([
             expect.objectContaining({ assignmentId: single.id, scheduleId: 702, startDate: "2026-10-01", endDate: "2026-10-26" }),
         ]);
+    });
+});
+
+describe("AdminServiceRecordEditService service-day schedule replacement", () => {
+    const off = { saturday: false, sunday: false, holiday: false };
+    const saturdayOn = { saturday: true, sunday: false, holiday: false };
+    // previewSourceSnapshot(): 3 sessions on Tue 2026-09-01 .. Thu 09-03, session 1 locked + submitted.
+    // 2026-09-05 is a Saturday.
+    const KEEP_LOCKED = ["2026-09-01", "2026-09-02", "2026-09-05"];
+
+    /** The preview source with its (single) written row unlocked, so session 1 may move. */
+    function unlockedSource(): ServiceRecordEditSource {
+        const base = previewSourceSnapshot();
+        return {
+            ...base,
+            sessions: base.sessions.map((session) => ({ ...session, locked: false, submittedAt: null })),
+        };
+    }
+
+    async function rejection(run: () => Promise<unknown>): Promise<BadRequestException> {
+        try {
+            await run();
+        } catch (error) {
+            if (error instanceof BadRequestException) return error;
+            throw error;
+        }
+        throw new Error("expected a BadRequestException");
+    }
+
+    function patch(
+        harness: ReturnType<typeof createHarness>,
+        dto: Record<string, unknown>,
+    ) {
+        return harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: 1,
+            changes: {},
+            ...dto,
+        } as never);
+    }
+
+    function savedChanges(harness: ReturnType<typeof createHarness>) {
+        return (harness.repository.updateDraft.mock.calls.at(-1)?.[0] as { changes: Record<string, unknown> }).changes;
+    }
+
+    it("normalizes a schedule into every session date plus the server-produced toggles", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        await patch(harness, { schedule: { serviceDays: saturdayOn, dates: KEEP_LOCKED } });
+        expect(savedChanges(harness)).toEqual({
+            serviceDays: saturdayOn,
+            sessions: KEEP_LOCKED.map((serviceDate, index) => ({ sessionIndex: index + 1, serviceDate })),
+        });
+    });
+
+    it.each([
+        ["too few dates", { serviceDays: off, dates: ["2026-09-01", "2026-09-02"] }, "SCHEDULE_COUNT_MISMATCH"],
+        ["too many dates", { serviceDays: off, dates: ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"] }, "SCHEDULE_COUNT_MISMATCH"],
+        ["a Saturday while Saturday service is off", { serviceDays: off, dates: KEEP_LOCKED }, "NON_SERVICE_DAY"],
+        ["a locked session moved", { serviceDays: off, dates: ["2026-09-02", "2026-09-03", "2026-09-04"] }, "LOCKED_SESSION_DATE_CHANGED"],
+        ["descending dates", { serviceDays: off, dates: ["2026-09-01", "2026-09-04", "2026-09-02"] }, "INVERTED_SERVICE_DATES"],
+        ["duplicate dates", { serviceDays: off, dates: ["2026-09-01", "2026-09-02", "2026-09-02"] }, "DUPLICATE_SERVICE_DATE"],
+        ["an impossible date", { serviceDays: off, dates: ["2026-09-01", "2026-09-02", "2026-09-31"] }, "INVALID_DATE"],
+        ["a date in an unpopulated holiday year", { serviceDays: off, dates: ["2026-09-01", "2026-09-02", "2028-01-03"] }, "UNSUPPORTED_HOLIDAY_YEAR"],
+    ])("answers %s with 400 INVALID_VALUE and the scheduleCode %s", async (_label, schedule, scheduleCode) => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        const error = await rejection(() => patch(harness, { schedule }));
+        expect(error.getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            errors: [expect.objectContaining({ code: "INVALID_VALUE" })],
+            scheduleCode,
+        });
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it("rejects a date before the service start", async () => {
+        const harness = createHarness({ source: unlockedSource() });
+        const error = await rejection(() => patch(harness, {
+            schedule: { serviceDays: off, dates: ["2026-08-31", "2026-09-02", "2026-09-03"] },
+        }));
+        expect(error.getResponse()).toMatchObject({ scheduleCode: "SCHEDULE_BEFORE_START", sessionIndex: 1 });
+    });
+
+    it("accepts a Saturday once Saturday service is on, and uses the client's stored toggles by default", async () => {
+        const harness = createHarness({ source: unlockedSource() });
+        await patch(harness, { schedule: { serviceDays: saturdayOn, dates: ["2026-09-01", "2026-09-02", "2026-09-05"] } });
+        expect(savedChanges(harness)["serviceDays"]).toEqual(saturdayOn);
+
+        const source = unlockedSource();
+        source.client.allowSaturdayService = true;
+        const stored = createHarness({ source });
+        await patch(stored, { schedule: { serviceDays: saturdayOn, dates: ["2026-09-01", "2026-09-02", "2026-09-05"] } });
+        expect(stored.repository.updateDraft).toHaveBeenCalled();
+        // A date move on a stored-Saturday client may land on a Saturday without any schedule.
+        await patch(stored, { dateMove: { sessionIndex: 3, toDate: "2026-09-05", shiftFollowing: false } });
+        expect(stored.repository.updateDraft).toHaveBeenCalledTimes(2);
+    });
+
+    it("refuses a schedule together with a dateMove or any per-session serviceDate", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        const schedule = { serviceDays: off, dates: ["2026-09-01", "2026-09-02", "2026-09-03"] };
+        const withMove = await rejection(() => patch(harness, {
+            schedule,
+            dateMove: { sessionIndex: 2, toDate: "2026-09-03" },
+        }));
+        expect(withMove.getResponse()).toMatchObject({
+            code: "VALIDATION_FAILED",
+            errors: [expect.objectContaining({ code: "INVALID_VALUE" })],
+            scheduleCode: "SCHEDULE_WITH_DATE_MOVE",
+        });
+        const withDates = await rejection(() => patch(harness, {
+            schedule,
+            changes: { sessions: [{ sessionIndex: 2, serviceDate: "2026-09-03" }] },
+        }));
+        expect(withDates.getResponse()).toMatchObject({ scheduleCode: "SCHEDULE_WITH_DATE_MOVE" });
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+
+        // Header and non-date session edits may ride along with a schedule.
+        await patch(harness, {
+            schedule,
+            changes: { header: { momName: "수정" }, sessions: [{ sessionIndex: 2, notes: "메모" }] },
+        });
+        expect(savedChanges(harness)).toMatchObject({
+            header: { momName: "수정" },
+            serviceDays: off,
+            sessions: [
+                { sessionIndex: 1, serviceDate: "2026-09-01" },
+                { sessionIndex: 2, notes: "메모", serviceDate: "2026-09-02" },
+                { sessionIndex: 3, serviceDate: "2026-09-03" },
+            ],
+        });
+    });
+
+    it("refuses a malformed schedule shape without reaching the policy", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        for (const schedule of [
+            { dates: KEEP_LOCKED },
+            { serviceDays: { saturday: true, sunday: false }, dates: KEEP_LOCKED },
+            { serviceDays: { saturday: "yes", sunday: false, holiday: false }, dates: KEEP_LOCKED },
+            { serviceDays: off, dates: [] },
+            { serviceDays: off, dates: ["2026/09/01"] },
+        ]) {
+            const error = await rejection(() => patch(harness, { schedule }));
+            expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED" });
+        }
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it("keeps scheduleCode on the serialized problem body", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        const error = await rejection(() => patch(harness, { schedule: { serviceDays: off, dates: KEEP_LOCKED } }));
+        const response = { locals: {} } as unknown as Response;
+        const problem = mapHttpProblem(error, { method: "PATCH" } as Request, response);
+        expect(problem).toMatchObject({
+            code: "VALIDATION_FAILED",
+            status: 400,
+            scheduleCode: "NON_SERVICE_DAY",
+            sessionIndex: 3,
+        });
+        // The internal message still never leaves the process.
+        expect(JSON.stringify(problem)).not.toContain("not a service day");
+    });
+
+    it("keeps the toggles through a later header save", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        await patch(harness, { schedule: { serviceDays: saturdayOn, dates: KEEP_LOCKED } });
+        const first = savedChanges(harness);
+        harness.repository.findDraftById.mockResolvedValue(draft({ changes: first }));
+        await patch(harness, { changes: { header: { momName: "수정" } } });
+        expect(savedChanges(harness)).toEqual({ ...first, header: { momName: "수정" } });
+    });
+
+    it("never accepts service days from the client-sent changes", async () => {
+        const harness = createHarness({ source: previewSourceSnapshot() });
+        const error = await rejection(() => patch(harness, { changes: { serviceDays: saturdayOn } }));
+        expect(error.getResponse()).toMatchObject({
+            errors: [expect.objectContaining({ pointer: "/changes/serviceDays", code: "UNEXPECTED_FIELD" })],
+        });
+        await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { serviceDays: saturdayOn } as never,
+        })).rejects.toBeInstanceOf(BadRequestException);
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+    });
+
+    describe("source fingerprint", () => {
+        async function fingerprintOf(client: Record<string, unknown>) {
+            const base = sourceSnapshot();
+            const harness = createHarness({ source: { ...base, client: { ...base.client, ...client } } as ServiceRecordEditSource });
+            await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            return (harness.repository.createOrResumeDraft.mock.calls[0]![0] as { sourceFingerprint: string }).sourceFingerprint;
+        }
+
+        /** The fingerprint exactly as it was computed before the toggles existed. */
+        function legacyFingerprint(source: ServiceRecordEditSource) {
+            const canonical = (value: unknown): string => {
+                if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+                if (value !== null && typeof value === "object") {
+                    return `{${Object.entries(value as Record<string, unknown>)
+                        .filter(([, item]) => item !== undefined)
+                        .sort(([left], [right]) => left.localeCompare(right))
+                        .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`)
+                        .join(",")}}`;
+                }
+                return JSON.stringify(value);
+            };
+            return createHash("sha256").update(canonical({
+                caseId: source.caseId,
+                branchName: source.branchName ?? null,
+                formVersion: source.formVersion,
+                requiredSessionCount: source.requiredSessionCount,
+                startDate: source.startDate,
+                endDate: source.endDate,
+                client: {
+                    id: source.client.id,
+                    name: source.client.name,
+                    duration: source.client.duration,
+                    startDate: source.client.startDate,
+                    endDate: source.client.endDate,
+                },
+                header: source.header,
+                sessions: source.sessions,
+                assignments: source.assignments,
+                plannedSessions: source.plannedSessions,
+                signatureMetadata: source.signatureMetadata ?? null,
+                documentScope: source.documentScope ?? null,
+            })).digest("hex");
+        }
+
+        it("is unchanged for an all-false client, however the false flags are stored", async () => {
+            const legacy = legacyFingerprint(sourceSnapshot());
+            expect(await fingerprintOf({})).toBe(legacy);
+            expect(await fingerprintOf({ allowSaturdayService: false, allowSundayService: false, allowHolidayService: false }))
+                .toBe(legacy);
+            expect(await fingerprintOf({ allowSaturdayService: null, allowSundayService: null, allowHolidayService: null }))
+                .toBe(legacy);
+        });
+
+        it("changes as soon as a toggle is turned on, and tells the toggles apart", async () => {
+            const off = await fingerprintOf({});
+            const saturday = await fingerprintOf({ allowSaturdayService: true });
+            const sunday = await fingerprintOf({ allowSundayService: true });
+            const holiday = await fingerprintOf({ allowHolidayService: true });
+            expect(new Set([off, saturday, sunday, holiday]).size).toBe(4);
+        });
+
+        it("marks an open draft stale when a toggle changes elsewhere", async () => {
+            const harness = createHarness();
+            const first = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            harness.repository.findActiveDraft.mockResolvedValue(first.draft);
+            const base = sourceSnapshot();
+            harness.repository.loadSource.mockResolvedValue({ ...base, client: { ...base.client, allowSundayService: true } });
+            await expect(harness.service.getDraft(BRANCH_ID, CLIENT_ID)).resolves.toMatchObject({ sourceChanged: true });
+        });
+    });
+
+    describe("preview and confirm", () => {
+        async function previewAndPrepare(options: {
+            source: ServiceRecordEditSource;
+            changes: Record<string, unknown>;
+            confirmSource?: ServiceRecordEditSource;
+            confirmFingerprintOf?: ServiceRecordEditSource;
+        }) {
+            const harness = createHarness({ source: options.source });
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            if (!started.draft) throw new Error("expected a draft");
+            const activeDraft = { ...started.draft, changes: options.changes };
+            (harness.repository as typeof harness.repository & { loadDraftWithSource: jest.Mock }).loadDraftWithSource =
+                jest.fn().mockResolvedValue({ draft: activeDraft, source: options.source });
+            const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+            });
+            harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+            await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: preview.previewId,
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            });
+            const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                prepare: (snapshot: { draft: unknown; source: ServiceRecordEditSource }) => ServiceRecordEditConfirmPlan;
+            };
+            return {
+                harness,
+                preview,
+                activeDraft,
+                prepare: (draftOverride?: unknown) => input.prepare({
+                    draft: draftOverride ?? activeDraft,
+                    source: options.confirmSource ?? options.source,
+                }),
+            };
+        }
+
+        async function savedScheduleChanges(source: ServiceRecordEditSource, schedule: unknown) {
+            const harness = createHarness({ source });
+            await patch(harness, { schedule });
+            return savedChanges(harness);
+        }
+
+        it("previews the new dates under the pending toggles and binds the toggles into the preview id", async () => {
+            const source = unlockedSource();
+            const changes = await savedScheduleChanges(source, {
+                serviceDays: saturdayOn,
+                dates: ["2026-09-01", "2026-09-02", "2026-09-05"],
+            });
+            const { preview } = await previewAndPrepare({ source, changes });
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.serviceDays).toEqual({ before: off, after: saturdayOn });
+            expect(preview.calendarVersion).toBe(`${KR_BUILTIN_CALENDAR.version}+sd-100`);
+            expect(preview.after.sessions.map(({ serviceDate }) => serviceDate)).toEqual(["2026-09-01", "2026-09-02", "2026-09-05"]);
+
+            const toggleFlipped = await previewAndPrepare({
+                source,
+                changes: { ...changes, serviceDays: { saturday: true, sunday: true, holiday: false } },
+            });
+            expect(toggleFlipped.preview.previewId).not.toBe(preview.previewId);
+        });
+
+        it("reports the stored toggles as 'before' and writes the new ones with the confirmed dates", async () => {
+            const source = unlockedSource();
+            source.client.allowSundayService = true;
+            const changes = await savedScheduleChanges(source, {
+                serviceDays: saturdayOn,
+                dates: ["2026-09-01", "2026-09-02", "2026-09-05"],
+            });
+            const { preview, prepare } = await previewAndPrepare({ source, changes });
+            expect(preview.serviceDays).toEqual({ before: { saturday: false, sunday: true, holiday: false }, after: saturdayOn });
+            const plan = prepare();
+            expect(plan.status).toBe("confirmed");
+            expect(plan.clientServiceDays).toEqual(saturdayOn);
+            expect(plan.revision).not.toBeNull();
+        });
+
+        it("plans no client write when the toggles are unchanged", async () => {
+            const source = unlockedSource();
+            const changes = await savedScheduleChanges(source, {
+                serviceDays: off,
+                dates: ["2026-09-01", "2026-09-02", "2026-09-04"],
+            });
+            const { prepare } = await previewAndPrepare({ source, changes });
+            const plan = prepare();
+            expect(plan.status).toBe("confirmed");
+            expect(plan.clientServiceDays).toBeUndefined();
+            expect("clientServiceDays" in plan).toBe(false);
+            const header = await previewAndPrepare({ source, changes: { header: { momName: "수정" } } });
+            expect(header.prepare().clientServiceDays).toBeUndefined();
+        });
+
+        it("saves a toggle-only change without a revision or document", async () => {
+            const source = unlockedSource();
+            const changes = await savedScheduleChanges(source, {
+                serviceDays: saturdayOn,
+                dates: ["2026-09-01", "2026-09-02", "2026-09-03"],
+            });
+            const { preview, prepare } = await previewAndPrepare({ source, changes });
+            expect(preview.blockingReasons).toEqual([]);
+            const plan = prepare();
+            expect(plan.status).toBe("no_changes");
+            expect(plan.clientServiceDays).toEqual(saturdayOn);
+            expect(plan.revision).toBeNull();
+            expect(plan.documentJob).toBeNull();
+            expect(plan.dispatchContext).toBeNull();
+        });
+
+        it("blocks a stored date change of a locked session at preview", async () => {
+            const source = previewSourceSnapshot();
+            const moved = { sessions: [{ sessionIndex: 1, serviceDate: "2026-08-31" }] };
+            const harness = createHarness({ source });
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            const activeDraft = { ...started.draft!, changes: moved };
+            (harness.repository as typeof harness.repository & { loadDraftWithSource: jest.Mock }).loadDraftWithSource =
+                jest.fn().mockResolvedValue({ draft: activeDraft, source });
+            const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+            });
+            expect(preview.blockingReasons).toEqual([
+                expect.objectContaining({ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 1 }),
+            ]);
+        });
+
+        it("re-checks the locked rows read inside the confirm transaction", async () => {
+            // The preview saw session 1 unlocked, so moving it was fine then.
+            const source = unlockedSource();
+            const changes = await savedScheduleChanges(source, {
+                serviceDays: off,
+                dates: ["2026-09-02", "2026-09-03", "2026-09-04"],
+            });
+            const lockedLater: ServiceRecordEditSource = {
+                ...source,
+                sessions: source.sessions.map((session) => ({
+                    ...session,
+                    locked: true,
+                    submittedAt: "2026-09-02T04:00:00.000Z",
+                })),
+            };
+            const relocked = createHarness({ source: lockedLater });
+            await relocked.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            const lockedFingerprint = (relocked.repository.createOrResumeDraft.mock.calls[0]![0] as {
+                sourceFingerprint: string;
+            }).sourceFingerprint;
+
+            const { prepare, activeDraft } = await previewAndPrepare({ source, changes, confirmSource: lockedLater });
+            expect(() => prepare({ ...activeDraft, sourceFingerprint: lockedFingerprint })).toThrow(
+                expect.objectContaining({
+                    response: expect.objectContaining({
+                        code: "REQUEST_CONFLICT",
+                        blockingReasons: [expect.objectContaining({ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 1 })],
+                    }),
+                }),
+            );
+        });
     });
 });

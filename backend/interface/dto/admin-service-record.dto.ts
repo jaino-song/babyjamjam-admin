@@ -1,6 +1,9 @@
 import { Prisma } from "@prisma/client";
 import { IsOptional, IsString, Matches, MaxLength } from "class-validator";
-import type { ServiceRecordScheduleProjection } from "@babyjamjam/shared/types/service-record";
+import type {
+    ServiceRecordEditServiceDays,
+    ServiceRecordScheduleProjection,
+} from "@babyjamjam/shared/types/service-record";
 
 const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
@@ -140,4 +143,6 @@ export interface AdminServiceRecordOverviewDto {
     assignments: AdminServiceRecordAssignmentDto[];
     /** Canonical all-session projection used by the administrator date editor. */
     scheduleProjection?: ServiceRecordScheduleProjection;
+    /** The client's service-day toggles, which the projection and session counts above already follow. */
+    serviceDays?: ServiceRecordEditServiceDays;
 }

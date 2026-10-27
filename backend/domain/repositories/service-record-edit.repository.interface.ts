@@ -117,6 +117,10 @@ export interface ServiceRecordEditSource {
         startDate: string | null;
         endDate: string | null;
         serviceStatus: string | null;
+        /** Which non-weekday days the client accepts service on; absent means false. */
+        allowSaturdayService?: boolean | null;
+        allowSundayService?: boolean | null;
+        allowHolidayService?: boolean | null;
     };
 }
 
@@ -474,6 +478,12 @@ export interface ServiceRecordEditConfirmPlan {
     /** Independent period/token operations; omitted only for legacy plans. */
     contractOperation?: ServiceRecordEditConfirmOperationPlan | null;
     receiptOperation?: ServiceRecordEditConfirmOperationPlan | null;
+    /**
+     * New client service-day toggles, set only when the draft carries toggles that
+     * differ from the stored ones. Written whatever the plan status: a toggle-only
+     * change is not a "change" (no revision, no document) but must still be saved.
+     */
+    clientServiceDays?: { saturday: boolean; sunday: boolean; holiday: boolean };
 }
 
 export interface ServiceRecordEditConfirmInput {

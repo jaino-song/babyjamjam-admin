@@ -1,4 +1,8 @@
-import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
+import {
+    UnsupportedKoreanHolidayYearError,
+    type KrBusinessDayCalendar,
+    type ServiceDayPolicy,
+} from "@babyjamjam/shared/utils/business-days";
 import {
     getExpectedSessionDateFromRecords,
     ServiceRecordScheduleValidationError,
@@ -50,6 +54,12 @@ export interface ServiceRecordEditDateMove {
     shiftFollowing?: boolean;
 }
 
+/** A whole-set schedule replacement, already shape-validated by the service. */
+export interface ServiceRecordEditScheduleReplacement {
+    serviceDays: ServiceDayPolicy;
+    dates: string[];
+}
+
 export interface ServiceRecordEditPreviewBuildInput {
     draftId: string;
     draftVersion: number;
@@ -58,6 +68,12 @@ export interface ServiceRecordEditPreviewBuildInput {
     source: ServiceRecordEditSource;
     changes: ServiceRecordEditJsonValue;
     previewId: string;
+    /**
+     * The branch calendar WITHOUT any client service-day policy. The policy is
+     * applied here: the client's stored toggles shape the "before" projection and
+     * the toggles pending in the draft shape every schedule check and the
+     * `calendarVersion` (so the preview id is bound to the toggles).
+     */
     calendar: KrBusinessDayCalendar;
 }
 
@@ -101,6 +117,39 @@ function reasonFromError(error: unknown, fallbackSessionIndex?: number): Service
     }
     if (error instanceof Error) return reason("INVALID_SCHEDULE_VECTOR", error.message, fallbackSessionIndex);
     return reason("INVALID_SCHEDULE_VECTOR", "서비스 예정일 벡터를 계산할 수 없습니다.", fallbackSessionIndex);
+}
+
+/** The client's stored service-day toggles (a missing flag means "not offered"). */
+export function storedServiceDays(source: ServiceRecordEditSource): ServiceDayPolicy {
+    return {
+        saturday: source.client.allowSaturdayService ?? false,
+        sunday: source.client.allowSundayService ?? false,
+        holiday: source.client.allowHolidayService ?? false,
+    };
+}
+
+/**
+ * The toggles a schedule replacement stored in the draft, or null. `serviceDays`
+ * is server-produced only, so anything but three booleans reads as absent.
+ */
+export function draftServiceDays(changes: ServiceRecordEditJsonValue | undefined): ServiceDayPolicy | null {
+    const record = asRecord(asRecord(changes)?.["serviceDays"]);
+    if (!record) return null;
+    const { saturday, sunday, holiday } = record;
+    if (typeof saturday !== "boolean" || typeof sunday !== "boolean" || typeof holiday !== "boolean") return null;
+    return { saturday, sunday, holiday };
+}
+
+/** Precedence: toggles pending in the draft, then the client's stored toggles. */
+export function pendingServiceDays(
+    source: ServiceRecordEditSource,
+    changes: ServiceRecordEditJsonValue | undefined,
+): ServiceDayPolicy {
+    return draftServiceDays(changes) ?? storedServiceDays(source);
+}
+
+export function sameServiceDays(left: ServiceDayPolicy, right: ServiceDayPolicy): boolean {
+    return left.saturday === right.saturday && left.sunday === right.sunday && left.holiday === right.holiday;
 }
 
 function assignmentById(source: ServiceRecordEditSource, assignmentId: string): ServiceRecordEditSourceAssignment | null {
@@ -615,6 +664,86 @@ export function resolveServiceRecordScheduleProjection(
     return projectLegacy(source, calendar);
 }
 
+/**
+ * A session the caregiver already locked or submitted keeps its date: the
+ * record exists, was signed against that date, and the confirm write has no
+ * locked filter of its own.
+ */
+function lockedSessionReasons(
+    source: ServiceRecordEditSource,
+    before: SharedPlannedSession[],
+    after: SharedPlannedSession[],
+): ServiceRecordEditPreviewBlockingReason[] {
+    const beforeByIndex = new Map(before.map((entry) => [entry.sessionIndex, entry]));
+    const afterByIndex = new Map(after.map((entry) => [entry.sessionIndex, entry]));
+    const lockedIndexes = [...new Set(source.sessions
+        .filter((session) => session.locked || Boolean(session.submittedAt))
+        .map((session) => session.sessionIndex))]
+        .sort((left, right) => left - right);
+    const reasons: ServiceRecordEditPreviewBlockingReason[] = [];
+    for (const sessionIndex of lockedIndexes) {
+        const previous = beforeByIndex.get(sessionIndex);
+        const next = afterByIndex.get(sessionIndex);
+        if (previous && next && previous.serviceDate !== next.serviceDate) {
+            reasons.push(reason(
+                "LOCKED_SESSION_DATE_CHANGED",
+                `Session ${sessionIndex} is locked or submitted, so its service date cannot change`,
+                sessionIndex,
+                next.assignmentId,
+            ));
+        }
+    }
+    return reasons;
+}
+
+/** Earliest date a service may be scheduled on: the case and client start dates, whichever is earlier. */
+function scheduleStartBound(source: ServiceRecordEditSource): string | null {
+    const bounds = [source.startDate, source.client.startDate].filter((value): value is string => Boolean(value));
+    return bounds.length === 0 ? null : bounds.sort()[0]!;
+}
+
+/**
+ * Checks specific to a schedule replacement. Only dates that differ from the
+ * stored vector are judged, and locked sessions (reported separately) never
+ * are, so historical dates that predate the client's toggles stay valid.
+ * `calendar` must carry the PENDING toggles. May throw
+ * `UnsupportedKoreanHolidayYearError` for a date in an unpopulated year.
+ */
+function scheduleReplacementReasons(
+    source: ServiceRecordEditSource,
+    before: SharedPlannedSession[],
+    after: SharedPlannedSession[],
+    calendar: KrBusinessDayCalendar,
+): ServiceRecordEditPreviewBlockingReason[] {
+    const beforeByIndex = new Map(before.map((entry) => [entry.sessionIndex, entry]));
+    const lockedIndexes = new Set(source.sessions
+        .filter((session) => session.locked || Boolean(session.submittedAt))
+        .map((session) => session.sessionIndex));
+    const start = scheduleStartBound(source);
+    const reasons: ServiceRecordEditPreviewBlockingReason[] = [];
+    for (const entry of after) {
+        const previous = beforeByIndex.get(entry.sessionIndex);
+        if (!previous || previous.serviceDate === entry.serviceDate || lockedIndexes.has(entry.sessionIndex)) continue;
+        if (start && entry.serviceDate < start) {
+            reasons.push(reason(
+                "SCHEDULE_BEFORE_START",
+                `Session ${entry.sessionIndex} is dated ${entry.serviceDate}, before the service start ${start}`,
+                entry.sessionIndex,
+                entry.assignmentId,
+            ));
+        }
+        if (!calendar.isBusinessDay(entry.serviceDate)) {
+            reasons.push(reason(
+                "NON_SERVICE_DAY",
+                `Session ${entry.sessionIndex} is dated ${entry.serviceDate}, which is not a service day for this client`,
+                entry.sessionIndex,
+                entry.assignmentId,
+            ));
+        }
+    }
+    return reasons;
+}
+
 function sessionChanges(value: ServiceRecordEditJsonValue | undefined): DraftSessionChange[] {
     const records = asArray(value) ?? [];
     return records
@@ -702,13 +831,27 @@ function mergeHeader(
     return { ...(previousRecord ?? {}), ...(incomingRecord ?? {}) } as ServiceRecordEditJsonObject;
 }
 
-/** Merge a PATCH onto the durable draft and normalize any date move once. */
+/** Surface the first blocking reason as a PATCH-time validation error. */
+function throwFirstReason(reasons: ServiceRecordEditPreviewBlockingReason[]): void {
+    const first = reasons[0];
+    if (first) throw new ServiceRecordScheduleValidationError(first.code, first.message, first.sessionIndex ?? null);
+}
+
+/**
+ * Merge a PATCH onto the durable draft and normalize any date move or whole-set
+ * schedule replacement once.
+ *
+ * `calendar` is the branch calendar without a client policy. The stored client
+ * toggles shape the "before" projection; the pending toggles (the replacement's,
+ * else the draft's earlier ones, else the stored ones) shape every date check.
+ */
 export function normalizeServiceRecordEditChanges(
     source: ServiceRecordEditSource,
     previousValue: ServiceRecordEditJsonValue | undefined,
     incomingValue: ServiceRecordEditJsonValue,
     calendar: KrBusinessDayCalendar,
     dateMove?: ServiceRecordEditDateMove,
+    schedule?: ServiceRecordEditScheduleReplacement,
 ): DraftNormalizationResult {
     const previous = asRecord(previousValue) ?? {};
     const incoming = asRecord(incomingValue) ?? {};
@@ -718,7 +861,17 @@ export function normalizeServiceRecordEditChanges(
     const output: ServiceRecordEditJsonObject = {};
     const header = mergeHeader(previous["header"], incoming["header"]);
     if (header !== undefined) output["header"] = header;
-    if (!dateMove && !hasDateSnapshot) {
+    const storedPolicy = storedServiceDays(source);
+    // serviceDays is server-produced: a replacement sets it, otherwise it is carried forward.
+    const draftPolicy = schedule?.serviceDays ?? draftServiceDays(previousValue);
+    if (draftPolicy) {
+        output["serviceDays"] = {
+            saturday: draftPolicy.saturday,
+            sunday: draftPolicy.sunday,
+            holiday: draftPolicy.holiday,
+        };
+    }
+    if (!dateMove && !schedule && !hasDateSnapshot) {
         const merged = mergedContentChanges(previousSessions, incomingSessions);
         if (merged.size > 0) {
             const sessionValues: DraftSessionChange[] = [];
@@ -731,7 +884,9 @@ export function normalizeServiceRecordEditChanges(
         return { changes: output, entries: null };
     }
 
-    const projection = resolveServiceRecordScheduleProjection(source, calendar);
+    const storedCalendar = calendar.withServiceDays(storedPolicy);
+    const pendingCalendar = calendar.withServiceDays(draftPolicy ?? storedPolicy);
+    const projection = resolveServiceRecordScheduleProjection(source, storedCalendar);
     if (projection.blockingReasons.length > 0) {
         throw new ServiceRecordScheduleValidationError(
             projection.blockingReasons[0]!.code,
@@ -739,6 +894,33 @@ export function normalizeServiceRecordEditChanges(
             projection.blockingReasons[0]!.sessionIndex ?? null,
         );
     }
+
+    if (schedule) {
+        const before = projection.entries;
+        if (schedule.dates.length !== before.length) {
+            throw new ServiceRecordScheduleValidationError(
+                "SCHEDULE_COUNT_MISMATCH",
+                `Expected ${before.length} service dates but received ${schedule.dates.length}`,
+            );
+        }
+        // Provenance (assignment, schedule, employee, version, original date) stays with
+        // each index; only the date is replaced. Order is the caller's: never sorted here.
+        const replaced = before.map((entry, index) => ({ ...entry, serviceDate: schedule.dates[index]! }));
+        const validated = validateServiceRecordScheduleVector(replaced, before.length, pendingCalendar, { persisted: true });
+        throwFirstReason([
+            ...lockedSessionReasons(source, before, validated),
+            ...scheduleReplacementReasons(source, before, validated, pendingCalendar),
+        ]);
+        const content = mergedContentChanges(previousSessions, incomingSessions);
+        for (const entry of validated) {
+            const current = content.get(entry.sessionIndex) ?? { sessionIndex: entry.sessionIndex };
+            current["serviceDate"] = entry.serviceDate;
+            content.set(entry.sessionIndex, current);
+        }
+        output["sessions"] = [...content.values()].sort((left, right) => left.sessionIndex - right.sessionIndex);
+        return { changes: output, entries: validated };
+    }
+
     const current = currentDateOverrides(projection.entries, previousSessions);
     const incomingDateOverrides = new Map(incomingSessions
         .filter((change) => typeof change["serviceDate"] === "string")
@@ -755,14 +937,14 @@ export function normalizeServiceRecordEditChanges(
             }
         }
     }
-    let sessions = normalizedSessionChanges(projection.entries, previousSessions, dateMove ? [] : incomingSessions, calendar);
+    let sessions = normalizedSessionChanges(projection.entries, previousSessions, dateMove ? [] : incomingSessions, pendingCalendar);
     if (dateMove) {
         const shifted = moveServiceRecordSessionDate(
             current,
             dateMove.sessionIndex,
             dateMove.toDate,
             dateMove.shiftFollowing ?? true,
-            calendar,
+            pendingCalendar,
         );
         const content = mergedContentChanges(previousSessions, incomingSessions);
         const normalizedByIndex = new Map<number, DraftSessionChange>();
@@ -786,6 +968,11 @@ export function normalizeServiceRecordEditChanges(
             }
         }
         sessions = [...normalizedByIndex.values()].sort((left, right) => left.sessionIndex - right.sessionIndex);
+        throwFirstReason(lockedSessionReasons(
+            source,
+            projection.entries,
+            currentDateOverrides(projection.entries, sessions),
+        ));
     }
     if (sessions.length > 0) output["sessions"] = sessions;
     return {
@@ -927,7 +1114,13 @@ function contentChanges(
 export function buildServiceRecordEditPreview(
     input: ServiceRecordEditPreviewBuildInput,
 ): ServiceRecordEditPreviewResponse {
-    const projection = resolveServiceRecordScheduleProjection(input.source, input.calendar);
+    const storedPolicy = storedServiceDays(input.source);
+    const draftPolicy = draftServiceDays(input.changes);
+    const pendingPolicy = draftPolicy ?? storedPolicy;
+    // Stored toggles describe the case as it is; the pending toggles judge the new dates.
+    const storedCalendar = input.calendar.withServiceDays(storedPolicy);
+    const pendingCalendar = input.calendar.withServiceDays(pendingPolicy);
+    const projection = resolveServiceRecordScheduleProjection(input.source, storedCalendar);
     const blockingReasons = [...projection.blockingReasons];
     const sourceChanges = asRecord(input.changes) ?? {};
     const draftSessions = sessionChanges(sourceChanges["sessions"]);
@@ -938,14 +1131,21 @@ export function buildServiceRecordEditPreview(
             before = validateServiceRecordScheduleVector(
                 projection.entries,
                 input.source.requiredSessionCount ?? undefined,
-                input.calendar,
+                storedCalendar,
                 { persisted: true },
             );
             after = applyStoredDates(before, draftSessions);
-            after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, input.calendar, { persisted: true });
+            after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, pendingCalendar, { persisted: true });
             blockingReasons.push(...assignmentRangeReasons(input.source, after));
+            blockingReasons.push(...lockedSessionReasons(input.source, before, after));
+            // Only a schedule replacement (marked by its toggles) is held to the service-day rules.
+            if (draftPolicy) {
+                blockingReasons.push(...scheduleReplacementReasons(input.source, before, after, pendingCalendar));
+            }
         } catch (error) {
-            blockingReasons.push(reasonFromError(error));
+            blockingReasons.push(error instanceof UnsupportedKoreanHolidayYearError
+                ? reason("UNSUPPORTED_HOLIDAY_YEAR", error.message)
+                : reasonFromError(error));
             before = [];
             after = [];
         }
@@ -982,7 +1182,8 @@ export function buildServiceRecordEditPreview(
         sourceCaseVersion: input.sourceCaseVersion,
         sourceFingerprint: input.sourceFingerprint,
         requiredSessionCount: input.source.requiredSessionCount,
-        calendarVersion: input.calendar.version,
+        calendarVersion: pendingCalendar.version,
+        serviceDays: { before: storedPolicy, after: pendingPolicy },
         before: vectorDates(before),
         after: vectorDates(after),
         provenance: previewRanges(after),

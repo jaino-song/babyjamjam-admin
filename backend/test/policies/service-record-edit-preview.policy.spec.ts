@@ -1,9 +1,18 @@
 import {
     buildServiceRecordEditPreview,
+    draftServiceDays,
     normalizeServiceRecordEditChanges,
+    pendingServiceDays,
     resolveServiceRecordScheduleProjection,
+    ServiceRecordScheduleValidationError,
+    storedServiceDays,
 } from "application/policies/service-record-edit-preview.policy";
-import { KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
+import {
+    KOREAN_HOLIDAY_CALENDAR,
+    KR_BUILTIN_CALENDAR,
+    UnsupportedKoreanHolidayYearError,
+    createKrBusinessDayCalendar,
+} from "domain/utils/business-days";
 import type {
     ServiceRecordEditSource,
     ServiceRecordEditJsonValue,
@@ -939,5 +948,237 @@ describe("service-record-edit-preview.policy", () => {
             expect(branchPreview.blockingReasons).toEqual([]);
             expect(branchPreview.before.sessions).toEqual(builtinPreview.before.sessions);
         });
+    });
+});
+
+describe("service-record-edit-preview.policy service-day schedule replacement", () => {
+    // Source dates are Mon 2026-09-07 .. Fri 2026-09-11. 2026-09-12 is a Saturday, 09-13 a Sunday.
+    const off = { saturday: false, sunday: false, holiday: false };
+    const saturdayOn = { saturday: true, sunday: false, holiday: false };
+    const baseInput = {
+        draftId: "33333333-3333-4333-8333-333333333333",
+        draftVersion: 1,
+        sourceCaseVersion: 7,
+        sourceFingerprint: "source-fingerprint",
+        previewId: "preview-1",
+    };
+    const weekdayDates = ["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14"];
+    const withSaturday = ["2026-09-07", "2026-09-08", "2026-09-09", "2026-09-11", "2026-09-12"];
+
+    function replace(
+        dates: string[],
+        serviceDays = off,
+        src: ServiceRecordEditSource = source(),
+        previous: ServiceRecordEditJsonValue = {},
+    ) {
+        return normalizeServiceRecordEditChanges(src, previous, {}, KR_BUILTIN_CALENDAR, undefined, { serviceDays, dates });
+    }
+    function codeOf(run: () => unknown): string | undefined {
+        try {
+            run();
+        } catch (error) {
+            if (error instanceof ServiceRecordScheduleValidationError) return error.code;
+            throw error;
+        }
+        return undefined;
+    }
+    function previewOf(src: ServiceRecordEditSource, changes: ServiceRecordEditJsonValue) {
+        return buildServiceRecordEditPreview({ ...baseInput, calendar: KR_BUILTIN_CALENDAR, source: src, changes });
+    }
+    const lockedSource = (indexes: number[]) => {
+        const base = source();
+        return source({
+            sessions: base.sessions.map((session) => (indexes.includes(session.sessionIndex)
+                ? { ...session, locked: true, submittedAt: "2026-09-08T04:00:00.000Z" }
+                : session)),
+        });
+    };
+
+    it("replaces every date at once, keeps provenance and binds the toggles into the preview", () => {
+        const normalized = replace(withSaturday, saturdayOn);
+        expect(normalized.changes["serviceDays"]).toEqual(saturdayOn);
+        expect((normalized.changes["sessions"] as Array<Record<string, unknown>>).map((entry) => entry["serviceDate"]))
+            .toEqual(withSaturday);
+        const original = source().plannedSessions as Array<Record<string, unknown>>;
+        for (const [index, entry] of (normalized.entries ?? []).entries()) {
+            expect(entry).toMatchObject({
+                sessionIndex: index + 1,
+                originalDate: original[index]!["originalDate"],
+                assignmentId: original[index]!["assignmentId"],
+                scheduleId: original[index]!["scheduleId"],
+                employeeId: original[index]!["employeeId"],
+                provenanceVersion: original[index]!["provenanceVersion"],
+            });
+        }
+
+        const preview = previewOf(source(), normalized.changes);
+        expect(preview.blockingReasons).toEqual([]);
+        expect(preview.serviceDays).toEqual({ before: off, after: saturdayOn });
+        expect(preview.calendarVersion).toBe(`${KR_BUILTIN_CALENDAR.version}+sd-100`);
+        expect(preview.after.sessions.map(({ serviceDate }) => serviceDate)).toEqual(withSaturday);
+        expect(preview.before.sessions.map(({ serviceDate }) => serviceDate)).toEqual([
+            "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11",
+        ]);
+        const plain = previewOf(source(), {});
+        expect(plain.calendarVersion).toBe(KR_BUILTIN_CALENDAR.version);
+        expect(plain.serviceDays).toEqual({ before: off, after: off });
+        expect(preview.previewId).toBe("preview-1");
+        expect(preview.calendarVersion).not.toBe(plain.calendarVersion);
+    });
+
+    it("rejects a count other than N", () => {
+        expect(codeOf(() => replace(weekdayDates.slice(0, 4)))).toBe("SCHEDULE_COUNT_MISMATCH");
+        expect(codeOf(() => replace([...weekdayDates, "2026-09-15"]))).toBe("SCHEDULE_COUNT_MISMATCH");
+    });
+
+    it("never sorts silently: descending, duplicate and malformed dates use the shared vector codes", () => {
+        expect(codeOf(() => replace(["2026-09-09", "2026-09-08", "2026-09-10", "2026-09-11", "2026-09-14"])))
+            .toBe("INVERTED_SERVICE_DATES");
+        expect(codeOf(() => replace(["2026-09-08", "2026-09-09", "2026-09-09", "2026-09-11", "2026-09-14"])))
+            .toBe("DUPLICATE_SERVICE_DATE");
+        expect(codeOf(() => replace(["2026-09-08", "2026-09-09", "2026-09-31", "2026-09-11", "2026-09-14"])))
+            .toBe("INVALID_DATE");
+    });
+
+    it("rejects a date before the service start", () => {
+        expect(codeOf(() => replace(["2026-09-04", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"])))
+            .toBe("SCHEDULE_BEFORE_START");
+    });
+
+    it("accepts a Saturday only when Saturday service is on, naming the session otherwise", () => {
+        let thrown: unknown;
+        try {
+            replace(withSaturday, off);
+        } catch (error) {
+            thrown = error;
+        }
+        expect(thrown).toMatchObject({ code: "NON_SERVICE_DAY", sessionIndex: 5 });
+        expect(() => replace(withSaturday, saturdayOn)).not.toThrow();
+        // Sunday needs its own toggle, and a holiday weekday needs the holiday toggle.
+        const sunday = ["2026-09-07", "2026-09-08", "2026-09-09", "2026-09-11", "2026-09-13"];
+        expect(codeOf(() => replace(sunday, saturdayOn))).toBe("NON_SERVICE_DAY");
+        expect(() => replace(sunday, { saturday: false, sunday: true, holiday: false })).not.toThrow();
+        const chuseok = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-28"];
+        expect(codeOf(() => replace(chuseok, off))).toBe("NON_SERVICE_DAY");
+        expect(() => replace(chuseok, { saturday: false, sunday: false, holiday: true })).not.toThrow();
+    });
+
+    it("lets the draft's toggles override the client's stored ones, and falls back to them", () => {
+        const saturdayClient = source();
+        saturdayClient.client.allowSaturdayService = true;
+        expect(storedServiceDays(saturdayClient)).toEqual(saturdayOn);
+        expect(pendingServiceDays(saturdayClient, {})).toEqual(saturdayOn);
+        expect(pendingServiceDays(saturdayClient, { serviceDays: off })).toEqual(off);
+        expect(draftServiceDays({ serviceDays: { saturday: true } })).toBeNull();
+        expect(() => replace(withSaturday, saturdayOn, saturdayClient)).not.toThrow();
+        expect(codeOf(() => replace(withSaturday, off, saturdayClient))).toBe("NON_SERVICE_DAY");
+    });
+
+    it("does not judge dates the replacement leaves alone (historical dates stay valid)", () => {
+        const base = source();
+        const historic = source({
+            sessions: base.sessions.map((session) => (session.sessionIndex === 5
+                ? { ...session, serviceDate: "2026-09-12" }
+                : session)),
+            plannedSessions: (base.plannedSessions as Array<Record<string, unknown>>).map((entry) => (
+                entry["sessionIndex"] === 5 ? { ...entry, serviceDate: "2026-09-12" } : entry)) as ServiceRecordEditJsonValue,
+        });
+        // Saturday 09-12 is unchanged at session 5 with Saturday off; only sessions 1-4 move.
+        const normalized = replace(["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12"], off, historic);
+        expect(previewOf(historic, normalized.changes).blockingReasons).toEqual([]);
+    });
+
+    it("applies the non-service-day rule only to a schedule replacement draft", () => {
+        // A hand-written date snapshot without toggles is a plain draft: no new rule.
+        const plain = previewOf(source(), { sessions: [{ sessionIndex: 5, serviceDate: "2026-09-12" }] });
+        expect(plain.blockingReasons).toEqual([]);
+        const replaced = previewOf(source(), {
+            serviceDays: off,
+            sessions: [{ sessionIndex: 5, serviceDate: "2026-09-12" }],
+        });
+        expect(replaced.blockingReasons).toEqual([
+            expect.objectContaining({ code: "NON_SERVICE_DAY", sessionIndex: 5 }),
+        ]);
+    });
+
+    it("re-checks a replacement against the preview's own policy", () => {
+        const dates = ["2026-09-04", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"];
+        const preview = previewOf(source(), {
+            serviceDays: off,
+            sessions: dates.map((serviceDate, index) => ({ sessionIndex: index + 1, serviceDate })),
+        });
+        expect(preview.blockingReasons.map(({ code }) => code)).toEqual(["SCHEDULE_BEFORE_START"]);
+    });
+
+    it("keeps a locked or submitted session's date fixed for a replacement", () => {
+        const locked = lockedSource([1]);
+        expect(codeOf(() => replace(["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14"], off, locked)))
+            .toBe("LOCKED_SESSION_DATE_CHANGED");
+        const kept = replace(["2026-09-07", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14"], off, locked);
+        expect(previewOf(locked, kept.changes).blockingReasons).toEqual([]);
+        // submittedAt alone locks the date too.
+        const submitted = source({
+            sessions: source().sessions.map((session) => (session.sessionIndex === 2
+                ? { ...session, submittedAt: "2026-09-08T04:00:00.000Z" }
+                : session)),
+        });
+        expect(codeOf(() => replace(["2026-09-07", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14"], off, submitted)))
+            .toBe("LOCKED_SESSION_DATE_CHANGED");
+    });
+
+    it("keeps a locked or submitted session's date fixed for a date move", () => {
+        expect(codeOf(() => normalizeServiceRecordEditChanges(
+            lockedSource([1]), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing: false },
+        ))).toBe("LOCKED_SESSION_DATE_CHANGED");
+        // A suffix move drags every later session along, including a locked one.
+        expect(codeOf(() => normalizeServiceRecordEditChanges(
+            lockedSource([4]), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 2, toDate: "2026-09-09" },
+        ))).toBe("LOCKED_SESSION_DATE_CHANGED");
+        // Moving only unlocked sessions around a locked one is fine.
+        expect(() => normalizeServiceRecordEditChanges(
+            lockedSource([1]), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 3, toDate: "2026-09-11" },
+        )).not.toThrow();
+    });
+
+    it("blocks the preview when a locked session's date was changed in the stored draft", () => {
+        const preview = previewOf(lockedSource([1]), { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-04" }] });
+        expect(preview.blockingReasons).toEqual([
+            expect.objectContaining({ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 1 }),
+        ]);
+    });
+
+    it("carries the toggles through later saves and applies them to a later date move", () => {
+        const first = replace(withSaturday, saturdayOn);
+        const header = normalizeServiceRecordEditChanges(source(), first.changes, { header: { momName: "수정" } }, KR_BUILTIN_CALENDAR);
+        expect(header.changes["serviceDays"]).toEqual(saturdayOn);
+        expect((header.changes["sessions"] as Array<Record<string, unknown>>).map((entry) => entry["serviceDate"]))
+            .toEqual(withSaturday);
+        expect(header.changes["header"]).toEqual({ momName: "수정" });
+
+        // The pending Saturday toggle lets a later move land on a Saturday.
+        const moved = normalizeServiceRecordEditChanges(
+            source(), first.changes, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 5, toDate: "2026-09-12", shiftFollowing: false },
+        );
+        expect(moved.changes["serviceDays"]).toEqual(saturdayOn);
+        expect(() => normalizeServiceRecordEditChanges(
+            source(), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 5, toDate: "2026-09-12", shiftFollowing: false },
+        )).toThrow();
+    });
+
+    it("never takes service days from the client-sent changes", () => {
+        const normalized = normalizeServiceRecordEditChanges(
+            source(), {}, { header: { momName: "수정" }, serviceDays: saturdayOn } as unknown as ServiceRecordEditJsonValue, KR_BUILTIN_CALENDAR,
+        );
+        expect(normalized.changes["serviceDays"]).toBeUndefined();
+    });
+
+    it("surfaces a date in an unpopulated year as the shared unsupported-year error", () => {
+        expect(() => replace(["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2028-01-03"]))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+        const preview = previewOf(source(), {
+            serviceDays: off,
+            sessions: [{ sessionIndex: 5, serviceDate: "2028-01-03" }],
+        });
+        expect(preview.blockingReasons.map(({ code }) => code)).toEqual(["UNSUPPORTED_HOLIDAY_YEAR"]);
     });
 });
