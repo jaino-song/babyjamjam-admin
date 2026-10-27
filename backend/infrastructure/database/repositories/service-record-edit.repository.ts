@@ -2029,6 +2029,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 endDate: true,
                 serviceStatus: true,
                 eDocId: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
             },
         });
         if (!client) return null;
@@ -2152,6 +2155,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 startDate: dateOnly(client.startDate),
                 endDate: dateOnly(client.endDate),
                 serviceStatus: client.serviceStatus,
+                allowSaturdayService: client.allowSaturdayService ?? false,
+                allowSundayService: client.allowSundayService ?? false,
+                allowHolidayService: client.allowHolidayService ?? false,
             },
         };
     }
@@ -3218,6 +3224,19 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         let revision: ServiceRecordRevision | null = null;
         let caseVersion = source.caseVersion;
         const documentStatus = plan.status === "no_changes" ? "not_required" : plan.documentStatus;
+        if (plan.clientServiceDays) {
+            // The toggles are a client setting, not part of the service record: a
+            // toggle-only save has no revision or document, so this write sits
+            // outside the confirmed branch (still inside this transaction).
+            await tx.client.updateMany({
+                where: { id: source.client.id, branchId: input.branchId },
+                data: {
+                    allowSaturdayService: plan.clientServiceDays.saturday,
+                    allowSundayService: plan.clientServiceDays.sunday,
+                    allowHolidayService: plan.clientServiceDays.holiday,
+                },
+            });
+        }
         if (plan.status === "confirmed") {
             if (plan.revision) {
                 revision = await this.appendRevisionWithClient(tx, plan.revision);

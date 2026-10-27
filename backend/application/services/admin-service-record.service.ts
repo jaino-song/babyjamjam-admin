@@ -172,7 +172,7 @@ export class AdminServiceRecordService {
         clientId: number,
         options: { includeSignatures?: boolean } = {},
     ): Promise<AdminServiceRecordOverviewDto> {
-        const [record, schedules] = await Promise.all([
+        const [record, schedules, clientFlags] = await Promise.all([
             this.prisma.service_record_case.findFirst({
                 where: { branchId, clientId },
                 include: { days: { orderBy: { caseSessionIndex: "asc" } } },
@@ -196,7 +196,23 @@ export class AdminServiceRecordService {
                 },
                 orderBy: { startDate: "desc" },
             }),
+            // Read on its own: the schedules' client include is empty for a client without schedules.
+            this.prisma.client.findFirst({
+                where: { id: clientId, branchId },
+                select: {
+                    allowSaturdayService: true,
+                    allowSundayService: true,
+                    allowHolidayService: true,
+                },
+            }),
         ]);
+        const serviceDays = clientFlags && clientFlags.allowSaturdayService !== undefined
+            ? {
+                saturday: clientFlags.allowSaturdayService ?? false,
+                sunday: clientFlags.allowSundayService ?? false,
+                holiday: clientFlags.allowHolidayService ?? false,
+            }
+            : undefined;
 
         const scheduleIds = schedules.map((schedule) => schedule.id);
         const jobs = scheduleIds.length > 0 ? await this.prisma.message_trigger_job.findMany({
@@ -231,7 +247,10 @@ export class AdminServiceRecordService {
         // repository is available, while retaining the legacy two-key shape
         // for callers that do not register that optional repository.
         // Overview totals and the projection are display-only, so the cached branch calendar is enough.
-        const calendar = await this.holidayCalendar.forBranch(branchId);
+        // The client's own service days decide which dates count, so every projection and
+        // session count below follows the stored toggles.
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
+        const calendar = serviceDays ? branchCalendar.withServiceDays(serviceDays) : branchCalendar;
         const scheduleProjection = this.editRepository
             ? await this.loadScheduleProjection(branchId, clientId, calendar)
             : undefined;
@@ -250,6 +269,7 @@ export class AdminServiceRecordService {
                 calendar,
             )),
             ...(scheduleProjection ? { scheduleProjection } : {}),
+            ...(serviceDays ? { serviceDays } : {}),
         };
     }
 
@@ -266,7 +286,8 @@ export class AdminServiceRecordService {
         // graph.  Keep the editor's explicit unavailable result for tests or
         // legacy modules that omit the optional edit repository.
         if (overview.scheduleProjection) return overview;
-        const calendar = await this.holidayCalendar.forBranch(branchId);
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
+        const calendar = overview.serviceDays ? branchCalendar.withServiceDays(overview.serviceDays) : branchCalendar;
         const scheduleProjection = await this.loadScheduleProjection(branchId, clientId, calendar);
         return { ...overview, scheduleProjection };
     }

@@ -1,7 +1,10 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
-import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
+import {
+    UnsupportedKoreanHolidayYearError,
+    type KrBusinessDayCalendar,
+} from "@babyjamjam/shared/utils/business-days";
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
@@ -14,9 +17,13 @@ import {
 } from "application/policies/service-record-answer-validation.policy";
 import {
     buildServiceRecordEditPreview,
+    draftServiceDays,
     normalizeServiceRecordEditChanges,
+    sameServiceDays,
     ServiceRecordScheduleValidationError,
+    storedServiceDays,
     type ServiceRecordEditDateMove,
+    type ServiceRecordEditScheduleReplacement,
 } from "application/policies/service-record-edit-preview.policy";
 import {
     ServiceRecordEditConflictError,
@@ -188,6 +195,7 @@ function sourceFingerprint(source: SourceSnapshot): string {
     // Lifecycle/retry timestamps and the optimistic case version are kept in
     // the immutable snapshot but deliberately excluded from this business
     // fingerprint. A status-only transition must not invalidate a draft.
+    const serviceDays = storedServiceDays(source);
     const fingerprintPayload = jsonValue({
         caseId: source.caseId,
         branchName: source.branchName ?? null,
@@ -201,6 +209,9 @@ function sourceFingerprint(source: SourceSnapshot): string {
             duration: source.client.duration,
             startDate: source.client.startDate,
             endDate: source.client.endDate,
+            // Keyed only when a toggle is on, so a draft saved before the toggles existed
+            // (every client all-false) keeps the fingerprint it was saved with.
+            ...(serviceDays.saturday || serviceDays.sunday || serviceDays.holiday ? { serviceDays } : {}),
         },
         header: source.header,
         sessions: source.sessions,
@@ -704,8 +715,23 @@ export class AdminServiceRecordEditService {
         actorUserId: string,
         dto: UpdateServiceRecordEditDraftDto,
     ): Promise<AdminServiceRecordEditStateDto> {
+        if (dto.schedule !== undefined && dto.dateMove !== undefined) {
+            throw this.scheduleRejection(
+                "SCHEDULE_WITH_DATE_MOVE",
+                "/schedule",
+                "일정 전체 변경과 단일 날짜 이동은 함께 요청할 수 없어요.",
+            );
+        }
         const target = await this.resolveDraftTarget(branchId, draftId);
         const validatedChanges = this.validateChanges(dto.changes, target.loaded.source);
+        const schedule = dto.schedule === undefined ? undefined : this.validateSchedule(dto.schedule);
+        if (schedule && this.changesCarryServiceDate(validatedChanges)) {
+            throw this.scheduleRejection(
+                "SCHEDULE_WITH_DATE_MOVE",
+                "/changes/sessions",
+                "일정 전체 변경과 회차별 날짜 변경은 함께 요청할 수 없어요.",
+            );
+        }
         if (!validatedChanges) {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                 pointer: "/changes",
@@ -724,11 +750,13 @@ export class AdminServiceRecordEditService {
                 validatedChanges,
                 calendar,
                 dto.dateMove as ServiceRecordEditDateMove | undefined,
+                schedule,
             ).changes;
         } catch (error) {
             if (error instanceof ServiceRecordScheduleValidationError) {
                 // 일정 벡터 사유 코드는 카탈로그에 없는 실행시점 표기라서(EM-CAT-01)
-                // 등록된 검증 코드로 응답하고 원인 텍스트는 호환 message로만 남겨요.
+                // 등록된 검증 코드로 응답하고, 구체 사유는 호환 확장 키 scheduleCode로
+                // 전달해 화면이 사유를 구분할 수 있게 해요. 원인 텍스트는 호환 message로만 남겨요.
                 throw new BadRequestException({
                     ...problemBody("VALIDATION_FAILED", {
                         pointer: "/changes",
@@ -738,7 +766,17 @@ export class AdminServiceRecordEditService {
                     }),
                     message: error.message,
                     sessionIndex: error.sessionIndex,
+                    scheduleCode: error.code,
                 });
+            }
+            if (error instanceof UnsupportedKoreanHolidayYearError) {
+                // 공휴일 데이터가 없는 연도의 날짜는 서버 오류가 아니라 입력 거절이에요.
+                throw this.scheduleRejection(
+                    "UNSUPPORTED_HOLIDAY_YEAR",
+                    "/changes",
+                    "공휴일 정보가 없는 연도의 날짜는 선택할 수 없어요.",
+                    error.message,
+                );
             }
             throw error;
         }
@@ -932,16 +970,7 @@ export class AdminServiceRecordEditService {
         }
 
         const fingerprint = sourceFingerprint(source);
-        if (draft.sourceFingerprint !== fingerprint) {
-            throw new ConflictException({
-                ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
-                sourceChanged: true,
-                sourceCaseVersion: source.caseVersion,
-                sourceFingerprint: fingerprint,
-            });
-        }
-
-        const provisional = buildServiceRecordEditPreview({
+        const buildProvisional = () => buildServiceRecordEditPreview({
             calendar,
             draftId,
             draftVersion: draft.draftVersion,
@@ -951,6 +980,32 @@ export class AdminServiceRecordEditService {
             changes: effectivePreviewChanges(source, draft.changes),
             previewId: "pending",
         });
+        // A schedule replacement must not move a session locked or submitted since the preview.
+        // Locking changes the source fingerprint, so this hard stop is judged against the rows
+        // read inside the confirm transaction BEFORE the stale-source rejection below, which
+        // would otherwise hide it behind the generic write-target response. A dateMove draft
+        // is not held to it.
+        const isScheduleDraft = draftServiceDays(draft.changes) !== null;
+        let provisional = isScheduleDraft ? buildProvisional() : null;
+        if (provisional) {
+            const lockedReasons = provisional.blockingReasons.filter((entry) => entry.code === "LOCKED_SESSION_DATE_CHANGED");
+            if (lockedReasons.length > 0) {
+                throw new ConflictException({
+                    ...codeOnlyProblemBody("REQUEST_CONFLICT"),
+                    blockingReasons: lockedReasons,
+                });
+            }
+        }
+        if (draft.sourceFingerprint !== fingerprint) {
+            throw new ConflictException({
+                ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
+                sourceChanged: true,
+                sourceCaseVersion: source.caseVersion,
+                sourceFingerprint: fingerprint,
+            });
+        }
+
+        provisional ??= buildProvisional();
         const { previewId: _ignoredPreviewId, ...previewValues } = provisional;
         void _ignoredPreviewId;
         const computedPreviewId = `srp_${createHash("sha256")
@@ -1337,6 +1392,13 @@ export class AdminServiceRecordEditService {
             }
             : null;
 
+        // The draft's toggles replace the client's only when they differ; a toggle-only save is
+        // not a "change" (no revision, no document) but the repository still stores the flags.
+        const pendingServiceDays = draftServiceDays(draft.changes);
+        const clientServiceDays = pendingServiceDays && !sameServiceDays(pendingServiceDays, storedServiceDays(source))
+            ? pendingServiceDays
+            : undefined;
+
         return {
             status: changed ? "confirmed" : "no_changes",
             sourceFingerprint: fingerprint,
@@ -1391,6 +1453,7 @@ export class AdminServiceRecordEditService {
             documentJob,
             contractOperation,
             receiptOperation,
+            ...(clientServiceDays ? { clientServiceDays } : {}),
         };
     }
 
@@ -1502,6 +1565,67 @@ export class AdminServiceRecordEditService {
         if (rawRecord["header"] !== undefined) output["header"] = this.validateHeader(rawRecord["header"]);
         if (rawRecord["sessions"] !== undefined) output["sessions"] = this.validateSessions(rawRecord["sessions"], source);
         return output;
+    }
+
+    private scheduleRejection(
+        scheduleCode: string,
+        pointer: string,
+        detail: string,
+        message: string = detail,
+    ): BadRequestException {
+        return new BadRequestException({
+            ...problemBody("VALIDATION_FAILED", { pointer, code: "INVALID_VALUE", detail, location: "body" }),
+            message,
+            scheduleCode,
+        });
+    }
+
+    private changesCarryServiceDate(changes: ServiceRecordEditJsonObject | undefined): boolean {
+        const sessions = changes?.["sessions"];
+        return Array.isArray(sessions) && sessions.some((session) => (
+            isPlainRecord(session) && session["serviceDate"] !== undefined
+        ));
+    }
+
+    /**
+     * Shape of a whole-set schedule replacement. Real calendar days, order,
+     * uniqueness and count are judged against the case by the schedule policy.
+     */
+    private validateSchedule(raw: unknown): ServiceRecordEditScheduleReplacement {
+        const invalid = (pointer: string, code: "REQUIRED" | "INVALID_FORMAT" | "OUT_OF_RANGE", detail: string) =>
+            new BadRequestException(problemBody("VALIDATION_FAILED", { pointer, code, detail, location: "body" }));
+        if (!isPlainRecord(raw)) {
+            throw invalid("/schedule", "INVALID_FORMAT", "일정 변경은 객체여야 해요.");
+        }
+        const serviceDays = raw["serviceDays"];
+        if (!isPlainRecord(serviceDays)) {
+            throw invalid("/schedule/serviceDays", "REQUIRED", "토요일·일요일·공휴일 제공 여부를 입력해 주세요.");
+        }
+        for (const key of ["saturday", "sunday", "holiday"] as const) {
+            if (typeof serviceDays[key] !== "boolean") {
+                throw invalid(`/schedule/serviceDays/${key}`, "INVALID_FORMAT", "제공 여부는 참·거짓 값이어야 해요.");
+            }
+        }
+        const dates = raw["dates"];
+        if (!Array.isArray(dates) || dates.length < 1) {
+            throw invalid("/schedule/dates", "REQUIRED", "서비스 제공일자를 입력해 주세요.");
+        }
+        if (dates.length > 366) {
+            throw invalid("/schedule/dates", "OUT_OF_RANGE", "서비스 제공일자가 너무 많아요.");
+        }
+        for (const [index, date] of dates.entries()) {
+            if (typeof date !== "string" || !DATE_ONLY_PATTERN.test(date)) {
+                throw invalid(`/schedule/dates/${index}`, "INVALID_FORMAT", "서비스 제공일자는 YYYY-MM-DD 형식이어야 해요.");
+            }
+        }
+        return {
+            serviceDays: {
+                saturday: serviceDays["saturday"] as boolean,
+                sunday: serviceDays["sunday"] as boolean,
+                holiday: serviceDays["holiday"] as boolean,
+            },
+            dates: dates as string[],
+        };
     }
 
     private validateHeader(raw: unknown): ServiceRecordEditJsonValue {
