@@ -423,13 +423,31 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                     // end-date comparison below fails closed (`items_changed`) and no item is filed.
                     deletedAt: null,
                 },
-                select: { id: true, endDate: true },
+                select: {
+                    id: true,
+                    endDate: true,
+                    allowSaturdayService: true,
+                    allowSundayService: true,
+                    allowHolidayService: true,
+                },
             });
             const endByClient = new Map(
                 currentEnds.map((row) => [row.id, row.endDate === null ? null : fromDbDate(row.endDate)]),
             );
+            const flagsByClient = new Map(currentEnds.map((row) => [row.id, row]));
             for (const draft of drafts) {
                 if (endByClient.get(draft.clientId) !== draft.storedEnd) return { status: "items_changed" };
+                // The draft's ends (and its "no item" decision) were computed with the service-day
+                // flags read before this transaction. A toggle since then (the locks above hold it
+                // off from here on) makes the draft stale either way: retry with fresh flags.
+                const flags = flagsByClient.get(draft.clientId);
+                if (
+                    flags?.allowSaturdayService !== (draft.allowSaturdayService ?? false)
+                    || flags?.allowSundayService !== (draft.allowSundayService ?? false)
+                    || flags?.allowHolidayService !== (draft.allowHolidayService ?? false)
+                ) {
+                    return { status: "items_changed" };
+                }
             }
 
             for (const draft of drafts) {

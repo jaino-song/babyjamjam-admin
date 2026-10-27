@@ -162,12 +162,34 @@ describe("HolidayReviewProcessorService", () => {
                         storedEnd: STORED_END,
                         recalculatedEnd: "2026-11-16",
                         previousEnd: STORED_END,
+                        allowSaturdayService: false,
+                        allowSundayService: false,
+                        allowHolidayService: false,
                         affectedFrom: "2026-11-10",
                         category: "safe",
                         reason: "no_sessions_after_date",
                     },
                 ],
             });
+        });
+
+        it("carries the service-day flags each draft was computed with, so the repository can fence on them", async () => {
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-10"],
+                queue: [event({ id: "e1", date: "2026-11-10" })],
+                candidates: {
+                    [BRANCH_A]: [
+                        candidate({ allowHolidayService: true, allowSaturdayService: true }),
+                        candidate({ clientId: 2 }),
+                    ],
+                },
+            });
+
+            await service.processDueEvents(NOW);
+
+            const drafts = repository.applyEventResult.mock.calls[0]![0].drafts;
+            expect(drafts.map((d) => [d.clientId, d.allowSaturdayService, d.allowSundayService, d.allowHolidayService]))
+                .toEqual([[1, true, false, true], [2, false, false, false]]);
         });
 
         it("computes a holiday-enabled client's end dates on its own service days, so a weekday holiday moves nothing", async () => {

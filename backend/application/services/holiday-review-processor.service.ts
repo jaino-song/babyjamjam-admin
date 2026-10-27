@@ -237,6 +237,10 @@ export class HolidayReviewProcessorService {
                 storedEnd: candidate.endDate,
                 recalculatedEnd,
                 previousEnd,
+                // The flags the two ends above were computed with (absent = not allowed).
+                allowSaturdayService: candidate.allowSaturdayService ?? false,
+                allowSundayService: candidate.allowSundayService ?? false,
+                allowHolidayService: candidate.allowHolidayService ?? false,
                 affectedFrom,
                 category,
                 reason,
