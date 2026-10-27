@@ -277,5 +277,47 @@ describe("mobile client wizard service days", () => {
         },
       });
     });
+
+    describe("a refused realignment", () => {
+      const saveSaturdayToggle = async () => {
+        await openEdit(makeClient());
+        goToStep(1);
+        fireEvent.click(chip("토요일 서비스"));
+        await waitFor(() => expect(endDate()).toBe("2026-12-24"));
+        goToStep(2);
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+        await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+      };
+
+      it("sends the admin to the schedule editor when the backend cannot re-lay the schedule", async () => {
+        mockUpdateClient.mockRejectedValue({
+          response: {
+            status: 409,
+            data: {
+              code: "REQUEST_CONFLICT",
+              scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE",
+              message: "conflict",
+            },
+          },
+        });
+
+        await saveSaturdayToggle();
+
+        expect(await screen.findByText("제공기록지 일정 변경에서 날짜를 직접 지정해 주세요")).toBeInTheDocument();
+        expect(mockPush).not.toHaveBeenCalled();
+      });
+
+      it("keeps the generic conflict message when the 409 carries no schedule code", async () => {
+        mockUpdateClient.mockRejectedValue({
+          response: { status: 409, data: { code: "REQUEST_CONFLICT", message: "conflict" } },
+        });
+
+        await saveSaturdayToggle();
+
+        await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+        expect(screen.queryByText("제공기록지 일정 변경에서 날짜를 직접 지정해 주세요")).not.toBeInTheDocument();
+        expect(mockPush).not.toHaveBeenCalled();
+      });
+    });
   });
 });
