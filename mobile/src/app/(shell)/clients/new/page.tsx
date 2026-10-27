@@ -89,6 +89,8 @@ import styles from "./page.module.css";
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
+// Backend `scheduleCode` on a 409 when a service-day change cannot be re-laid automatically.
+const MANUAL_SCHEDULE_REQUIRED_CODE = "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE";
 const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
 
 const WIZARD_STEPS = [
@@ -1237,6 +1239,17 @@ export default function NewClientPage() {
         && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
       ) {
         setErrorState({ ...normalized, message: CLIENT_END_DATE_CHANGED_MESSAGE });
+        setHasUnknownMutationOutcome(false);
+        return;
+      }
+      // A handover the server cannot re-lay on its own: send the admin to the schedule editor.
+      if (
+        normalized.status === 409
+        && responseData
+        && typeof responseData === "object"
+        && (responseData as { scheduleCode?: unknown }).scheduleCode === MANUAL_SCHEDULE_REQUIRED_CODE
+      ) {
+        setErrorState({ ...normalized, message: t(locale, "clients.form.error-manual-schedule") });
         setHasUnknownMutationOutcome(false);
         return;
       }
