@@ -157,17 +157,17 @@
     },
     "frontend/src/app/(protected)/clients/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "147:10-147:33|pageLocalComponent"
+        "149:10-149:33|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1001:193-1001:355|visualTailwindInPage",
-        "1002:78-1002:180|visualTailwindInPage",
-        "1005:78-1005:174|visualTailwindInPage",
-        "1006:78-1006:213|visualTailwindInPage",
-        "1008:74-1008:182|visualTailwindInPage",
-        "1048:79-1048:166|visualTailwindInPage",
-        "1147:69-1147:97|visualTailwindInPage",
-        "939:39-943:30|visualTailwindInPage"
+        "1009:193-1009:355|visualTailwindInPage",
+        "1010:78-1010:180|visualTailwindInPage",
+        "1013:78-1013:174|visualTailwindInPage",
+        "1014:78-1014:213|visualTailwindInPage",
+        "1016:74-1016:182|visualTailwindInPage",
+        "1056:79-1056:166|visualTailwindInPage",
+        "1155:69-1155:97|visualTailwindInPage",
+        "947:39-951:30|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {
