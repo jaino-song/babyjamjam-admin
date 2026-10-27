@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { isRealIsoDate, resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import type { ServiceDayPolicy } from "@/lib/date/business-days";
+import { calendarWithServiceDays } from "@/lib/date/service-day-policy";
 import { toFieldMessageView, withGuidance, type FieldMessageView } from "@/lib/forms/field-message-text";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -26,6 +28,8 @@ interface ServiceScheduleChangeModalProps {
     onClose: () => void;
     /** `allowNonBusinessDay` is true once the admin confirmed a weekend or holiday date. */
     onSubmit: (allowNonBusinessDay: boolean) => void;
+    /** Days this client accepts service on besides plain business days; absent means none. */
+    serviceDays?: ServiceDayPolicy;
 }
 
 const DATE_INPUT_ID = "service-schedule-change-date";
@@ -47,18 +51,28 @@ export function ServiceScheduleChangeModal({
     onDateChange,
     onClose,
     onSubmit,
+    serviceDays,
 }: ServiceScheduleChangeModalProps) {
     const locale = useLocale();
     const fields = useFieldInputStates<"date">();
     const label = `${sessionIndex}회차 서비스 제공 날짜`;
     const selectedYear = isRealIsoDate(selectedDate) ? [Number(selectedDate.slice(0, 4))] : [];
     const {
-        calendar,
+        calendar: branchCalendar,
         ready: isCalendarReady,
         error: calendarError,
         retry: retryCalendar,
         refreshForSave,
     } = useBusinessDayCalendar({ extraYears: selectedYear });
+    // A day the client accepts service on is a normal service day, not a weekend or holiday exception.
+    const serviceSaturday = serviceDays?.saturday ?? false;
+    const serviceSunday = serviceDays?.sunday ?? false;
+    const serviceHoliday = serviceDays?.holiday ?? false;
+    const policy = useMemo<ServiceDayPolicy>(
+        () => ({ saturday: serviceSaturday, sunday: serviceSunday, holiday: serviceHoliday }),
+        [serviceSaturday, serviceSunday, serviceHoliday],
+    );
+    const calendar = useMemo(() => calendarWithServiceDays(branchCalendar, policy), [branchCalendar, policy]);
     // Weekends and holidays are blocked by default; an admin may still pick one
     // for a special case after confirming it in a second step.
     const [isConfirmingNonBusinessDay, setIsConfirmingNonBusinessDay] = useState(false);
@@ -125,7 +139,7 @@ export function ServiceScheduleChangeModal({
                 return;
             }
             let nonBusinessDay: boolean;
-            try { nonBusinessDay = !fresh.calendar.isBusinessDay(selectedDate); }
+            try { nonBusinessDay = !calendarWithServiceDays(fresh.calendar, policy).isBusinessDay(selectedDate); }
             catch {
                 setCalendarSaveMessage({ tone: "error", text: CALENDAR_UNSUPPORTED_YEAR_MESSAGE });
                 setIsConfirmingNonBusinessDay(false);

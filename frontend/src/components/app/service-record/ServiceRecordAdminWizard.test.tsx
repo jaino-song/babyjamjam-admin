@@ -1278,6 +1278,99 @@ describe("per-session administrator editing", () => {
         expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.07");
     });
 
+    describe("client service days", () => {
+        const decemberDates = ["2026-12-16", "2026-12-17", "2026-12-18"];
+        const withServiceDays = (serviceDays?: { saturday: boolean; sunday: boolean; holiday: boolean }) => ({
+            ...sessionOverview,
+            record: {
+                ...sessionOverview.record,
+                startDate: decemberDates[0],
+                endDate: decemberDates[2],
+                sessions: decemberDates.map((serviceDate, index) => makeSession(index + 1, { serviceDate, submittedAt: "2026-12-16T07:14:00Z" })),
+            },
+            scheduleProjection: { entries: decemberDates.map((serviceDate, index) => ({
+                sessionIndex: index + 1, serviceDate, originalDate: serviceDate,
+                assignmentId: "assignment-7", scheduleId: 7, employeeId: 7, provenanceVersion: "projection-1",
+            })), blockingReasons: [] },
+            ...(serviceDays ? { serviceDays } : {}),
+        }) as unknown as AdminServiceRecordEditorOverview;
+        function openDayPicker(overviewProp: AdminServiceRecordEditorOverview) {
+            const result = render(<ServiceRecordAdminWizard clientId="42" overview={overviewProp} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+            fireEvent.click(result.container.querySelectorAll('[data-slot="day"]')[0]);
+            fireEvent.click(result.container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            return result;
+        }
+        const lastShiftedEntries = () => {
+            const schedule = jest.requireMock("@babyjamjam/shared/utils/service-record-schedule");
+            const results = jest.mocked(schedule.moveServiceRecordSessionDate).mock.results;
+            return results.at(-1)!.value.entries.map((entry: { serviceDate: string }) => entry.serviceDate);
+        };
+
+        it("accepts a Saturday for a Saturday-enabled client and shifts the later sessions onto service days", () => {
+            openDayPicker(withServiceDays({ saturday: true, sunday: false, holiday: false }));
+            fireEvent.click(screen.getByRole("option", { name: "19일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            // 12-16 -> 12-19 is three service days (17, 18, 19) once Saturday counts.
+            const modal = screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" });
+            expect(modal).toHaveTextContent("1회차의 서비스 제공일을 3영업일만큼 변경합니다.");
+            fireEvent.click(within(modal).getByRole("button", { name: "변경하기" }));
+            expect(lastShiftedEntries()).toEqual(["2026-12-19", "2026-12-21", "2026-12-22"]);
+        });
+
+        it("does not offer Saturday without the client's Saturday service", () => {
+            openDayPicker(withServiceDays());
+            expect(screen.queryByRole("option", { name: "19일" })).not.toBeInTheDocument();
+            expect(screen.queryByRole("option", { name: "20일" })).not.toBeInTheDocument();
+            fireEvent.click(screen.getByRole("option", { name: "21일" }));
+        });
+
+        it("validates the save-time calendar with the same service days", async () => {
+            const refreshForSave = jest.fn().mockResolvedValue({ ok: true, calendar: KR_BUILTIN_CALENDAR_FOR_TEST, changed: false });
+            jest.mocked(useBusinessDayCalendar).mockReturnValue({
+                calendar: KR_BUILTIN_CALENDAR_FOR_TEST,
+                ready: true,
+                error: null,
+                retry: jest.fn(),
+                refreshForSave,
+                version: KR_BUILTIN_CALENDAR_FOR_TEST.version,
+            });
+            try {
+                const saturdayOverview = withServiceDays({ saturday: true, sunday: false, holiday: false });
+                const afterDates = ["2026-12-19", "2026-12-21", "2026-12-22"];
+                const before = saturdayOverview.scheduleProjection!.entries;
+                movedDates = Object.fromEntries(afterDates.map((date, index) => [index + 1, date]));
+                jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+                    ...confirmPreviewResponse, draftVersion: 2,
+                    before: { startDate: decemberDates[0], endDate: decemberDates[2], sessions: before },
+                    after: { startDate: afterDates[0], endDate: afterDates[2], sessions: before.map((entry, index) => ({ ...entry, serviceDate: afterDates[index] })) },
+                    contentChanges: { headerChanged: false, changedSessionIndexes: [1, 2, 3] },
+                } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+                const { container } = openDayPicker(saturdayOverview);
+                fireEvent.click(screen.getByRole("option", { name: "19일" }));
+                fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+                fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: "변경하기" }));
+                expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.12.19");
+                acceptEdit();
+                await screen.findByRole("button", { name: "수정 확정" });
+                await startCommit();
+                // A plain calendar would refuse Saturday 12-19 on the save-time refresh and block the commit.
+                expect(refreshForSave).toHaveBeenCalled();
+                expect(screen.queryByText("공휴일 정보를 불러오지 못했어요.")).not.toBeInTheDocument();
+                expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, { sessionIndex: 1, toDate: "2026-12-19", shiftFollowing: true });
+            } finally {
+                jest.mocked(useBusinessDayCalendar).mockImplementation(() => ({
+                    calendar: KR_BUILTIN_CALENDAR_FOR_TEST,
+                    ready: true,
+                    error: null,
+                    retry: jest.fn(),
+                    refreshForSave: async () => ({ ok: true, calendar: KR_BUILTIN_CALENDAR_FOR_TEST, changed: false }),
+                    version: KR_BUILTIN_CALENDAR_FOR_TEST.version,
+                }));
+            }
+        });
+    });
+
     describe("refresh modal", () => {
         async function openWithPending() {
             const result = open();

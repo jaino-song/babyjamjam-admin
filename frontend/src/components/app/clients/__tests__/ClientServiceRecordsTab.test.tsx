@@ -1225,6 +1225,30 @@ describe("ClientServiceRecordsTab", () => {
         }
     });
 
+    it.each([
+        ["without Saturday service", undefined, ["예정일 2026.12.17", "예정일 2026.12.18", "예정일 2026.12.21"]],
+        ["with Saturday service", { saturday: true, sunday: false, holiday: false }, ["예정일 2026.12.17", "예정일 2026.12.18", "예정일 2026.12.19"]],
+    ] as const)("computes fallback 예정일 %s", (_label, serviceDays, expected) => {
+        const assignment = {
+            ...createAssignment(1, "none"),
+            startDate: "2026-12-17T00:00:00.000Z",
+            endDate: "2026-12-21T00:00:00.000Z",
+            totalSessions: 3,
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                serviceDays={serviceDays}
+            />,
+        );
+
+        expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(expected);
+    });
+
     it("chains an unwritten slot's 예정일 from the last written session's actual date", () => {
         function writtenSession(sessionIndex: number, serviceDate: string): ServiceRecordSession {
             return {
