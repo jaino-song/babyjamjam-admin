@@ -56,6 +56,26 @@ type ServiceDayKey = keyof ServiceDayPolicy;
 
 const SERVICE_DAY_KEYS: readonly ServiceDayKey[] = ["saturday", "sunday", "holiday"];
 
+/**
+ * The one 409 that means "someone wrote the same target meanwhile", so the whole save can be
+ * redone from a fresh read. Backend (admin-service-record-edit.service.ts): `throwConflictWithLatest`
+ * (:1496), the repository write conflict (:932) and a moved source fingerprint (:824, :1001).
+ * REQUEST_NOT_PENDING (:811, :969), REQUEST_STALE (:1017) and a bare REQUEST_CONFLICT (:542, :993,
+ * :1025, :1072) mean the draft itself is gone or stale: retrying would confirm twice. A missing
+ * or unknown code is not retried either. The draft proxies keep this registered `code`.
+ */
+const WRITE_TARGET_CHANGED_CODE = "SERVICE_RECORD_WRITE_TARGET_CHANGED";
+
+function isRetryableWriteTargetConflict(failure: unknown): boolean {
+    if (!(failure instanceof AdminServiceRecordEditApiError) || failure.status !== 409) return false;
+    const body = failure.body;
+    const code = typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
+    return code === WRITE_TARGET_CHANGED_CODE
+        && !readBlockingOperation(body)
+        && readServiceRecordScheduleBlockingReasons(body).length === 0
+        && failure.scheduleCode === null;
+}
+
 type LoadState =
     | { kind: "loading" }
     | { kind: "error"; reason: "load-failed" | "projection-blocked" | "no-sessions" }
@@ -363,16 +383,9 @@ export function ServiceRecordScheduleDialog({
             return { kind: "saved", caseId: confirmed.caseId, caseVersion: confirmed.caseVersion };
         } catch (failure) {
             await discardPrepared();
-            // A plain version conflict is retried once; a conflict that names its reason or a
-            // running follow-up job is not a version conflict and is shown as it is.
-            if (
-                confirming
-                && !isRetry
-                && failure instanceof AdminServiceRecordEditApiError
-                && failure.status === 409
-                && !readBlockingOperation(failure.body)
-                && readServiceRecordScheduleBlockingReasons(failure.body).length === 0
-            ) {
+            // Only a concurrent write to the same target is retried (once). Every other 409 answers
+            // the request itself and is shown as it is.
+            if (confirming && !isRetry && isRetryableWriteTargetConflict(failure)) {
                 return { kind: "retry" };
             }
             return { kind: "error", message: scheduleFailureMessage(locale, failure) };

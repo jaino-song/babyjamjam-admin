@@ -25,6 +25,8 @@ const FIXTURE_DATES = [
     "2026-12-14", "2026-12-15", "2026-12-16", "2026-12-17", "2026-12-18",
     "2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24", "2026-12-28",
 ];
+// The backend's concurrent-write code: the only 409 the dialog retries.
+const WRITE_TARGET_CHANGED = "SERVICE_RECORD_WRITE_TARGET_CHANGED";
 const OFF = { saturday: false, sunday: false, holiday: false };
 
 function overviewOf(dates: string[], writtenSessions: number[]): AdminServiceRecordEditorOverview {
@@ -491,7 +493,7 @@ describe("ServiceRecordScheduleDialog", () => {
 
         it("retries a version conflict on confirm exactly once and then succeeds", async () => {
             api.confirmDraft
-                .mockRejectedValueOnce(new AdminServiceRecordEditApiError(409, { code: "REQUEST_CONFLICT" }))
+                .mockRejectedValueOnce(new AdminServiceRecordEditApiError(409, { code: WRITE_TARGET_CHANGED }))
                 .mockResolvedValue({ status: "confirmed", caseId: "case-1", caseVersion: 3 } as unknown as ConfirmResult);
             const { onOpenChange } = await renderReady();
 
@@ -505,7 +507,7 @@ describe("ServiceRecordScheduleDialog", () => {
         });
 
         it("gives up after the single retry when the conflict persists", async () => {
-            api.confirmDraft.mockRejectedValue(new AdminServiceRecordEditApiError(409, { code: "REQUEST_CONFLICT" }));
+            api.confirmDraft.mockRejectedValue(new AdminServiceRecordEditApiError(409, { code: WRITE_TARGET_CHANGED }));
             const { onOpenChange } = await renderReady();
 
             await saveEdited();
@@ -518,7 +520,7 @@ describe("ServiceRecordScheduleDialog", () => {
 
         it("does not retry a conflict that names its blocking reasons", async () => {
             api.confirmDraft.mockRejectedValue(new AdminServiceRecordEditApiError(409, {
-                code: "REQUEST_CONFLICT",
+                code: WRITE_TARGET_CHANGED,
                 blockingReasons: [{ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 3 }],
             }));
             await renderReady();
@@ -533,7 +535,7 @@ describe("ServiceRecordScheduleDialog", () => {
 
         it("does not retry a conflict caused by a running follow-up job", async () => {
             api.confirmDraft.mockRejectedValue(new AdminServiceRecordEditApiError(409, {
-                code: "REQUEST_CONFLICT",
+                code: WRITE_TARGET_CHANGED,
                 blockingOperation: { operation: "record_snapshot" },
             }));
             await renderReady();
@@ -547,7 +549,7 @@ describe("ServiceRecordScheduleDialog", () => {
         it("reloads instead of retrying when the source moved during the failed confirm", async () => {
             api.confirmDraft.mockImplementationOnce(async () => {
                 sourceFingerprint = "source-2";
-                throw new AdminServiceRecordEditApiError(409, { code: "REQUEST_CONFLICT" });
+                throw new AdminServiceRecordEditApiError(409, { code: WRITE_TARGET_CHANGED });
             });
             await renderReady();
 
@@ -556,6 +558,24 @@ describe("ServiceRecordScheduleDialog", () => {
             expect(await screen.findByText("일정이 바뀌어 다시 불러왔어요")).toBeInTheDocument();
             expect(api.confirmDraft).toHaveBeenCalledTimes(1);
             expect(api.startDraft).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ["REQUEST_NOT_PENDING", { code: "REQUEST_NOT_PENDING" }],
+            ["REQUEST_STALE", { code: "REQUEST_STALE" }],
+            ["a bare REQUEST_CONFLICT", { code: "REQUEST_CONFLICT" }],
+            ["a 409 without a code", {}],
+            ["an unknown code", { code: "SOMETHING_ELSE" }],
+        ])("confirms only once and shows the error for %s", async (_label, body) => {
+            api.confirmDraft.mockRejectedValue(new AdminServiceRecordEditApiError(409, body));
+            const { onOpenChange } = await renderReady();
+
+            await saveEdited();
+
+            expect(await screen.findByText(/다른 화면에서 일정이 바뀌어 저장하지 못했어요/)).toBeInTheDocument();
+            expect(api.confirmDraft).toHaveBeenCalledTimes(1);
+            expect(api.startDraft).toHaveBeenCalledTimes(1);
+            expect(onOpenChange).not.toHaveBeenCalledWith(false);
         });
 
         it("shows the Korean message for the preview's blocking reasons and discards the draft", async () => {
