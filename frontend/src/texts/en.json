@@ -405,10 +405,76 @@
       "doc-deleted": "Deleted",
       "doc-voided": "Voided",
       "add-description": "Fill in the form to register a new client",
-      "edit-description": "Modify the client information"
+      "edit-description": "Modify the client information",
+      "error-manual-schedule-required": "Set the dates yourself in Change service record schedule"
     },
     "detail": {
       "description": "View client information details"
+    },
+    "service-record-schedule": {
+      "title": "Change service record schedule",
+      "subtitle": "{name} · Starts {startDate}",
+      "service-days-title": "Weekend and holiday service",
+      "service-days-description": "Days you turn on can also be picked as service days.",
+      "saturday": "Saturday",
+      "sunday": "Sunday",
+      "holiday": "Holidays",
+      "service-days-switch": "{label} service",
+      "calendar-title": "Service dates",
+      "calendar-description": "Deselect a chosen date and pick another one.",
+      "session-count": "Sessions",
+      "revert": "Undo changes",
+      "prev-month": "Previous month",
+      "next-month": "Next month",
+      "month-title": "{month}/{year}",
+      "holiday-label": "Holiday",
+      "legend-weekday": "Weekday",
+      "legend-extra": "Weekend/holiday",
+      "legend-skipped": "Skipped day",
+      "legend-open": "Available",
+      "legend-unavailable": "Unavailable",
+      "day-session": "{date} session {order}",
+      "day-session-fixed": "{date} session {order}, cannot be changed",
+      "day-session-removable": "{date} session {order}, press to remove",
+      "day-open": "Select {date}",
+      "loading": "Loading the schedule…",
+      "retry": "Try again",
+      "saving": "Saving…",
+      "close": "Close",
+      "notice-full": "All {count} sessions are already chosen. Remove a date first.",
+      "notice-written": "Sessions that are already written cannot be changed",
+      "notice-dropped": "{dates} can no longer be chosen and was removed.",
+      "success": "Saved the service dates for {count} sessions.",
+      "reloaded": "The schedule changed, so it was reloaded",
+      "errors": {
+        "load-failed": "Could not load the schedule. Please try again shortly.",
+        "projection-blocked": "The service schedule cannot be confirmed, so it cannot be changed.",
+        "no-sessions": "There are no sessions to change.",
+        "calendar-unavailable": "Could not check the holiday data. Please try again shortly.",
+        "no-longer-complete": "Please check the chosen dates again. The schedule is no longer complete.",
+        "draft-in-use": "Another screen is editing this record, so nothing was saved. Please try again shortly.",
+        "preview-mismatch": "Could not verify the schedule to save. Please try again shortly.",
+        "conflict": "The schedule changed elsewhere, so it was not saved. Close this window and open it again.",
+        "generic": "Could not save the schedule. Please try again shortly.",
+        "unauthenticated": "You need to sign in.",
+        "forbidden": "You do not have permission to change the schedule.",
+        "blocking-operation": "A follow-up task from an earlier edit is still running, so this cannot be saved yet. Please try again shortly.",
+        "schedule": {
+          "SCHEDULE_COUNT_MISMATCH": "The number of chosen dates does not match the number of sessions.",
+          "SCHEDULE_WITH_DATE_MOVE": "This cannot be saved together with another date change. Close this window and open it again.",
+          "UNSUPPORTED_HOLIDAY_YEAR": "Dates in a year without holiday data cannot be chosen.",
+          "INVALID_DATE": "One of the dates is not valid.",
+          "DUPLICATE_SERVICE_DATE": "The same date cannot be chosen twice.",
+          "INVERTED_SERVICE_DATES": "The dates are not in session order.",
+          "NON_BUSINESS_DATE": "A chosen date is not a service day. Check the weekend and holiday settings."
+        },
+        "blocking": {
+          "NON_SERVICE_DAY": "A chosen date is not a service day. Check the weekend and holiday settings.",
+          "SCHEDULE_BEFORE_START": "A chosen date is before the service start date.",
+          "LOCKED_SESSION_DATE_CHANGED": "A session was written in the meantime, so its date cannot change. Close this window and open it again.",
+          "ASSIGNMENT_RANGE_OVERLAP": "The caregiver assignment periods overlap, so the schedule cannot be changed."
+        }
+      }
     }
   },
   "employees": {

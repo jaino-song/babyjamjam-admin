@@ -20,6 +20,7 @@ import {
     RotateCcw,
     Trash2,
     FileSignature,
+    CalendarCheck,
     Send,
 } from "lucide-react";
 import {
@@ -69,6 +70,7 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import { ServiceRecordScheduleDialog } from "@/components/app/service-record/ServiceRecordScheduleDialog";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
@@ -296,6 +298,7 @@ export default function ClientsPage() {
     const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
     const [isResettingLink, setIsResettingLink] = useState(false);
     const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
+    const [serviceRecordScheduleClient, setServiceRecordScheduleClient] = useState<Client | null>(null);
     const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
     const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
     const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
@@ -599,6 +602,11 @@ export default function ClientsPage() {
         } finally {
             setIsApplyingScheduleChange(false);
         }
+    };
+
+    const handleServiceRecordScheduleSaved = async () => {
+        // The client form reads the toggles and dates from the client query.
+        await queryClient.invalidateQueries({ queryKey: ["clients"] });
     };
 
     const handleCopyResetServiceRecordLink = async (serviceRecordUrl: string) => {
@@ -1198,6 +1206,16 @@ export default function ClientsPage() {
                                         )}
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
+                                                data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"
+                                                onClick={() => setServiceRecordScheduleClient(activeSelectedClient)}
+                                                className="gap-2"
+                                            >
+                                                <CalendarCheck className="w-4 h-4" />
+                                                제공기록지 일정 변경
+                                            </DropdownMenuItem>
+                                        )}
+                                        {canManageBranchFeatures && (
+                                            <DropdownMenuItem
                                                 data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_reset-service-record-link"
                                                 onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
                                                 className="gap-2"
@@ -1319,6 +1337,18 @@ export default function ClientsPage() {
                     }}
                     onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
                     serviceDays={serviceDayPolicyOfClient(scheduleChangeTarget.client)}
+                />
+            ) : null}
+
+            {serviceRecordScheduleClient ? (
+                <ServiceRecordScheduleDialog
+                    open
+                    onOpenChange={(open) => {
+                        if (!open) setServiceRecordScheduleClient(null);
+                    }}
+                    clientId={serviceRecordScheduleClient.id}
+                    clientName={serviceRecordScheduleClient.name}
+                    onSaved={handleServiceRecordScheduleSaved}
                 />
             ) : null}
 
