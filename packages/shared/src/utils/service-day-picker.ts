@@ -31,8 +31,6 @@ export interface CreateServiceDayPickerInput {
     policy: ServiceDayPolicy;
 }
 
-const AUTO_FILL_SEARCH_LIMIT_DAYS = 366 * 2;
-
 function sortedUnique(dates: readonly string[]): string[] {
     return [...new Set(dates)].sort();
 }
@@ -82,7 +80,9 @@ export function autoFillServiceDays(startDate: string, count: number, calendar: 
     if (!Number.isInteger(count) || count <= 0) return [];
     const result: string[] = [];
     let cursor = startDate;
-    for (let i = 0; i < AUTO_FILL_SEARCH_LIMIT_DAYS && result.length < count; i += 1) {
+    // Terminates because the holiday data is finite: past it, isBusinessDay throws
+    // UnsupportedKoreanHolidayYearError, which must propagate (fail closed).
+    while (result.length < count) {
         if (calendar.isBusinessDay(cursor)) result.push(cursor);
         cursor = nextIso(cursor);
     }

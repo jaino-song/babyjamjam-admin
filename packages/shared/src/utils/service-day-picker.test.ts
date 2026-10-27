@@ -55,6 +55,15 @@ describe("autoFillServiceDays", () => {
     it("propagates the unsupported-year error when the walk leaves the data", () => {
         expect(() => autoFillServiceDays("2027-12-29", 5, cal)).toThrow(UnsupportedKoreanHolidayYearError);
     });
+
+    it("does not truncate a long fill at a fixed calendar-day horizon", () => {
+        const dates = autoFillServiceDays("2024-01-01", 600, cal);
+        expect(dates).toHaveLength(600);
+        // 600th business day from 2024-01-01 (a holiday, so the walk starts 2024-01-02).
+        expect(dates[599]).toBe("2026-06-18");
+        expect(dates.every((d) => cal.isBusinessDay(d))).toBe(true);
+        expect(dates).toEqual([...dates].sort());
+    });
 });
 
 describe("classifyServiceDay", () => {
