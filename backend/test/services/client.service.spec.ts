@@ -599,6 +599,51 @@ describe("ClientService", () => {
                 expect(result.allowHolidayService).toBe(true);
             });
 
+            it("treats null flags like omitted ones and never writes null", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowSundayService = false;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams,
+                    reuseExistingClient: true,
+                    allowSaturdayService: null,
+                    allowSundayService: null,
+                    allowHolidayService: null,
+                } as unknown as Parameters<typeof service.create>[1]);
+
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(result.allowSaturdayService).toBe(true);
+                expect(result.allowSundayService).toBe(false);
+                expect(result.allowHolidayService).toBe(true);
+            });
+
+            it("writes only the boolean flag when another flag is null", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams,
+                    reuseExistingClient: true,
+                    allowSaturdayService: null,
+                    allowHolidayService: false,
+                } as unknown as Parameters<typeof service.create>[1]);
+
+                const dayUpdates = prismaService.client.updateMany.mock.calls
+                    .filter(([arg]) => "allowHolidayService" in arg.data || "allowSaturdayService" in arg.data);
+                expect(dayUpdates).toHaveLength(1);
+                expect(dayUpdates[0]![0]).toEqual({
+                    where: { id: reused.id, branchId },
+                    data: { allowHolidayService: false },
+                });
+                expect(result.allowSaturdayService).toBe(true);
+                expect(result.allowHolidayService).toBe(false);
+            });
+
             it("persists false for a new client created with the flags omitted", async () => {
                 createClientUsecase.execute.mockResolvedValue(createClientEntity());
 

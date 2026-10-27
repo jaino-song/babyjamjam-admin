@@ -1380,9 +1380,9 @@ export class ClientService {
                 allowSundayService?: boolean;
                 allowHolidayService?: boolean;
             } = {};
-            if (params.allowSaturdayService !== undefined) reusedServiceDayPatch.allowSaturdayService = params.allowSaturdayService;
-            if (params.allowSundayService !== undefined) reusedServiceDayPatch.allowSundayService = params.allowSundayService;
-            if (params.allowHolidayService !== undefined) reusedServiceDayPatch.allowHolidayService = params.allowHolidayService;
+            if (typeof params.allowSaturdayService === "boolean") reusedServiceDayPatch.allowSaturdayService = params.allowSaturdayService;
+            if (typeof params.allowSundayService === "boolean") reusedServiceDayPatch.allowSundayService = params.allowSundayService;
+            if (typeof params.allowHolidayService === "boolean") reusedServiceDayPatch.allowHolidayService = params.allowHolidayService;
             if (Object.keys(reusedServiceDayPatch).length > 0) {
                 await this.prismaService.client.updateMany({
                     where: { id: existing.id, branchId: branchid },
