@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
     buildServiceRecordEditPreview,
     draftServiceDays,
@@ -1173,17 +1174,51 @@ describe("service-record-edit-preview.policy service-day schedule replacement", 
             "blockingReasons", "signatureMetadata", "documentScope",
         ];
 
-        it("omits serviceDays for a non-schedule draft so the hash matches the pre-feature build", () => {
-            const drafts: ServiceRecordEditJsonValue[] = [{}, { sessions: [{ sessionIndex: 5, serviceDate: "2026-09-12" }] }];
-            for (const changes of drafts) {
-                const plain = previewOf(source(), changes);
-                expect("serviceDays" in plain).toBe(false);
-                expect(Object.keys(plain)).toEqual(baseKeys);
-                expect(plain.calendarVersion).toBe(KR_BUILTIN_CALENDAR.version);
-                expect(JSON.stringify(plain)).toBe(JSON.stringify(Object.fromEntries(
-                    baseKeys.map((key) => [key, (plain as unknown as Record<string, unknown>)[key]]),
-                )));
+        // Independent oracle: these hashes were produced ONCE by running the BASE builder
+        // (`git show 246bf74c0:backend/application/policies/service-record-edit-preview.policy.ts`,
+        // copied outside the tree's tracked files) on the same fixtures, then hashing
+        // `previewId`-less output exactly as admin-service-record-edit.service.ts does
+        // (sha256 over stableStringify(JSON value, keys sorted)). They are not derived from
+        // the code under test, so any change to the default payload (a key, a value) fails.
+        const stable = (value: unknown): string => {
+            if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+            if (value && typeof value === "object") {
+                return `{${Object.entries(value as Record<string, unknown>)
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`)
+                    .join(",")}}`;
             }
+            return JSON.stringify(value);
+        };
+        const hashOf = (preview: Record<string, unknown>) => {
+            const { previewId: _ignored, ...rest } = preview;
+            void _ignored;
+            return createHash("sha256").update(stable(JSON.parse(JSON.stringify(rest)))).digest("hex");
+        };
+        const baseDraftInput = { ...baseInput, previewId: "pending" };
+        const baseHashes: Array<[string, ServiceRecordEditJsonValue, string]> = [
+            ["default (no change)", {}, "2419e0dcdc753dfdc94070cd5dd0664f8f5d1034c6bd82e84dff8495e7a27646"],
+            [
+                "non-schedule dateMove (session 3 to 09-10, following shifted)",
+                {
+                    sessions: [
+                        { sessionIndex: 3, serviceDate: "2026-09-10" },
+                        { sessionIndex: 4, serviceDate: "2026-09-11" },
+                        { sessionIndex: 5, serviceDate: "2026-09-14" },
+                    ],
+                },
+                "aa306700093975609487b884d6f93ab2c446d1e1f678f690d91ada71e65ffb5b",
+            ],
+        ];
+
+        it.each(baseHashes)("omits serviceDays and matches the pre-feature base payload hash: %s", (_name, changes, expectedHash) => {
+            const plain = buildServiceRecordEditPreview({
+                ...baseDraftInput, calendar: KR_BUILTIN_CALENDAR, source: source(), changes,
+            });
+            expect("serviceDays" in plain).toBe(false);
+            expect(Object.keys(plain)).toEqual(baseKeys);
+            expect(plain.calendarVersion).toBe(KR_BUILTIN_CALENDAR.version);
+            expect(hashOf(plain as unknown as Record<string, unknown>)).toBe(expectedHash);
         });
 
         it("still carries serviceDays for a schedule draft and for a client with stored toggles", () => {
