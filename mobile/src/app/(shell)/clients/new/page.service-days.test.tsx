@@ -254,5 +254,28 @@ describe("mobile client wizard service days", () => {
         },
       });
     });
+
+    it("recalculates the end date of a saved duration that the price list no longer offers", async () => {
+      // The price table offers only 10; the saved period is 12 service days.
+      await openEdit(makeClient({ duration: 12, endDate: "2026-12-30" }));
+      goToStep(1);
+
+      fireEvent.click(chip("토요일 서비스"));
+      await waitFor(() => expect(endDate()).toBe("2026-12-28"));
+      goToStep(2);
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+      await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+      expect(mockUpdateClient).toHaveBeenCalledWith({
+        id: 7,
+        dto: {
+          allowSaturdayService: true,
+          startDate: "2026-12-14",
+          endDate: "2026-12-28",
+          duration: 12,
+          expectedEndDate: "2026-12-30",
+        },
+      });
+    });
   });
 });

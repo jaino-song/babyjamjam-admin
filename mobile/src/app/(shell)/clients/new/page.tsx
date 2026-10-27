@@ -886,6 +886,8 @@ export default function NewClientPage() {
 
   // 시작일(YYYY-MM-DD) + 바우처 기간이 정해지면 평일(주말+지점 휴일 캘린더 기준 공휴일 제외)로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
+  // 재계산 시점은 가격표 기준 기간(effectiveDuration) 변화로 감지하고, 계산에는 저장될 기간(chosenDuration)을 쓴다:
+  // 현재 가격표에 없는 기존 기간도 서비스 요일 변경에 따라 재계산되어야 한다.
   // 종료일은 저장되는 값이라 지점 캘린더가 로드된 뒤에만 계산한다. 로드 중에 건너뛴 계산은
   // 캘린더가 준비되는 순간 한 번만 실행하고, 캘린더 객체/버전이 바뀌어도 다시 계산하지 않는다.
   useEffect(() => {
@@ -900,7 +902,7 @@ export default function NewClientPage() {
       serviceDaysKey,
     };
     if (!servicePeriodChanged && !endDateCalcSkippedRef.current) return;
-    if (!store.startDate || !effectiveDuration) {
+    if (!store.startDate || !chosenDuration) {
       endDateCalcSkippedRef.current = false;
       setEndDateUnsupported(false);
       return;
@@ -925,7 +927,7 @@ export default function NewClientPage() {
     endDateCalcSkippedRef.current = false;
     let endIso: string | null = null;
     try {
-      endIso = calendarRef.current.calcEndDateBusinessDays(store.startDate, effectiveDuration);
+      endIso = calendarRef.current.calcEndDateBusinessDays(store.startDate, chosenDuration);
     } catch {
       // A year the branch calendar does not cover: clear the end date instead of keeping the
       // previous one, and leave it to the user (the server validates a typed date).
@@ -938,7 +940,7 @@ export default function NewClientPage() {
     autoEndDateRef.current = endIso;
     if (store.endDate === endIso) return;
     setField("endDate", endIso);
-  }, [calendarReady, effectiveDuration, serviceDaysKey, setField, store.endDate, store.startDate]);
+  }, [calendarReady, chosenDuration, effectiveDuration, serviceDaysKey, setField, store.endDate, store.startDate]);
 
   useEffect(() => {
     if (pendingDurationConfirmation === null) return;
@@ -1076,9 +1078,9 @@ export default function NewClientPage() {
       const freshServiceCalendar = fresh.calendar.withServiceDays(serviceDays);
       if (autoEndDateRef.current === store.endDate
         && (hasUserEditedServicePeriodRef.current || serviceDaysEditedRef.current)
-        && store.startDate && effectiveDuration) {
+        && store.startDate && chosenDuration) {
         try {
-          recalculatedEnd = freshServiceCalendar.calcEndDateBusinessDays(store.startDate, effectiveDuration) ?? store.endDate;
+          recalculatedEnd = freshServiceCalendar.calcEndDateBusinessDays(store.startDate, chosenDuration) ?? store.endDate;
         } catch {
           setEndDateUnsupported(true);
           setPendingDurationConfirmation(null);
