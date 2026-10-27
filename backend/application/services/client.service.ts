@@ -107,6 +107,10 @@ import { ServiceRecordLinkService } from "./service-record-link.service";
 import { IMMUTABLE_FINALIZATION_STATUSES, ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { SystemSettingService } from "./system-setting.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
+import {
+    ServiceRecordScheduleRealignmentService,
+    type ServiceRecordRealignmentResult,
+} from "./service-record-schedule-realignment.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
@@ -125,6 +129,8 @@ const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "090"]);
 export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
 const CONTRACT_AUTO_REGISTRATION_SOURCE = "contract_auto_registration";
 const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
+/** The per-client Saturday / Sunday / holiday service-day flags. */
+const SERVICE_DAY_FLAG_FIELDS = ["allowSaturdayService", "allowSundayService", "allowHolidayService"] as const;
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
 const PHONE_LINK_LOCK_RETRY_LIMIT = 3;
 /** Returned by a phone-link attempt whose locked client set no longer matches the document owners. */
@@ -281,6 +287,7 @@ export class ClientService {
         private readonly clientAutomationImpact?: ClientAutomationImpactPort,
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
+        @Optional() private readonly serviceRecordScheduleRealignmentService?: ServiceRecordScheduleRealignmentService,
     ) {}
 
     /**
@@ -1374,7 +1381,8 @@ export class ClientService {
             }
             // Same rule for the service-day flags: only an explicitly supplied
             // flag changes a reused client; omitted flags keep their stored values.
-            // Re-scheduling after a flag change is owned by later units.
+            // A flag that really changes re-lays the remaining sessions in the
+            // same locked transaction as the write.
             const reusedServiceDayPatch: {
                 allowSaturdayService?: boolean;
                 allowSundayService?: boolean;
@@ -1384,10 +1392,7 @@ export class ClientService {
             if (typeof params.allowSundayService === "boolean") reusedServiceDayPatch.allowSundayService = params.allowSundayService;
             if (typeof params.allowHolidayService === "boolean") reusedServiceDayPatch.allowHolidayService = params.allowHolidayService;
             if (Object.keys(reusedServiceDayPatch).length > 0) {
-                await this.prismaService.client.updateMany({
-                    where: { id: existing.id, branchId: branchid },
-                    data: reusedServiceDayPatch,
-                });
+                await this.applyReusedClientServiceDays(branchid, existing.id, existing, reusedServiceDayPatch, calendar);
                 Object.assign(existing, reusedServiceDayPatch);
             }
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
@@ -2280,6 +2285,10 @@ export class ClientService {
             ) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
+            // Judged on the locked row: a flag that differs from what is stored
+            // re-lays the remaining service-record sessions after the write.
+            const serviceDayFlagsChanged = SERVICE_DAY_FLAG_FIELDS.some((field) =>
+                params[field] !== undefined && params[field] !== (currentClient[field] ?? false));
             const lockedMergedServicePeriod = mergeAndValidateClientServicePeriod(currentClient, {
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,
@@ -2389,6 +2398,14 @@ export class ClientService {
                 const assignmentChanged = primaryEmployeeId !== currentPrimaryEmployeeId
                     || secondaryEmployeeId !== currentSecondaryEmployeeId;
                 if (assignmentChanged) {
+                    if (serviceDayFlagsChanged) {
+                        // A new schedule has no assignment row until the lifecycle sync below,
+                        // so the remaining sessions cannot be re-laid in the same save.
+                        await this.serviceRecordScheduleRealignmentService?.assertCanCombineWithAssignmentChange(
+                            transaction,
+                            { branchId: branchid, clientId: id },
+                        );
+                    }
                     if (primaryEmployeeId === null) {
                         throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                             pointer: "/primaryEmployeeId",
@@ -2515,7 +2532,34 @@ export class ClientService {
             } else if (!currentClient) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
+            // The flags are written; re-lay what is still unwritten before the lifecycle
+            // sync derives status and token expiry from the new period.
+            let realignment: ServiceRecordRealignmentResult | null = null;
+            if (serviceDayFlagsChanged && this.serviceRecordScheduleRealignmentService) {
+                realignment = await this.serviceRecordScheduleRealignmentService.realignForServiceDayChangeInTransaction(
+                    transaction,
+                    {
+                        branchId: branchid,
+                        clientId: id,
+                        calendar,
+                        callerSuppliedEndDate: params.endDate !== undefined,
+                    },
+                );
+            }
+            const syncedRecord = await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
+            // A re-laid legacy end date never changes how many sessions the case owes. The
+            // sync re-caps a legacy case's N from its period, so restore the N it had.
+            if (
+                realignment?.restoreRequiredSessionCount != null
+                && syncedRecord
+                && syncedRecord.requiredSessionCount !== realignment.restoreRequiredSessionCount
+            ) {
+                await transaction.service_record_case.update({
+                    where: { id: syncedRecord.id },
+                    data: { requiredSessionCount: realignment.restoreRequiredSessionCount },
+                });
+                await this.serviceRecordLifecycleService?.recompute(syncedRecord.id, transaction, calendar);
+            }
             if (
                 automationImpact
                 && automationImpact.availability === "available"
@@ -2592,6 +2636,55 @@ export class ClientService {
             createdScheduleId,
         );
         return updatedClient;
+    }
+
+    /**
+     * Writes the explicitly supplied service-day flags of a reused client and, when a
+     * flag really changes, re-lays the remaining service-record sessions in the same
+     * transaction. The client-owned lock set is taken first, so the flags compared
+     * against are the locked row's, not the earlier pre-read; the write and the
+     * re-lay then commit or roll back together.
+     */
+    private async applyReusedClientServiceDays(
+        branchId: string,
+        clientId: number,
+        preRead: Partial<Record<(typeof SERVICE_DAY_FLAG_FIELDS)[number], boolean | null>>,
+        patch: Partial<Record<(typeof SERVICE_DAY_FLAG_FIELDS)[number], boolean>>,
+        calendar: KrBusinessDayCalendar,
+    ): Promise<void> {
+        const work = async (transaction: Prisma.TransactionClient): Promise<void> => {
+            await lockServiceRecordWriteSet(transaction, { branchId, clientId });
+            const locked = typeof transaction.client.findUnique === "function"
+                ? await transaction.client.findUnique({
+                    where: { id: clientId },
+                    select: {
+                        branchId: true,
+                        allowSaturdayService: true,
+                        allowSundayService: true,
+                        allowHolidayService: true,
+                    },
+                })
+                : null;
+            // Narrow unit doubles have no locked reread; the pre-read stands in for it.
+            const stored = locked ?? preRead;
+            const flagsChanged = SERVICE_DAY_FLAG_FIELDS.some((field) =>
+                patch[field] !== undefined && patch[field] !== (stored[field] ?? false));
+            await transaction.client.updateMany({
+                where: { id: clientId, branchId },
+                data: patch,
+            });
+            if (flagsChanged) {
+                await this.serviceRecordScheduleRealignmentService?.realignForServiceDayChangeInTransaction(
+                    transaction,
+                    { branchId, clientId, calendar },
+                );
+            }
+        };
+        if (this.messageAutomationBranchLockService) {
+            await this.messageAutomationBranchLockService.runExclusive(branchId, work);
+        } else {
+            await this.prismaService.$transaction(work);
+        }
     }
 
     /**

@@ -388,8 +388,8 @@ function hasPlannedDateDifference(
  * its stored dates and no other assignment takes the edge. Only a session-owning
  * candidate whose computed start falls after its end is refused as a conflict.
  */
-function assignmentWrites(
-    source: ServiceRecordEditSource,
+export function assignmentWrites(
+    source: Pick<ServiceRecordEditSource, "assignments">,
     startDate: string | null,
     endDate: string | null,
     ownerAssignmentIds: ReadonlySet<string>,
