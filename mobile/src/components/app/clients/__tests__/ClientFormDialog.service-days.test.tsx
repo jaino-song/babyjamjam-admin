@@ -154,4 +154,31 @@ describe("mobile ClientFormDialog service days", () => {
         await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
         expect(updateMutateAsync).toHaveBeenCalledWith({ id: 77, dto: { allowSaturdayService: true } });
     });
+
+    it("points the admin to the schedule editor when the server cannot re-lay the remaining sessions", async () => {
+        updateMutateAsync.mockRejectedValue({
+            response: {
+                status: 409,
+                data: { code: "REQUEST_CONFLICT", scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE" },
+            },
+        });
+        await renderDialog(storedClient());
+
+        fireEvent.click(toggle("allowSaturdayService"));
+        save();
+
+        expect(await screen.findByText("제공기록지 일정 변경에서 날짜를 직접 지정해 주세요")).toBeInTheDocument();
+    });
+
+    it("keeps the generic conflict message for a 409 without the manual-schedule extension", async () => {
+        updateMutateAsync.mockRejectedValue({ response: { status: 409, data: { code: "REQUEST_CONFLICT" } } });
+        await renderDialog(storedClient());
+
+        fireEvent.click(toggle("allowSaturdayService"));
+        save();
+
+        await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+        expect(screen.queryByText("제공기록지 일정 변경에서 날짜를 직접 지정해 주세요")).not.toBeInTheDocument();
+    });
 });
