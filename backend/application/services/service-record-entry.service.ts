@@ -436,8 +436,10 @@ export class ServiceRecordEntryService {
     }
 
     /**
-     * Create/update one session record. Sessions are filled in order; submitted sessions
-     * are immutable after client approval and locking.
+     * Create/update one session record. Sessions are filled in order. A submitted (locked)
+     * session keeps its date, signature and approval; the caregiver who submitted it may
+     * still change its answers, notes, etc. service and payment flag until the case is
+     * finalized, and each real change is written to service_record_day_edit_log.
      */
     async upsertSession(ctx: ServiceRecordTokenContext, sessionIndex: number, dto: UpsertSessionDto, lock: boolean) {
         const aggregate = await this.resolveCase(ctx);
@@ -592,111 +594,117 @@ export class ServiceRecordEntryService {
                 }
             }
             const lockedEdit = Boolean(existing?.locked);
+            // On a locked edit the stored date is the verified one (same
+            // calendar day as the request); the request's time of day must not
+            // take part in any later date comparison.
+            const checkedServiceDate = existing?.locked ? existing.serviceDate : serviceDate;
 
             // A postponed session (a later serviceDate than originally
             // scheduled) can push the remaining sessions past the current
             // end date. requiredSessionCount stays fixed; the end date
             // extends automatically so the case can still fit every
             // session, no admin approval needed.
-            const serviceDateIso = toIso(serviceDate);
-            const currentEndIso = record.endDate ? toIso(record.endDate) : null;
-            let requiredEndIso: string;
-            try {
-                requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
-            } catch {
-                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                    pointer: "/serviceDate",
-                    code: "INVALID_VALUE",
-                    detail: "서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.",
-                    location: "body",
-                }));
-            }
-            if (!lockedEdit && currentEndIso && requiredEndIso > currentEndIso) {
-                const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
-                // Production already owns these locks from the common set
-                // above. Keep the helper calls only for legacy unit doubles
-                // that omit client ownership fields.
-                if (typeof schedule.clientId !== "number") {
-                    await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
-                    await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
-                        schedule.primaryEmployeeId,
-                        schedule.secondaryEmployeeId,
-                    ]);
+            if (!lockedEdit) {
+                const serviceDateIso = toIso(serviceDate);
+                const currentEndIso = record.endDate ? toIso(record.endDate) : null;
+                let requiredEndIso: string;
+                try {
+                    requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
+                } catch {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/serviceDate",
+                        code: "INVALID_VALUE",
+                        detail: "서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.",
+                        location: "body",
+                    }));
                 }
-                if (schedule.startDate) {
-                    try {
-                        await assertNoActiveEmployeeScheduleOverlap(tx, {
-                            branchId: ctx.branchId,
-                            clientId: schedule.clientId,
-                            primaryEmployeeId: schedule.primaryEmployeeId,
-                            secondaryEmployeeId: schedule.secondaryEmployeeId,
-                            startDate: schedule.startDate,
-                            endDate: newEndDate,
-                            replaced: schedule.replaced,
-                            excludeScheduleId: schedule.id,
-                        });
-                    } catch (error) {
-                        if (error instanceof ConflictException) {
-                            const response = error.getResponse();
-                            const code = typeof response === "object" && response !== null && "code" in response
-                                ? (response as { code?: unknown }).code
-                                : undefined;
-                            if (code === EMPLOYEE_SCHEDULE_OVERLAP_CODE) {
-                                throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
-                            }
-                        }
-                        throw error;
+                if (currentEndIso && requiredEndIso > currentEndIso) {
+                    const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
+                    // Production already owns these locks from the common set
+                    // above. Keep the helper calls only for legacy unit doubles
+                    // that omit client ownership fields.
+                    if (typeof schedule.clientId !== "number") {
+                        await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
+                        await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
+                            schedule.primaryEmployeeId,
+                            schedule.secondaryEmployeeId,
+                        ]);
                     }
-                }
-                await tx.employee_schedule.update({
-                    where: { id: schedule.id, branchId: ctx.branchId },
-                    data: { endDate: newEndDate },
-                });
-                await tx.client.update({
-                    where: { id: schedule.clientId, branchId: ctx.branchId },
-                    data: { endDate: newEndDate },
-                });
-                // The client's end date just moved, so its open holiday review
-                // item (at most one per client) no longer describes the stored
-                // end date. Close it in this same transaction so the review
-                // card stays accurate: "fixed" when the auto-extend landed on
-                // the date the review recommended (resolvedBy stays null: the
-                // system did it), otherwise "obsolete" because the item's
-                // recommendation is now stale. branchId is pinned for tenant
-                // isolation; the item id never leaves the transaction.
-                const openReviewItem = await tx.end_date_review_item.findFirst({
-                    where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
-                    select: { id: true, recalculatedEnd: true },
-                });
-                if (openReviewItem) {
-                    await tx.end_date_review_item.updateMany({
-                        where: {
-                            id: openReviewItem.id,
-                            clientId: schedule.clientId,
-                            branchId: ctx.branchId,
-                            status: "open",
-                        },
-                        data: {
-                            status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
-                            resolvedAt: new Date(),
-                        },
+                    if (schedule.startDate) {
+                        try {
+                            await assertNoActiveEmployeeScheduleOverlap(tx, {
+                                branchId: ctx.branchId,
+                                clientId: schedule.clientId,
+                                primaryEmployeeId: schedule.primaryEmployeeId,
+                                secondaryEmployeeId: schedule.secondaryEmployeeId,
+                                startDate: schedule.startDate,
+                                endDate: newEndDate,
+                                replaced: schedule.replaced,
+                                excludeScheduleId: schedule.id,
+                            });
+                        } catch (error) {
+                            if (error instanceof ConflictException) {
+                                const response = error.getResponse();
+                                const code = typeof response === "object" && response !== null && "code" in response
+                                    ? (response as { code?: unknown }).code
+                                    : undefined;
+                                if (code === EMPLOYEE_SCHEDULE_OVERLAP_CODE) {
+                                    throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
+                                }
+                            }
+                            throw error;
+                        }
+                    }
+                    await tx.employee_schedule.update({
+                        where: { id: schedule.id, branchId: ctx.branchId },
+                        data: { endDate: newEndDate },
                     });
+                    await tx.client.update({
+                        where: { id: schedule.clientId, branchId: ctx.branchId },
+                        data: { endDate: newEndDate },
+                    });
+                    // The client's end date just moved, so its open holiday review
+                    // item (at most one per client) no longer describes the stored
+                    // end date. Close it in this same transaction so the review
+                    // card stays accurate: "fixed" when the auto-extend landed on
+                    // the date the review recommended (resolvedBy stays null: the
+                    // system did it), otherwise "obsolete" because the item's
+                    // recommendation is now stale. branchId is pinned for tenant
+                    // isolation; the item id never leaves the transaction.
+                    const openReviewItem = await tx.end_date_review_item.findFirst({
+                        where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
+                        select: { id: true, recalculatedEnd: true },
+                    });
+                    if (openReviewItem) {
+                        await tx.end_date_review_item.updateMany({
+                            where: {
+                                id: openReviewItem.id,
+                                clientId: schedule.clientId,
+                                branchId: ctx.branchId,
+                                status: "open",
+                            },
+                            data: {
+                                status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
+                                resolvedAt: new Date(),
+                            },
+                        });
+                    }
+                    // Hand over the calendar this auto-extend already holds: without it ensureForClient
+                    // loads its own, on a second pooled connection while these locks are held.
+                    await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
+                    await this.tokenService.extendExpiryForCase(
+                        record.id,
+                        getServiceRecordTokenExpiresAt(newEndDate),
+                        tx,
+                    );
+                    this.logger.log(
+                        `Service-record session ${sessionIndex} for case ${record.id} extended end date ${currentEndIso} -> ${requiredEndIso}`,
+                    );
+                    record = await tx.service_record_case.findUnique({ where: { id: record.id } }) ?? record;
                 }
-                // Hand over the calendar this auto-extend already holds: without it ensureForClient
-                // loads its own, on a second pooled connection while these locks are held.
-                await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
-                await this.tokenService.extendExpiryForCase(
-                    record.id,
-                    getServiceRecordTokenExpiresAt(newEndDate),
-                    tx,
-                );
-                this.logger.log(
-                    `Service-record session ${sessionIndex} for case ${record.id} extended end date ${currentEndIso} -> ${requiredEndIso}`,
-                );
-                record = await tx.service_record_case.findUnique({ where: { id: record.id } }) ?? record;
             }
 
-            if (record.endDate && serviceDate > record.endDate) {
+            if (record.endDate && checkedServiceDate > record.endDate) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/serviceDate",
                     code: "INVALID_VALUE",
@@ -717,7 +725,7 @@ export class ServiceRecordEntryService {
                 if (!prev?.locked) {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
-                if (serviceDate < prev.serviceDate) {
+                if (checkedServiceDate < prev.serviceDate) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                         pointer: "/serviceDate",
                         code: "INVALID_VALUE",

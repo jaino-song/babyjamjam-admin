@@ -922,16 +922,90 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             expect(lifecycle.recompute).not.toHaveBeenCalled();
         });
 
-        it("allows the same calendar date sent with a different time of day", async () => {
+        it("allows the same calendar date sent with a non-midnight time of day and keeps the stored date", async () => {
             const { service, upsert, editLogCreate } = createHarness({ existing: createDay() });
 
             await service.upsertSession(context, 1, createDto({
-                serviceDate: "2026-07-01T00:00:00.000Z",
+                serviceDate: "2026-07-01T09:30:00.000Z",
                 notes: "수정",
             }), true);
 
             expect(upsert).toHaveBeenCalledTimes(1);
+            expect(upsert.mock.calls[0][0].update.serviceDate).toEqual(SERVICE_DATE);
             expect(editLogCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it("allows a non-midnight time on the case end date without tripping the end-date check", async () => {
+            const endDate = new Date("2027-12-31T00:00:00.000Z");
+            const { service, upsert, editLogCreate } = createHarness({
+                existing: createDay({ serviceDate: endDate }),
+                transactionRecord: createRecord({
+                    requiredSessionCount: 1,
+                    startDate: new Date("2027-12-01T00:00:00.000Z"),
+                    endDate,
+                }),
+            });
+
+            await service.upsertSession(context, 1, createDto({
+                serviceDate: "2027-12-31T09:00:00.000Z",
+                notes: "수정",
+            }), true);
+
+            expect(upsert).toHaveBeenCalledTimes(1);
+            expect(upsert.mock.calls[0][0].update.serviceDate).toEqual(endDate);
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it("still rejects an unlocked non-midnight date past the end date (unlocked behaviour unchanged)", async () => {
+            const { service, upsert } = createHarness({
+                existing: null,
+                transactionRecord: createRecord({
+                    requiredSessionCount: 1,
+                    startDate: new Date("2027-12-01T00:00:00.000Z"),
+                    endDate: new Date("2027-12-31T00:00:00.000Z"),
+                }),
+            });
+
+            await expectException(service.upsertSession(
+                context,
+                1,
+                createDto({ serviceDate: "2027-12-31T09:00:00.000Z" }),
+                true,
+            ), BadRequestException, "VALIDATION_FAILED");
+            expect(upsert).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["changed", { notes: "수정" }],
+            ["unchanged", {}],
+        ])("runs no extension calendar arithmetic for a %s edit (a holiday added at the supported-year boundary must not break it)", async (_label, fields) => {
+            // Session 1 of 2 on 2027-12-30, end date 2027-12-31. Once the branch
+            // adds 2027-12-31 as a holiday, the required end date would fall in
+            // the unsupported year 2028 and the calendar throws. The extension
+            // already ran at the first submit, so an edit must never ask.
+            const serviceDate = new Date("2027-12-30T00:00:00.000Z");
+            const calendarStub = branchHolidayCalendar("2027-12-31");
+            const { service, upsert, scheduleUpdate, clientUpdate, editLogCreate } = createHarness({
+                existing: createDay({ serviceDate }),
+                transactionRecord: createRecord({
+                    requiredSessionCount: 2,
+                    startDate: new Date("2027-12-01T00:00:00.000Z"),
+                    endDate: new Date("2027-12-31T00:00:00.000Z"),
+                }),
+                holidayCalendar: calendarStub,
+            });
+            const calendar = await calendarStub.forBranch(BRANCH_ID);
+            expect(() => calendar.addBusinessDays("2027-12-30", 1)).toThrow();
+
+            await expect(service.upsertSession(context, 1, createDto({
+                serviceDate: serviceDate.toISOString(),
+                ...fields,
+            }), true)).resolves.toEqual(expect.objectContaining({ locked: true }));
+
+            expect(scheduleUpdate).not.toHaveBeenCalled();
+            expect(clientUpdate).not.toHaveBeenCalled();
+            expect(upsert).toHaveBeenCalledTimes(Object.keys(fields).length ? 1 : 0);
+            expect(editLogCreate).toHaveBeenCalledTimes(Object.keys(fields).length ? 1 : 0);
         });
 
         it("keeps the stored signature when the request carries a different one", async () => {
