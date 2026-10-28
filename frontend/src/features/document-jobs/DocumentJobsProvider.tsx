@@ -21,7 +21,7 @@ import {
 } from "@/hooks/useEformsignDocumentJobs";
 import { useInitialUser } from "@/providers/UserProvider";
 
-import { describeFailurePopup, recoverJobHref } from "./failure-popup-copy";
+import { describeFailurePopup, isRecoverableJob, recoverJobHref } from "./failure-popup-copy";
 import { useDetailsFetchWindow } from "./useDetailsFetchWindow";
 import { useDocumentJobFailurePopups } from "./useDocumentJobFailurePopups";
 
@@ -226,7 +226,13 @@ export function DocumentJobsProvider({ children }: { children: ReactNode }) {
       actionLabel: copy.actionLabel,
       onAction: () => {
         dismiss(entry.key);
-        router.push(recoverJobHref(entry.jobId));
+        if (job && isRecoverableJob(job)) {
+          router.push(recoverJobHref(entry.jobId));
+        } else if (job?.documentId) {
+          router.push(`${CONTRACTS_PATH}?documentId=${encodeURIComponent(job.documentId)}`);
+        } else {
+          openJobsList();
+        }
       },
       onClose: () => dismiss(entry.key),
     };

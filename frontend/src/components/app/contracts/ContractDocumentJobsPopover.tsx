@@ -23,7 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
-import { recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
+import { isRecoverableJob, recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
 import { cn } from "@/lib/utils";
 
 const SOURCE_COMPONENT = "ContractDocumentJobsPopover";
@@ -166,13 +166,18 @@ function JobRow({
     />
   );
 
-  const isRecoverable = job.status === "failed" || job.status === "requires_attention";
+  const isTerminal =
+    job.status === "failed" || job.status === "requires_attention" || job.status === "completed";
   const isCompleted = job.status === "completed";
-  const href = isRecoverable
-    ? recoverJobHref(job.jobId)
-    : isCompleted && job.documentId
-      ? `/contracts?documentId=${encodeURIComponent(job.documentId)}`
-      : null;
+  const documentHref = job.documentId
+    ? `/contracts?documentId=${encodeURIComponent(job.documentId)}`
+    : null;
+  const href =
+    (job.status === "failed" || job.status === "requires_attention") && isRecoverableJob(job)
+      ? recoverJobHref(job.jobId)
+      : isTerminal
+        ? documentHref
+        : null;
 
   if (!href) {
     return (

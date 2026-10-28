@@ -1,6 +1,9 @@
-import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+
+import type { QueryClient } from "@tanstack/react-query";
 
 import { DocumentJobsStatMini } from "@/components/app/contracts/DocumentJobsStatMini";
+import { eformsignDocumentJobsQueryKeys } from "@/hooks/useEformsignDocumentJobs";
 import { eformsignApi } from "@/services/api";
 
 import { useDocumentJobs } from "../DocumentJobsProvider";
@@ -270,5 +273,65 @@ describe("DocumentJobsProvider", () => {
     // An active job is read-only: its row is shown, but it links nowhere.
     expect(await screen.findByText("김하늘 · 검토완료")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /검토완료/ })).not.toBeInTheDocument();
+  });
+
+  describe("failure popup action routing", () => {
+    async function openPopupFor(job: ReturnType<typeof makeJob>, listed = true) {
+      const getSummary = jest
+        .spyOn(eformsignApi, "getDocumentJobSummary")
+        .mockResolvedValue(makeSummary());
+      jest
+        .spyOn(eformsignApi, "getDocumentJobs")
+        .mockResolvedValue(makeJobList({ requiresAttention: listed ? [job] : [] }));
+      const queryClient: QueryClient = createTestQueryClient();
+      render(<JobsTestWrapper queryClient={queryClient}>{null}</JobsTestWrapper>);
+      const summaryKey = eformsignDocumentJobsQueryKeys.summary("branch-a");
+      await waitFor(() => expect(queryClient.getQueryState(summaryKey)?.status).toBe("success"));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: [job.jobId] }));
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: summaryKey });
+      });
+      await screen.findByRole("alert");
+    }
+
+    it("sends a recoverable job's popup action to the recovery view", async () => {
+      await openPopupFor(makeJob({ jobId: "j-rec", recoveryKind: "manual_send" }));
+      fireEvent.click(await screen.findByRole("button", { name: "직접 작성하기" }));
+
+      expect(mockPush).toHaveBeenCalledWith("/contracts?recoverJobId=j-rec");
+    });
+
+    it("sends a non-recoverable job with a document id to that document", async () => {
+      await openPopupFor(
+        makeJob({
+          jobId: "j-auto",
+          source: "auto_finalize",
+          status: "requires_attention",
+          recoveryKind: null,
+          documentId: "doc auto/1",
+        }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "확인하기" }));
+
+      expect(mockPush).toHaveBeenCalledWith("/contracts?documentId=doc%20auto%2F1");
+      expect(mockPush).not.toHaveBeenCalledWith(expect.stringContaining("recoverJobId"));
+    });
+
+    it("opens the jobs list for a non-recoverable job without a document, or one not in the loaded list", async () => {
+      await openPopupFor(makeJob({ jobId: "j-dead", recoveryKind: null, documentId: null }));
+      fireEvent.click(await screen.findByRole("button", { name: "확인하기" }));
+      expect(mockPush).toHaveBeenCalledWith("/contracts");
+      expect(mockPush).not.toHaveBeenCalledWith(expect.stringContaining("recoverJobId"));
+    });
+
+    it("opens the jobs list when the job is not in the loaded list", async () => {
+      await openPopupFor(makeJob({ jobId: "j-missing", recoveryKind: "manual_send" }), false);
+      fireEvent.click(await screen.findByRole("button", { name: "확인하기" }));
+      expect(mockPush).toHaveBeenCalledWith("/contracts");
+      expect(mockPush).not.toHaveBeenCalledWith(expect.stringContaining("recoverJobId"));
+    });
   });
 });

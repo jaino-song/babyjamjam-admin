@@ -51,6 +51,19 @@ export function describeFailurePopup(
   return FALLBACK_COPY;
 }
 
+/**
+ * True only for staff contract jobs the backend recovery contract accepts: a
+ * `manual_send` or `verify_result` recovery kind. Auto-finalize jobs and any job
+ * with no recovery kind have no recovery flow, so a recovery link would dead-end.
+ */
+export function isRecoverableJob(job: {
+  source?: "staff" | "auto_finalize" | null;
+  recoveryKind?: "manual_send" | "verify_result" | null;
+}): boolean {
+  if (job.source === "auto_finalize") return false;
+  return job.recoveryKind === "manual_send" || job.recoveryKind === "verify_result";
+}
+
 export function recoverJobHref(jobId: string): string {
   return `/contracts?recoverJobId=${encodeURIComponent(jobId)}`;
 }
