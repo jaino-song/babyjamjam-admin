@@ -151,16 +151,24 @@ export function useRealtimeInvalidation(identity: string | null): void {
       }, delayMs);
     };
 
-    // Coalesced: a burst of events yields one trailing pass over the union of
-    // their roots, measured from the last event.
+    // Coalesced with a fixed window: the first event of a burst arms one
+    // trailing pass FOLLOW_UP_INVALIDATE_MS later; further events inside the
+    // window only add their roots (de-duplicated by root key) and never move the
+    // timer, so a steady stream cannot postpone the pass indefinitely. Once it
+    // fires, the next event starts a new window.
     const scheduleFollowUp = (roots: readonly QueryKey[]) => {
-      pendingFollowUpRoots = [...pendingFollowUpRoots, ...roots];
-      clearFollowUpTimer();
+      for (const root of roots) {
+        const id = JSON.stringify(root);
+        if (!pendingFollowUpRoots.some((pending) => JSON.stringify(pending) === id)) {
+          pendingFollowUpRoots.push(root);
+        }
+      }
+      if (followUpTimer !== null) return;
       followUpTimer = window.setTimeout(() => {
         followUpTimer = null;
-        const roots = pendingFollowUpRoots;
+        const trailingRoots = pendingFollowUpRoots;
         pendingFollowUpRoots = [];
-        invalidateRoots(roots);
+        invalidateRoots(trailingRoots);
       }, FOLLOW_UP_INVALIDATE_MS);
     };
 
@@ -262,6 +270,7 @@ export function useRealtimeInvalidation(identity: string | null): void {
       clearReconnectTimer();
       clearHeartbeatTimer();
       clearFollowUpTimer();
+      pendingFollowUpRoots = [];
       clearBootstrapTimer();
       bootstrapController?.abort();
       closeSource();
