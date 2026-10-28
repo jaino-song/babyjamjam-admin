@@ -61,16 +61,11 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
     const previousMode = process.env["TENANT_ISOLATION_MODE"];
 
     type Fixture = Awaited<ReturnType<typeof makeCase>>;
-    let own: Fixture; // client A in branch A, with the case under test
+    // Read-only fixtures shared by every test (never written after beforeAll).
+    // Each test builds its own case, so the tests do not depend on order.
     let otherClientA: { id: number }; // second client in branch A, no case
     let clientB: Fixture; // client in branch B, with its own case
 
-    // Shared across the ordered tests below.
-    let sessionOneDayId: string;
-    let sessionTwoDayId: string;
-    let serviceEditId: string;
-    let seeded: { old: string; mid: string; recent: string };
-    let revisionsBeforeEdits: unknown;
 
     beforeAll(async () => {
         assertThrowawayTarget();
@@ -98,7 +93,6 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
         );
         repository = new ServiceRecordEditRepository(raw as unknown as PrismaService);
 
-        own = await makeCase(branchA);
         otherClientA = await raw.client.create({
             data: { name: `고객${randomUUID().slice(0, 8)}`, voucherClient: false, branchId: branchA, serviceStatus: "active" },
             select: { id: true },
@@ -189,113 +183,155 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
     const dayRow = (caseId: string, sessionIndex: number) =>
         raw.service_record_day.findUniqueOrThrow({ where: { serviceRecordCaseId_caseSessionIndex: { serviceRecordCaseId: caseId, caseSessionIndex: sessionIndex } } });
 
+
+    /** A fresh case + client in branch A with sessions 1 and 2 submitted and locked through the service. No edits. */
+    async function submittedCase() {
+        const fixture = await makeCase(branchA);
+        await save(fixture, 1, START);
+        await save(fixture, 2, "2026-09-08");
+        const one = await dayRow(fixture.record.id, 1);
+        const two = await dayRow(fixture.record.id, 2);
+        return { fixture, sessionOneDayId: one.id, sessionTwoDayId: two.id };
+    }
+
+    /** Three edit-log rows with explicit, distinct editedAt, inserted directly. */
+    async function seedEdits(base: Awaited<ReturnType<typeof submittedCase>>) {
+        const { fixture, sessionOneDayId, sessionTwoDayId } = base;
+        const make = (editedAt: string, caseSessionIndex: number, serviceRecordDayId: string, employeeNameSnapshot: string, before: object, after: object) =>
+            raw.service_record_day_edit_log.create({
+                data: {
+                    branchId: branchA,
+                    serviceRecordCaseId: fixture.record.id,
+                    caseSessionIndex,
+                    serviceRecordDayId,
+                    employeeId: fixture.employee.id,
+                    employeeNameSnapshot,
+                    before,
+                    after,
+                    editedAt: new Date(editedAt),
+                },
+            });
+        const plain = { serviceDate: START, etcService: null, notes: "전", paymentConfirmed: false };
+        const old = await make("2020-01-01T00:00:00.000Z", 1, sessionOneDayId, "오래된", { ...plain, answers: {} }, { ...plain, answers: {}, notes: "후" });
+        const mid = await make("2020-01-02T00:00:00.000Z", 2, sessionTwoDayId, "중간", { ...plain, answers: {} }, { ...plain, answers: {}, paymentConfirmed: true });
+        const recent = await make(
+            "2020-01-03T00:00:00.000Z",
+            1,
+            sessionOneDayId,
+            "최근",
+            { ...plain, answers: { meal: "A" } },
+            { ...plain, answers: { meal: "B", rest: "C" }, etcService: "기타", notes: "후", paymentConfirmed: true },
+        );
+        return { old: old.id, mid: mid.id, recent: recent.id };
+    }
+
     it("lists no caregiver edits for a case that has none", async () => {
-        const history = await repository.listRevisionHistory(branchA, own.client.id);
+        const { fixture } = await submittedCase();
+        const history = await repository.listRevisionHistory(branchA, fixture.client.id);
         expect(history).not.toBeNull();
-        expect(history?.caseId).toBe(own.record.id);
+        expect(history?.caseId).toBe(fixture.record.id);
         expect(history?.caregiverEdits).toEqual([]);
-        revisionsBeforeEdits = history?.revisions;
         // A client of the same branch without a case has no history at all.
         expect(await repository.listRevisionHistory(branchA, otherClientA.id)).toBeNull();
     });
 
     describe("entry write path (ServiceRecordEntryService on real Prisma)", () => {
-        it("submits and locks sessions 1 and 2 through the service without writing an edit-log row", async () => {
-            await save(own, 1, START);
-            await save(own, 2, "2026-09-08");
-            const one = await dayRow(own.record.id, 1);
-            const two = await dayRow(own.record.id, 2);
-            expect(one.locked).toBe(true);
-            expect(one.clientSignature).toBe(SIGNATURE);
-            expect(one.submittedAt).not.toBeNull();
-            expect(one.notes).toBe("초기 메모");
-            sessionOneDayId = one.id;
-            sessionTwoDayId = two.id;
-            expect(await editLogRows(own.record.id)).toHaveLength(0);
-        });
+        it("logs exactly one row per real change of a locked day and never touches the submit facts", async () => {
+            const { fixture, sessionOneDayId } = await submittedCase();
+            const caseId = fixture.record.id;
 
-        it("writes no row for an unchanged re-submit of a locked day", async () => {
-            const before = await dayRow(own.record.id, 1);
-            await save(own, 1, START);
-            expect(await editLogRows(own.record.id)).toHaveLength(0);
-            expect(await dayRow(own.record.id, 1)).toEqual(before);
-        });
+            // Submitting sessions 1 and 2 wrote no edit-log row.
+            const submitted = await dayRow(caseId, 1);
+            expect(submitted.locked).toBe(true);
+            expect(submitted.clientSignature).toBe(SIGNATURE);
+            expect(submitted.submittedAt).not.toBeNull();
+            expect(submitted.notes).toBe("초기 메모");
+            expect(await editLogRows(caseId)).toHaveLength(0);
 
-        it("writes exactly one row for a changed re-submit and leaves the submit facts untouched", async () => {
-            const before = await dayRow(own.record.id, 1);
-            // The caregiver's resend carries a (different) signature too; it must be ignored.
-            await save(own, 1, START, { notes: "수정된 메모", clientSignature: "data:image/png;base64,b3RoZXI=" });
+            // Unchanged re-submit: no row, day untouched.
+            await save(fixture, 1, START);
+            expect(await editLogRows(caseId)).toHaveLength(0);
+            expect(await dayRow(caseId, 1)).toEqual(submitted);
 
-            const rows = await editLogRows(own.record.id);
+            // Changed re-submit (with a different signature, which must be ignored): exactly one row.
+            await save(fixture, 1, START, { notes: "수정된 메모", clientSignature: "data:image/png;base64,b3RoZXI=" });
+            const rows = await editLogRows(caseId);
             expect(rows).toHaveLength(1);
             const row = rows[0]!;
-            serviceEditId = row.id;
             expect(row).toMatchObject({
                 branchId: branchA,
-                serviceRecordCaseId: own.record.id,
+                serviceRecordCaseId: caseId,
                 caseSessionIndex: 1,
                 serviceRecordDayId: sessionOneDayId,
-                employeeId: own.employee.id,
-                employeeNameSnapshot: own.employee.name,
+                employeeId: fixture.employee.id,
+                employeeNameSnapshot: fixture.employee.name,
             });
             expect(row.before).toEqual({ serviceDate: START, answers: {}, etcService: null, notes: "초기 메모", paymentConfirmed: true });
             expect(row.after).toEqual({ serviceDate: START, answers: {}, etcService: null, notes: "수정된 메모", paymentConfirmed: true });
 
-            const after = await dayRow(own.record.id, 1);
-            expect(after.notes).toBe("수정된 메모");
-            expect(after.clientSignature).toBe(before.clientSignature);
-            expect(after.clientSignedAt).toEqual(before.clientSignedAt);
-            expect(after.submittedAt).toEqual(before.submittedAt);
-            expect(after.serviceDate).toEqual(before.serviceDate);
-            expect(after.locked).toBe(true);
-            expect(after.employeeId).toBe(before.employeeId);
+            const edited = await dayRow(caseId, 1);
+            expect(edited.notes).toBe("수정된 메모");
+            expect(edited.clientSignature).toBe(submitted.clientSignature);
+            expect(edited.clientSignedAt).toEqual(submitted.clientSignedAt);
+            expect(edited.submittedAt).toEqual(submitted.submittedAt);
+            expect(edited.serviceDate).toEqual(submitted.serviceDate);
+            expect(edited.locked).toBe(true);
+            expect(edited.employeeId).toBe(submitted.employeeId);
             // Session 2 and the other branch's case are untouched.
+            expect(await dayRow(caseId, 2)).toMatchObject({ notes: "초기 메모", locked: true });
             expect(await editLogRows(clientB.record.id)).toHaveLength(0);
-        });
 
-        it("writes nothing when the same edit is re-sent unchanged", async () => {
-            await save(own, 1, START, { notes: "수정된 메모" });
-            expect(await editLogRows(own.record.id)).toHaveLength(1);
+            // Re-sending the same edit is unchanged again: still one row.
+            await save(fixture, 1, START, { notes: "수정된 메모" });
+            expect(await editLogRows(caseId)).toHaveLength(1);
+
+            // The admin read path sees the service-written row, scoped to its branch and client.
+            const history = await repository.listRevisionHistory(branchA, fixture.client.id);
+            expect(history?.caregiverEdits).toEqual([
+                { id: row.id, editedAt: row.editedAt.toISOString(), sessionIndex: 1, employeeName: fixture.employee.name },
+            ]);
+            const written = await repository.findCaregiverEditForChanges(branchA, fixture.client.id, row.id);
+            const writtenChanges = buildServiceRecordCaregiverEditChanges(written!);
+            expect(writtenChanges.employeeName).toBe(fixture.employee.name);
+            expect(writtenChanges.session.changes).toEqual([{ path: "session.notes", before: "초기 메모", after: "수정된 메모" }]);
+            expect(await repository.findCaregiverEditForChanges(branchB, fixture.client.id, row.id)).toBeNull();
         });
     });
 
     describe("admin read path (repository + changes policy)", () => {
-        it("seeds additional edit-log rows with explicit, distinct editedAt", async () => {
-            const make = (editedAt: string, caseSessionIndex: number, serviceRecordDayId: string, employeeNameSnapshot: string, before: object, after: object) =>
-                raw.service_record_day_edit_log.create({
-                    data: {
-                        branchId: branchA,
-                        serviceRecordCaseId: own.record.id,
-                        caseSessionIndex,
-                        serviceRecordDayId,
-                        employeeId: own.employee.id,
-                        employeeNameSnapshot,
-                        before,
-                        after,
-                        editedAt: new Date(editedAt),
-                    },
-                });
-            const base = { serviceDate: START, etcService: null, notes: "전", paymentConfirmed: false };
-            const old = await make("2020-01-01T00:00:00.000Z", 1, sessionOneDayId, "오래된", { ...base, answers: {} }, { ...base, answers: {}, notes: "후" });
-            const mid = await make("2020-01-02T00:00:00.000Z", 2, sessionTwoDayId, "중간", { ...base, answers: {} }, { ...base, answers: {}, paymentConfirmed: true });
-            const recent = await make(
-                "2020-01-03T00:00:00.000Z",
-                1,
-                sessionOneDayId,
-                "최근",
-                { ...base, answers: { meal: "A" } },
-                { ...base, answers: { meal: "B", rest: "C" }, etcService: "기타", notes: "후", paymentConfirmed: true },
-            );
-            seeded = { old: old.id, mid: mid.id, recent: recent.id };
-            expect(await editLogRows(own.record.id)).toHaveLength(4);
-        });
+        it("lists caregiver edits newest first with identity only, and preserves a real revision", async () => {
+            const base = await submittedCase();
+            const { fixture } = base;
+            // A real revision, appended after the days were submitted (it makes the case's planned dates authoritative).
+            const revision = await repository.appendRevision({
+                branchId: branchA,
+                serviceRecordCaseId: fixture.record.id,
+                actorUserId: randomUUID(),
+                payload: { header: { momName: "개정" } },
+                plannedSessions: [],
+                provenance: {},
+                formVersionAtConfirm: 1,
+            });
+            expect(revision.revisionNumber).toBe(1);
 
-        it("lists caregiver edits newest first with identity only, and leaves revisions unchanged", async () => {
-            const history = await repository.listRevisionHistory(branchA, own.client.id);
-            expect(history?.caregiverEdits.map((edit) => edit.id)).toEqual([serviceEditId, seeded.recent, seeded.mid, seeded.old]);
-            const serviceEdit = await raw.service_record_day_edit_log.findUniqueOrThrow({ where: { id: serviceEditId } });
+            const baseline = await repository.listRevisionHistory(branchA, fixture.client.id);
+            expect(baseline?.caregiverEdits).toEqual([]);
+            // Independent oracle for the revision summary (not derived from the response under test).
+            const stored = await raw.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } });
+            const storedRevision = await raw.service_record_revision.findUniqueOrThrow({ where: { id: revision.id } });
+            expect(baseline?.revisions).toEqual([
+                {
+                    id: revision.id,
+                    revisionNumber: 1,
+                    confirmedAt: storedRevision.confirmedAt.toISOString(),
+                    isCurrent: stored.currentRevisionId === revision.id,
+                    documents: [],
+                },
+            ]);
+
+            const seeded = await seedEdits(base);
+            const history = await repository.listRevisionHistory(branchA, fixture.client.id);
             expect(history?.caregiverEdits).toEqual([
-                { id: serviceEditId, editedAt: serviceEdit.editedAt.toISOString(), sessionIndex: 1, employeeName: own.employee.name },
                 { id: seeded.recent, editedAt: "2020-01-03T00:00:00.000Z", sessionIndex: 1, employeeName: "최근" },
                 { id: seeded.mid, editedAt: "2020-01-02T00:00:00.000Z", sessionIndex: 2, employeeName: "중간" },
                 { id: seeded.old, editedAt: "2020-01-01T00:00:00.000Z", sessionIndex: 1, employeeName: "오래된" },
@@ -303,20 +339,26 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
             for (const edit of history?.caregiverEdits ?? []) {
                 expect(Object.keys(edit).sort()).toEqual(["editedAt", "employeeName", "id", "sessionIndex"]);
             }
-            expect(JSON.stringify(history?.caregiverEdits)).not.toMatch(/before|after|수정된 메모/);
-            expect(history?.revisions).toEqual(revisionsBeforeEdits);
+            expect(JSON.stringify(history?.caregiverEdits)).not.toMatch(/before|after/);
+            // The revision list is preserved, byte for byte, once edits exist.
+            expect(history?.revisions).toEqual(baseline?.revisions);
+            expect(history?.revisions).toHaveLength(1);
         });
 
         it("does not leak one case's edits into another branch's history", async () => {
+            const base = await submittedCase();
+            await seedEdits(base);
             const history = await repository.listRevisionHistory(branchB, clientB.client.id);
             expect(history?.caseId).toBe(clientB.record.id);
             expect(history?.caregiverEdits).toEqual([]);
             // Client A's id under branch B's scope resolves to no case at all.
-            expect(await repository.listRevisionHistory(branchB, own.client.id)).toBeNull();
+            expect(await repository.listRevisionHistory(branchB, base.fixture.client.id)).toBeNull();
         });
 
         it("finds an edit for its own branch and client", async () => {
-            const found = await repository.findCaregiverEditForChanges(branchA, own.client.id, seeded.recent);
+            const base = await submittedCase();
+            const seeded = await seedEdits(base);
+            const found = await repository.findCaregiverEditForChanges(branchA, base.fixture.client.id, seeded.recent);
             expect(found).toMatchObject({
                 id: seeded.recent,
                 editedAt: new Date("2020-01-03T00:00:00.000Z"),
@@ -327,23 +369,27 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
         });
 
         it("returns null for another branch, another client, an unknown id and a malformed id", async () => {
+            const base = await submittedCase();
+            const seeded = await seedEdits(base);
             const find = (branchId: string, clientId: number, id: string) => repository.findCaregiverEditForChanges(branchId, clientId, id);
             // Another branch (client A's id under branch B's scope).
-            expect(await find(branchB, own.client.id, seeded.recent)).toBeNull();
+            expect(await find(branchB, base.fixture.client.id, seeded.recent)).toBeNull();
             // Another client of the same branch.
             expect(await find(branchA, otherClientA.id, seeded.recent)).toBeNull();
             // Another branch's client under the owning branch, and under its own branch.
             expect(await find(branchA, clientB.client.id, seeded.recent)).toBeNull();
             expect(await find(branchB, clientB.client.id, seeded.recent)).toBeNull();
             // Unknown and malformed ids.
-            expect(await find(branchA, own.client.id, randomUUID())).toBeNull();
+            expect(await find(branchA, base.fixture.client.id, randomUUID())).toBeNull();
             for (const malformed of ["not-a-uuid", "", `${seeded.recent}x`, "' OR 1=1 --"]) {
-                expect(await find(branchA, own.client.id, malformed)).toBeNull();
+                expect(await find(branchA, base.fixture.client.id, malformed)).toBeNull();
             }
         });
 
         it("builds the expected diff paths from a fetched row", async () => {
-            const recent = await repository.findCaregiverEditForChanges(branchA, own.client.id, seeded.recent);
+            const base = await submittedCase();
+            const seeded = await seedEdits(base);
+            const recent = await repository.findCaregiverEditForChanges(branchA, base.fixture.client.id, seeded.recent);
             expect(recent).not.toBeNull();
             const changes = buildServiceRecordCaregiverEditChanges(recent!);
             expect(changes).toMatchObject({ editId: seeded.recent, editedAt: "2020-01-03T00:00:00.000Z", employeeName: "최근" });
@@ -355,12 +401,6 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
                 { path: "session.notes", before: "전", after: "후" },
                 { path: "session.paymentConfirmed", before: false, after: true },
             ]);
-
-            // The edit the service wrote itself diffs on notes only.
-            const written = await repository.findCaregiverEditForChanges(branchA, own.client.id, serviceEditId);
-            const writtenChanges = buildServiceRecordCaregiverEditChanges(written!);
-            expect(writtenChanges.employeeName).toBe(own.employee.name);
-            expect(writtenChanges.session.changes).toEqual([{ path: "session.notes", before: "초기 메모", after: "수정된 메모" }]);
         });
     });
 });
