@@ -609,6 +609,89 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         ]);
     });
 
+    describe("current-provider re-check after the write-set lock", () => {
+        const currentSchedule = {
+            id: 10,
+            clientId: 100,
+            branchId: BRANCH_ID,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+        };
+
+        /** The pre-lock read sees the current schedule; the post-lock reread sees `afterLock`. */
+        function harnessWithPostLockSchedule(afterLock: Record<string, unknown>, existing?: ReturnType<typeof createDay>) {
+            const harness = createHarness({ schedule: currentSchedule, existing });
+            harness.transactionClient.employee_schedule.findUnique
+                .mockResolvedValueOnce(currentSchedule)
+                .mockResolvedValueOnce({ ...currentSchedule, ...afterLock });
+            return harness;
+        }
+
+        function expectNoWrites(h: ReturnType<typeof createHarness>) {
+            expect(h.upsert).not.toHaveBeenCalled();
+            expect(h.updateMany).not.toHaveBeenCalled();
+            expect(h.editLogCreate).not.toHaveBeenCalled();
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+            expect(h.scheduleUpdate).not.toHaveBeenCalled();
+            expect(h.clientUpdate).not.toHaveBeenCalled();
+        }
+
+        it.each([
+            ["replaced schedule", { replaced: true }],
+            ["different primary employee", { primaryEmployeeId: 21 }],
+        ])("refuses a first submit when the post-lock reread shows a %s", async (_name, afterLock) => {
+            const h = harnessWithPostLockSchedule(afterLock);
+
+            await expect(h.service.upsertSession(context, 1, createDto(), true)).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            expectNoWrites(h);
+        });
+
+        it.each([
+            ["replaced schedule", { replaced: true }],
+            ["different primary employee", { primaryEmployeeId: 21 }],
+        ])("refuses a locked-session edit when the post-lock reread shows a %s", async (_name, afterLock) => {
+            const h = harnessWithPostLockSchedule(afterLock, createDay());
+
+            await expect(h.service.upsertSession(context, 1, createDto({ notes: "수정됨" }), true)).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            expectNoWrites(h);
+        });
+
+        it("refuses a draft save when the post-lock reread shows a replaced schedule", async () => {
+            const h = harnessWithPostLockSchedule({ replaced: true });
+
+            await expect(h.service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            expectNoWrites(h);
+        });
+
+        it("still accepts a first submit when the schedule and provider are unchanged", async () => {
+            const h = harnessWithPostLockSchedule({});
+
+            await expect(h.service.upsertSession(context, 1, createDto(), true)).resolves.toEqual(
+                expect.objectContaining({ sessionIndex: 1, locked: true }),
+            );
+            expect(h.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("still accepts a locked-session edit when the schedule and provider are unchanged", async () => {
+            const h = harnessWithPostLockSchedule({}, createDay());
+
+            await h.service.upsertSession(context, 1, createDto({ notes: "수정됨" }), true);
+
+            expect(h.upsert).toHaveBeenCalledTimes(1);
+            expect(h.editLogCreate).toHaveBeenCalledTimes(1);
+        });
+    });
+
     it("returns the four stored provider sessions for a transferred case with a 15-day voucher", async () => {
         const record = createRecord({
             requiredSessionCount: 4, days: [],

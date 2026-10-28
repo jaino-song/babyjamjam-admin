@@ -298,6 +298,53 @@ describeReal("service-record caregiver edits (real PostgreSQL, tenant enforce)",
         });
     });
 
+    describe("current-provider re-check (replacement wins before the caregiver's write)", () => {
+        it("refuses a locked edit and a first submit once the caregiver's schedule is replaced, with no log row and no day change", async () => {
+            const { fixture } = await submittedCase();
+            const caseId = fixture.record.id;
+            const before = await dayRow(caseId, 1);
+            expect(await editLogRows(caseId)).toHaveLength(0);
+
+            // The replacement flow commits `replaced = true` under the write-set
+            // locks (and hands the day to a new primary) while this caregiver's
+            // request still holds a context resolved before it. The token row is
+            // deliberately left alone: it is revoked only after commit.
+            await raw.employee_schedule.update({ where: { id: fixture.schedule.id }, data: { replaced: true } });
+            const label = Math.floor(Math.random() * 90_000_000 + 10_000_000).toString();
+            const successor = await raw.employee.create({
+                data: {
+                    name: `후임${label}`, workArea: [], phone: `010-${label.slice(0, 4)}-${label.slice(4)}`,
+                    phoneNormalized: `010${label}`, grade: "A", branchId: branchA,
+                },
+            });
+            await raw.employee_schedule.create({
+                data: {
+                    primaryEmployeeId: successor.id,
+                    workAddress: "서울",
+                    startDate: d(START),
+                    endDate: d("2026-09-29"),
+                    clientId: fixture.client.id,
+                    branchId: branchA,
+                },
+            });
+
+            // A locked edit by the replaced caregiver is refused.
+            await expect(save(fixture, 1, START, { notes: "교체 후 수정" })).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            // So is a first submit of a new session.
+            await expect(save(fixture, 3, "2026-09-09")).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+
+            expect(await editLogRows(caseId)).toHaveLength(0);
+            expect(await dayRow(caseId, 1)).toEqual(before);
+            expect(await raw.service_record_day.findUnique({
+                where: { serviceRecordCaseId_caseSessionIndex: { serviceRecordCaseId: caseId, caseSessionIndex: 3 } },
+            })).toBeNull();
+        });
+    });
+
     describe("admin read path (repository + changes policy)", () => {
         it("lists caregiver edits newest first with identity only, and preserves a real revision", async () => {
             const base = await submittedCase();
