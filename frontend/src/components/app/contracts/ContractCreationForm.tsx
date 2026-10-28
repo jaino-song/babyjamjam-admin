@@ -231,6 +231,12 @@ export interface ContractCreationFormProps {
   onSessionStateChange?: (hasSession: boolean) => void;
   onProcessingFailureChange?: (failed: boolean) => void;
   onSubmissionStateChange?: (submitting: boolean) => void;
+  /**
+   * True only while the run awaits the first (non-forced) headless dispatch or the job
+   * enqueue — the only moments the host may unmount this form without losing the send's
+   * follow-up work. A host can offer an explicit close while it is true.
+   */
+  onDetachableChange?: (detachable: boolean) => void;
   activeStep?: number;
   onActiveStepChange?: (step: number) => void;
   contentClassName?: string;
@@ -620,6 +626,7 @@ export const ContractCreationForm = ({
   onSessionStateChange,
   onProcessingFailureChange,
   onSubmissionStateChange,
+  onDetachableChange,
   activeStep: controlledActiveStep,
   onActiveStepChange,
   contentClassName,
@@ -667,6 +674,10 @@ export const ContractCreationForm = ({
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
+  // The progress stream can report "sent" before the HTTP result is back. The success
+  // footer (and its 완료 exit, which can unmount the form) waits for the verified result.
+  const [isDispatchVerified, setIsDispatchVerified] = useState(false);
+  const [isDetachable, setIsDetachable] = useState(false);
   const confirmationResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const requestConfirmation = (message: string): Promise<boolean> => {
@@ -906,9 +917,15 @@ export const ContractCreationForm = ({
   const hasProcessingFailure = hasCreationSession && creationProgress.failed;
   const hasProcessingSuccess = hasCreationSession && creationProgress.completed;
 
+  const showSuccessFooter = hasProcessingSuccess && isDispatchVerified;
+
   useEffect(() => {
     onSessionStateChange?.(hasCreationSession);
   }, [hasCreationSession, onSessionStateChange]);
+
+  useEffect(() => {
+    onDetachableChange?.(isDetachable);
+  }, [isDetachable, onDetachableChange]);
 
   useEffect(() => {
     onProcessingFailureChange?.(hasProcessingFailure);
@@ -982,6 +999,8 @@ export const ContractCreationForm = ({
     setSubmitError(null);
     setAllowIframeFallback(false);
     setUnverifiedDispatchNotice(null);
+    setIsDispatchVerified(false);
+    setIsDetachable(false);
     setCreationProgress(INITIAL_CREATION_PROGRESS);
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
@@ -1578,11 +1597,16 @@ export const ContractCreationForm = ({
         };
 
         if (shouldEnqueueDocumentJob) {
-          await enqueueCreationMutation.mutateAsync({
-            requestKey: createHeadlessProgressId(),
-            clientId: finalClientId,
-            contractData,
-          });
+          setIsDetachable(true);
+          try {
+            await enqueueCreationMutation.mutateAsync({
+              requestKey: createHeadlessProgressId(),
+              clientId: finalClientId,
+              contractData,
+            });
+          } finally {
+            if (isMountedRef.current) setIsDetachable(false);
+          }
           toast({ description: "전자문서 작업을 시작했어요" });
           // Calling the parent from a form that was closed mid-run could close a
           // dialog the user has since opened for another client.
@@ -1604,6 +1628,7 @@ export const ContractCreationForm = ({
           // isSubmitting) lands before the manual run sets it again.
           const openIframeFallback = () => {
             setTimeout(() => {
+              if (!isMountedRef.current) return;
               void handleContractCreation({ mode: "manual" });
             }, 0);
           };
@@ -1645,11 +1670,17 @@ export const ContractCreationForm = ({
               },
             });
 
-            const headless = await eformsignApi.dispatchHeadless(
-              contractData,
-              finalClientId,
-              progressId,
-            );
+            let headless: Awaited<ReturnType<typeof eformsignApi.dispatchHeadless>>;
+            setIsDetachable(true);
+            try {
+              headless = await eformsignApi.dispatchHeadless(
+                contractData,
+                finalClientId,
+                progressId,
+              );
+            } finally {
+              if (isMountedRef.current) setIsDetachable(false);
+            }
 
             if (!isMountedRef.current) {
               // Closed mid-send: the server finished (or failed) on its own. Report it
@@ -1661,6 +1692,7 @@ export const ContractCreationForm = ({
             if (headless.ok) {
               setCreationProgress({ step: "sent", completed: true, failed: false });
               invalidateContractQueries(finalClientId);
+              setIsDispatchVerified(true);
               setIsCreationSuccessOpen(true);
               return;
             }
@@ -1718,6 +1750,7 @@ export const ContractCreationForm = ({
                 }
                 setCreationProgress({ step: "sent", completed: true, failed: false });
                 invalidateContractQueries(finalClientId);
+                setIsDispatchVerified(true);
                 setIsCreationSuccessOpen(true);
               } catch {
                 setSubmitError("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.");
@@ -1748,6 +1781,7 @@ export const ContractCreationForm = ({
                 if (forced.ok) {
                   setCreationProgress({ step: "sent", completed: true, failed: false });
                   invalidateContractQueries(finalClientId);
+                  setIsDispatchVerified(true);
                   setIsCreationSuccessOpen(true);
                 }
               }
@@ -1809,11 +1843,16 @@ export const ContractCreationForm = ({
           finalClientId
         );
 
+        // Closed while the editor option was being generated: opening it now would
+        // show an editor nobody can see and touch the parent.
+        if (!isMountedRef.current) return;
+
         keepSubmittingUntilDialogCloses = true;
         setIsDialogOpen(true);
         setCreationProgress({ step: "client-started", completed: false, failed: false });
 
         setTimeout(() => {
+          if (!isMountedRef.current) return;
           openDocument(documentOption, "eformsign_iframe", {
             onSuccess: async (response) => {
               setCreationProgress({ step: "creating", completed: false, failed: false });
@@ -1843,6 +1882,7 @@ export const ContractCreationForm = ({
               setCreationProgress({ step: "sent", completed: true, failed: false });
               invalidateContractQueries(finalClientId);
               handleDialogClose();
+              setIsDispatchVerified(true);
               setIsCreationSuccessOpen(true);
             },
             onError: (response) => {
@@ -1863,6 +1903,12 @@ export const ContractCreationForm = ({
           });
         }, 500);
       } catch (error) {
+        if (!isMountedRef.current) {
+          // Closed mid-run: there is no UI to put the error on and the parent must not
+          // be driven from here, so only report it.
+          notifyDetachedSendFailed();
+          return;
+        }
         // Locally authored copy keeps its message; otherwise the registered
         // problem message (verified) or the generic fallback is rendered —
         // upstream internals are never surfaced.
@@ -2759,7 +2805,7 @@ export const ContractCreationForm = ({
 
   const footer = (
     <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
-      {hasProcessingSuccess ? (
+      {showSuccessFooter ? (
         <Button
           type="button"
           variant="outline"
@@ -2823,7 +2869,7 @@ export const ContractCreationForm = ({
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
           </Button>
-        ) : hasProcessingSuccess ? (
+        ) : showSuccessFooter ? (
           <Button
             type="button"
             size="sm"

@@ -1,7 +1,8 @@
 /**
- * The dialog's X may leave while a send is running (the server finishes it
- * regardless), except for a re-issue and except before a session has started.
- * ESC and outside-click stay blocked whenever the dialog is busy.
+ * The dialog's X may leave only while the form reports it is detachable (awaiting
+ * the first dispatch / enqueue call; the server finishes the send regardless), and
+ * never for a re-issue. Everywhere else the X follows the busy rule. ESC and
+ * outside-click stay blocked whenever the dialog is busy.
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -13,6 +14,7 @@ interface StubFormProps {
   onSessionStateChange?: (hasSession: boolean) => void;
   onSubmissionStateChange?: (submitting: boolean) => void;
   onProcessingFailureChange?: (failed: boolean) => void;
+  onDetachableChange?: (detachable: boolean) => void;
   renderLayout?: (parts: { content: ReactNode; footer: ReactNode }) => ReactNode;
 }
 
@@ -55,11 +57,12 @@ describe("MaternityContractDialog — closing while busy", () => {
     formProps = {};
   });
 
-  it("closes from the X while a creation session is running", () => {
+  it("closes from the X while the form is detachable", () => {
     const { onClose } = renderDialog();
     act(() => {
       formProps.onSubmissionStateChange?.(true);
       formProps.onSessionStateChange?.(true);
+      formProps.onDetachableChange?.(true);
     });
 
     expect(closeButton()).toBeEnabled();
@@ -67,11 +70,28 @@ describe("MaternityContractDialog — closing while busy", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the X disabled during a re-issue session", () => {
+  it("keeps the X disabled during a session once the form is no longer detachable", () => {
+    const { onClose } = renderDialog();
+    act(() => {
+      formProps.onSubmissionStateChange?.(true);
+      formProps.onSessionStateChange?.(true);
+      formProps.onDetachableChange?.(true);
+    });
+    act(() => {
+      formProps.onDetachableChange?.(false);
+    });
+
+    expect(closeButton()).toBeDisabled();
+    fireEvent.click(closeButton());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the X disabled for a re-issue even while detachable", () => {
     const { onClose } = renderDialog("doc-old-1");
     act(() => {
       formProps.onSubmissionStateChange?.(true);
       formProps.onSessionStateChange?.(true);
+      formProps.onDetachableChange?.(true);
     });
 
     expect(closeButton()).toBeDisabled();
@@ -79,7 +99,7 @@ describe("MaternityContractDialog — closing while busy", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("keeps the X disabled while submitting before a session has started", () => {
+  it("keeps the X disabled while submitting before the form is detachable", () => {
     const { onClose } = renderDialog();
     act(() => {
       formProps.onSubmissionStateChange?.(true);
@@ -90,10 +110,12 @@ describe("MaternityContractDialog — closing while busy", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("blocks ESC while a creation session is running", () => {
+  it("blocks ESC while detachable and busy", () => {
     const { onClose } = renderDialog();
     act(() => {
+      formProps.onSubmissionStateChange?.(true);
       formProps.onSessionStateChange?.(true);
+      formProps.onDetachableChange?.(true);
     });
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });

@@ -56,12 +56,14 @@ export function MaternityContractDialog({
   const [activeStep, setActiveStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasCreationSession, setHasCreationSession] = useState(false);
+  const [isDetachable, setIsDetachable] = useState(false);
   const [processingFailed, setProcessingFailed] = useState(false);
   const isBusy = isSubmitting || (hasCreationSession && !processingFailed);
-  // Once a send is running the server finishes it whether or not this dialog stays
-  // open, so the explicit X may leave. A re-issue is the exception: the replaced
-  // contract is cancelled by the mounted form after the send, so it keeps the block.
-  const isCloseBlocked = isBusy && !(hasCreationSession && !supersedeDocumentId);
+  // The explicit X may leave only while the form is awaiting the dispatch/enqueue call
+  // itself: the server finishes the send, and the unmounted form reports it by toast.
+  // Everywhere else the mounted form has work left to do. A re-issue is the exception
+  // even then: the replaced contract is cancelled by the mounted form after the send.
+  const isCloseBlocked = isBusy && !(isDetachable && !supersedeDocumentId);
 
   // The wizard's own required-field/session state is meaningless once the dialog
   // is closed; reset the step so the next open (potentially for a different
@@ -75,6 +77,7 @@ export function MaternityContractDialog({
         setIsSubmitting(false);
         setHasCreationSession(false);
         setProcessingFailed(false);
+        setIsDetachable(false);
       });
     }
   }, [open]);
@@ -160,6 +163,7 @@ export function MaternityContractDialog({
           onSubmissionStateChange={setIsSubmitting}
           onSessionStateChange={setHasCreationSession}
           onProcessingFailureChange={setProcessingFailed}
+          onDetachableChange={setIsDetachable}
           contentClassName="h-auto flex-1"
           renderLayout={({ content, footer }) => (
             <>
