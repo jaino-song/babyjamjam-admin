@@ -390,6 +390,149 @@ describe("EformsignDocumentJobWorkerService", () => {
         );
     });
 
+    describe("operation-lock refusals before execution starts", () => {
+        const lockUnavailable = {
+            ok: false,
+            reason: "operation_lock_unavailable",
+            fallbackHint: "manual_check",
+            durationMs: 1,
+            code: "DOCUMENT_LOCK_UNAVAILABLE",
+            outcome: "NOT_APPLIED",
+            recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        };
+
+        function finalizeJob(overrides: Partial<EformsignDocumentJobEntity> = {}) {
+            return job({
+                id: "00000000-0000-0000-0000-000000000003",
+                jobType: "finalize_document",
+                documentId: "doc-3",
+                activeKey: "finalize:doc-3",
+                payload: { documentId: "doc-3" },
+                ...overrides,
+            });
+        }
+
+        it("retries a create job on the pre-send schedule when the lock is unavailable", async () => {
+            const claimed = job();
+            const { worker, repository, reconciliation } = buildWorker({
+                repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+                dispatch: { execute: jest.fn().mockResolvedValue(lockUnavailable) },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.markReconciling).not.toHaveBeenCalled();
+            expect(reconciliation.reconcile).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).toHaveBeenCalledTimes(1);
+            const [id, token, nextAttemptAt, code] = repository.scheduleRetry.mock.calls[0];
+            expect([id, token, code]).toEqual([claimed.id, claimed.leaseToken, "operation_lock_unavailable"]);
+            expect((nextAttemptAt as Date).getTime() - Date.now()).toBeGreaterThan(50_000);
+            expect((nextAttemptAt as Date).getTime() - Date.now()).toBeLessThanOrEqual(60_000);
+        });
+
+        it("retries a finalize job on the pre-send schedule when the lock is unavailable", async () => {
+            const claimed = finalizeJob();
+            const { worker, repository, reconciliation } = buildWorker({
+                repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+                finalize: { execute: jest.fn().mockResolvedValue(lockUnavailable) },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.markReconciling).not.toHaveBeenCalled();
+            expect(reconciliation.reconcile).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).toHaveBeenCalledTimes(1);
+            const [id, token, nextAttemptAt, code] = repository.scheduleRetry.mock.calls[0];
+            expect([id, token, code]).toEqual([claimed.id, claimed.leaseToken, "operation_lock_unavailable"]);
+            expect((nextAttemptAt as Date).getTime() - Date.now()).toBeGreaterThan(50_000);
+            expect((nextAttemptAt as Date).getTime() - Date.now()).toBeLessThanOrEqual(60_000);
+        });
+
+        it("still reconciles a create job whose lock refusal arrives after creating was latched", async () => {
+            const claimed = job();
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("creating");
+                        return lockUnavailable;
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "creating");
+        });
+
+        it("still reconciles a finalize job whose lock refusal arrives after creating was latched", async () => {
+            const claimed = finalizeJob();
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                finalize: {
+                    execute: jest.fn().mockImplementation(async ({ onProgress }) => {
+                        await onProgress?.("creating");
+                        return lockUnavailable;
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "creating");
+        });
+
+        it.each(["operation_lock_lost", "operation_in_progress", "uncertain_intent"])(
+            "keeps reconciling a create manual_check result with reason %s",
+            async (reason) => {
+                const claimed = job();
+                const { worker, repository } = buildWorker({
+                    repository: {
+                        claimDue: jest.fn().mockResolvedValue([claimed]),
+                        markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                    },
+                    dispatch: {
+                        execute: jest.fn().mockResolvedValue({ ...lockUnavailable, reason }),
+                    },
+                });
+
+                await worker.processDueJobs();
+
+                expect(repository.scheduleRetry).not.toHaveBeenCalled();
+                expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "reconciling");
+            },
+        );
+
+        it.each(["operation_lock_lost", "operation_in_progress", "uncertain_intent"])(
+            "keeps reconciling a finalize manual_check result with reason %s",
+            async (reason) => {
+                const claimed = finalizeJob();
+                const { worker, repository } = buildWorker({
+                    repository: {
+                        claimDue: jest.fn().mockResolvedValue([claimed]),
+                        markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                    },
+                    finalize: {
+                        execute: jest.fn().mockResolvedValue({ ...lockUnavailable, reason }),
+                    },
+                });
+
+                await worker.processDueJobs();
+
+                expect(repository.scheduleRetry).not.toHaveBeenCalled();
+                expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "reconciling");
+            },
+        );
+    });
+
     it.each([
         "template_workflow_config_invalid",
         "template_workflow_unsupported",

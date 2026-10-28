@@ -75,6 +75,22 @@ function isTemplateWorkflowFailure(reason: unknown): reason is string {
     return typeof reason === "string" && TEMPLATE_WORKFLOW_FAILURE_REASONS.has(reason);
 }
 
+/**
+ * The operation-lock service refused before the use case's browser/provider
+ * body was entered (it is only raised while acquiring the lock), so no 전송
+ * click could have run. Matches the exact reason: `operation_lock_lost` can
+ * surface mid-flight and `operation_in_progress` belongs to another owner, so
+ * neither is a verified pre-send refusal.
+ */
+function isLockUnavailableRefusal(
+    result: DispatchHeadlessResult | FinalizeHeadlessResult,
+): boolean {
+    return "reason" in result
+        && result.reason === "operation_lock_unavailable"
+        && "outcome" in result
+        && result.outcome === "NOT_APPLIED";
+}
+
 interface CreateDocumentJobPayload {
     clientId: number;
     contractData: ContractDataDto;
@@ -732,6 +748,17 @@ export class EformsignDocumentJobWorkerService {
             await this.handlePreSendFailure(job, result.reason);
             return;
         }
+        if (
+            !sendEvidence.step
+            && latestProgressStep !== "creating"
+            && latestProgressStep !== "sent"
+            && isLockUnavailableRefusal(result)
+        ) {
+            // Refused before execution started: retry on the pre-send schedule
+            // instead of treating the lock hint as an unknown outcome.
+            await this.handlePreSendFailure(job, result.reason);
+            return;
+        }
         if (sendEvidence.step || this.isAmbiguous(result, latestProgressStep)) {
             await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
             return;
@@ -907,6 +934,15 @@ export class EformsignDocumentJobWorkerService {
             if (!result.ok) {
                 // A later step's failure must not erase an earlier step's send:
                 // `latestProgressStep` only remembers the most recent step.
+                if (
+                    !sendEvidence.step
+                    && latestProgressStep !== "creating"
+                    && latestProgressStep !== "sent"
+                    && isLockUnavailableRefusal(result)
+                ) {
+                    await this.handlePreSendFailure(job, result.reason);
+                    return;
+                }
                 if (sendEvidence.step || this.isAmbiguous(result, latestProgressStep)) {
                     await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
                     return;
