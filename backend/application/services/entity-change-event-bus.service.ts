@@ -44,6 +44,8 @@ export class EntityChangeEventBus {
         const key = input.branchId ?? "\u0000null";
         const existing = this.pending.get(key);
         if (existing) {
+            // Fixed window: later writes join the batch but never reset the timer, so a steady
+            // burst cannot postpone the event forever.
             existing.kinds.add(input.kind);
             return;
         }

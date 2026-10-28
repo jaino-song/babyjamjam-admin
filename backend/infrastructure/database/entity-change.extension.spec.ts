@@ -163,6 +163,60 @@ describe("entity-change extension (model operations)", () => {
         );
     });
 
+    it("a *AndReturn write with rows [B, null] notifies B and broadcasts for the null row", async () => {
+        const { events, write } = setup();
+
+        await tenantContextStore.run({ origin: "http", branchId: "store-branch" }, () =>
+            write("client", "updateManyAndReturn", [
+                { id: 1, branchId: "b1" },
+                { id: 2, branchId: null },
+            ]),
+        );
+        jest.advanceTimersByTime(300);
+
+        expect(events).toHaveLength(2);
+        expect(events).toEqual(
+            expect.arrayContaining([
+                { branchId: "b1", entities: ["client"] },
+                { branchId: null, entities: ["client"] },
+            ]),
+        );
+    });
+
+    it("a *AndReturn write with rows [B, B] yields one B event", async () => {
+        const { events, write } = setup();
+
+        await write("client", "createManyAndReturn", [
+            { id: 1, branchId: "b1" },
+            { id: 2, branchId: "b1" },
+        ]);
+        jest.advanceTimersByTime(300);
+
+        expect(events).toEqual([{ branchId: "b1", entities: ["client"] }]);
+    });
+
+    it("a single row with an explicit null branchId broadcasts instead of using the tenant store", async () => {
+        const { events, write } = setup();
+
+        await tenantContextStore.run({ origin: "http", branchId: "store-branch" }, () =>
+            write("message_log", "create", { id: 1, branchId: null }),
+        );
+        jest.advanceTimersByTime(300);
+
+        expect(events).toEqual([{ branchId: null, entities: ["message"] }]);
+    });
+
+    it("a row without a branchId field still falls back to the tenant store", async () => {
+        const { events, write } = setup();
+
+        await tenantContextStore.run({ origin: "http", branchId: "store-branch" }, () =>
+            write("message_log", "create", { id: 1 }),
+        );
+        jest.advanceTimersByTime(300);
+
+        expect(events).toEqual([{ branchId: "store-branch", entities: ["message"] }]);
+    });
+
     it("a burst of 5 writes inside the window yields one event with the distinct kinds", async () => {
         const { events, write } = setup();
 
@@ -292,6 +346,23 @@ describe("entity-change extension (raw SQL)", () => {
         jest.advanceTimersByTime(1000);
 
         expect(events).toEqual([]);
+    });
+
+    it("ignores write keywords inside string literals and comments", () => {
+        expect(watchedKindsInSql("SELECT 'UPDATE client' AS note")).toEqual(new Set());
+        expect(watchedKindsInSql("SELECT 1 /* UPDATE employee */")).toEqual(new Set());
+        expect(watchedKindsInSql("SELECT 1 -- DELETE FROM client\n")).toEqual(new Set());
+        expect(watchedKindsInSql("SELECT 'it''s UPDATE client'")).toEqual(new Set());
+        expect(watchedKindsInSql("SELECT $q$ UPDATE client $q$")).toEqual(new Set());
+        expect(watchedKindsInSql("SELECT $1, $$ INSERT INTO employee $$")).toEqual(new Set());
+        expect(watchedKindsInSql("SELECT /* a /* nested UPDATE client */ still comment */ 1")).toEqual(new Set());
+    });
+
+    it("still matches real writes next to comments, quoted identifiers and string literals", () => {
+        expect(watchedKindsInSql(`UPDATE "client" SET name = 'x -- y'`)).toEqual(new Set(["client"]));
+        expect(watchedKindsInSql("/* note */ UPDATE message_trigger_job SET a = 1")).toEqual(new Set(["message"]));
+        expect(watchedKindsInSql("-- header\nDELETE FROM employee WHERE note = 'a''b'")).toEqual(new Set(["employee"]));
+        expect(watchedKindsInSql("UPDATE client SET a = $1 /* UPDATE branch */")).toEqual(new Set(["client"]));
     });
 
     it("does not shadow service_record_day / service_record_case with the service_record prefix", () => {

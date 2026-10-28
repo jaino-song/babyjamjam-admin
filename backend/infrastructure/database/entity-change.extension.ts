@@ -53,8 +53,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function rowBranchId(row: unknown): string | undefined {
-    return isRecord(row) && typeof row["branchId"] === "string" ? row["branchId"] : undefined;
+/**
+ * `string` = the row's branch, `null` = the row explicitly has no branch (broadcast),
+ * `undefined` = the result does not carry a `branchId` at all (e.g. a `select` dropped it).
+ */
+function rowBranchId(row: unknown): string | null | undefined {
+    if (!isRecord(row) || !("branchId" in row)) return undefined;
+    const branchId = row["branchId"];
+    if (typeof branchId === "string") return branchId;
+    return branchId === null ? null : undefined;
 }
 
 /** Did the write touch anything? A no-op background `updateMany` must not wake every screen. */
@@ -73,7 +80,7 @@ function changedSomething(operation: string, result: unknown): boolean {
  * (broadcast). Never re-reads the DB to find a branch.
  */
 function resolveBranchIds(operation: string, result: unknown): Array<string | null> {
-    const fromRows = new Set<string>();
+    const fromRows = new Set<string | null>();
     if (ARRAY_WRITE_OPERATIONS.has(operation) && Array.isArray(result)) {
         for (const row of result) {
             const branchId = rowBranchId(row);
@@ -83,6 +90,7 @@ function resolveBranchIds(operation: string, result: unknown): Array<string | nu
         const branchId = rowBranchId(result);
         if (branchId !== undefined) fromRows.add(branchId);
     }
+    // An explicit `null` row branch stays in the set: that row must broadcast, not fall back.
     if (fromRows.size > 0) return [...fromRows];
     return [tenantContextStore.get()?.branchId ?? null];
 }
@@ -140,9 +148,81 @@ function rawSqlText(args: unknown): string {
     return "";
 }
 
+const DOLLAR_QUOTE_OPEN = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/;
+
+/**
+ * Blanks `-- line` and `/* block *\/` comments (nested, as Postgres allows), single-quoted string
+ * literals (with the `''` escape) and dollar-quoted strings, so text such as
+ * `SELECT 'UPDATE client'` never looks like a write. Double-quoted identifiers are copied through
+ * untouched: `UPDATE "message_trigger_job"` must still match.
+ */
+export function stripSqlNonCode(sql: string): string {
+    let out = "";
+    let i = 0;
+    while (i < sql.length) {
+        const ch = sql[i] as string;
+        const next = sql[i + 1];
+        if (ch === "-" && next === "-") {
+            const end = sql.indexOf("\n", i);
+            i = end === -1 ? sql.length : end;
+            out += " ";
+        } else if (ch === "/" && next === "*") {
+            let depth = 1;
+            i += 2;
+            while (i < sql.length && depth > 0) {
+                if (sql[i] === "/" && sql[i + 1] === "*") {
+                    depth += 1;
+                    i += 2;
+                } else if (sql[i] === "*" && sql[i + 1] === "/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            out += " ";
+        } else if (ch === "'") {
+            i += 1;
+            while (i < sql.length) {
+                if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
+                else if (sql[i] === "'") {
+                    i += 1;
+                    break;
+                } else i += 1;
+            }
+            out += " ";
+        } else if (ch === '"') {
+            const start = i;
+            i += 1;
+            while (i < sql.length) {
+                if (sql[i] === '"' && sql[i + 1] === '"') i += 2;
+                else if (sql[i] === '"') {
+                    i += 1;
+                    break;
+                } else i += 1;
+            }
+            out += sql.slice(start, i);
+        } else if (ch === "$") {
+            const open = DOLLAR_QUOTE_OPEN.exec(sql.slice(i, i + 130));
+            if (open) {
+                const close = sql.indexOf(open[0], i + open[0].length);
+                i = close === -1 ? sql.length : close + open[0].length;
+                out += " ";
+            } else {
+                out += ch;
+                i += 1;
+            }
+        } else {
+            out += ch;
+            i += 1;
+        }
+    }
+    return out;
+}
+
 export function watchedKindsInSql(sql: string): Set<EntityChangeKind> {
     const kinds = new Set<EntityChangeKind>();
-    for (const match of sql.matchAll(RAW_WRITE_PATTERN)) {
+    for (const match of stripSqlNonCode(sql).matchAll(RAW_WRITE_PATTERN)) {
         const kind = ENTITY_KIND_BY_MODEL[(match[1] ?? "").toLowerCase()];
         if (kind) kinds.add(kind);
     }
