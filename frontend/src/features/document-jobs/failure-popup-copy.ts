@@ -35,14 +35,14 @@ export function describeFailurePopup(
     if (job.jobType === "create_document") {
       return {
         title: "계약서 자동 전송 실패",
-        description: `${who} · 계약서를 자동으로 보내지 못했어요. 입력한 내용 그대로 직접 작성할 수 있어요.`,
-        actionLabel: "직접 작성하기",
+        description: `${who} · 계약서를 자동으로 보내지 못했어요. 저장된 내용을 확인하고 새로 작성할 수 있어요.`,
+        actionLabel: "확인하기",
       };
     }
     if (job.jobType === "finalize_document") {
       return {
         title: "검토완료 자동 처리 실패",
-        description: `${who} · 검토완료를 자동으로 처리하지 못했어요. 직접 처리해 주세요.`,
+        description: `${who} · 검토완료를 자동으로 처리하지 못했어요. 계약서에서 다시 처리해 주세요.`,
         actionLabel: "직접 처리하기",
       };
     }

@@ -26,10 +26,17 @@ const DEFAULT_RESOLVE_RETRY_DELAY_MS = 800;
 const COPY = {
   forbidden: "이 작업은 관리자 권한이 필요해요. 지점 관리자에게 요청해 주세요.",
   gone: "이미 처리됐거나 찾을 수 없는 작업이에요.",
-  expired: "보관 기간(7일)이 지나 저장된 내용이 없어요. 새로 작성해 주세요.",
+  /** Expired with no way forward we can vouch for: the job type or its document is unknown. */
+  expired: "보관 기간(7일)이 지나 저장된 내용이 없어요.",
+  expiredCreate: "보관 기간(7일)이 지나 저장된 내용이 없어요. 새로 작성하면 이 작업은 처리됨으로 닫혀요.",
+  expiredFinalize:
+    "보관 기간(7일)이 지나 저장된 내용이 없어요. 처리됨으로 표시한 뒤 계약서에서 검토완료를 다시 눌러 주세요.",
   unavailable: "작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
   resolveFailed: "처리됨으로 표시하지 못했어요. 다시 시도해 주세요.",
   manualSend: "자동 전송이 끝내 실패했어요. 아무것도 전송되지 않았어요.",
+  manualSendFresh: "새로 작성하면 이 작업은 처리됨으로 닫혀요.",
+  manualSendFinalize: "검토완료 자동 처리가 끝내 실패했어요. 아무것도 전송되지 않았어요.",
+  openedAfterResolve: "처리됨으로 표시했어요. 계약서에서 검토완료를 다시 눌러 주세요.",
 } as const;
 
 type RecoveryFailure =
@@ -67,7 +74,7 @@ function isTransientError(error: unknown): boolean {
   return status === undefined || status >= 500;
 }
 
-function describeFailure(failure: RecoveryFailure): string {
+function describeFailure(failure: RecoveryFailure, expiredCopy: string): string {
   switch (failure.kind) {
     case "claimed": {
       const until = failure.expiresAt ? dayjs(failure.expiresAt) : null;
@@ -76,7 +83,7 @@ function describeFailure(failure: RecoveryFailure): string {
         : "다른 곳에서 처리 중이에요. 잠시 후 다시 시도해 주세요.";
     }
     case "expired":
-      return COPY.expired;
+      return expiredCopy;
     case "forbidden":
       return COPY.forbidden;
     case "gone":
@@ -121,7 +128,7 @@ export function DocumentJobRecoveryDialog({
   "data-component": dataComponent = DEFAULT_DATA_COMPONENT,
 }: DocumentJobRecoveryDialogProps) {
   const { toast } = useToast();
-  const { refetchSummary, refetchJobs } = useDocumentJobs();
+  const { refetchSummary, refetchJobs, jobs: jobList } = useDocumentJobs();
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
 
   const [claim, setClaim] = useState<ClaimEformsignDocumentJobRecoveryResponse | null>(null);
@@ -176,6 +183,23 @@ export function DocumentJobRecoveryDialog({
     ?? (claim && recoveryKind === null ? { kind: "gone" } : null)
     ?? (claim && recoveryKind === "manual_send" && !resendInput ? { kind: "expired" } : null);
 
+  // A 410 carries no claim, so the job's type and document come from the jobs list (it may not hold it).
+  const listedJob = claim
+    ? undefined
+    : (jobList?.requiresAttention.find((candidate) => candidate.jobId === jobId)
+      ?? jobList?.recent.find((candidate) => candidate.jobId === jobId));
+  const jobType = job?.jobType ?? listedJob?.jobType ?? null;
+  const finalizeDocumentId =
+    jobType === "finalize_document"
+      ? (job?.documentId ?? (resendInput?.kind === "finalize" ? resendInput.request.documentId : null) ?? listedJob?.documentId ?? null)
+      : null;
+  const expiredCopy =
+    jobType === "create_document"
+      ? COPY.expiredCreate
+      : finalizeDocumentId
+        ? COPY.expiredFinalize
+        : COPY.expired;
+
   /** Marks the job resolved; retries only network errors and 5xx. */
   const resolveJob = async (): Promise<boolean> => {
     for (let attempt = 0; ; attempt += 1) {
@@ -195,7 +219,7 @@ export function DocumentJobRecoveryDialog({
         } else {
           // 404 / 409: the list is stale about this job, whoever changed it.
           if (next.kind === "gone" || next.kind === "claimed") refreshProvider();
-          setNotice(describeFailure(next));
+          setNotice(describeFailure(next, expiredCopy));
         }
         return false;
       }
@@ -224,14 +248,31 @@ export function DocumentJobRecoveryDialog({
       }
     });
 
-  const startFresh = () => {
-    onStartFresh();
-    onClose();
-  };
+  /**
+   * The old job keeps its duplicate-guard key until it is resolved, so a blank form opened first would
+   * only be refused as "already in progress": resolve, and open the form only once that succeeded.
+   */
+  const resolveThenStartFresh = () =>
+    runExclusive(async () => {
+      if (await resolveJob()) {
+        onStartFresh();
+        onClose();
+      }
+    });
+
+  /** A finalize job never gets a blank form (it would create a second contract): resolve, then open its contract. */
+  const resolveThenOpenDocument = (documentId: string) =>
+    runExclusive(async () => {
+      if (await resolveJob()) {
+        toast({ variant: "success", description: COPY.openedAfterResolve });
+        onViewDocument(documentId);
+        onClose();
+      }
+    });
 
   const proceedFresh = () => {
     if (hasCreationInProgress) setConfirm("discard");
-    else startFresh();
+    else void resolveThenStartFresh();
   };
 
   const requestFresh = () => proceedFresh();
@@ -241,7 +282,7 @@ export function DocumentJobRecoveryDialog({
     setConfirm(null);
     if (kind === "resolve") void handleResolveOnly("처리됨으로 표시했어요");
     else if (kind === "verify-fresh") proceedFresh();
-    else if (kind === "discard") startFresh();
+    else if (kind === "discard") void resolveThenStartFresh();
   };
 
   const handleRetryClaim = () => {
@@ -260,7 +301,7 @@ export function DocumentJobRecoveryDialog({
     },
     "verify-fresh": {
       title: "새로 작성할까요?",
-      description: "eformsign에서 이 계약서가 전송되지 않은 것을 확인했나요?",
+      description: "eformsign에서 이 계약서가 전송되지 않은 것을 확인했나요? 확인하면 이 작업은 처리됨으로 닫히고 새 작성 화면이 열려요.",
       approvalLabel: "확인했어요",
     },
     discard: {
@@ -288,7 +329,7 @@ export function DocumentJobRecoveryDialog({
     if (effectiveFailure) {
       return (
         <p data-component={sub("failure")} className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">
-          {describeFailure(effectiveFailure)}
+          {describeFailure(effectiveFailure, expiredCopy)}
         </p>
       );
     }
@@ -304,7 +345,12 @@ export function DocumentJobRecoveryDialog({
     if (job && resendInput) {
       return (
         <div data-component={sub("manual-send")} className="space-y-3">
-          <p className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{COPY.manualSend}</p>
+          <p className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">
+            {jobType === "finalize_document" ? COPY.manualSendFinalize : COPY.manualSend}
+          </p>
+          {jobType === "create_document" ? (
+            <p className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{COPY.manualSendFresh}</p>
+          ) : null}
           <DocumentJobRecoverySummary data-component={sub("summary")} job={job} input={resendInput} />
         </div>
       );
@@ -317,7 +363,7 @@ export function DocumentJobRecoveryDialog({
     if (isClaiming) return null;
 
     if (effectiveFailure) {
-      const canStartFresh = effectiveFailure.kind === "expired";
+      const isExpired = effectiveFailure.kind === "expired";
       return (
         <>
           <Button type="button" variant="neutral" size="sm" data-component={sub("close")} disabled={isBusy} onClick={onClose}>
@@ -328,7 +374,7 @@ export function DocumentJobRecoveryDialog({
               다시 시도
             </Button>
           ) : null}
-          {canStartFresh ? (
+          {isExpired ? (
             <>
               <Button
                 type="button"
@@ -340,9 +386,22 @@ export function DocumentJobRecoveryDialog({
               >
                 {isBusy ? "처리 중…" : resolveFailed ? "처리됨 표시 다시 시도" : "목록에서 닫기"}
               </Button>
-              <Button type="button" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>
-                새로 작성
-              </Button>
+              {jobType === "create_document" ? (
+                <Button type="button" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>
+                  새로 작성
+                </Button>
+              ) : null}
+              {finalizeDocumentId ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  data-component={sub("resolve-open")}
+                  disabled={isBusy}
+                  onClick={() => void resolveThenOpenDocument(finalizeDocumentId)}
+                >
+                  처리됨으로 표시하고 계약서 열기
+                </Button>
+              ) : null}
             </>
           ) : null}
         </>
@@ -369,9 +428,11 @@ export function DocumentJobRecoveryDialog({
               계약서 보기
             </Button>
           ) : null}
-          <Button type="button" variant="outline" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={() => setConfirm("verify-fresh")}>
-            새로 작성
-          </Button>
+          {jobType === "create_document" ? (
+            <Button type="button" variant="outline" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={() => setConfirm("verify-fresh")}>
+              새로 작성
+            </Button>
+          ) : null}
           <Button type="button" size="sm" data-component={sub("resolve")} disabled={isBusy} onClick={() => setConfirm("resolve")}>
             {resolveLabel}
           </Button>
@@ -379,14 +440,35 @@ export function DocumentJobRecoveryDialog({
       );
     }
 
+    const isFinalize = jobType === "finalize_document";
     return (
       <>
-        <Button type="button" variant="outline" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>
-          새로 작성
-        </Button>
-        <Button type="button" size="sm" data-component={sub("resolve")} disabled={isBusy} onClick={() => setConfirm("resolve")}>
+        {!isFinalize ? (
+          <Button type="button" variant="outline" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>
+            새로 작성
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant={isFinalize && finalizeDocumentId ? "outline" : "default"}
+          size="sm"
+          data-component={sub("resolve")}
+          disabled={isBusy}
+          onClick={() => setConfirm("resolve")}
+        >
           {resolveLabel}
         </Button>
+        {isFinalize && finalizeDocumentId ? (
+          <Button
+            type="button"
+            size="sm"
+            data-component={sub("resolve-open")}
+            disabled={isBusy}
+            onClick={() => void resolveThenOpenDocument(finalizeDocumentId)}
+          >
+            처리됨으로 표시하고 계약서 열기
+          </Button>
+        ) : null}
       </>
     );
   };

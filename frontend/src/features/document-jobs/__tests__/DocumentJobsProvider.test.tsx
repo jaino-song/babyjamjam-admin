@@ -299,7 +299,7 @@ describe("DocumentJobsProvider", () => {
 
     it("sends a recoverable job's popup action to the recovery view", async () => {
       await openPopupFor(makeJob({ jobId: "j-rec", recoveryKind: "manual_send" }));
-      fireEvent.click(await screen.findByRole("button", { name: "직접 작성하기" }));
+      fireEvent.click(await screen.findByRole("button", { name: "확인하기" }));
 
       expect(mockPush).toHaveBeenCalledWith("/contracts?recoverJobId=j-rec");
     });

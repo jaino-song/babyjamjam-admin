@@ -125,7 +125,7 @@ describe("document job failure popups", () => {
 
     const create = await screen.findByText("계약서 자동 전송 실패");
     expect(within(create.closest('[role="alert"]') as HTMLElement).getByText(/김하늘 님/)).toBeInTheDocument();
-    expect(within(create.closest('[role="alert"]') as HTMLElement).getByRole("button", { name: "직접 작성하기" })).toBeInTheDocument();
+    expect(within(create.closest('[role="alert"]') as HTMLElement).getByRole("button", { name: "확인하기" })).toBeInTheDocument();
 
     const finalize = await screen.findByText("검토완료 자동 처리 실패");
     expect(within(finalize.closest('[role="alert"]') as HTMLElement).getByText(/이수진 님/)).toBeInTheDocument();
@@ -195,7 +195,7 @@ describe("document job failure popups", () => {
     getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: ["j-create"] }));
     await refetchSummary(queryClient);
 
-    fireEvent.click(await screen.findByRole("button", { name: "직접 작성하기" }));
+    fireEvent.click(await screen.findByRole("button", { name: "확인하기" }));
 
     expect(mockPush).toHaveBeenCalledWith("/contracts?recoverJobId=j-create");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
