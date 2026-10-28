@@ -195,7 +195,9 @@ describe("document job failure popups", () => {
     getSummary.mockResolvedValue(makeSummary({ unresolvedJobIds: ["j-create"] }));
     await refetchSummary(queryClient);
 
-    fireEvent.click(await screen.findByRole("button", { name: "확인하기" }));
+    // The generic loading copy shares the "확인하기" label, so wait for the job's own copy.
+    const popup = (await screen.findByText("계약서 자동 전송 실패")).closest('[role="alert"]') as HTMLElement;
+    fireEvent.click(within(popup).getByRole("button", { name: "확인하기" }));
 
     expect(mockPush).toHaveBeenCalledWith("/contracts?recoverJobId=j-create");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
