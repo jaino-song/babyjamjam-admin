@@ -643,6 +643,16 @@ export const ContractCreationForm = ({
     }
   }, [queryClient]);
   const { toast } = useToast();
+  // The in-flight send outlives this form when the dialog hosting it is closed mid-send.
+  // After an await the run checks this before touching the parent or the UI; the toast
+  // store is global, so the outcome is still reported.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const { data: authUser } = useGetAuthUser();
   const [internalActiveStep, setInternalActiveStep] = useState(0);
   const activeStep = controlledActiveStep ?? internalActiveStep;
@@ -723,6 +733,15 @@ export const ContractCreationForm = ({
     if (!isCreationSuccessOpen) return;
     setIsCreationSuccessOpen(false);
     onSuccess?.();
+  };
+
+  // 완료 button: same exit as acknowledging the success notification, but it must also
+  // work after that notification was dismissed and in hosts that pass no onSuccess.
+  const handleCreationDone = () => {
+    setIsCreationSuccessOpen(false);
+    if (onSuccess) onSuccess();
+    else if (onClose) onClose();
+    else router.push("/contracts");
   };
 
   const {
@@ -1202,6 +1221,17 @@ export const ContractCreationForm = ({
     setAttemptedSteps((previous) => (previous.includes(step) ? previous : [...previous, step]));
   };
 
+  const notifyDetachedSendSucceeded = () => {
+    toast({ description: name.trim() ? `${name.trim()}님께 전자문서를 보냈어요` : "전자문서를 보냈어요" });
+  };
+
+  const notifyDetachedSendFailed = () => {
+    toast({
+      variant: "destructive",
+      description: "전자문서 발송에 실패했어요. 계약서 목록에서 상태를 확인해 주세요.",
+    });
+  };
+
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
     const dateProblem = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
@@ -1500,6 +1530,9 @@ export const ContractCreationForm = ({
             contractData,
           });
           toast({ description: "전자문서 작업을 시작했어요" });
+          // Calling the parent from a form that was closed mid-run could close a
+          // dialog the user has since opened for another client.
+          if (!isMountedRef.current) return;
           if (onSuccess) onSuccess();
           else onClose?.();
           return;
@@ -1563,6 +1596,18 @@ export const ContractCreationForm = ({
               finalClientId,
               progressId,
             );
+
+            if (!isMountedRef.current) {
+              // Closed mid-send: the server finished (or failed) on its own. Report it
+              // by toast only — no parent callbacks, no iframe/manual fallback.
+              if (headless.ok) {
+                invalidateContractQueries(finalClientId);
+                notifyDetachedSendSucceeded();
+              } else {
+                notifyDetachedSendFailed();
+              }
+              return;
+            }
 
             if (headless.ok) {
               setCreationProgress({ step: "sent", completed: true, failed: false });
@@ -1685,6 +1730,10 @@ export const ContractCreationForm = ({
               "[contract-creation] headless dispatch threw",
               headlessError,
             );
+            if (!isMountedRef.current) {
+              notifyDetachedSendFailed();
+              return;
+            }
             // The backend's verdict never reached us, so whether the document was
             // sent is genuinely unknown. Reopening the editor here can send a second
             // contract; require a list check before any explicit retry.
@@ -1800,7 +1849,7 @@ export const ContractCreationForm = ({
       }
     } finally {
       isSubmittingRef.current = false;
-      onSubmissionStateChange?.(false);
+      if (isMountedRef.current) onSubmissionStateChange?.(false);
     }
   };
 
@@ -2661,7 +2710,21 @@ export const ContractCreationForm = ({
 
   const footer = (
     <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
-      <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
+      {hasProcessingSuccess ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="contract-creation-new-send"
+          data-component="desktop_contracts_creation_new-send"
+          onClick={handleStartNewContractCreation}
+          className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
+        >
+          새 전자문서 발송
+        </Button>
+      ) : (
+        <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
+      )}
       <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
         {activeStep === 0 && !hasProcessingSuccess ? (
           <Button
@@ -2715,12 +2778,12 @@ export const ContractCreationForm = ({
           <Button
             type="button"
             size="sm"
-            data-testid="contract-creation-new-send"
-            data-component="desktop_contracts_creation_new-send"
-            onClick={handleStartNewContractCreation}
+            data-testid="contract-creation-done"
+            data-component="desktop_contracts_creation_done"
+            onClick={handleCreationDone}
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
-            새 전자문서 발송
+            완료
           </Button>
         ) : hasProcessingFailure ? (
           <>

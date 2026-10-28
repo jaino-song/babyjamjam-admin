@@ -58,13 +58,24 @@ export function MaternityContractDialog({
   const [hasCreationSession, setHasCreationSession] = useState(false);
   const [processingFailed, setProcessingFailed] = useState(false);
   const isBusy = isSubmitting || (hasCreationSession && !processingFailed);
+  // Once a send is running the server finishes it whether or not this dialog stays
+  // open, so the explicit X may leave. A re-issue is the exception: the replaced
+  // contract is cancelled by the mounted form after the send, so it keeps the block.
+  const isCloseBlocked = isBusy && !(hasCreationSession && !supersedeDocumentId);
 
   // The wizard's own required-field/session state is meaningless once the dialog
   // is closed; reset the step so the next open (potentially for a different
   // client) always starts from step 0 rather than wherever this client left off.
+  // The busy flags are reset too: the form that reported them is gone, and a stale
+  // "session running" would otherwise block ESC on the next open.
   useEffect(() => {
     if (!open) {
-      queueMicrotask(() => setActiveStep(0));
+      queueMicrotask(() => {
+        setActiveStep(0);
+        setIsSubmitting(false);
+        setHasCreationSession(false);
+        setProcessingFailed(false);
+      });
     }
   }, [open]);
 
@@ -78,9 +89,9 @@ export function MaternityContractDialog({
   }, []);
 
   const requestClose = useCallback(() => {
-    if (isBusy) return;
+    if (isCloseBlocked) return;
     onClose();
-  }, [isBusy, onClose]);
+  }, [isCloseBlocked, onClose]);
 
   const handleWizardSuccess = useCallback(() => {
     // A completed submission is the definitive "done" signal regardless of the
@@ -120,11 +131,11 @@ export function MaternityContractDialog({
             <DialogClose asChild>
               <button
                 type="button"
-                disabled={isBusy}
+                disabled={isCloseBlocked}
                 data-component={`${BASE_DATA_COMPONENT}_close`}
                 className={cn(
                   APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME,
-                  isBusy && "cursor-not-allowed opacity-50",
+                  isCloseBlocked && "cursor-not-allowed opacity-50",
                 )}
               >
                 <X className={APP_DIALOG_CLOSE_ICON_CLASS_NAME} />
