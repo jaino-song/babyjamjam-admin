@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
     DAY_PAGES,
     getWizardProgress,
@@ -11,6 +11,7 @@ import {
 import { ServiceRecordStepHeader } from "@/components/app/v3/ServiceRecordStepHeader";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
 
+import { ServiceRecordGuide } from "../guide";
 import type { MobileServiceRecordWizardProps } from "../ServiceRecordWizard";
 import { DayPageStep } from "./DayPageStep";
 import {
@@ -99,6 +100,16 @@ export function MobileServiceRecordScreen({
     slots,
 }: MobileServiceRecordScreenProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
+    // The how-to guide opens by itself over a first-time service-info step (no saved header on the
+    // server: `context.header`, not the page's `header` state, which always carries `deliveryType`),
+    // and from 사용방법 on the overview. Closing it ends the automatic opening for this mount.
+    const [guideDismissed, setGuideDismissed] = useState(false);
+    const [guideRequested, setGuideRequested] = useState(false);
+    const guideOpen = guideRequested || (!guideDismissed && screen === "service" && context != null && context.header == null);
+    const closeGuide = () => {
+        setGuideDismissed(true);
+        setGuideRequested(false);
+    };
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const { plannedDateVectorProvided, plannedDateVectorValid, currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
@@ -205,6 +216,7 @@ export function MobileServiceRecordScreen({
                     scheduleChangeBusy={scheduleChangeBusy}
                     onOpenDay={onOpenDay}
                     onOpenScheduleChangePreview={onOpenScheduleChangePreview}
+                    onOpenGuide={() => setGuideRequested(true)}
                 />
             )}
 
@@ -258,6 +270,7 @@ export function MobileServiceRecordScreen({
                     </div>
                 </StatusBody>
             )}
+            <ServiceRecordGuide data-component={child("guide")} open={guideOpen} onClose={closeGuide} />
             {slots?.submitModal}
             {slots?.scheduleChangeModal}
             {slots?.serviceDateChangeModal}

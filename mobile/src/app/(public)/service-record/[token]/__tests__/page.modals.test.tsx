@@ -97,7 +97,7 @@ describe("service-record page approval modals", () => {
             previewResponse.resolve(jsonResponse(preview));
 
             expect(await screen.findByText("1회차 서비스 일정을 조정할까요?")).toBeInTheDocument();
-            const description = screen.getByText(/관리자 승인 후 일정이 조정됩니다/);
+            const description = screen.getByText(/본사 승인 후 일정이 조정됩니다/);
             expect(description).not.toHaveClass("sr-only");
             expect(screen.getByRole("button", { name: "승인 요청" })).toBeEnabled();
             expect(screen.getByRole("button", { name: "취소" })).toBeEnabled();

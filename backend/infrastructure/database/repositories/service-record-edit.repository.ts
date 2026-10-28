@@ -2332,6 +2332,29 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         } : null;
     }
 
+    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        // Same 404 contract as revisions: a malformed id never reaches the uuid cast.
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editId)) return null;
+        const edit = await this.prisma.service_record_day_edit_log.findFirst({
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId } },
+            select: {
+                id: true,
+                editedAt: true,
+                employeeNameSnapshot: true,
+                caseSessionIndex: true,
+                before: true,
+                after: true,
+            },
+        });
+        return edit ? {
+            ...edit,
+            before: toDomainJson(edit.before),
+            after: toDomainJson(edit.after),
+        } : null;
+    }
+
     async listRevisionHistory(
         branchId: string,
         clientId: number,
@@ -2382,6 +2405,24 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
               AND service_record_case_id = ${ownerCase.caseId}::uuid
             ORDER BY revision_number DESC, id DESC
         `);
+        // Caregiver edits of submitted days (not revisions). Identity only: the
+        // before/after payloads are fetched per edit through the changes route.
+        const caregiverEdits = await rawStateQuery<Array<{
+            id: string;
+            editedAt: Date | string;
+            sessionIndex: number;
+            employeeName: string;
+        }>>(tx, Prisma.sql`
+            SELECT
+                id,
+                edited_at AS "editedAt",
+                case_session_index AS "sessionIndex",
+                employee_name_snapshot AS "employeeName"
+            FROM "service_record_day_edit_log"
+            WHERE branch_id = ${branchId}::uuid
+              AND service_record_case_id = ${ownerCase.caseId}::uuid
+            ORDER BY edited_at DESC, id DESC
+        `);
         const states = await selectRevisionDocumentState(tx, {
             branchId,
             clientId,
@@ -2416,6 +2457,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         canRetry: canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
                     })),
+            })),
+            caregiverEdits: caregiverEdits.map((edit) => ({
+                id: edit.id,
+                editedAt: stateDate(edit.editedAt) ?? "",
+                sessionIndex: edit.sessionIndex,
+                employeeName: edit.employeeName,
             })),
         };
     }
