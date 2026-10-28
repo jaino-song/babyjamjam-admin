@@ -1044,6 +1044,61 @@ describe("ServiceRecordEditRepository", () => {
         expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
+    it("treats a job carrying dispatch_authorized as in flight, exactly like creating", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValueOnce([{ id: "document-job-1" }]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).rejects.toThrow(
+            "A service-record document dispatch is already irreversible",
+        );
+        const inFlight = tx.$queryRaw.mock.calls[0]?.[0] as { values: unknown[] };
+        expect(sqlText(inFlight)).toContain("job.progress_step IN ('creating', 'sent', ");
+        expect(sqlTextWithValues(inFlight)).toContain("job.progress_step IN ('creating', 'sent', dispatch_authorized)");
+        expect(sqlTextWithValues(inFlight)).toContain("job.status IN ('processing', 'reconciling')");
+        expect(inFlight.values).toContain("dispatch_authorized");
+    });
+
+    it("fallback supersession filters on dispatch_authorized as well as creating and sent", async () => {
+        const documentJobs = {
+            findMany: jest.fn().mockResolvedValueOnce([{
+                id: "authorized-in-flight",
+                status: "processing",
+                progressStep: "dispatch_authorized",
+                requestKey: "create:branch:101",
+                payload: null,
+            }]),
+        };
+        const tx = {
+            client: { findFirst: jest.fn().mockResolvedValue({ eDocId: "document-1" }) },
+            eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+            eformsign_document_job: documentJobs,
+            message_trigger_job: { findMany: jest.fn().mockResolvedValue([]) },
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (
+                client: unknown,
+                branch: string,
+                serviceCase: string,
+                clientId: number,
+                scope: "all" | "revision_generation",
+            ) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101, "all")).rejects.toThrow(
+            "A service-record document dispatch is already irreversible",
+        );
+        expect(documentJobs.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                status: { in: ["processing", "reconciling"] },
+                progressStep: { in: ["creating", "sent", "dispatch_authorized"] },
+            }),
+        }));
+    });
+
     it("does not cancel a message job after it enters dispatching", async () => {
         const tx = {
             $queryRaw: jest.fn()

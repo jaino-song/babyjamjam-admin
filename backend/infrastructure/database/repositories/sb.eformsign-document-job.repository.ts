@@ -2,6 +2,7 @@ import { ConflictException, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
+    DISPATCH_AUTHORIZED_PROGRESS_STEP,
     EformsignDocumentJobEntity,
     EformsignDocumentJobPayload,
     EformsignDocumentJobSource,
@@ -588,6 +589,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         if (current.lease_token !== input.leaseToken) {
             return { kind: "lost", reason: "lease_lost" } as const;
         }
+        // Only real or possible send evidence blocks authorization. A row that
+        // still carries `dispatch_authorized` from an earlier attempt re-claimed
+        // under a new lease authorizes again: the lease check above already
+        // guarantees a single live owner.
         if (current.progress_step === "creating" || current.progress_step === "sent") {
             return { kind: "lost", reason: "dispatch_already_claimed" } as const;
         }
@@ -607,7 +612,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
         const claimed = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             UPDATE "eformsign_document_job"
-            SET progress_step = 'creating', heartbeat_at = now(), updated_at = now()
+            SET progress_step = ${DISPATCH_AUTHORIZED_PROGRESS_STEP}, heartbeat_at = now(), updated_at = now()
             WHERE id = ${input.jobId}::uuid
               AND lease_token = ${input.leaseToken}::uuid
               AND status = 'processing'

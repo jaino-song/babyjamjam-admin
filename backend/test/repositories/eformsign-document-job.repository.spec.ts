@@ -132,7 +132,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         })).rejects.toThrow("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
     });
 
-    it("authorizes a live lease and commits the creating marker in the caller transaction", async () => {
+    it("authorizes a live lease and commits the dispatch_authorized marker in the caller transaction", async () => {
         queryRaw
             .mockResolvedValueOnce([row({
                 id: dispatchJobId,
@@ -153,8 +153,37 @@ describe("SbEformsignDocumentJobRepository", () => {
 
         expect(queryRaw).toHaveBeenCalledTimes(2);
         expect(sqlText(queryRaw.mock.calls[0][0])).toContain("FOR UPDATE");
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("progress_step = 'creating'");
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("status = 'processing'");
+        const claim = queryRaw.mock.calls[1][0] as { values: unknown[] };
+        // The authorization marker is the exclusivity marker, not send evidence:
+        // it is written as dispatch_authorized and never as `creating`, and it is
+        // absent from the NOT IN guard so a re-claimed row authorizes again.
+        expect(sqlText(claim)).toContain("SET progress_step = ");
+        expect(sqlText(claim)).not.toContain("progress_step = 'creating'");
+        expect(claim.values).toContain("dispatch_authorized");
+        expect(claim.values).not.toContain("creating");
+        expect(sqlText(claim)).toContain("COALESCE(progress_step, '') NOT IN ('creating', 'sent')");
+        expect(sqlText(claim)).not.toMatch(/NOT IN \([^)]*dispatch_authorized/);
+        expect(sqlText(claim)).toContain("status = 'processing'");
+    });
+
+    it("authorizes again a row that still carries dispatch_authorized from an earlier attempt", async () => {
+        queryRaw
+            .mockResolvedValueOnce([row({
+                id: dispatchJobId,
+                branch_id: dispatchBranchId,
+                status: "processing",
+                progress_step: "dispatch_authorized",
+                lease_token: dispatchLeaseToken,
+                payload: { context: dispatchContext },
+            })])
+            .mockResolvedValueOnce([{ id: dispatchJobId }]);
+
+        await expect(repository.authorizeForDispatchInTransaction({ $queryRaw: queryRaw } as never, {
+            jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken,
+            expectedContext: dispatchContext,
+        })).resolves.toEqual({ kind: "allow" });
+        expect(queryRaw).toHaveBeenCalledTimes(2);
     });
 
     it("returns stale without claiming when the locked revision context changed", async () => {
@@ -202,7 +231,8 @@ describe("SbEformsignDocumentJobRepository", () => {
         expect(result).toEqual({ kind: "allow" });
         const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
         const clientLockIndex = statements.findIndex((statement) => statement.includes("FROM \"client\""));
-        const markerIndex = statements.findIndex((statement) => statement.includes("progress_step = 'creating'"));
+        const markerIndex = statements.findIndex((statement) => statement.includes("SET progress_step = ")
+            && statement.includes("NOT IN ('creating', 'sent')"));
         expect(clientLockIndex).toBeGreaterThanOrEqual(0);
         expect(markerIndex).toBeGreaterThan(clientLockIndex);
         expect(statements[markerIndex]).toContain("status = 'processing'");
@@ -255,7 +285,8 @@ describe("SbEformsignDocumentJobRepository", () => {
 
         expect(transaction.service_record_case.findUnique).toHaveBeenCalledTimes(2);
         const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
-        const markerIndex = statements.findIndex((statement) => statement.includes("progress_step = 'creating'"));
+        const markerIndex = statements.findIndex((statement) => statement.includes("SET progress_step = ")
+            && statement.includes("NOT IN ('creating', 'sent')"));
         expect(markerIndex).toBeGreaterThan(
             statements.findIndex((statement) => statement.includes("FROM \"service_record_case\"")),
         );
@@ -307,6 +338,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         { status: "failed", lease_token: dispatchLeaseToken, progress_step: "preparing" },
         { status: "processing", lease_token: "00000000-0000-4000-8000-000000000098", progress_step: "preparing" },
         { status: "processing", lease_token: dispatchLeaseToken, progress_step: "creating" },
+        { status: "processing", lease_token: dispatchLeaseToken, progress_step: "sent" },
         { status: "reconciling", lease_token: dispatchLeaseToken, progress_step: "reconciling" },
     ])("fails closed for a non-dispatchable job state %#", async (state) => {
         queryRaw.mockResolvedValueOnce([row({
@@ -526,6 +558,12 @@ describe("SbEformsignDocumentJobRepository", () => {
         const statement = sqlText(queryRaw.mock.calls[0][0]);
         expect(statement).toContain("progress_step IS NULL");
         expect(statement).toContain("ELSE 'reconciling'");
+        // dispatch_authorized is deliberately absent from the requeue list: a crash
+        // could have happened mid-click before `creating` persisted, so a stale
+        // job carrying it goes to reconciling.
+        expect(statement).toContain("progress_step IN ('queued', 'validating', 'preparing')");
+        expect(statement).not.toContain("dispatch_authorized");
+        expect((queryRaw.mock.calls[0][0] as { values: unknown[] }).values).not.toContain("dispatch_authorized");
         expect(statement).toContain("jsonb_typeof(payload)");
         expect(statement).toContain("status IN ('processing', 'reconciling')");
     });

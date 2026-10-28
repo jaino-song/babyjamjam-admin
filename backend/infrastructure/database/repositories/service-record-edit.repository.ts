@@ -45,6 +45,7 @@ import {
     type ServiceRecordEditTransactionContext,
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
@@ -816,9 +817,13 @@ type RevisionSnapshotRetryJobRow = {
     progressStep: string | null;
 };
 
+// Terminal re-queue guard: `dispatch_authorized` is blocked too. It is not send
+// evidence, but a crash mid-click can leave it on a row that reached
+// requires_attention through stale recovery, so re-queueing stays conservative.
 const REVISION_SNAPSHOT_RETRY_BLOCKED_PROGRESS_STEPS = [
     "creating",
     "sent",
+    DISPATCH_AUTHORIZED_PROGRESS_STEP,
     "reconciling",
     "unknown",
 ] as const;
@@ -2808,7 +2813,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                   AND request_key = ${snapshotRetryJob.scope.requestKey}
                   AND document_id IS NULL
                   AND status IN ('failed', 'requires_attention')
-                  AND COALESCE(progress_step, '') NOT IN ('creating', 'sent', 'reconciling', 'unknown')
+                  AND COALESCE(progress_step, '') NOT IN (
+                      'creating', 'sent', ${DISPATCH_AUTHORIZED_PROGRESS_STEP}, 'reconciling', 'unknown'
+                  )
                 RETURNING id
             `);
             if (requeued.length !== 1) {
@@ -3645,7 +3652,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, clientId)}
                   AND job.job_type IN ('create_document', 'finalize_document')
                   AND job.status IN ('processing', 'reconciling')
-                  AND job.progress_step IN ('creating', 'sent')
+                  AND job.progress_step IN ('creating', 'sent', ${DISPATCH_AUTHORIZED_PROGRESS_STEP})
                   AND ${documentJobSupersessionPredicate(scope)}
                 FOR UPDATE OF job
             `);
@@ -3731,7 +3738,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 OR: ownedDocumentPredicate,
                 jobType: { in: ["create_document", "finalize_document"] },
                 status: { in: ["processing", "reconciling"] },
-                progressStep: { in: ["creating", "sent"] },
+                progressStep: { in: ["creating", "sent", DISPATCH_AUTHORIZED_PROGRESS_STEP] },
             },
             select: { id: true, status: true, progressStep: true, requestKey: true, payload: true },
         }) ?? [];

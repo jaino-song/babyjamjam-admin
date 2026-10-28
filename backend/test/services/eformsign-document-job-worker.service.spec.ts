@@ -268,7 +268,7 @@ describe("EformsignDocumentJobWorkerService", () => {
         );
     });
 
-    it("reconciles a provider failure after the durable dispatch marker", async () => {
+    it("retries a pre-send provider failure after authorization: the dispatch_authorized marker is not send evidence", async () => {
         const claimed = job();
         const { worker, repository, dispatch } = buildWorker({
             repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
@@ -289,6 +289,34 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect.objectContaining({ clientId: 7, contractData: expect.any(Object), onProgress: expect.any(Function) }),
             workerPrincipal,
         );
+        // Authorization is mirrored onto the claim as dispatch_authorized, never
+        // as `creating`, so the failure follows the pre-send retry path.
+        expect(claimed.progressStep).toBe("dispatch_authorized");
+        expect(repository.scheduleRetry).toHaveBeenCalledWith(
+            claimed.id,
+            claimed.leaseToken,
+            expect.any(Date),
+            "HEADLESS_CREATE_PRE_SEND_FAILURE",
+        );
+        expect(repository.markReconciling).not.toHaveBeenCalled();
+    });
+
+    it("reconciles a provider failure when the claimed row already carries real creating evidence", async () => {
+        const claimed = job({ progressStep: "creating" });
+        const { worker, repository } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+            dispatch: {
+                execute: jest.fn().mockResolvedValue({
+                    ok: false,
+                    reason: "editor timeout",
+                    fallbackHint: "iframe",
+                    durationMs: 10,
+                }),
+            },
+        });
+
+        await worker.processDueJobs();
+
         expect(repository.scheduleRetry).not.toHaveBeenCalled();
         expect(repository.markReconciling).toHaveBeenCalledWith(
             claimed.id,
@@ -299,16 +327,16 @@ describe("EformsignDocumentJobWorkerService", () => {
 
     it("classifies additive-envelope dispatch failures exactly as before", async () => {
         // Through this seam a permitted create job always carries the durable
-        // creating marker, so the observable classification boundary is the
-        // progress step recorded on markReconciling: an ambiguous failure
+        // dispatch_authorized marker, which is not send evidence, so the
+        // observable classification boundary is: an ambiguous failure
         // reconciles on the live progress step ("reconciling" when none was
-        // emitted), a non-ambiguous one reconciles on the durable marker
-        // ("creating"). The additive code/outcome/recovery fields must not
-        // move a failure across that boundary in either direction.
+        // emitted), a non-ambiguous one takes the pre-send retry path. The
+        // additive code/outcome/recovery fields must not move a failure across
+        // that boundary in either direction.
 
         // An iframe-hint pre-send failure stays non-ambiguous even while
-        // carrying NOT_APPLIED outcome fields: it reconciles on the durable
-        // marker, not as an unknown-outcome run.
+        // carrying NOT_APPLIED outcome fields: it retries as a pre-send
+        // failure, not as an unknown-outcome run.
         const preSendClaim = job();
         const preSend = buildWorker({
             repository: { claimDue: jest.fn().mockResolvedValue([preSendClaim]) },
@@ -325,10 +353,12 @@ describe("EformsignDocumentJobWorkerService", () => {
             },
         });
         await preSend.worker.processDueJobs();
-        expect(preSend.repository.markReconciling).toHaveBeenCalledWith(
+        expect(preSend.repository.markReconciling).not.toHaveBeenCalled();
+        expect(preSend.repository.scheduleRetry).toHaveBeenCalledWith(
             preSendClaim.id,
             preSendClaim.leaseToken,
-            "creating",
+            expect.any(Date),
+            "HEADLESS_CREATE_PRE_SEND_FAILURE",
         );
 
         // A manual_check failure carrying UNKNOWN outcome fields stays
@@ -809,6 +839,31 @@ describe("EformsignDocumentJobWorkerService", () => {
             claimed.leaseToken,
             undefined,
         );
+    });
+
+    it("reconciles instead of retrying when completing a coordinated revision operation throws", async () => {
+        const claimed = job({ payload: revisionOperationPayload() });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn().mockResolvedValue({
+                revisionGeneration: null,
+                status: "completed",
+                reason: null,
+                contract: null,
+                receipt: null,
+            }),
+        };
+        const { worker, repository } = buildWorker({
+            repository: {
+                claimDue: jest.fn().mockResolvedValue([claimed]),
+                markCompleted: jest.fn().mockRejectedValue(new Error("db down")),
+            },
+            revisionOperationCoordinator: coordinator,
+        });
+
+        await worker.processDueJobs();
+
+        expect(repository.scheduleRetry).not.toHaveBeenCalled();
+        expect(repository.markReconciling).toHaveBeenCalled();
     });
 
     it("does not route a stale operation claim to any renderer or coordinator", async () => {
@@ -1573,9 +1628,9 @@ describe("EformsignDocumentJobWorkerService", () => {
                 jobId: string,
                 leaseToken: string,
                 step: string,
-                preserveDispatchMarker: boolean,
+                dispatchFence?: "authorized" | "creating" | "sent",
             ) => Promise<void>;
-        }).recordProgress(claimed.id, claimed.leaseToken!, "info-inserted", true);
+        }).recordProgress(claimed.id, claimed.leaseToken!, "info-inserted", "creating");
 
         expect(repository.updateProgress).toHaveBeenCalledWith(
             claimed.id,
@@ -1608,12 +1663,13 @@ describe("EformsignDocumentJobWorkerService", () => {
         }
         jest.advanceTimersByTime(30_000);
         await Promise.resolve();
-        expect(repository.updateProgress).toHaveBeenCalledWith(
-            claimed.id,
-            claimed.leaseToken,
-            "creating",
-            expect.any(Date),
-        );
+        // The attempt holds only the authorization fence (no send evidence), so
+        // progress and the heartbeat persist `dispatch_authorized`, never the raw
+        // step and never `creating`.
+        expect(repository.updateProgress.mock.calls.map((call) => call[2])).toEqual([
+            "dispatch_authorized",
+            "dispatch_authorized",
+        ]);
 
         resolveDispatch({ ok: true, documentId: "doc-1", durationMs: 10 });
         await processing;
@@ -2105,6 +2161,344 @@ describe("EformsignDocumentJobWorkerService", () => {
 
                 expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(2);
             });
+        });
+    });
+
+    describe("dispatch authorization marker is not send evidence", () => {
+        type FakeStatus = "queued" | "processing" | "reconciling" | "failed" | "requires_attention" | "completed";
+
+        /**
+         * In-memory job repository whose rules come from the unit brief, not from
+         * the SQL: claim = queued and due -> processing, attempts + 1, new lease;
+         * authorize = single live owner, refused only for creating/sent;
+         * scheduleRetry = back to queued with the lease cleared and progress_step
+         * untouched; recoverStale = pre-send steps requeue, anything else (including
+         * dispatch_authorized) goes to reconciling.
+         */
+        function createFakeRepository(options: { authorizeThrowsOn?: Set<number> } = {}) {
+            const row = {
+                status: "queued" as FakeStatus,
+                attempts: 0,
+                progressStep: null as string | null,
+                leaseToken: null as string | null,
+                nextAttemptAt: new Date(0),
+                lastErrorCode: null as string | null,
+            };
+            const progressWrites: string[] = [];
+            const retries: Array<{ delayMs: number; errorCode: string }> = [];
+            const toEntity = () => job({
+                status: row.status,
+                attempts: row.attempts,
+                progressStep: row.progressStep,
+                leaseToken: row.leaseToken,
+                lastErrorCode: row.lastErrorCode,
+            });
+            const holdsLease = (lease: string) => row.leaseToken !== null && row.leaseToken === lease;
+            const repository = {
+                recoverStale: jest.fn(async () => []),
+                claimDue: jest.fn(async () => {
+                    if (row.status !== "queued" || row.nextAttemptAt.getTime() > Date.now()) return [];
+                    row.status = "processing";
+                    row.attempts += 1;
+                    row.leaseToken = `00000000-0000-4000-8000-0000000001${String(row.attempts).padStart(2, "0")}`;
+                    return [toEntity()];
+                }),
+                authorizeForDispatch: jest.fn(async ({ leaseToken }: { leaseToken: string }) => {
+                    if (options.authorizeThrowsOn?.has(row.attempts)) throw new Error("transient authorization failure");
+                    if (row.status !== "processing") return { kind: "lost", reason: "job_not_active" };
+                    if (!holdsLease(leaseToken)) return { kind: "lost", reason: "lease_lost" };
+                    if (row.progressStep === "creating" || row.progressStep === "sent") {
+                        return { kind: "lost", reason: "dispatch_already_claimed" };
+                    }
+                    row.progressStep = "dispatch_authorized";
+                    return { kind: "allow" };
+                }),
+                updateProgress: jest.fn(async (_id: string, leaseToken: string, step: string) => {
+                    if (!holdsLease(leaseToken) || (row.status !== "processing" && row.status !== "reconciling")) return null;
+                    progressWrites.push(step);
+                    row.progressStep = step;
+                    return toEntity();
+                }),
+                scheduleRetry: jest.fn(async (_id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string) => {
+                    if (!holdsLease(leaseToken) || row.status !== "processing") return null;
+                    retries.push({ delayMs: nextAttemptAt.getTime() - Date.now(), errorCode });
+                    row.status = "queued";
+                    row.nextAttemptAt = nextAttemptAt;
+                    row.lastErrorCode = errorCode;
+                    row.leaseToken = null;
+                    return toEntity();
+                }),
+                markReconciling: jest.fn(async (_id: string, leaseToken: string, step?: string) => {
+                    if (!holdsLease(leaseToken)) return null;
+                    row.status = "reconciling";
+                    row.progressStep = step ?? "reconciling";
+                    return toEntity();
+                }),
+                markFailed: jest.fn(async (_id: string, leaseToken: string, errorCode: string) => {
+                    if (!holdsLease(leaseToken)) return null;
+                    row.status = "failed";
+                    row.lastErrorCode = errorCode;
+                    return toEntity();
+                }),
+                markRequiresAttention: jest.fn(async (_id: string, leaseToken: string, errorCode: string) => {
+                    if (!holdsLease(leaseToken)) return null;
+                    row.status = "requires_attention";
+                    row.lastErrorCode = errorCode;
+                    return toEntity();
+                }),
+                markCompleted: jest.fn(async () => null),
+            };
+            return { repository, row, progressWrites, retries };
+        }
+
+        function failNonAmbiguously(...steps: Array<"client-started" | "info-inserted">) {
+            return jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                for (const step of steps) await onProgress?.(step);
+                return { ok: false, reason: "editor timeout", fallbackHint: "iframe", durationMs: 1 };
+            });
+        }
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date("2026-10-28T00:00:00Z"));
+        });
+
+        it("retries an authorized attempt that only emitted pre-send steps and leaves dispatch_authorized, not creating", async () => {
+            const fake = createFakeRepository();
+            const { worker, reconciliation } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: { execute: failNonAmbiguously("client-started", "info-inserted") },
+            });
+
+            await worker.processDueJobs();
+
+            expect(fake.row.status).toBe("queued");
+            expect(fake.row.progressStep).toBe("dispatch_authorized");
+            expect(fake.retries).toEqual([{ delayMs: 60_000, errorCode: "HEADLESS_CREATE_PRE_SEND_FAILURE" }]);
+            expect(fake.repository.markReconciling).not.toHaveBeenCalled();
+            expect(reconciliation.reconcile).not.toHaveBeenCalled();
+        });
+
+        it("re-authorizes the retried attempt, and a transient authorization failure on it retries at 5 minutes", async () => {
+            const fake = createFakeRepository({ authorizeThrowsOn: new Set([2]) });
+            const execute = failNonAmbiguously("client-started");
+            const { worker } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: { execute },
+            });
+
+            await worker.processDueJobs();
+            expect(fake.retries.map((retry) => retry.delayMs)).toEqual([60_000]);
+            expect(fake.row.progressStep).toBe("dispatch_authorized");
+
+            // Attempt 2 is not claimable until the 1 minute delay has passed.
+            await worker.processDueJobs();
+            expect(fake.row.attempts).toBe(1);
+            jest.setSystemTime(Date.now() + 60_000);
+            await worker.processDueJobs();
+
+            expect(fake.row.attempts).toBe(2);
+            expect(execute).toHaveBeenCalledTimes(1);
+            expect(fake.retries).toEqual([
+                { delayMs: 60_000, errorCode: "HEADLESS_CREATE_PRE_SEND_FAILURE" },
+                { delayMs: 5 * 60_000, errorCode: "SERVICE_RECORD_REVISION_AUTHORIZATION_FAILURE" },
+            ]);
+            expect(fake.row.status).toBe("queued");
+            expect(fake.repository.markRequiresAttention).not.toHaveBeenCalled();
+            expect(fake.repository.markReconciling).not.toHaveBeenCalled();
+
+            // Attempt 3 authorizes again over the dispatch_authorized marker the
+            // earlier attempt left (no dispatch_already_claimed) and runs the provider.
+            jest.setSystemTime(Date.now() + 5 * 60_000);
+            await worker.processDueJobs();
+            expect(fake.row.attempts).toBe(3);
+            expect(execute).toHaveBeenCalledTimes(2);
+            expect(fake.retries[2]).toEqual({ delayMs: 15 * 60_000, errorCode: "HEADLESS_CREATE_PRE_SEND_FAILURE" });
+        });
+
+        it("re-authorizes over a leftover dispatch_authorized marker on the next attempt", async () => {
+            const fake = createFakeRepository();
+            const { worker } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: { execute: failNonAmbiguously("client-started") },
+            });
+
+            await worker.processDueJobs();
+            jest.setSystemTime(Date.now() + 60_000);
+            await worker.processDueJobs();
+
+            const results = await Promise.all(fake.repository.authorizeForDispatch.mock.results.map((result) => result.value));
+            expect(results).toEqual([{ kind: "allow" }, { kind: "allow" }]);
+            expect(fake.row.attempts).toBe(2);
+        });
+
+        it("exhausts four pre-send failures into failed / PRE_SEND_RETRY_EXHAUSTED with a notification and never reconciles", async () => {
+            const fake = createFakeRepository();
+            const { worker, notificationService, reconciliation } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: { execute: failNonAmbiguously("client-started", "info-inserted") },
+            });
+
+            for (const delayMs of [60_000, 5 * 60_000, 15 * 60_000]) {
+                await worker.processDueJobs();
+                expect(fake.row.status).toBe("queued");
+                expect(fake.retries.at(-1)?.delayMs).toBe(delayMs);
+                jest.setSystemTime(Date.now() + delayMs);
+            }
+            await worker.processDueJobs();
+
+            expect(fake.row.attempts).toBe(4);
+            expect(fake.row.status).toBe("failed");
+            expect(fake.row.lastErrorCode).toBe("PRE_SEND_RETRY_EXHAUSTED");
+            expect(fake.repository.markFailed).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.any(String),
+                "PRE_SEND_RETRY_EXHAUSTED",
+            );
+            expect(fake.repository.markReconciling).not.toHaveBeenCalled();
+            expect(reconciliation.reconcile).not.toHaveBeenCalled();
+            await Promise.resolve();
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+            expect(fake.progressWrites.every((step) => step === "dispatch_authorized")).toBe(true);
+        });
+
+        it("keeps the fence up for the whole attempt: every progress write and heartbeat persists dispatch_authorized", async () => {
+            const fake = createFakeRepository();
+            let finish!: (value: unknown) => void;
+            const gate = new Promise((resolve) => {
+                finish = resolve;
+            });
+            const { worker } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("client-started");
+                        await onProgress?.("info-inserted");
+                        return gate;
+                    }),
+                },
+            });
+
+            const processing = worker.processDueJobs();
+            for (let tick = 0; tick < 20 && fake.progressWrites.length < 2; tick += 1) await Promise.resolve();
+            jest.advanceTimersByTime(30_000);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(fake.progressWrites).toEqual(["dispatch_authorized", "dispatch_authorized", "dispatch_authorized"]);
+            expect(fake.row.progressStep).toBe("dispatch_authorized");
+
+            finish({ ok: false, reason: "editor timeout", fallbackHint: "iframe", durationMs: 1 });
+            await processing;
+            expect(fake.row.status).toBe("queued");
+        });
+
+        it("reconciles and never retries when persisting the creating step fails, before the click can run", async () => {
+            const fake = createFakeRepository();
+            let clicked = false;
+            const baseUpdate = fake.repository.updateProgress.getMockImplementation()!;
+            fake.repository.updateProgress.mockImplementation(async (id, lease, step) => {
+                if (step === "creating") throw new Error("database unavailable");
+                return baseUpdate(id, lease, step);
+            });
+            const { worker } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("client-started");
+                        // The gate awaits `creating` before it clicks 전송: a rejection aborts the click.
+                        await onProgress?.("creating");
+                        clicked = true;
+                        return { ok: true, documentId: "doc-1", durationMs: 1 };
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(clicked).toBe(false);
+            expect(fake.repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(fake.repository.markReconciling).toHaveBeenCalledWith(expect.any(String), expect.any(String), "creating");
+            expect(fake.row.status).toBe("reconciling");
+        });
+
+        it("reconciles and never retries an attempt that emitted creating and then failed; the next authorization is refused", async () => {
+            const fake = createFakeRepository();
+            const { worker } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("client-started");
+                        await onProgress?.("creating");
+                        return { ok: false, reason: "browser disconnected", durationMs: 1 };
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(fake.repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(fake.row.status).toBe("reconciling");
+            expect(fake.row.progressStep).toBe("creating");
+            expect(fake.progressWrites).toEqual(["dispatch_authorized", "creating"]);
+
+            // A row carrying real send evidence can never be authorized again.
+            for (const step of ["creating", "sent"]) {
+                fake.row.status = "processing";
+                fake.row.progressStep = step;
+                await expect(fake.repository.authorizeForDispatch({ leaseToken: fake.row.leaseToken! }))
+                    .resolves.toEqual({ kind: "lost", reason: "dispatch_already_claimed" });
+            }
+        });
+
+        it("never lets dispatch_authorized overwrite creating or sent through progress writes or the heartbeat", async () => {
+            const fake = createFakeRepository();
+            let finish!: (value: unknown) => void;
+            const gate = new Promise((resolve) => {
+                finish = resolve;
+            });
+            const { worker } = buildWorker({
+                repository: fake.repository as never,
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("client-started");
+                        await onProgress?.("creating");
+                        await onProgress?.("info-inserted");
+                        await onProgress?.("sent");
+                        await onProgress?.("client-started");
+                        return gate;
+                    }),
+                },
+            });
+
+            const processing = worker.processDueJobs();
+            for (let tick = 0; tick < 40 && fake.progressWrites.length < 6; tick += 1) await Promise.resolve();
+            jest.advanceTimersByTime(30_000);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(fake.progressWrites).toEqual([
+                "dispatch_authorized",
+                "creating",
+                "creating",
+                "sent",
+                "sent",
+                "sent",
+            ]);
+            finish({ ok: true, documentId: "doc-1", durationMs: 1 });
+            await processing;
+        });
+
+        it("reconciles a job recovered from a crash that left dispatch_authorized", async () => {
+            const recovered = job({ status: "reconciling", progressStep: "dispatch_authorized" });
+            const { worker, reconciliation, repository } = buildWorker({
+                repository: { recoverStale: jest.fn().mockResolvedValue([recovered]) },
+            });
+
+            await worker.processDueJobs();
+
+            expect(reconciliation.reconcile).toHaveBeenCalledWith(recovered, workerPrincipal);
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
         });
     });
 });

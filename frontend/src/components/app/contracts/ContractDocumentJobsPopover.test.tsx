@@ -202,6 +202,21 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.getByText("처리 중", { selector: "p, span, div" })).toBeInTheDocument();
   });
 
+  it("shows an authorized job as 전송 준비 중, not its raw step name", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [
+          { jobId: "job-authorized", jobType: "create_document", status: "processing", progressStep: "dispatch_authorized", clientName: "김하늘" },
+        ],
+        requiresAttention: [],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText("dispatch_authorized")).not.toBeInTheDocument();
+    expect(screen.getByText("전송 준비 중", { selector: "p, span, div" })).toBeInTheDocument();
+  });
+
   it("closes on Escape and mobile backdrop clicks", () => {
     const onOpenChange = jest.fn();
     renderOpenPopover({ onOpenChange });
