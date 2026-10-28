@@ -211,6 +211,11 @@
     "name-label": "Mother's Name",
     "name-placeholder": "Jane Doe"
   },
+  "contract-reminder-msg": {
+    "subtitle": "Generate a contract signing request message",
+    "name-label": "Mother's Name",
+    "name-placeholder": "Jane Doe"
+  },
   "survey-msg": {
     "subtitle": "Generate a monitoring survey request message",
     "name-label": "Mother's Name",

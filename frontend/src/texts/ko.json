@@ -238,6 +238,11 @@
     "name-label": "산모님 성함",
     "name-placeholder": "홍길동"
   },
+  "contract-reminder-msg": {
+    "subtitle": "계약서 작성 요청 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
   "survey-msg": {
     "subtitle": "모니터링 설문 요청 문자 메시지를 생성합니다",
     "name-label": "산모님 성함",
