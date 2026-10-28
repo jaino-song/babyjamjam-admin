@@ -24,6 +24,7 @@ describe("AdminServiceRecordController (Integration)", () => {
         getClientEditor: jest.Mock;
         getRevisionHistory: jest.Mock;
         getRevisionChanges: jest.Mock;
+        getCaregiverEditChanges: jest.Mock;
         retryRevisionDocument: jest.Mock;
     };
     let adminServiceRecordEditService: {
@@ -39,6 +40,7 @@ describe("AdminServiceRecordController (Integration)", () => {
             getClientEditor: jest.fn(),
             getRevisionHistory: jest.fn(),
             getRevisionChanges: jest.fn(),
+            getCaregiverEditChanges: jest.fn(),
             retryRevisionDocument: jest.fn(),
         };
         adminServiceRecordEditService = {
@@ -111,6 +113,18 @@ describe("AdminServiceRecordController (Integration)", () => {
         expect(adminServiceRecordService.getRevisionChanges).toHaveBeenCalledWith("branch-1", 42, "revision-1");
     });
 
+    it("protects and scopes caregiver edit changes with branch-manager authority", async () => {
+        const handler = AdminServiceRecordController.prototype.getCaregiverEditChanges;
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(BranchManagerGuard);
+        expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
+        expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe("clients/:clientId/caregiver-edits/:editId/changes");
+        const result = { editId: "edit-1", editedAt: "2026-10-28T00:00:00.000Z", employeeName: "A", session: { sessionIndex: 1, kind: "changed", serviceDateBefore: null, serviceDateAfter: null, changes: [] } };
+        adminServiceRecordService.getCaregiverEditChanges.mockResolvedValue(result);
+        await expect(controller.getCaregiverEditChanges(tenant, 42, "edit-1")).resolves.toBe(result);
+        // Branch authority comes from the tenant principal, never from the request.
+        expect(adminServiceRecordService.getCaregiverEditChanges).toHaveBeenCalledWith("branch-1", 42, "edit-1");
+    });
+
     it("rejects query authority and does not expose a history/changes route to provider links", () => {
         const pipe = new AdminServiceRecordNoQueryPipe();
         expect(pipe.transform({})).toEqual({});
@@ -118,8 +132,9 @@ describe("AdminServiceRecordController (Integration)", () => {
         for (const name of Object.getOwnPropertyNames(ServiceRecordEntryController.prototype)) {
             const handler = Object.getOwnPropertyDescriptor(ServiceRecordEntryController.prototype, name)?.value;
             if (typeof handler !== "function") continue;
-            expect(Reflect.getMetadata(PATH_METADATA, handler) ?? "").not.toMatch(/revisions|changes|history/);
+            expect(Reflect.getMetadata(PATH_METADATA, handler) ?? "").not.toMatch(/revisions|changes|history|caregiver-edits/);
             expect(handler).not.toBe(AdminServiceRecordController.prototype.getRevisionChanges);
+            expect(handler).not.toBe(AdminServiceRecordController.prototype.getCaregiverEditChanges);
         }
     });
 

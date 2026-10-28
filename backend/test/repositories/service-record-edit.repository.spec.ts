@@ -997,6 +997,74 @@ describe("ServiceRecordEditRepository", () => {
         expect(await repository.findRevisionForChanges(branchId, 42, id)).toBeNull();
     });
 
+    it("reads a caregiver edit scoped by branch AND client (never by id alone) and rejects malformed IDs before querying", async () => {
+        const editId = "66666666-6666-4666-8666-666666666666";
+        const row = {
+            id: editId,
+            editedAt: new Date("2026-10-28T01:02:03.000Z"),
+            employeeNameSnapshot: "김제공",
+            caseSessionIndex: 3,
+            before: { notes: "old" },
+            after: { notes: "new" },
+        };
+        const findFirst = jest.fn().mockResolvedValue(row);
+        const repository = new ServiceRecordEditRepository({ service_record_day_edit_log: { findFirst } } as never);
+        expect(await repository.findCaregiverEditForChanges(branchId, 42, editId)).toEqual(row);
+        expect(findFirst).toHaveBeenCalledTimes(1);
+        expect(findFirst).toHaveBeenCalledWith({
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId: 42 } },
+            select: { id: true, editedAt: true, employeeNameSnapshot: true, caseSessionIndex: true, before: true, after: true },
+        });
+        findFirst.mockClear();
+        for (const bad of ["not-a-uuid", "", "x".repeat(256)]) {
+            expect(await repository.findCaregiverEditForChanges(branchId, 42, bad)).toBeNull();
+        }
+        expect(findFirst).not.toHaveBeenCalled();
+        findFirst.mockResolvedValue(null);
+        expect(await repository.findCaregiverEditForChanges(branchId, 42, editId)).toBeNull();
+    });
+
+    it("lists caregiver edits newest first inside the history transaction, scoped to the case, without before/after", async () => {
+        const editRows = [
+            { id: "e2", editedAt: new Date("2026-10-28T02:00:00.000Z"), sessionIndex: 2, employeeName: "B" },
+            { id: "e1", editedAt: "2026-10-28T01:00:00.000Z", sessionIndex: 1, employeeName: "A" },
+        ];
+        const queries: string[] = [];
+        const values: unknown[][] = [];
+        const tx = {
+            $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+                const text = sql.strings.join("?");
+                queries.push(text);
+                values.push(sql.values);
+                if (text.includes('FROM "service_record_case"')) {
+                    return [{ caseId, caseVersion: 4, currentRevisionId: null, currentUsableRevisionId: null }];
+                }
+                if (text.includes('FROM "service_record_day_edit_log"')) return editRows;
+                return [];
+            }),
+        };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)) };
+        const repository = new ServiceRecordEditRepository(prisma as never);
+
+        const history = await repository.listRevisionHistory(branchId, 42);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        const editIndex = queries.findIndex((text) => text.includes('FROM "service_record_day_edit_log"'));
+        expect(editIndex).toBeGreaterThanOrEqual(0);
+        const editQuery = queries[editIndex]!;
+        expect(editQuery).toMatch(/branch_id = \?::uuid/);
+        expect(editQuery).toMatch(/service_record_case_id = \?::uuid/);
+        expect(editQuery).toMatch(/ORDER BY edited_at DESC, id DESC/);
+        expect(values[editIndex]).toEqual([branchId, caseId]);
+        // The list never selects the payloads.
+        expect(editQuery).not.toMatch(/\bbefore\b|\bafter\b/i);
+        expect(history?.caregiverEdits).toEqual([
+            { id: "e2", editedAt: "2026-10-28T02:00:00.000Z", sessionIndex: 2, employeeName: "B" },
+            { id: "e1", editedAt: "2026-10-28T01:00:00.000Z", sessionIndex: 1, employeeName: "A" },
+        ]);
+        expect(history?.revisions).toEqual([]);
+    });
+
     it("allocates contiguous revision numbers without accepting caller overrides", async () => {
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
