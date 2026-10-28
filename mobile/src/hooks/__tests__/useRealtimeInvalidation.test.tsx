@@ -49,6 +49,8 @@ class MockEventSource {
   }
 }
 
+const IDENTITY = "user-1:branch-1";
+
 function setVisibilityState(state: DocumentVisibilityState) {
   Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
   document.dispatchEvent(new Event("visibilitychange"));
@@ -94,7 +96,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("opens the same-origin stream through the authenticated opener", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
 
     expect(mockOpenAuthenticatedEventSource).toHaveBeenCalledWith(
@@ -104,15 +106,15 @@ describe("useRealtimeInvalidation", () => {
     expect(MockEventSource.instances).toHaveLength(1);
   });
 
-  it("does not connect while disabled (logged out)", async () => {
-    renderHook(() => useRealtimeInvalidation(false), { wrapper });
+  it("does not connect without an identity (logged out)", async () => {
+    renderHook(() => useRealtimeInvalidation(null), { wrapper });
     await flushConnection();
 
     expect(mockOpenAuthenticatedEventSource).not.toHaveBeenCalled();
   });
 
   it("invalidates the roots of the changed kinds now and again after 1500 ms", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
 
     act(() => {
@@ -142,7 +144,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("coalesces a burst into one follow-up over the union of its roots", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
 
     act(() => {
@@ -166,7 +168,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("ignores unknown kinds and malformed payloads", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
 
     act(() => {
@@ -180,7 +182,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("reconnects 3 s after an error and invalidates every mapped root once on re-open", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
 
     const first = latest();
@@ -218,7 +220,7 @@ describe("useRealtimeInvalidation", () => {
 
   it("retries after the authenticated opener fails", async () => {
     mockOpenAuthenticatedEventSource.mockRejectedValueOnce(new Error("session expired"));
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
     expect(MockEventSource.instances).toHaveLength(0);
 
@@ -231,7 +233,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("reconnects when no ping arrives for 70 s, and pings keep it alive", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
     const first = latest();
     act(() => {
@@ -257,7 +259,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("reconnects immediately when the tab becomes visible and the stream is not open", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
     const first = latest();
     act(() => {
@@ -276,7 +278,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("keeps an open stream when the tab becomes visible", async () => {
-    renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
     act(() => {
       latest().dispatch("open");
@@ -292,7 +294,7 @@ describe("useRealtimeInvalidation", () => {
   });
 
   it("closes the stream and cancels pending timers on unmount", async () => {
-    const { unmount } = renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    const { unmount } = renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
     const source = latest();
     act(() => {
@@ -318,7 +320,7 @@ describe("useRealtimeInvalidation", () => {
         resolveOpen = resolve;
       }),
     );
-    const { unmount } = renderHook(() => useRealtimeInvalidation(true), { wrapper });
+    const { unmount } = renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     unmount();
 
     const late = new MockEventSource("/api/realtime/events");
@@ -328,5 +330,156 @@ describe("useRealtimeInvalidation", () => {
     });
 
     expect(late.closed).toBe(true);
+  });
+
+  describe("bootstrap that never settles", () => {
+    function pendingOpeners() {
+      const attempts: { signal: AbortSignal; resolve: (source: EventSource) => void }[] = [];
+      mockOpenAuthenticatedEventSource.mockImplementation(
+        (_url, options) => new Promise<EventSource>((resolve) => {
+          attempts.push({ signal: options?.signal as AbortSignal, resolve });
+        }),
+      );
+      return attempts;
+    }
+
+    it("aborts the stalled attempt after the bootstrap bound and retries on the normal 3 s delay", async () => {
+      const attempts = pendingOpeners();
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+      expect(attempts).toHaveLength(1);
+
+      act(() => {
+        jest.advanceTimersByTime(19_999);
+      });
+      expect(attempts[0].signal.aborted).toBe(false);
+
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(attempts[0].signal.aborted).toBe(true);
+      expect(attempts).toHaveLength(1);
+
+      act(() => {
+        jest.advanceTimersByTime(3000);
+      });
+      await flushConnection();
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1].signal.aborted).toBe(false);
+    });
+
+    it("closes the source of an abandoned attempt that resolves late and keeps exactly one live source", async () => {
+      const attempts = pendingOpeners();
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      act(() => {
+        jest.advanceTimersByTime(20_000 + 3000);
+      });
+      await flushConnection();
+      expect(attempts).toHaveLength(2);
+
+      const stale = new MockEventSource("/api/realtime/events");
+      const fresh = new MockEventSource("/api/realtime/events");
+      await act(async () => {
+        attempts[1].resolve(fresh as unknown as EventSource);
+        await Promise.resolve();
+      });
+      await act(async () => {
+        attempts[0].resolve(stale as unknown as EventSource);
+        await Promise.resolve();
+      });
+
+      expect(stale.closed).toBe(true);
+      expect(fresh.closed).toBe(false);
+      act(() => {
+        fresh.dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }));
+      });
+      expect(invalidateSpy).toHaveBeenCalled();
+      act(() => {
+        stale.dispatch("entity-changed", JSON.stringify({ entities: ["client"] }));
+      });
+      expect(invalidatedRoots(invalidateSpy)).not.toContain(JSON.stringify(["clients"]));
+    });
+
+    it("does not start an overlapping attempt when the tab becomes visible during a pending bootstrap", async () => {
+      const attempts = pendingOpeners();
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      act(() => {
+        setVisibilityState("visible");
+        jest.advanceTimersByTime(1000);
+      });
+      await flushConnection();
+
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0].signal.aborted).toBe(false);
+    });
+  });
+
+  describe("subscription identity", () => {
+    it("closes the old stream and opens exactly one new one when the user or branch changes", async () => {
+      const { rerender } = renderHook(
+        ({ identity }: { identity: string | null }) => useRealtimeInvalidation(identity),
+        { wrapper, initialProps: { identity: "user-1:branch-A" } },
+      );
+      await flushConnection();
+      const forA = latest();
+      act(() => {
+        forA.dispatch("open");
+      });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      rerender({ identity: "user-1:branch-B" });
+      await flushConnection();
+
+      expect(forA.closed).toBe(true);
+      expect(MockEventSource.instances).toHaveLength(2);
+      const forB = latest();
+      expect(forB.closed).toBe(false);
+
+      // The cache still holds branch A's rows, so the first open refreshes everything.
+      act(() => {
+        forB.dispatch("open");
+      });
+      expect([...invalidatedRoots(invalidateSpy)].sort()).toEqual(
+        allEntityQueryRoots().map((root) => JSON.stringify(root)).sort(),
+      );
+    });
+
+    it("keeps the single source when it re-renders with an unchanged identity", async () => {
+      const { rerender } = renderHook(
+        ({ identity }: { identity: string | null }) => useRealtimeInvalidation(identity),
+        { wrapper, initialProps: { identity: "user-1:branch-A" } },
+      );
+      await flushConnection();
+      const first = latest();
+      act(() => {
+        first.dispatch("open");
+      });
+
+      rerender({ identity: "user-1:branch-A" });
+      await flushConnection();
+
+      expect(first.closed).toBe(false);
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    it("closes the stream when the identity becomes null (logged out)", async () => {
+      const { rerender } = renderHook(
+        ({ identity }: { identity: string | null }) => useRealtimeInvalidation(identity),
+        { wrapper, initialProps: { identity: "user-1:branch-A" as string | null } },
+      );
+      await flushConnection();
+      const first = latest();
+
+      rerender({ identity: null });
+      await flushConnection();
+
+      expect(first.closed).toBe(true);
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
   });
 });

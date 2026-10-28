@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
@@ -19,6 +19,11 @@ const RECONNECT_DELAY_MS = 3000;
 // for this long, the stream is silently dead (e.g. the function that proxies it
 // hit its duration limit and was killed without firing `error`).
 const HEARTBEAT_TIMEOUT_MS = 70_000;
+// The auth bootstrap inside `openAuthenticatedEventSource` (a /api/auth/me fetch,
+// possibly followed by a session refresh) normally takes milliseconds. The
+// watchdog above only starts once a source exists, so a bootstrap that never
+// settles would stall the hook forever; abort it after this long and retry.
+const BOOTSTRAP_TIMEOUT_MS = 20_000;
 // The backend emits right after its transaction commits, but a list refetch that
 // lands before a read replica / cache catches up would store the old rows. One
 // more pass shortly after settles that.
@@ -47,14 +52,26 @@ const FOLLOW_UP_INVALIDATE_MS = 1500;
  * The stream is opened through `openAuthenticatedEventSource`, which refreshes
  * an expired session first — a bare `EventSource` cannot do that.
  *
- * `enabled` should be the current authentication state — pass `false` to skip
- * connecting (e.g. before the user has logged in).
+ * A bootstrap that never settles is aborted after {@link BOOTSTRAP_TIMEOUT_MS}
+ * and retried on the normal reconnect delay; if the abandoned opener resolves
+ * late, its source is closed on arrival so only one live source ever exists.
+ *
+ * `identity` names who the stream belongs to (user + branch) and is part of the
+ * subscription: `null` skips connecting (e.g. before the user has logged in),
+ * and a change closes the old stream and opens a new one for the new identity —
+ * a stream is branch-scoped server-side, so it must never outlive a switch. The
+ * first open after such a change refreshes every mapped root, because the cache
+ * still holds the previous identity's rows.
  */
-export function useRealtimeInvalidation(enabled: boolean): void {
+export function useRealtimeInvalidation(identity: string | null): void {
   const queryClient = useQueryClient();
+  const lastIdentityRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!enabled || typeof window === "undefined" || typeof EventSource === "undefined") {
+    const previousIdentity = lastIdentityRef.current;
+    lastIdentityRef.current = identity;
+
+    if (identity === null || typeof window === "undefined" || typeof EventSource === "undefined") {
       return;
     }
 
@@ -62,10 +79,11 @@ export function useRealtimeInvalidation(enabled: boolean): void {
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let followUpTimer: number | null = null;
+    let bootstrapTimer: number | null = null;
+    // The attempt currently awaiting its authenticated opener; null when idle.
     let bootstrapController: AbortController | null = null;
     let disposed = false;
-    let connecting = false;
-    let hasConnectedOnce = false;
+    let hasConnectedOnce = previousIdentity !== null && previousIdentity !== identity;
     // Roots from events still waiting for their follow-up pass.
     let pendingFollowUpRoots: QueryKey[] = [];
 
@@ -93,6 +111,13 @@ export function useRealtimeInvalidation(enabled: boolean): void {
       if (followUpTimer !== null) {
         window.clearTimeout(followUpTimer);
         followUpTimer = null;
+      }
+    };
+
+    const clearBootstrapTimer = () => {
+      if (bootstrapTimer !== null) {
+        window.clearTimeout(bootstrapTimer);
+        bootstrapTimer = null;
       }
     };
 
@@ -140,11 +165,18 @@ export function useRealtimeInvalidation(enabled: boolean): void {
     };
 
     async function connect() {
-      if (disposed || source || connecting) return;
+      if (disposed || source || bootstrapController !== null) return;
 
-      connecting = true;
       const controller = new AbortController();
       bootstrapController = controller;
+      bootstrapTimer = window.setTimeout(() => {
+        bootstrapTimer = null;
+        // Retire the stalled attempt: aborting makes a late-resolving opener's
+        // source get closed below, and freeing the slot lets the retry proceed.
+        controller.abort();
+        if (bootstrapController === controller) bootstrapController = null;
+        scheduleReconnect(RECONNECT_DELAY_MS);
+      }, BOOTSTRAP_TIMEOUT_MS);
 
       try {
         const next = await openAuthenticatedEventSource(ENDPOINT, { signal: controller.signal });
@@ -196,15 +228,18 @@ export function useRealtimeInvalidation(enabled: boolean): void {
           scheduleReconnect(RECONNECT_DELAY_MS);
         }
       } finally {
-        connecting = false;
         if (bootstrapController === controller) {
           bootstrapController = null;
+          clearBootstrapTimer();
         }
       }
     }
 
     const handleVisibilityChange = () => {
       if (disposed || document.visibilityState !== "visible") return;
+      // A bootstrap is already in flight (bounded by its own timeout); starting
+      // another would overlap it.
+      if (bootstrapController !== null) return;
       if (source && source.readyState === EventSource.OPEN) return;
       // Back on the tab and the stream isn't open — reconnect now.
       scheduleReconnect(0);
@@ -219,8 +254,9 @@ export function useRealtimeInvalidation(enabled: boolean): void {
       clearReconnectTimer();
       clearHeartbeatTimer();
       clearFollowUpTimer();
+      clearBootstrapTimer();
       bootstrapController?.abort();
       closeSource();
     };
-  }, [enabled, queryClient]);
+  }, [identity, queryClient]);
 }
