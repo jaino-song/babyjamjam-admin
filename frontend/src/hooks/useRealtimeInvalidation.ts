@@ -39,11 +39,16 @@ function parseKinds(data: unknown): unknown[] {
  * visible again; after any *re*open every known root is invalidated once to
  * catch up on changes missed while the stream was down.
  *
+ * `identity` is the authenticated user + selected branch. The stream is scoped
+ * to that identity on the server, so a change (in-app branch switch keeps the
+ * layout mounted) closes the old source and opens a new one immediately instead
+ * of staying subscribed to the previous branch until the proxy deadline.
+ *
  * Each event invalidates immediately and again after
  * {@link TRAILING_REFRESH_DELAY_MS}; events arriving inside that window share
  * one trailing refresh covering the union of their kinds.
  */
-export function useRealtimeInvalidation(enabled = true): void {
+export function useRealtimeInvalidation(enabled = true, identity: string | null = null): void {
     const queryClient = useQueryClient();
 
     useEffect(() => {
@@ -188,5 +193,5 @@ export function useRealtimeInvalidation(enabled = true): void {
             clearTrailingTimer();
             closeSource();
         };
-    }, [enabled, queryClient]);
+    }, [enabled, identity, queryClient]);
 }

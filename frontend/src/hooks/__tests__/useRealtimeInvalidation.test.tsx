@@ -327,6 +327,56 @@ describe("useRealtimeInvalidation", () => {
     expect(MockEventSource.instances).toHaveLength(1);
   });
 
+  test("re-subscribes immediately when the identity changes: old source closed, exactly one new source", () => {
+    const { rerender } = renderHook(
+      ({ identity }: { identity: string }) => useRealtimeInvalidation(true, identity),
+      { wrapper, initialProps: { identity: "user-1:branch-a" } },
+    );
+    const first = MockEventSource.instances[0];
+    act(() => first.fireOpen());
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    rerender({ identity: "user-1:branch-b" });
+
+    expect(first.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].closed).toBe(false);
+    expect(MockEventSource.instances[1].url).toBe(ENDPOINT);
+  });
+
+  test("keeps the same source when re-rendered with an unchanged identity", () => {
+    const { rerender } = renderHook(
+      ({ identity }: { identity: string }) => useRealtimeInvalidation(true, identity),
+      { wrapper, initialProps: { identity: "user-1:branch-a" } },
+    );
+    const first = MockEventSource.instances[0];
+    act(() => first.fireOpen());
+
+    rerender({ identity: "user-1:branch-a" });
+    rerender({ identity: "user-1:branch-a" });
+
+    expect(first.closed).toBe(false);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  test("events from the previous identity's source no longer invalidate after a switch", () => {
+    const { rerender } = renderHook(
+      ({ identity }: { identity: string }) => useRealtimeInvalidation(true, identity),
+      { wrapper, initialProps: { identity: "user-1:branch-a" } },
+    );
+    const first = MockEventSource.instances[0];
+    act(() => first.fireOpen());
+    rerender({ identity: "user-1:branch-b" });
+    const second = MockEventSource.instances[1];
+    act(() => second.fireOpen());
+
+    emitEntityChanged(first, ["employee"]);
+    expect(invalidateSpy).not.toHaveBeenCalled();
+
+    emitEntityChanged(second, ["employee"]);
+    expect(invalidatedKeys()).toEqual(["employees"]);
+  });
+
   test("closes the source and clears every timer on unmount", () => {
     const { unmount } = mountStream();
     const source = MockEventSource.instances[0];
