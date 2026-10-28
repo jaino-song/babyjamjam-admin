@@ -411,12 +411,12 @@ export function ServiceRecordScheduleSheet({
               <section data-component={part("body_section-service-days")} className="min-w-0">
                 <h3 className="text-sm font-extrabold text-v3-dark">{text("section-service-days")}</h3>
                 <p className="mt-1 text-xs font-semibold text-v3-text-muted">{text("service-days-help")}</p>
-                <div role="group" aria-label={text("section-service-days")} className="mt-2 grid min-w-0">
+                <div role="group" aria-label={text("section-service-days")} className="mt-2 grid min-w-0 gap-2">
                   {SERVICE_DAY_FIELDS.map(({ key, textKey }) => (
                     <div
                       key={key}
                       data-component={part(`body_section-service-days_${key}`)}
-                      className="flex min-h-11 min-w-0 items-center justify-between gap-3"
+                      className="flex min-h-12 min-w-0 items-center justify-between gap-3 rounded-[14px] border-[1.5px] border-v3-border bg-white px-4"
                     >
                       <Label htmlFor={`schedule-sheet-${key}`} className="cursor-pointer text-[0.82rem] font-bold text-v3-dark">
                         {t(locale, textKey)}
