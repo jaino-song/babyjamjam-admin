@@ -231,6 +231,12 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.queryByText("최근 완료")).not.toBeInTheDocument();
   });
 
+  it("labels a completed job as 최근 완료", () => {
+    renderOpenPopover();
+
+    expect(screen.getByText("최근 완료")).toBeInTheDocument();
+  });
+
   it("closes on Escape and mobile backdrop clicks", () => {
     const onOpenChange = jest.fn();
     renderOpenPopover({ onOpenChange });
