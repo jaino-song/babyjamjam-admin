@@ -23,6 +23,16 @@ export interface ContractCreationProgressPanelProps {
   errorHint?: string;
 }
 
+type StampMap = Partial<Record<HeadlessProgressStepKey, Date>>;
+
+interface RunStamps {
+  stamps: StampMap;
+  index: number;
+  failed: boolean;
+}
+
+const INITIAL_RUN: RunStamps = { stamps: {}, index: -1, failed: false };
+
 type RowState = "done" | "active" | "error" | "pending";
 
 function getActiveTitle(key: HeadlessProgressStepKey, recipientName: string): string {
@@ -49,25 +59,33 @@ export function ContractCreationProgressPanel({
 }: ContractCreationProgressPanelProps) {
   const currentIndex = progress.step ? steps.findIndex((item) => item.key === progress.step) : -1;
   // No server timestamp exists, so completion times are stamped client-side as rows turn done.
-  const [completedAt, setCompletedAt] = useState<Partial<Record<HeadlessProgressStepKey, Date>>>({});
+  // The last rendered run position is kept beside the stamps so a restart can be detected even
+  // when React batches the reset (null step) away and no null render ever happens.
+  const [run, setRun] = useState<RunStamps>(INITIAL_RUN);
 
   // Adjust state while rendering (React's "derived state" pattern) so a row is stamped the
   // moment it turns done, without an effect-triggered cascade.
   if (currentIndex < 0) {
     // A finished run leaves its stamps behind; drop them so the next run starts clean.
-    if (Object.keys(completedAt).length > 0) setCompletedAt({});
+    if (run !== INITIAL_RUN) setRun(INITIAL_RUN);
     return null;
   }
+  const isRestart =
+    run.index >= 0 && (currentIndex < run.index || (run.failed && !progress.failed));
+  const baseStamps = isRestart ? {} : run.stamps;
   const unstamped = steps.filter((item, idx) => {
     const isDone = progress.completed ? idx <= currentIndex : idx < currentIndex;
-    return isDone && !completedAt[item.key];
+    return isDone && !baseStamps[item.key];
   });
-  if (unstamped.length > 0) {
-    const stampedAt = new Date();
-    setCompletedAt({
-      ...completedAt,
-      ...Object.fromEntries(unstamped.map((item) => [item.key, stampedAt])),
-    });
+  const stamps: StampMap =
+    unstamped.length > 0
+      ? {
+          ...baseStamps,
+          ...Object.fromEntries(unstamped.map((item) => [item.key, new Date()])),
+        }
+      : baseStamps;
+  if (isRestart || stamps !== run.stamps || run.index !== currentIndex || run.failed !== progress.failed) {
+    setRun({ stamps, index: currentIndex, failed: progress.failed });
   }
 
   const states: RowState[] = steps.map((_, idx) => {
@@ -177,7 +195,7 @@ export function ContractCreationProgressPanel({
       >
         {steps.map((item, idx) => {
           const state = states[idx];
-          const doneAt = state === "done" ? completedAt[item.key] : undefined;
+          const doneAt = state === "done" ? stamps[item.key] : undefined;
 
           return (
             <li

@@ -170,4 +170,71 @@ describe("ContractCreationProgressPanel", () => {
       document.querySelector('[data-component="desktop_contracts_creation-progress_panel_hero_subtitle"]'),
     ).toBeNull();
   });
+
+  describe("completion timestamps across runs", () => {
+    const at = (h: number, m: number, s: number) => new Date(2026, 0, 1, h, m, s);
+    const timeOf = (key: string) =>
+      within(screen.getByTestId(`contract-creation-progress-step-${key}`)).queryByText(TIME_PATTERN)
+        ?.textContent;
+    const panel = (progress: HeadlessProgressState) => (
+      <ContractCreationProgressPanel steps={STEPS} progress={progress} />
+    );
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(at(0, 0, 0));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("keeps earlier stamps unchanged during normal forward progress", () => {
+      const { rerender } = render(panel({ step: "info-inserted", completed: false, failed: false }));
+      expect(timeOf("client-started")).toBe("00:00:00");
+
+      jest.setSystemTime(at(0, 0, 30));
+      rerender(panel({ step: "creating", completed: false, failed: false }));
+      expect(timeOf("client-started")).toBe("00:00:00");
+      expect(timeOf("info-inserted")).toBe("00:00:30");
+
+      jest.setSystemTime(at(0, 1, 0));
+      rerender(panel({ step: "sent", completed: true, failed: false }));
+      expect(timeOf("client-started")).toBe("00:00:00");
+      expect(timeOf("info-inserted")).toBe("00:00:30");
+      expect(timeOf("creating")).toBe("00:01:00");
+      expect(timeOf("sent")).toBe("00:01:00");
+    });
+
+    it("restamps when a failed run restarts at an earlier step without a null render", () => {
+      const { rerender } = render(panel({ step: "creating", completed: false, failed: true }));
+      expect(timeOf("client-started")).toBe("00:00:00");
+
+      jest.setSystemTime(at(0, 1, 0));
+      rerender(panel({ step: "client-started", completed: false, failed: false }));
+      rerender(panel({ step: "info-inserted", completed: false, failed: false }));
+
+      expect(timeOf("client-started")).toBe("00:01:00");
+    });
+
+    it("restamps when the failed step itself is retried at the same position", () => {
+      const { rerender } = render(panel({ step: "client-started", completed: false, failed: true }));
+
+      jest.setSystemTime(at(0, 1, 0));
+      rerender(panel({ step: "client-started", completed: false, failed: false }));
+      jest.setSystemTime(at(0, 2, 0));
+      rerender(panel({ step: "info-inserted", completed: false, failed: false }));
+
+      expect(timeOf("client-started")).toBe("00:02:00");
+    });
+
+    it("clears stamps when the step returns to null", () => {
+      const { rerender } = render(panel({ step: "creating", completed: false, failed: false }));
+      rerender(panel({ step: null, completed: false, failed: false }));
+
+      jest.setSystemTime(at(0, 1, 0));
+      rerender(panel({ step: "info-inserted", completed: false, failed: false }));
+      expect(timeOf("client-started")).toBe("00:01:00");
+    });
+  });
 });
