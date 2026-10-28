@@ -188,7 +188,7 @@
         "367:10-367:22|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1883:7-1890:8|rawUiElement"
+        "1897:7-1904:8|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
         "1043:36-1043:208|visualTailwindInPage",
@@ -197,13 +197,13 @@
         "1088:36-1088:208|visualTailwindInPage",
         "1109:36-1109:208|visualTailwindInPage",
         "1121:36-1121:208|visualTailwindInPage",
-        "1742:31-1742:63|visualTailwindInPage",
-        "1752:33-1752:81|visualTailwindInPage",
-        "1764:31-1764:63|visualTailwindInPage",
-        "1795:29-1795:136|visualTailwindInPage",
-        "1886:19-1886:233|visualTailwindInPage",
-        "1904:25-1904:232|visualTailwindInPage",
-        "1954:25-1954:157|visualTailwindInPage",
+        "1756:31-1756:63|visualTailwindInPage",
+        "1766:33-1766:81|visualTailwindInPage",
+        "1778:31-1778:63|visualTailwindInPage",
+        "1809:29-1809:136|visualTailwindInPage",
+        "1900:19-1900:233|visualTailwindInPage",
+        "1918:25-1918:232|visualTailwindInPage",
+        "1968:25-1968:157|visualTailwindInPage",
         "392:27-403:19|visualTailwindInPage",
         "718:72-718:177|visualTailwindInPage",
         "791:27-795:18|visualTailwindInPage",
