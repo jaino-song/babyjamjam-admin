@@ -16,6 +16,7 @@ import userEvent from "@testing-library/user-event";
 import ServiceRecordPage from "@/app/(public)/service-record/[token]/page";
 import { DAILY_ITEMS } from "@babyjamjam/service-record-ui";
 import { FIELD_COPY } from "../../../packages/service-record-ui/src/field-messages";
+import { dismissServiceRecordGuide, queryServiceRecordGuide, SERVICE_RECORD_GUIDE_NAME } from "@/test-utils/service-record-guide";
 
 import {
     NOW,
@@ -358,9 +359,27 @@ describe("service-record page contract", () => {
     });
 
     describe("basic information (header)", () => {
+        it("3. the how-to guide opens by itself over a first-time header step, and skipping it leaves the form usable", async () => {
+            const { api, user } = await renderPage();
+            const guide = await screen.findByRole("dialog", { name: SERVICE_RECORD_GUIDE_NAME });
+            expect(within(guide).getByRole("button", { name: "건너뛰기" })).toBeInTheDocument();
+
+            await dismissServiceRecordGuide(user);
+
+            expect(queryServiceRecordGuide()).toBeNull();
+            const momName = screen.getByRole("textbox", { name: HEADER_LABELS.momName });
+            await user.type(momName, SAVED_HEADER.momName);
+            expect(momName).toHaveValue(SAVED_HEADER.momName);
+            expect(screen.getByRole("radiogroup", { name: DELIVERY_LABEL })).toBeInTheDocument();
+            expect(api.callsTo("PUT", "/header")).toHaveLength(0);
+            // Dismissed for good: typing in the form does not bring it back.
+            expect(queryServiceRecordGuide()).toBeNull();
+        });
+
         it("3. pressing next on an empty form shows every required message and saves nothing", async () => {
             const { api, user } = await renderPage();
             await screen.findByLabelText(HEADER_LABELS.momName);
+            await dismissServiceRecordGuide(user);
 
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
 
@@ -375,6 +394,7 @@ describe("service-record page contract", () => {
         it("3. a partial birthday is flagged once the field is left, and digits are formatted as a date", async () => {
             const { user } = await renderPage();
             const birth = await screen.findByLabelText(HEADER_LABELS.momBirth);
+            await dismissServiceRecordGuide(user);
 
             await user.type(birth, "1999");
             await user.tab();
@@ -388,6 +408,7 @@ describe("service-record page contract", () => {
         it("3. a birthday in the future is rejected", async () => {
             const { user } = await renderPage();
             const birth = await screen.findByLabelText(HEADER_LABELS.momBirth);
+            await dismissServiceRecordGuide(user);
 
             await user.type(birth, "20270101");
             await user.tab();
@@ -397,7 +418,9 @@ describe("service-record page contract", () => {
 
         it("3. a valid header is sent to PUT /header with ISO dates and the session overview appears", async () => {
             const { api, user } = await renderPage();
-            await user.type(await screen.findByLabelText(HEADER_LABELS.momName), SAVED_HEADER.momName);
+            await screen.findByLabelText(HEADER_LABELS.momName);
+            await dismissServiceRecordGuide(user);
+            await user.type(screen.getByLabelText(HEADER_LABELS.momName), SAVED_HEADER.momName);
             await user.type(screen.getByLabelText(HEADER_LABELS.momBirth), "19940315");
             await user.type(screen.getByLabelText(HEADER_LABELS.babyName), SAVED_HEADER.babyName);
             await user.type(screen.getByLabelText(HEADER_LABELS.babyBirth), "20260910");
