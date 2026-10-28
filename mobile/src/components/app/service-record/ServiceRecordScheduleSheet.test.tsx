@@ -192,6 +192,9 @@ describe("ServiceRecordScheduleSheet", () => {
 
       await user.click(cell("12/17(목)"));
       expect(progressText()).toBe("9/10");
+      expect(
+        document.querySelector<HTMLElement>('[data-component$="_body_section-calendar_progress_bar"] > div')?.style.width,
+      ).toBe("90%");
       expect(saveButton()).toBeDisabled();
 
       await user.click(cell("12/29(화)"));

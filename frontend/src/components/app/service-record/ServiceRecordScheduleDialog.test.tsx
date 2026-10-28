@@ -239,6 +239,9 @@ describe("ServiceRecordScheduleDialog", () => {
 
             click("2026-12-17");
             expect(progress()).toBe("9/10");
+            expect(
+                document.querySelector<HTMLElement>('[data-component$="_section-calendar_progress_bar"] > div')?.style.width,
+            ).toBe("90%");
             expect(dayButton("2026-12-17")).toHaveAttribute("aria-pressed", "false");
             expect(saveButton()).toBeDisabled();
 

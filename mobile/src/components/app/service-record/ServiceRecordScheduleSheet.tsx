@@ -453,12 +453,25 @@ export function ServiceRecordScheduleSheet({
                   </Button>
                 </div>
 
-                <p
+                <div
                   data-component={part("body_section-calendar_progress")}
-                  className={cn("py-1 text-[0.8rem] font-extrabold", complete ? "text-v3-green" : "text-v3-orange")}
+                  className={cn(
+                    "flex min-w-0 items-center gap-3 py-1 text-[0.8rem] font-extrabold",
+                    complete ? "text-v3-green" : "text-v3-orange",
+                  )}
                 >
-                  {`${progress?.selectedCount ?? 0}/${model.requiredCount}`}
-                </p>
+                  <span>{`${progress?.selectedCount ?? 0}/${model.requiredCount}`}</span>
+                  <div
+                    data-component={part("body_section-calendar_progress_bar")}
+                    aria-hidden="true"
+                    className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-black/[0.07]"
+                  >
+                    <div
+                      className="h-full rounded-full bg-current transition-[width] duration-200"
+                      style={{ width: `${Math.min(100, ((progress?.selectedCount ?? 0) / Math.max(1, model.requiredCount)) * 100)}%` }}
+                    />
+                  </div>
+                </div>
 
                 {!calendarReady ? (
                   <div role="status" className="mt-2 flex items-center gap-2 text-xs text-v3-text-muted">
