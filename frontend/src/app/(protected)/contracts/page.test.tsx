@@ -6,6 +6,7 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
 import { eformsignApi } from "@/services/api";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 
@@ -297,7 +298,7 @@ async function renderContractDetailAndOpenPreview() {
     '[data-component="desktop_contracts_detail_dialogs_document-preview_footer_file-actions_receipt-send"]',
   ) as HTMLButtonElement | null;
   expect(sendButton).not.toBeNull();
-  return { sendButton: sendButton as HTMLButtonElement };
+  return { sendButton: sendButton as HTMLButtonElement, queryClient };
 }
 
 describe("ContractDetail manual receipt-send interaction", () => {
@@ -463,6 +464,31 @@ describe("ContractDetail manual receipt-send interaction", () => {
     expect(sendReceiptLink).toHaveBeenCalledWith("doc-1");
     // Let the mutation's onSuccess (closes the confirm dialog, fires a toast) settle
     // inside act() before the test ends, or React logs an act() warning.
+    await waitFor(() =>
+      expect(screen.queryByText("서비스 종료 안내 문자를 보낼까요?")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("refreshes the upcoming and client-history message lists after the send succeeds", async () => {
+    jest.spyOn(eformsignApi, "sendReceiptLink").mockResolvedValue({
+      jobId: "job-1",
+      scheduledFor: "2026-09-03T00:00:00.000Z",
+      clientName: "김산모",
+    } as never);
+
+    const { sendButton, queryClient } = await renderContractDetailAndOpenPreview();
+    const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+    fireEvent.click(sendButton);
+    await screen.findByText("서비스 종료 안내 문자를 보낼까요?");
+
+    fireEvent.click(screen.getByRole("button", { name: "발송하기" }));
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...messageTriggerKeys.all, "client-history"],
+    });
     await waitFor(() =>
       expect(screen.queryByText("서비스 종료 안내 문자를 보낼까요?")).not.toBeInTheDocument(),
     );
