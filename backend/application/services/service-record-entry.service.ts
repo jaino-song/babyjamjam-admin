@@ -5,6 +5,7 @@ import {
     BadRequestException,
     ConflictException,
 } from "@nestjs/common";
+import { isDeepStrictEqual } from "node:util";
 import { Prisma } from "@prisma/client";
 import {
     assertNoActiveEmployeeScheduleOverlap,
@@ -42,6 +43,37 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
+}
+
+/** The four caregiver-editable fields of a submitted day, plus its immutable service date. */
+type EditableDaySnapshot = {
+    serviceDate: string;
+    answers: Prisma.JsonValue;
+    etcService: string | null;
+    notes: string | null;
+    paymentConfirmed: boolean;
+};
+
+/** Plain-JSON copy so stored JSON and freshly validated answers compare structurally (key order irrelevant). */
+function toPlainJson(value: unknown): Prisma.JsonValue {
+    return JSON.parse(JSON.stringify(value ?? {})) as Prisma.JsonValue;
+}
+
+/** Snapshot used both to detect a real change and as the `before` payload of the edit log. Never carries signature data. */
+function editableDaySnapshot(day: {
+    serviceDate: Date;
+    answers: unknown;
+    etcService: string | null;
+    notes: string | null;
+    paymentConfirmed: boolean;
+}): EditableDaySnapshot {
+    return {
+        serviceDate: toIso(day.serviceDate),
+        answers: toPlainJson(day.answers),
+        etcService: day.etcService ?? null,
+        notes: day.notes ?? null,
+        paymentConfirmed: day.paymentConfirmed,
+    };
 }
 
 type PlannedSessionVectorResult = {
@@ -404,8 +436,10 @@ export class ServiceRecordEntryService {
     }
 
     /**
-     * Create/update one session record. Sessions are filled in order; submitted sessions
-     * are immutable after client approval and locking.
+     * Create/update one session record. Sessions are filled in order. A submitted (locked)
+     * session keeps its date, signature and approval; the caregiver who submitted it may
+     * still change its answers, notes, etc. service and payment flag until the case is
+     * finalized, and each real change is written to service_record_day_edit_log.
      */
     async upsertSession(ctx: ServiceRecordTokenContext, sessionIndex: number, dto: UpsertSessionDto, lock: boolean) {
         const aggregate = await this.resolveCase(ctx);
@@ -422,6 +456,7 @@ export class ServiceRecordEntryService {
         // Saved computation: read the branch calendar fresh, before the
         // transaction opens, so a holiday edit is honoured at once.
         const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
+        let lockedEditOutcome: "edited" | "unchanged" | null = null;
         const saved = await this.prisma.$transaction(async (tx) => {
             // Discover the assignment before locking. Production rows carry a
             // client id, so the common policy then locks client -> employees ->
@@ -447,6 +482,11 @@ export class ServiceRecordEntryService {
                     where: { id: ctx.scheduleId },
                     include: { primaryEmployee: true },
                 });
+                // A replacement commits `replaced=true` under these same locks
+                // while this request may still hold a context resolved before
+                // it. The token proves who was the provider at request start,
+                // so refuse once the schedule is replaced or no longer owned
+                // by the context's employee.
                 if (
                     !rereadSchedule
                     || rereadSchedule.clientId !== schedule.clientId
@@ -454,6 +494,8 @@ export class ServiceRecordEntryService {
                         rereadSchedule.branchId !== undefined
                         && rereadSchedule.branchId !== ctx.branchId
                     )
+                    || rereadSchedule.replaced === true
+                    || rereadSchedule.primaryEmployeeId !== ctx.employeeId
                 ) {
                     throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
@@ -531,118 +573,12 @@ export class ServiceRecordEntryService {
                 }
             }
 
-            // A postponed session (a later serviceDate than originally
-            // scheduled) can push the remaining sessions past the current
-            // end date. requiredSessionCount stays fixed; the end date
-            // extends automatically so the case can still fit every
-            // session, no admin approval needed.
-            const serviceDateIso = toIso(serviceDate);
-            const currentEndIso = record.endDate ? toIso(record.endDate) : null;
-            let requiredEndIso: string;
-            try {
-                requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
-            } catch {
-                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                    pointer: "/serviceDate",
-                    code: "INVALID_VALUE",
-                    detail: "서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.",
-                    location: "body",
-                }));
-            }
-            if (currentEndIso && requiredEndIso > currentEndIso) {
-                const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
-                // Production already owns these locks from the common set
-                // above. Keep the helper calls only for legacy unit doubles
-                // that omit client ownership fields.
-                if (typeof schedule.clientId !== "number") {
-                    await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
-                    await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
-                        schedule.primaryEmployeeId,
-                        schedule.secondaryEmployeeId,
-                    ]);
-                }
-                if (schedule.startDate) {
-                    try {
-                        await assertNoActiveEmployeeScheduleOverlap(tx, {
-                            branchId: ctx.branchId,
-                            clientId: schedule.clientId,
-                            primaryEmployeeId: schedule.primaryEmployeeId,
-                            secondaryEmployeeId: schedule.secondaryEmployeeId,
-                            startDate: schedule.startDate,
-                            endDate: newEndDate,
-                            replaced: schedule.replaced,
-                            excludeScheduleId: schedule.id,
-                        });
-                    } catch (error) {
-                        if (error instanceof ConflictException) {
-                            const response = error.getResponse();
-                            const code = typeof response === "object" && response !== null && "code" in response
-                                ? (response as { code?: unknown }).code
-                                : undefined;
-                            if (code === EMPLOYEE_SCHEDULE_OVERLAP_CODE) {
-                                throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
-                            }
-                        }
-                        throw error;
-                    }
-                }
-                await tx.employee_schedule.update({
-                    where: { id: schedule.id, branchId: ctx.branchId },
-                    data: { endDate: newEndDate },
-                });
-                await tx.client.update({
-                    where: { id: schedule.clientId, branchId: ctx.branchId },
-                    data: { endDate: newEndDate },
-                });
-                // The client's end date just moved, so its open holiday review
-                // item (at most one per client) no longer describes the stored
-                // end date. Close it in this same transaction so the review
-                // card stays accurate: "fixed" when the auto-extend landed on
-                // the date the review recommended (resolvedBy stays null: the
-                // system did it), otherwise "obsolete" because the item's
-                // recommendation is now stale. branchId is pinned for tenant
-                // isolation; the item id never leaves the transaction.
-                const openReviewItem = await tx.end_date_review_item.findFirst({
-                    where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
-                    select: { id: true, recalculatedEnd: true },
-                });
-                if (openReviewItem) {
-                    await tx.end_date_review_item.updateMany({
-                        where: {
-                            id: openReviewItem.id,
-                            clientId: schedule.clientId,
-                            branchId: ctx.branchId,
-                            status: "open",
-                        },
-                        data: {
-                            status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
-                            resolvedAt: new Date(),
-                        },
-                    });
-                }
-                // Hand over the calendar this auto-extend already holds: without it ensureForClient
-                // loads its own, on a second pooled connection while these locks are held.
-                await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
-                await this.tokenService.extendExpiryForCase(
-                    record.id,
-                    getServiceRecordTokenExpiresAt(newEndDate),
-                    tx,
-                );
-                this.logger.log(
-                    `Service-record session ${sessionIndex} for case ${record.id} extended end date ${currentEndIso} -> ${requiredEndIso}`,
-                );
-                record = await tx.service_record_case.findUnique({ where: { id: record.id } }) ?? record;
-            }
-
-            if (record.endDate && serviceDate > record.endDate) {
-                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                    pointer: "/serviceDate",
-                    code: "INVALID_VALUE",
-                    detail: "Service date cannot exceed the service end date.",
-                    location: "body",
-                }));
-            }
-
+            // Read this session's stored row before anything below can write.
+            // A submitted (locked) day may be edited by the caregiver who
+            // submitted it until the case is finalized; its date is immutable
+            // and the end-date extension already ran at the first submit, so an
+            // edit must not reach the extension block (it would otherwise
+            // commit a schedule/client/token change on an edit).
             const existing = await tx.service_record_day.findUnique({
                 where: {
                     serviceRecordCaseId_caseSessionIndex: {
@@ -652,7 +588,136 @@ export class ServiceRecordEntryService {
                 },
             });
             if (existing?.locked) {
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                // Draft saves stay refused; submits are refused for a changed
+                // date, a legacy day without a signature, or a different
+                // caregiver than the one who submitted the day.
+                if (
+                    !lock
+                    || toIso(serviceDate) !== toIso(existing.serviceDate)
+                    || !existing.clientSignature
+                    || existing.employeeId !== ctx.employeeId
+                ) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+            }
+            const lockedEdit = Boolean(existing?.locked);
+            // On a locked edit the stored date is the verified one (same
+            // calendar day as the request); the request's time of day must not
+            // take part in any later date comparison.
+            const checkedServiceDate = existing?.locked ? existing.serviceDate : serviceDate;
+
+            // A postponed session (a later serviceDate than originally
+            // scheduled) can push the remaining sessions past the current
+            // end date. requiredSessionCount stays fixed; the end date
+            // extends automatically so the case can still fit every
+            // session, no admin approval needed.
+            if (!lockedEdit) {
+                const serviceDateIso = toIso(serviceDate);
+                const currentEndIso = record.endDate ? toIso(record.endDate) : null;
+                let requiredEndIso: string;
+                try {
+                    requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
+                } catch {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/serviceDate",
+                        code: "INVALID_VALUE",
+                        detail: "서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.",
+                        location: "body",
+                    }));
+                }
+                if (currentEndIso && requiredEndIso > currentEndIso) {
+                    const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
+                    // Production already owns these locks from the common set
+                    // above. Keep the helper calls only for legacy unit doubles
+                    // that omit client ownership fields.
+                    if (typeof schedule.clientId !== "number") {
+                        await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
+                        await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
+                            schedule.primaryEmployeeId,
+                            schedule.secondaryEmployeeId,
+                        ]);
+                    }
+                    if (schedule.startDate) {
+                        try {
+                            await assertNoActiveEmployeeScheduleOverlap(tx, {
+                                branchId: ctx.branchId,
+                                clientId: schedule.clientId,
+                                primaryEmployeeId: schedule.primaryEmployeeId,
+                                secondaryEmployeeId: schedule.secondaryEmployeeId,
+                                startDate: schedule.startDate,
+                                endDate: newEndDate,
+                                replaced: schedule.replaced,
+                                excludeScheduleId: schedule.id,
+                            });
+                        } catch (error) {
+                            if (error instanceof ConflictException) {
+                                const response = error.getResponse();
+                                const code = typeof response === "object" && response !== null && "code" in response
+                                    ? (response as { code?: unknown }).code
+                                    : undefined;
+                                if (code === EMPLOYEE_SCHEDULE_OVERLAP_CODE) {
+                                    throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
+                                }
+                            }
+                            throw error;
+                        }
+                    }
+                    await tx.employee_schedule.update({
+                        where: { id: schedule.id, branchId: ctx.branchId },
+                        data: { endDate: newEndDate },
+                    });
+                    await tx.client.update({
+                        where: { id: schedule.clientId, branchId: ctx.branchId },
+                        data: { endDate: newEndDate },
+                    });
+                    // The client's end date just moved, so its open holiday review
+                    // item (at most one per client) no longer describes the stored
+                    // end date. Close it in this same transaction so the review
+                    // card stays accurate: "fixed" when the auto-extend landed on
+                    // the date the review recommended (resolvedBy stays null: the
+                    // system did it), otherwise "obsolete" because the item's
+                    // recommendation is now stale. branchId is pinned for tenant
+                    // isolation; the item id never leaves the transaction.
+                    const openReviewItem = await tx.end_date_review_item.findFirst({
+                        where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
+                        select: { id: true, recalculatedEnd: true },
+                    });
+                    if (openReviewItem) {
+                        await tx.end_date_review_item.updateMany({
+                            where: {
+                                id: openReviewItem.id,
+                                clientId: schedule.clientId,
+                                branchId: ctx.branchId,
+                                status: "open",
+                            },
+                            data: {
+                                status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
+                                resolvedAt: new Date(),
+                            },
+                        });
+                    }
+                    // Hand over the calendar this auto-extend already holds: without it ensureForClient
+                    // loads its own, on a second pooled connection while these locks are held.
+                    await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
+                    await this.tokenService.extendExpiryForCase(
+                        record.id,
+                        getServiceRecordTokenExpiresAt(newEndDate),
+                        tx,
+                    );
+                    this.logger.log(
+                        `Service-record session ${sessionIndex} for case ${record.id} extended end date ${currentEndIso} -> ${requiredEndIso}`,
+                    );
+                    record = await tx.service_record_case.findUnique({ where: { id: record.id } }) ?? record;
+                }
+            }
+
+            if (record.endDate && checkedServiceDate > record.endDate) {
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/serviceDate",
+                    code: "INVALID_VALUE",
+                    detail: "Service date cannot exceed the service end date.",
+                    location: "body",
+                }));
             }
 
             if (sessionIndex > 1) {
@@ -667,7 +732,7 @@ export class ServiceRecordEntryService {
                 if (!prev?.locked) {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
-                if (serviceDate < prev.serviceDate) {
+                if (checkedServiceDate < prev.serviceDate) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                         pointer: "/serviceDate",
                         code: "INVALID_VALUE",
@@ -704,6 +769,84 @@ export class ServiceRecordEntryService {
                 }
             }
 
+            const etcService = this.trimNullable(
+                dto.etcService,
+                SERVICE_RECORD_TEXT_LIMITS.etcService,
+                "etcService",
+            );
+            const notes = this.trimNullable(
+                dto.notes,
+                SERVICE_RECORD_TEXT_LIMITS.notes,
+                "notes",
+            );
+            const paymentConfirmed = dto.paymentConfirmed ?? false;
+
+            if (existing && lockedEdit) {
+                // Caregiver edit of a submitted day. Only the four editable
+                // fields come from the request; every other column is the
+                // stored fact (original submit time, approval, signature,
+                // author, schedule, form version). The request's
+                // clientSignature is deliberately ignored.
+                const before = editableDaySnapshot(existing);
+                const after: EditableDaySnapshot = {
+                    serviceDate: toIso(existing.serviceDate),
+                    answers: toPlainJson(answers),
+                    etcService,
+                    notes,
+                    paymentConfirmed,
+                };
+                if (isDeepStrictEqual(before, after)) {
+                    // The client always resends the full draft; an unchanged
+                    // edit writes and logs nothing.
+                    lockedEditOutcome = "unchanged";
+                    return existing;
+                }
+                const editData = {
+                    branchId: ctx.branchId,
+                    scheduleId: existing.scheduleId,
+                    serviceRecordCaseId: record.id,
+                    caseSessionIndex: sessionIndex,
+                    employeeId: existing.employeeId,
+                    employeeNameSnapshot: existing.employeeNameSnapshot,
+                    formVersion: existing.formVersion,
+                    sessionIndex: existing.sessionIndex,
+                    serviceDate: existing.serviceDate,
+                    answers: answers as Prisma.InputJsonValue,
+                    etcService,
+                    notes,
+                    paymentConfirmed,
+                    momApproval: existing.momApproval,
+                    locked: true,
+                    submittedAt: existing.submittedAt,
+                };
+                const editedRow = await tx.service_record_day.upsert({
+                    where: {
+                        branchId: ctx.branchId,
+                        serviceRecordCaseId_caseSessionIndex: {
+                            serviceRecordCaseId: record.id,
+                            caseSessionIndex: sessionIndex,
+                        },
+                    },
+                    create: editData,
+                    update: editData,
+                });
+                await tx.service_record_day_edit_log.create({
+                    data: {
+                        branchId: ctx.branchId,
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: sessionIndex,
+                        serviceRecordDayId: existing.id,
+                        employeeId: ctx.employeeId,
+                        employeeNameSnapshot: schedule.primaryEmployee.name,
+                        before: before as unknown as Prisma.InputJsonValue,
+                        after: after as unknown as Prisma.InputJsonValue,
+                    },
+                });
+                lockedEditOutcome = "edited";
+                await this.lifecycleService.recompute(record.id, tx, calendar);
+                return editedRow;
+            }
+
             const submittedAt = lock ? new Date() : existing?.submittedAt ?? null;
             const data = {
                 branchId: ctx.branchId,
@@ -716,19 +859,11 @@ export class ServiceRecordEntryService {
                 sessionIndex,
                 serviceDate,
                 answers: answers as Prisma.InputJsonValue,
-                etcService: this.trimNullable(
-                    dto.etcService,
-                    SERVICE_RECORD_TEXT_LIMITS.etcService,
-                    "etcService",
-                ),
-                notes: this.trimNullable(
-                    dto.notes,
-                    SERVICE_RECORD_TEXT_LIMITS.notes,
-                    "notes",
-                ),
-                paymentConfirmed: dto.paymentConfirmed ?? false,
+                etcService,
+                notes,
+                paymentConfirmed,
                 momApproval: dto.momApproval ?? null,
-                locked: Boolean(existing?.locked || lock),
+                locked: lock,
                 submittedAt,
             };
 
@@ -764,7 +899,9 @@ export class ServiceRecordEntryService {
             await this.lifecycleService.recompute(record.id, tx, calendar);
             return row;
         });
-        if (lock) {
+        if (lockedEditOutcome === "edited") {
+            this.logger.log(`Service-record session ${sessionIndex} edited after submit for case ${aggregate.id}`);
+        } else if (lock && lockedEditOutcome === null) {
             this.logger.log(`Service-record session ${sessionIndex} submitted + locked for case ${aggregate.id}`);
         }
         return { ...saved, sessionIndex: saved.caseSessionIndex ?? saved.sessionIndex };
