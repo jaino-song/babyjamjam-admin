@@ -600,6 +600,33 @@ describe("SbEformsignDocumentJobRepository", () => {
         expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("branch_id = "))).toBe(true);
     });
 
+    describe("updateProgress monotonic marker", () => {
+        it("decides the step ordering in SQL while still advancing the heartbeat under the lease", async () => {
+            queryRaw.mockResolvedValueOnce([row({ status: "processing", progress_step: "sent" })]);
+            const heartbeatAt = new Date("2026-10-28T00:00:00Z");
+
+            await repository.updateProgress(dispatchJobId, dispatchLeaseToken, "dispatch_authorized", heartbeatAt);
+
+            const call = queryRaw.mock.calls[0][0];
+            const statement = sqlText(call).replace(/\s+/g, " ");
+            expect(statement).toContain("SET progress_step = CASE WHEN progress_step = 'sent' THEN progress_step");
+            expect(statement).toContain("WHEN progress_step = 'creating' AND ");
+            expect(statement).toContain("::text <> 'sent' THEN progress_step");
+            expect(statement).toContain("WHEN progress_step = ");
+            expect(statement).toContain("::text NOT IN ('creating', 'sent') THEN progress_step");
+            expect(statement).toContain("ELSE ");
+            expect(statement).toContain("END, heartbeat_at = ");
+            expect(statement).toContain("updated_at = now()");
+            expect(statement).toContain("lease_token = ");
+            expect(statement).toContain("status IN ('processing', 'reconciling')");
+            const values = (call as { values: unknown[] }).values;
+            expect(values).toContain(heartbeatAt);
+            expect(values).toContain("dispatch_authorized");
+            expect(values).toContain(dispatchJobId);
+            expect(values).toContain(dispatchLeaseToken);
+        });
+    });
+
     describe("contract job payload retention", () => {
         const leaseToken = "00000000-0000-4000-8000-000000000099";
 

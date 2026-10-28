@@ -655,8 +655,20 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     async updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt = new Date()) {
+        // The persisted marker only moves forward: dispatch_authorized ->
+        // creating -> sent. A late write (a delayed heartbeat) computed before
+        // a later step committed must not regress it, so the ordering is
+        // decided here, atomically, against the stored value. The heartbeat
+        // and lease predicates are unchanged: the heartbeat still advances
+        // when the step is kept.
         return this.updateOne(Prisma.sql`
-            UPDATE "eformsign_document_job" SET progress_step = ${progressStep},
+            UPDATE "eformsign_document_job" SET progress_step = CASE
+                    WHEN progress_step = 'sent' THEN progress_step
+                    WHEN progress_step = 'creating' AND ${progressStep}::text <> 'sent' THEN progress_step
+                    WHEN progress_step = ${DISPATCH_AUTHORIZED_PROGRESS_STEP}
+                        AND ${progressStep}::text NOT IN ('creating', 'sent') THEN progress_step
+                    ELSE ${progressStep}::text
+                END,
                 heartbeat_at = ${heartbeatAt}, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling') RETURNING *
