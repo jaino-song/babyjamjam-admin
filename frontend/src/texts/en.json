@@ -368,7 +368,7 @@
       "breast-pump": "Breast Pump Rental",
       "message-automation": "Automatic Message Sending",
       "service-days": "Weekend & holiday service",
-      "service-days-helper": "Days you turn on count as service days in the end date and service record sessions.",
+      "service-days-helper": "Service days can include weekends and public holidays.",
       "service-days-saturday": "Saturday",
       "service-days-sunday": "Sunday",
       "service-days-holiday": "Holiday",

@@ -2137,6 +2137,7 @@ function ClientFormContent({
                     <FormSwitchGroupRow
                         data-component={`${base}_field-service-days`}
                         className="lg:col-span-3"
+                        optionsClassName="lg:grid-cols-3"
                         title={t(locale, "clients.form.service-days")}
                         description={t(locale, "clients.form.service-days-helper")}
                         options={serviceDayOptions}
@@ -2539,6 +2540,7 @@ function ClientFormContent({
                     data-component={`${base}_service-days-field`}
                     size="control"
                     className="col-span-full"
+                    optionsClassName={isEditMode ? "lg:grid-cols-2" : "lg:grid-cols-3"}
                     title={t(locale, "clients.form.service-days")}
                     description={t(locale, "clients.form.service-days-helper")}
                     options={serviceDayOptions}

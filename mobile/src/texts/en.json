@@ -287,7 +287,7 @@
       "care-center": "Postpartum Care Center",
       "breast-pump": "Breast Pump Rental",
       "section-service-days": "Weekend & holiday service",
-      "service-days-help": "Days you turn on count as service days for the end date and the service record sessions.",
+      "service-days-help": "Service days can include weekends and public holidays.",
       "service-day-saturday": "Saturday",
       "service-day-sunday": "Sunday",
       "service-day-holiday": "Holiday",

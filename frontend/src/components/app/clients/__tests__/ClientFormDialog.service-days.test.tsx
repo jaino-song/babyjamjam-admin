@@ -125,7 +125,10 @@ describe("ClientFormDialog 주말·공휴일 서비스 switches", () => {
 
     const row = document.querySelector('[data-source-component="FormSwitchGroupRow"]') as HTMLElement;
     expect(row).not.toBeNull();
+    expect(row.className).not.toMatch(/border/);
     expect(within(row).getByText("주말·공휴일 서비스")).toBeInTheDocument();
+    expect(within(row).getByText("서비스 제공일에 주말 및 공휴일을 포함할 수 있어요.")).toBeInTheDocument();
+    expect(row.querySelectorAll('[data-source-component="FormSwitchRow"]')).toHaveLength(3);
     for (const name of ["토요일", "일요일", "공휴일"]) {
       expect(within(row).getByRole("switch", { name })).not.toBeChecked();
     }

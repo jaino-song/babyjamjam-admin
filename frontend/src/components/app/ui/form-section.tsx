@@ -484,20 +484,26 @@ export interface FormSwitchGroupOption {
 export interface FormSwitchGroupRowProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "title"> {
   title: React.ReactNode;
   description?: React.ReactNode;
+  /** Size forwarded to every `FormSwitchRow`; match the sibling rows at the call site. */
   size?: "default" | "control";
   options: FormSwitchGroupOption[];
+  /** Columns/gap of the options grid. Defaults to three columns at `lg`, stacked below. */
+  optionsClassName?: string;
   "data-component"?: string;
 }
 
 /**
- * A full-width card with one title and a wrapping row of compact pills, each pill a label plus a
- * switch. An enabled pill is marked by its border only: no tinted background, label stays dark.
+ * A borderless sub-heading (title plus description) spanning the full width, followed by one
+ * regular `FormSwitchRow` per option laid out in a grid, so the rows line up with sibling
+ * `FormSwitchRow`s placed in the same column grid. An enabled row looks exactly like any other
+ * checked switch row: the group adds no border or tint of its own.
  */
 function FormSwitchGroupRow({
   title,
   description,
   size = "default",
   options,
+  optionsClassName,
   className,
   "data-component": dataComponent,
   ...props
@@ -509,11 +515,7 @@ function FormSwitchGroupRow({
       {...props}
       data-component={dataComponent}
       data-source-component={FORM_SWITCH_GROUP_ROW_SOURCE_COMPONENT}
-      className={cn(
-        "flex min-h-[calc(54px*var(--glint-ui-scale,1))] flex-wrap items-center justify-between gap-x-[calc(14px*var(--glint-ui-scale,1))] gap-y-[calc(8px*var(--glint-ui-scale,1))] rounded-[14px] border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]",
-        size === "control" && "min-h-[calc(38px*var(--glint-ui-scale,1))] border-[1.35px] py-[calc(6px*var(--glint-ui-scale,1))]",
-        className,
-      )}
+      className={cn("flex min-w-0 flex-col gap-[calc(10px*var(--glint-ui-scale,1))]", className)}
     >
       <div data-component={sub("copy")} className="min-w-0">
         <strong
@@ -533,29 +535,22 @@ function FormSwitchGroupRow({
       </div>
       <div
         data-component={sub("options")}
-        className="flex min-w-0 flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
+        className={cn(
+          "grid gap-[calc(12px*var(--glint-ui-scale,1))]",
+          optionsClassName ?? "lg:grid-cols-3",
+        )}
       >
         {options.map((option) => (
-          <div
+          <FormSwitchRow
             key={option.key}
             data-component={sub(`option-${option.key}`)}
-            className={cn(
-              "flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] rounded-[11px] border-[1.35px] border-v3-border bg-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(5px*var(--glint-ui-scale,1))] transition-colors",
-              option.checked && "border-v3-primary/35",
-            )}
-          >
-            <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-none text-v3-dark">
-              {option.label}
-            </span>
-            <Switch
-              data-component={sub(`option-${option.key}_button`)}
-              thumbDataComponent={sub(`option-${option.key}_thumb`)}
-              checked={option.checked}
-              onCheckedChange={option.onToggle}
-              aria-label={option.ariaLabel ?? option.label}
-              disabled={option.disabled}
-            />
-          </div>
+            size={size}
+            title={option.label}
+            checked={option.checked}
+            onToggle={option.onToggle}
+            buttonAriaLabel={option.ariaLabel ?? option.label}
+            disabled={option.disabled}
+          />
         ))}
       </div>
     </div>
