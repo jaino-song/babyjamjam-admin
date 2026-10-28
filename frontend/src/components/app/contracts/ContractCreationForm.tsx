@@ -265,6 +265,9 @@ export const CONTRACT_CREATION_STEPPER_STEPS = [
   { label: "전자문서 생성" },
 ] as const;
 
+const SUCCESS_FOOTER_BUTTON_CLASS_NAME =
+  "w-full sm:h-9 sm:w-auto sm:min-w-[calc(132px*var(--glint-ui-scale,1))] sm:px-3 sm:text-xs";
+
 const CONTRACT_INFO_STEP_INDEX = 3;
 const CONTRACT_CREATION_PROCESSING_STEP_INDEX = 4;
 const CONTRACT_CREATION_MANUAL_HELP = "수동으로 입력해 주세요";
@@ -2803,23 +2806,34 @@ export const ContractCreationForm = ({
     </SteppedWizardPanelContent>
   );
 
-  const footer = (
+  // Same mobile layout as the service-record StickyActionBar: below `sm` the two
+  // buttons split the row into equal slots at the default height; from `sm` they
+  // keep the wizard's compact size at either end.
+  const footer = showSuccessFooter ? (
+    <div className="grid w-full auto-cols-fr grid-flow-col gap-[calc(8px*var(--glint-ui-scale,1))] max-sm:[&>*]:min-w-0 max-sm:[&>*]:truncate sm:flex sm:justify-between sm:[&>*]:flex-none">
+      <Button
+        type="button"
+        variant="outline"
+        data-testid="contract-creation-new-send"
+        data-component="desktop_contracts_creation_new-send"
+        onClick={handleStartNewContractCreation}
+        className={SUCCESS_FOOTER_BUTTON_CLASS_NAME}
+      >
+        새 전자문서 발송
+      </Button>
+      <Button
+        type="button"
+        data-testid="contract-creation-done"
+        data-component="desktop_contracts_creation_done"
+        onClick={handleCreationDone}
+        className={SUCCESS_FOOTER_BUTTON_CLASS_NAME}
+      >
+        완료
+      </Button>
+    </div>
+  ) : (
     <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
-      {showSuccessFooter ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          data-testid="contract-creation-new-send"
-          data-component="desktop_contracts_creation_new-send"
-          onClick={handleStartNewContractCreation}
-          className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
-        >
-          새 전자문서 발송
-        </Button>
-      ) : (
-        <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
-      )}
+      <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
       <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
         {activeStep === 0 && !hasProcessingSuccess ? (
           <Button
@@ -2868,17 +2882,6 @@ export const ContractCreationForm = ({
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
-          </Button>
-        ) : showSuccessFooter ? (
-          <Button
-            type="button"
-            size="sm"
-            data-testid="contract-creation-done"
-            data-component="desktop_contracts_creation_done"
-            onClick={handleCreationDone}
-            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
-          >
-            완료
           </Button>
         ) : hasProcessingFailure ? (
           <>

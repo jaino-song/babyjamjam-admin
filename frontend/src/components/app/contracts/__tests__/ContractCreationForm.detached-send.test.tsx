@@ -425,9 +425,12 @@ describe("ContractCreationForm — success footer", () => {
 
         const newSend = screen.getByTestId("contract-creation-new-send");
         const done = screen.getByTestId("contract-creation-done");
-        const sizeClass = "min-w-[calc(132px*var(--glint-ui-scale,1))]";
-        expect(newSend).toHaveClass(sizeClass);
-        expect(done).toHaveClass(sizeClass);
+        // Equal full-width slots on mobile (service-record StickyActionBar layout),
+        // the wizard's compact size from `sm`.
+        const sizeClasses = ["w-full", "sm:h-9", "sm:w-auto", "sm:min-w-[calc(132px*var(--glint-ui-scale,1))]"];
+        expect(newSend).toHaveClass(...sizeClasses);
+        expect(done).toHaveClass(...sizeClasses);
+        expect(newSend.parentElement).toHaveClass("grid", "auto-cols-fr", "grid-flow-col", "sm:flex");
         expect(newSend).toHaveAttribute("data-component", "desktop_contracts_creation_new-send");
         expect(done).toHaveAttribute("data-component", "desktop_contracts_creation_done");
         expect(newSend).toHaveTextContent("새 전자문서 발송");
