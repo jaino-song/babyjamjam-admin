@@ -36,4 +36,4 @@ Status: Proposed — 사용자 제품 정책 확정, 구현 설계 독립 검토
 
 ## Follow-up (2026-10-28)
 
-제공인력도 최종화 전까지 제출한 회차를 다시 제출해 고칠 수 있게 됐다(business-rules 기록-03). 이 수정은 이 ADR의 판(`service_record_revision`)을 만들지 않는다. 판이 생기면 `currentRevisionId`가 설정돼 최종 문서 자동 생성이 수동 검토로 멈추기 때문이다(`service-record-finalization.service.ts` 의 `currentRevisionId !== null` 분기). 대신 `service_record_day_edit_log`에 회차 단위 고치기 전 → 고친 뒤를 남기고, 관리자 수정 이력 화면에 판과 함께 보여 준다. 산모 서명·서명 시각·최초 제출 시각·제공일자는 바뀌지 않는다.
+제공인력도 최종화 전까지 본인이 제출한 회차를 다시 제출해 고칠 수 있게 됐다(business-rules 기록-03). 다른 제공인력이 제출한 회차와 산모 서명이 없는 옛 잠긴 회차는 거부된다. 이 수정은 이 ADR의 판(`service_record_revision`)을 만들지 않는다. 판이 생기면 `currentRevisionId`가 설정돼 최종 문서 자동 생성이 수동 검토로 멈추기 때문이다(`service-record-finalization.service.ts` 의 `currentRevisionId !== null` 분기). 대신 `service_record_day_edit_log`에 회차 단위 고치기 전 → 고친 뒤를 남기고, 관리자 수정 이력 화면에 판과 함께 보여 준다. 산모 서명·서명 시각·최초 제출 시각·제공일자는 바뀌지 않는다.
