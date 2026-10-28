@@ -1232,6 +1232,60 @@ export const ContractCreationForm = ({
     });
   };
 
+  // Mirrors the mounted 확인 필요 notice: the verdict never arrived, so a duplicate is possible.
+  const notifyDetachedSendUnverified = () => {
+    toast({
+      variant: "destructive",
+      description:
+        "발송 결과를 확인하지 못했어요. 계약서 목록에서 생성 여부를 먼저 확인하고, 확인 전에는 새로 만들지 마세요.",
+    });
+  };
+
+  // The form was closed mid-send, so there is no UI to drive; only the work that needs
+  // none still runs (query refresh, adopting an already-sent document) and the outcome
+  // is reported by toast. Never calls a parent callback or opens a fallback.
+  const settleDetachedHeadlessResult = async (
+    headless: Awaited<ReturnType<typeof eformsignApi.dispatchHeadless>>,
+    affectedClientId: number,
+  ) => {
+    if (headless.ok) {
+      invalidateContractQueries(affectedClientId);
+      notifyDetachedSendSucceeded();
+      return;
+    }
+    const structuredOutcome = readHeadlessOutcome(headless.outcome);
+    if (structuredOutcome === "UNKNOWN") {
+      notifyDetachedSendUnverified();
+      return;
+    }
+    const failureReason = headless.reason;
+    if (
+      (failureReason === "local_persist_failed" || structuredOutcome === "PARTIALLY_APPLIED")
+      && headless.remoteDocumentId
+    ) {
+      // The document was sent; adopting registers it in our DB and needs no UI.
+      try {
+        const adopted = await eformsignApi.adoptDocument(headless.remoteDocumentId, affectedClientId);
+        invalidateContractQueries(affectedClientId);
+        if (adopted.warnings?.includes("mirror_sync_failed")) {
+          toast({
+            description:
+              "문서는 전송되었지만 동기화가 아직 끝나지 않았어요. 새 계약서를 다시 만들지 말고 잠시 후 목록에서 확인해 주세요.",
+          });
+        } else {
+          notifyDetachedSendSucceeded();
+        }
+      } catch {
+        toast({
+          variant: "destructive",
+          description: "문서는 전송되었으나 등록에 실패했어요. 계약서 목록에서 상태를 확인해 주세요.",
+        });
+      }
+      return;
+    }
+    notifyDetachedSendFailed();
+  };
+
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
     const dateProblem = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
@@ -1600,12 +1654,7 @@ export const ContractCreationForm = ({
             if (!isMountedRef.current) {
               // Closed mid-send: the server finished (or failed) on its own. Report it
               // by toast only — no parent callbacks, no iframe/manual fallback.
-              if (headless.ok) {
-                invalidateContractQueries(finalClientId);
-                notifyDetachedSendSucceeded();
-              } else {
-                notifyDetachedSendFailed();
-              }
+              await settleDetachedHeadlessResult(headless, finalClientId);
               return;
             }
 
@@ -1731,7 +1780,7 @@ export const ContractCreationForm = ({
               headlessError,
             );
             if (!isMountedRef.current) {
-              notifyDetachedSendFailed();
+              notifyDetachedSendUnverified();
               return;
             }
             // The backend's verdict never reached us, so whether the document was

@@ -236,6 +236,126 @@ describe("ContractCreationForm — closed mid-send", () => {
         expect(callbacks.onSubmissionStateChange).not.toHaveBeenCalled();
     });
 
+    it("adopts the sent document and toasts success on partial-apply after unmount", async () => {
+        const callbacks = makeCallbacks();
+        const { pending, view } = await startSendAndUnmount(callbacks);
+
+        await act(async () => {
+            pending.resolve({
+                ok: false,
+                reason: "local_persist_failed",
+                outcome: "PARTIALLY_APPLIED",
+                remoteDocumentId: "doc-remote-9",
+                durationMs: 5,
+            });
+        });
+        await settle();
+
+        expect(mockAdoptDocument).toHaveBeenCalledWith("doc-remote-9", 42);
+        expect(mockToast).toHaveBeenCalledTimes(1);
+        expect(mockToast).toHaveBeenCalledWith({ description: "송진호님께 전자문서를 보냈어요" });
+        expect(view.invalidateSpy).toHaveBeenCalledWith({ queryKey: clientKeys.detail(42) });
+        expect(mockOpenDocument).not.toHaveBeenCalled();
+        expect(mockGenerateDocument).not.toHaveBeenCalled();
+        expect(callbacks.onSuccess).not.toHaveBeenCalled();
+        expect(callbacks.onClose).not.toHaveBeenCalled();
+    });
+
+    it("adopts on local_persist_failed with a remote id even without a structured outcome", async () => {
+        const callbacks = makeCallbacks();
+        const { pending } = await startSendAndUnmount(callbacks);
+
+        await act(async () => {
+            pending.resolve({
+                ok: false,
+                reason: "local_persist_failed",
+                remoteDocumentId: "doc-remote-9",
+                durationMs: 5,
+            });
+        });
+        await settle();
+
+        expect(mockAdoptDocument).toHaveBeenCalledWith("doc-remote-9", 42);
+        expect(mockToast).toHaveBeenCalledWith({ description: "송진호님께 전자문서를 보냈어요" });
+    });
+
+    it("toasts a non-destructive warning when the adopted document has mirror_sync_failed", async () => {
+        mockAdoptDocument.mockResolvedValue({ documentId: "doc-remote-9", warnings: ["mirror_sync_failed"] });
+        const callbacks = makeCallbacks();
+        const { pending, view } = await startSendAndUnmount(callbacks);
+
+        await act(async () => {
+            pending.resolve({
+                ok: false,
+                outcome: "PARTIALLY_APPLIED",
+                remoteDocumentId: "doc-remote-9",
+                durationMs: 5,
+            });
+        });
+        await settle();
+
+        expect(mockToast).toHaveBeenCalledTimes(1);
+        expect(mockToast).toHaveBeenCalledWith({
+            description:
+                "문서는 전송되었지만 동기화가 아직 끝나지 않았어요. 새 계약서를 다시 만들지 말고 잠시 후 목록에서 확인해 주세요.",
+        });
+        expect(view.invalidateSpy).toHaveBeenCalledWith({ queryKey: clientKeys.detail(42) });
+        expect(callbacks.onSuccess).not.toHaveBeenCalled();
+        expect(callbacks.onClose).not.toHaveBeenCalled();
+    });
+
+    it("toasts a destructive failure when adopting the sent document throws", async () => {
+        mockAdoptDocument.mockRejectedValue(new Error("adopt failed"));
+        const callbacks = makeCallbacks();
+        const { pending } = await startSendAndUnmount(callbacks);
+
+        await act(async () => {
+            pending.resolve({
+                ok: false,
+                outcome: "PARTIALLY_APPLIED",
+                remoteDocumentId: "doc-remote-9",
+                durationMs: 5,
+            });
+        });
+        await settle();
+
+        expect(mockToast).toHaveBeenCalledTimes(1);
+        expect(mockToast).toHaveBeenCalledWith({
+            variant: "destructive",
+            description: "문서는 전송되었으나 등록에 실패했어요. 계약서 목록에서 상태를 확인해 주세요.",
+        });
+        expect(callbacks.onSuccess).not.toHaveBeenCalled();
+        expect(callbacks.onClose).not.toHaveBeenCalled();
+    });
+
+    it("toasts the unverified notice when the outcome is UNKNOWN after unmount", async () => {
+        const callbacks = makeCallbacks();
+        const { pending } = await startSendAndUnmount(callbacks);
+
+        await act(async () => {
+            pending.resolve({
+                ok: false,
+                reason: "dispatch_uncertain_manual_reconciliation_required",
+                fallbackHint: "iframe",
+                outcome: "UNKNOWN",
+                durationMs: 5,
+            });
+        });
+        await settle();
+
+        expect(mockToast).toHaveBeenCalledTimes(1);
+        expect(mockToast).toHaveBeenCalledWith({
+            variant: "destructive",
+            description:
+                "발송 결과를 확인하지 못했어요. 계약서 목록에서 생성 여부를 먼저 확인하고, 확인 전에는 새로 만들지 마세요.",
+        });
+        expect(mockAdoptDocument).not.toHaveBeenCalled();
+        expect(mockOpenDocument).not.toHaveBeenCalled();
+        expect(mockGenerateDocument).not.toHaveBeenCalled();
+        expect(callbacks.onSuccess).not.toHaveBeenCalled();
+        expect(callbacks.onClose).not.toHaveBeenCalled();
+    });
+
     it("toasts a destructive failure when the dispatch throws after unmount", async () => {
         let rejectDispatch!: (error: Error) => void;
         mockDispatchHeadless.mockReturnValue(
@@ -256,9 +376,11 @@ describe("ContractCreationForm — closed mid-send", () => {
 
         expect(mockToast).toHaveBeenCalledWith({
             variant: "destructive",
-            description: "전자문서 발송에 실패했어요. 계약서 목록에서 상태를 확인해 주세요.",
+            description:
+                "발송 결과를 확인하지 못했어요. 계약서 목록에서 생성 여부를 먼저 확인하고, 확인 전에는 새로 만들지 마세요.",
         });
         expect(mockOpenDocument).not.toHaveBeenCalled();
+        expect(callbacks.onSuccess).not.toHaveBeenCalled();
         expect(callbacks.onClose).not.toHaveBeenCalled();
     });
 
