@@ -69,7 +69,7 @@ export function GuideDemoStage({ "data-component": base, demo, active, reducedMo
             className={styles.stage}
             aria-hidden="true"
         >
-            <div ref={stageRef} data-component={`${base}_fit`} className={styles["stage-fit"]}>
+            <div ref={stageRef} data-component={`${base}_fit`} data-slot="stage-fit" className={styles["stage-fit"]}>
                 <div ref={miniRef} data-component={`${base}_mini-screen`} className={styles.m} />
                 {SPOTLIGHT_DEMOS.includes(demo) ? <span ref={spotRef} data-component={`${base}_spotlight`} className={styles.spot} /> : null}
                 <span ref={touchRef} data-component={`${base}_touch`} className={styles.touch} />

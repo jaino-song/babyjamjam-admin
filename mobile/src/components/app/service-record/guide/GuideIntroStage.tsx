@@ -15,7 +15,7 @@ export function GuideIntroStage({ "data-component": base }: { "data-component": 
 
     return (
         <div ref={frameRef} data-component={base} data-source-component={SOURCE_COMPONENT} className={styles.stage}>
-            <div data-component={`${base}_fit`} className={styles["stage-fit"]}>
+            <div data-component={`${base}_fit`} data-slot="stage-fit" className={styles["stage-fit"]}>
                 <div className={styles.intro}>
                     <div className={styles["intro-hero"]} aria-hidden="true">
                         <div className={styles.doc}>
