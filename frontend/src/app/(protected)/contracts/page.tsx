@@ -439,6 +439,11 @@ export default function ContractsPage() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [hasContractCreationSession, setHasContractCreationSession] = useState(false);
+  // A creation form is open (shown or hidden behind a document), whatever its step. The
+  // form reports a session only while it is processing, so this is what keeps an ordinary
+  // editing draft mounted — and its component-local state — when the user looks away.
+  // Cleared only by an explicit close, cancel, or successful submit (handleCloseContractCreation).
+  const [hasOpenCreationDraft, setHasOpenCreationDraft] = useState(false);
   const [contractCreationActiveStep, setContractCreationActiveStep] = useState(0);
   const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [registerClientDocumentId, setRegisterClientDocumentId] = useState<string | null>(null);
@@ -595,13 +600,16 @@ export default function ContractsPage() {
 
   const handleStartContractCreation = useCallback(() => {
     setSelectedDocId(null);
-    // A creation still in progress is resumed where it is; only a genuinely new
-    // contract starts at the first step.
-    if (!hasContractCreationSession) {
+    // A creation still in progress is resumed where it is, and so is a draft that was only
+    // hidden behind a document (open but not showing); only a genuinely new contract starts
+    // at the first step.
+    const isHiddenDraft = hasOpenCreationDraft && !isCreating;
+    if (!hasContractCreationSession && !isHiddenDraft) {
       setContractCreationActiveStep(0);
     }
+    setHasOpenCreationDraft(true);
     setIsCreating(true);
-  }, [hasContractCreationSession]);
+  }, [hasContractCreationSession, hasOpenCreationDraft, isCreating]);
 
   useEffect(() => {
     if (searchParams.get("create") !== "1") return;
@@ -643,11 +651,13 @@ export default function ContractsPage() {
     setHasContractCreationSession(false);
     setContractCreationActiveStep(0);
     setContractCreationFormKey((key) => key + 1);
+    setHasOpenCreationDraft(true);
     setIsCreating(true);
   }, []);
 
   const handleCloseContractCreation = useCallback(() => {
     setIsCreating(false);
+    setHasOpenCreationDraft(false);
     setHasContractCreationSession(false);
     setContractCreationActiveStep(0);
   }, []);
@@ -851,7 +861,7 @@ export default function ContractsPage() {
               which moves the creation form (and unmounts its session) the moment a document is
               selected. One stable detail group keeps the form mounted while it is hidden. */}
           <>
-          {(isCreating || hasContractCreationSession) && (
+          {(isCreating || hasOpenCreationDraft || hasContractCreationSession) && (
             <div
               data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session"
               className={isCreating ? "contents" : "hidden"}
@@ -1163,12 +1173,12 @@ export default function ContractsPage() {
         <DocumentJobRecoveryDialog
           key={recoverJobId}
           jobId={recoverJobId}
-          hasCreationInProgress={isCreating || hasContractCreationSession}
+          hasCreationInProgress={isCreating || hasOpenCreationDraft || hasContractCreationSession}
           onStartFresh={handleStartFreshContractCreation}
           onViewDocument={(documentId) => {
             setActiveSection("maternity");
-            // Same switch as selecting a list row: leaving creation mode only hides the form —
-            // its session stays mounted, so the in-progress input is kept, not discarded.
+            // Leaving creation mode only hides the form — it stays mounted (an open draft or a
+            // processing session), so the in-progress input is kept, not discarded.
             setIsCreating(false);
             setRegisterClientDocumentId(null);
             setSelectedDocId(documentId);
