@@ -442,11 +442,11 @@ export function ServiceRecordScheduleSheet({
                   </p>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="link"
                     size="sm"
                     disabled={saving}
                     data-component={part("body_section-calendar_revert")}
-                    className="min-h-11 rounded-xl px-3"
+                    className="min-h-11 px-1 font-bold"
                     onClick={handleRevert}
                   >
                     {text("revert")}
