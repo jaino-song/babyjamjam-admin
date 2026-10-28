@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 import ts from "typescript";
 
 import { EntityChangeEventBus, type EntityChangedEvent } from "application/services/entity-change-event-bus.service";
-import { entityChangeExtension, watchedKindsInSql } from "./entity-change.extension";
+import { entityChangeExtension, stripSqlNonCode, watchedKindsInSql } from "./entity-change.extension";
 import { PrismaService } from "./prisma.service";
 
 /**
@@ -183,7 +183,8 @@ function watchedWrites(source: string, fileName = "source.ts"): WatchedWrite[] {
                         line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
                         kinds,
                         consumer,
-                        hasReturning: /\bRETURNING\b/i.test(text),
+                        // Comments and string literals are blanked first: `-- No RETURNING` is not one.
+                        hasReturning: /\bRETURNING\b/i.test(stripSqlNonCode(text)),
                     });
                 }
             }
@@ -246,6 +247,17 @@ describe("raw-write call-site guard (findRawWriteViolations)", () => {
         expect(findRawWriteViolations(`await tx.$executeRawUnsafe("${unsafe}", status, id);`)).toEqual([]);
         expect(findRawWriteViolations(`await tx.$queryRaw(Prisma.sql\`${update} RETURNING id\`);`)).toEqual([]);
         expect(findRawWriteViolations(`await updateOne(Prisma.sql\`${update} RETURNING *\`);`)).toEqual([]);
+    });
+
+    it("does not count RETURNING that only appears in a comment or a string literal", () => {
+        const lineComment = `await tx.$queryRaw(Prisma.sql\`\n    -- No RETURNING: nobody reads the rows\n    ${update}\`);`;
+        const blockComment = `await tx.$queryRaw(Prisma.sql\`/* RETURNING id */ ${update}\`);`;
+        const stringLiteral = `await tx.$queryRaw(Prisma.sql\`UPDATE ${table} SET note = 'RETURNING id' WHERE id = $1\`);`;
+        for (const source of [lineComment, blockComment, stringLiteral]) {
+            expect(findRawWriteViolations(source)).toEqual([expect.objectContaining({ consumer: "$queryRaw", kinds: ["document"] })]);
+        }
+        // A real trailing RETURNING next to such noise still satisfies the guard.
+        expect(findRawWriteViolations(`await tx.$queryRaw(Prisma.sql\`-- note\n    ${update}\n    RETURNING id\`);`)).toEqual([]);
     });
 
     it("ignores reads, locking selects and tables the stream does not watch", () => {
