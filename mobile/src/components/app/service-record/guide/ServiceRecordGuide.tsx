@@ -42,6 +42,8 @@ interface GuidePanelProps {
  */
 export function ServiceRecordGuide({ "data-component": base, open, onClose }: ServiceRecordGuideProps) {
     const nextRef = useRef<HTMLButtonElement>(null);
+    // Radix restores focus only to a trigger it knows; this sheet is opened from outside, so keep the opener here.
+    const openerRef = useRef<Element | null>(null);
     const sheet = `${base}_sheet`;
 
     return (
@@ -57,7 +59,15 @@ export function ServiceRecordGuide({ "data-component": base, open, onClose }: Se
                 onInteractOutside={(event) => event.preventDefault()}
                 onOpenAutoFocus={(event) => {
                     event.preventDefault();
+                    // Focus has not moved yet: the active element is whatever opened the guide (<body> when it opened by itself).
+                    openerRef.current = document.activeElement;
                     nextRef.current?.focus();
+                }}
+                onCloseAutoFocus={(event) => {
+                    event.preventDefault();
+                    const opener = openerRef.current;
+                    openerRef.current = null;
+                    if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) opener.focus();
                 }}
             >
                 <SheetTitle className="sr-only">{GUIDE_TITLE}</SheetTitle>

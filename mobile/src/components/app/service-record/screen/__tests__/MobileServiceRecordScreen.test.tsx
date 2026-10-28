@@ -314,6 +314,17 @@ describe("MobileServiceRecordScreen: how-to guide", () => {
         expect(window.localStorage.length).toBe(0);
     });
 
+    it("saves a first-time (header == null) complete header once the guide is dismissed", async () => {
+        const user = userEvent.setup();
+        const complete = { momName: "이예지", momBirth: "1999-01-01", babyName: "이아기", babyBirth: "2026-06-15", deliveryType: "자연분만", babyWeight: "3.2" };
+        const props = makeProps({ screen: "service", context: FIRST_TIME, header: complete });
+        render(<MobileServiceRecordScreen {...props} />);
+        await user.click(within(guide() as HTMLElement).getByRole("button", { name: "건너뛰기" }));
+        expect(guide()).toBeNull();
+        await user.click(screen.getByRole("button", { name: "다음" }));
+        expect(props.onSaveHeader).toHaveBeenCalledTimes(1);
+    });
+
     it("shows 사용방법 in the overview title row, which opens the guide on 1 / 7", async () => {
         const user = userEvent.setup();
         render(<MobileServiceRecordScreen {...makeProps({ screen: "overview", context: SAVED })} />);

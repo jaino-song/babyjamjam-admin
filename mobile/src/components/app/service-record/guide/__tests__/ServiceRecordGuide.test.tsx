@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -128,6 +129,58 @@ describe("ServiceRecordGuide", () => {
         const mini = q("sheet_slide-sched_stage_mini-screen");
         expect(mini).toHaveTextContent("3회차 서비스를 12월 3일에서 12월 4일로 변경을 요청할까요? 본사 승인 후 일정이 조정됩니다.");
         expect(mini).not.toHaveTextContent("관리자");
+    });
+
+    describe("focus restoration", () => {
+        function Harness({ withOpener = true }: { withOpener?: boolean }) {
+            const [open, setOpen] = useState(!withOpener);
+            return (
+                <>
+                    {withOpener ? <button type="button" onClick={() => setOpen(true)}>사용방법</button> : null}
+                    <ServiceRecordGuide data-component={BASE} open={open} onClose={() => setOpen(false)} />
+                </>
+            );
+        }
+        const settle = () => act(() => { jest.runOnlyPendingTimers(); });
+
+        it("returns focus to the opener after 건너뛰기", async () => {
+            render(<Harness />);
+            const opener = screen.getByRole("button", { name: "사용방법" });
+            await user.click(opener);
+            expect(nextButton()).toHaveFocus();
+            await user.click(within(dialog()).getByRole("button", { name: "건너뛰기" }));
+            settle();
+            expect(screen.queryByRole("dialog")).toBeNull();
+            expect(opener).toHaveFocus();
+        });
+
+        it("returns focus to the opener after the final button", async () => {
+            render(<Harness />);
+            const opener = screen.getByRole("button", { name: "사용방법" });
+            await user.click(opener);
+            for (let i = 0; i < 6; i += 1) await user.click(nextButton());
+            await user.click(nextButton());
+            settle();
+            expect(screen.queryByRole("dialog")).toBeNull();
+            expect(opener).toHaveFocus();
+        });
+
+        it("returns focus to the opener after Esc", async () => {
+            render(<Harness />);
+            const opener = screen.getByRole("button", { name: "사용방법" });
+            await user.click(opener);
+            await user.keyboard("{Escape}");
+            settle();
+            expect(opener).toHaveFocus();
+        });
+
+        it("does not throw when it opened by itself and the opener was <body>", async () => {
+            render(<Harness withOpener={false} />);
+            expect(nextButton()).toHaveFocus();
+            await user.click(within(dialog()).getByRole("button", { name: "건너뛰기" }));
+            expect(() => settle()).not.toThrow();
+            expect(screen.queryByRole("dialog")).toBeNull();
+        });
     });
 
     describe("demo player", () => {
