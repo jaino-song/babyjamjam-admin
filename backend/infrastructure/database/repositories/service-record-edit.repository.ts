@@ -629,6 +629,7 @@ function sameSortedNumbers(left: number[], right: number[]): boolean {
 
 type OptionalQueryTransaction = Prisma.TransactionClient & {
     $queryRaw?: <T = unknown>(query: Prisma.Sql) => Promise<T>;
+    $executeRaw?: (query: Prisma.Sql) => Promise<number>;
 };
 
 type RevisionDocumentStateRow = {
@@ -922,6 +923,25 @@ async function rawStateQuery<T>(
         throw new ServiceRecordEditConflictError("Revision document state storage is unavailable");
     }
     return queryClient.$queryRaw<T>(query);
+}
+
+/**
+ * Raw write whose rows nobody reads. It must go through `$executeRaw` rather than `$queryRaw`:
+ * the entity-change extension decides "did this write change anything" from the affected count,
+ * and a `$queryRaw` without `RETURNING` always yields `[]`, which it treats as a no-op and so
+ * never emits the realtime hint.
+ */
+async function rawStateExecute(
+    client: Prisma.TransactionClient | PrismaService,
+    query: Prisma.Sql,
+): Promise<number> {
+    const executeClient = client as unknown as {
+        $executeRaw?: (statement: Prisma.Sql) => Promise<number>;
+    };
+    if (typeof executeClient.$executeRaw !== "function") {
+        throw new ServiceRecordEditConflictError("Revision document state storage is unavailable");
+    }
+    return executeClient.$executeRaw(query);
 }
 
 const revisionDocumentStateColumns = Prisma.sql`
@@ -1280,7 +1300,7 @@ async function persistRevisionJobDocumentVersion(
         }
         const nextPayload = { ...payload, documentVersion };
         const nextFingerprint = jsonFingerprint(nextPayload);
-        await rawStateQuery(tx, Prisma.sql`
+        await rawStateExecute(tx, Prisma.sql`
             UPDATE "eformsign_document_job"
             SET payload = ${jsonSql(nextPayload as unknown as ServiceRecordEditJsonValue)},
                 payload_fingerprint = ${nextFingerprint},
@@ -3667,7 +3687,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     "A service-record message dispatch is already irreversible",
                 );
             }
-            await transaction.$queryRaw(Prisma.sql`
+            await rawStateExecute(transaction, Prisma.sql`
                 UPDATE "eformsign_document_job" AS job
                 SET status = 'failed',
                     last_error_code = 'SERVICE_RECORD_REVISION_SUPERSEDED',
@@ -3689,7 +3709,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                   AND job.status IN ('queued', 'processing', 'reconciling')
                   AND ${documentJobSupersessionPredicate(scope)}
             `);
-            await transaction.$queryRaw(Prisma.sql`
+            await rawStateExecute(transaction, Prisma.sql`
                 UPDATE "message_trigger_job"
                 SET status = 'canceled',
                     canceled_at = now(),
@@ -3983,7 +4003,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 );
             }
             if (existing[0].status === "failed" || existing[0].status === "requires_attention") {
-                await transaction.$queryRaw(Prisma.sql`
+                await rawStateExecute(transaction, Prisma.sql`
                     UPDATE "eformsign_document_job"
                     SET status = 'queued',
                         active_key = ${activeKey},
