@@ -132,7 +132,8 @@ function getJobSubtitle(job: ContractDocumentJob): string {
 function getJobMeta(job: ContractDocumentJob): string {
   if (job.source === "auto_finalize") return "자동 최종화";
   if (job.attempts && job.attempts > 1) return `${job.attempts}회 시도`;
-  if (job.completedAt) return "최근 완료";
+  // Failed jobs also carry completedAt (the failure time), so only a completed job is "done".
+  if (job.completedAt && job.status === "completed") return "최근 완료";
   return "전자문서 작업";
 }
 

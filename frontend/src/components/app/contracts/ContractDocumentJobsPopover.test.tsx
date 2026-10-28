@@ -217,6 +217,20 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.getByText("전송 준비 중", { selector: "p, span, div" })).toBeInTheDocument();
   });
 
+  it("does not label a needs-check job as 최근 완료 although it carries its failure time", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-check", jobType: "create_document", status: "requires_attention", attempts: 1, completedAt: "2026-08-13T01:00:00.000Z", recoveryKind: "verify_result", clientName: "김하늘" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText("최근 완료")).not.toBeInTheDocument();
+  });
+
   it("closes on Escape and mobile backdrop clicks", () => {
     const onOpenChange = jest.fn();
     renderOpenPopover({ onOpenChange });
