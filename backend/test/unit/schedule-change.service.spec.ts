@@ -1659,4 +1659,151 @@ describe("ScheduleChangeService", () => {
             });
         });
     });
+
+    describe("client service days", () => {
+        const saturdayOnly = { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false };
+        const weekdayOnly = { allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
+        // Session 3 sits on Fri 2026-12-18; the next service day is Sat 12-19 for a
+        // Saturday-enabled client and Mon 12-21 for a default one.
+        const clientOf = (flags: Record<string, boolean>) => ({ id: CLIENT_ID, duration: 10, ...flags });
+        const scheduleOf = (flags: Record<string, boolean>) => createSchedule({
+            startDate: toDbDate("2026-12-14"),
+            endDate: toDbDate("2026-12-24"),
+            client: clientOf(flags),
+        });
+        const days = () => [
+            createDay(1, "2026-12-16", true),
+            createDay(2, "2026-12-17", true),
+            createDay(3, "2026-12-18", false),
+        ];
+
+        it.each([
+            ["a Saturday-enabled client", saturdayOnly, "2026-12-19"],
+            ["a default client", weekdayOnly, "2026-12-21"],
+        ])("preview shifts %s to its next service day", async (_label, flags, toDate) => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(scheduleOf(flags));
+            prismaService.service_record_day.findMany.mockResolvedValue(days());
+
+            await expect(service.preview(ctx)).resolves.toEqual({
+                sessionIndex: 3,
+                fromDate: "2026-12-18",
+                toDate,
+            });
+        });
+
+        it.each([
+            ["a Saturday-enabled client", saturdayOnly, "2026-12-19"],
+            ["a default client", weekdayOnly, "2026-12-21"],
+        ])("createRequest persists %s's next service day", async (_label, flags, toDate) => {
+            prismaService.employee_schedule.findUnique.mockResolvedValue(scheduleOf(flags));
+            prismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            prismaService.service_record_day.findMany.mockResolvedValue(days());
+            prismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                sessionIndex: 3,
+                fromDate: toDbDate("2026-12-18"),
+                toDate: toDbDate(toDate),
+            }));
+
+            await service.createRequest(ctx);
+
+            expect(prismaService.schedule_change_request.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ toDate: toDbDate(toDate) }),
+            });
+        });
+
+        it.each([
+            ["a Saturday-enabled client", saturdayOnly, "2026-12-19"],
+            ["a default client", weekdayOnly, "2026-12-21"],
+        ])("previewAdminChange starts the missing session on %s's next service day", async (_label, flags, fromDate) => {
+            prismaService.employee_schedule.findFirst.mockResolvedValue(scheduleOf(flags));
+            prismaService.service_record_case.findFirst.mockResolvedValue({ id: "case-1" });
+            // Sessions 1 and 2 are locked (2 on Fri 12-18); session 3 has no row yet.
+            prismaService.service_record_day.findMany.mockResolvedValue([
+                createDay(1, "2026-12-16", true),
+                createDay(2, "2026-12-18", true),
+            ]);
+
+            await expect(service.previewAdminChange(BRANCH_ID, SCHEDULE_ID)).resolves.toMatchObject({
+                sessionIndex: 3,
+                fromDate,
+            });
+        });
+
+        describe("applyAdminChange on a Saturday date", () => {
+            const arrangeTransaction = (flags: Record<string, boolean>) => {
+                txPrismaService.employee_schedule.findFirst.mockResolvedValue(scheduleOf(flags));
+                txPrismaService.service_record_case.findFirst.mockResolvedValue({ id: "case-1", formVersion: 1 });
+                txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+                txPrismaService.service_record_day.findMany
+                    .mockResolvedValueOnce([...days(), createDay(4, "2026-12-21", false)])
+                    .mockResolvedValueOnce([createDay(4, "2026-12-21", false)]);
+                txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                    status: "approved",
+                    sessionIndex: 3,
+                    fromDate: toDbDate("2026-12-18"),
+                    toDate: toDbDate("2026-12-19"),
+                }));
+            };
+            const preRead = (flags: Record<string, boolean>) => {
+                prismaService.employee_schedule.findFirst.mockResolvedValue({ client: flags });
+            };
+
+            it("accepts the Saturday for a Saturday-enabled client without a confirmed exception", async () => {
+                preRead(saturdayOnly);
+                arrangeTransaction(saturdayOnly);
+
+                await service.applyAdminChange(SCHEDULE_ID, "2026-12-19", tenant);
+
+                expect(prismaService.employee_schedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: SCHEDULE_ID, branchId: BRANCH_ID },
+                    select: {
+                        client: {
+                            select: {
+                                allowSaturdayService: true,
+                                allowSundayService: true,
+                                allowHolidayService: true,
+                            },
+                        },
+                    },
+                }));
+                expect(txPrismaService.service_record_day.upsert).toHaveBeenCalledWith(
+                    expect.objectContaining({ update: { serviceDate: toDbDate("2026-12-19") } }),
+                );
+            });
+
+            it("rejects the same Saturday for a default client before the transaction opens", async () => {
+                preRead(weekdayOnly);
+                arrangeTransaction(weekdayOnly);
+
+                await expectBadRequestCode(
+                    () => service.applyAdminChange(SCHEDULE_ID, "2026-12-19", tenant),
+                    "INVALID_SCHEDULE_DATE",
+                );
+                expect(prismaService.$transaction).not.toHaveBeenCalled();
+            });
+
+            it("still honours allowNonBusinessDay as a bypass of the client's own calendar", async () => {
+                preRead(weekdayOnly);
+                arrangeTransaction(weekdayOnly);
+
+                await service.applyAdminChange(SCHEDULE_ID, "2026-12-19", tenant, { allowNonBusinessDay: true });
+
+                expect(txPrismaService.service_record_day.upsert).toHaveBeenCalled();
+            });
+
+            it("re-checks the date inside the transaction with the reread client's flags", async () => {
+                // The flag was on when the early check ran and off by the time the lock was taken.
+                preRead(saturdayOnly);
+                arrangeTransaction(weekdayOnly);
+
+                await expectBadRequestCode(
+                    () => service.applyAdminChange(SCHEDULE_ID, "2026-12-19", tenant),
+                    "INVALID_SCHEDULE_DATE",
+                );
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+                expect(txPrismaService.schedule_change_request.create).not.toHaveBeenCalled();
+            });
+        });
+    });
 });

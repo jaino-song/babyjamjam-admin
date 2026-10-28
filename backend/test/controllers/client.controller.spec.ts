@@ -39,4 +39,22 @@ describe("ClientController document linking boundary", () => {
         expect(service.create.mock.calls[0][1]).not.toHaveProperty("eDocId");
         expect(service.update.mock.calls[0][2]).not.toHaveProperty("eDocId");
     });
+
+    it("forwards omitted create service-day flags as undefined and explicit ones as given", () => {
+        const service = { create: jest.fn() };
+        const controller = new ClientController(service as unknown as ClientService);
+        controller.create({ branchId: "branch-1" }, { ...createBody } as CreateClientDto);
+        controller.create({ branchId: "branch-1" }, {
+            ...createBody, allowSaturdayService: false, allowSundayService: true,
+        } as CreateClientDto);
+
+        const omitted = service.create.mock.calls[0][1];
+        expect(omitted.allowSaturdayService).toBeUndefined();
+        expect(omitted.allowSundayService).toBeUndefined();
+        expect(omitted.allowHolidayService).toBeUndefined();
+        const explicit = service.create.mock.calls[1][1];
+        expect(explicit.allowSaturdayService).toBe(false);
+        expect(explicit.allowSundayService).toBe(true);
+        expect(explicit.allowHolidayService).toBeUndefined();
+    });
 });

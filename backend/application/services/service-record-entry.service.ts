@@ -21,6 +21,7 @@ import { validateServiceRecordAnswers } from "application/policies/service-recor
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -261,8 +262,12 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
-        // Legacy session counts control entry/submission, so use the current calendar.
-        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
+        // Legacy session counts control entry/submission, so use the current
+        // calendar on this client's own service days.
+        const calendar = withClientServiceDays(
+            await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true }),
+            schedule.client,
+        );
         const persistedDates = persistedPlannedSessionDates(
             record.plannedSessions,
             record.requiredSessionCount,
@@ -281,6 +286,11 @@ export class ServiceRecordEntryService {
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
+            serviceDays: {
+                saturday: schedule.client.allowSaturdayService ?? false,
+                sunday: schedule.client.allowSundayService ?? false,
+                holiday: schedule.client.allowHolidayService ?? false,
+            },
             totalSessions: entrySessionCount(record, calendar),
             startDate: record.startDate,
             endDate: record.endDate,
@@ -469,6 +479,14 @@ export class ServiceRecordEntryService {
             });
             if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            // The client's service-day flags, read with the locked reread so a
+            // concurrent flag change cannot be missed. Absent (branch calendar)
+            // only for legacy test doubles that carry no client ownership.
+            let clientServiceDays: {
+                allowSaturdayService?: boolean | null;
+                allowSundayService?: boolean | null;
+                allowHolidayService?: boolean | null;
+            } | null | undefined;
             if (typeof schedule.clientId === "number") {
                 await lockServiceRecordWriteSet(tx, {
                     branchId: ctx.branchId,
@@ -480,7 +498,16 @@ export class ServiceRecordEntryService {
                 });
                 const rereadSchedule = await tx.employee_schedule.findUnique({
                     where: { id: ctx.scheduleId },
-                    include: { primaryEmployee: true },
+                    include: {
+                        primaryEmployee: true,
+                        client: {
+                            select: {
+                                allowSaturdayService: true,
+                                allowSundayService: true,
+                                allowHolidayService: true,
+                            },
+                        },
+                    },
                 });
                 // A replacement commits `replaced=true` under these same locks
                 // while this request may still hold a context resolved before
@@ -500,6 +527,7 @@ export class ServiceRecordEntryService {
                     throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
                 schedule = rereadSchedule;
+                clientServiceDays = rereadSchedule.client;
                 record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
             } else {
                 // Serialize all entry writes for this case before reading a
@@ -524,7 +552,8 @@ export class ServiceRecordEntryService {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
-            const total = entrySessionCount(record, calendar);
+            const clientCalendar = withClientServiceDays(calendar, clientServiceDays);
+            const total = entrySessionCount(record, clientCalendar);
             if (sessionIndex < 1 || sessionIndex > total) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/sessionIndex",
@@ -556,7 +585,7 @@ export class ServiceRecordEntryService {
             // Check the persisted vector after the common lock/reread and
             // before any schedule/client extension so stale provider input can
             // never mutate derived periods first.
-            const persistedDates = plannedSessionVector(record.plannedSessions, total, calendar);
+            const persistedDates = plannedSessionVector(record.plannedSessions, total, clientCalendar);
             if (
                 persistedDates.state === "invalid"
                 || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
@@ -616,7 +645,7 @@ export class ServiceRecordEntryService {
                 const currentEndIso = record.endDate ? toIso(record.endDate) : null;
                 let requiredEndIso: string;
                 try {
-                    requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
+                    requiredEndIso = clientCalendar.addBusinessDays(serviceDateIso, total - sessionIndex);
                 } catch {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                         pointer: "/serviceDate",
@@ -698,7 +727,7 @@ export class ServiceRecordEntryService {
                     }
                     // Hand over the calendar this auto-extend already holds: without it ensureForClient
                     // loads its own, on a second pooled connection while these locks are held.
-                    await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
+                    await this.lifecycleService.ensureForClient(schedule.clientId, tx, clientCalendar);
                     await this.tokenService.extendExpiryForCase(
                         record.id,
                         getServiceRecordTokenExpiresAt(newEndDate),

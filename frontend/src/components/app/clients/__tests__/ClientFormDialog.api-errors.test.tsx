@@ -183,6 +183,41 @@ describe("ClientFormDialog API errors", () => {
       expect(screen.queryByText(message.textContent as string)).not.toBeInTheDocument();
       expect(status).not.toHaveAttribute("aria-invalid", "true");
     });
+
+    it("sends the admin to the schedule dialog when realigning needs manually chosen dates", async () => {
+      const problem = {
+        ...createProblemDetails({
+          code: "REQUEST_CONFLICT", requestId: "manual-schedule-required", status: 409,
+        }),
+        detail: "raw upstream text",
+        scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE",
+      };
+      mockUpdateClientMutateAsync.mockRejectedValue({ response: { status: 409, data: problem } });
+      renderForm(createClient({}));
+      await flushOpenEffect();
+      const submit = screen.getByRole("button", { name: "저장" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+
+      expect(await screen.findByText(/제공기록지 일정 변경에서 날짜를 직접 지정해 주세요/)).toBeInTheDocument();
+      expect(screen.queryByText(/raw upstream text/)).not.toBeInTheDocument();
+    });
+
+    it("keeps the generic conflict handling when a 409 carries no schedule code", async () => {
+      const problem = createProblemDetails({
+        code: "REQUEST_CONFLICT", requestId: "plain-conflict", status: 409,
+      });
+      mockUpdateClientMutateAsync.mockRejectedValue({ response: { status: 409, data: problem } });
+      renderForm(createClient({}));
+      await flushOpenEffect();
+      const submit = screen.getByRole("button", { name: "저장" });
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+
+      await waitFor(() => expect(mockUpdateClientMutateAsync).toHaveBeenCalled());
+      await flushOpenEffect();
+      expect(screen.queryByText(/제공기록지 일정 변경에서 날짜를 직접 지정해 주세요/)).not.toBeInTheDocument();
+    });
   });
 
   it("renders every structured field error, preserves values, and links dialog inputs", async () => {
