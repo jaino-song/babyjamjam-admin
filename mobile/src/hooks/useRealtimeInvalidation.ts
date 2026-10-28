@@ -169,18 +169,25 @@ export function useRealtimeInvalidation(identity: string | null): void {
 
       const controller = new AbortController();
       bootstrapController = controller;
+      // An attempt may only touch the hook's shared state while it still owns
+      // the connection. Once retired (timeout) or torn down (unmount) it is
+      // inert: its late resolve or reject must not overwrite the replacement's
+      // `source`, timers or controller.
+      const owns = () =>
+        !disposed && !controller.signal.aborted && bootstrapController === controller;
       bootstrapTimer = window.setTimeout(() => {
+        if (!owns()) return;
         bootstrapTimer = null;
         // Retire the stalled attempt: aborting makes a late-resolving opener's
         // source get closed below, and freeing the slot lets the retry proceed.
         controller.abort();
-        if (bootstrapController === controller) bootstrapController = null;
+        bootstrapController = null;
         scheduleReconnect(RECONNECT_DELAY_MS);
       }, BOOTSTRAP_TIMEOUT_MS);
 
       try {
         const next = await openAuthenticatedEventSource(ENDPOINT, { signal: controller.signal });
-        if (disposed || controller.signal.aborted) {
+        if (!owns()) {
           next.close();
           return;
         }
@@ -221,12 +228,13 @@ export function useRealtimeInvalidation(identity: string | null): void {
         // still triggers a reconnect.
         resetHeartbeat();
       } catch {
-        source = null;
-        // Session refresh failed or the request was aborted; retry unless we
-        // were torn down.
-        if (!disposed && !controller.signal.aborted) {
-          scheduleReconnect(RECONNECT_DELAY_MS);
-        }
+        // A retired or torn-down attempt rejects when its abort propagates (or
+        // its stalled refresh finally fails); the replacement already owns the
+        // connection, so leave everything alone.
+        if (!owns()) return;
+        // Session refresh failed: drop any half-set-up source and retry.
+        closeSource();
+        scheduleReconnect(RECONNECT_DELAY_MS);
       } finally {
         if (bootstrapController === controller) {
           bootstrapController = null;

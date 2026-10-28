@@ -334,10 +334,14 @@ describe("useRealtimeInvalidation", () => {
 
   describe("bootstrap that never settles", () => {
     function pendingOpeners() {
-      const attempts: { signal: AbortSignal; resolve: (source: EventSource) => void }[] = [];
+      const attempts: {
+        signal: AbortSignal;
+        resolve: (source: EventSource) => void;
+        reject: (error: unknown) => void;
+      }[] = [];
       mockOpenAuthenticatedEventSource.mockImplementation(
-        (_url, options) => new Promise<EventSource>((resolve) => {
-          attempts.push({ signal: options?.signal as AbortSignal, resolve });
+        (_url, options) => new Promise<EventSource>((resolve, reject) => {
+          attempts.push({ signal: options?.signal as AbortSignal, resolve, reject });
         }),
       );
       return attempts;
@@ -400,6 +404,58 @@ describe("useRealtimeInvalidation", () => {
         stale.dispatch("entity-changed", JSON.stringify({ entities: ["client"] }));
       });
       expect(invalidatedRoots(invalidateSpy)).not.toContain(JSON.stringify(["clients"]));
+    });
+
+    it("ignores a retired attempt that rejects after its replacement is live", async () => {
+      const attempts = pendingOpeners();
+      const { unmount } = renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      // Attempt 1 stalls past the bound; attempt 2 replaces it and connects.
+      act(() => {
+        jest.advanceTimersByTime(20_000 + 3000);
+      });
+      await flushConnection();
+      expect(attempts).toHaveLength(2);
+      const replacement = new MockEventSource("/api/realtime/events");
+      await act(async () => {
+        attempts[1].resolve(replacement as unknown as EventSource);
+        await Promise.resolve();
+      });
+      act(() => {
+        replacement.dispatch("open");
+      });
+
+      // The abandoned refresh finally settles: the aborted opener rejects.
+      await act(async () => {
+        attempts[0].reject(new DOMException("aborted", "AbortError"));
+        await Promise.resolve();
+      });
+      act(() => {
+        jest.advanceTimersByTime(10_000);
+      });
+      await flushConnection();
+
+      // The replacement is still the live handle: it keeps receiving events.
+      expect(replacement.closed).toBe(false);
+      act(() => {
+        replacement.dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }));
+      });
+      expect(invalidatedRoots(invalidateSpy)).toContain(JSON.stringify(["employees"]));
+
+      // A visibility change with the stream open must not open a second source.
+      act(() => {
+        setVisibilityState("visible");
+        jest.advanceTimersByTime(1);
+      });
+      await flushConnection();
+      expect(attempts).toHaveLength(2);
+      expect(replacement.closed).toBe(false);
+
+      // And unmount closes the replacement: no live source survives.
+      expect(MockEventSource.instances.filter((source) => !source.closed)).toHaveLength(1);
+      unmount();
+      expect(MockEventSource.instances.filter((source) => !source.closed)).toHaveLength(0);
     });
 
     it("does not start an overlapping attempt when the tab becomes visible during a pending bootstrap", async () => {
