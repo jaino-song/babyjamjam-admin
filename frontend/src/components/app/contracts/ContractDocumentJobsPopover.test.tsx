@@ -42,6 +42,7 @@ const JOBS: ContractDocumentJobsData = {
       jobType: "finalize_document",
       status: "requires_attention",
       documentId: "document-2",
+      recoveryKind: "verify_result",
       attempts: 3,
     },
   ],
@@ -131,6 +132,59 @@ describe("ContractDocumentJobsPopover", () => {
       "href",
       "/contracts?recoverJobId=job-f2",
     );
+  });
+
+  it("links an auto-finalize requires_attention job with no recovery kind to its document, not recovery", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          {
+            jobId: "job-auto",
+            jobType: "finalize_document",
+            source: "auto_finalize",
+            status: "requires_attention",
+            documentId: "document auto/1",
+            recoveryKind: null,
+          },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/contracts?documentId=document%20auto%2F1");
+  });
+
+  it("links staff failed (manual_send) and requires_attention (verify_result) rows to recovery", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-m", jobType: "create_document", source: "staff", status: "failed", recoveryKind: "manual_send", documentId: "d-1" },
+          { jobId: "job-v", jobType: "finalize_document", source: "staff", status: "requires_attention", recoveryKind: "verify_result", documentId: "d-2" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+      "/contracts?recoverJobId=job-m",
+      "/contracts?recoverJobId=job-v",
+    ]);
+  });
+
+  it("renders a static row for a failed job with no recovery kind and no document id", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-dead", jobType: "create_document", status: "failed", recoveryKind: null, documentId: null },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("shows a claimed job as ordinary progress, not its raw step name", () => {
