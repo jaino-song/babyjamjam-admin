@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { adminServiceRecordEditApi } from "@/features/service-records/api/admin-service-record-edit.api";
 import type {
+    ServiceRecordCaregiverEditChangesResponse,
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionHistoryResponse,
 } from "@/features/service-records/types";
@@ -25,6 +26,7 @@ jest.mock("@/features/service-records/api/service-records.api", () => ({
     serviceRecordsApi: {
         getClientRevisionHistory: jest.fn(),
         getClientRevisionChanges: jest.fn(),
+        getClientCaregiverEditChanges: jest.fn(),
     },
 }));
 // Repo convention (see SendNotificationSection.test.tsx): jsdom cannot drive a Radix Select, so each option is a plain button.
@@ -55,6 +57,7 @@ jest.mock("@/components/ui/select", () => {
 
 const mockHistory = serviceRecordsApi.getClientRevisionHistory as jest.Mock;
 const mockChanges = serviceRecordsApi.getClientRevisionChanges as jest.Mock;
+const mockEditChanges = serviceRecordsApi.getClientCaregiverEditChanges as jest.Mock;
 
 // Deliberately oldest first: the view must order them newest first itself.
 const history: ServiceRecordRevisionHistoryResponse = {
@@ -70,6 +73,7 @@ const history: ServiceRecordRevisionHistoryResponse = {
         // 15:05 UTC is 00:05 the next day in Korea.
         { id: "rev-3", revisionNumber: 3, confirmedAt: "2026-09-11T15:05:00.000Z", isCurrent: true, documents: [] },
     ],
+    caregiverEdits: [],
 };
 
 const changesByRevision: Record<string, ServiceRecordRevisionChangesResponse> = {
@@ -133,6 +137,7 @@ function renderWithQuery(node: ReactNode) {
 beforeEach(() => {
     mockHistory.mockReset();
     mockChanges.mockReset();
+    mockEditChanges.mockReset();
     mockHistory.mockResolvedValue({ data: history });
     mockChanges.mockImplementation(async (_clientId: number, revisionId: string) => ({ data: changesByRevision[revisionId] }));
 });
@@ -284,6 +289,136 @@ describe("RevisionHistoryView", () => {
         await screen.findAllByRole("option");
         fireEvent.click(screen.getByRole("button", { name: "이전" }));
         expect(onBack).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("RevisionHistoryView caregiver edits (제공인력 수정)", () => {
+    // 2026-09-10 05:00 KST: between rev-2 (01:30) and rev-3 (09-12 00:05).
+    const editMid = { id: "edit-1", editedAt: "2026-09-09T20:00:00.000Z", sessionIndex: 3, employeeName: "박제공" };
+    // Newest of all: 2026-09-13 09:00 KST.
+    const editNewest = { id: "edit-2", editedAt: "2026-09-13T00:00:00.000Z", sessionIndex: 1, employeeName: "최제공" };
+    const editChanges: Record<string, ServiceRecordCaregiverEditChangesResponse> = {
+        "edit-1": {
+            editId: "edit-1",
+            editedAt: editMid.editedAt,
+            employeeName: "박제공",
+            session: {
+                sessionIndex: 3,
+                kind: "changed",
+                serviceDateBefore: "2026-09-10",
+                serviceDateAfter: "2026-09-10",
+                changes: [
+                    { path: "session.answers.perineum", before: ["이상없음"], after: ["열상"] },
+                    { path: "session.notes", before: null, after: "수정 메모" },
+                ],
+            },
+        },
+        "edit-2": {
+            editId: "edit-2",
+            editedAt: editNewest.editedAt,
+            employeeName: "최제공",
+            session: { sessionIndex: 1, kind: "changed", serviceDateBefore: "2026-09-08", serviceDateAfter: "2026-09-08", changes: [] },
+        },
+    };
+
+    beforeEach(() => {
+        mockHistory.mockResolvedValue({ data: { ...history, caregiverEdits: [editMid, editNewest] } });
+        mockEditChanges.mockImplementation(async (_clientId: number, editId: string) => ({ data: editChanges[editId] }));
+    });
+
+    function open() {
+        return renderWithQuery(<RevisionHistoryView data-component="test_history" clientId="42" onBack={jest.fn()} />);
+    }
+
+    it("merges revisions and caregiver edits newest first, labelling edits with who and when", async () => {
+        open();
+        const options = await screen.findAllByRole("option");
+        expect(options.map((option) => option.textContent)).toEqual([
+            "제공인력 수정 · 최제공 · 2026-09-13 09:00",
+            "#3 · 2026-09-12 00:05",
+            "제공인력 수정 · 박제공 · 2026-09-10 05:00",
+            "#2 · 2026-09-10 01:30",
+            "#1 · 2026-09-08 10:02",
+        ]);
+        // The newest entry overall (an edit) is selected, and only its query runs.
+        expect(options[0]).toHaveAttribute("aria-selected", "true");
+        await waitFor(() => expect(mockEditChanges).toHaveBeenCalledWith(42, "edit-2"));
+        expect(mockChanges).not.toHaveBeenCalled();
+    });
+
+    it("shows the selected caregiver edit's session before → after and fetches only the edit query", async () => {
+        open();
+        fireEvent.click(await screen.findByRole("option", { name: "제공인력 수정 · 박제공 · 2026-09-10 05:00" }));
+
+        expect(await screen.findByRole("heading", { name: "3회차 · 2026-09-10" })).toBeInTheDocument();
+        const perineum = screen.getByText("① 회음절개부위 (또는 수술부위)").closest('[role="group"]') as HTMLElement;
+        expect(within(perineum).getByText("이상없음")).toHaveAttribute("data-slot", "before-value");
+        expect(within(perineum).getByText("열상")).toHaveAttribute("data-slot", "after-value");
+        const notes = screen.getByText("특이사항").closest('[role="group"]') as HTMLElement;
+        expect(within(notes).getByText("수정 메모")).toBeInTheDocument();
+        expect(mockEditChanges).toHaveBeenCalledWith(42, "edit-1");
+        expect(mockChanges).not.toHaveBeenCalled();
+        // Before is always recorded for edits, so the missing-before notice never shows.
+        expect(screen.queryByText("변경 전 내용이 기록되지 않은 수정입니다.")).not.toBeInTheDocument();
+        expect(screen.queryByText("기본정보")).not.toBeInTheDocument();
+    });
+
+    it("says there is nothing to show for a caregiver edit with no changes, without the before-unavailable notice", async () => {
+        open();
+        expect(await screen.findByText("표시할 변경 내용이 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("변경 전 내용이 기록되지 않은 수정입니다.")).not.toBeInTheDocument();
+    });
+
+    it("switches back to a revision and stops fetching the edit", async () => {
+        open();
+        fireEvent.click(await screen.findByRole("option", { name: "#3 · 2026-09-12 00:05" }));
+        expect(await screen.findByText("김산모")).toBeInTheDocument();
+        expect(mockChanges).toHaveBeenCalledWith(42, "rev-3");
+        expect(mockEditChanges).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the empty state only when both lists are empty", async () => {
+        mockHistory.mockResolvedValue({ data: { ...history, revisions: [], caregiverEdits: [] } });
+        const first = open();
+        expect(await screen.findByText("수정 이력이 없습니다.")).toBeInTheDocument();
+        first.unmount();
+
+        mockHistory.mockResolvedValue({ data: { ...history, revisions: [], caregiverEdits: [editMid] } });
+        open();
+        expect(await screen.findByRole("option", { name: "제공인력 수정 · 박제공 · 2026-09-10 05:00" })).toBeInTheDocument();
+        expect(screen.queryByText("수정 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    it("keeps a revision and a caregiver edit with the same id apart", async () => {
+        mockHistory.mockResolvedValue({
+            data: {
+                ...history,
+                revisions: [{ id: "same-id", revisionNumber: 1, confirmedAt: "2026-09-08T01:02:03.000Z", isCurrent: true, documents: [] }],
+                caregiverEdits: [{ id: "same-id", editedAt: "2026-09-09T01:02:03.000Z", sessionIndex: 2, employeeName: "박제공" }],
+            },
+        });
+        mockChanges.mockResolvedValue({ data: { ...changesByRevision["rev-1"], revisionId: "same-id" } });
+        mockEditChanges.mockResolvedValue({ data: editChanges["edit-1"] });
+        open();
+
+        const edit = await screen.findByRole("option", { name: "제공인력 수정 · 박제공 · 2026-09-09 10:02" });
+        const revision = screen.getByRole("option", { name: "#1 · 2026-09-08 10:02" });
+        // Newest (the edit) is selected; the revision is not, despite the shared id.
+        expect(edit).toHaveAttribute("aria-selected", "true");
+        expect(revision).toHaveAttribute("aria-selected", "false");
+        await waitFor(() => expect(mockEditChanges).toHaveBeenCalledWith(42, "same-id"));
+        expect(mockChanges).not.toHaveBeenCalled();
+
+        fireEvent.click(revision);
+        await waitFor(() => expect(mockChanges).toHaveBeenCalledWith(42, "same-id"));
+        expect(screen.getByRole("option", { name: "#1 · 2026-09-08 10:02" })).toHaveAttribute("aria-selected", "true");
+        expect(screen.getByRole("option", { name: "제공인력 수정 · 박제공 · 2026-09-09 10:02" })).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("reports a failed caregiver edit load with the shared error copy", async () => {
+        mockEditChanges.mockRejectedValue(new Error("boom"));
+        open();
+        expect(await screen.findByText("변경 내용을 불러오지 못했습니다.")).toBeInTheDocument();
     });
 });
 

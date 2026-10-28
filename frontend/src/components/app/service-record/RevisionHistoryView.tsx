@@ -7,6 +7,7 @@ import type {
     ServiceRecordRevisionSessionChange,
 } from "@/features/service-records/types";
 import {
+    useClientServiceRecordCaregiverEditChanges,
     useClientServiceRecordRevisionChanges,
     useClientServiceRecordRevisionHistory,
 } from "@/features/service-records/hooks/use-service-records";
@@ -29,6 +30,7 @@ export const REVISION_HISTORY_LOAD_ERROR_COPY = "수정 이력을 불러오지 �
 export const REVISION_CHANGES_LOAD_ERROR_COPY = "변경 내용을 불러오지 못했습니다.";
 export const REVISION_BEFORE_UNAVAILABLE_COPY = "변경 전 내용이 기록되지 않은 수정입니다.";
 export const REVISION_NO_CHANGES_COPY = "표시할 변경 내용이 없습니다.";
+export const CAREGIVER_EDIT_LABEL = "제공인력 수정";
 
 const SESSION_KIND_TAG: Record<ServiceRecordRevisionSessionChange["kind"], string | null> = {
     added: "추가됨",
@@ -42,6 +44,14 @@ export interface RevisionHistoryViewProps {
     onBack: () => void;
 }
 
+/**
+ * One row of the merged picker. Revisions and caregiver edits live in different
+ * tables, so their ids can collide; `key` is the only selection identity.
+ */
+type HistoryEntry =
+    | { kind: "revision"; key: string; id: string; at: string; revisionNumber: number; label: string }
+    | { kind: "edit"; key: string; id: string; at: string; revisionNumber: 0; label: string };
+
 function numericClientId(clientId: string): number | null {
     const value = Number(clientId);
     return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -52,38 +62,68 @@ export function RevisionHistoryView({ "data-component": root, clientId, onBack }
     const labelId = useId();
     const numericId = numericClientId(clientId);
     const history = useClientServiceRecordRevisionHistory(numericId);
-    // Newest first, whatever order the server returned.
-    const revisions = useMemo(() => [...(history.data?.revisions ?? [])].sort((left, right) => (
-        Date.parse(right.confirmedAt) - Date.parse(left.confirmedAt) || right.revisionNumber - left.revisionNumber
-    )), [history.data]);
-    const [chosenId, setChosenId] = useState<string | null>(null);
-    // The newest revision is selected on entering the view.
-    const selectedId = revisions.find((revision) => revision.id === chosenId)?.id ?? revisions[0]?.id ?? null;
-    const changes = useClientServiceRecordRevisionChanges(numericId, selectedId);
+    // Revisions and caregiver edits in one list, newest first whatever order
+    // the server returned. Equal times: revision before edit, then by number/id.
+    const entries = useMemo<HistoryEntry[]>(() => {
+        const merged: HistoryEntry[] = [
+            ...(history.data?.revisions ?? []).map((revision): HistoryEntry => ({
+                kind: "revision",
+                key: `revision:${revision.id}`,
+                id: revision.id,
+                at: revision.confirmedAt,
+                revisionNumber: revision.revisionNumber,
+                label: `#${revision.revisionNumber} · ${formatRevisionTimestamp(revision.confirmedAt)}`,
+            })),
+            ...(history.data?.caregiverEdits ?? []).map((edit): HistoryEntry => ({
+                kind: "edit",
+                key: `edit:${edit.id}`,
+                id: edit.id,
+                at: edit.editedAt,
+                revisionNumber: 0,
+                label: `${CAREGIVER_EDIT_LABEL} · ${edit.employeeName} · ${formatRevisionTimestamp(edit.editedAt)}`,
+            })),
+        ];
+        return merged.sort((left, right) => (
+            Date.parse(right.at) - Date.parse(left.at)
+            || (left.kind === right.kind ? 0 : left.kind === "revision" ? -1 : 1)
+            || right.revisionNumber - left.revisionNumber
+            || right.id.localeCompare(left.id)
+        ));
+    }, [history.data]);
+    const [chosenKey, setChosenKey] = useState<string | null>(null);
+    // The newest entry overall is selected on entering the view.
+    const selected = entries.find((entry) => entry.key === chosenKey) ?? entries[0] ?? null;
+    // Only the query of the selected kind is enabled.
+    const revisionChanges = useClientServiceRecordRevisionChanges(numericId, selected?.kind === "revision" ? selected.id : null);
+    const editChanges = useClientServiceRecordCaregiverEditChanges(numericId, selected?.kind === "edit" ? selected.id : null);
+    const changes = selected?.kind === "edit" ? editChanges : revisionChanges;
 
-    const sessions = (changes.data?.sessions ?? []).filter((session) => session.kind !== "changed" || session.changes.length > 0);
-    const hasChanges = Boolean(changes.data && (changes.data.basicInfo.length > 0 || sessions.length > 0));
+    const revisionSessions = (revisionChanges.data?.sessions ?? []).filter((session) => session.kind !== "changed" || session.changes.length > 0);
+    const editSession = editChanges.data?.session.changes.length ? editChanges.data.session : null;
+    const hasChanges = selected?.kind === "edit"
+        ? editSession !== null
+        : Boolean(revisionChanges.data && (revisionChanges.data.basicInfo.length > 0 || revisionSessions.length > 0));
 
     let body;
     if (history.isPending) {
         body = <p data-component={child("body_state-loading")} data-slot="state" className="text-sm text-v3-text-muted">불러오는 중…</p>;
     } else if (history.isError) {
         body = <p data-component={child("body_state-error")} data-slot="state" role="alert" className="text-sm text-v3-burgundy">{REVISION_HISTORY_LOAD_ERROR_COPY}</p>;
-    } else if (revisions.length === 0) {
+    } else if (entries.length === 0) {
         body = <p data-component={child("body_state-empty")} data-slot="state" className="text-sm text-v3-text-muted">{REVISION_HISTORY_EMPTY_COPY}</p>;
     } else {
         body = (
             <>
                 <div data-component={child("body_picker")} data-slot="picker" className="flex flex-col gap-2">
                     <span id={labelId} data-component={child("body_picker_label")} className="text-sm font-semibold text-v3-dark">수정 시각</span>
-                    <Select value={selectedId ?? undefined} onValueChange={setChosenId}>
+                    <Select value={selected?.key} onValueChange={setChosenKey}>
                         <SelectTrigger data-component={child("body_picker_trigger")} aria-labelledby={labelId} className="w-full sm:w-72">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            {revisions.map((revision) => (
-                                <SelectItem key={revision.id} value={revision.id}>
-                                    {`#${revision.revisionNumber} · ${formatRevisionTimestamp(revision.confirmedAt)}`}
+                            {entries.map((entry) => (
+                                <SelectItem key={entry.key} value={entry.key}>
+                                    {entry.label}
                                 </SelectItem>
                             ))}
                         </SelectContent>
@@ -93,20 +133,20 @@ export function RevisionHistoryView({ "data-component": root, clientId, onBack }
                     <p data-component={child("body_changes-loading")} data-slot="state" className="text-sm text-v3-text-muted">불러오는 중…</p>
                 ) : changes.isError ? (
                     <p data-component={child("body_changes-error")} data-slot="state" role="alert" className="text-sm text-v3-burgundy">{REVISION_CHANGES_LOAD_ERROR_COPY}</p>
-                ) : !changes.data.beforeAvailable ? (
+                ) : selected?.kind === "revision" && !revisionChanges.data?.beforeAvailable ? (
                     <p data-component={child("body_changes-unavailable")} data-slot="state" className="text-sm text-v3-text-muted">{REVISION_BEFORE_UNAVAILABLE_COPY}</p>
                 ) : !hasChanges ? (
                     <p data-component={child("body_changes-empty")} data-slot="state" className="text-sm text-v3-text-muted">{REVISION_NO_CHANGES_COPY}</p>
                 ) : (
                     <div data-component={child("body_changes")} data-slot="changes" className="flex flex-col">
-                        {changes.data.basicInfo.length > 0 ? (
+                        {selected?.kind === "revision" && revisionChanges.data && revisionChanges.data.basicInfo.length > 0 ? (
                             <ReviewSection data-component={child("body_changes_basic")} titleId={`${labelId}-basic`} title="기본정보" tone="mom">
-                                {changes.data.basicInfo.map((change) => (
+                                {revisionChanges.data.basicInfo.map((change) => (
                                     <ChangeRow key={change.path} change={change} root={child("body_changes_basic_rows_row")} />
                                 ))}
                             </ReviewSection>
                         ) : null}
-                        {sessions.map((session) => (
+                        {(selected?.kind === "edit" ? (editSession ? [editSession] : []) : revisionSessions).map((session) => (
                             <SessionChangeGroup key={session.sessionIndex} session={session} root={child("body_changes_session")} idPrefix={labelId} />
                         ))}
                     </div>

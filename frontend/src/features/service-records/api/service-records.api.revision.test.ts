@@ -124,6 +124,90 @@ describe("service-record revision API", () => {
         });
     });
 
+    describe("caregiver edits", () => {
+        const historyBody = {
+            caseId: "case-1",
+            caseVersion: 3,
+            currentRevisionId: null,
+            currentUsableRevisionId: null,
+            revisions: [],
+        };
+
+        it("normalizes a missing caregiverEdits field to an empty list", async () => {
+            mockGet.mockResolvedValue({ status: 200, data: historyBody });
+            const response = await serviceRecordsApi.getClientRevisionHistory(7);
+            expect(response.data.caregiverEdits).toEqual([]);
+        });
+
+        it("keeps only the summary fields of each caregiver edit", async () => {
+            mockGet.mockResolvedValue({
+                status: 200,
+                data: {
+                    ...historyBody,
+                    caregiverEdits: [{
+                        id: "edit-1",
+                        editedAt: "2026-10-28T01:02:03.000Z",
+                        sessionIndex: 3,
+                        employeeName: "박제공",
+                        before: { notes: "must not pass" },
+                        after: { notes: "must not pass" },
+                    }],
+                },
+            });
+            const response = await serviceRecordsApi.getClientRevisionHistory(7);
+            expect(response.data.caregiverEdits).toEqual([
+                { id: "edit-1", editedAt: "2026-10-28T01:02:03.000Z", sessionIndex: 3, employeeName: "박제공" },
+            ]);
+            expect(JSON.stringify(response.data)).not.toContain("must not pass");
+        });
+
+        it.each([
+            ["a non-array list", "nope"],
+            ["a non-object row", ["nope"]],
+            ["a row without an id", [{ editedAt: "2026-10-28T01:02:03.000Z", sessionIndex: 1, employeeName: "A" }]],
+            ["a row with an unparseable date", [{ id: "e", editedAt: "yesterday", sessionIndex: 1, employeeName: "A" }]],
+            ["a row with a zero session index", [{ id: "e", editedAt: "2026-10-28T01:02:03.000Z", sessionIndex: 0, employeeName: "A" }]],
+            ["a row without an employee name", [{ id: "e", editedAt: "2026-10-28T01:02:03.000Z", sessionIndex: 1, employeeName: "" }]],
+        ])("rejects %s in the history", async (_name, caregiverEdits) => {
+            mockGet.mockResolvedValue({ status: 200, data: { ...historyBody, caregiverEdits } });
+            await expect(serviceRecordsApi.getClientRevisionHistory(7)).rejects.toThrow(/Invalid service-record revision/);
+        });
+
+        const validEdit = {
+            editId: "edit-1",
+            editedAt: "2026-10-28T01:02:03.000Z",
+            employeeName: "박제공",
+            session: {
+                sessionIndex: 3,
+                kind: "changed",
+                serviceDateBefore: "2026-10-20",
+                serviceDateAfter: "2026-10-20",
+                changes: [{ path: "session.notes", before: null, after: "메모" }],
+            },
+        };
+
+        it("requests the edit's changes by encoded ids and returns the validated shape", async () => {
+            mockGet.mockResolvedValue({ status: 200, data: validEdit });
+            const response = await serviceRecordsApi.getClientCaregiverEditChanges(7, "edit/1");
+            expect(mockGet).toHaveBeenCalledWith("/admin/service-records/clients/7/caregiver-edits/edit%2F1/changes");
+            expect(response.data).toEqual(validEdit);
+        });
+
+        it.each([
+            ["a non-object body", "nope"],
+            ["a missing editId", { ...validEdit, editId: "" }],
+            ["an unparseable editedAt", { ...validEdit, editedAt: "yesterday" }],
+            ["a missing employee name", { ...validEdit, employeeName: undefined }],
+            ["a missing session", { ...validEdit, session: undefined }],
+            ["an unknown session kind", { ...validEdit, session: { ...validEdit.session, kind: "moved" } }],
+            ["session changes that are not a list", { ...validEdit, session: { ...validEdit.session, changes: null } }],
+            ["a change value that is an object", { ...validEdit, session: { ...validEdit.session, changes: [{ path: "session.notes", before: { a: 1 }, after: "b" }] } }],
+        ])("rejects %s", async (_name, data) => {
+            mockGet.mockResolvedValue({ status: 200, data });
+            await expect(serviceRecordsApi.getClientCaregiverEditChanges(7, "edit-1")).rejects.toThrow(/Invalid service-record/);
+        });
+    });
+
     it("sends only expectedGeneration for a retry", async () => {
         mockPost.mockResolvedValue({
             status: 200,
