@@ -33,3 +33,7 @@ Status: Proposed — 사용자 제품 정책 확정, 구현 설계 독립 검토
 ## Risks and validation
 
 제공 일수 유실은 N 및 날짜 배열 불변식으로 검증한다. 다른 고객의 직원 배정과 겹치는 경우 잠금 안에서 거부한다. 자동 완료/메시지 작업의 오래된 실행과 외부 완료 경합은 버전 검사와 외부 상태 재조회로 검증한다. 외부 문서 부분 실패·중복 요청·구버전 webhook·서명 및 수령일 보존·재접속·공용 PDF/영수증 이미지 검증을 필수로 한다. 자세한 task/배포/롤백 조건은 implementation-plan.md를 따른다.
+
+## Follow-up (2026-10-28)
+
+제공인력도 최종화 전까지 제출한 회차를 다시 제출해 고칠 수 있게 됐다(business-rules 기록-03). 이 수정은 이 ADR의 판(`service_record_revision`)을 만들지 않는다. 판이 생기면 `currentRevisionId`가 설정돼 최종 문서 자동 생성이 수동 검토로 멈추기 때문이다(`service-record-finalization.service.ts` 의 `currentRevisionId !== null` 분기). 대신 `service_record_day_edit_log`에 회차 단위 고치기 전 → 고친 뒤를 남기고, 관리자 수정 이력 화면에 판과 함께 보여 준다. 산모 서명·서명 시각·최초 제출 시각·제공일자는 바뀌지 않는다.
