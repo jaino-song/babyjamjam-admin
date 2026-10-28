@@ -482,6 +482,11 @@ export class ServiceRecordEntryService {
                     where: { id: ctx.scheduleId },
                     include: { primaryEmployee: true },
                 });
+                // A replacement commits `replaced=true` under these same locks
+                // while this request may still hold a context resolved before
+                // it. The token proves who was the provider at request start,
+                // so refuse once the schedule is replaced or no longer owned
+                // by the context's employee.
                 if (
                     !rereadSchedule
                     || rereadSchedule.clientId !== schedule.clientId
@@ -489,6 +494,8 @@ export class ServiceRecordEntryService {
                         rereadSchedule.branchId !== undefined
                         && rereadSchedule.branchId !== ctx.branchId
                     )
+                    || rereadSchedule.replaced === true
+                    || rereadSchedule.primaryEmployeeId !== ctx.employeeId
                 ) {
                     throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                 }
