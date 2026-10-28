@@ -94,7 +94,7 @@ describe("mobile ClientFormDialog service days", () => {
         await renderDialog();
 
         expect(screen.getByText("주말·공휴일 서비스")).toBeInTheDocument();
-        expect(screen.getByText("켠 날도 서비스일로 계산해 종료일과 제공기록지 회차에 포함해요.")).toBeInTheDocument();
+        expect(screen.getByText("서비스 제공일에 주말 및 공휴일을 포함할 수 있어요.")).toBeInTheDocument();
         for (const id of ["allowSaturdayService", "allowSundayService", "allowHolidayService"]) {
             expect(toggle(id)).toHaveAttribute("aria-checked", "false");
         }

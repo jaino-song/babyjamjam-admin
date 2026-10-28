@@ -31,7 +31,7 @@ describe("FormSwitchGroupRow", () => {
       />,
     );
 
-  it("renders a pill with a switch per option under the expected data-components", () => {
+  it("renders a heading block and one FormSwitchRow per option under the expected data-components", () => {
     const { container } = renderRow({ saturday: jest.fn(), sunday: jest.fn(), holiday: jest.fn() }, { sunday: true });
 
     const root = container.querySelector('[data-component="test_service-days"]');
@@ -40,23 +40,60 @@ describe("FormSwitchGroupRow", () => {
       expect(container.querySelector(`[data-component="test_service-days_${suffix}"]`)).not.toBeNull();
     }
     for (const key of ["saturday", "sunday", "holiday"]) {
-      expect(container.querySelector(`[data-component="test_service-days_option-${key}"]`)).not.toBeNull();
+      const row = container.querySelector(`[data-component="test_service-days_option-${key}"]`);
+      expect(row).toHaveAttribute("data-source-component", "FormSwitchRow");
       expect(container.querySelector(`[data-component="test_service-days_option-${key}_button"]`)).not.toBeNull();
       expect(container.querySelector(`[data-component="test_service-days_option-${key}_thumb"]`)).not.toBeNull();
     }
+    expect(container.querySelectorAll('[data-source-component="FormSwitchRow"]')).toHaveLength(3);
     expect(screen.getAllByRole("switch")).toHaveLength(3);
     expect(screen.getByRole("switch", { name: "sunday" })).toBeChecked();
   });
 
-  it("marks an on pill by border only: no tinted background and a dark label", () => {
+  it("has no outer card border and lays the rows out in a three-column grid like sibling switch rows", () => {
+    const { container } = renderRow({ saturday: jest.fn(), sunday: jest.fn(), holiday: jest.fn() }, { sunday: true });
+
+    const root = container.querySelector('[data-component="test_service-days"]') as HTMLElement;
+    expect(root.className).not.toMatch(/border/);
+    const options = container.querySelector('[data-component="test_service-days_options"]') as HTMLElement;
+    expect(options).toHaveClass("grid", "lg:grid-cols-3");
+    expect(options.className).toContain("gap-[calc(12px*var(--glint-ui-scale,1))]");
+  });
+
+  it("lets the call site override the options grid columns", () => {
+    const { container } = render(
+      <FormSwitchGroupRow
+        data-component="test_service-days"
+        title="t"
+        optionsClassName="lg:grid-cols-2"
+        options={[{ key: "a", label: "a", checked: false, onToggle: jest.fn() }]}
+      />,
+    );
+
+    const options = container.querySelector('[data-component="test_service-days_options"]') as HTMLElement;
+    expect(options).toHaveClass("lg:grid-cols-2");
+    expect(options).not.toHaveClass("lg:grid-cols-3");
+  });
+
+  it("renders a checked option exactly like an unchecked one apart from the switch state", () => {
     const { container } = renderRow({ saturday: jest.fn(), sunday: jest.fn(), holiday: jest.fn() }, { sunday: true });
 
     const on = container.querySelector('[data-component="test_service-days_option-sunday"]') as HTMLElement;
     const off = container.querySelector('[data-component="test_service-days_option-saturday"]') as HTMLElement;
-    expect(on).toHaveClass("border-v3-primary/35", "bg-white");
-    expect(on.className).not.toMatch(/bg-v3-primary/);
-    expect(on.querySelector("span")).toHaveClass("text-v3-dark");
-    expect(off).not.toHaveClass("border-v3-primary/35");
+    expect(on.className).toBe(off.className);
+    expect(on.className).not.toMatch(/border-v3-primary/);
+  });
+
+  it("keeps a disabled option's switch disabled", () => {
+    render(
+      <FormSwitchGroupRow
+        data-component="test_service-days"
+        title="t"
+        options={[{ key: "a", label: "a", checked: false, onToggle: jest.fn(), disabled: true }]}
+      />,
+    );
+
+    expect(screen.getByRole("switch", { name: "a" })).toBeDisabled();
   });
 
   it("calls only the toggled option's handler", () => {

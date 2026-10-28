@@ -396,7 +396,7 @@
       "breast-pump": "유축기 대여",
       "message-automation": "메시지 자동 전송",
       "service-days": "주말·공휴일 서비스",
-      "service-days-helper": "켠 날도 서비스일로 계산해 종료일과 제공기록지 회차에 포함해요.",
+      "service-days-helper": "서비스 제공일에 주말 및 공휴일을 포함할 수 있어요.",
       "service-days-saturday": "토요일",
       "service-days-sunday": "일요일",
       "service-days-holiday": "공휴일",
