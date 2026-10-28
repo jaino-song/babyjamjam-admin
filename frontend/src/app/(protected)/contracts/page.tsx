@@ -106,7 +106,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { eformsignApi, withEformsignReauth } from "@/services/api";
+import { eformsignApi, withEformsignReauth, type EnqueueEformsignDocumentJobResponse } from "@/services/api";
 import { cn } from "@/lib/utils";
 import {
   extractDocumentAddress,
@@ -1496,18 +1496,32 @@ export function ContractDetail({
   });
 
   const openStaffCompletionMutation = useMutation({
-    mutationFn: async ({ endDate }: { endDate?: string } = {}): Promise<void> => {
-      await enqueueFinalizationMutation.mutateAsync({
+    mutationFn: ({ endDate }: { endDate?: string } = {}): Promise<EnqueueEformsignDocumentJobResponse> =>
+      enqueueFinalizationMutation.mutateAsync({
         requestKey: createFinalizeProgressId(),
         documentId: doc.id,
         prefillEndDate: endDate,
-      });
-    },
-    onSuccess: () => {
+      }),
+    onSuccess: ({ existing, status }) => {
+      // `existing` means the server kept a prior finalize job for this document
+      // (the active key survives queued/processing and requires_attention), so
+      // nothing new was created and "시작했어요" would be false.
+      if (existing && (status === "failed" || status === "requires_attention")) {
+        toast({
+          variant: "destructive",
+          title: "최종 확인을 마치지 못했어요",
+          description: "이 계약서의 검토완료 작업이 처리중 목록에 남아 있어요. 처리중 목록에서 확인해 주세요.",
+        });
+        return;
+      }
       setIsPreviewOpen(false);
       setIsFinalizeOpen(false);
       setIsServiceRecordFinalizeConfirmOpen(false);
       setFinalizeEndDate("");
+      if (existing) {
+        toast({ description: "이 계약서의 검토완료가 이미 처리 중이에요." });
+        return;
+      }
       toast({ description: "전자문서 작업을 시작했어요" });
     },
     onError: (error) => {
