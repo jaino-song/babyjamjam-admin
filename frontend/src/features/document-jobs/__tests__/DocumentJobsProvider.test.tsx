@@ -267,9 +267,8 @@ describe("DocumentJobsProvider", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "전자문서 처리중 작업 보기" }));
 
-    expect(await screen.findByRole("link", { name: /전자문서 최종 처리/ })).toHaveAttribute(
-      "href",
-      "/contracts?documentId=doc-1",
-    );
+    // An active job is read-only: its row is shown, but it links nowhere.
+    expect(await screen.findByText("김하늘 · 검토완료")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /검토완료/ })).not.toBeInTheDocument();
   });
 });

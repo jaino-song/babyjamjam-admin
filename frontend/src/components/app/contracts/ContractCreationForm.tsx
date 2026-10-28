@@ -5,13 +5,12 @@ import dayjs from "dayjs";
 import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
-import { Check, X } from "lucide-react";
+import { Check } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
-import { eformsignApi } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Input, V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +26,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { WizardStep } from "@/components/app/v3";
-import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { FormHelperText, FormNativeSelect } from "@/components/app/ui/form-section";
 import {
@@ -39,14 +37,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useCallback, useState, useEffect, useRef, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useEformsign } from "@/hooks/useEformsign";
 import { useToast } from "@/hooks/use-toast";
 import { useEnqueueEformsignDocumentCreation } from "@/hooks/useEformsignDocumentJobs";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
-import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   HeadlessProgressStepper,
   type HeadlessProgressState,
@@ -131,8 +126,6 @@ function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | nul
   return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
 }
 
-import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
-import { clientKeys } from "@/features/clients/hooks/keys";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { ContactInput } from "@/components/app/messages/forms/form-components/ContactInput";
@@ -255,11 +248,6 @@ export const CONTRACT_CREATION_STEPPER_STEPS = [
 
 const CONTRACT_INFO_STEP_INDEX = 3;
 const CONTRACT_CREATION_PROCESSING_STEP_INDEX = 4;
-const CONTRACT_CREATION_MANUAL_HELP = "수동으로 입력해 주세요";
-
-interface ContractCreationRunOptions {
-  mode?: "auto" | "manual";
-}
 
 const INITIAL_CREATION_PROGRESS: HeadlessProgressState = {
   step: null,
@@ -578,16 +566,6 @@ export const ContractCreationForm = ({
 }: ContractCreationFormProps = {}) => {
   const router = useRouter();
   const locale = useLocale();
-  const queryClient = useQueryClient();
-  // A sent or superseded contract changes the client's displayed documentStatus, so the client
-  // list and that client's detail must refetch together with the document list.
-  const invalidateContractQueries = useCallback((affectedClientId: number | null) => {
-    void queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
-    void queryClient.invalidateQueries({ queryKey: clientKeys.all });
-    if (affectedClientId !== null) {
-      void queryClient.invalidateQueries({ queryKey: clientKeys.detail(affectedClientId) });
-    }
-  }, [queryClient]);
   const { toast } = useToast();
   const { data: authUser } = useGetAuthUser();
   const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -601,8 +579,6 @@ export const ContractCreationForm = ({
     },
     [controlledActiveStep, onActiveStepChange],
   );
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
   const confirmationResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const requestConfirmation = (message: string): Promise<boolean> => {
@@ -639,7 +615,6 @@ export const ContractCreationForm = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [canCreateManually, setCanCreateManually] = useState(false);
   const creationRequestRef = useRef<{ fingerprint: string; key: string } | null>(null);
   const hadUncertainEnqueueRef = useRef(false);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_CREATION_PROGRESS);
@@ -655,15 +630,6 @@ export const ContractCreationForm = ({
   // 계속하기/제출을 눌러 본 단계. 이 단계의 문제 필드는 모두 메시지를 보여줘요.
   const [attemptedSteps, setAttemptedSteps] = useState<readonly number[]>([]);
   const pendingFocusRef = useRef<{ target: ContractFocusTarget; step: number } | null>(null);
-
-  const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
-    useEformsign();
-
-  const handleCreationSuccessAcknowledged = () => {
-    if (!isCreationSuccessOpen) return;
-    setIsCreationSuccessOpen(false);
-    onSuccess?.();
-  };
 
   const {
     clientId,
@@ -887,21 +853,9 @@ export const ContractCreationForm = ({
     }
   };
 
-  const handleDialogClose = () => {
-    setCreationProgress((current) =>
-      current.step !== null && !current.completed && !current.failed
-        ? { ...current, failed: true }
-        : current,
-    );
-    setIsDialogOpen(false);
-    setIsSubmitting(false);
-  };
-
   const resetCreationSession = () => {
-    setIsDialogOpen(false);
     setIsSubmitting(false);
     setSubmitError(null);
-    setCanCreateManually(false);
     creationRequestRef.current = null;
     hadUncertainEnqueueRef.current = false;
     setCreationProgress(INITIAL_CREATION_PROGRESS);
@@ -1043,25 +997,6 @@ export const ContractCreationForm = ({
     setPaymentDateInput(initialPaymentDate ?? "");
   }, [initialClient]);
 
-  // Re-issue: the replaced contract is cancelled only after the new one was sent,
-  // so abandoning or failing the send leaves the client's current contract intact.
-  // The queue path supersedes server-side; this effect handles manual creation only.
-  const supersededRef = useRef(false);
-  useEffect(() => {
-    if (!isCreationSuccessOpen || !supersedeDocumentId || supersededRef.current) return;
-    // Only when the contract just sent is for the re-issued client.
-    if (!initialClient || clientId !== initialClient.id) return;
-    supersededRef.current = true;
-    eformsignApi.supersedeDocument(supersedeDocumentId, clientId)
-      .then(() => invalidateContractQueries(clientId))
-      .catch(() => {
-        toast({
-          variant: "destructive",
-          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
-        });
-      });
-  }, [isCreationSuccessOpen, supersedeDocumentId, initialClient, clientId, invalidateContractQueries, toast]);
-
   const initialClientEmployeePrefillAppliedRef = useRef(false);
 
   useEffect(() => {
@@ -1138,9 +1073,8 @@ export const ContractCreationForm = ({
     setAttemptedSteps((previous) => (previous.includes(step) ? previous : [...previous, step]));
   };
 
-  const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
+  const handleContractCreation = async () => {
     if (isSubmittingRef.current) return;
-    setCanCreateManually(false);
     const dateProblem = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (dateProblem) {
       requestFieldFocus(dateProblem, CONTRACT_INFO_STEP_INDEX);
@@ -1155,8 +1089,6 @@ export const ContractCreationForm = ({
     isSubmittingRef.current = true;
     onSubmissionStateChange?.(true);
     try {
-      const shouldEnqueueDocumentJob = mode !== "manual";
-
       if (employeeId === null || (showEmployee2 && employee2Id === null)) {
         // 문제는 제공인력 선택 필드의 라벨 줄 메시지로 보여줘요.
         markStepAttempted(1);
@@ -1164,26 +1096,11 @@ export const ContractCreationForm = ({
         return;
       }
 
-      if (!shouldEnqueueDocumentJob && !isEformsignLoaded) {
-        setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
-        setActiveStep(CONTRACT_INFO_STEP_INDEX);
-        return;
-      }
-
       setIsSubmitting(true);
       setSubmitError(null);
-      setIsDialogOpen(false);
-      // A manual run is the same creation session re-entering after the automatic run
-      // failed, so progress must never drop to "no session" in between: that would
-      // end the session (and the page's 전자문서 생성 step) while the editor opens.
-      setCreationProgress(
-        mode === "manual"
-          ? { step: "client-started", completed: false, failed: false }
-          : INITIAL_CREATION_PROGRESS,
-      );
+      setCreationProgress(INITIAL_CREATION_PROGRESS);
 
       let autoRegisteredClientId: number | null = null;
-      let keepSubmittingUntilDialogCloses = false;
       try {
         let finalClientId = clientId;
         const normalizedDueDate = toRealIsoDate(dueDateInput) ?? "";
@@ -1386,112 +1303,43 @@ export const ContractCreationForm = ({
           actualPrice,
         };
 
-        if (shouldEnqueueDocumentJob) {
-          // An accepted job may exist even if its response was lost. Retain the
-          // persisted client and request key until acceptance is confirmed.
-          autoRegisteredClientId = null;
-          const request = {
-            clientId: finalClientId,
-            contractData,
-            ...(supersedeDocumentId ? { supersedeDocumentId } : {}),
-          };
-          const fingerprint = JSON.stringify(request);
-          const previousRequest = creationRequestRef.current;
-          const isRetry = previousRequest?.fingerprint === fingerprint;
-          const requestKey = isRetry ? previousRequest.key : createHeadlessProgressId();
-          creationRequestRef.current = { fingerprint, key: requestKey };
-          let accepted;
-          try {
-            accepted = await enqueueCreationMutation.mutateAsync({ ...request, requestKey });
-          } catch (error) {
-            // An earlier uncertain enqueue remains unsafe even if a later request is rejected.
-            const status = isAxiosError(error) ? error.response?.status : undefined;
-            const wasRejected = status !== undefined && ((status >= 400 && status < 500) || status === 503);
-            if (!wasRejected) hadUncertainEnqueueRef.current = true;
-            setCanCreateManually(!hadUncertainEnqueueRef.current && wasRejected);
-            if (hadUncertainEnqueueRef.current) {
-              throw new AuthoredSubmissionError("전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인해 주세요.");
-            }
-            throw error;
-          }
-          if (accepted.existing && !isRetry) {
-            creationRequestRef.current = null;
-            throw new AuthoredSubmissionError("이 고객의 전자문서 작업이 이미 진행 중이에요. 처리중 목록에서 확인해 주세요.");
-          }
-          if (accepted.existing && (accepted.status === "failed" || accepted.status === "requires_attention")) {
-            throw new AuthoredSubmissionError("전자문서 작업을 완료하지 못했어요. 처리중 목록에서 확인해 주세요.");
-          }
-          creationRequestRef.current = null;
-          toast({ description: supersedeDocumentId ? "계약서 재발행을 시작했어요" : "전자문서 생성을 시작했어요" });
-          if (onSuccess) onSuccess();
-          else onClose?.();
-          return;
-        }
-
-        if (!isEformsignLoaded) {
-          setSubmitError("eformsign SDK가 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
-          setActiveStep(CONTRACT_INFO_STEP_INDEX);
-          return;
-        }
-
-        const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
+        // An accepted job may exist even if its response was lost. Retain the
+        // persisted client and request key until acceptance is confirmed.
+        autoRegisteredClientId = null;
+        const request = {
+          clientId: finalClientId,
           contractData,
-          finalClientId
-        );
-
-        keepSubmittingUntilDialogCloses = true;
-        setIsDialogOpen(true);
-        setCreationProgress({ step: "client-started", completed: false, failed: false });
-
-        setTimeout(() => {
-          openDocument(documentOption, "eformsign_iframe", {
-            onSuccess: async (response) => {
-              setCreationProgress({ step: "creating", completed: false, failed: false });
-              if (finalClientId && response.document_id) {
-                try {
-                  await eformsignApi.createDocRecord({
-                    documentId: response.document_id,
-                    clientId: finalClientId,
-                    statusType: "060",
-                    statusDetail: "대기",
-                    stepType: "01",
-                    stepIndex: "1",
-                    stepName: "서명 요청",
-                    stepRecipientType: "01",
-                    stepRecipientName: name,
-                    stepRecipientSms: phone,
-                    expiredDate: (end ?? start.add(60, "day")).add(30, "day").toISOString(),
-                    linkToClient: true,
-                    documentKind: "contract",
-                    templateId: documentOption.mode.template_id ?? null,
-                  });
-                } catch (docError) {
-                  console.error("Failed to create eformsign doc record:", docError);
-                }
-              }
-
-              setCreationProgress({ step: "sent", completed: true, failed: false });
-              invalidateContractQueries(finalClientId);
-              handleDialogClose();
-              setIsCreationSuccessOpen(true);
-            },
-            onError: (response) => {
-              // The vendor message is never forwarded; locally authored copy
-              // covers the SDK failure. The vendor code stays a diagnostic.
-              console.error("Document creation failed:", response.code);
-              markCreationProgressFailed();
-              setSubmitError("문서 생성에 실패했어요. 잠시 후 다시 시도해 주세요.");
-              handleDialogClose();
-            },
-            onAction: () => {
-              setCreationProgress((current) =>
-                current.step === "client-started" && !current.completed && !current.failed
-                  ? { step: "info-inserted", completed: false, failed: false }
-                  : current,
-              );
-            },
-          });
-        }, 500);
+          ...(supersedeDocumentId ? { supersedeDocumentId } : {}),
+        };
+        const fingerprint = JSON.stringify(request);
+        const previousRequest = creationRequestRef.current;
+        const isRetry = previousRequest?.fingerprint === fingerprint;
+        const requestKey = isRetry ? previousRequest.key : createHeadlessProgressId();
+        creationRequestRef.current = { fingerprint, key: requestKey };
+        let accepted;
+        try {
+          accepted = await enqueueCreationMutation.mutateAsync({ ...request, requestKey });
+        } catch (error) {
+          // An earlier uncertain enqueue remains unsafe even if a later request is rejected.
+          const status = isAxiosError(error) ? error.response?.status : undefined;
+          const wasRejected = status !== undefined && ((status >= 400 && status < 500) || status === 503);
+          if (!wasRejected) hadUncertainEnqueueRef.current = true;
+          if (hadUncertainEnqueueRef.current) {
+            throw new AuthoredSubmissionError("전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인해 주세요.");
+          }
+          throw error;
+        }
+        if (accepted.existing && !isRetry) {
+          creationRequestRef.current = null;
+          throw new AuthoredSubmissionError("이 고객의 전자문서 작업이 이미 진행 중이에요. 처리중 목록에서 확인해 주세요.");
+        }
+        if (accepted.existing && (accepted.status === "failed" || accepted.status === "requires_attention")) {
+          throw new AuthoredSubmissionError("전자문서 작업을 완료하지 못했어요. 처리중 목록에서 확인해 주세요.");
+        }
+        creationRequestRef.current = null;
+        toast({ description: supersedeDocumentId ? "계약서 재발행을 시작했어요" : "전자문서 생성을 시작했어요" });
+        if (onSuccess) onSuccess();
+        else onClose?.();
       } catch (error) {
         // Locally authored copy keeps its message; otherwise the registered
         // problem message (verified) or the generic fallback is rendered —
@@ -1515,16 +1363,13 @@ export const ContractCreationForm = ({
           }
         }
         console.error("Error creating contract:", error);
-        setIsDialogOpen(false);
         setActiveStep(CONTRACT_INFO_STEP_INDEX);
         markCreationProgressFailed();
         if (!autoRegisteredClientId) {
           setSubmitError(creationFailureCopy);
         }
       } finally {
-        if (!keepSubmittingUntilDialogCloses) {
-          setIsSubmitting(false);
-        }
+        setIsSubmitting(false);
       }
     } finally {
       isSubmittingRef.current = false;
@@ -1782,7 +1627,6 @@ export const ContractCreationForm = ({
 
   const handleWizardComplete = async () => {
     if (isSubmittingRef.current || !isCalendarReady || isEndDateUnsupported) return;
-    setCanCreateManually(false);
     const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (problemTarget) {
       requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
@@ -1826,11 +1670,6 @@ export const ContractCreationForm = ({
   const handleRetryContractCreation = () => {
     setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
     void handleContractCreation();
-  };
-
-  const handleManualContractCreation = () => {
-    setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
-    void handleContractCreation({ mode: "manual" });
   };
 
   const wizardSteps: WizardStep[] = [
@@ -2344,7 +2183,6 @@ export const ContractCreationForm = ({
             ariaLabel="전자계약서 생성 진행 상태"
             dataComponentPrefix="contract-creation-processing"
             testIdPrefix="contract-creation-progress"
-            errorHint={CONTRACT_CREATION_MANUAL_HELP}
             spinnerClassName="contract-creation-processing-spinner"
             className="h-full w-full max-w-[22rem] [&>li:not(:last-child)]:flex-1"
           />
@@ -2360,15 +2198,9 @@ export const ContractCreationForm = ({
       stepContentClassName={cn(stepContentClassName, isProcessingStep && "flex min-h-0 flex-1")}
       feedback={
         <>
-          {(submitError || eformsignError) && (
+          {submitError && (
             <Alert variant="destructive" data-component="desktop_messages_sections_contract-form-error">
-              <AlertDescription>{submitError || eformsignError}</AlertDescription>
-            </Alert>
-          )}
-
-          {isEformsignLoading && (
-            <Alert data-component="desktop_messages_sections_contract-form-loading">
-              <AlertDescription>eformsign SDK를 로드하는 중입니다...</AlertDescription>
+              <AlertDescription>{submitError}</AlertDescription>
             </Alert>
           )}
         </>
@@ -2421,24 +2253,6 @@ export const ContractCreationForm = ({
           </Button>
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
           <>
-            {canCreateManually && (
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-component="desktop_contracts_creation_form_manual"
-                  data-testid="contract-creation-manual"
-                  onClick={handleManualContractCreation}
-                  disabled={isSubmitting}
-                >
-                  수동 입력
-                </Button>
-                <p data-component="desktop_contracts_creation_form_footer_manual-help">
-                  직접 작성 전에 처리중 목록에 같은 고객의 작업이 없는지 확인해 주세요.
-                </p>
-              </div>
-            )}
             <Button
               type="button"
               size="sm"
@@ -2494,44 +2308,6 @@ export const ContractCreationForm = ({
         </>
       )}
 
-      <Dialog open={isDialogOpen} onOpenChange={(open: boolean) => !open && handleDialogClose()}>
-        <DialogContent
-          data-component="desktop_messages_sections_contract-form-dialog"
-          // Mobile: full-screen. Desktop (lg+): keep the manual eformsign canvas near A4 portrait.
-          className="max-w-full w-screen h-screen p-0 gap-0 flex flex-col lg:w-[820px] lg:max-w-[95vw] lg:h-[1102px] lg:max-h-[95vh] lg:rounded-lg"
-        >
-          <DialogHeader className="px-4 py-2 flex flex-row items-center justify-between border-b shrink-0">
-            <DialogTitle>계약서 작성</DialogTitle>
-            <DialogDescription className="sr-only">
-              전자문서 작성 화면과 생성 진행 상태를 표시합니다.
-            </DialogDescription>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="계약서 작성 닫기"
-              onClick={handleDialogClose}
-              className="h-8 w-8"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <iframe id="eformsign_iframe" className="w-full h-full border-none" title="eformsign Document" />
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <NotificationOneButtonModal
-        open={isCreationSuccessOpen}
-        onOpenChange={(open) => {
-          if (!open) handleCreationSuccessAcknowledged();
-        }}
-        dataComponent="desktop_contracts_creation_success-notification"
-        title="계약서가 성공적으로 생성되었습니다."
-        description="전자문서 생성과 전송이 완료되었습니다."
-        onAcknowledge={handleCreationSuccessAcknowledged}
-      />
       <Dialog
         open={clientDiffPrompt !== null}
         onOpenChange={(open: boolean) => {

@@ -23,6 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
 import { cn } from "@/lib/utils";
 
 const SOURCE_COMPONENT = "ContractDocumentJobsPopover";
@@ -42,6 +43,8 @@ export interface ContractDocumentJob {
   source?: "staff" | "auto_finalize";
   status: ContractDocumentJobStatus;
   clientId?: number | null;
+  clientName?: string | null;
+  recoveryKind?: "manual_send" | "verify_result" | null;
   documentId?: string | null;
   progressStep?: string | null;
   attempts?: number;
@@ -107,10 +110,19 @@ function getStatusCopy(status: ContractDocumentJobStatus) {
 }
 
 function getJobTitle(job: ContractDocumentJob): string {
-  return job.jobType === "create_document" ? "전자문서 생성" : "전자문서 최종 처리";
+  const who = job.clientName?.trim() || "고객";
+  return `${who} · ${job.jobType === "create_document" ? "계약서 생성" : "검토완료"}`;
 }
 
+/** Machine steps written by manual recovery; staff see words, never the step name. */
+const MANUAL_STEP_COPY: Readonly<Record<string, string>> = {
+  manual_in_progress: "처리 중",
+  manual_resolved: "처리됨으로 표시",
+};
+
 function getJobSubtitle(job: ContractDocumentJob): string {
+  const manualCopy = job.progressStep ? MANUAL_STEP_COPY[job.progressStep] : undefined;
+  if (manualCopy) return manualCopy;
   if (job.progressStep) return job.progressStep;
   if (job.documentId) return `문서 ID ${job.documentId}`;
   return "문서 연결 정보 없음";
@@ -154,12 +166,20 @@ function JobRow({
     />
   );
 
-  if (!job.documentId) {
+  const isRecoverable = job.status === "failed" || job.status === "requires_attention";
+  const isCompleted = job.status === "completed";
+  const href = isRecoverable
+    ? recoverJobHref(job.jobId)
+    : isCompleted && job.documentId
+      ? `/contracts?documentId=${encodeURIComponent(job.documentId)}`
+      : null;
+
+  if (!href) {
     return (
       <div
-        data-component={sub("missing-document")}
+        data-component={sub("static")}
         className="flex min-w-0 items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[16px] px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]"
-        title="연결된 계약서가 없어 이동할 수 없어요."
+        title={isCompleted ? "연결된 계약서가 없어 이동할 수 없어요." : undefined}
       >
         {content}
       </div>
@@ -168,7 +188,7 @@ function JobRow({
 
   return (
     <Link
-      href={`/contracts?documentId=${encodeURIComponent(job.documentId)}`}
+      href={href}
       data-component={sub("link")}
       className="flex min-w-0 items-center rounded-[16px] px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left transition-colors hover:bg-v3-dim-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2"
       onClick={onNavigate}
