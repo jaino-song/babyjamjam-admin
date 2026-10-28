@@ -52,7 +52,6 @@ import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import {
-  HeadlessProgressStepper,
   type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
@@ -145,6 +144,7 @@ import { ContactInput } from "@/components/app/messages/forms/form-components/Co
 import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import { ContractClientSelector } from "@/components/app/contracts/ContractClientSelector";
 import { ContractEmployeeSelector } from "@/components/app/contracts/ContractEmployeeSelector";
+import { ContractCreationProgressPanel } from "@/components/app/contracts/ContractCreationProgressPanel";
 import { useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
@@ -2613,18 +2613,13 @@ export const ContractCreationForm = ({
     {
       label: "전자문서 생성",
       content: (
-        <div className="flex h-full w-full items-stretch justify-center py-2">
-          <HeadlessProgressStepper
-            steps={CONTRACT_CREATION_PROGRESS_STEPS}
-            progress={creationProgress}
-            ariaLabel="전자계약서 생성 진행 상태"
-            dataComponentPrefix="contract-creation-processing"
-            testIdPrefix="contract-creation-progress"
-            errorHint={CONTRACT_CREATION_MANUAL_HELP}
-            spinnerClassName="contract-creation-processing-spinner"
-            className="h-full w-full max-w-[22rem] [&>li:not(:last-child)]:flex-1"
-          />
-        </div>
+        <ContractCreationProgressPanel
+          steps={CONTRACT_CREATION_PROGRESS_STEPS}
+          progress={creationProgress}
+          recipientName={name}
+          recipientPhone={phone}
+          errorHint={CONTRACT_CREATION_MANUAL_HELP}
+        />
       ),
     },
   ];
