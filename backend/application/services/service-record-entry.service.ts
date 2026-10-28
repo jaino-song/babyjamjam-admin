@@ -5,6 +5,7 @@ import {
     BadRequestException,
     ConflictException,
 } from "@nestjs/common";
+import { isDeepStrictEqual } from "node:util";
 import { Prisma } from "@prisma/client";
 import {
     assertNoActiveEmployeeScheduleOverlap,
@@ -42,6 +43,37 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
+}
+
+/** The four caregiver-editable fields of a submitted day, plus its immutable service date. */
+type EditableDaySnapshot = {
+    serviceDate: string;
+    answers: Prisma.JsonValue;
+    etcService: string | null;
+    notes: string | null;
+    paymentConfirmed: boolean;
+};
+
+/** Plain-JSON copy so stored JSON and freshly validated answers compare structurally (key order irrelevant). */
+function toPlainJson(value: unknown): Prisma.JsonValue {
+    return JSON.parse(JSON.stringify(value ?? {})) as Prisma.JsonValue;
+}
+
+/** Snapshot used both to detect a real change and as the `before` payload of the edit log. Never carries signature data. */
+function editableDaySnapshot(day: {
+    serviceDate: Date;
+    answers: unknown;
+    etcService: string | null;
+    notes: string | null;
+    paymentConfirmed: boolean;
+}): EditableDaySnapshot {
+    return {
+        serviceDate: toIso(day.serviceDate),
+        answers: toPlainJson(day.answers),
+        etcService: day.etcService ?? null,
+        notes: day.notes ?? null,
+        paymentConfirmed: day.paymentConfirmed,
+    };
 }
 
 type PlannedSessionVectorResult = {
@@ -422,6 +454,7 @@ export class ServiceRecordEntryService {
         // Saved computation: read the branch calendar fresh, before the
         // transaction opens, so a holiday edit is honoured at once.
         const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
+        let lockedEditOutcome: "edited" | "unchanged" | null = null;
         const saved = await this.prisma.$transaction(async (tx) => {
             // Discover the assignment before locking. Production rows carry a
             // client id, so the common policy then locks client -> employees ->
@@ -531,6 +564,35 @@ export class ServiceRecordEntryService {
                 }
             }
 
+            // Read this session's stored row before anything below can write.
+            // A submitted (locked) day may be edited by the caregiver who
+            // submitted it until the case is finalized; its date is immutable
+            // and the end-date extension already ran at the first submit, so an
+            // edit must not reach the extension block (it would otherwise
+            // commit a schedule/client/token change on an edit).
+            const existing = await tx.service_record_day.findUnique({
+                where: {
+                    serviceRecordCaseId_caseSessionIndex: {
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: sessionIndex,
+                    },
+                },
+            });
+            if (existing?.locked) {
+                // Draft saves stay refused; submits are refused for a changed
+                // date, a legacy day without a signature, or a different
+                // caregiver than the one who submitted the day.
+                if (
+                    !lock
+                    || toIso(serviceDate) !== toIso(existing.serviceDate)
+                    || !existing.clientSignature
+                    || existing.employeeId !== ctx.employeeId
+                ) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+            }
+            const lockedEdit = Boolean(existing?.locked);
+
             // A postponed session (a later serviceDate than originally
             // scheduled) can push the remaining sessions past the current
             // end date. requiredSessionCount stays fixed; the end date
@@ -549,7 +611,7 @@ export class ServiceRecordEntryService {
                     location: "body",
                 }));
             }
-            if (currentEndIso && requiredEndIso > currentEndIso) {
+            if (!lockedEdit && currentEndIso && requiredEndIso > currentEndIso) {
                 const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
                 // Production already owns these locks from the common set
                 // above. Keep the helper calls only for legacy unit doubles
@@ -643,18 +705,6 @@ export class ServiceRecordEntryService {
                 }));
             }
 
-            const existing = await tx.service_record_day.findUnique({
-                where: {
-                    serviceRecordCaseId_caseSessionIndex: {
-                        serviceRecordCaseId: record.id,
-                        caseSessionIndex: sessionIndex,
-                    },
-                },
-            });
-            if (existing?.locked) {
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            }
-
             if (sessionIndex > 1) {
                 const prev = await tx.service_record_day.findUnique({
                     where: {
@@ -704,6 +754,84 @@ export class ServiceRecordEntryService {
                 }
             }
 
+            const etcService = this.trimNullable(
+                dto.etcService,
+                SERVICE_RECORD_TEXT_LIMITS.etcService,
+                "etcService",
+            );
+            const notes = this.trimNullable(
+                dto.notes,
+                SERVICE_RECORD_TEXT_LIMITS.notes,
+                "notes",
+            );
+            const paymentConfirmed = dto.paymentConfirmed ?? false;
+
+            if (existing && lockedEdit) {
+                // Caregiver edit of a submitted day. Only the four editable
+                // fields come from the request; every other column is the
+                // stored fact (original submit time, approval, signature,
+                // author, schedule, form version). The request's
+                // clientSignature is deliberately ignored.
+                const before = editableDaySnapshot(existing);
+                const after: EditableDaySnapshot = {
+                    serviceDate: toIso(existing.serviceDate),
+                    answers: toPlainJson(answers),
+                    etcService,
+                    notes,
+                    paymentConfirmed,
+                };
+                if (isDeepStrictEqual(before, after)) {
+                    // The client always resends the full draft; an unchanged
+                    // edit writes and logs nothing.
+                    lockedEditOutcome = "unchanged";
+                    return existing;
+                }
+                const editData = {
+                    branchId: ctx.branchId,
+                    scheduleId: existing.scheduleId,
+                    serviceRecordCaseId: record.id,
+                    caseSessionIndex: sessionIndex,
+                    employeeId: existing.employeeId,
+                    employeeNameSnapshot: existing.employeeNameSnapshot,
+                    formVersion: existing.formVersion,
+                    sessionIndex: existing.sessionIndex,
+                    serviceDate: existing.serviceDate,
+                    answers: answers as Prisma.InputJsonValue,
+                    etcService,
+                    notes,
+                    paymentConfirmed,
+                    momApproval: existing.momApproval,
+                    locked: true,
+                    submittedAt: existing.submittedAt,
+                };
+                const editedRow = await tx.service_record_day.upsert({
+                    where: {
+                        branchId: ctx.branchId,
+                        serviceRecordCaseId_caseSessionIndex: {
+                            serviceRecordCaseId: record.id,
+                            caseSessionIndex: sessionIndex,
+                        },
+                    },
+                    create: editData,
+                    update: editData,
+                });
+                await tx.service_record_day_edit_log.create({
+                    data: {
+                        branchId: ctx.branchId,
+                        serviceRecordCaseId: record.id,
+                        caseSessionIndex: sessionIndex,
+                        serviceRecordDayId: existing.id,
+                        employeeId: ctx.employeeId,
+                        employeeNameSnapshot: schedule.primaryEmployee.name,
+                        before: before as unknown as Prisma.InputJsonValue,
+                        after: after as unknown as Prisma.InputJsonValue,
+                    },
+                });
+                lockedEditOutcome = "edited";
+                await this.lifecycleService.recompute(record.id, tx, calendar);
+                return editedRow;
+            }
+
             const submittedAt = lock ? new Date() : existing?.submittedAt ?? null;
             const data = {
                 branchId: ctx.branchId,
@@ -716,19 +844,11 @@ export class ServiceRecordEntryService {
                 sessionIndex,
                 serviceDate,
                 answers: answers as Prisma.InputJsonValue,
-                etcService: this.trimNullable(
-                    dto.etcService,
-                    SERVICE_RECORD_TEXT_LIMITS.etcService,
-                    "etcService",
-                ),
-                notes: this.trimNullable(
-                    dto.notes,
-                    SERVICE_RECORD_TEXT_LIMITS.notes,
-                    "notes",
-                ),
-                paymentConfirmed: dto.paymentConfirmed ?? false,
+                etcService,
+                notes,
+                paymentConfirmed,
                 momApproval: dto.momApproval ?? null,
-                locked: Boolean(existing?.locked || lock),
+                locked: lock,
                 submittedAt,
             };
 
@@ -764,7 +884,9 @@ export class ServiceRecordEntryService {
             await this.lifecycleService.recompute(record.id, tx, calendar);
             return row;
         });
-        if (lock) {
+        if (lockedEditOutcome === "edited") {
+            this.logger.log(`Service-record session ${sessionIndex} edited after submit for case ${aggregate.id}`);
+        } else if (lock && lockedEditOutcome === null) {
             this.logger.log(`Service-record session ${sessionIndex} submitted + locked for case ${aggregate.id}`);
         }
         return { ...saved, sessionIndex: saved.caseSessionIndex ?? saved.sessionIndex };
