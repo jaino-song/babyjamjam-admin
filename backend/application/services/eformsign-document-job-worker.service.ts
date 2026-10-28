@@ -434,10 +434,21 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
 
+        // Send evidence is latched for the whole attempt and seeded from the
+        // claimed row, so a marker an earlier attempt persisted survives into
+        // this one. It is captured before authorization mirrors its own
+        // `creating` marker onto the claim: that marker proves exclusivity,
+        // not that a send was attempted.
+        const sendEvidence: SendEvidence = { step: dispatchEvidenceOf(job.progressStep) };
+
         let revisionAuthorization: CreateDispatchAuthorizationResult;
         try {
             revisionAuthorization = await this.authorizeRevisionJob(job);
         } catch {
+            if (sendEvidence.step) {
+                await this.markAndReconcile(job, sendEvidence.step);
+                return;
+            }
             await this.handlePreSendFailure(job, "SERVICE_RECORD_REVISION_AUTHORIZATION_FAILURE");
             return;
         }
@@ -467,6 +478,7 @@ export class EformsignDocumentJobWorkerService {
             job.id,
             job.leaseToken,
             () => latestProgressStep,
+            () => sendEvidence.step,
             job.progressStep === "creating" || job.progressStep === "sent",
         );
         try {
@@ -479,13 +491,13 @@ export class EformsignDocumentJobWorkerService {
                     if (revision) {
                         await this.processRevision(job, revision);
                     } else {
-                        await this.processCreation(job, (step) => {
+                        await this.processCreation(job, sendEvidence, (step) => {
                             latestProgressStep = step;
                         });
                     }
                 }
             } else if (job.jobType === "finalize_document") {
-                await this.processFinalization(job, (step) => {
+                await this.processFinalization(job, sendEvidence, (step) => {
                     latestProgressStep = step;
                 });
             } else {
@@ -499,7 +511,7 @@ export class EformsignDocumentJobWorkerService {
             }
         } catch {
             this.logger.warn(`Eformsign document job ${job.id} failed`);
-            await this.handleExecutionFailure(job, latestProgressStep);
+            await this.handleExecutionFailure(job, sendEvidence, latestProgressStep);
         } finally {
             clearInterval(heartbeat);
         }
@@ -654,6 +666,7 @@ export class EformsignDocumentJobWorkerService {
 
     private async processCreation(
         job: EformsignDocumentJobEntity,
+        sendEvidence: SendEvidence,
         onProgressStep?: (step: EformsignHeadlessProgressStep) => void,
     ): Promise<void> {
         const leaseToken = job.leaseToken;
@@ -680,12 +693,14 @@ export class EformsignDocumentJobWorkerService {
                 force: payload.force,
                 onProgress: async (step) => {
                     latestProgressStep = step;
+                    observeSendEvidence(sendEvidence, step);
                     onProgressStep?.(step);
                     await this.recordProgress(
                         job.id,
                         leaseToken,
                         step,
-                        job.progressStep === "creating" || job.progressStep === "sent",
+                        sendEvidence.step
+                            ?? (job.progressStep === "creating" || job.progressStep === "sent"),
                     );
                 },
             },
@@ -708,8 +723,8 @@ export class EformsignDocumentJobWorkerService {
             await this.handlePreSendFailure(job, result.reason);
             return;
         }
-        if (this.isAmbiguous(result, latestProgressStep)) {
-            await this.markAndReconcile(job, latestProgressStep);
+        if (sendEvidence.step || this.isAmbiguous(result, latestProgressStep)) {
+            await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
             return;
         }
         if (job.progressStep === "creating") {
@@ -842,6 +857,7 @@ export class EformsignDocumentJobWorkerService {
 
     private async processFinalization(
         job: EformsignDocumentJobEntity,
+        sendEvidence: SendEvidence,
         onProgressStep?: (step: EformsignHeadlessProgressStep) => void,
     ): Promise<void> {
         const leaseToken = job.leaseToken;
@@ -870,12 +886,14 @@ export class EformsignDocumentJobWorkerService {
                     progressId: payload.progressId,
                     onProgress: async (progressStep) => {
                         latestProgressStep = progressStep;
+                        observeSendEvidence(sendEvidence, progressStep);
                         onProgressStep?.(progressStep);
                         await this.recordProgress(
                             job.id,
                             leaseToken,
                             progressStep,
-                            job.progressStep === "creating" || job.progressStep === "sent",
+                            sendEvidence.step
+                                ?? (job.progressStep === "creating" || job.progressStep === "sent"),
                         );
                     },
                 },
@@ -883,8 +901,10 @@ export class EformsignDocumentJobWorkerService {
             );
 
             if (!result.ok) {
-                if (this.isAmbiguous(result, latestProgressStep)) {
-                    await this.markAndReconcile(job, latestProgressStep);
+                // A later step's failure must not erase an earlier step's send:
+                // `latestProgressStep` only remembers the most recent step.
+                if (sendEvidence.step || this.isAmbiguous(result, latestProgressStep)) {
+                    await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
                     return;
                 }
                 await this.handlePreSendFailure(job, "HEADLESS_FINALIZE_PRE_SEND_FAILURE");
@@ -896,21 +916,27 @@ export class EformsignDocumentJobWorkerService {
             }
         }
 
-        await this.markAndReconcile(job, "reconciling");
+        await this.markAndReconcile(job, sendEvidence.step ?? "reconciling");
     }
 
     private async handleExecutionFailure(
         job: EformsignDocumentJobEntity,
+        sendEvidence: SendEvidence,
         latestProgressStep?: EformsignHeadlessProgressStep,
     ): Promise<void> {
-        const sendAttempted = latestProgressStep === "creating"
+        const sendAttempted = Boolean(sendEvidence.step)
+            || latestProgressStep === "creating"
             || latestProgressStep === "sent"
             || job.progressStep === "creating"
             || job.progressStep === "sent";
         if (sendAttempted) {
+            // Never persist a step that is behind the evidence already seen.
             await this.markAndReconcile(
                 job,
-                latestProgressStep ?? job.progressStep ?? "reconciling",
+                sendEvidence.step
+                    ?? dispatchEvidenceOf(job.progressStep)
+                    ?? latestProgressStep
+                    ?? "reconciling",
             );
             return;
         }
@@ -1019,13 +1045,17 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         jobLeaseToken: string,
         progressStep: () => string | undefined,
+        sendEvidence: () => DispatchEvidence | undefined,
         preserveDispatchMarker = false,
     ): ReturnType<typeof setInterval> {
         const heartbeat = setInterval(() => {
             const observed = progressStep();
-            const persisted = preserveDispatchMarker
-                ? observed === "sent" ? "sent" : "creating"
-                : observed ?? "processing";
+            const evidence = sendEvidence();
+            const persisted = evidence === "sent" || (preserveDispatchMarker && observed === "sent")
+                ? "sent"
+                : preserveDispatchMarker || evidence
+                    ? "creating"
+                    : observed ?? "processing";
             void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date()).catch(() => {
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
             });
@@ -1038,9 +1068,14 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         leaseToken: string,
         step: EformsignHeadlessProgressStep,
-        preserveDispatchMarker = false,
+        preserveDispatchMarker: boolean | DispatchEvidence = false,
     ): Promise<void> {
-        const persistedStep = preserveDispatchMarker && step !== "sent" ? "creating" : step;
+        // Once the dispatch marker is held the persisted step may only move
+        // `creating` -> `sent`, never back to an ordinary progress step; a
+        // latched `sent` stays `sent` through every later step.
+        const persistedStep = preserveDispatchMarker
+            ? preserveDispatchMarker === "sent" || step === "sent" ? "sent" : "creating"
+            : step;
         const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date());
         if (!updated) {
             throw new Error("EFORMSIGN_DOCUMENT_JOB_LEASE_LOST");
@@ -1186,6 +1221,26 @@ export class EformsignDocumentJobWorkerService {
             && ["remote_unconfirmed", "ambiguous", "provider_timeout", "send_outcome_unknown"]
                 .some((reason) => result.reason === reason);
     }
+}
+
+type DispatchEvidence = "creating" | "sent";
+
+/**
+ * Whether a job's provider send may have happened, latched across every step
+ * and attempt of one job. A step that only reports ordinary progress after a
+ * `creating`/`sent` step must never clear it.
+ */
+interface SendEvidence {
+    step: DispatchEvidence | undefined;
+}
+
+function dispatchEvidenceOf(step: string | null | undefined): DispatchEvidence | undefined {
+    return step === "creating" || step === "sent" ? step : undefined;
+}
+
+function observeSendEvidence(evidence: SendEvidence, step: string): void {
+    if (step === "sent") evidence.step = "sent";
+    else if (step === "creating" && evidence.step !== "sent") evidence.step = "creating";
 }
 
 function parseCreatePayload(payload: Record<string, unknown>): CreateDocumentJobPayload | null {

@@ -6,7 +6,7 @@ import {
     EformsignDocumentJobWorkerService,
     type ServiceRecordRevisionOperationCoordinatorPort,
 } from "application/services/eformsign-document-job-worker.service";
-import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
+import { classifyRecovery, EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
 const branchId = "00000000-0000-0000-0000-000000000010";
@@ -484,6 +484,254 @@ describe("EformsignDocumentJobWorkerService", () => {
             "sent",
         );
         expect(reconciliation.reconcile).toHaveBeenCalled();
+    });
+
+    describe("send evidence latched across finalize steps and attempts", () => {
+        function finalizeClaim(overrides: Partial<EformsignDocumentJobEntity> = {}) {
+            return job({
+                id: "00000000-0000-0000-0000-000000000003",
+                jobType: "finalize_document",
+                documentId: "doc-3",
+                activeKey: "finalize:doc-3",
+                payload: { documentId: "doc-3" },
+                ...overrides,
+            });
+        }
+
+        function persistedSteps(repository: { updateProgress: jest.Mock }): string[] {
+            return repository.updateProgress.mock.calls.map((call) => call[2] as string);
+        }
+
+        it("reconciles instead of failing when a later step reports progress and fails after an earlier step was sent", async () => {
+            // Reproduced scenario: three authorization failures consumed the
+            // pre-send retries (attempts is now 4). Step one sends; step two
+            // reports `client-started` and fails before sending anything.
+            const claimed = finalizeClaim({ attempts: 4 });
+            const transitioned = finalizeClaim({ attempts: 4, status: "requires_attention", progressStep: "sent" });
+            const { worker, repository, finalize, reconciliation } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                finalize: {
+                    execute: jest.fn()
+                        .mockImplementationOnce(async ({ onProgress }) => {
+                            await onProgress?.("sent");
+                            return { ok: true, completed: false, durationMs: 1 };
+                        })
+                        .mockImplementationOnce(async ({ onProgress }) => {
+                            await onProgress?.("client-started");
+                            return { ok: false, reason: "browser closed before send", durationMs: 1 };
+                        }),
+                },
+                reconciliation: {
+                    reconcile: jest.fn().mockResolvedValue({ status: "requires_attention", transitioned }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(finalize.execute).toHaveBeenCalledTimes(2);
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "sent");
+            expect(reconciliation.reconcile).toHaveBeenCalled();
+            // `sent` is never walked back by the later ordinary step.
+            expect(persistedSteps(repository)).toEqual(["sent", "sent"]);
+            expect(classifyRecovery(transitioned)).toBe("verify_result");
+        });
+
+        it("reconciles when a step that sent is followed by a later step that throws", async () => {
+            const claimed = finalizeClaim({ attempts: 4 });
+            const { worker, repository, reconciliation } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                finalize: {
+                    execute: jest.fn()
+                        .mockImplementationOnce(async ({ onProgress }) => {
+                            await onProgress?.("sent");
+                            return { ok: true, completed: false, durationMs: 1 };
+                        })
+                        .mockImplementationOnce(async ({ onProgress }) => {
+                            await onProgress?.("client-started");
+                            throw new Error("browser disconnected");
+                        }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "sent");
+            expect(reconciliation.reconcile).toHaveBeenCalled();
+        });
+
+        it("keeps a latched creating step from the same attempt through a later failing step", async () => {
+            const claimed = finalizeClaim({ attempts: 2 });
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                finalize: {
+                    execute: jest.fn()
+                        .mockImplementationOnce(async ({ onProgress }) => {
+                            await onProgress?.("creating");
+                            return { ok: true, completed: false, durationMs: 1 };
+                        })
+                        .mockImplementationOnce(async ({ onProgress }) => {
+                            await onProgress?.("client-started");
+                            return { ok: false, reason: "boom", durationMs: 1 };
+                        }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "creating");
+        });
+
+        it("reconciles a later attempt that inherited a sent marker instead of scheduling another retry", async () => {
+            // Sent in attempt N; attempt N+1 is claimed with the durable `sent`
+            // marker and its authorization fails before any step runs.
+            const claimed = finalizeClaim({ attempts: 2, progressStep: "sent" });
+            const { worker, repository, finalize } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    authorizeForDispatch: jest.fn().mockRejectedValue(new Error("database unavailable")),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(finalize.execute).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "sent");
+        });
+
+        it("reconciles a later attempt that inherited a sent marker when its finalize step fails pre-send", async () => {
+            const claimed = finalizeClaim({ attempts: 4, progressStep: "sent" });
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                finalize: {
+                    execute: jest.fn().mockImplementation(async ({ onProgress }) => {
+                        await onProgress?.("client-started");
+                        return { ok: false, reason: "boom", durationMs: 1 };
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "sent");
+        });
+
+        it("persists a latched creating step through the heartbeat and later progress for a send that began mid-attempt", async () => {
+            const claimed = finalizeClaim({ attempts: 1 });
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                finalize: {
+                    execute: jest.fn().mockImplementation(async ({ onProgress }) => {
+                        await onProgress?.("sent");
+                        await onProgress?.("info-inserted");
+                        await onProgress?.("client-started");
+                        return { ok: false, reason: "boom", durationMs: 1 };
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(persistedSteps(repository)).toEqual(["sent", "sent", "sent"]);
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "sent");
+        });
+
+        it("still retries a genuine pre-send failure at 1, 5 and 15 minutes and then fails it as manual_send", async () => {
+            const delays = [60_000, 5 * 60_000, 15 * 60_000];
+            for (const [index, delay] of delays.entries()) {
+                const claimed = finalizeClaim({ attempts: index + 1 });
+                const { worker, repository } = buildWorker({
+                    repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+                    finalize: {
+                        execute: jest.fn().mockImplementation(async ({ onProgress }) => {
+                            await onProgress?.("client-started");
+                            return { ok: false, reason: "boom", durationMs: 1 };
+                        }),
+                    },
+                });
+                const before = Date.now();
+
+                await worker.processDueJobs();
+
+                expect(repository.markReconciling).not.toHaveBeenCalled();
+                expect(repository.markFailed).not.toHaveBeenCalled();
+                const [id, lease, nextAttemptAt, code] = repository.scheduleRetry.mock.calls[0]!;
+                expect([id, lease, code]).toEqual([claimed.id, claimed.leaseToken, "HEADLESS_FINALIZE_PRE_SEND_FAILURE"]);
+                expect((nextAttemptAt as Date).getTime() - before).toBeGreaterThanOrEqual(delay - 50);
+                expect((nextAttemptAt as Date).getTime() - before).toBeLessThan(delay + 5_000);
+            }
+
+            const claimed = finalizeClaim({ attempts: 4 });
+            const failed = finalizeClaim({ attempts: 4, status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED" });
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markFailed: jest.fn().mockResolvedValue(failed),
+                },
+                finalize: {
+                    execute: jest.fn().mockImplementation(async ({ onProgress }) => {
+                        await onProgress?.("client-started");
+                        return { ok: false, reason: "boom", durationMs: 1 };
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).not.toHaveBeenCalled();
+            expect(repository.markFailed).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "PRE_SEND_RETRY_EXHAUSTED");
+            expect(classifyRecovery(failed)).toBe("manual_send");
+        });
+
+        it("latches a send across the creation path's later progress steps too", async () => {
+            const claimed = job({ attempts: 4 });
+            const { worker, repository } = buildWorker({
+                repository: {
+                    claimDue: jest.fn().mockResolvedValue([claimed]),
+                    markReconciling: jest.fn().mockResolvedValue({ ...claimed, status: "reconciling", payload: null }),
+                },
+                dispatch: {
+                    execute: jest.fn().mockImplementation(async (_branchId, { onProgress }) => {
+                        await onProgress?.("sent");
+                        await onProgress?.("client-started");
+                        throw new Error("browser disconnected");
+                    }),
+                },
+            });
+
+            await worker.processDueJobs();
+
+            expect(persistedSteps(repository)).toEqual(["sent", "sent"]);
+            expect(repository.markFailed).not.toHaveBeenCalled();
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "sent");
+        });
     });
 
     it("does not call eformsign for a revision whose capability is unverified", async () => {
