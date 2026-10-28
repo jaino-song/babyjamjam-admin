@@ -167,9 +167,6 @@ interface ContractDataDto {
   paymentYear: string;
   paymentMonth: string;
   paymentDay: string;
-  receiptYear: string;
-  receiptMonth: string;
-  receiptDay: string;
   fullPrice: string;
   grant: string;
   actualPrice: string;
@@ -1267,7 +1264,6 @@ export const ContractCreationForm = ({
         const start = dayjs(startDate);
         const end = endDate ? dayjs(endDate) : null;
         const payment = dayjs(paymentDate);
-        const today = dayjs();
 
         const contractData: ContractDataDto = {
           customerName: name,
@@ -1295,9 +1291,6 @@ export const ContractCreationForm = ({
           paymentYear: payment.format("YY"),
           paymentMonth: payment.format("MM"),
           paymentDay: payment.format("DD"),
-          receiptYear: today.format("YY"),
-          receiptMonth: today.format("MM"),
-          receiptDay: today.format("DD"),
           fullPrice,
           grant,
           actualPrice,
