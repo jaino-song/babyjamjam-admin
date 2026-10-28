@@ -167,6 +167,127 @@ describe("useRealtimeInvalidation", () => {
     ]);
   });
 
+  describe("trailing pass window", () => {
+    const FOLLOW_UP = 1500;
+
+    it("invalidates each mapped root exactly once after a burst of the same kind", async () => {
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      act(() => {
+        latest().dispatch("open");
+        for (let i = 0; i < 3; i += 1) {
+          latest().dispatch("entity-changed", JSON.stringify({ entities: ["client"] }));
+        }
+      });
+      // 3 immediate passes over the 2 client roots.
+      expect(invalidateSpy).toHaveBeenCalledTimes(6);
+
+      act(() => {
+        jest.advanceTimersByTime(FOLLOW_UP);
+      });
+
+      expect(invalidatedRoots(invalidateSpy).slice(6).sort()).toEqual([
+        JSON.stringify(["clients"]),
+        JSON.stringify(["dashboard"]),
+      ]);
+    });
+
+    it("covers the union of different kinds in the window, each root once", async () => {
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      act(() => {
+        latest().dispatch("open");
+        // "client" and "document" both map to ["dashboard"].
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["client"] }));
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["document", "employee"] }));
+      });
+      const immediate = invalidateSpy.mock.calls.length;
+
+      act(() => {
+        jest.advanceTimersByTime(FOLLOW_UP);
+      });
+
+      const trailing = invalidatedRoots(invalidateSpy).slice(immediate);
+      expect(new Set(trailing).size).toBe(trailing.length);
+      expect([...trailing].sort()).toEqual(
+        [
+          ["clients"],
+          ["dashboard"],
+          ["eformsign-documents"],
+          ["eformsign-docs"],
+          ["eformsign-doc-client-names"],
+          ["eformsign-document-detail"],
+          ["employees"],
+        ].map((root) => JSON.stringify(root)).sort(),
+      );
+    });
+
+    it("fires FOLLOW_UP ms after the first event, not after the last, and includes later roots", async () => {
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      act(() => {
+        latest().dispatch("open");
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }));
+      });
+      act(() => {
+        jest.advanceTimersByTime(FOLLOW_UP - 100);
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(2);
+
+      act(() => {
+        jest.advanceTimersByTime(99);
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(2);
+
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(invalidatedRoots(invalidateSpy).slice(2).sort()).toEqual([
+        JSON.stringify(["employees"]),
+        JSON.stringify(["service-records"]),
+      ]);
+
+      act(() => {
+        jest.advanceTimersByTime(FOLLOW_UP * 2);
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it("starts a fresh window for an event after the trailing pass fired", async () => {
+      renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+      await flushConnection();
+
+      act(() => {
+        latest().dispatch("open");
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }));
+      });
+      act(() => {
+        jest.advanceTimersByTime(FOLLOW_UP);
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(2);
+
+      act(() => {
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+
+      act(() => {
+        jest.advanceTimersByTime(FOLLOW_UP - 1);
+      });
+      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      // Only the new window's root: the earlier window's roots are not replayed.
+      expect(invalidatedRoots(invalidateSpy).slice(3)).toEqual([JSON.stringify(["service-records"])]);
+    });
+  });
+
   it("ignores unknown kinds and malformed payloads", async () => {
     renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
