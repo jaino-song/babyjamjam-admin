@@ -105,12 +105,15 @@
 .stage {
   position: relative;
   display: flex;
-  flex: none;
+  /* Shrinks before the caption does on short screens; the demo scales with it (useStageFit). */
+  flex: 1 1 min(430px, 52svh);
   align-items: center;
   justify-content: center;
-  height: min(430px, 52svh);
+  min-height: 160px;
+  max-height: min(430px, 52svh);
   overflow: hidden;
   border-radius: 20px;
+  word-break: keep-all;
   background: linear-gradient(160deg, hsl(var(--v3-primary-light)) 0%, hsl(var(--v3-primary-medium) / 0.55) 100%);
 }
 
@@ -140,6 +143,7 @@
 }
 
 .cap {
+  flex: none;
   padding: 16px 2px 0;
 }
 
