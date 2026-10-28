@@ -722,6 +722,7 @@ export default function ServiceRecordPage() {
                         description={editing
                             ? `확인하면 ${day}회차 기록이 수정 제출됩니다.`
                             : `확인하면 ${day}회차 기록이 제출됩니다.`}
+                        isDescriptionVisuallyHidden={false}
                         cancelLabel="취소"
                         approvalLabel="확인"
                         pendingLabel="제출 중…"
