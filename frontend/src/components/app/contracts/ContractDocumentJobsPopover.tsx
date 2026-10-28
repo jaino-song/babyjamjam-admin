@@ -114,10 +114,11 @@ function getJobTitle(job: ContractDocumentJob): string {
   return `${who} · ${job.jobType === "create_document" ? "계약서 생성" : "검토완료"}`;
 }
 
-/** Machine steps written by manual recovery; staff see words, never the step name. */
+/** Machine steps written by the backend; staff see words, never the step name. */
 const MANUAL_STEP_COPY: Readonly<Record<string, string>> = {
   manual_in_progress: "처리 중",
   manual_resolved: "처리됨으로 표시",
+  dispatch_authorized: "전송 준비 중",
 };
 
 function getJobSubtitle(job: ContractDocumentJob): string {

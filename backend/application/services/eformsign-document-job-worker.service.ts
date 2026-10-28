@@ -16,6 +16,7 @@ import {
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
 import {
     classifyRecovery,
+    DISPATCH_AUTHORIZED_PROGRESS_STEP,
     EformsignDocumentJobEntity,
     isContractJob,
 } from "domain/entities/eformsign-document-job.entity";
@@ -437,8 +438,9 @@ export class EformsignDocumentJobWorkerService {
         // Send evidence is latched for the whole attempt and seeded from the
         // claimed row, so a marker an earlier attempt persisted survives into
         // this one. It is captured before authorization mirrors its own
-        // `creating` marker onto the claim: that marker proves exclusivity,
-        // not that a send was attempted.
+        // `dispatch_authorized` marker onto the claim. That marker proves
+        // exclusivity only: it is never send evidence, so only a real
+        // `creating`/`sent` step latches here.
         const sendEvidence: SendEvidence = { step: dispatchEvidenceOf(job.progressStep) };
 
         let revisionAuthorization: CreateDispatchAuthorizationResult;
@@ -467,10 +469,13 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
         if (revisionAuthorization.irreversible) {
-            // The database marker is the source of truth for confirm races;
-            // mirror it on this claimed copy so any exception after the
-            // marker follows reconciliation instead of a retry path.
-            Object.assign(job, { progressStep: "creating" });
+            // The database marker is the source of truth for exclusivity and
+            // confirm races; mirror it on this claimed copy so the attempt
+            // keeps the fence up (progress writes stay `dispatch_authorized`
+            // until real send evidence latches). It is not send evidence: an
+            // exception before the 전송 click still follows the pre-send retry
+            // path.
+            Object.assign(job, { progressStep: DISPATCH_AUTHORIZED_PROGRESS_STEP });
         }
 
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
@@ -478,8 +483,7 @@ export class EformsignDocumentJobWorkerService {
             job.id,
             job.leaseToken,
             () => latestProgressStep,
-            () => sendEvidence.step,
-            job.progressStep === "creating" || job.progressStep === "sent",
+            () => dispatchFenceOf(sendEvidence, job.progressStep),
         );
         try {
             if (job.jobType === "create_document") {
@@ -597,7 +601,7 @@ export class EformsignDocumentJobWorkerService {
     /**
      * A revision job carries a complete immutable generation input rather than
      * legacy contractData.  Route it only through the renderer boundary after
-     * repository authorization has committed the durable `creating` marker;
+     * repository authorization has committed the durable `dispatch_authorized` marker;
      * malformed/missing renderer wiring is a terminal attention outcome and
      * never falls back to the mutable live-case renderer or contract sender.
      */
@@ -699,8 +703,7 @@ export class EformsignDocumentJobWorkerService {
                         job.id,
                         leaseToken,
                         step,
-                        sendEvidence.step
-                            ?? (job.progressStep === "creating" || job.progressStep === "sent"),
+                        dispatchFenceOf(sendEvidence, job.progressStep),
                     );
                 },
             },
@@ -716,8 +719,7 @@ export class EformsignDocumentJobWorkerService {
         }
         if (isTemplateWorkflowFailure(result.reason)) {
             // Workflow validation/read failures happen before the provider send
-            // boundary. Keep them on the deterministic pre-send path even when
-            // a queued job carries a stale `creating` marker from authorization;
+            // boundary. Keep them on the deterministic pre-send path;
             // reconciling such a run would imply a provider submission that was
             // never attempted.
             await this.handlePreSendFailure(job, result.reason);
@@ -727,14 +729,9 @@ export class EformsignDocumentJobWorkerService {
             await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
             return;
         }
-        if (job.progressStep === "creating") {
-            // A durable pre-send authorization marker makes this attempt
-            // irreversible from the confirm race's perspective. Even when
-            // the provider reports a synchronous failure before its callback,
-            // reconcile instead of reopening a second send via retry.
-            await this.markAndReconcile(job, "creating");
-            return;
-        }
+        // No send evidence and not ambiguous: the failure happened before the
+        // 전송 click could have run. The `dispatch_authorized` marker only
+        // fences concurrent owners, so it never forces reconciliation.
         await this.handlePreSendFailure(job, "HEADLESS_CREATE_PRE_SEND_FAILURE");
     }
 
@@ -798,7 +795,8 @@ export class EformsignDocumentJobWorkerService {
     /**
      * The worker owns provider orchestration only. The repository owns the
      * transaction, aggregate locks, authoritative rereads, and durable
-     * creating marker so every caller reaches the same dispatch boundary.
+     * `dispatch_authorized` marker so every caller reaches the same dispatch
+     * boundary.
      */
     private async authorizeRevisionJob(
         job: EformsignDocumentJobEntity,
@@ -892,8 +890,7 @@ export class EformsignDocumentJobWorkerService {
                             job.id,
                             leaseToken,
                             progressStep,
-                            sendEvidence.step
-                                ?? (job.progressStep === "creating" || job.progressStep === "sent"),
+                            dispatchFenceOf(sendEvidence, job.progressStep),
                         );
                     },
                 },
@@ -1045,17 +1042,14 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         jobLeaseToken: string,
         progressStep: () => string | undefined,
-        sendEvidence: () => DispatchEvidence | undefined,
-        preserveDispatchMarker = false,
+        dispatchFence: () => DispatchFence | undefined,
     ): ReturnType<typeof setInterval> {
         const heartbeat = setInterval(() => {
             const observed = progressStep();
-            const evidence = sendEvidence();
-            const persisted = evidence === "sent" || (preserveDispatchMarker && observed === "sent")
-                ? "sent"
-                : preserveDispatchMarker || evidence
-                    ? "creating"
-                    : observed ?? "processing";
+            const fence = dispatchFence();
+            const persisted = fence
+                ? persistedFenceStep(fence, observed)
+                : observed ?? "processing";
             void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date()).catch(() => {
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
             });
@@ -1068,14 +1062,13 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         leaseToken: string,
         step: EformsignHeadlessProgressStep,
-        preserveDispatchMarker: boolean | DispatchEvidence = false,
+        dispatchFence?: DispatchFence,
     ): Promise<void> {
-        // Once the dispatch marker is held the persisted step may only move
-        // `creating` -> `sent`, never back to an ordinary progress step; a
-        // latched `sent` stays `sent` through every later step.
-        const persistedStep = preserveDispatchMarker
-            ? preserveDispatchMarker === "sent" || step === "sent" ? "sent" : "creating"
-            : step;
+        // While the attempt holds the dispatch fence the persisted step may
+        // only move `dispatch_authorized` -> `creating` -> `sent`, never back
+        // to an ordinary progress step; a latched `creating`/`sent` stays put
+        // through every later step.
+        const persistedStep = dispatchFence ? persistedFenceStep(dispatchFence, step) : step;
         const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date());
         if (!updated) {
             throw new Error("EFORMSIGN_DOCUMENT_JOB_LEASE_LOST");
@@ -1224,6 +1217,35 @@ export class EformsignDocumentJobWorkerService {
 }
 
 type DispatchEvidence = "creating" | "sent";
+
+/**
+ * What the attempt has durably claimed. `authorized` is the exclusivity marker
+ * only (no send evidence); `creating`/`sent` are real or possible send
+ * evidence. Ordering: authorized < creating < sent.
+ */
+type DispatchFence = "authorized" | DispatchEvidence;
+
+/**
+ * The fence an attempt holds: latched in-attempt evidence first, otherwise
+ * whatever the claimed copy carries (`dispatch_authorized` after a successful
+ * authorization). Undefined when the attempt holds no authorization.
+ */
+function dispatchFenceOf(
+    evidence: SendEvidence,
+    claimedStep: string | null | undefined,
+): DispatchFence | undefined {
+    const claimedEvidence = dispatchEvidenceOf(claimedStep);
+    if (evidence.step === "sent" || claimedEvidence === "sent") return "sent";
+    if (evidence.step === "creating" || claimedEvidence === "creating") return "creating";
+    return claimedStep === DISPATCH_AUTHORIZED_PROGRESS_STEP ? "authorized" : undefined;
+}
+
+/** The step to persist while the fence is up: never behind the fence or the step. */
+function persistedFenceStep(fence: DispatchFence, step: string | undefined): string {
+    if (fence === "sent" || step === "sent") return "sent";
+    if (fence === "creating" || step === "creating") return "creating";
+    return DISPATCH_AUTHORIZED_PROGRESS_STEP;
+}
 
 /**
  * Whether a job's provider send may have happened, latched across every step

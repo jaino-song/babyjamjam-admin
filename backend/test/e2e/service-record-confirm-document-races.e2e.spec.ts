@@ -106,10 +106,11 @@ describeE2E("confirm versus existing electronic-document authorization (actual P
             expect(finalJob.leaseToken).toBeNull();
             expect(finalJob.payload).toBeNull();
             expect(finalJob.progressStep).not.toBe("creating");
+            expect(finalJob.progressStep).not.toBe("dispatch_authorized");
         } else {
             expect(result).toMatchObject({ kind: "allow" });
             expect(other).toBeInstanceOf(ConflictException);
-            expect(finalJob).toMatchObject({ status: "processing", progressStep: "creating", leaseToken: job.leaseToken });
+            expect(finalJob).toMatchObject({ status: "processing", progressStep: "dispatch_authorized", leaseToken: job.leaseToken });
             expect(await prisma.service_record_edit_draft.findUniqueOrThrow({ where: { id: draft.id } }))
                 .toMatchObject({ status: "ACTIVE" });
             expect(await prisma.client.findUniqueOrThrow({ where: { id: fixture.client.id } }))

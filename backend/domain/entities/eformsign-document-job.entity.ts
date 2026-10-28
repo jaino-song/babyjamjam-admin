@@ -80,6 +80,15 @@ export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
     declare readonly clientName?: string | null;
 }
 
+/**
+ * `progress_step` value the dispatch authorization writes. It proves exclusivity
+ * (one live owner may drive the headless browser) and nothing else: it is NOT send
+ * evidence. Ordering of the dispatch markers is
+ * null < dispatch_authorized < creating < sent; only `creating`/`sent` mean the
+ * eformsign "전송" button may have been clicked.
+ */
+export const DISPATCH_AUTHORIZED_PROGRESS_STEP = "dispatch_authorized";
+
 /** `progress_step` value of a job that staff resolved by hand in the eformsign iframe. */
 export const MANUAL_RESOLVED_PROGRESS_STEP = "manual_resolved";
 
