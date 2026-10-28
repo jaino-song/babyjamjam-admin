@@ -841,6 +841,31 @@ describe("EformsignDocumentJobWorkerService", () => {
         );
     });
 
+    it("reconciles instead of retrying when completing a coordinated revision operation throws", async () => {
+        const claimed = job({ payload: revisionOperationPayload() });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn().mockResolvedValue({
+                revisionGeneration: null,
+                status: "completed",
+                reason: null,
+                contract: null,
+                receipt: null,
+            }),
+        };
+        const { worker, repository } = buildWorker({
+            repository: {
+                claimDue: jest.fn().mockResolvedValue([claimed]),
+                markCompleted: jest.fn().mockRejectedValue(new Error("db down")),
+            },
+            revisionOperationCoordinator: coordinator,
+        });
+
+        await worker.processDueJobs();
+
+        expect(repository.scheduleRetry).not.toHaveBeenCalled();
+        expect(repository.markReconciling).toHaveBeenCalled();
+    });
+
     it("does not route a stale operation claim to any renderer or coordinator", async () => {
         const claimed = job({ payload: revisionOperationPayload() });
         const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {

@@ -488,6 +488,13 @@ export class EformsignDocumentJobWorkerService {
         try {
             if (job.jobType === "create_document") {
                 const revisionOperations = revisionOperationsPayload(job.payload);
+                if (revisionOperations || revisionPayload(job.payload)) {
+                    // Revision paths send through their own coordinators and
+                    // report no progress steps, so nothing here can prove a
+                    // failure is pre-send: any throw after authorization keeps
+                    // reconciling instead of entering the pre-send retry.
+                    observeSendEvidence(sendEvidence, "creating");
+                }
                 if (revisionOperations) {
                     await this.processRevisionOperations(job, revisionOperations);
                 } else {
