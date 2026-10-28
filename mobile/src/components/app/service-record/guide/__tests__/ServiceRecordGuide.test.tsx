@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { useState } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -111,6 +113,68 @@ describe("ServiceRecordGuide", () => {
         expect(counter()).toBe("2 / 7");
         await user.keyboard("{ArrowRight>8/}");
         expect(counter()).toBe("7 / 7");
+    });
+
+    describe("focus stays inside the dialog", () => {
+        it("moves focus from 이전 to 다음 when going back to slide 1 disables 이전", async () => {
+            renderGuide();
+            await user.click(nextButton());
+            await user.click(prevButton());
+            expect(counter()).toBe("1 / 7");
+            expect(prevButton()).toBeDisabled();
+            expect(nextButton()).toHaveFocus();
+        });
+
+        it("does the same when ArrowLeft pages back while 이전 has focus", async () => {
+            renderGuide();
+            await user.click(nextButton());
+            prevButton().focus();
+            expect(prevButton()).toHaveFocus();
+            await user.keyboard("{ArrowLeft}");
+            expect(counter()).toBe("1 / 7");
+            expect(nextButton()).toHaveFocus();
+        });
+
+        it("leaves focus alone when nothing focused is disabled", async () => {
+            renderGuide();
+            const skip = within(dialog()).getByRole("button", { name: "건너뛰기" });
+            skip.focus();
+            await user.keyboard("{ArrowRight}");
+            expect(counter()).toBe("2 / 7");
+            expect(skip).toHaveFocus();
+        });
+    });
+
+    describe("stage fit", () => {
+        const clientHeight = jest.spyOn(HTMLElement.prototype, "clientHeight", "get");
+        afterEach(() => clientHeight.mockReset());
+        afterAll(() => clientHeight.mockRestore());
+
+        it("scales the illustration down with a short stage frame, on the intro and on a demo", () => {
+            clientHeight.mockReturnValue(206);
+            renderGuide();
+            for (const key of ["intro", "sched"]) {
+                const frame = q(`sheet_slide-${key}_stage`) as HTMLElement;
+                expect(frame.style.getPropertyValue("--fit")).toBe("0.5");
+                expect(q(`sheet_slide-${key}_stage_fit`)?.parentElement).toBe(frame);
+            }
+        });
+
+        it("never scales up a tall frame", () => {
+            clientHeight.mockReturnValue(430);
+            renderGuide();
+            expect((q("sheet_slide-intro_stage") as HTMLElement).style.getPropertyValue("--fit")).toBe("1");
+        });
+    });
+
+    describe("guide text never breaks inside a Korean word", () => {
+        const css = readFileSync(join(__dirname, "../ServiceRecordGuide.module.css"), "utf8");
+        const rule = (selector: string) => new RegExp(`\\n\\${selector} \\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+
+        it.each([".chip", ".cap-title", ".cap-body", ".st-name", ".st-sub"])("%s keeps words whole", (selector) => {
+            expect(rule(selector)).toMatch(/word-break:\s*keep-all/);
+            expect(rule(selector)).toMatch(/overflow-wrap:\s*anywhere/);
+        });
     });
 
     it("restarts on slide 1 when it is opened again", async () => {

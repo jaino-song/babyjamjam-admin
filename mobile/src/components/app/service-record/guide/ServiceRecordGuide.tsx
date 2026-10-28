@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
 import { useReducedMotion } from "framer-motion";
 
 import { Button } from "@/components/ui/button";
@@ -83,6 +83,22 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
     const swipeStartX = useRef<number | null>(null);
     const isLast = index === LAST_INDEX;
     const nav = `${sheet}_nav`;
+
+    // 이전 disables on slide 1. Browsers drop the focus of a control that turns disabled onto <body>, outside
+    // the dialog, so remember where focus last was and hand it to 다음 (never disabled) when that control
+    // has just been disabled (older engines keep it on the disabled control itself, which counts too).
+    const lastFocusedRef = useRef<Element | null>(null);
+    useEffect(() => {
+        const onFocusIn = (event: FocusEvent) => { lastFocusedRef.current = event.target instanceof Element ? event.target : null; };
+        document.addEventListener("focusin", onFocusIn);
+        return () => document.removeEventListener("focusin", onFocusIn);
+    }, []);
+    useLayoutEffect(() => {
+        const isDisabled = (element: Element | null) => element instanceof HTMLButtonElement && element.disabled;
+        const active = document.activeElement;
+        const focusLost = !active || active === document.body;
+        if (isDisabled(active) || (focusLost && isDisabled(lastFocusedRef.current))) nextRef.current?.focus();
+    }, [index, nextRef]);
 
     // Esc is Radix's; paging by arrow key works wherever the focus is inside the sheet.
     useEffect(() => {
