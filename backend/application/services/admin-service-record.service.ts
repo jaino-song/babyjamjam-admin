@@ -49,8 +49,15 @@ import type {
     ServiceRecordRevisionHistoryResponse,
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
-import { buildServiceRecordRevisionChanges } from "application/policies/service-record-revision-changes.policy";
+import {
+    buildServiceRecordCaregiverEditChanges,
+    buildServiceRecordRevisionChanges,
+} from "application/policies/service-record-revision-changes.policy";
 import type { ServiceRecordRevisionChangesResponse } from "interface/dto/admin-service-record-edit.dto";
+import type {
+    ServiceRecordCaregiverEditChangesResponse,
+    ServiceRecordCaregiverEditSummary,
+} from "@babyjamjam/shared/types/service-record";
 
 type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
@@ -317,6 +324,22 @@ export class AdminServiceRecordService {
         const result = await this.getRevisionStatusRepository().findRevisionForChanges(branchId, clientId, normalizedRevisionId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return buildServiceRecordRevisionChanges(result);
+    }
+
+    /** One caregiver edit (제공인력 수정) of a submitted day. Not a revision. */
+    async getCaregiverEditChanges(
+        branchId: string,
+        clientId: number,
+        editId: string,
+    ): Promise<ServiceRecordCaregiverEditChangesResponse> {
+        const normalizedEditId = normalizePathIdentifier(editId);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedEditId)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        await this.assertClientBelongsToBranch(branchId, clientId);
+        const result = await this.getRevisionStatusRepository().findCaregiverEditForChanges(branchId, clientId, normalizedEditId);
+        if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return buildServiceRecordCaregiverEditChanges(result);
     }
 
     /**
@@ -900,13 +923,33 @@ function normalizeRevisionHistoryResponse(value: unknown): ServiceRecordRevision
             documents,
         };
     });
+    // A missing field (older repository/read model) is an empty list; a present
+    // but malformed one is rejected like any other part of this response.
+    const rawCaregiverEdits = readField(row, ["caregiverEdits", "caregiver_edits"]);
+    if (rawCaregiverEdits !== undefined && rawCaregiverEdits !== null && !Array.isArray(rawCaregiverEdits)) {
+        throw new Error("Invalid service-record caregiver edit history response");
+    }
+    const caregiverEdits = asRows(rawCaregiverEdits ?? []).map(normalizeCaregiverEditSummary);
     return {
         caseId,
         caseVersion,
         currentRevisionId,
         currentUsableRevisionId,
         revisions,
+        caregiverEdits,
     };
+}
+
+function normalizeCaregiverEditSummary(row: Record<string, unknown>): ServiceRecordCaregiverEditSummary {
+    const id = readStringField(row, ["id"]);
+    const editedAt = normalizeIsoDate(readField(row, ["editedAt", "edited_at"]));
+    const sessionIndex = readPositiveIntegerField(row, ["sessionIndex", "session_index"]);
+    const employeeName = readStringField(row, ["employeeName", "employee_name"]);
+    if (!id || !editedAt || sessionIndex === null || !employeeName) {
+        throw new Error("Invalid service-record caregiver edit summary response");
+    }
+    // Only these four fields cross the list boundary; before/after never do.
+    return { id, editedAt, sessionIndex, employeeName };
 }
 
 function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevisionDocumentSummary {

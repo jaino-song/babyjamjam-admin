@@ -52,7 +52,6 @@ import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import {
-  HeadlessProgressStepper,
   type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
@@ -145,6 +144,7 @@ import { ContactInput } from "@/components/app/messages/forms/form-components/Co
 import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import { ContractClientSelector } from "@/components/app/contracts/ContractClientSelector";
 import { ContractEmployeeSelector } from "@/components/app/contracts/ContractEmployeeSelector";
+import { ContractCreationProgressPanel } from "@/components/app/contracts/ContractCreationProgressPanel";
 import { useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
@@ -231,6 +231,12 @@ export interface ContractCreationFormProps {
   onSessionStateChange?: (hasSession: boolean) => void;
   onProcessingFailureChange?: (failed: boolean) => void;
   onSubmissionStateChange?: (submitting: boolean) => void;
+  /**
+   * True only while the run awaits the first (non-forced) headless dispatch or the job
+   * enqueue — the only moments the host may unmount this form without losing the send's
+   * follow-up work. A host can offer an explicit close while it is true.
+   */
+  onDetachableChange?: (detachable: boolean) => void;
   activeStep?: number;
   onActiveStepChange?: (step: number) => void;
   contentClassName?: string;
@@ -258,6 +264,9 @@ export const CONTRACT_CREATION_STEPPER_STEPS = [
   { label: "계약\n정보" },
   { label: "전자문서 생성" },
 ] as const;
+
+const SUCCESS_FOOTER_BUTTON_CLASS_NAME =
+  "w-full sm:h-9 sm:w-auto sm:min-w-[calc(132px*var(--glint-ui-scale,1))] sm:px-3 sm:text-xs";
 
 const CONTRACT_INFO_STEP_INDEX = 3;
 const CONTRACT_CREATION_PROCESSING_STEP_INDEX = 4;
@@ -620,6 +629,7 @@ export const ContractCreationForm = ({
   onSessionStateChange,
   onProcessingFailureChange,
   onSubmissionStateChange,
+  onDetachableChange,
   activeStep: controlledActiveStep,
   onActiveStepChange,
   contentClassName,
@@ -643,6 +653,16 @@ export const ContractCreationForm = ({
     }
   }, [queryClient]);
   const { toast } = useToast();
+  // The in-flight send outlives this form when the dialog hosting it is closed mid-send.
+  // After an await the run checks this before touching the parent or the UI; the toast
+  // store is global, so the outcome is still reported.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const { data: authUser } = useGetAuthUser();
   const [internalActiveStep, setInternalActiveStep] = useState(0);
   const activeStep = controlledActiveStep ?? internalActiveStep;
@@ -657,6 +677,10 @@ export const ContractCreationForm = ({
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreationSuccessOpen, setIsCreationSuccessOpen] = useState(false);
+  // The progress stream can report "sent" before the HTTP result is back. The success
+  // footer (and its 완료 exit, which can unmount the form) waits for the verified result.
+  const [isDispatchVerified, setIsDispatchVerified] = useState(false);
+  const [isDetachable, setIsDetachable] = useState(false);
   const confirmationResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const requestConfirmation = (message: string): Promise<boolean> => {
@@ -723,6 +747,15 @@ export const ContractCreationForm = ({
     if (!isCreationSuccessOpen) return;
     setIsCreationSuccessOpen(false);
     onSuccess?.();
+  };
+
+  // 완료 button: same exit as acknowledging the success notification, but it must also
+  // work after that notification was dismissed and in hosts that pass no onSuccess.
+  const handleCreationDone = () => {
+    setIsCreationSuccessOpen(false);
+    if (onSuccess) onSuccess();
+    else if (onClose) onClose();
+    else router.push("/contracts");
   };
 
   const {
@@ -887,9 +920,15 @@ export const ContractCreationForm = ({
   const hasProcessingFailure = hasCreationSession && creationProgress.failed;
   const hasProcessingSuccess = hasCreationSession && creationProgress.completed;
 
+  const showSuccessFooter = hasProcessingSuccess && isDispatchVerified;
+
   useEffect(() => {
     onSessionStateChange?.(hasCreationSession);
   }, [hasCreationSession, onSessionStateChange]);
+
+  useEffect(() => {
+    onDetachableChange?.(isDetachable);
+  }, [isDetachable, onDetachableChange]);
 
   useEffect(() => {
     onProcessingFailureChange?.(hasProcessingFailure);
@@ -963,6 +1002,8 @@ export const ContractCreationForm = ({
     setSubmitError(null);
     setAllowIframeFallback(false);
     setUnverifiedDispatchNotice(null);
+    setIsDispatchVerified(false);
+    setIsDetachable(false);
     setCreationProgress(INITIAL_CREATION_PROGRESS);
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
@@ -1200,6 +1241,71 @@ export const ContractCreationForm = ({
 
   const markStepAttempted = (step: number) => {
     setAttemptedSteps((previous) => (previous.includes(step) ? previous : [...previous, step]));
+  };
+
+  const notifyDetachedSendSucceeded = () => {
+    toast({ description: name.trim() ? `${name.trim()}님께 전자문서를 보냈어요` : "전자문서를 보냈어요" });
+  };
+
+  const notifyDetachedSendFailed = () => {
+    toast({
+      variant: "destructive",
+      description: "전자문서 발송에 실패했어요. 계약서 목록에서 상태를 확인해 주세요.",
+    });
+  };
+
+  // Mirrors the mounted 확인 필요 notice: the verdict never arrived, so a duplicate is possible.
+  const notifyDetachedSendUnverified = () => {
+    toast({
+      variant: "destructive",
+      description:
+        "발송 결과를 확인하지 못했어요. 계약서 목록에서 생성 여부를 먼저 확인하고, 확인 전에는 새로 만들지 마세요.",
+    });
+  };
+
+  // The form was closed mid-send, so there is no UI to drive; only the work that needs
+  // none still runs (query refresh, adopting an already-sent document) and the outcome
+  // is reported by toast. Never calls a parent callback or opens a fallback.
+  const settleDetachedHeadlessResult = async (
+    headless: Awaited<ReturnType<typeof eformsignApi.dispatchHeadless>>,
+    affectedClientId: number,
+  ) => {
+    if (headless.ok) {
+      invalidateContractQueries(affectedClientId);
+      notifyDetachedSendSucceeded();
+      return;
+    }
+    const structuredOutcome = readHeadlessOutcome(headless.outcome);
+    if (structuredOutcome === "UNKNOWN") {
+      notifyDetachedSendUnverified();
+      return;
+    }
+    const failureReason = headless.reason;
+    if (
+      (failureReason === "local_persist_failed" || structuredOutcome === "PARTIALLY_APPLIED")
+      && headless.remoteDocumentId
+    ) {
+      // The document was sent; adopting registers it in our DB and needs no UI.
+      try {
+        const adopted = await eformsignApi.adoptDocument(headless.remoteDocumentId, affectedClientId);
+        invalidateContractQueries(affectedClientId);
+        if (adopted.warnings?.includes("mirror_sync_failed")) {
+          toast({
+            description:
+              "문서는 전송되었지만 동기화가 아직 끝나지 않았어요. 새 계약서를 다시 만들지 말고 잠시 후 목록에서 확인해 주세요.",
+          });
+        } else {
+          notifyDetachedSendSucceeded();
+        }
+      } catch {
+        toast({
+          variant: "destructive",
+          description: "문서는 전송되었으나 등록에 실패했어요. 계약서 목록에서 상태를 확인해 주세요.",
+        });
+      }
+      return;
+    }
+    notifyDetachedSendFailed();
   };
 
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
@@ -1494,12 +1600,20 @@ export const ContractCreationForm = ({
         };
 
         if (shouldEnqueueDocumentJob) {
-          await enqueueCreationMutation.mutateAsync({
-            requestKey: createHeadlessProgressId(),
-            clientId: finalClientId,
-            contractData,
-          });
+          setIsDetachable(true);
+          try {
+            await enqueueCreationMutation.mutateAsync({
+              requestKey: createHeadlessProgressId(),
+              clientId: finalClientId,
+              contractData,
+            });
+          } finally {
+            if (isMountedRef.current) setIsDetachable(false);
+          }
           toast({ description: "전자문서 작업을 시작했어요" });
+          // Calling the parent from a form that was closed mid-run could close a
+          // dialog the user has since opened for another client.
+          if (!isMountedRef.current) return;
           if (onSuccess) onSuccess();
           else onClose?.();
           return;
@@ -1517,6 +1631,7 @@ export const ContractCreationForm = ({
           // isSubmitting) lands before the manual run sets it again.
           const openIframeFallback = () => {
             setTimeout(() => {
+              if (!isMountedRef.current) return;
               void handleContractCreation({ mode: "manual" });
             }, 0);
           };
@@ -1558,15 +1673,29 @@ export const ContractCreationForm = ({
               },
             });
 
-            const headless = await eformsignApi.dispatchHeadless(
-              contractData,
-              finalClientId,
-              progressId,
-            );
+            let headless: Awaited<ReturnType<typeof eformsignApi.dispatchHeadless>>;
+            setIsDetachable(true);
+            try {
+              headless = await eformsignApi.dispatchHeadless(
+                contractData,
+                finalClientId,
+                progressId,
+              );
+            } finally {
+              if (isMountedRef.current) setIsDetachable(false);
+            }
+
+            if (!isMountedRef.current) {
+              // Closed mid-send: the server finished (or failed) on its own. Report it
+              // by toast only — no parent callbacks, no iframe/manual fallback.
+              await settleDetachedHeadlessResult(headless, finalClientId);
+              return;
+            }
 
             if (headless.ok) {
               setCreationProgress({ step: "sent", completed: true, failed: false });
               invalidateContractQueries(finalClientId);
+              setIsDispatchVerified(true);
               setIsCreationSuccessOpen(true);
               return;
             }
@@ -1624,6 +1753,7 @@ export const ContractCreationForm = ({
                 }
                 setCreationProgress({ step: "sent", completed: true, failed: false });
                 invalidateContractQueries(finalClientId);
+                setIsDispatchVerified(true);
                 setIsCreationSuccessOpen(true);
               } catch {
                 setSubmitError("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.");
@@ -1654,6 +1784,7 @@ export const ContractCreationForm = ({
                 if (forced.ok) {
                   setCreationProgress({ step: "sent", completed: true, failed: false });
                   invalidateContractQueries(finalClientId);
+                  setIsDispatchVerified(true);
                   setIsCreationSuccessOpen(true);
                 }
               }
@@ -1685,6 +1816,10 @@ export const ContractCreationForm = ({
               "[contract-creation] headless dispatch threw",
               headlessError,
             );
+            if (!isMountedRef.current) {
+              notifyDetachedSendUnverified();
+              return;
+            }
             // The backend's verdict never reached us, so whether the document was
             // sent is genuinely unknown. Reopening the editor here can send a second
             // contract; require a list check before any explicit retry.
@@ -1711,11 +1846,16 @@ export const ContractCreationForm = ({
           finalClientId
         );
 
+        // Closed while the editor option was being generated: opening it now would
+        // show an editor nobody can see and touch the parent.
+        if (!isMountedRef.current) return;
+
         keepSubmittingUntilDialogCloses = true;
         setIsDialogOpen(true);
         setCreationProgress({ step: "client-started", completed: false, failed: false });
 
         setTimeout(() => {
+          if (!isMountedRef.current) return;
           openDocument(documentOption, "eformsign_iframe", {
             onSuccess: async (response) => {
               setCreationProgress({ step: "creating", completed: false, failed: false });
@@ -1745,6 +1885,7 @@ export const ContractCreationForm = ({
               setCreationProgress({ step: "sent", completed: true, failed: false });
               invalidateContractQueries(finalClientId);
               handleDialogClose();
+              setIsDispatchVerified(true);
               setIsCreationSuccessOpen(true);
             },
             onError: (response) => {
@@ -1765,6 +1906,12 @@ export const ContractCreationForm = ({
           });
         }, 500);
       } catch (error) {
+        if (!isMountedRef.current) {
+          // Closed mid-run: there is no UI to put the error on and the parent must not
+          // be driven from here, so only report it.
+          notifyDetachedSendFailed();
+          return;
+        }
         // Locally authored copy keeps its message; otherwise the registered
         // problem message (verified) or the generic fallback is rendered —
         // upstream internals are never surfaced.
@@ -1800,7 +1947,7 @@ export const ContractCreationForm = ({
       }
     } finally {
       isSubmittingRef.current = false;
-      onSubmissionStateChange?.(false);
+      if (isMountedRef.current) onSubmissionStateChange?.(false);
     }
   };
 
@@ -2613,18 +2760,13 @@ export const ContractCreationForm = ({
     {
       label: "전자문서 생성",
       content: (
-        <div className="flex h-full w-full items-stretch justify-center py-2">
-          <HeadlessProgressStepper
-            steps={CONTRACT_CREATION_PROGRESS_STEPS}
-            progress={creationProgress}
-            ariaLabel="전자계약서 생성 진행 상태"
-            dataComponentPrefix="contract-creation-processing"
-            testIdPrefix="contract-creation-progress"
-            errorHint={CONTRACT_CREATION_MANUAL_HELP}
-            spinnerClassName="contract-creation-processing-spinner"
-            className="h-full w-full max-w-[22rem] [&>li:not(:last-child)]:flex-1"
-          />
-        </div>
+        <ContractCreationProgressPanel
+          steps={CONTRACT_CREATION_PROGRESS_STEPS}
+          progress={creationProgress}
+          recipientName={name}
+          recipientPhone={phone}
+          errorHint={CONTRACT_CREATION_MANUAL_HELP}
+        />
       ),
     },
   ];
@@ -2664,7 +2806,32 @@ export const ContractCreationForm = ({
     </SteppedWizardPanelContent>
   );
 
-  const footer = (
+  // Same mobile layout as the service-record StickyActionBar: below `sm` the two
+  // buttons split the row into equal slots at the default height; from `sm` they
+  // keep the wizard's compact size at either end.
+  const footer = showSuccessFooter ? (
+    <div className="grid w-full auto-cols-fr grid-flow-col gap-[calc(8px*var(--glint-ui-scale,1))] max-sm:[&>*]:min-w-0 max-sm:[&>*]:truncate sm:flex sm:justify-between sm:[&>*]:flex-none">
+      <Button
+        type="button"
+        variant="outline"
+        data-testid="contract-creation-new-send"
+        data-component="desktop_contracts_creation_new-send"
+        onClick={handleStartNewContractCreation}
+        className={SUCCESS_FOOTER_BUTTON_CLASS_NAME}
+      >
+        새 전자문서 발송
+      </Button>
+      <Button
+        type="button"
+        data-testid="contract-creation-done"
+        data-component="desktop_contracts_creation_done"
+        onClick={handleCreationDone}
+        className={SUCCESS_FOOTER_BUTTON_CLASS_NAME}
+      >
+        완료
+      </Button>
+    </div>
+  ) : (
     <div className="flex w-full flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]">
       <span className={DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME}>{requiredFieldProgressText}</span>
       <div className={DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME}>
@@ -2715,17 +2882,6 @@ export const ContractCreationForm = ({
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
-          </Button>
-        ) : hasProcessingSuccess ? (
-          <Button
-            type="button"
-            size="sm"
-            data-testid="contract-creation-new-send"
-            data-component="desktop_contracts_creation_new-send"
-            onClick={handleStartNewContractCreation}
-            className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
-          >
-            새 전자문서 발송
           </Button>
         ) : hasProcessingFailure ? (
           <>

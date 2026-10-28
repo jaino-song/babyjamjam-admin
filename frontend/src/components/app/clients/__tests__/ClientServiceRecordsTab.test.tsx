@@ -403,6 +403,7 @@ describe("ClientServiceRecordsTab", () => {
                     caseVersion: 4,
                     currentRevisionId: "revision-1",
                     currentUsableRevisionId: null,
+                    caregiverEdits: [],
                     revisions: [{
                         id: "revision-1",
                         revisionNumber: 1,
@@ -543,6 +544,7 @@ describe("ClientServiceRecordsTab", () => {
             caseVersion: 4,
             currentRevisionId: "revision-1",
             currentUsableRevisionId: null,
+            caregiverEdits: [],
             revisions: [{
                 id: "revision-1",
                 revisionNumber: 1,

@@ -547,6 +547,15 @@ export interface IServiceRecordEditRepository {
         & { beforeSnapshot: ServiceRecordEditJsonValue | null }
         | null
     >;
+    /** Read one caregiver edit of a submitted day only inside the owning branch and client. */
+    findCaregiverEditForChanges(branchId: string, clientId: number, editId: string): Promise<{
+        id: string;
+        editedAt: Date;
+        employeeNameSnapshot: string;
+        caseSessionIndex: number;
+        before: ServiceRecordEditJsonValue;
+        after: ServiceRecordEditJsonValue;
+    } | null>;
     /** Read one mutable operation row by all server-owned scope keys. */
     findRevisionDocumentState(
         branchId: string,

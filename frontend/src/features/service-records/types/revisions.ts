@@ -3,6 +3,8 @@ import {
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
 } from "@babyjamjam/shared/types/service-record";
 import type {
+    ServiceRecordCaregiverEditChangesResponse,
+    ServiceRecordCaregiverEditSummary,
     ServiceRecordRevisionChangeValue,
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentOperation,
@@ -21,6 +23,8 @@ export {
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES as SERVICE_RECORD_DOCUMENT_STATUSES,
 };
 export type {
+    ServiceRecordCaregiverEditChangesResponse,
+    ServiceRecordCaregiverEditSummary,
     ServiceRecordRevisionChangeValue,
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentOperation,
@@ -146,12 +150,32 @@ export function normalizeServiceRecordRevisionHistory(
         };
     });
 
+    // Caregiver edits are optional on the wire (older servers omit them).
+    if (value.caregiverEdits !== undefined && value.caregiverEdits !== null && !Array.isArray(value.caregiverEdits)) {
+        throw new Error("Invalid service-record revision history response: caregiverEdits");
+    }
+    const caregiverEdits = (value.caregiverEdits ?? []).map(normalizeCaregiverEditSummary);
+
     return {
         caseId: requiredString(value.caseId, "caseId"),
         caseVersion: nonNegativeInteger(value.caseVersion, "caseVersion"),
         currentRevisionId,
         currentUsableRevisionId,
         revisions,
+        caregiverEdits,
+    };
+}
+
+function normalizeCaregiverEditSummary(value: unknown): ServiceRecordCaregiverEditSummary {
+    if (!isRecord(value)) {
+        throw new Error("Invalid service-record revision history response: caregiverEdit");
+    }
+    // Only these fields cross the boundary, so a payload can never ride along.
+    return {
+        id: requiredString(value.id, "caregiverEdit.id"),
+        editedAt: normalizeDate(value.editedAt, "caregiverEdit.editedAt"),
+        sessionIndex: positiveInteger(value.sessionIndex, "caregiverEdit.sessionIndex"),
+        employeeName: requiredString(value.employeeName, "caregiverEdit.employeeName"),
     };
 }
 
@@ -226,5 +250,19 @@ export function normalizeServiceRecordRevisionChanges(
         beforeAvailable: value.beforeAvailable,
         basicInfo: normalizeFieldChanges(value.basicInfo, "basicInfo"),
         sessions: value.sessions.map(normalizeSessionChange),
+    };
+}
+
+export function normalizeServiceRecordCaregiverEditChanges(
+    value: unknown,
+): ServiceRecordCaregiverEditChangesResponse {
+    if (!isRecord(value)) {
+        throw new Error("Invalid service-record caregiver edit changes response");
+    }
+    return {
+        editId: requiredString(value.editId, "editId"),
+        editedAt: normalizeDate(value.editedAt, "editedAt"),
+        employeeName: requiredString(value.employeeName, "employeeName"),
+        session: normalizeSessionChange(value.session),
     };
 }

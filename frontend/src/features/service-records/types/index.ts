@@ -49,6 +49,8 @@ export { AdminServiceRecordEditApiError } from "./admin-edit";
 
 export type {
     RetryServiceRecordDocumentInput,
+    ServiceRecordCaregiverEditChangesResponse,
+    ServiceRecordCaregiverEditSummary,
     ServiceRecordRevisionChangeValue,
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentOperation,
@@ -64,6 +66,7 @@ export {
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
     SERVICE_RECORD_DOCUMENT_OPERATIONS,
     SERVICE_RECORD_DOCUMENT_STATUSES,
+    normalizeServiceRecordCaregiverEditChanges,
     normalizeServiceRecordRevisionChanges,
     normalizeServiceRecordRevisionDocumentSummary,
     normalizeServiceRecordRevisionHistory,

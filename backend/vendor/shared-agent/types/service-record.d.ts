@@ -296,12 +296,24 @@ export interface ServiceRecordRevisionHistoryEntry {
     isCurrent: boolean;
     documents: ServiceRecordRevisionDocumentSummary[];
 }
+/**
+ * One caregiver edit of an already-submitted day (제공인력 수정). Not a
+ * revision: the list carries identity only, never the before/after payloads.
+ */
+export interface ServiceRecordCaregiverEditSummary {
+    id: string;
+    editedAt: string;
+    /** Case-level 1-based index, the same meaning as a revision session change's sessionIndex. */
+    sessionIndex: number;
+    employeeName: string;
+}
 export interface ServiceRecordRevisionHistoryResponse {
     caseId: string;
     caseVersion: number;
     currentRevisionId: string | null;
     currentUsableRevisionId: string | null;
     revisions: ServiceRecordRevisionHistoryEntry[];
+    caregiverEdits: ServiceRecordCaregiverEditSummary[];
 }
 export type ServiceRecordRevisionChangeValue = string | number | boolean | null | string[];
 export interface ServiceRecordRevisionFieldChange {
@@ -327,6 +339,13 @@ export interface ServiceRecordRevisionChangesResponse {
     beforeAvailable: boolean;
     basicInfo: ServiceRecordRevisionFieldChange[];
     sessions: ServiceRecordRevisionSessionChange[];
+}
+export interface ServiceRecordCaregiverEditChangesResponse {
+    editId: string;
+    editedAt: string;
+    employeeName: string;
+    /** Always present; `changes` is empty when nothing differs. kind is "changed". */
+    session: ServiceRecordRevisionSessionChange;
 }
 export interface ServiceRecordRevisionDocumentRetryRequest {
     expectedGeneration: string;

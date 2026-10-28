@@ -539,6 +539,8 @@ export default function ServiceRecordPage() {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
                 } else if (problemCode(normalized, e) === "SERVICE_DATE_IMMUTABLE") {
                     setErrorNotificationMessage("제공일자는 변경할 수 없어요.");
+                } else if (problemCode(normalized, e) === "REQUEST_CONFLICT") {
+                    setErrorNotificationMessage("이미 처리되었거나 수정할 수 없는 상태예요.");
                 } else {
                     setErrorNotificationMessage(normalized.verified ? normalized.message : "제출에 실패했어요.");
                 }
@@ -746,7 +748,7 @@ export default function ServiceRecordPage() {
                         open={scheduleChangeModalOpen}
                         title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정 변경"}
                         description={scheduleChangePreview
-                            ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${formatMonthDayKo(scheduleChangePreview.fromDate)}에서 ${formatMonthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 관리자 승인 후 일정이 조정됩니다.`
+                            ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${formatMonthDayKo(scheduleChangePreview.fromDate)}에서 ${formatMonthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 본사 승인 후 일정이 조정됩니다.`
                             : "변경 가능한 일정을 확인하고 있어요."}
                         isDescriptionVisuallyHidden={false}
                         cancelLabel="취소"
