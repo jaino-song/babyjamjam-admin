@@ -91,13 +91,22 @@ describe("GET /api/realtime/events", () => {
     await expect(response.text()).resolves.toBe('event: entity-changed\ndata: {"entities":["client"]}\n\n');
   });
 
-  it("preserves the upstream status when the backend rejects the stream", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "tenant blocked" }), { status: 403 }));
+  it("passes only the upstream status when the backend rejects the stream, never its body", async () => {
+    const marker = "검토전용기밀문구 처리 권한이 없습니다.";
+    const cancel = jest.fn();
+    const rejected = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ message: marker })));
+      },
+      cancel,
+    });
+    mockFetch.mockResolvedValue(new Response(rejected, { status: 403 }));
 
     const response = await GET(createRequest());
 
     expect(response.status).toBe(403);
-    expect(response.headers.get("Content-Type")).toContain("text/event-stream");
+    await expect(response.text()).resolves.not.toContain(marker);
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("answers a transport failure with an SSE error rather than throwing", async () => {

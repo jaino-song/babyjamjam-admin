@@ -1,7 +1,4 @@
-import {
-    upstreamSseTransportErrorResponse,
-    upstreamSseUpstreamErrorResponse,
-} from "@/lib/api/problem-responses";
+import { upstreamSseTransportErrorResponse } from "@/lib/api/problem-responses";
 
 // The proxying serverless function is killed at its own duration limit
 // (`maxDuration = 60` on the route) without telling the browser. Ending the
@@ -119,9 +116,13 @@ export async function proxySseStream({
         });
 
         if (!upstream.ok || !upstream.body) {
-            const upstreamText = await upstream.text().catch(() => "");
+            // Release the upstream connection: cleanup() removes the abort
+            // handle, so an unread body would otherwise linger in the pool.
+            // The body is never forwarded: it can carry backend-authored
+            // text the browser must not see, so only the status goes through.
+            await upstream.body?.cancel().catch(() => undefined);
             cleanup();
-            return upstreamSseUpstreamErrorResponse(upstream.status, upstreamText || undefined, "read");
+            return new Response(null, { status: upstream.status });
         }
 
         const transform = new TransformStream<Uint8Array, Uint8Array>();
