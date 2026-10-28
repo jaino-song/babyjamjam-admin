@@ -1,5 +1,6 @@
 import { api } from "@/lib/api/client";
 import {
+    normalizeServiceRecordCaregiverEditChanges,
     normalizeServiceRecordRevisionChanges,
     normalizeServiceRecordRevisionDocumentSummary,
     normalizeServiceRecordRevisionHistory,
@@ -17,6 +18,7 @@ import type {
     ServiceRecordOverview,
     ServiceRecordPlannedSession,
     RetryServiceRecordDocumentInput,
+    ServiceRecordCaregiverEditChangesResponse,
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionDocumentSummary,
     ServiceRecordRevisionHistoryResponse,
@@ -165,6 +167,13 @@ export const serviceRecordsApi = {
             ...response,
             data: normalizeServiceRecordRevisionChanges(response.data),
         } as typeof response & { data: ServiceRecordRevisionChangesResponse })),
+    getClientCaregiverEditChanges: (clientId: number, editId: string) =>
+        api.get<unknown>(
+            `/admin/service-records/clients/${encodeURIComponent(String(clientId))}/caregiver-edits/${encodeURIComponent(editId)}/changes`,
+        ).then((response) => ({
+            ...response,
+            data: normalizeServiceRecordCaregiverEditChanges(response.data),
+        } as typeof response & { data: ServiceRecordCaregiverEditChangesResponse })),
     retryRevisionDocument: ({ revisionId, documentStateId, expectedGeneration }: RetryServiceRecordDocumentInput) =>
         api.post<unknown>(
             `/admin/service-records/revisions/${encodeURIComponent(revisionId)}/documents/${encodeURIComponent(documentStateId)}/retry`,
