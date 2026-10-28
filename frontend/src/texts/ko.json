@@ -473,7 +473,7 @@
       "notice-full": "이미 {count}회차를 모두 골랐어요. 먼저 빼고 싶은 날짜를 눌러 주세요.",
       "notice-written": "작성된 회차는 바꿀 수 없어요",
       "notice-dropped": "{dates}은(는) 이제 고를 수 없어서 뺐어요.",
-      "success": "{count}회차 서비스 제공일을 저장했어요.",
+      "success": "서비스 제공일정을 변경했어요.",
       "reloaded": "일정이 바뀌어 다시 불러왔어요",
       "errors": {
         "load-failed": "일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",

@@ -5,7 +5,7 @@ const failure = (status: number, data: unknown = {}) => ({ response: { status, d
 describe("service-record schedule messages", () => {
   it("fills {placeholders} and leaves unknown ones", () => {
     expect(fillText("{a}-{b}", { a: 1 })).toBe("1-{b}");
-    expect(scheduleText("ko", "success", { count: 10 })).toBe("10회차 서비스 제공일을 저장했어요");
+    expect(scheduleText("ko", "success", { count: 10 })).toBe("서비스 제공일정을 변경했어요.");
   });
 
   it.each([

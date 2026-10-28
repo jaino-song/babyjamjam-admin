@@ -375,7 +375,7 @@
       "draft-in-use": "Someone else is editing, so nothing was saved. Please try again shortly.",
       "draft-start-failed": "Could not start the change. Please try again shortly.",
       "preview-mismatch": "The schedule changed, so nothing was saved. Reload and try again.",
-      "success": "Saved the service dates for {count} sessions",
+      "success": "Service schedule updated.",
       "client-refresh-failed": "Saved. The client could not be reloaded, so please refresh the screen.",
       "save-failed": "Could not save. Please try again shortly.",
       "forbidden": "You do not have permission to change the schedule",

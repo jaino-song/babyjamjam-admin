@@ -444,7 +444,7 @@
       "notice-full": "All {count} sessions are already chosen. Remove a date first.",
       "notice-written": "Sessions that are already written cannot be changed",
       "notice-dropped": "{dates} can no longer be chosen and was removed.",
-      "success": "Saved the service dates for {count} sessions.",
+      "success": "Service schedule updated.",
       "reloaded": "The schedule changed, so it was reloaded",
       "errors": {
         "load-failed": "Could not load the schedule. Please try again shortly.",

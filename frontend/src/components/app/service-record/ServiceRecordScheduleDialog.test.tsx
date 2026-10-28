@@ -445,7 +445,7 @@ describe("ServiceRecordScheduleDialog", () => {
             expect(publishServiceRecordRevisionSync).toHaveBeenCalledWith({ caseId: "case-1", caseVersion: 2 });
             expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
                 variant: "success",
-                description: "10회차 서비스 제공일을 저장했어요.",
+                description: "서비스 제공일정을 변경했어요.",
             }));
             expect(api.discardDraft).not.toHaveBeenCalled();
         });

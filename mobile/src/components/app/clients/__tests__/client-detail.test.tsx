@@ -1596,7 +1596,7 @@ describe("제공기록지 일정 변경 menu item", () => {
 
     await waitFor(() => expect(onClientUpdated).toHaveBeenCalledWith(fresh));
     expect(fetchClient).toHaveBeenCalledWith(client.id);
-    expect(toast).toHaveBeenCalledWith({ variant: "success", description: "10회차 서비스 제공일을 저장했어요" });
+    expect(toast).toHaveBeenCalledWith({ variant: "success", description: "서비스 제공일정을 변경했어요." });
     expect(screen.queryByRole("dialog", { name: "제공기록지 일정 변경 시트" })).not.toBeInTheDocument();
   });
 
