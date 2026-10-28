@@ -12,16 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
-import {
-  clearResendUncertain,
-  isResendUncertain,
-  markResendUncertain,
-} from "@/features/document-jobs/resend-uncertain-storage";
 import { useToast } from "@/hooks/use-toast";
-import {
-  useEnqueueEformsignDocumentCreation,
-  useEnqueueEformsignDocumentFinalization,
-} from "@/hooks/useEformsignDocumentJobs";
 import {
   eformsignApi,
   type ClaimEformsignDocumentJobRecoveryResponse,
@@ -37,12 +28,8 @@ const COPY = {
   gone: "이미 처리됐거나 찾을 수 없는 작업이에요.",
   expired: "보관 기간(7일)이 지나 저장된 내용이 없어요. 새로 작성해 주세요.",
   unavailable: "작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
-  existing:
-    "같은 고객/계약서의 작업이 이미 처리중 목록에 있어요. 확인한 뒤 처리됨으로 표시해 주세요.",
   resolveFailed: "처리됨으로 표시하지 못했어요. 다시 시도해 주세요.",
-  resendRejected: "다시 보내지 못했어요. 잠시 후 다시 시도해 주세요.",
-  resendUncertain:
-    "전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인한 뒤 다시 시도해 주세요.",
+  manualSend: "자동 전송이 끝내 실패했어요. 아무것도 전송되지 않았어요.",
 } as const;
 
 type RecoveryFailure =
@@ -52,7 +39,7 @@ type RecoveryFailure =
   | { kind: "gone" }
   | { kind: "unavailable" };
 
-type ConfirmKind = "resend" | "resolve" | "verify-fresh" | "discard";
+type ConfirmKind = "resolve" | "verify-fresh" | "discard";
 
 function readErrorBody(error: unknown): EformsignDocumentJobRecoveryErrorBody {
   if (!isAxiosError(error)) return {};
@@ -119,10 +106,10 @@ export interface DocumentJobRecoveryDialogProps {
 /**
  * Recovery for one failed document job, opened from /contracts?recoverJobId=.
  *
- * A job that definitely sent nothing (manual_send) can be resent from its saved input through the
- * job queue; one whose outcome is unknown (verify_result) is never resent. Every resend uses the
- * deterministic request key `resend:<jobId>`, so a repeated click, a second tab or another manager
- * lands on the same server job instead of a second send.
+ * The server queue already retries a send that failed before anything left (1 → 5 → 15 minutes), so
+ * this dialog never resends. For a job that definitely sent nothing (manual_send) staff can start a
+ * fresh form or mark the job handled; for one whose outcome is unknown (verify_result) they must
+ * first confirm in eformsign that nothing was sent.
  */
 export function DocumentJobRecoveryDialog({
   jobId,
@@ -135,8 +122,6 @@ export function DocumentJobRecoveryDialog({
 }: DocumentJobRecoveryDialogProps) {
   const { toast } = useToast();
   const { refetchSummary, refetchJobs } = useDocumentJobs();
-  const enqueueCreation = useEnqueueEformsignDocumentCreation();
-  const enqueueFinalization = useEnqueueEformsignDocumentFinalization();
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
 
   const [claim, setClaim] = useState<ClaimEformsignDocumentJobRecoveryResponse | null>(null);
@@ -145,17 +130,8 @@ export function DocumentJobRecoveryDialog({
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  // The resend was accepted but the old job is not resolved yet: only resolving is left to do.
-  const [resendAccepted, setResendAccepted] = useState(false);
-  // The server already had a job under this key or for this client/document: never resolve it for staff.
-  const [existingJob, setExistingJob] = useState(false);
   // The last resolve ended without an answer (network/5xx/other): offer it again, never a resend.
   const [resolveFailed, setResolveFailed] = useState(false);
-  // A resend enqueue ended without a definite answer, so the first send may have been accepted. Once set it
-  // is never cleared here: starting a fresh contract then needs the same "nothing was sent" confirmation as
-  // verify_result. The marker also lives in localStorage so closing and reopening the dialog cannot lose it;
-  // it fails closed when storage cannot be read.
-  const [resendUncertain, setResendUncertain] = useState(() => isResendUncertain(jobId));
 
   const busyRef = useRef(false);
   const claimStartedRef = useRef(false);
@@ -188,12 +164,6 @@ export function DocumentJobRecoveryDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The server's own id is the canonical one; it may spell the URL's id differently, so check it once known.
-  const canonicalJobId = claim?.job.jobId || null;
-  useEffect(() => {
-    if (canonicalJobId && isResendUncertain(canonicalJobId)) setResendUncertain(true);
-  }, [canonicalJobId]);
-
   const recoveryKind = claim?.recoveryKind ?? null;
   const job = claim?.job ?? null;
   const resendInput = useMemo(
@@ -206,14 +176,11 @@ export function DocumentJobRecoveryDialog({
     ?? (claim && recoveryKind === null ? { kind: "gone" } : null)
     ?? (claim && recoveryKind === "manual_send" && !resendInput ? { kind: "expired" } : null);
 
-  /** Marks the old job resolved; retries only network errors and 5xx, never anything that could resend. */
+  /** Marks the job resolved; retries only network errors and 5xx. */
   const resolveJob = async (): Promise<boolean> => {
     for (let attempt = 0; ; attempt += 1) {
       try {
         await eformsignApi.resolveDocumentJob(jobId);
-        // The job is no longer recoverable, so there is nothing left to be uncertain about.
-        clearResendUncertain(jobId);
-        if (canonicalJobId) clearResendUncertain(canonicalJobId);
         refreshProvider();
         return true;
       } catch (error) {
@@ -257,65 +224,6 @@ export function DocumentJobRecoveryDialog({
       }
     });
 
-  const handleResend = () =>
-    runExclusive(async () => {
-      if (!claim || !resendInput) return;
-
-      // Re-check right before sending: the claim may have expired or been taken over meanwhile.
-      try {
-        await eformsignApi.claimDocumentJobRecovery(jobId);
-      } catch (error) {
-        const next = classifyRecoveryError(error);
-        if (next.kind === "unavailable") {
-          setNotice(COPY.resendRejected);
-        } else {
-          setFailure(next);
-          if (next.kind === "gone") refreshProvider();
-        }
-        return;
-      }
-
-      // The URL may spell the same UUID in either case; the server's own id is the canonical one, and lower-casing
-      // keeps the key identical for every spelling so the idempotency key can never fork.
-      const canonicalId = (claim.job.jobId || jobId).toLowerCase();
-      const requestKey = `resend:${canonicalId}`;
-      // Write-ahead: the marker exists before the request leaves, so a tab closed or a dialog unmounted while it is
-      // in flight still finds it. The in-memory latch is not touched here; the open dialog's 새로 작성 stays disabled
-      // while busy. A definite 4xx below takes back only a marker this attempt wrote.
-      const wasUncertain = resendUncertain || isResendUncertain(canonicalId);
-      markResendUncertain(canonicalId);
-      let existing: boolean;
-      try {
-        const accepted =
-          resendInput.kind === "create"
-            ? await enqueueCreation.mutateAsync({ ...resendInput.request, requestKey })
-            : await enqueueFinalization.mutateAsync({ ...resendInput.request, requestKey });
-        existing = accepted.existing;
-      } catch (error) {
-        const status = isAxiosError(error) ? error.response?.status : undefined;
-        // Only a 4xx is a definite rejection; a network error, timeout or any 5xx may still have been accepted.
-        if (status === undefined || status >= 500) setResendUncertain(true);
-        else if (!wasUncertain) clearResendUncertain(canonicalId);
-        if (status === 403) setNotice(COPY.forbidden);
-        else if (status !== undefined && ((status >= 400 && status < 500) || status === 503)) setNotice(COPY.resendRejected);
-        else setNotice(COPY.resendUncertain);
-        return;
-      }
-
-      if (existing) {
-        // The response does not say whose job this is, so staff decide whether the old one is done.
-        setExistingJob(true);
-        setNotice(COPY.existing);
-        return;
-      }
-
-      setResendAccepted(true);
-      if (await resolveJob()) {
-        toast({ variant: "success", description: "다시 보내기를 시작했어요" });
-        onClose();
-      }
-    });
-
   const startFresh = () => {
     onStartFresh();
     onClose();
@@ -326,16 +234,12 @@ export function DocumentJobRecoveryDialog({
     else startFresh();
   };
 
-  const requestFresh = () => {
-    if (resendUncertain) setConfirm("verify-fresh");
-    else proceedFresh();
-  };
+  const requestFresh = () => proceedFresh();
 
   const handleConfirm = () => {
     const kind = confirm;
     setConfirm(null);
-    if (kind === "resend") void handleResend();
-    else if (kind === "resolve") void handleResolveOnly("처리됨으로 표시했어요");
+    if (kind === "resolve") void handleResolveOnly("처리됨으로 표시했어요");
     else if (kind === "verify-fresh") proceedFresh();
     else if (kind === "discard") startFresh();
   };
@@ -349,11 +253,6 @@ export function DocumentJobRecoveryDialog({
   };
 
   const confirmCopy: Record<ConfirmKind, { title: string; description: string; approvalLabel: string; destructive?: boolean }> = {
-    resend: {
-      title: "다시 보낼까요?",
-      description: "저장된 내용으로 계약서를 다시 보낼까요? 결과는 처리중 목록에서 확인할 수 있어요.",
-      approvalLabel: "다시 보내기",
-    },
     resolve: {
       title: "처리됨으로 표시할까요?",
       description: "이 작업을 목록에서 정리해요. 계약서를 다시 보내지는 않아요.",
@@ -405,9 +304,7 @@ export function DocumentJobRecoveryDialog({
     if (job && resendInput) {
       return (
         <div data-component={sub("manual-send")} className="space-y-3">
-          <p className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">
-            자동 처리에 실패했어요. 저장된 내용으로 다시 보낼 수 있어요.
-          </p>
+          <p className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{COPY.manualSend}</p>
           <DocumentJobRecoverySummary data-component={sub("summary")} job={job} input={resendInput} />
         </div>
       );
@@ -484,26 +381,12 @@ export function DocumentJobRecoveryDialog({
 
     return (
       <>
-        {!resendAccepted ? (
-          <Button type="button" variant="outline" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>
-            새로 작성
-          </Button>
-        ) : null}
-        <Button
-          type="button"
-          variant={resendAccepted || existingJob ? "positive" : "outline"}
-          size="sm"
-          data-component={sub("resolve")}
-          disabled={isBusy}
-          onClick={() => (resendAccepted ? void handleResolveOnly("다시 보내기를 시작했어요") : setConfirm("resolve"))}
-        >
+        <Button type="button" variant="outline" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>
+          새로 작성
+        </Button>
+        <Button type="button" size="sm" data-component={sub("resolve")} disabled={isBusy} onClick={() => setConfirm("resolve")}>
           {resolveLabel}
         </Button>
-        {!resendAccepted && !existingJob ? (
-          <Button type="button" size="sm" data-component={sub("resend")} disabled={isBusy} onClick={() => setConfirm("resend")}>
-            저장된 내용으로 다시 보내기
-          </Button>
-        ) : null}
       </>
     );
   };
