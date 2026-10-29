@@ -25,6 +25,17 @@ const SOURCE_COMPONENT = "ReviewStep";
 /** Shown instead of the edit and submit actions on a day another caregiver submitted. */
 const OTHER_CAREGIVER_NOTICE_COPY = "다른 제공인력이 제출한 회차라 수정할 수 없어요.";
 
+/**
+ * The server lets only the caregiver who submitted a locked day resubmit it; a locked
+ * day with no recorded submitter is treated as not editable, like the server does.
+ */
+export function isLockedByOtherCaregiver(
+    session: { locked?: boolean; employeeId?: number | null } | null | undefined,
+    context: { employee?: { id: number } } | null | undefined,
+): boolean {
+    return Boolean(session?.locked) && session?.employeeId !== context?.employee?.id;
+}
+
 export type ReviewStepProps = Pick<
     ServiceRecordWizardProps,
     | "data-component"
@@ -92,9 +103,7 @@ export function ReviewStep({
     const { currentSession, currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
     });
-    // The server lets only the caregiver who submitted a locked day resubmit it; a day with
-    // no recorded submitter is treated as not editable, like the server does.
-    const readOnlyOther = Boolean(currentSession?.locked) && currentSession?.employeeId !== context?.employee?.id;
+    const readOnlyOther = isLockedByOtherCaregiver(currentSession, context);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
     const hasInvalidNumericAnswers = Object.keys(getServiceRecordNumericErrors(draft)).length > 0;

@@ -22,6 +22,7 @@ import { ToastAction } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
+import { isLockedByOtherCaregiver } from "@/components/app/service-record/screen/ReviewStep";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
 import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
 import { type KrBusinessDayCalendar, type ServiceDayPolicy } from "@/lib/date/business-days";
@@ -209,6 +210,8 @@ export default function ServiceRecordPage() {
         options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
     ) => {
         setScreen(nextScreen);
+        // The submit dialog describes the day that was open when it was raised; any navigation retires it.
+        setSubmitModalOpen(false);
         if (options.day !== undefined) setDay(options.day);
         if (options.pageIdx !== undefined) setPageIdx(options.pageIdx);
         if (options.mode && options.mode !== "none") {
@@ -362,7 +365,7 @@ export default function ServiceRecordPage() {
             const session = ctx.sessions.find((row) => row.sessionIndex === targetDay);
             const isLockedSession = Boolean(session?.locked);
             // A day another caregiver submitted is read-only: land on its review page, never on an input page.
-            const isOtherCaregiverSession = isLockedSession && session?.employeeId !== ctx.employee?.id;
+            const isOtherCaregiverSession = isLockedByOtherCaregiver(session, ctx);
             const targetPageIdx = isOtherCaregiverSession
                 ? DAY_PAGES.length - 1
                 : Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
@@ -521,6 +524,11 @@ export default function ServiceRecordPage() {
 
     async function submitDay() {
         if (defaultsGated) return;
+        // Same rule as the review page: another caregiver's submitted day is never resubmitted from here.
+        if (isLockedByOtherCaregiver(ctx?.sessions.find((session) => session.sessionIndex === day), ctx)) {
+            setSubmitModalOpen(false);
+            return;
+        }
         // Captured before any await: the toast fires after the context reloads.
         const submittedDay = day;
         const wasEditing = editing;
