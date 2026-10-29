@@ -163,7 +163,7 @@ function shouldAuthenticateEformsignFromCredentials(error: unknown): boolean {
     return typeof status === "number" && EFORMSIGN_CREDENTIAL_REAUTH_STATUSES.has(status);
 }
 
-async function redirectToLoginOnce() {
+export async function redirectToLoginOnce() {
     if (typeof window === "undefined" || isRedirectingToLogin) return;
     const currentPath = window.location.pathname;
     const isAuthPage = isPublicAuthPath(currentPath);

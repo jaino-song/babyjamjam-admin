@@ -3,13 +3,16 @@
 import { useEffect } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 
+import { redirectToLoginOnce } from "@/lib/api/client";
+import {
+    AuthSessionEndedError,
+    createReconnectBackoff,
+    openAuthenticatedEventSource,
+} from "@/lib/realtime/authenticated-event-source";
 import { allQueryKeyRoots, queryKeyRootsForKinds } from "@/lib/realtime/entity-query-keys";
 
 const ENDPOINT = "/api/realtime/events";
 
-// After an error, wait this long before reopening — avoids a tight reconnect
-// loop while the upstream is briefly unavailable.
-const RECONNECT_DELAY_MS = 3000;
 // Backend sends a `ping` every 30s. If we hear nothing for this long, the
 // stream is silently dead (e.g. the Vercel function proxying it hit its
 // duration limit and was killed without firing `error`).
@@ -39,6 +42,13 @@ function parseKinds(data: unknown): unknown[] {
  * visible again; after any *re*open every known root is invalidated once to
  * catch up on changes missed while the stream was down.
  *
+ * The first connect is a plain EventSource (the middleware just issued fresh
+ * cookies). Every reconnect goes through `openAuthenticatedEventSource`, which
+ * refreshes an expired access token first — a bare EventSource can't read the
+ * 401, so without it the stream would retry against an expired cookie forever.
+ * Consecutive failures back off 3 s → 60 s; a refresh rejected with 401 ends
+ * the session, so reconnecting stops and the user is sent to login.
+ *
  * `identity` is the authenticated user + selected branch. The stream is scoped
  * to that identity on the server, so a change (in-app branch switch keeps the
  * layout mounted) closes the old source and opens a new one immediately instead
@@ -60,9 +70,16 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
         let reconnectTimer: number | null = null;
         let heartbeatTimer: number | null = null;
         let trailingTimer: number | null = null;
+        // The attempt currently awaiting its authenticated opener; null when idle.
+        let attemptController: AbortController | null = null;
         let pendingKinds = new Set<unknown>();
         let disposed = false;
-        let hasConnectedOnce = false;
+        // The session ended: no more reconnects, whatever triggers them.
+        let stopped = false;
+        // Set once a reconnect has been scheduled, so the next `open` catches up
+        // on changes missed while the stream was down.
+        let needsCatchUp = false;
+        const backoff = createReconnectBackoff();
 
         const invalidateRoots = (roots: QueryKey[]) => {
             for (const queryKey of roots) {
@@ -115,42 +132,50 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
             }, TRAILING_REFRESH_DELAY_MS);
         };
 
-        // Restart the dead-connection watchdog. Called on every inbound message
-        // (open/ping/entity-changed) so a healthy stream never trips it.
-        const resetHeartbeat = () => {
-            clearHeartbeatTimer();
-            heartbeatTimer = window.setTimeout(() => {
-                heartbeatTimer = null;
-                scheduleReconnect(0);
-            }, HEARTBEAT_TIMEOUT_MS);
-        };
-
         // The single reconnect path. error / heartbeat / visibility all funnel
         // here; the `reconnectTimer` guard collapses concurrent triggers into
         // one reconnect, so we never end up with overlapping sources or timers.
-        const scheduleReconnect = (delayMs: number) => {
-            if (disposed || reconnectTimer !== null) return;
+        // `backoff` is for failures (error, probe trouble); `immediate` skips the
+        // delay and leaves the backoff untouched — it also pre-empts a pending
+        // backoff timer, so a tab coming back to the foreground doesn't wait out
+        // a delay that has grown to a minute.
+        const scheduleReconnect = (mode: "backoff" | "immediate") => {
+            if (disposed || stopped) return;
+            if (reconnectTimer !== null) {
+                if (mode === "backoff") return;
+                clearReconnectTimer();
+            }
             closeSource();
             clearHeartbeatTimer();
+            needsCatchUp = true;
+            const delayMs = mode === "backoff" ? backoff.nextDelay() : 0;
             reconnectTimer = window.setTimeout(() => {
                 reconnectTimer = null;
-                connect();
+                void reconnect();
             }, delayMs);
         };
 
-        function connect() {
-            if (disposed || source) return;
+        // Restart the dead-connection watchdog. Called on every inbound message
+        // (open/ping/entity-changed) so a healthy stream never trips it.
+        function resetHeartbeat() {
+            clearHeartbeatTimer();
+            heartbeatTimer = window.setTimeout(() => {
+                heartbeatTimer = null;
+                scheduleReconnect("immediate");
+            }, HEARTBEAT_TIMEOUT_MS);
+        }
 
-            const next = new EventSource(ENDPOINT);
+        function attach(next: EventSource) {
             source = next;
 
             next.addEventListener("open", () => {
                 if (source !== next) return;
-                if (hasConnectedOnce) {
+                backoff.reset();
+                if (needsCatchUp) {
                     // Reopened after a gap — catch up on anything missed.
+                    needsCatchUp = false;
                     invalidateRoots(allQueryKeyRoots());
                 }
-                hasConnectedOnce = true;
                 resetHeartbeat();
             });
 
@@ -167,7 +192,7 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
 
             next.addEventListener("error", () => {
                 if (source !== next) return;
-                scheduleReconnect(RECONNECT_DELAY_MS);
+                scheduleReconnect("backoff");
             });
 
             // Arm the watchdog even before `open`, so a connection that never
@@ -175,15 +200,51 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
             resetHeartbeat();
         }
 
+        async function reconnect() {
+            if (disposed || stopped || source || attemptController !== null) return;
+
+            const controller = new AbortController();
+            attemptController = controller;
+            // A probe may resolve after unmount, an identity change or a newer
+            // attempt; only the attempt that still owns the connection may open
+            // a source or touch this closure's state.
+            const owns = () => !disposed && !controller.signal.aborted && attemptController === controller;
+
+            try {
+                const next = await openAuthenticatedEventSource(ENDPOINT, { signal: controller.signal });
+                if (!owns()) {
+                    next.close();
+                    return;
+                }
+                attach(next);
+            } catch (error) {
+                if (!owns()) return;
+                if (error instanceof AuthSessionEndedError) {
+                    stopped = true;
+                    clearHeartbeatTimer();
+                    void redirectToLoginOnce();
+                    return;
+                }
+                scheduleReconnect("backoff");
+            } finally {
+                if (attemptController === controller) attemptController = null;
+            }
+        }
+
         const handleVisibilityChange = () => {
-            if (disposed || document.visibilityState !== "visible") return;
+            if (disposed || stopped || document.visibilityState !== "visible") return;
+            // A probe is already in flight (bounded by its own timeout); starting
+            // another would overlap it.
+            if (attemptController !== null) return;
             if (source && source.readyState === EventSource.OPEN) return;
             // Back on the tab and the stream isn't open — reconnect now.
-            scheduleReconnect(0);
+            scheduleReconnect("immediate");
         };
 
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        connect();
+        // Fresh page load: the middleware just issued current cookies, so open
+        // directly. Only reconnects pay for the auth probe.
+        attach(new EventSource(ENDPOINT));
 
         return () => {
             disposed = true;
@@ -191,6 +252,7 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
             clearReconnectTimer();
             clearHeartbeatTimer();
             clearTrailingTimer();
+            attemptController?.abort();
             closeSource();
         };
     }, [enabled, identity, queryClient]);
