@@ -24,6 +24,10 @@ import { IMessageTriggerRuleBranchOverrideRepository } from "domain/repositories
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import { EntityChangeEventBus, type EntityChangedEvent } from "application/services/entity-change-event-bus.service";
+import { ServiceRecordLinkReconciliationService } from "application/services/service-record-link-reconciliation.service";
+import { handleEntityModelOperation } from "infrastructure/database/entity-change.extension";
+import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
 describe("ServiceRecordLinkService", () => {
     beforeEach(() => {
@@ -747,6 +751,8 @@ describe("ServiceRecordLinkService", () => {
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+        // The fixed rule does not exist yet, so it is created.
+        prisma.message_trigger_rule.findUnique.mockResolvedValue(null);
 
         await service.sendNow(10);
 
@@ -755,6 +761,10 @@ describe("ServiceRecordLinkService", () => {
         expect(prisma.system_template.findUnique).toHaveBeenCalledWith({
             where: { templateKey: "SERVICE_RECORD_LINK" },
             select: { customVariables: true },
+        });
+        expect(prisma.message_trigger_rule.findUnique).toHaveBeenCalledWith({
+            where: { id: SERVICE_RECORD_LINK_RULE_ID },
+            select: { id: true },
         });
         expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledWith({
             where: { id: SERVICE_RECORD_LINK_RULE_ID },
@@ -776,6 +786,113 @@ describe("ServiceRecordLinkService", () => {
         expect(prisma.message_trigger_rule.upsert.mock.invocationCallOrder[0]).toBeLessThan(
             tokenService.issueLink.mock.invocationCallOrder[0]!,
         );
+    });
+
+    describe("fixed system rule provisioning vs the realtime hint", () => {
+        const buildAutomaticService = (prisma: ReturnType<typeof createPrisma>) => new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, createTokenService() as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined, undefined, createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+        /** A rule table whose `upsert` goes through the real entity-change handler, as in production. */
+        const attachStatefulRuleStore = (prisma: ReturnType<typeof createPrisma>, exists: boolean) => {
+            const bus = new EntityChangeEventBus();
+            const events: EntityChangedEvent[] = [];
+            bus.events$.subscribe((event) => events.push(event));
+            const state = { exists };
+            prisma.message_trigger_rule.findUnique.mockImplementation(async () => (
+                state.exists ? { id: SERVICE_RECORD_LINK_RULE_ID, branchId: null, isActive: true } : null
+            ));
+            prisma.message_trigger_rule.upsert.mockImplementation((args: unknown) => handleEntityModelOperation({
+                model: "message_trigger_rule",
+                operation: "upsert",
+                args,
+                query: async () => {
+                    state.exists = true;
+                    return { id: SERVICE_RECORD_LINK_RULE_ID, branchId: null };
+                },
+            }, bus));
+            return { events, state };
+        };
+        const completedClientSchedule = () => createSchedule({
+            startDate: new Date("2026-11-03T00:00:00.000Z"),
+            endDate: new Date("2026-11-14T00:00:00.000Z"),
+            client: { id: 20, name: "김산모", serviceStatus: "completed" },
+        });
+
+        beforeEach(() => {
+            jest.setSystemTime(new Date("2026-11-02T06:00:00.000Z"));
+        });
+
+        it("rule already exists: no write at all, so no realtime emission", async () => {
+            const prisma = createPrisma();
+            const { events } = attachStatefulRuleStore(prisma, true);
+            const service = buildAutomaticService(prisma);
+            prisma.employee_schedule.findUnique.mockResolvedValue(completedClientSchedule());
+
+            expect(await service.scheduleForServiceStart(10)).toBe(false);
+            jest.advanceTimersByTime(1000);
+
+            expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            expect(events).toEqual([]);
+        });
+
+        it("rule absent: created exactly once, and the creation is the only `message` broadcast", async () => {
+            const prisma = createPrisma();
+            const { events } = attachStatefulRuleStore(prisma, false);
+            const service = buildAutomaticService(prisma);
+            prisma.employee_schedule.findUnique.mockResolvedValue(completedClientSchedule());
+
+            await service.scheduleForServiceStart(10);
+            await service.scheduleForServiceStart(10);
+            jest.advanceTimersByTime(1000);
+
+            expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+            expect(events).toEqual([{ branchId: null, entities: ["message"] }]);
+        });
+
+        it("repeated reconciliation over refused candidates emits no `message` after the first creation", async () => {
+            const prisma = createPrisma();
+            const { events } = attachStatefulRuleStore(prisma, false);
+            const linkService = buildAutomaticService(prisma);
+            prisma.employee_schedule.findUnique.mockResolvedValue(completedClientSchedule());
+            const reconcilerPrisma = {
+                branch: { findMany: jest.fn().mockResolvedValue([{ id: "branch-1" }]) },
+                message_trigger_job: {
+                    // One page of 100 candidates, then the end of the list.
+                    findMany: jest.fn().mockImplementation(async (args: { cursor?: unknown }) => (
+                        args.cursor
+                            ? []
+                            : Array.from({ length: 100 }, (_, i) => ({
+                                id: `marker-${i}`,
+                                employeeSchedule: { id: 10, primaryEmployee: { phone: "010-1111-2222" } },
+                            }))
+                    )),
+                },
+            };
+            const reconciler = new ServiceRecordLinkReconciliationService(
+                reconcilerPrisma as unknown as PrismaService,
+                linkService,
+                createSchedulerLeaseMock(),
+            );
+
+            await expect(reconciler.reconcileMissingJobs(new Date())).resolves.toBe(0);
+            jest.advanceTimersByTime(1000);
+            expect(events).toEqual([{ branchId: null, entities: ["message"] }]);
+            events.length = 0;
+
+            for (let cycle = 0; cycle < 2; cycle += 1) {
+                await expect(reconciler.reconcileMissingJobs(new Date())).resolves.toBe(0);
+                jest.advanceTimersByTime(1000);
+            }
+
+            expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+            expect(events).toEqual([]);
+        });
     });
 
     it("refuses to activate the fixed rule when a required template variable has no automatic source", async () => {
