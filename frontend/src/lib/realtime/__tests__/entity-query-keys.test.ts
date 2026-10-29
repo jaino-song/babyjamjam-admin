@@ -1,5 +1,12 @@
 import { QueryClient, type QueryKey } from "@tanstack/react-query";
 
+import { contractStatsQueryKeys } from "@/app/(protected)/contracts/page";
+import {
+    allLinkConfirmationsQueryKey,
+    clientContractDocsQueryKey,
+    linkConfirmationsQueryKey,
+} from "@/components/app/clients/contract-link-confirm";
+import { MESSAGE_SENDER_APPROVAL_QUERY_KEY } from "@/components/app/messages/MessageApprovalGate";
 import { settingsQueryKey as holidaySettingsQueryKey } from "@/components/app/holidays/HolidaySettingsSection";
 import { clientKeys } from "@/features/clients/hooks/keys";
 import { messageTemplateKeys } from "@/features/message-templates/hooks/keys";
@@ -57,10 +64,12 @@ const REAL_KEYS: Record<RealtimeEntityKind, Array<[label: string, key: QueryKey]
         ["eformsignQueryKeys.clientCandidate", eformsignQueryKeys.clientCandidate("doc-1")],
         ["eformsignDocumentJobsQueryKeys.list", eformsignDocumentJobsQueryKeys.list("branch-1")],
         ["dashboardQueryKeys.overview", dashboardQueryKeys.overview(10)],
-        // No factory builds these three today; kept from the original map.
-        ["eformsign-docs (no factory)", ["eformsign-docs", "branch-1"]],
+        ["clientContractDocsQueryKey", clientContractDocsQueryKey(7)],
+        ["linkConfirmationsQueryKey", linkConfirmationsQueryKey(7)],
+        ["allLinkConfirmationsQueryKey", allLinkConfirmationsQueryKey("branch-1")],
+        ["contractStatsQueryKeys.statusCounts", contractStatsQueryKeys.statusCounts("branch-1")],
+        // Inline literal in contracts/page.tsx and useEformsignDocsLiveStream.ts; no factory builds it.
         ["eformsign-client-names (no factory)", ["eformsign-client-names"]],
-        ["eformsign-status-counts (no factory)", ["eformsign-status-counts", "branch-1"]],
     ],
     message: [
         ["messageTriggerKeys.upcoming", messageTriggerKeys.upcoming()],
@@ -93,9 +102,9 @@ const REAL_KEYS: Record<RealtimeEntityKind, Array<[label: string, key: QueryKey]
         ["dashboardQueryKeys.stats", dashboardQueryKeys.stats()],
     ],
     settings: [
-        // Inline literals in the settings / clients / messages screens; no factory.
+        ["MESSAGE_SENDER_APPROVAL_QUERY_KEY", MESSAGE_SENDER_APPROVAL_QUERY_KEY],
+        // Inline or module-private literals in the settings / clients screens; no exported builder.
         ["settings notification preferences (no factory)", ["settings", "notification-preferences"]],
-        ["settings message sender approval (no factory)", ["settings", "message-sender-approval"]],
         ["voucherQueryKeys.areaTemplates", voucherQueryKeys.areaTemplates],
         ["voucherQueryKeys.availableClientAreas", voucherQueryKeys.availableClientAreas],
         ["voucherQueryKeys.voucherPriceInfos", voucherQueryKeys.voucherPriceInfos("type", 2026)],
