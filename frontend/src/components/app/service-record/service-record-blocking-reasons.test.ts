@@ -42,7 +42,7 @@ describe("describeScheduleBlockingReasons", () => {
         expect(lines[0].label).toBe("제공일을 계산할 수 없는 회차가 있어요 (2–3회차)");
     });
 
-    it("shows an unknown code's message as is when it is already Korean", () => {
+    it("shows an unknown code's message as is when every message in the group is the same Korean text", () => {
         const lines = describeScheduleBlockingReasons([
             { code: "BRAND_NEW", message: "새로운 사유가 있습니다." },
         ]);
@@ -50,12 +50,54 @@ describe("describeScheduleBlockingReasons", () => {
         expect(lines[0].label).toBe("새로운 사유가 있습니다.");
     });
 
-    it("never groups different Korean messages of one unknown code together", () => {
+    it("groups 15 unknown-code reasons with session-specific Korean messages into one generic line", () => {
+        const reasons = Array.from({ length: 15 }, (_, index) => ({
+            code: "NEW_BLOCKER",
+            message: `${index + 1}회차에 새로운 사유가 있습니다.`,
+            sessionIndex: index + 1,
+        }));
+        const lines = describeScheduleBlockingReasons(reasons);
+        expect(lines).toHaveLength(1);
+        expect(lines[0].label).toBe("제공일을 계산할 수 없는 회차가 있어요 (1–15회차)");
+    });
+
+    it("keeps an identical Korean message for an unknown code across sessions and appends the range", () => {
         const lines = describeScheduleBlockingReasons([
+            { code: "NEW_BLOCKER", message: "새로운 사유가 있어요.", sessionIndex: 2 },
+            { code: "NEW_BLOCKER", message: "새로운 사유가 있어요.", sessionIndex: 4 },
+        ]);
+        expect(lines).toHaveLength(1);
+        expect(lines[0].label).toBe("새로운 사유가 있어요 (2, 4회차)");
+    });
+
+    it("uses the generic line for mixed Korean/English or differing messages under one unknown code", () => {
+        const mixed = describeScheduleBlockingReasons([
+            { code: "BRAND_NEW", message: "첫 번째 사유" },
+            { code: "BRAND_NEW", message: "Second reason" },
+        ]);
+        expect(mixed.map((line) => line.label)).toEqual([GENERIC_BLOCKING_REASON]);
+        const differing = describeScheduleBlockingReasons([
             { code: "BRAND_NEW", message: "첫 번째 사유" },
             { code: "BRAND_NEW", message: "두 번째 사유" },
         ]);
-        expect(lines.map((line) => line.label)).toEqual(["첫 번째 사유", "두 번째 사유"]);
+        expect(differing.map((line) => line.label)).toEqual([GENERIC_BLOCKING_REASON]);
+    });
+
+    it("treats codes that collide with Object.prototype members as unknown", () => {
+        const lines = describeScheduleBlockingReasons([
+            { code: "constructor", message: "oops", sessionIndex: 1 },
+            { code: "__proto__", message: "oops", sessionIndex: 2 },
+            { code: "toString", message: "oops" },
+        ]);
+        expect(lines.map((line) => line.text)).toEqual([GENERIC_BLOCKING_REASON, GENERIC_BLOCKING_REASON, GENERIC_BLOCKING_REASON]);
+        expect(lines.map((line) => line.code)).toEqual(["constructor", "__proto__", "toString"]);
+    });
+
+    it("counts decomposed Jamo as Korean", () => {
+        const decomposed = "새로운 사유".normalize("NFD");
+        expect(decomposed).not.toBe("새로운 사유");
+        const [line] = describeScheduleBlockingReasons([{ code: "BRAND_NEW", message: decomposed }]);
+        expect(line.label).toBe("새로운 사유");
     });
 
     it("prefers the Korean table over the backend message for known codes", () => {

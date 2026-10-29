@@ -13,7 +13,7 @@ export interface ScheduleBlockingReasonInput {
 }
 
 export interface ScheduleBlockingReasonLine {
-    /** Stable key: the code, plus the message for unknown codes that keep their own Korean text. */
+    /** Stable key: the code. */
     key: string;
     code: string;
     /** The sentence without the 회차 suffix. */
@@ -77,34 +77,43 @@ export function formatSessionIndices(indices: readonly number[]): string {
     return parts.length ? `${parts.join(", ")}회차` : "";
 }
 
-function textFor(reason: ScheduleBlockingReasonInput): string {
-    const known = BLOCKING_REASON_COPY[reason.code];
-    if (known) return known;
-    return HANGUL.test(reason.message) ? reason.message : GENERIC_BLOCKING_REASON;
+function knownCopy(code: string): string | undefined {
+    return Object.hasOwn(BLOCKING_REASON_COPY, code) ? BLOCKING_REASON_COPY[code] : undefined;
 }
 
-/** One line per code (per distinct text for unknown codes), in first-seen order. */
+/** Unknown codes: the shared message when every reason in the group says the same Korean thing, else the generic line. */
+function unknownCodeText(messages: readonly string[]): string {
+    const first = messages[0]?.normalize("NFC");
+    if (first === undefined || !HANGUL.test(first)) return GENERIC_BLOCKING_REASON;
+    return messages.every((message) => message.normalize("NFC") === first) ? first : GENERIC_BLOCKING_REASON;
+}
+
+/** One line per code, in first-seen order. */
 export function describeScheduleBlockingReasons(
     reasons: readonly ScheduleBlockingReasonInput[],
 ): ScheduleBlockingReasonLine[] {
-    const lines = new Map<string, ScheduleBlockingReasonLine>();
+    const groups = new Map<string, { messages: string[]; sessionIndices: number[] }>();
     for (const reason of reasons) {
-        const text = textFor(reason);
-        const key = reason.code in BLOCKING_REASON_COPY ? reason.code : `${reason.code}:${text}`;
-        let line = lines.get(key);
-        if (!line) {
-            line = { key, code: reason.code, text, sessionIndices: [], label: text };
-            lines.set(key, line);
+        let group = groups.get(reason.code);
+        if (!group) {
+            group = { messages: [], sessionIndices: [] };
+            groups.set(reason.code, group);
         }
-        if (reason.sessionIndex !== undefined && !line.sessionIndices.includes(reason.sessionIndex)) {
-            line.sessionIndices.push(reason.sessionIndex);
+        group.messages.push(reason.message);
+        if (reason.sessionIndex !== undefined && !group.sessionIndices.includes(reason.sessionIndex)) {
+            group.sessionIndices.push(reason.sessionIndex);
         }
     }
-    const result = [...lines.values()];
-    for (const line of result) {
-        line.sessionIndices.sort((a, b) => a - b);
-        const range = formatSessionIndices(line.sessionIndices);
-        line.label = range ? `${line.text.replace(/\.$/, "")} (${range})` : line.text;
-    }
-    return result;
+    return [...groups].map(([code, group]) => {
+        const text = knownCopy(code) ?? unknownCodeText(group.messages);
+        const sessionIndices = [...group.sessionIndices].sort((a, b) => a - b);
+        const range = formatSessionIndices(sessionIndices);
+        return {
+            key: code,
+            code,
+            text,
+            sessionIndices,
+            label: range ? `${text.replace(/\.$/, "")} (${range})` : text,
+        };
+    });
 }
