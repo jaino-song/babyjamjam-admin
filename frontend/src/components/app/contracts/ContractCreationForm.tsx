@@ -809,6 +809,10 @@ export const ContractCreationForm = ({
     isLoading: isAreaTemplatesLoading,
     refetch: refetchAreaTemplates,
   } = useAreaTemplates();
+  // The select picks an AREA, so several templates for one area must show as one option.
+  const areaTemplateOptions = areaTemplates.filter(
+    (template, index) => areaTemplates.findIndex((other) => other.areaId === template.areaId) === index,
+  );
   const isAreaTemplatesEmpty = !isAreaTemplatesLoading && !isAreaTemplatesError && areaTemplates.length === 0;
   const isAreaTemplateSelectDisabled = isAreaTemplatesLoading || isAreaTemplatesError || isAreaTemplatesEmpty;
   const isAreaTemplateSelectionValid =
@@ -1782,7 +1786,7 @@ export const ContractCreationForm = ({
                 />
               </SelectTrigger>
               <SelectContent data-component="desktop_contracts_creation_doc-type-field_select_dropdown">
-                {areaTemplates.map((template) => (
+                {areaTemplateOptions.map((template) => (
                   <SelectItem
                     key={template.areaId}
                     value={template.areaId}

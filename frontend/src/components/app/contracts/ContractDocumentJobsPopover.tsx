@@ -115,16 +115,34 @@ function getJobTitle(job: ContractDocumentJob): string {
 }
 
 /** Machine steps written by the backend; staff see words, never the step name. */
-const MANUAL_STEP_COPY: Readonly<Record<string, string>> = {
-  manual_in_progress: "처리 중",
-  manual_resolved: "처리됨으로 표시",
+const PROGRESS_STEP_COPY: Readonly<Record<string, string>> = {
+  queued: "대기 중",
+  processing: "처리 중",
+  "client-started": "전자문서 연결 중",
+  "info-inserted": "이용자 정보 입력 완료",
+  creating: "전자문서 생성 중",
+  sent: "전송 완료",
+  failed: "실패",
+  reconciling: "결과 확인 중",
   dispatch_authorized: "전송 준비 중",
+  manual_resolved: "처리됨으로 표시",
+  manual_in_progress: "처리 중",
 };
 
+/** A manual claim may be stored as `manual_in_progress:<userId>:<expiry>`; only the prefix is meaningful. */
+const MANUAL_CLAIM_STEP_PREFIX = "manual_in_progress:";
+
+function getProgressStepCopy(progressStep: string | null | undefined): string | undefined {
+  if (!progressStep) return undefined;
+  if (progressStep.startsWith(MANUAL_CLAIM_STEP_PREFIX)) return PROGRESS_STEP_COPY.manual_in_progress;
+  return Object.prototype.hasOwnProperty.call(PROGRESS_STEP_COPY, progressStep)
+    ? PROGRESS_STEP_COPY[progressStep]
+    : undefined;
+}
+
 function getJobSubtitle(job: ContractDocumentJob): string {
-  const manualCopy = job.progressStep ? MANUAL_STEP_COPY[job.progressStep] : undefined;
-  if (manualCopy) return manualCopy;
-  if (job.progressStep) return job.progressStep;
+  const stepCopy = getProgressStepCopy(job.progressStep);
+  if (stepCopy) return stepCopy;
   if (job.documentId) return `문서 ID ${job.documentId}`;
   return "문서 연결 정보 없음";
 }

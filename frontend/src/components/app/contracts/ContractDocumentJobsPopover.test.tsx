@@ -32,7 +32,7 @@ const JOBS: ContractDocumentJobsData = {
       jobType: "finalize_document",
       status: "processing",
       documentId: "document-1",
-      progressStep: "전자문서 최종 확인중",
+      progressStep: "creating",
       attempts: 1,
     },
   ],
@@ -104,14 +104,14 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.getByRole("heading", { name: "처리 중" })).toBeInTheDocument();
     expect(screen.getByText("확인 필요")).toBeInTheDocument();
     expect(screen.getByText("최근 처리")).toBeInTheDocument();
-    expect(screen.getByText("전자문서 최종 확인중")).toBeInTheDocument();
+    expect(screen.getByText("전자문서 생성 중")).toBeInTheDocument();
 
     const links = screen.getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/contracts?recoverJobId=job-attention",
       "/contracts?documentId=document-3",
     ]);
-    expect(screen.queryByRole("link", { name: /전자문서 최종 확인중/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /전자문서 생성 중/ })).not.toBeInTheDocument();
   });
 
   it("links failed rows to recovery and titles rows with the client name", () => {
@@ -215,6 +215,66 @@ describe("ContractDocumentJobsPopover", () => {
 
     expect(screen.queryByText("dispatch_authorized")).not.toBeInTheDocument();
     expect(screen.getByText("전송 준비 중", { selector: "p, span, div" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["queued", "대기 중"],
+    ["processing", "처리 중"],
+    ["client-started", "전자문서 연결 중"],
+    ["info-inserted", "이용자 정보 입력 완료"],
+    ["creating", "전자문서 생성 중"],
+    ["sent", "전송 완료"],
+    ["failed", "실패"],
+    ["reconciling", "결과 확인 중"],
+    ["dispatch_authorized", "전송 준비 중"],
+    ["manual_resolved", "처리됨으로 표시"],
+    ["manual_in_progress", "처리 중"],
+  ])("labels the %s step in Korean and never shows the key", (step, label) => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [
+          { jobId: "job-step", jobType: "create_document", status: "processing", progressStep: step, clientName: "김하늘", documentId: "doc-step" },
+        ],
+        requiresAttention: [],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText(step)).not.toBeInTheDocument();
+    expect(screen.getAllByText(label, { selector: "p, span, div" }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("문서 ID doc-step")).not.toBeInTheDocument();
+  });
+
+  it("shows no raw key, user id or expiry for a claim step stored with its owner", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-claim", jobType: "create_document", status: "failed", progressStep: "manual_in_progress:42:2026-10-29T01:00:00.000Z", clientName: "김하늘" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.getByText("처리 중", { selector: "p, span, div" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/manual_in_progress|42|2026-10-29/);
+  });
+
+  it("falls back to the document line, never the raw key, for an unknown step", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [
+          { jobId: "job-unknown", jobType: "create_document", status: "processing", progressStep: "some-new-step", clientName: "김하늘", documentId: "doc-7" },
+          { jobId: "job-unknown-2", jobType: "create_document", status: "processing", progressStep: "other_step", clientName: "이하늘" },
+        ],
+        requiresAttention: [],
+        recent: [],
+      },
+    });
+
+    expect(document.body.textContent).not.toMatch(/some-new-step|other_step/);
+    expect(screen.getByText("문서 ID doc-7")).toBeInTheDocument();
+    expect(screen.getByText("문서 연결 정보 없음")).toBeInTheDocument();
   });
 
   it("does not label a needs-check job as 최근 완료 although it carries its failure time", () => {

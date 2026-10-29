@@ -1,4 +1,6 @@
-import { parseDocumentJobResendInput } from "./DocumentJobRecoverySummary";
+import { render, screen } from "@testing-library/react";
+
+import { DocumentJobRecoverySummary, parseDocumentJobResendInput } from "./DocumentJobRecoverySummary";
 
 const CONTRACT_DATA = { customerName: "김하늘", fullPrice: "1500000" };
 
@@ -54,5 +56,35 @@ describe("parseDocumentJobResendInput", () => {
     ["creation payload on a finalization job", "finalize_document", { clientId: 7, contractData: CONTRACT_DATA }],
   ] as const)("fails closed on %s", (_label, jobType, payload) => {
     expect(parseDocumentJobResendInput(jobType, payload as Record<string, unknown> | null)).toBeNull();
+  });
+});
+
+describe("DocumentJobRecoverySummary 계약 기간", () => {
+  function renderSummary(contractData: Record<string, unknown>) {
+    return render(
+      <DocumentJobRecoverySummary
+        job={{ clientName: "김하늘" }}
+        input={{ kind: "create", request: { clientId: 7, contractData: contractData as never } }}
+      />,
+    );
+  }
+
+  it("builds the period from the dates and never shows a stray contractDuration", () => {
+    renderSummary({ startDate: "2026-11-01", endDate: "2026-11-15", contractDuration: "10" });
+
+    expect(screen.getByText("계약 기간").nextElementSibling).toHaveTextContent("2026-11-01 ~ 2026-11-15");
+    expect(screen.queryByText("10")).not.toBeInTheDocument();
+  });
+
+  it("shows an open-ended period when only the start date exists", () => {
+    renderSummary({ startDate: "2026-11-01", contractDuration: "10" });
+
+    expect(screen.getByText("계약 기간").nextElementSibling).toHaveTextContent(/^2026-11-01 ~$/);
+  });
+
+  it("falls back to contractDuration only when neither date exists", () => {
+    renderSummary({ contractDuration: "2026-11-01 ~ 2026-11-15" });
+
+    expect(screen.getByText("계약 기간").nextElementSibling).toHaveTextContent("2026-11-01 ~ 2026-11-15");
   });
 });
