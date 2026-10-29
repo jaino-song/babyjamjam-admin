@@ -21,8 +21,10 @@ jest.mock("@/components/app/v3/useScrollActivity", () => ({
   }),
 }));
 
+const mockPush = jest.fn();
+
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 const mockedUseClientAlerts = jest.mocked(useClientAlerts);
@@ -61,6 +63,28 @@ describe("SidebarNotifications loading state", () => {
     rerender(<SidebarNotifications />);
 
     expect(screen.getByText("계약 알림")).toBeInTheDocument();
+  });
+
+  it("navigates a failed document job notification to its recovery link", () => {
+    mockedUseClientAlerts.mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useClientAlerts>);
+    mockedUseNotifications.mockReturnValue({
+      data: [{
+        id: 3,
+        title: "계약서 자동 전송 실패",
+        body: "계약서를 자동으로 보내지 못했어요.",
+        data: { type: "eformsign_document_job_failed", url: "/contracts?recoverJobId=j1" },
+        sentAt: "2026-08-19T00:00:00.000Z",
+        readAt: null,
+        isRead: false,
+      }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useNotifications>);
+
+    render(<SidebarNotifications />);
+    fireEvent.click(screen.getByRole("button", { name: "알림 열기" }));
+    fireEvent.click(screen.getByText("계약서 자동 전송 실패"));
+
+    expect(mockPush).toHaveBeenCalledWith("/contracts?recoverJobId=j1");
   });
 
   it("wraps a specific notification body without overlapping its time label", () => {

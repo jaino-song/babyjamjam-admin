@@ -48,6 +48,14 @@ export const EFORMSIGN_STATUS_READ_TIMEOUT_MS = 2_000;
 // Keep the same total request-and-body budget used by the API client.
 export const EFORMSIGN_DELETE_TIMEOUT_MS = 30_000;
 
+export interface StaffCompletionPrefillAmounts {
+    fullPrice: number;
+    grant: number;
+    actualPrice: number;
+    /** Date range printed in the review step, e.g. `20260709 ~ 20270106`. Passed through verbatim. */
+    servicePeriod?: string;
+}
+
 function normalizeEformsignAmount(value: string): string {
     if (value.trim() === "") return "";
     return normalizeKoreanWon(value) ?? "";
@@ -292,6 +300,7 @@ export class EformsignService {
         accessToken: string,
         refreshToken: string,
         prefillEndDate?: string,
+        prefillAmounts?: StaffCompletionPrefillAmounts,
     ) {
         this.assertConfigured();
         const doc = this.vendorStubsEnabled
@@ -305,7 +314,7 @@ export class EformsignService {
             throw new BadGatewayException(codeOnlyProblemBody("UPSTREAM_INVALID_RESPONSE"));
         }
 
-        const prefill = this.buildStaffCompletionPrefill(prefillEndDate);
+        const prefill = this.buildStaffCompletionPrefill(prefillEndDate, prefillAmounts);
 
         return {
             company: {
@@ -336,32 +345,51 @@ export class EformsignService {
         };
     }
 
-    private buildStaffCompletionPrefill(prefillEndDate?: string) {
-        if (typeof prefillEndDate === "undefined") {
+    private buildStaffCompletionPrefill(
+        prefillEndDate?: string,
+        prefillAmounts?: StaffCompletionPrefillAmounts,
+    ) {
+        if (prefillEndDate === undefined && prefillAmounts === undefined) {
             return undefined;
         }
 
-        if (!ISO_END_DATE_REGEX.test(prefillEndDate)) {
-            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                pointer: "/prefillEndDate",
-                code: "INVALID_VALUE",
-                detail: "prefillEndDate must match YYYY-MM-DD",
-                location: "body",
-            }));
-        }
+        const dateFields: Array<{ id: string; value: string; enabled: boolean; required: boolean }> = [];
+        if (prefillEndDate !== undefined) {
+            if (!ISO_END_DATE_REGEX.test(prefillEndDate)) {
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/prefillEndDate",
+                    code: "INVALID_VALUE",
+                    detail: "prefillEndDate must match YYYY-MM-DD",
+                    location: "body",
+                }));
+            }
 
-        const [year, month, day] = prefillEndDate.split("-");
-
-        return {
-            fields: [
+            const [year, month, day] = prefillEndDate.split("-");
+            dateFields.push(
                 // The live regional templates print the century prefix (`20`)
                 // outside this field, matching the two-digit values sent during
                 // contract creation. Supplying `2026` renders as `20 2026`.
                 { id: EFORMSIGN_END_DATE_FIELD_IDS.year, value: year!.slice(-2), enabled: true, required: false },
-                { id: EFORMSIGN_END_DATE_FIELD_IDS.month, value: month, enabled: true, required: false },
-                { id: EFORMSIGN_END_DATE_FIELD_IDS.day, value: day, enabled: true, required: false },
-            ],
-        };
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.month, value: month!, enabled: true, required: false },
+                { id: EFORMSIGN_END_DATE_FIELD_IDS.day, value: day!, enabled: true, required: false },
+            );
+        }
+
+        // Plain integer strings without separators, matching what
+        // generateDocumentOptions sends for the same field ids.
+        const amountFields = prefillAmounts
+            ? [
+                { id: "서비스 비용", value: String(prefillAmounts.fullPrice), enabled: true, required: false },
+                { id: "정부지원금", value: String(prefillAmounts.grant), enabled: true, required: false },
+                { id: "본인부담금", value: String(prefillAmounts.actualPrice), enabled: true, required: false },
+                { id: "서비스 가격", value: String(prefillAmounts.fullPrice), enabled: true, required: false },
+                ...(prefillAmounts.servicePeriod
+                    ? [{ id: "서비스 기간", value: prefillAmounts.servicePeriod, enabled: true, required: false }]
+                    : []),
+            ]
+            : [];
+
+        return { fields: [...dateFields, ...amountFields] };
     }
 
     /**

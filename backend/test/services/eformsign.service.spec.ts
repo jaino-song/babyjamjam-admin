@@ -638,6 +638,78 @@ describe("EformsignService", () => {
         ]));
     });
 
+    describe("staff completion amount prefill", () => {
+        const mockTemplateFetch = () => jest.spyOn(global, "fetch").mockResolvedValue(new Response(
+            JSON.stringify({ detail_template_info: { id: "template-seogu" } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+        ));
+
+        it("prefills amounts and the service period at staff completion when given", async () => {
+            const service = new EformsignService(createConfigService());
+            mockTemplateFetch();
+
+            const options = await service.generateStaffCompletionOptions(
+                "doc-1", "access", "refresh", "2026-10-14",
+                { fullPrice: 1015000, grant: 812000, actualPrice: 203000, servicePeriod: "20261005 ~ 20261014" },
+            ) as { prefill?: { fields: Array<{ id: string; value: string }> } };
+
+            const byId = Object.fromEntries(options.prefill!.fields.map((f) => [f.id, f.value]));
+            expect(byId).toMatchObject({
+                "계약 종료 년도": "26", "계약 종료 월": "10", "계약 종료 일": "14",
+                "서비스 비용": "1015000", "정부지원금": "812000", "본인부담금": "203000",
+                "서비스 가격": "1015000", "서비스 기간": "20261005 ~ 20261014",
+            });
+        });
+
+        it("omits the service period field when no servicePeriod is given", async () => {
+            const service = new EformsignService(createConfigService());
+            mockTemplateFetch();
+
+            const options = await service.generateStaffCompletionOptions(
+                "doc-1", "access", "refresh", "2026-10-14",
+                { fullPrice: 1015000, grant: 812000, actualPrice: 203000 },
+            ) as { prefill?: { fields: Array<{ id: string }> } };
+
+            const ids = options.prefill!.fields.map((f) => f.id);
+            expect(ids).toEqual(expect.arrayContaining(["서비스 비용", "정부지원금", "본인부담금", "서비스 가격"]));
+            expect(ids).not.toContain("서비스 기간");
+        });
+
+        it("emits only the amount fields when amounts are given without an end date", async () => {
+            const service = new EformsignService(createConfigService());
+            mockTemplateFetch();
+
+            const options = await service.generateStaffCompletionOptions(
+                "doc-1", "access", "refresh", undefined,
+                { fullPrice: 1000, grant: 500, actualPrice: 500, servicePeriod: "20260101 ~ 20260107" },
+            ) as { prefill?: { fields: Array<{ id: string }> } };
+
+            expect(options.prefill!.fields.map((f) => f.id)).toEqual([
+                "서비스 비용", "정부지원금", "본인부담금", "서비스 가격", "서비스 기간",
+            ]);
+        });
+
+        it("keeps the end-date-only prefill when no amounts are given", async () => {
+            const service = new EformsignService(createConfigService());
+            mockTemplateFetch();
+
+            const options = await service.generateStaffCompletionOptions(
+                "doc-1", "access", "refresh", "2026-10-14",
+            ) as { prefill?: { fields: Array<{ id: string }> } };
+
+            expect(options.prefill!.fields.map((f) => f.id)).toEqual(["계약 종료 년도", "계약 종료 월", "계약 종료 일"]);
+        });
+
+        it("emits no prefill when neither an end date nor amounts are given", async () => {
+            const service = new EformsignService(createConfigService());
+            mockTemplateFetch();
+
+            const options = await service.generateStaffCompletionOptions("doc-1", "access", "refresh");
+
+            expect(options).not.toHaveProperty("prefill");
+        });
+    });
+
     it("uses e2e vendor stubs for document listing without network access", async () => {
         const fetchSpy = jest.spyOn(global, "fetch");
         const service = new EformsignService(createConfigService({

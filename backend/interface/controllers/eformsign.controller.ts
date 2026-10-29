@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
 import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
 import { isDefinitiveVendorRefusal, successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
 import { EformsignService } from "../../application/services/eformsign.service";
@@ -36,16 +36,14 @@ import {
     enrichMirrorPage,
 } from "application/services/eformsign-mirror-list.service";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
 import {
     EformsignTemplateScopeService,
     type EformsignListSection,
 } from "application/services/eformsign-template-scope.service";
 import { EformsignPermanentPurgeRequest } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { GetContractClientCandidateUsecase } from "application/usecases/eformsign-doc/get-contract-client-candidate.usecase";
-import {
-    EformsignApiError,
-    isEformsignDocumentAbsentError,
-} from "infrastructure/api/eformsign-api.error";
+import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
 import {
     documentSearchIndex,
     type DocumentStatusCategory,
@@ -62,7 +60,6 @@ import {
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
-import { hasCustomerSigned, isCancellableUnsignedContract } from "domain/utils/eformsign-customer-signature";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
@@ -250,6 +247,7 @@ export class EformsignController {
         private readonly rasterizer: PdfPageRasterizerService,
         private readonly holidayCalendar: HolidayCalendarService,
         private readonly voidContractDocumentUsecase: VoidContractDocumentUsecase,
+        private readonly contractSupersedeService: ContractSupersedeService,
     ) { }
 
     /**
@@ -849,8 +847,6 @@ export class EformsignController {
         @Param("documentId") documentId: string,
         @Body() body: SupersedeDocumentRequestDto,
     ) {
-        let cancelAttempted = false;
-        let vendorCancelled = false;
         try {
             const branchId = tenant.branchId ?? "";
             const allowedDocuments = await this.filterDocumentsByBranch(
@@ -869,76 +865,14 @@ export class EformsignController {
             if (!client.eDocId || client.eDocId === documentId) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
-            // Only this client's own contract can be superseded, never another
-            // client's document or a service-record snapshot.
-            const document = await this.prisma.eformsign_doc.findUnique({
-                where: { documentId },
-                select: {
-                    clientId: true, documentKind: true,
-                    statusType: true, stepType: true, stepName: true,
-                },
+            return await this.contractSupersedeService.supersede({
+                branchId,
+                clientId: body.clientId,
+                documentId,
+                principal: tenant,
             });
-            if (
-                !document
-                || document.documentKind === "service_record_snapshot"
-                // Positive ownership only: an unowned (clientId null) legacy document is
-                // not this client's, so a caller must not be able to cancel and purge it
-                // just by knowing its id.
-                || document.clientId !== body.clientId
-                || hasCustomerSigned(document)
-            ) {
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            }
-            const terminalDocumentIds = await this.documentMirrorService
-                .findTerminalDocumentIds([documentId]);
-            if (terminalDocumentIds.length > 0) {
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            }
-
-            const fresh = await this.credentialBoundary.withCredentials(
-                tenant,
-                "document.read",
-                ({ accessToken }) => this.eformsignService.getDocumentById(accessToken, documentId),
-            ).catch((error: unknown) => {
-                if (isEformsignDocumentAbsentError(error)) {
-                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-                }
-                throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
-            });
-            const freshContract = {
-                statusType: fresh?.current_status?.status_type,
-                stepType: fresh?.current_status?.step_type ?? null,
-                stepName: fresh?.current_status?.step_name ?? null,
-            };
-            if (hasCustomerSigned(freshContract) || !isCancellableUnsignedContract(freshContract)) {
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            }
-
-            const result = await this.credentialBoundary.withCredentials(
-                tenant,
-                "document.cancel",
-                ({ accessToken }) => {
-                    cancelAttempted = true;
-                    return this.eformsignService.cancelDocuments(accessToken, [documentId]);
-                },
-            );
-            if (!successfulDeletedDocumentIds(result).includes(documentId)) {
-                // A refusal (possibly signed in the meantime) leaves the local record intact.
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            }
-            vendorCancelled = true;
-            await this.documentMirrorService.purgeDocuments([documentId]);
-            return { documentId, superseded: true };
         } catch (error) {
             if (error instanceof HttpException) throw error;
-            if (cancelAttempted && !vendorCancelled) {
-                Logger.warn({
-                    message: "supersede cancel outcome ambiguous; old contract left intact and visible",
-                    documentId,
-                    clientId: body.clientId,
-                    branchId: tenant.branchId ?? "",
-                }, EformsignController.name);
-            }
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }

@@ -56,29 +56,15 @@ export function MaternityContractDialog({
   const [activeStep, setActiveStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasCreationSession, setHasCreationSession] = useState(false);
-  const [isDetachable, setIsDetachable] = useState(false);
   const [processingFailed, setProcessingFailed] = useState(false);
   const isBusy = isSubmitting || (hasCreationSession && !processingFailed);
-  // The explicit X may leave only while the form is awaiting the dispatch/enqueue call
-  // itself: the server finishes the send, and the unmounted form reports it by toast.
-  // Everywhere else the mounted form has work left to do. A re-issue is the exception
-  // even then: the replaced contract is cancelled by the mounted form after the send.
-  const isCloseBlocked = isBusy && !(isDetachable && !supersedeDocumentId);
 
   // The wizard's own required-field/session state is meaningless once the dialog
   // is closed; reset the step so the next open (potentially for a different
   // client) always starts from step 0 rather than wherever this client left off.
-  // The busy flags are reset too: the form that reported them is gone, and a stale
-  // "session running" would otherwise block ESC on the next open.
   useEffect(() => {
     if (!open) {
-      queueMicrotask(() => {
-        setActiveStep(0);
-        setIsSubmitting(false);
-        setHasCreationSession(false);
-        setProcessingFailed(false);
-        setIsDetachable(false);
-      });
+      queueMicrotask(() => setActiveStep(0));
     }
   }, [open]);
 
@@ -92,9 +78,9 @@ export function MaternityContractDialog({
   }, []);
 
   const requestClose = useCallback(() => {
-    if (isCloseBlocked) return;
+    if (isBusy) return;
     onClose();
-  }, [isCloseBlocked, onClose]);
+  }, [isBusy, onClose]);
 
   const handleWizardSuccess = useCallback(() => {
     // A completed submission is the definitive "done" signal regardless of the
@@ -134,11 +120,11 @@ export function MaternityContractDialog({
             <DialogClose asChild>
               <button
                 type="button"
-                disabled={isCloseBlocked}
+                disabled={isBusy}
                 data-component={`${BASE_DATA_COMPONENT}_close`}
                 className={cn(
                   APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME,
-                  isCloseBlocked && "cursor-not-allowed opacity-50",
+                  isBusy && "cursor-not-allowed opacity-50",
                 )}
               >
                 <X className={APP_DIALOG_CLOSE_ICON_CLASS_NAME} />
@@ -163,7 +149,6 @@ export function MaternityContractDialog({
           onSubmissionStateChange={setIsSubmitting}
           onSessionStateChange={setHasCreationSession}
           onProcessingFailureChange={setProcessingFailed}
-          onDetachableChange={setIsDetachable}
           contentClassName="h-auto flex-1"
           renderLayout={({ content, footer }) => (
             <>

@@ -890,7 +890,7 @@ export default function ClientsPage() {
                 </Alert>
             ) : null}
             <StatsBar
-                name="clients" density="responsive-square"
+                name="clients" density="responsive-square" showDocumentJobs="whenActive"
                 isLoading={isSummaryInitialLoading}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번 달 출산 예정", counter: "명" },

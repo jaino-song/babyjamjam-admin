@@ -108,6 +108,7 @@ import {
   PageSection,
   SectionNav,
   SplitLayout,
+  StatsBar,
   useSplitLayoutSelection,
 } from "@/components/app/v3";
 import { MessagePhonePreview } from "@/components/app/messages/MessagePhonePreview";
@@ -130,6 +131,7 @@ import { StatusBadge } from "@/components/app/ui/status-badge";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { findMessageHistoryClient } from "@/lib/message-history/client-match";
+import { getMessageRecordStatusCounts } from "@/lib/message-record-status-counts";
 import { renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
 import type { TemplateVariable as EditorTemplateVariable } from "@/lib/template/types";
@@ -743,14 +745,15 @@ function getMergedRecordEmptyStateMessage(filter: MessageRecordStatusFilter, has
   return hasSearchQuery ? "조건에 맞는 메시지가 없습니다." : "표시할 메시지가 없습니다.";
 }
 
-function MessageHistorySection() {
+const MESSAGE_RECORD_QUERY_LIMIT = 200;
+
+// Share the list's loaded sources and filters with the page-level status row.
+function useMessageHistoryListState() {
   const [searchValue, setSearchValue] = useState("");
   const [recordStatusFilter, setRecordStatusFilter] = useState<MessageRecordStatusFilter>("all");
   const [relativeDateFilter, setRelativeDateFilter] = useState<MessageHistoryRelativeDateFilter>("all");
   const [dateYear, setDateYear] = useState("");
   const [dateMonth, setDateMonth] = useState("");
-  const [scheduledDetailTab, setScheduledDetailTab] = useState<ScheduledDetailTab>("info");
-  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const deferredSearchValue = useDeferredValue(searchValue);
   const {
     data: historyDataLoaded,
@@ -759,7 +762,7 @@ function MessageHistorySection() {
     isFetching: isFetchingHistory,
     isPaused: isHistoryPaused,
     refetch: refetchHistory,
-  } = useMessageHistory();
+  } = useMessageHistory(MESSAGE_RECORD_QUERY_LIMIT);
   const {
     data: upcomingJobsLoaded,
     isLoading: isLoadingUpcoming,
@@ -767,11 +770,11 @@ function MessageHistorySection() {
     isFetching: isFetchingUpcoming,
     isPaused: isUpcomingPaused,
     refetch: refetchUpcoming,
-  } = useUpcomingMessageTriggerJobs();
+  } = useUpcomingMessageTriggerJobs(MESSAGE_RECORD_QUERY_LIMIT);
   // A failed query only counts as "no data" when no earlier successful load is
   // cached; judged from the data itself, never from !isError.
-  const historyData = historyDataLoaded ?? [];
-  const upcomingJobs = upcomingJobsLoaded ?? [];
+  const historyData = useMemo(() => historyDataLoaded ?? [], [historyDataLoaded]);
+  const upcomingJobs = useMemo(() => upcomingJobsLoaded ?? [], [upcomingJobsLoaded]);
   // The history query is often already cached (TemplateSendForm subscribes to
   // the same key), so isLoading can settle before isLoadingUpcoming does. The
   // two zone lists and the three count pills key off this combined flag so the
@@ -864,25 +867,65 @@ function MessageHistorySection() {
   // Soonest-first, matching the old scheduled section. No date-range filter here
   // on purpose — upcoming sends are always in the future, so the "지난 발송" date
   // filter below only ever applies to zone 2.
-  const filteredUpcomingJobs = useMemo(() => {
-    if (!showUpcomingZone) return [];
+  const matchingUpcomingJobs = useMemo(() => {
     return smsUpcomingJobs
       .filter((job) => matchesScheduledJobQuery(job, deferredSearchValue))
       .sort((left, right) => new Date(left.scheduledFor).getTime() - new Date(right.scheduledFor).getTime());
-  }, [deferredSearchValue, showUpcomingZone, smsUpcomingJobs]);
+  }, [deferredSearchValue, smsUpcomingJobs]);
 
-  const filteredHistoryRecords = useMemo(
+  const matchingHistoryRecords = useMemo(
     () => {
-      if (!showPastZone) return [];
       return historyRecords.filter((record) => {
-        const matchesStatus = pastStatusFilter === "all" || record.status === pastStatusFilter;
         const matchesRelativeDate = matchesHistoryRelativeDate(record.sentAt, relativeDateFilter);
         const matchesDate = matchesHistoryDateParts(record.sentAt, dateYear, dateMonth);
-        return matchesStatus && matchesRelativeDate && matchesDate && matchesHistoryQuery(record, deferredSearchValue);
+        return matchesRelativeDate && matchesDate && matchesHistoryQuery(record, deferredSearchValue);
       });
     },
-    [dateMonth, dateYear, deferredSearchValue, historyRecords, pastStatusFilter, relativeDateFilter, showPastZone]
+    [dateMonth, dateYear, deferredSearchValue, historyRecords, relativeDateFilter]
   );
+
+  const filteredUpcomingJobs = useMemo(
+    () => showUpcomingZone ? matchingUpcomingJobs : [],
+    [matchingUpcomingJobs, showUpcomingZone],
+  );
+  const filteredHistoryRecords = useMemo(
+    () => showPastZone ? matchingHistoryRecords.filter((record) => pastStatusFilter === "all" || record.status === pastStatusFilter) : [],
+    [matchingHistoryRecords, pastStatusFilter, showPastZone],
+  );
+  const statusCounts = getMessageRecordStatusCounts({
+    history: matchingHistoryRecords,
+    upcomingCount: matchingUpcomingJobs.length,
+    historyUnknown: (isHistoryError || isHistoryPaused) && historyDataLoaded === undefined,
+    upcomingUnknown: (isUpcomingError || isUpcomingPaused) && upcomingJobsLoaded === undefined,
+    historyLimited: historyData.length === MESSAGE_RECORD_QUERY_LIMIT,
+    upcomingLimited: upcomingJobs.length === MESSAGE_RECORD_QUERY_LIMIT,
+  });
+
+  return {
+    searchValue, setSearchValue, recordStatusFilter, setRecordStatusFilter,
+    relativeDateFilter, setRelativeDateFilter, dateYear, setDateYear, dateMonth, setDateMonth,
+    deferredSearchValue, historyDataLoaded, isLoading, isHistoryError, isFetchingHistory, isHistoryPaused, refetchHistory,
+    upcomingJobsLoaded, isLoadingUpcoming, isUpcomingError, isFetchingUpcoming, isUpcomingPaused, refetchUpcoming,
+    isPanelLoading, retryHistory, isRetrying, cancelMutation, resendMutation, toast,
+    canManageBranchMessages, canOpenOwnerAdmin, hasDatePartFilter, historyYearOptions,
+    handleDateYearChange, handleDateMonthChange, showUpcomingZone, showPastZone,
+    filteredUpcomingJobs, filteredHistoryRecords, statusCounts,
+  };
+}
+
+function MessageHistorySection({ listState }: { listState: ReturnType<typeof useMessageHistoryListState> }) {
+  const [scheduledDetailTab, setScheduledDetailTab] = useState<ScheduledDetailTab>("info");
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const {
+    searchValue, setSearchValue, recordStatusFilter, setRecordStatusFilter,
+    relativeDateFilter, setRelativeDateFilter, dateYear, setDateYear, dateMonth, setDateMonth,
+    deferredSearchValue, historyDataLoaded, isLoading, isHistoryError, isFetchingHistory, isHistoryPaused, refetchHistory,
+    upcomingJobsLoaded, isLoadingUpcoming, isUpcomingError, isFetchingUpcoming, isUpcomingPaused, refetchUpcoming,
+    isPanelLoading, retryHistory, isRetrying, cancelMutation, resendMutation, toast,
+    canManageBranchMessages, canOpenOwnerAdmin, hasDatePartFilter, historyYearOptions,
+    handleDateYearChange, handleDateMonthChange, showUpcomingZone, showPastZone,
+    filteredUpcomingJobs, filteredHistoryRecords,
+  } = listState;
 
   const combinedRecordIds = useMemo(
     () => [
@@ -1519,6 +1562,7 @@ function MessageHistorySection() {
 }
 
 export default function MessagesPage() {
+  const historyListState = useMessageHistoryListState();
   const locale = useLocale();
   // The section the viewer picked in the nav; until then the `?section=` deep
   // link (e.g. the "자동화 설정 열기" link of a disabled 재발송 button) or 전송하기.
@@ -1992,6 +2036,18 @@ export default function MessagesPage() {
 
   return (
     <PageSection name="desktop_messages_sections">
+      <StatsBar
+        name="desktop_messages_sections"
+        showDocumentJobs="whenActive"
+        isLoading={historyListState.isPanelLoading}
+        items={MESSAGE_RECORD_STATUS_FILTER_TABS.map((tab, colorIndex) => ({
+          icon: tab.value === "upcoming" ? CalendarClock : tab.value === "canceled" ? Ban : History,
+          value: historyListState.statusCounts[tab.value],
+          label: tab.label,
+          counter: "건",
+          colorIndex,
+        }))}
+      />
       <div
         data-slot="page-sections"
         className="flex flex-1 min-h-0 flex-col gap-4 lg:flex-row lg:items-stretch"
@@ -2298,7 +2354,7 @@ export default function MessagesPage() {
           ) : activeSection === "history" ? (
             <MessageApprovalGate dataComponent="desktop_messages_sections_section-content_history-section_approval-gate">
               <section data-component="desktop_messages_sections_section-content_history-section" className="flex min-h-0 flex-1 flex-col">
-                <MessageHistorySection />
+                <MessageHistorySection listState={historyListState} />
               </section>
             </MessageApprovalGate>
           ) : activeSection === "triggers" ? (

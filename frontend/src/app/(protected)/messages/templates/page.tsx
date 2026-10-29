@@ -29,6 +29,7 @@ import {
   FormTextInput,
 } from "@/components/app/ui/form-section";
 import { SECTION_NAV_RAIL_WIDTH_PX } from "@/components/app/v3/SectionNav";
+import { StatsBar } from "@/components/app/v3/StatsBar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -329,11 +330,12 @@ export default function TemplatesPage() {
   return (
     <section
       data-component="desktop_messages_sections_templates"
-      className="flex h-full min-h-0 flex-1 flex-col lg:pl-[calc(var(--message-section-nav-content-offset)*var(--glint-ui-scale,1))]"
+      className="flex h-full min-h-0 flex-1 flex-col gap-6 lg:pl-[calc(var(--message-section-nav-content-offset)*var(--glint-ui-scale,1))]"
       style={{
         "--message-section-nav-content-offset": `${SECTION_NAV_RAIL_WIDTH_PX}px`,
       } as CSSProperties}
     >
+      <StatsBar items={[]} showDocumentJobs="whenActive" name="desktop_messages_sections_templates" />
       <SplitLayout data-component="desktop_messages_sections_templates_split-layout" hasSelection={!!activeTemplateId} onBack={() => setSelectedValue(null)}>
         <ListPanel data-component="desktop_messages_sections_templates_split-layout_list-panel"
           title="지점 템플릿 수정"

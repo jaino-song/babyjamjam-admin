@@ -34,6 +34,11 @@ function buildService() {
         enqueue: jest.fn(),
         enqueueInTransaction: jest.fn(),
         authorizeForDispatchInTransaction: jest.fn(),
+        getSummary: jest.fn(),
+        claimRecovery: jest.fn(),
+        resolveManually: jest.fn(),
+        purgeExpiredAttentionPayloads: jest.fn(),
+        listRecentStaffFailures: jest.fn(),
     };
     const documents = { findByDocumentId: jest.fn() };
     const clients = { findById: jest.fn() };
@@ -120,6 +125,75 @@ describe("EformsignDocumentJobService", () => {
         }));
     });
 
+    it("carries prefillAmounts into the finalize job payload only when given", async () => {
+        const { service, repository, documents } = buildService();
+        documents.findByDocumentId.mockResolvedValue({ documentId: "owned-document", clientId: 7 });
+        repository.enqueue.mockResolvedValue({ job: { id: "job-1" }, existing: false });
+        const prefillAmounts = {
+            fullPrice: 1015000, grant: 812000, actualPrice: 203000, servicePeriod: "20261005 ~ 20261014",
+        };
+
+        await service.enqueueFinalizeDocument({
+            branchId, documentId: "owned-document", requestKey: "request-1", source: "staff", prefillAmounts,
+        });
+        await service.enqueueFinalizeDocument({
+            branchId, documentId: "owned-document", requestKey: "request-2", source: "staff",
+        });
+
+        expect(repository.enqueue).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            payload: { documentId: "owned-document", prefillAmounts },
+        }));
+        expect(repository.enqueue).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            payload: { documentId: "owned-document" },
+        }));
+    });
+
+    it.each([
+        ["a non-object", "1000"],
+        ["an array", [1, 2, 3]],
+        ["null", null],
+        ["a negative amount", { fullPrice: -1, grant: 0, actualPrice: 0 }],
+        ["a fractional amount", { fullPrice: 1000.5, grant: 0, actualPrice: 0 }],
+        ["an unsafe integer amount", { fullPrice: Number.MAX_SAFE_INTEGER + 1, grant: 0, actualPrice: 0 }],
+        ["a string amount", { fullPrice: "1000", grant: 0, actualPrice: 0 }],
+        ["a missing amount", { fullPrice: 1000, grant: 0 }],
+        ["an empty servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "" }],
+        ["a whitespace-only servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "   " }],
+        ["a non-string servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: 7 }],
+        ["an oversized servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "x".repeat(65) }],
+    ])("rejects %s prefillAmounts at enqueue with a 400 before queueing anything", async (_label, prefillAmounts) => {
+        const { service, repository, documents } = buildService();
+        documents.findByDocumentId.mockResolvedValue({ documentId: "owned-document", clientId: 7 });
+
+        await expect(service.enqueueFinalizeDocument({
+            branchId, documentId: "owned-document", requestKey: "request-1", source: "staff",
+            prefillAmounts: prefillAmounts as never,
+        })).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({ code: "VALIDATION_FAILED" }),
+        });
+        expect(repository.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("carries supersedeDocumentId into the create job payload only when given", async () => {
+        const { service, repository, clients } = buildService();
+        clients.findById.mockResolvedValue({ id: 7 });
+        repository.enqueue.mockResolvedValue({ job: { id: "job-1" }, existing: false });
+
+        await service.enqueueCreateDocument({
+            branchId, clientId: 7, contractData: validContractData as never, requestKey: "request-1",
+            supersedeDocumentId: "old-doc",
+        });
+        await service.enqueueCreateDocument({
+            branchId, clientId: 7, contractData: validContractData as never, requestKey: "request-2",
+        });
+
+        expect(repository.enqueue).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            payload: expect.objectContaining({ supersedeDocumentId: "old-doc" }),
+        }));
+        expect(repository.enqueue.mock.calls[1]![0].payload).not.toHaveProperty("supersedeDocumentId");
+    });
+
     it("refuses finalization of a voided (파기) document with a 409 before queueing anything", async () => {
         const { service, repository, documents } = buildService();
         documents.findByDocumentId.mockResolvedValue({
@@ -187,4 +261,42 @@ describe("EformsignDocumentJobService", () => {
             expect(repository.enqueue).not.toHaveBeenCalled();
         },
     );
+
+    it("passes the recovery claim, manual resolve, purge and failure queries straight to the repository", async () => {
+        const { service, repository } = buildService();
+        const input = {
+            jobId: "00000000-0000-4000-8000-000000000001",
+            branchId,
+            userId: "11111111-1111-4111-8111-111111111111",
+            now: new Date("2026-10-22T03:00:00.000Z"),
+        };
+        repository.claimRecovery.mockResolvedValue({ kind: "not_found" });
+        repository.resolveManually.mockResolvedValue({ kind: "invalid_state", status: "queued" });
+        repository.purgeExpiredAttentionPayloads.mockResolvedValue(2);
+        repository.listRecentStaffFailures.mockResolvedValue([]);
+
+        await expect(service.claimRecovery(input)).resolves.toEqual({ kind: "not_found" });
+        await expect(service.resolveManually(input)).resolves.toEqual({ kind: "invalid_state", status: "queued" });
+        await expect(service.purgeExpiredAttentionPayloads(input.now)).resolves.toBe(2);
+        await expect(service.listRecentStaffFailures(input.now)).resolves.toEqual([]);
+
+        expect(repository.claimRecovery).toHaveBeenCalledWith(input);
+        expect(repository.resolveManually).toHaveBeenCalledWith(input);
+        expect(repository.purgeExpiredAttentionPayloads).toHaveBeenCalledWith(input.now);
+        expect(repository.listRecentStaffFailures).toHaveBeenCalledWith(input.now);
+    });
+
+    it("exposes the failed and unresolved summary fields", async () => {
+        const { service, repository } = buildService();
+        const summary = {
+            activeCount: 1,
+            requiresAttentionCount: 2,
+            failedCount: 3,
+            unresolvedCount: 5,
+            unresolvedJobIds: ["job-1"],
+        };
+        repository.getSummary.mockResolvedValue(summary);
+
+        await expect(service.getSummary(branchId)).resolves.toEqual(summary);
+    });
 });

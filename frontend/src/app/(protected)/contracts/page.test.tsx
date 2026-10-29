@@ -148,21 +148,16 @@ describe("ContractsPage contract stats states", () => {
   });
 });
 
-describe("ContractsPage headless finalization fallback", () => {
-  it("does not reopen the reviewer iframe when the backend verdict is unknown", () => {
-    expect(source).toContain("let transportOutcomeUnknown = false");
-    expect(source).toContain("transportOutcomeUnknown = true");
-    expect(source).toContain("if (manualCheckRequired || transportOutcomeUnknown)");
-    expect(source).not.toContain("headless finalize threw, falling back to iframe");
-  });
-
-  // BJJ-319 5-4c: the additive envelope `outcome` is the primary
-  // classification — an UNKNOWN verdict must reach the manual-check recovery
-  // (확인 필요 copy, no reviewer iframe) even if fallbackHint would say
-  // otherwise. Envelopes without the field keep the fallbackHint decision.
-  it("treats an UNKNOWN envelope outcome as a manual check, never the reviewer iframe", () => {
-    expect(source).toContain("const structuredOutcome = readHeadlessOutcome(headless.outcome);");
-    expect(source).toContain('manualCheckRequired = headless.fallbackHint === "manual_check"\n            || structuredOutcome === "UNKNOWN";');
+describe("ContractsPage finalization", () => {
+  // Staff finalization always runs through the job queue; the browser iframe and the
+  // synchronous headless route it used to fall back to are retired 410 tombstones.
+  it("has no iframe or synchronous headless finalization path left", () => {
+    expect(source).not.toContain("StaffCompletionIframeModal");
+    expect(source).not.toContain("finalizeHeadless");
+    expect(source).not.toContain("generateStaffDocument");
+    expect(source).not.toContain("startFinalizeFlow");
+    expect(source).not.toContain('path: "direct"');
+    expect(source).toContain("enqueueFinalizationMutation.mutateAsync");
   });
 });
 
