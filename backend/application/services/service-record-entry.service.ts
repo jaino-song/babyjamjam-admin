@@ -2,6 +2,7 @@ import {
     Injectable,
     Logger,
     NotFoundException,
+    UnauthorizedException,
     BadRequestException,
     ConflictException,
 } from "@nestjs/common";
@@ -32,6 +33,7 @@ import {
 } from "@babyjamjam/shared/utils/service-record-schedule";
 
 import {
+    isServiceRecordAccessTokenUsable,
     ServiceRecordTokenService,
     ServiceRecordTokenContext,
     VerifyPhoneResult,
@@ -387,6 +389,7 @@ export class ServiceRecordEntryService {
                     throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
             }
+            await this.assertTokenStillValid(tx, ctx);
             // The pre-transaction checks above are only an early rejection.
             // The client/case lock can wait behind a submit or finalization,
             // so reread both the case status and locked-day set before the
@@ -539,6 +542,9 @@ export class ServiceRecordEntryService {
                 }
                 record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
             }
+            // Token lock goes after the write-set lock (documented lock order)
+            // and before any write below.
+            await this.assertTokenStillValid(tx, ctx);
             if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (record.branchId !== ctx.branchId) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -939,6 +945,13 @@ export class ServiceRecordEntryService {
     /** Backward-compatible completion acknowledgement. Snapshot creation is scheduler-owned. */
     async finalize(ctx: ServiceRecordTokenContext) {
         const record = await this.resolveCase(ctx);
+        // `recompute` opens its own transaction with its own lock order, so the
+        // token is checked in a separate short transaction right before it. This
+        // narrows, but does not serialise, the window between the check and the
+        // recompute's writes.
+        await this.prisma.$transaction(async (tx) => {
+            await this.assertTokenStillValid(tx, ctx);
+        });
         const updated = await this.lifecycleService.recompute(record.id);
         const documentIds = await this.prisma.eformsign_doc.findMany({
             where: { serviceRecordCaseId: record.id, documentKind: "service_record_snapshot" },
@@ -953,6 +966,41 @@ export class ServiceRecordEntryService {
             chunkCount: documentIds.length,
             documentIds: documentIds.map((document) => document.documentId),
         };
+    }
+
+    /**
+     * Re-check the caregiver access token inside a write transaction. The guard
+     * resolves it once per request, so an admin revoke/replace or an expiry that
+     * lands between that check and the write would otherwise still commit.
+     *
+     * The token row is locked (`FOR UPDATE`) so a concurrent revoke/replace
+     * serialises with this write. Call it AFTER the service-record write-set /
+     * case lock: `service-record-write-lock.policy` fixes client -> employees ->
+     * case -> schedules/assignments/days, and `schedule-change.service` takes
+     * those locks before updating token rows, so locking the token earlier here
+     * would invert that order.
+     *
+     * Refuses exactly as the guard does for an unusable token. The current-provider
+     * / phone check stays in `resolveAccess`; only row state and ownership are
+     * re-checked here.
+     */
+    private async assertTokenStillValid(
+        tx: Prisma.TransactionClient,
+        ctx: ServiceRecordTokenContext,
+    ): Promise<void> {
+        // Narrow unit doubles that expose no token lock keep the old behaviour;
+        // the real token service always has it.
+        if (typeof this.tokenService.lockAccessTokenForWrite !== "function") return;
+        const token = await this.tokenService.lockAccessTokenForWrite(tx, ctx.tokenId);
+        if (
+            !token
+            || !isServiceRecordAccessTokenUsable(token)
+            || token.scheduleId !== ctx.scheduleId
+            || token.employeeId !== ctx.employeeId
+        ) {
+            this.logger.warn("Service record write refused: access token no longer valid inside transaction");
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        }
     }
 
     private async resolveCase(ctx: ServiceRecordTokenContext) {
