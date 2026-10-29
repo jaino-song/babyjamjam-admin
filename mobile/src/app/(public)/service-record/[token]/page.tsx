@@ -22,6 +22,7 @@ import { ToastAction } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
+import { isLockedByOtherCaregiver } from "@/components/app/service-record/screen/ReviewStep";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
 import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
 import { type KrBusinessDayCalendar, type ServiceDayPolicy } from "@/lib/date/business-days";
@@ -38,6 +39,7 @@ import {
 } from "@/lib/observability/capture-service-record-error";
 
 const MOM_APPROVAL_APPROVED = "approved";
+const AUTH_LOST_PHONE_NOTICE = "안전을 위해 휴대폰 번호를 다시 확인해 주세요.";
 const DRAFT_STORAGE_PREFIX = "daily-service-record-draft";
 const FINALIZED_RECORD_STATUSES = new Set([
     "FINALIZING",
@@ -189,6 +191,7 @@ export default function ServiceRecordPage() {
     const [phone, setPhone] = useState("");
     const [phoneError, setPhoneError] = useState<string | null>(null);
     const [phoneFieldError, setPhoneFieldError] = useState<string | null>(null);
+    const [phoneNotice, setPhoneNotice] = useState<string | null>(null);
     const [ctx, setCtx] = useState<TokenServiceRecordContext | null>(null);
     const [header, setHeader] = useState<Record<string, string>>({ deliveryType: "자연분만" });
     const [day, setDay] = useState(1);
@@ -209,6 +212,8 @@ export default function ServiceRecordPage() {
         options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
     ) => {
         setScreen(nextScreen);
+        // The submit dialog describes the day that was open when it was raised; any navigation retires it.
+        setSubmitModalOpen(false);
         if (options.day !== undefined) setDay(options.day);
         if (options.pageIdx !== undefined) setPageIdx(options.pageIdx);
         if (options.mode && options.mode !== "none") {
@@ -359,9 +364,13 @@ export default function ServiceRecordPage() {
             }
 
             const targetDay = Math.min(Math.max(target.day, 1), Math.max(ctx.totalSessions, 1));
-            const targetPageIdx = Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             const session = ctx.sessions.find((row) => row.sessionIndex === targetDay);
             const isLockedSession = Boolean(session?.locked);
+            // A day another caregiver submitted is read-only: land on its review page, never on an input page.
+            const isOtherCaregiverSession = isLockedByOtherCaregiver(session, ctx);
+            const targetPageIdx = isOtherCaregiverSession
+                ? DAY_PAGES.length - 1
+                : Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             setEditing(isLockedSession);
             setMomSignature(null);
             if (isLockedSession && session) {
@@ -430,6 +439,22 @@ export default function ServiceRecordPage() {
         },
         [serviceCalendar, ctx, plannedDateVectorValid],
     );
+    /**
+     * A write refused for auth (401 / 403) means the caregiver's access is gone: send them back to phone verification.
+     * The stored form state and `ctx` are left alone, so a new day's draft survives the round trip.
+     * Returns true when the response was an auth refusal, so the caller stops without an error notification.
+     */
+    function handleAuthLost(res: Response): boolean {
+        if (res.status !== 401 && res.status !== 403) return false;
+        setScheduleChangeModalOpen(false);
+        setScheduleChangePreview(null);
+        setScheduleChangeBusy(false);
+        setPhoneError(null);
+        setPhoneFieldError(null);
+        setPhoneNotice(AUTH_LOST_PHONE_NOTICE);
+        navigateTo("phone", { mode: "replace" });
+        return true;
+    }
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
         setBusy(true); setPhoneError(null); setPhoneFieldError(null);
@@ -439,6 +464,7 @@ export default function ServiceRecordPage() {
             });
             const data = await res.json();
             if (data?.ok) {
+                setPhoneNotice(null);
                 await loadContext("push");
             } else {
                 // The mismatch belongs to the phone field, so it shows in that field's message slot.
@@ -473,6 +499,7 @@ export default function ServiceRecordPage() {
         try {
             const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
             if (!response.ok) {
+                if (handleAuthLost(response)) return;
                 const body: unknown = await response.json().catch(() => ({}));
                 setErrorNotificationMessage(problemMessage(response.status, body, "기본정보 저장에 실패했어요."));
                 return;
@@ -517,6 +544,11 @@ export default function ServiceRecordPage() {
 
     async function submitDay() {
         if (defaultsGated) return;
+        // Same rule as the review page: another caregiver's submitted day is never resubmitted from here.
+        if (isLockedByOtherCaregiver(ctx?.sessions.find((session) => session.sessionIndex === day), ctx)) {
+            setSubmitModalOpen(false);
+            return;
+        }
         // Captured before any await: the toast fires after the context reloads.
         const submittedDay = day;
         const wasEditing = editing;
@@ -535,6 +567,7 @@ export default function ServiceRecordPage() {
             };
             const res = await api(`/sessions/${day}/submit`, { method: "POST", body: JSON.stringify(body) });
             if (!res.ok) {
+                if (handleAuthLost(res)) return;
                 const e: unknown = await res.json().catch(() => ({}));
                 const normalized = normalizeApiError(
                     { response: { status: res.status, data: e } },
@@ -576,6 +609,7 @@ export default function ServiceRecordPage() {
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change/preview");
+            if (handleAuthLost(res)) return;
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 setScheduleChangeModalOpen(false);
@@ -601,6 +635,7 @@ export default function ServiceRecordPage() {
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change", { method: "POST" });
+            if (handleAuthLost(res)) return;
             const data = await res.json().catch(() => ({}));
             // Registered-code comparison only — the raw body text is never read.
             if (res.ok || (res.status === 409 && problemCode(normalizeApiError(
@@ -704,6 +739,7 @@ export default function ServiceRecordPage() {
             phone={phone}
             phoneError={phoneError}
             phoneFieldError={phoneFieldError}
+            phoneNotice={phoneNotice}
             context={ctx}
             header={header}
             day={day}

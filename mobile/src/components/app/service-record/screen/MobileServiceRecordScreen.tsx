@@ -68,6 +68,7 @@ export function MobileServiceRecordScreen({
     phone,
     phoneError,
     phoneFieldError,
+    phoneNotice,
     context,
     header,
     day,
@@ -182,6 +183,7 @@ export function MobileServiceRecordScreen({
                     phone={phone}
                     phoneError={phoneError}
                     phoneFieldError={phoneFieldError}
+                    phoneNotice={phoneNotice}
                     busy={busy}
                     onPhoneChange={onPhoneChange}
                     onSubmitPhone={onSubmitPhone}

@@ -293,6 +293,9 @@ async function fillDayUpToReview(user: User, feeding: FeedingCounts = { breast: 
     await screen.findByText(PINNED_COPY.reviewTitle);
 }
 
+/** The context's caregiver (makeContext employee id 7) submitted the first day. */
+const ownSubmittedFirstSession = () => ({ ...makeSubmittedFirstSession(), employeeId: 7 });
+
 describe("service-record page contract", () => {
     const originalFetch = global.fetch;
 
@@ -608,7 +611,7 @@ describe("service-record page contract", () => {
 
         it("6. a submitted day re-opens on the review with the answers the server holds", async () => {
             const { user } = await renderPage({
-                context: makeContext({ header: SAVED_HEADER, sessions: [makeSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
+                context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
 
             await user.click(await screen.findByRole("button", dayCard(1)));
@@ -617,9 +620,25 @@ describe("service-record page contract", () => {
             expectSubmittedReview();
         });
 
+        it("6. another caregiver's submitted day opens read-only: the note, no 수정, no submit", async () => {
+            const { user } = await renderPage({
+                context: makeContext({
+                    header: SAVED_HEADER,
+                    sessions: [{ ...makeSubmittedFirstSession(), employeeId: 99 }, makeSession(2), makeSession(3)],
+                }),
+            });
+
+            await user.click(await screen.findByRole("button", dayCard(1)));
+
+            expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(screen.getByText("다른 제공인력이 제출한 회차라 수정할 수 없어요.")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: /수정$/ })).toBeNull();
+            expect(screen.queryByRole("button", { name: PINNED_COPY.reviewSubmit })).toBeNull();
+        });
+
         it("6. re-submitting a re-opened day sends the server's answers unchanged and keeps the saved signature", async () => {
             const { api, user } = await renderPage({
-                context: makeContext({ header: SAVED_HEADER, sessions: [makeSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
+                context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
             await user.click(await screen.findByRole("button", dayCard(1)));
             await screen.findByText(PINNED_COPY.reviewTitle);
@@ -658,7 +677,7 @@ describe("service-record page contract", () => {
 
         it("6. 신생아 수정 on the review of a submitted day opens the 신생아 page, and a change made there is what gets re-submitted", async () => {
             const { api, user } = await renderPage({
-                context: makeContext({ header: SAVED_HEADER, sessions: [makeSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
+                context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
             await user.click(await screen.findByRole("button", dayCard(1)));
             await screen.findByText(PINNED_COPY.reviewTitle);

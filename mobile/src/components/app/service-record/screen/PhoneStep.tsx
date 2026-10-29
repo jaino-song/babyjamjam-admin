@@ -26,6 +26,8 @@ export type PhoneStepProps = Pick<
     ServiceRecordWizardProps,
     "data-component" | "phone" | "phoneError" | "phoneFieldError" | "busy" | "onPhoneChange" | "onSubmitPhone"
 > & {
+    /** A muted line above the field (not an alert); null on a normal first visit. */
+    phoneNotice?: string | null;
     /** The phone field's interaction state, owned by the screen root so it outlives this step (SRW:526-528, :535). */
     fieldState: PhoneFieldState;
 };
@@ -36,6 +38,7 @@ export function PhoneStep({
     phone,
     phoneError,
     phoneFieldError,
+    phoneNotice,
     busy,
     onPhoneChange,
     onSubmitPhone,
@@ -79,6 +82,11 @@ export function PhoneStep({
                     {PHONE_TITLE}
                 </div>
                 <p data-component={child("body_phone-help")} className="text-sm text-v3-text-muted">{PHONE_HELP_COPY}</p>
+                {phoneNotice ? (
+                    <p data-component={child("body_phone-notice")} className="text-sm text-v3-text-muted">
+                        {phoneNotice}
+                    </p>
+                ) : null}
                 {phoneError ? (
                     <p
                         data-component={child("body_phone-error")}
