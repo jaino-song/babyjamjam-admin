@@ -2,6 +2,8 @@ import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { allQueryKeyRoots, queryKeyRootsForKinds } from "@/lib/realtime/entity-query-keys";
+
 import { useRealtimeInvalidation } from "../useRealtimeInvalidation";
 
 // jsdom has no EventSource — provide a controllable fake so we can drive
@@ -76,6 +78,9 @@ describe("useRealtimeInvalidation", () => {
   const invalidatedKeys = () =>
     invalidateSpy.mock.calls.map(([filters]) => (filters as { queryKey: unknown[] }).queryKey[0]);
 
+  // First segment of each root the map assigns to these kinds, in invalidation order.
+  const rootNames = (kinds: string[]) => queryKeyRootsForKinds(kinds).map((root) => root[0]);
+
   const emitEntityChanged = (source: MockEventSource, entities: unknown) =>
     act(() => source.emit("entity-changed", { entities }));
 
@@ -120,7 +125,7 @@ describe("useRealtimeInvalidation", () => {
     emitEntityChanged(source, ["employee"]);
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["employees"] });
-    expect(invalidatedKeys()).toEqual(["employees"]);
+    expect(invalidatedKeys()).toEqual(rootNames(["employee"]));
   });
 
   test("invalidates the union of roots when several kinds arrive together", () => {
@@ -130,7 +135,7 @@ describe("useRealtimeInvalidation", () => {
 
     emitEntityChanged(source, ["client", "message"]);
 
-    expect(invalidatedKeys()).toEqual(["clients", "dashboard", "message-triggers"]);
+    expect(invalidatedKeys()).toEqual(rootNames(["client", "message"]));
   });
 
   test("ignores unknown kinds and malformed payloads without invalidating or scheduling a refresh", () => {
@@ -178,23 +183,24 @@ describe("useRealtimeInvalidation", () => {
       jest.advanceTimersByTime(1000);
     });
     emitEntityChanged(source, ["message"]);
-    expect(invalidatedKeys()).toEqual(["employees", "message-triggers"]);
+    const firstWindow = rootNames(["employee", "message"]);
+    // Both kinds have fired immediately: employee's roots, then message's not already seen.
+    expect(invalidatedKeys()).toEqual([...rootNames(["employee"]), ...rootNames(["message"])]);
 
     // The first event's timer fires at +1500 ms and covers both kinds; no second timer.
     act(() => {
       jest.advanceTimersByTime(500);
     });
-    expect(invalidatedKeys()).toEqual([
-      "employees",
-      "message-triggers",
-      "employees",
-      "message-triggers",
-    ]);
+    expect(invalidatedKeys().slice(-firstWindow.length)).toEqual(firstWindow);
+    // Two immediate invalidations plus one trailing refresh of the union.
+    const expectedCalls =
+      rootNames(["employee"]).length + rootNames(["message"]).length + firstWindow.length;
+    expect(invalidateSpy).toHaveBeenCalledTimes(expectedCalls);
 
     act(() => {
       jest.advanceTimersByTime(5000);
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(4);
+    expect(invalidateSpy).toHaveBeenCalledTimes(expectedCalls);
   });
 
   test("a new event after the trailing refresh starts a fresh window", () => {
@@ -213,10 +219,10 @@ describe("useRealtimeInvalidation", () => {
 
     // The second window must not replay the first window's kind.
     expect(invalidatedKeys()).toEqual([
-      "employees",
-      "employees",
-      "message-triggers",
-      "message-triggers",
+      ...rootNames(["employee"]),
+      ...rootNames(["employee"]),
+      ...rootNames(["message"]),
+      ...rootNames(["message"]),
     ]);
   });
 
@@ -282,21 +288,7 @@ describe("useRealtimeInvalidation", () => {
     const second = MockEventSource.instances[1];
     act(() => second.fireOpen());
 
-    const keys = invalidatedKeys();
-    expect([...keys].sort()).toEqual(
-      [
-        "clients",
-        "dashboard",
-        "eformsign-client-names",
-        "eformsign-docs",
-        "eformsign-document-jobs",
-        "eformsign-documents",
-        "eformsign-status-counts",
-        "employees",
-        "message-triggers",
-        "service-records",
-      ].sort(),
-    );
+    expect(invalidatedKeys()).toEqual(allQueryKeyRoots().map((root) => root[0]));
     // Never an unfiltered invalidate.
     expect(invalidateSpy.mock.calls.every(([filters]) => Boolean(filters?.queryKey))).toBe(true);
   });
@@ -374,7 +366,7 @@ describe("useRealtimeInvalidation", () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
 
     emitEntityChanged(second, ["employee"]);
-    expect(invalidatedKeys()).toEqual(["employees"]);
+    expect(invalidatedKeys()).toEqual(rootNames(["employee"]));
   });
 
   test("closes the source and clears every timer on unmount", () => {
