@@ -79,7 +79,17 @@ export class UpdateEformsignDocStatusUsecase {
             return { document: existing, applied: false };
         }
 
-        const updatedDate = params.sourceUpdatedDate ?? existing.updatedDate;
+        // The entity refuses updatedDate < createdDate, and createdDate is the local write
+        // time, which can be later than the vendor's updated_date. Clamp like the webhook
+        // and unassigned-mirror paths do. The stale checks above ran against the original
+        // source time; `existing.updatedDate >= existing.createdDate`, so a clamped value is
+        // never newer than the stored row and the CAS below simply reports it as not applied.
+        const updatedDate = params.sourceUpdatedDate
+            ? new Date(Math.max(
+                params.sourceUpdatedDate.getTime(),
+                existing.createdDate.getTime(),
+            ))
+            : existing.updatedDate;
 
         // Reconstitute entity with updated fields
         const updated = EformsignDocEntity.reconstitute({

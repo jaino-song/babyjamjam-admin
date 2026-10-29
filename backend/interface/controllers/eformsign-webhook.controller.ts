@@ -1,6 +1,9 @@
 import { Body, Controller, Post, HttpCode, HttpStatus, Logger, ServiceUnavailableException, UseGuards } from "@nestjs/common";
 import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
-import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
+import {
+    EformsignWebhookService,
+    type EformsignWebhookProcessResult,
+} from "application/services/eformsign-webhook.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import {
     EFORMSIGN_WEBHOOK_OUTCOME,
@@ -11,6 +14,7 @@ import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { isEformsignDocumentAbsentError } from "infrastructure/api/eformsign-api.error";
+import type { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { createEformsignGlobalWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 
@@ -136,12 +140,30 @@ export class EformsignWebhookController {
                         return { success: true };
                     }
                     if (!this.isWebhookCurrentEnough(payload, mirroredDocument.updated_date)) {
+                        // The branch-owned summary is the webhook CAS's to write and this
+                        // delivery is being dropped, so a document eformsign completed right
+                        // after it would stay at its last step forever (no doc_complete is
+                        // guaranteed to follow). Claim the completion from the stored detail.
+                        const claim = await this.claimCompletionFromStaleDrop(
+                            documentId,
+                            mirroredDocument,
+                        );
+                        const claimed =
+                            claim?.completionClaim === "claimed"
+                            && Boolean(claim.completionBranchId);
                         await this.recordDroppedWebhook(
                             payload,
                             documentId,
-                            EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
-                            "mirror is newer",
+                            claimed
+                                ? EFORMSIGN_WEBHOOK_OUTCOME.COMPLETION_CLAIMED
+                                : EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
+                            claimed
+                                ? "mirror is newer; completion claimed from the stored detail"
+                                : "mirror is newer",
                         );
+                        if (claimed) {
+                            await this.webhookService.publishLocalDocumentChange(documentId);
+                        }
                         return { success: true };
                     }
                     await this.webhookService.processWebhook(payload, {
@@ -249,6 +271,22 @@ export class EformsignWebhookController {
                 dropReason: sanitizeEformsignErrorMessage(error),
             };
         }
+    }
+
+    private async claimCompletionFromStaleDrop(
+        documentId: string,
+        mirroredDocument: EformsignApiDocumentResponse,
+    ): Promise<EformsignWebhookProcessResult | undefined> {
+        const statusType = normalizeEformsignStatusCode(
+            mirroredDocument.current_status?.status_type,
+        );
+        if (!COMPLETED_EFORMSIGN_STATUS_TYPES.has(statusType)) {
+            return undefined;
+        }
+        return this.webhookService.claimCompletionFromStoredDetail(
+            documentId,
+            mirroredDocument,
+        );
     }
 
     private async recordDroppedWebhook(

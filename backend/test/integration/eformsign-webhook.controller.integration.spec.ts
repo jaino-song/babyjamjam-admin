@@ -17,7 +17,10 @@ describe("EformsignWebhookController (Integration)", () => {
     let controller: EformsignWebhookController;
     let webhookService: jest.Mocked<Pick<
         EformsignWebhookService,
-        "processWebhook" | "publishCompletionEvent" | "publishLocalDocumentChange"
+        | "processWebhook"
+        | "publishCompletionEvent"
+        | "publishLocalDocumentChange"
+        | "claimCompletionFromStoredDetail"
     >>;
     let webhookEventWriter: jest.Mocked<Pick<EformsignWebhookEventWriter, "append">>;
     let documentMirrorService: jest.Mocked<Pick<
@@ -77,6 +80,7 @@ describe("EformsignWebhookController (Integration)", () => {
             }),
             publishCompletionEvent: jest.fn(),
             publishLocalDocumentChange: jest.fn(),
+            claimCompletionFromStoredDetail: jest.fn().mockResolvedValue(undefined),
         };
         const mockDocumentMirrorService = {
             syncDocument: jest.fn().mockResolvedValue(undefined),
@@ -167,28 +171,124 @@ describe("EformsignWebhookController (Integration)", () => {
         }));
     });
 
-    it("records an older delivery as one stale-event drop", async () => {
-        const stalePayload: EformsignWebhookPayloadDto = {
+    describe("a stale non-completion delivery", () => {
+        // doc_accept_participant (062) arrives; eformsign auto-completes the document
+        // milliseconds later, so the freshly fetched detail is newer than the webhook.
+        const staleAcceptPayload: EformsignWebhookPayloadDto = {
             ...payload,
+            webhook_id: "webhook-stale-1",
             document: {
                 ...payload.document!,
-                status: "doc_decline",
+                status: "doc_accept_participant",
                 updated_date: mirroredDocument.updated_date - 1,
             },
         };
+        const completedDetail = {
+            ...mirroredDocument,
+            current_status: { ...mirroredDocument.current_status, status_type: "003" },
+        };
 
-        await expect(controller.handleWebhook(stalePayload)).resolves.toEqual({ success: true });
+        it("records an older delivery as one stale-event drop when the stored detail is not completed", async () => {
+            documentMirrorService.getStoredDetail.mockResolvedValue({
+                ...mirroredDocument,
+                current_status: { ...mirroredDocument.current_status, status_type: "060" },
+            });
+            const stalePayload: EformsignWebhookPayloadDto = {
+                ...payload,
+                document: {
+                    ...payload.document!,
+                    status: "doc_decline",
+                    updated_date: mirroredDocument.updated_date - 1,
+                },
+            };
 
-        expect(webhookService.processWebhook).not.toHaveBeenCalled();
-        expect(webhookEventWriter.append).toHaveBeenCalledTimes(1);
-        expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
-            webhookId: "webhook-1",
-            documentId: "doc-1",
-            rawStatus: "doc_decline",
-            sourceUpdatedDate: new Date(mirroredDocument.updated_date - 1),
-            outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
-            outcomeReason: "mirror is newer",
-        }));
+            await expect(controller.handleWebhook(stalePayload)).resolves.toEqual({ success: true });
+
+            expect(webhookService.processWebhook).not.toHaveBeenCalled();
+            expect(webhookService.claimCompletionFromStoredDetail).not.toHaveBeenCalled();
+            expect(webhookService.publishLocalDocumentChange).not.toHaveBeenCalled();
+            expect(webhookEventWriter.append).toHaveBeenCalledTimes(1);
+            expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
+                webhookId: "webhook-1",
+                documentId: "doc-1",
+                rawStatus: "doc_decline",
+                sourceUpdatedDate: new Date(mirroredDocument.updated_date - 1),
+                outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
+                outcomeReason: "mirror is newer",
+            }));
+        });
+
+        it.each(["060", "070"])(
+            "does not claim completion when the stored detail is %s",
+            async (statusType) => {
+                documentMirrorService.getStoredDetail.mockResolvedValue({
+                    ...mirroredDocument,
+                    current_status: { ...mirroredDocument.current_status, status_type: statusType },
+                });
+
+                await expect(controller.handleWebhook(staleAcceptPayload)).resolves.toEqual({ success: true });
+
+                expect(webhookService.claimCompletionFromStoredDetail).not.toHaveBeenCalled();
+                expect(webhookService.processWebhook).not.toHaveBeenCalled();
+                expect(webhookService.publishLocalDocumentChange).not.toHaveBeenCalled();
+                expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
+                    outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
+                    outcomeReason: "mirror is newer",
+                }));
+            },
+        );
+
+        it("claims completion from the stored detail and publishes when the claim lands", async () => {
+            documentMirrorService.getStoredDetail.mockResolvedValue(completedDetail);
+            webhookService.claimCompletionFromStoredDetail.mockResolvedValue({
+                completionClaim: "claimed",
+                completionBranchId: "branch-1",
+            });
+
+            await expect(controller.handleWebhook(staleAcceptPayload)).resolves.toEqual({ success: true });
+
+            expect(webhookService.claimCompletionFromStoredDetail).toHaveBeenCalledTimes(1);
+            expect(webhookService.claimCompletionFromStoredDetail).toHaveBeenCalledWith(
+                "doc-1",
+                completedDetail,
+            );
+            expect(webhookService.processWebhook).not.toHaveBeenCalled();
+            expect(webhookService.publishLocalDocumentChange).toHaveBeenCalledWith("doc-1");
+            expect(webhookEventWriter.append).toHaveBeenCalledTimes(1);
+            expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
+                webhookId: "webhook-stale-1",
+                documentId: "doc-1",
+                rawStatus: "doc_accept_participant",
+                sourceUpdatedDate: new Date(mirroredDocument.updated_date - 1),
+                outcome: EFORMSIGN_WEBHOOK_OUTCOME.COMPLETION_CLAIMED,
+                outcomeReason: expect.stringContaining("stored detail"),
+            }));
+        });
+
+        it.each([
+            ["duplicate", { completionClaim: "duplicate", completionBranchId: "branch-1" }],
+            ["stale", { completionClaim: "stale", completionBranchId: "branch-1" }],
+            ["missing", { completionClaim: "missing", completionBranchId: "branch-1" }],
+            ["an unassigned row", undefined],
+        ] as const)(
+            "does not publish and still records the stale drop when the claim result is %s",
+            async (_label, claimResult) => {
+                documentMirrorService.getStoredDetail.mockResolvedValue(completedDetail);
+                webhookService.claimCompletionFromStoredDetail.mockResolvedValue(
+                    claimResult as never,
+                );
+
+                await expect(controller.handleWebhook(staleAcceptPayload)).resolves.toEqual({ success: true });
+
+                expect(webhookService.claimCompletionFromStoredDetail).toHaveBeenCalledTimes(1);
+                expect(webhookService.publishLocalDocumentChange).not.toHaveBeenCalled();
+                expect(webhookEventWriter.append).toHaveBeenCalledTimes(1);
+                expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
+                    outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
+                    outcomeReason: "mirror is newer",
+                }));
+            },
+        );
     });
 
     it("records an unavailable local mirror as one mirror-failed delivery", async () => {

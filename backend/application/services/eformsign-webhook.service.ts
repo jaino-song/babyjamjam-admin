@@ -388,6 +388,54 @@ export class EformsignWebhookService {
         this.eventBus.emit({ branchId, documentId, reason });
     }
 
+    /**
+     * Heal a branch-owned row whose last delivery was dropped as stale while the stored
+     * detail already shows the document completed.
+     *
+     * The non-completion webhook path syncs the detail with `skipBranchOwnedProjection`, so
+     * the summary columns are left to the webhook CAS. eformsign can auto-complete a
+     * document milliseconds after its last status webhook, which makes the freshly fetched
+     * detail newer than that webhook: the controller drops it as stale, no `doc_complete`
+     * ever follows, and nothing else projects the summary. This applies the same completion
+     * claim a `doc_complete` webhook would, sourced from the stored detail, with completion
+     * effects deferred because the mirror sync's detail-driven reconciler already ran them.
+     *
+     * Returns undefined when there is nothing to claim: the detail is not completed, the row
+     * is unassigned (it has no branch to key the claim by), or no row exists.
+     */
+    async claimCompletionFromStoredDetail(
+        documentId: string,
+        mirroredDocument: EformsignApiDocumentResponse,
+    ): Promise<EformsignWebhookProcessResult | undefined> {
+        const mirroredStatusType = normalizeEformsignStatusCode(
+            mirroredDocument.current_status?.status_type,
+        );
+        if (!COMPLETED_STATUS_CODES.has(mirroredStatusType)) {
+            return undefined;
+        }
+        const localDocument = await this.findLocalDocument(documentId);
+        if (!localDocument || localDocument.branchId === null) {
+            return undefined;
+        }
+        const branchId = localDocument.branchId;
+        const claimResult = await this.claimDocumentCompletion(
+            branchId,
+            documentId,
+            mirroredDocument,
+            "stored_detail",
+            mirroredDocument.document_name,
+            mirroredDocument.template?.name,
+            webhookSourceUpdatedDate(mirroredDocument.updated_date),
+        );
+        if (claimResult === "claimed") {
+            await this.reconcileDeferredServiceRecordSnapshotCompletion(
+                documentId,
+                mirroredDocument.template?.id,
+            );
+        }
+        return { completionClaim: claimResult, completionBranchId: branchId };
+    }
+
     async publishLocalDocumentChange(documentId: string): Promise<void> {
         const branchId = await this.eformsignDocRepository
             .findBranchIdByDocumentId(documentId);

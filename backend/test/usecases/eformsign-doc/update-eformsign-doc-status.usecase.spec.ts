@@ -221,6 +221,28 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
+    it("clamps a vendor timestamp that precedes the row's createdDate instead of throwing", async () => {
+        // The row's createdDate is the local write time, which can be later than the vendor's
+        // updated_date; the entity refuses updatedDate < createdDate, which used to fail every
+        // same-status (060 -> 060) doc_request_participant webhook.
+        const existing = createDocEntity("060");
+        const sourceUpdatedDate = new Date(existing.createdDate.getTime() - 60_000);
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(existing);
+        eformsignDocRepository.updateIfSourceNewer.mockImplementation(
+            (_branchId, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
+
+        await expect(usecase.executeWithOutcome(branchId, {
+            documentId,
+            statusType: "060",
+            statusDetail: "서명 대기",
+            sourceUpdatedDate,
+        })).resolves.toEqual(expect.objectContaining({ applied: true }));
+
+        const persisted = eformsignDocRepository.updateIfSourceNewer.mock.calls[0]![1] as EformsignDocEntity;
+        expect(persisted.updatedDate).toEqual(existing.createdDate);
+    });
+
     it("stores the vendor timestamp and enables the repository CAS for a current webhook", async () => {
         const sourceUpdatedDate = new Date("2026-05-03T00:00:00.000Z");
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
