@@ -11,6 +11,8 @@ export const ROOT_COMPONENT_REQUIREMENTS = Object.freeze([
     importPath: "@/components/ui/toaster",
     sourceFile: "mobile/src/components/ui/toaster.tsx",
     mountFile: "mobile/src/components/app/root/mobile-shell-providers.tsx",
+    // The public caregiver record route sits outside the shell providers, so it mounts its own Toaster.
+    additionalMountFiles: Object.freeze(["mobile/src/app/(public)/service-record/[token]/layout.tsx"]),
     exportName: "Toaster",
   }),
 ]);
@@ -90,10 +92,13 @@ function requiredEntryErrors(requirement, manifest) {
   return errors;
 }
 
+function mountFilesFor(requirement) {
+  return [requirement.mountFile, ...(requirement.additionalMountFiles ?? [])];
+}
+
 function requiredSourceErrors(requirement, sources) {
   const errors = [];
   const source = sourceText(sources, requirement.sourceFile);
-  const mountSource = sourceText(sources, requirement.mountFile);
 
   if (typeof source !== "string") {
     errors.push(`Missing source for root component ${requirement.sourceFile}.`);
@@ -108,28 +113,32 @@ function requiredSourceErrors(requirement, sources) {
     }
   }
 
-  if (typeof mountSource !== "string") {
-    errors.push(`Missing root mount source ${requirement.mountFile}.`);
-    return errors;
-  }
-
   const importPattern = new RegExp(
     String.raw`import\s*\{\s*${escapeRegExp(requirement.exportName)}\s*\}\s*from\s*["']${escapeRegExp(requirement.importPath)}["']`,
     "g",
   );
   const mountPattern = new RegExp(`<${escapeRegExp(requirement.name)}\\b[^>]*>`, "g");
-  const importCount = countMatches(mountSource, importPattern);
-  const mountCount = countMatches(mountSource, mountPattern);
 
-  if (importCount !== 1) {
-    errors.push(
-      `Root mount ${requirement.mountFile} must import ${requirement.name} exactly once (found ${importCount}).`,
-    );
-  }
-  if (mountCount !== 1) {
-    errors.push(
-      `Root mount ${requirement.mountFile} must render ${requirement.name} exactly once (found ${mountCount}).`,
-    );
+  for (const mountFile of mountFilesFor(requirement)) {
+    const mountSource = sourceText(sources, mountFile);
+    if (typeof mountSource !== "string") {
+      errors.push(`Missing root mount source ${mountFile}.`);
+      continue;
+    }
+
+    const importCount = countMatches(mountSource, importPattern);
+    const mountCount = countMatches(mountSource, mountPattern);
+
+    if (importCount !== 1) {
+      errors.push(
+        `Root mount ${mountFile} must import ${requirement.name} exactly once (found ${importCount}).`,
+      );
+    }
+    if (mountCount !== 1) {
+      errors.push(
+        `Root mount ${mountFile} must render ${requirement.name} exactly once (found ${mountCount}).`,
+      );
+    }
   }
 
   return errors;
@@ -143,12 +152,15 @@ function duplicateMountErrors(requirement, sources) {
       Array.from(source.matchAll(mountPattern), () => relativePath),
     );
 
-  if (productionMounts.length === 1) {
+  const expected = mountFilesFor(requirement);
+  const exact = productionMounts.length === expected.length
+    && expected.every((mountFile) => productionMounts.filter((found) => found === mountFile).length === 1);
+  if (exact) {
     return [];
   }
 
   return [
-    `Mobile production sources must render root ${requirement.name} exactly once (found ${productionMounts.length}: ${productionMounts.join(", ") || "none"}).`,
+    `Mobile production sources must render root ${requirement.name} exactly once in each of ${expected.join(", ")} and nowhere else (found ${productionMounts.length}: ${productionMounts.join(", ") || "none"}).`,
   ];
 }
 

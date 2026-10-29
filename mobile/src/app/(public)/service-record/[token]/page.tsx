@@ -18,6 +18,8 @@ import type {
 
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
+import { ToastAction } from "@/components/ui/toaster";
+import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
@@ -515,6 +517,9 @@ export default function ServiceRecordPage() {
 
     async function submitDay() {
         if (defaultsGated) return;
+        // Captured before any await: the toast fires after the context reloads.
+        const submittedDay = day;
+        const wasEditing = editing;
         const serviceDate = (draft["_date"] as string) ?? defaultDate(day);
         setBusy(true);
         try {
@@ -551,6 +556,17 @@ export default function ServiceRecordPage() {
             setEditing(false);
             setMomSignature(null);
             await loadContext("push");
+            if (wasEditing) {
+                toast({
+                    variant: "success",
+                    title: `${submittedDay}회차 수정이 저장됐어요`,
+                    action: (
+                        <ToastAction onClick={() => openDayRef.current(submittedDay, true)}>
+                            기록 보기
+                        </ToastAction>
+                    ),
+                });
+            }
         } finally { setBusy(false); }
     }
 
@@ -735,6 +751,7 @@ export default function ServiceRecordPage() {
                         description={editing
                             ? `확인하면 ${day}회차 기록이 수정 제출됩니다.`
                             : `확인하면 ${day}회차 기록이 제출됩니다.`}
+                        isDescriptionVisuallyHidden={false}
                         cancelLabel="취소"
                         approvalLabel="확인"
                         pendingLabel="제출 중…"
