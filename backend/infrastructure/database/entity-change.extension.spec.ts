@@ -91,7 +91,7 @@ describe("entity-change extension (model operations)", () => {
     it("an unwatched model never emits", async () => {
         const { events, write } = setup();
 
-        await write("branch", "update", { id: "b1", branchId: "b1" });
+        await write("auth_session", "update", { id: "s1", branchId: "b1" });
         await write(undefined, "update", { id: 1 });
         jest.advanceTimersByTime(1000);
 
@@ -341,8 +341,8 @@ describe("entity-change extension (raw SQL)", () => {
         const { events, raw } = setup();
 
         await raw(["UPDATE client_note SET a = 1"], 1);
-        await raw(["UPDATE branch SET a = 1"], 1);
-        await raw(["INSERT INTO message_trigger_rule (id) VALUES (1)"], 1);
+        await raw(["UPDATE auth_session SET a = 1"], 1);
+        await raw(["INSERT INTO message_trigger_rule_archive (id) VALUES (1)"], 1);
         jest.advanceTimersByTime(1000);
 
         expect(events).toEqual([]);

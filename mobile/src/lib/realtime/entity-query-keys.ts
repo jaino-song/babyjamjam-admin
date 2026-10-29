@@ -11,6 +11,12 @@ export const REALTIME_ENTITY_KINDS = [
   "document",
   "message",
   "service-record",
+  "inquiry",
+  "call",
+  "file",
+  "holiday",
+  "settings",
+  "notification",
 ] as const;
 
 export type RealtimeEntityKind = (typeof REALTIME_ENTITY_KINDS)[number];
@@ -27,10 +33,35 @@ export const ENTITY_QUERY_ROOTS: Record<RealtimeEntityKind, readonly QueryKey[]>
     ["eformsign-docs"],
     ["eformsign-doc-client-names"],
     ["eformsign-document-detail"],
+    // The contracts page's missing-customer-name lookup; its own root, so the
+    // singular `eformsign-document-detail` prefix does not reach it.
+    ["eformsign-document-details"],
     ["dashboard"],
   ],
-  message: [["message-triggers"], ["messages"]],
+  message: [["message-triggers"], ["messages"], ["message-templates"]],
   "service-record": [["service-records"]],
+  inquiry: [["consultation-inquiries"]],
+  call: [["call-inbox"]],
+  // The file library (`document` + `document_category`), not the eformsign `document` kind.
+  file: [["documents"], ["document-categories"]],
+  holiday: [
+    ["holidays"],
+    ["holiday-settings"],
+    ["holiday-review-events"],
+    ["holiday-review-items"],
+  ],
+  // Mobile's voucher price hooks all sit under `voucher-price-infos`
+  // (`["voucher-price-infos", "all", year]` included), so one root covers them.
+  settings: [
+    ["settings"],
+    ["voucher-price-infos"],
+    ["area-templates"],
+    ["bank-account-infos"],
+    ["voucher-years"],
+    ["out-of-pocket-price-infos"],
+    ["system-templates"],
+  ],
+  notification: [["notifications"]],
 };
 
 function isRealtimeEntityKind(value: unknown): value is RealtimeEntityKind {

@@ -10,14 +10,26 @@ export type RealtimeEntityKind =
     | "employee"
     | "document"
     | "message"
-    | "service-record";
+    | "service-record"
+    | "inquiry"
+    | "call"
+    | "file"
+    | "holiday"
+    | "settings"
+    | "notification";
 
 // Roots only (prefix match): every query under a root is stale when its kind
-// changes. A root appearing under two kinds (`dashboard`) is de-duplicated when
-// the union is built.
+// changes. A root appearing under several kinds (`dashboard`, `data-source`) is
+// de-duplicated when the union is built.
+//
+// Literals rather than imports of the key factories: those live in hook modules
+// that pull in the API client and services, and this map is mounted from the
+// app shell. `__tests__/entity-query-keys.test.ts` pins every root against the
+// real factory output so a renamed key fails there instead of going stale silently.
 export const ENTITY_QUERY_KEY_ROOTS: Readonly<Record<RealtimeEntityKind, readonly QueryKey[]>> = {
     client: [["clients"], ["dashboard"]],
-    employee: [["employees"]],
+    // `data-source`: dynamic-select option lists built from employee data.
+    employee: [["employees"], ["data-source"]],
     document: [
         ["eformsign-documents"],
         ["eformsign-docs"],
@@ -25,9 +37,34 @@ export const ENTITY_QUERY_KEY_ROOTS: Readonly<Record<RealtimeEntityKind, readonl
         ["eformsign-status-counts"],
         ["eformsign-document-jobs"],
         ["dashboard"],
+        ["eformsign-client-candidate"],
     ],
-    message: [["message-triggers"]],
+    message: [["message-triggers"], ["message-templates"], ["data-source"]],
     "service-record": [["service-records"]],
+    inquiry: [["consultation-inquiries"]],
+    // The desktop app has no call inbox; the kind is announced for mobile only.
+    call: [],
+    // The file library (`documents`), not the eformsign `document` kind above.
+    file: [["documents"], ["document-categories"]],
+    holiday: [
+        ["holidays"],
+        ["holiday-settings"],
+        ["holiday-review-events"],
+        ["holiday-review-items"],
+        ["dashboard"],
+    ],
+    settings: [
+        ["settings"],
+        ["area-templates"],
+        ["voucher-price-infos"],
+        ["all-voucher-price-infos"],
+        ["out-of-pocket-price-infos"],
+        ["voucher-years"],
+        ["bank-account-infos"],
+        ["data-source"],
+        ["system-templates"],
+    ],
+    notification: [["notifications"]],
 };
 
 const isKnownKind = (kind: unknown): kind is RealtimeEntityKind =>

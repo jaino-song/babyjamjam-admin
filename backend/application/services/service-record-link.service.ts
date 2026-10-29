@@ -840,6 +840,16 @@ export class ServiceRecordLinkService {
                     });
                 }
 
+                // The `update: {}` upsert below still returns the row when it already exists, which
+                // the realtime hint reads as a change: the 5-minute reconciler would broadcast
+                // `message` to every branch each cycle for candidates it then refuses. Only write
+                // when the rule is absent (serialised by the lock above, so no create race).
+                const existingRule = await writeTransaction.message_trigger_rule.findUnique({
+                    where: { id: SERVICE_RECORD_LINK_RULE_ID },
+                    select: { id: true },
+                });
+                if (existingRule) return;
+
                 await writeTransaction.message_trigger_rule.upsert({
                     where: { id: SERVICE_RECORD_LINK_RULE_ID },
                     create: {
