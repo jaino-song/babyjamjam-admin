@@ -1,11 +1,29 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Clock3 } from "lucide-react";
+
+import {
+  createTestQueryClient,
+  JobsTestWrapper,
+  makeJob,
+  makeJobList,
+  makeSummary,
+  setBranchCookie,
+} from "@/features/document-jobs/testing/jobs-test-utils";
+import { eformsignDocumentJobsQueryKeys } from "@/hooks/useEformsignDocumentJobs";
+import { eformsignApi } from "@/services/api";
 
 import {
   ContractDocumentJobsPopover,
   type ContractDocumentJobsData,
 } from "./ContractDocumentJobsPopover";
 import { ContractStatsBar } from "./ContractStatsBar";
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/contracts",
+}));
+
+const PROCESSING_TILE = { name: "전자문서 처리중 작업 보기" };
 
 const JOBS: ContractDocumentJobsData = {
   active: [
@@ -14,7 +32,7 @@ const JOBS: ContractDocumentJobsData = {
       jobType: "finalize_document",
       status: "processing",
       documentId: "document-1",
-      progressStep: "전자문서 최종 확인중",
+      progressStep: "creating",
       attempts: 1,
     },
   ],
@@ -24,6 +42,7 @@ const JOBS: ContractDocumentJobsData = {
       jobType: "finalize_document",
       status: "requires_attention",
       documentId: "document-2",
+      recoveryKind: "verify_result",
       attempts: 3,
     },
   ],
@@ -50,171 +69,456 @@ function renderOpenPopover(overrides: Partial<React.ComponentProps<typeof Contra
   );
 }
 
+const STAT_ITEMS = Array.from({ length: 5 }, (_, index) => ({
+  icon: Clock3,
+  value: index + 1,
+  label: `통계 ${index + 1}`,
+  counter: "건",
+}));
+
+function renderBar(props: Partial<React.ComponentProps<typeof ContractStatsBar>> = {}) {
+  const queryClient = createTestQueryClient();
+  render(
+    <JobsTestWrapper queryClient={queryClient}>
+      <ContractStatsBar name="desktop_contracts" items={STAT_ITEMS} {...props} />
+    </JobsTestWrapper>,
+  );
+  return queryClient;
+}
+
 describe("ContractDocumentJobsPopover", () => {
-  it("renders the three read-only sections and deep-links rows with a document id", () => {
+  beforeEach(() => {
+    setBranchCookie("branch-a");
+    window.sessionStorage.clear();
+    jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(makeJobList());
+  });
+
+  afterEach(() => {
+    setBranchCookie(null);
+    jest.restoreAllMocks();
+  });
+
+  it("renders the three sections; active rows are not links, failed rows open recovery, completed rows open the document", () => {
     renderOpenPopover();
 
     expect(screen.getByRole("heading", { name: "처리 중" })).toBeInTheDocument();
     expect(screen.getByText("확인 필요")).toBeInTheDocument();
     expect(screen.getByText("최근 처리")).toBeInTheDocument();
-    expect(screen.getByText("전자문서 최종 확인중")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /전자문서 최종 처리/ })[0]).toHaveAttribute(
+    expect(screen.getByText("전자문서 생성 중")).toBeInTheDocument();
+
+    const links = screen.getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/contracts?recoverJobId=job-attention",
+      "/contracts?documentId=document-3",
+    ]);
+    expect(screen.queryByRole("link", { name: /전자문서 생성 중/ })).not.toBeInTheDocument();
+  });
+
+  it("links failed rows to recovery and titles rows with the client name", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job f/1", jobType: "create_document", status: "failed", clientName: "김하늘", recoveryKind: "manual_send" },
+          { jobId: "job-f2", jobType: "finalize_document", status: "failed", clientName: null, recoveryKind: "manual_send" },
+        ],
+        recent: [],
+      },
+    });
+
+    const first = screen.getByRole("link", { name: /김하늘 · 계약서 생성/ });
+    expect(first).toHaveAttribute("href", "/contracts?recoverJobId=job%20f%2F1");
+    expect(screen.getByRole("link", { name: /고객 · 검토완료/ })).toHaveAttribute(
       "href",
-      "/contracts?documentId=document-1",
+      "/contracts?recoverJobId=job-f2",
     );
   });
 
-  it("closes on Escape and mobile backdrop clicks", () => {
-    const onOpenChange = jest.fn();
-    renderOpenPopover({ onOpenChange });
-
-    const content = screen.getByRole("dialog");
-    fireEvent.keyDown(content, { key: "Escape" });
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-
-    const backdrop = document.querySelector('[data-slot="popover-backdrop"]');
-    expect(backdrop).toBeInTheDocument();
-    fireEvent.click(backdrop as HTMLElement);
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("shows safe copy and no navigation for a job without a document id", () => {
+  it("links an auto-finalize requires_attention job with no recovery kind to its document, not recovery", () => {
     renderOpenPopover({
       documentJobs: {
-        active: [{ ...JOBS.active[0], documentId: null }],
+        active: [],
+        requiresAttention: [
+          {
+            jobId: "job-auto",
+            jobType: "finalize_document",
+            source: "auto_finalize",
+            status: "requires_attention",
+            documentId: "document auto/1",
+            recoveryKind: null,
+          },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/contracts?documentId=document%20auto%2F1");
+  });
+
+  it("links staff failed (manual_send) and requires_attention (verify_result) rows to recovery", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-m", jobType: "create_document", source: "staff", status: "failed", recoveryKind: "manual_send", documentId: "d-1" },
+          { jobId: "job-v", jobType: "finalize_document", source: "staff", status: "requires_attention", recoveryKind: "verify_result", documentId: "d-2" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+      "/contracts?recoverJobId=job-m",
+      "/contracts?recoverJobId=job-v",
+    ]);
+  });
+
+  it("renders a static row for a failed job with no recovery kind and no document id", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-dead", jobType: "create_document", status: "failed", recoveryKind: null, documentId: null },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("shows a claimed job as ordinary progress, not its raw step name", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-claimed", jobType: "create_document", status: "failed", progressStep: "manual_in_progress", clientName: "김하늘" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText("manual_in_progress")).not.toBeInTheDocument();
+    expect(screen.getByText("처리 중", { selector: "p, span, div" })).toBeInTheDocument();
+  });
+
+  it("shows an authorized job as 전송 준비 중, not its raw step name", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [
+          { jobId: "job-authorized", jobType: "create_document", status: "processing", progressStep: "dispatch_authorized", clientName: "김하늘" },
+        ],
         requiresAttention: [],
         recent: [],
       },
     });
 
+    expect(screen.queryByText("dispatch_authorized")).not.toBeInTheDocument();
+    expect(screen.getByText("전송 준비 중", { selector: "p, span, div" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["queued", "대기 중"],
+    ["processing", "처리 중"],
+    ["client-started", "전자문서 연결 중"],
+    ["info-inserted", "이용자 정보 입력 완료"],
+    ["creating", "전자문서 생성 중"],
+    ["sent", "전송 완료"],
+    ["failed", "실패"],
+    ["reconciling", "결과 확인 중"],
+    ["dispatch_authorized", "전송 준비 중"],
+    ["manual_resolved", "처리됨으로 표시"],
+    ["manual_in_progress", "처리 중"],
+  ])("labels the %s step in Korean and never shows the key", (step, label) => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [
+          { jobId: "job-step", jobType: "create_document", status: "processing", progressStep: step, clientName: "김하늘", documentId: "doc-step" },
+        ],
+        requiresAttention: [],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText(step)).not.toBeInTheDocument();
+    expect(screen.getAllByText(label, { selector: "p, span, div" }).length).toBeGreaterThan(0);
+    expect(screen.queryByText("문서 ID doc-step")).not.toBeInTheDocument();
+  });
+
+  it("shows no raw key, user id or expiry for a claim step stored with its owner", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-claim", jobType: "create_document", status: "failed", progressStep: "manual_in_progress:42:2026-10-29T01:00:00.000Z", clientName: "김하늘" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.getByText("처리 중", { selector: "p, span, div" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/manual_in_progress|42|2026-10-29/);
+  });
+
+  it("falls back to the document line, never the raw key, for an unknown step", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [
+          { jobId: "job-unknown", jobType: "create_document", status: "processing", progressStep: "some-new-step", clientName: "김하늘", documentId: "doc-7" },
+          { jobId: "job-unknown-2", jobType: "create_document", status: "processing", progressStep: "other_step", clientName: "이하늘" },
+        ],
+        requiresAttention: [],
+        recent: [],
+      },
+    });
+
+    expect(document.body.textContent).not.toMatch(/some-new-step|other_step/);
+    expect(screen.getByText("문서 ID doc-7")).toBeInTheDocument();
+    expect(screen.getByText("문서 연결 정보 없음")).toBeInTheDocument();
+  });
+
+  it("does not label a needs-check job as 최근 완료 although it carries its failure time", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [
+          { jobId: "job-check", jobType: "create_document", status: "requires_attention", attempts: 1, completedAt: "2026-08-13T01:00:00.000Z", recoveryKind: "verify_result", clientName: "김하늘" },
+        ],
+        recent: [],
+      },
+    });
+
+    expect(screen.queryByText("최근 완료")).not.toBeInTheDocument();
+  });
+
+  it("labels a completed job as 최근 완료", () => {
+    renderOpenPopover();
+
+    expect(screen.getByText("최근 완료")).toBeInTheDocument();
+  });
+
+  it("closes the desktop popover on Escape and renders no sheet or backdrop", () => {
+    const onOpenChange = jest.fn();
+    renderOpenPopover({ onOpenChange });
+
+    const content = screen.getByRole("dialog");
+    expect(content).toHaveAttribute("data-slot", "document-jobs-popover");
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toContainElement(content);
+    expect(document.querySelector('[data-slot="sheet-overlay"]')).not.toBeInTheDocument();
+    fireEvent.keyDown(content, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  describe("below the lg breakpoint", () => {
+    const originalWidth = window.innerWidth;
+
+    beforeEach(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalWidth });
+    });
+
+    it("renders the list in a bottom sheet outside any popper wrapper, with its rows and header", () => {
+      renderOpenPopover({ "data-component": "jobs_popover" });
+
+      const sheet = screen.getByRole("dialog", { name: "전자문서 작업" });
+      expect(sheet).toHaveAttribute("data-slot", "document-jobs-popover");
+      expect(sheet).toHaveAttribute("data-side", "bottom");
+      expect(sheet).toHaveAttribute("data-component", "jobs_popover");
+      expect(sheet).toHaveAttribute("data-source-component", "ContractDocumentJobsPopover");
+      // The popper wrapper is a transformed, content-sized box that collapses a fixed child.
+      expect(document.querySelector("[data-radix-popper-content-wrapper]")).not.toBeInTheDocument();
+      expect(sheet.closest("[data-radix-popper-content-wrapper]")).toBeNull();
+      expect(sheet).toHaveTextContent("읽기 전용 처리 현황");
+      expect(sheet).toHaveTextContent("5건");
+      expect(screen.getByRole("heading", { name: "처리 중" })).toBeInTheDocument();
+      expect(screen.getByText("전자문서 생성 중")).toBeInTheDocument();
+      expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+        "/contracts?recoverJobId=job-attention",
+        "/contracts?documentId=document-3",
+      ]);
+    });
+
+    it("closes on Escape and on a backdrop (overlay) click", async () => {
+      const onOpenChange = jest.fn();
+      renderOpenPopover({ onOpenChange });
+      // Radix registers its outside-pointer listener on the next tick.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+
+      onOpenChange.mockClear();
+      const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+      expect(overlay).toBeInTheDocument();
+      fireEvent.pointerDown(overlay as HTMLElement);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("closes after navigating through a job link", () => {
+      const onOpenChange = jest.fn();
+      renderOpenPopover({ onOpenChange });
+
+      fireEvent.click(screen.getAllByRole("link")[0]);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("opens from its trigger", () => {
+      const onOpenChange = jest.fn();
+      render(
+        <ContractDocumentJobsPopover
+          onOpenChange={onOpenChange}
+          documentJobs={JOBS}
+          trigger={<button type="button">전자문서 처리중</button>}
+        />,
+      );
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중" }));
+      expect(onOpenChange).toHaveBeenCalledWith(true);
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toBeInTheDocument();
+    });
+  });
+
+  it("shows safe copy and no navigation for a completed job without a document id", () => {
+    renderOpenPopover({
+      documentJobs: {
+        active: [],
+        requiresAttention: [],
+        recent: [{ jobId: "job-done", jobType: "create_document", status: "completed", documentId: null }],
+      },
+    });
+
     expect(screen.getByTitle("연결된 계약서가 없어 이동할 수 없어요.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /전자문서 최종 처리/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("uses only the summary active count in the far-right processing tile", () => {
-    render(
-      <ContractStatsBar
-        name="desktop_contracts"
-        items={Array.from({ length: 5 }, (_, index) => ({
-          icon: Clock3,
-          value: index + 1,
-          label: `통계 ${index + 1}`,
-          counter: "건",
-        }))}
-        summary={{ activeCount: 7, requiresAttentionCount: 99 }}
-        documentJobs={{ active: JOBS.active.slice(0, 1), requiresAttention: JOBS.requiresAttention, recent: [] }}
-      />,
-    );
+  it("renders the processing tile first in the row, without ms-auto, from active + unresolved only", async () => {
+    jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockResolvedValue(makeSummary({ activeCount: 7, requiresAttentionCount: 99 }));
+    renderBar({ items: STAT_ITEMS });
 
-    const stats = document.querySelector('[data-component="desktop_contracts_stats"]');
-    expect(stats).toBeInTheDocument();
-    const statLabels = Array.from(stats?.querySelectorAll("p") ?? []).map((node) => node.textContent);
-    expect(statLabels).toContain("전자문서 처리중");
-    expect(statLabels).toContain("7");
-    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
-    expect(processingTile).toHaveTextContent("7");
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("7"));
     expect(processingTile).not.toHaveTextContent("99");
+    expect(processingTile).not.toHaveClass("ms-auto");
 
-    expect(processingTile).toHaveClass("ms-auto");
-    expect(processingTile.compareDocumentPosition(stats?.querySelector('[data-component="desktop_contracts_stats_stat-4"]') as Node)).toBe(
-      Node.DOCUMENT_POSITION_PRECEDING,
-    );
+    const stats = document.querySelector('[data-component="desktop_contracts_stats"]') as HTMLElement;
+    expect(stats.firstElementChild).toBe(processingTile);
+    expect(
+      processingTile.compareDocumentPosition(
+        stats.querySelector('[data-component="desktop_contracts_stats_stat-0"]') as Node,
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("shows an unavailable processing count and retries the summary after an initial failure", () => {
-    const onRetrySummary = jest.fn();
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={undefined}
-        summaryError={new Error("summary unavailable")}
-        onRetrySummary={onRetrySummary}
-      />,
-    );
+  it("shows an unavailable processing count and retries the summary after an initial failure", async () => {
+    const getSummary = jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockRejectedValueOnce(new Error("summary unavailable"))
+      .mockResolvedValue(makeSummary());
+    renderBar();
 
-    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    expect(await screen.findByRole("alert")).toHaveTextContent("전자문서 처리 현황을 불러오지 못했어요");
     expect(processingTile).toHaveTextContent("—");
-    expect(screen.getByRole("alert")).toHaveTextContent("전자문서 처리 현황을 불러오지 못했어요");
+
     fireEvent.click(screen.getByRole("button", { name: "전자문서 처리 현황 다시 시도" }));
-    expect(onRetrySummary).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps a successful zero distinct from an unavailable summary", () => {
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 0, requiresAttentionCount: 0 }}
-      />,
-    );
-
-    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+    await waitFor(() => expect(getSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(processingTile).toHaveTextContent("0");
+  });
+
+  it("keeps a successful zero distinct from an unavailable summary", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary());
+    renderBar();
+
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("0"));
+    expect(processingTile).not.toHaveTextContent("—");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("retains a cached summary count and offers a stale retry after refresh failure", () => {
-    const onRetrySummary = jest.fn();
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 4, requiresAttentionCount: 1 }}
-        summaryError={new Error("summary refresh failed")}
-        summaryHasData
-        onRetrySummary={onRetrySummary}
-      />,
-    );
+  it("retains a cached summary count and offers a stale retry after a refresh failure", async () => {
+    const getSummary = jest
+      .spyOn(eformsignApi, "getDocumentJobSummary")
+      .mockResolvedValueOnce(makeSummary({ activeCount: 4 }))
+      .mockRejectedValue(new Error("summary refresh failed"));
+    const queryClient = renderBar();
 
-    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("4");
-    expect(screen.getByRole("alert")).toHaveTextContent("최근 성공한 처리 현황을 표시하고 있어요");
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("4"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.summary("branch-a") });
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("최근 성공한 처리 현황을 표시하고 있어요");
+    expect(processingTile).toHaveTextContent("4");
+
+    getSummary.mockResolvedValue(makeSummary({ activeCount: 5 }));
     fireEvent.click(screen.getByRole("button", { name: "전자문서 처리 현황 다시 시도" }));
-    expect(onRetrySummary).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(processingTile).toHaveTextContent("5"));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
 
-  it("clears the summary warning and renders the recovered count", () => {
-    const onRetrySummary = jest.fn();
-    const view = render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={undefined}
-        summaryError={new Error("summary unavailable")}
-        onRetrySummary={onRetrySummary}
-      />,
-    );
+  it("keeps list errors and retries independent from the summary tile", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 4 }));
+    const getJobs = jest.spyOn(eformsignApi, "getDocumentJobs").mockRejectedValue(new Error("list unavailable"));
+    renderBar();
 
-    view.rerender(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 0, requiresAttentionCount: 0 }}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("0");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("keeps list errors and retries independent from the summary tile", () => {
-    const onRetryJobs = jest.fn();
-    render(
-      <ContractStatsBar
-        name="contracts"
-        items={[]}
-        summary={{ activeCount: 4, requiresAttentionCount: 0 }}
-        jobsError={new Error("list unavailable")}
-        onRetryJobs={onRetryJobs}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("4");
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("4"));
     expect(screen.queryByText("전자문서 처리 현황을 불러오지 못했어요")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
-    expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3);
+    fireEvent.click(processingTile);
+    await waitFor(() => expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3));
+    const callsBefore = getJobs.mock.calls.length;
     fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
-    expect(onRetryJobs).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getJobs.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it("lists active jobs from the list endpoint in the card's popover without linking them", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 1 }));
+    jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(
+      makeJobList({ active: [makeJob({ jobId: "job-x", status: "processing", jobType: "finalize_document", documentId: "doc-9" })] }),
+    );
+    renderBar();
+
+    fireEvent.click(await screen.findByRole("button", PROCESSING_TILE));
+
+    expect(await screen.findByText("김하늘 · 검토완료")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /김하늘 · 검토완료/ })).not.toBeInTheDocument();
+  });
+
+  it("renders no jobs card and touches neither provider nor react-query with showDocumentJobs={false}", () => {
+    const getSummary = jest.spyOn(eformsignApi, "getDocumentJobSummary");
+    render(<ContractStatsBar name="contracts" items={STAT_ITEMS} showDocumentJobs={false} />);
+
+    expect(screen.queryByRole("button", PROCESSING_TILE)).not.toBeInTheDocument();
+    expect(screen.getByText("통계 1")).toBeInTheDocument();
+    expect(getSummary).not.toHaveBeenCalled();
+  });
+
+  it("still accepts the deprecated job-data props and ignores them", async () => {
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 2 }));
+    renderBar({
+      items: [],
+      summary: { activeCount: 50, requiresAttentionCount: 50 },
+      summaryError: new Error("ignored"),
+      summaryHasData: true,
+      documentJobs: JOBS,
+      jobsError: new Error("ignored"),
+      onRetrySummary: jest.fn(),
+      onRetryJobs: jest.fn(),
+    });
+
+    const processingTile = await screen.findByRole("button", PROCESSING_TILE);
+    await waitFor(() => expect(processingTile).toHaveTextContent("2"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

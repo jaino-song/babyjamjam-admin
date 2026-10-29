@@ -44,14 +44,19 @@ describeE2E("confirmation and historically unbound contract jobs (actual Postgre
         return { fixture, documentId, service, draft, changed, preview };
     }
 
-    it.each(["processing", "reconciling"] as const)("refuses a %s irreversible job whose document proves ownership", async (status) => {
+    // dispatch_authorized is the authorization marker: it blocks confirmation exactly as `creating` does.
+    it.each([
+        ["processing", "creating"],
+        ["reconciling", "creating"],
+        ["processing", "dispatch_authorized"],
+    ] as const)("refuses a %s irreversible job (%s) whose document proves ownership", async (status, progressStep) => {
         const { fixture, documentId, service, draft, changed, preview } = await prepare();
         // Historical enqueueFinalizeDocument omitted clientId. The real owned
         // document proves which client's irreversible/uncertain job this is.
         const job = await prisma.eformsign_document_job.create({ data: {
             branchId: fixture.branch.id, clientId: null, documentId, jobType: "finalize_document",
             source: "staff", status, requestKey: randomUUID(), activeKey: randomUUID(),
-            leaseToken: randomUUID(), progressStep: "creating", payload: { documentId },
+            leaseToken: randomUUID(), progressStep, payload: { documentId },
         } });
         await expect(service.confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
             expectedDraftVersion: changed.draft!.draftVersion, previewId: preview.previewId, idempotencyKey: randomUUID(),

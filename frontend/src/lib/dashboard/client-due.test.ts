@@ -1,5 +1,6 @@
-import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
+import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import {
+  calendarForServiceDays,
   getDashboardClientDueLabel,
   isServiceEndingNextBusinessDay,
 } from "./client-due";
@@ -163,5 +164,51 @@ describe("branch calendar years", () => {
         { today: TODAY, calendar: narrowCalendar },
       ),
     ).toBeNull();
+  });
+});
+
+describe("client service days", () => {
+  const saturdayClient = { allowSaturdayService: true };
+  const friday = new Date(2026, 6, 10, 12, 0, 0);
+  const saturday = new Date(2026, 6, 11, 12, 0, 0);
+
+  it("counts Saturday as a service day before the end date for a Saturday-enabled client", () => {
+    // Ends Mon 07-13: a plain client is 1 business day away on Fri, a Saturday client 2 service days away.
+    const ending = { ...BASE_CLIENT, endDate: "2026-07-13" };
+    expect(isServiceEndingNextBusinessDay(ending, friday)).toBe(true);
+    expect(isServiceEndingNextBusinessDay({ ...ending, ...saturdayClient }, friday)).toBe(false);
+    expect(getDashboardClientDueLabel({ ...ending, ...saturdayClient }, { today: friday })).toBe("서비스 종료 2 영업일 남음");
+  });
+
+  it("is ending next service day on a Saturday only for a Saturday-enabled client", () => {
+    const ending = { ...BASE_CLIENT, endDate: "2026-07-13" };
+    expect(isServiceEndingNextBusinessDay(ending, saturday)).toBe(false);
+    expect(isServiceEndingNextBusinessDay({ ...ending, ...saturdayClient }, saturday)).toBe(true);
+  });
+
+  it("keeps the default client's labels unchanged", () => {
+    expect(getDashboardClientDueLabel(BASE_CLIENT, { today: TODAY })).toBe("서비스 종료 7 영업일 남음");
+    expect(
+      getDashboardClientDueLabel({ ...BASE_CLIENT, allowSaturdayService: false, allowSundayService: false, allowHolidayService: false }, { today: TODAY }),
+    ).toBe("서비스 종료 7 영업일 남음");
+  });
+
+  it("leaves replacement-request and waiting labels on the branch calendar", () => {
+    expect(
+      getDashboardClientDueLabel({ ...BASE_CLIENT, ...saturdayClient, serviceStatus: "replacement_requested" }, { today: TODAY }),
+    ).toBe("교체 요청 2 영업일 경과");
+    expect(
+      getDashboardClientDueLabel({ ...BASE_CLIENT, ...saturdayClient, serviceStatus: "waiting", startDate: "2026-07-14" }, { today: TODAY }),
+    ).toBe("서비스 시작 5 영업일 남음");
+  });
+
+  it("reuses one wrapped calendar per base calendar and policy", () => {
+    const policy = { saturday: true, sunday: false, holiday: false };
+    const first = calendarForServiceDays(BRANCH_CALENDAR, policy);
+    expect(first).not.toBe(BRANCH_CALENDAR);
+    expect(first.isBusinessDay("2026-07-11")).toBe(true);
+    expect(calendarForServiceDays(BRANCH_CALENDAR, { ...policy })).toBe(first);
+    expect(calendarForServiceDays(KR_BUILTIN_CALENDAR, policy)).not.toBe(first);
+    expect(calendarForServiceDays(BRANCH_CALENDAR, { saturday: false, sunday: false, holiday: false })).toBe(BRANCH_CALENDAR);
   });
 });

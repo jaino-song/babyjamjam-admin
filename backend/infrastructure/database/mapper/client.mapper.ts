@@ -26,6 +26,9 @@ type ClientRow = {
     branchId?: string | null;
     suppressGreetingSms?: boolean;
     smsAutomationEnabled?: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     phoneNormalized?: string | null;
 };
 
@@ -58,6 +61,9 @@ export class ClientMapper {
             row.phoneNormalized,
             row.bookingConfirmedAt,
             row.smsAutomationEnabled ?? true,
+            row.allowSaturdayService ?? false,
+            row.allowSundayService ?? false,
+            row.allowHolidayService ?? false,
         );
     }
 
@@ -87,6 +93,9 @@ export class ClientMapper {
             areaId: entity.areaId,
             suppressGreetingSms: entity.suppressGreetingSms,
             smsAutomationEnabled: entity.smsAutomationEnabled,
+            allowSaturdayService: entity.allowSaturdayService,
+            allowSundayService: entity.allowSundayService,
+            allowHolidayService: entity.allowHolidayService,
         };
     }
 
@@ -113,6 +122,9 @@ export class ClientMapper {
             eDocId: entity.eDocId,
             areaId: entity.areaId,
             suppressGreetingSms: entity.suppressGreetingSms,
+            allowSaturdayService: entity.allowSaturdayService,
+            allowSundayService: entity.allowSundayService,
+            allowHolidayService: entity.allowHolidayService,
         };
     }
 }

@@ -163,6 +163,29 @@ export interface ServiceRecordEditPreviewImpactedAssignment {
     endDate: string | null;
 }
 
+/** Which non-weekday days a client accepts service on (mirrors `ServiceDayPolicy`). */
+export interface ServiceRecordEditServiceDays {
+    saturday: boolean;
+    sunday: boolean;
+    holiday: boolean;
+}
+
+/**
+ * Whole-set schedule replacement sent with a draft update: exactly one date per
+ * session (strictly ascending, unique) plus the client's service-day toggles.
+ */
+export interface ServiceRecordEditSchedule {
+    serviceDays: ServiceRecordEditServiceDays;
+    dates: string[];
+}
+
+export interface ServiceRecordEditPreviewServiceDays {
+    /** The client's stored toggles. */
+    before: ServiceRecordEditServiceDays;
+    /** The toggles that confirming this draft would store. */
+    after: ServiceRecordEditServiceDays;
+}
+
 /**
  * Server-owned preview contract. The identifier is bound to every value that
  * a later atomic confirm will recheck; clients cannot supply provenance or
@@ -176,6 +199,8 @@ export interface ServiceRecordEditPreviewResponse {
     sourceFingerprint: string;
     requiredSessionCount: number | null;
     calendarVersion: string;
+    /** Absent on previews produced before service-day toggles existed. */
+    serviceDays?: ServiceRecordEditPreviewServiceDays;
     before: ServiceRecordEditPreviewVector;
     after: ServiceRecordEditPreviewVector;
     provenance: ServiceRecordEditPreviewAssignmentRange[];

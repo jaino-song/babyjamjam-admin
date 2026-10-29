@@ -162,3 +162,20 @@ describe("buildClientUpdatePayload", () => {
     })).toEqual({});
   });
 });
+
+describe("buildClientUpdatePayload service-day flags", () => {
+  it("treats missing flags as off and sends nothing when they stay off", () => {
+    expect(
+      buildClientUpdatePayload({ baseline, current: { ...baseline, allowSaturdayService: false } }),
+    ).toEqual({});
+  });
+
+  it("sends only the flag that changed", () => {
+    const payload = buildClientUpdatePayload({
+      baseline: { ...baseline, allowSaturdayService: true, allowHolidayService: true },
+      current: { ...baseline, allowSaturdayService: true, allowHolidayService: false, allowSundayService: true },
+    });
+
+    expect(payload).toEqual({ allowSundayService: true, allowHolidayService: false });
+  });
+});

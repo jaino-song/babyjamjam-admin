@@ -143,6 +143,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 startDate: true,
                 endDate: true,
                 duration: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
                 serviceRecordCase: {
                     select: {
                         status: true,
@@ -164,6 +167,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 startDate: fromDbDate(row.startDate),
                 endDate: fromDbDate(row.endDate),
                 duration: row.duration,
+                allowSaturdayService: row.allowSaturdayService,
+                allowSundayService: row.allowSundayService,
+                allowHolidayService: row.allowHolidayService,
                 facts: caseFacts(row.serviceRecordCase),
             });
         }
@@ -318,6 +324,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 endDate: true,
                 duration: true,
                 serviceStatus: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
                 serviceRecordCase: {
                     select: { status: true, days: { select: { serviceDate: true, locked: true } } },
                 },
@@ -330,6 +339,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             duration: row.duration,
             terminated: row.serviceStatus === SERVICE_STATUS.TERMINATED,
             finished: row.endDate !== null && row.endDate < toDbDate(isoDateInKorea()),
+            allowSaturdayService: row.allowSaturdayService,
+            allowSundayService: row.allowSundayService,
+            allowHolidayService: row.allowHolidayService,
             facts: caseFacts(row.serviceRecordCase),
         };
     }
@@ -411,13 +423,31 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                     // end-date comparison below fails closed (`items_changed`) and no item is filed.
                     deletedAt: null,
                 },
-                select: { id: true, endDate: true },
+                select: {
+                    id: true,
+                    endDate: true,
+                    allowSaturdayService: true,
+                    allowSundayService: true,
+                    allowHolidayService: true,
+                },
             });
             const endByClient = new Map(
                 currentEnds.map((row) => [row.id, row.endDate === null ? null : fromDbDate(row.endDate)]),
             );
+            const flagsByClient = new Map(currentEnds.map((row) => [row.id, row]));
             for (const draft of drafts) {
                 if (endByClient.get(draft.clientId) !== draft.storedEnd) return { status: "items_changed" };
+                // The draft's ends (and its "no item" decision) were computed with the service-day
+                // flags read before this transaction. A toggle since then (the locks above hold it
+                // off from here on) makes the draft stale either way: retry with fresh flags.
+                const flags = flagsByClient.get(draft.clientId);
+                if (
+                    flags?.allowSaturdayService !== (draft.allowSaturdayService ?? false)
+                    || flags?.allowSundayService !== (draft.allowSundayService ?? false)
+                    || flags?.allowHolidayService !== (draft.allowHolidayService ?? false)
+                ) {
+                    return { status: "items_changed" };
+                }
             }
 
             for (const draft of drafts) {

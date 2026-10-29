@@ -77251,6 +77251,269 @@
       "review_task": "bjj-454-phase-audit",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "documented machine-export exception; record scope and safeguard against API-01"
+    },
+    {
+      "id": "owner-5cc37a66a047",
+      "path": "backend/application/services/contract-supersede.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by the eformsign document-jobs supersede work (replace an unsigned contract: cancel at the vendor, purge the local mirror); discovered unclassified by the raw-error intake gate, which matches the exception class names themselves rather than only raw bodies. Fully on-contract: every throw already uses a registered problem body. Missing, out-of-scope, signed, terminal, vendor-absent or refused-cancel document -> ConflictException(codeOnlyProblemBody REQUEST_CONFLICT) 409; credentials or vendor read unavailable before the cancel -> ServiceUnavailableException(codeOnlyProblemBody DEPENDENCY_UNAVAILABLE) 503; any other failure, including an ambiguous cancel outcome, -> InternalServerErrorException(uncertainProblemBody INTERNAL_ERROR) 500 carrying the uncertainty marker; an HttpException from a collaborator is rethrown unchanged. No new codes and no status change, so no conversion was needed.",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 3,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 6,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 8,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 95,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 100,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 107,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 109,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 111,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 119,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 132,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 137,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 138,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 147,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "raw-error-intake-gate",
+      "spec_ids": [
+        "EM-ARCH-01",
+        "EM-MAP-04"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT",
+        "DEPENDENCY_UNAVAILABLE",
+        "INTERNAL_ERROR"
+      ],
+      "outcome_evidence": "Each refusal reaches the client as its registered catalog code; covered by contract-supersede.service.spec.ts.",
+      "consumer_paths": [
+        "eformsign document-job worker supersede path",
+        "HTTP eformsign controller supersede"
+      ],
+      "test_evidence": [
+        "backend/test/services/contract-supersede.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "eformsign-jobs-always-on-p5fix-d",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "problem-contract bodies only; ambiguous cancel outcome keeps the uncertainty marker"
+    },
+    {
+      "id": "owner-27fa9b1db48c",
+      "path": "backend/application/services/service-record-schedule-realignment.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by client-service-day-toggles Task 4.1 (re-lay a client's remaining service-record sessions when its service-day flags change, called from ClientService.update and reuse-create); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a registered problem body. Client missing on the locked reread or client/case outside the caller branch -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_WRITE_TARGET_CHANGED) 409; stored planned vector unreadable -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE) 409; re-lay crossing an inner handover boundary, failing the vector validation or the employee-schedule overlap check, or a ServiceRecordEditConflictError from assignmentWrites -> ConflictException(problemBody REQUEST_CONFLICT) 409 with the scheduleCode extension REALIGNMENT_REQUIRES_MANUAL_SCHEDULE; any other error rethrown unchanged. BadRequestException is referenced only in an instanceof check. No new codes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 78,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 79,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 160,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 222,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 245,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 251,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 284,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 325,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 326,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 345,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 346,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 347,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 594,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 617,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 618,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 619,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 621,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "client-service-day-toggles-4.1-intake",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-CORE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [],
+      "outcome_evidence": null,
+      "consumer_paths": [
+        "HTTP client.controller (update, create reuseExistingClient) via ClientService"
+      ],
+      "test_evidence": [
+        "backend/test/services/service-record-schedule-realignment.service.spec.ts",
+        "backend/test/services/client.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered codes only; scheduleCode extension re-attached at the HTTP boundary"
     }
   ]
 }

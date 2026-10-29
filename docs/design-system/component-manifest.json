@@ -1318,6 +1318,23 @@
         ]
       },
       {
+        "name": "DocumentJobsStatMini",
+        "layer": "organism",
+        "import": "@/components/app/contracts/DocumentJobsStatMini",
+        "file": "frontend/src/components/app/contracts/DocumentJobsStatMini.tsx",
+        "exports": [
+          "DocumentJobsStatMini",
+          "useDocumentJobsStatVisible"
+        ],
+        "replaces": [
+          "per-page document job status tiles",
+          "contract document job status tiles"
+        ],
+        "requiredFor": [
+          "first-slot document jobs card of every stats bar"
+        ]
+      },
+      {
         "name": "ContractDocumentJobsPopover",
         "layer": "organism",
         "import": "@/components/app/contracts/ContractDocumentJobsPopover",
@@ -1331,6 +1348,38 @@
         ],
         "requiredFor": [
           "read-only eformsign document job status"
+        ]
+      },
+      {
+        "name": "DocumentJobRecoveryDialog",
+        "layer": "organism",
+        "import": "@/components/app/contracts/DocumentJobRecoveryDialog",
+        "file": "frontend/src/components/app/contracts/DocumentJobRecoveryDialog.tsx",
+        "exports": [
+          "DocumentJobRecoveryDialog"
+        ],
+        "replaces": [
+          "page-local failed document job recovery dialogs",
+          "manual eformsign iframe fallbacks"
+        ],
+        "requiredFor": [
+          "recovering a failed eformsign document job from /contracts?recoverJobId="
+        ]
+      },
+      {
+        "name": "DocumentJobRecoverySummary",
+        "layer": "molecule",
+        "import": "@/components/app/contracts/DocumentJobRecoverySummary",
+        "file": "frontend/src/components/app/contracts/DocumentJobRecoverySummary.tsx",
+        "exports": [
+          "DocumentJobRecoverySummary",
+          "parseDocumentJobResendInput"
+        ],
+        "replaces": [
+          "custom read-only saved-input summaries"
+        ],
+        "requiredFor": [
+          "showing the saved input of a failed document job"
         ]
       },
       {
@@ -1474,6 +1523,37 @@
         "file": "frontend/src/components/app/ui/automation-status-notice.tsx",
         "exports": [
           "AutomationStatusNotice"
+        ]
+      },
+      {
+        "name": "DocumentJobFailurePopup",
+        "layer": "molecule",
+        "import": "@/components/app/ui/DocumentJobFailurePopup",
+        "file": "frontend/src/components/app/ui/DocumentJobFailurePopup.tsx",
+        "exports": [
+          "DocumentJobFailurePopup"
+        ],
+        "replaces": [
+          "persistent failure toasts",
+          "custom bottom-right failure notice cards"
+        ],
+        "requiredFor": [
+          "document job failure notices"
+        ]
+      },
+      {
+        "name": "DocumentJobFailurePopupStack",
+        "layer": "organism",
+        "import": "@/components/app/ui/DocumentJobFailurePopupStack",
+        "file": "frontend/src/components/app/ui/DocumentJobFailurePopupStack.tsx",
+        "exports": [
+          "DocumentJobFailurePopupStack"
+        ],
+        "replaces": [
+          "custom bottom-right notice stacks"
+        ],
+        "requiredFor": [
+          "app-wide document job failure popups"
         ]
       },
       {
@@ -2491,10 +2571,12 @@
         "import": "@/components/ui/toaster",
         "file": "mobile/src/components/ui/toaster.tsx",
         "exports": [
-          "Toaster"
+          "Toaster",
+          "ToastAction"
         ],
         "requiredFor": [
-          "mobile shell toast feedback"
+          "mobile shell toast feedback",
+          "service-record public route toast feedback"
         ]
       },
       {

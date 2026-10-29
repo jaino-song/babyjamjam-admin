@@ -9,6 +9,7 @@ import {
     parseBody,
 } from "@/lib/api/route-utils";
 import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
+import { withManualScheduleRequired } from "@/app/api/admin/service-records/_lib/schedule-extensions";
 import { invalidClientIdResponse, isValidClientId } from "../client-route-utils";
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -85,7 +86,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return backendJsonResponse(backendResponse);
     } catch (error) {
-        return errorResponse(error, "update client", "mutation");
+        // The sanitizer drops unknown members; a handover the server cannot re-lay keeps its reason.
+        return withManualScheduleRequired(errorResponse(error, "update client", "mutation"), error);
     }
 }
 

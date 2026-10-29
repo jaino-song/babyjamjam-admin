@@ -12,6 +12,7 @@ import {
     ReviewItemDraft,
 } from "domain/repositories/holiday-review.repository.interface";
 import { KrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 
 /** A save in flight computed with the pre-change calendar must land before the event is processed. */
 export const HOLIDAY_REVIEW_GRACE_MS = 2 * 60 * 1000;
@@ -205,8 +206,12 @@ export class HolidayReviewProcessorService {
             let recalculatedEnd: string;
             let previousEnd: string;
             try {
-                recalculatedEnd = current.calcEndDateBusinessDays(candidate.startDate, candidate.duration);
-                previousEnd = previous.calcEndDateBusinessDays(candidate.startDate, candidate.duration);
+                // The end date is the CLIENT's service days; event applicability
+                // above stays on the branch calendar.
+                recalculatedEnd = withClientServiceDays(current, candidate)
+                    .calcEndDateBusinessDays(candidate.startDate, candidate.duration);
+                previousEnd = withClientServiceDays(previous, candidate)
+                    .calcEndDateBusinessDays(candidate.startDate, candidate.duration);
             } catch (error) {
                 if (error instanceof UnsupportedKoreanHolidayYearError) {
                     this.logger.debug(
@@ -232,6 +237,10 @@ export class HolidayReviewProcessorService {
                 storedEnd: candidate.endDate,
                 recalculatedEnd,
                 previousEnd,
+                // The flags the two ends above were computed with (absent = not allowed).
+                allowSaturdayService: candidate.allowSaturdayService ?? false,
+                allowSundayService: candidate.allowSundayService ?? false,
+                allowHolidayService: candidate.allowHolidayService ?? false,
                 affectedFrom,
                 category,
                 reason,

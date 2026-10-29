@@ -6,7 +6,11 @@ import {
     ReviewFixSnapshot,
     ReviewItemRecord,
 } from "domain/repositories/holiday-review.repository.interface";
-import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import {
+    createKrBusinessDayCalendar,
+    KR_BUILTIN_HOLIDAYS,
+    UnsupportedKoreanHolidayYearError,
+} from "domain/utils/business-days";
 import { HolidayReviewResolveService } from "./holiday-review-resolve.service";
 
 const BRANCH = "11111111-1111-4111-8111-111111111111";
@@ -21,6 +25,12 @@ const EVENT: HolidayChangeEventRecord = {
     name: "임시공휴일",
     source: "kasi",
     createdAt: new Date("2026-11-01T03:04:05.000Z"),
+};
+
+const NO_SERVICE_DAYS = {
+    allowSaturdayService: false,
+    allowSundayService: false,
+    allowHolidayService: false,
 };
 
 let nextId = 0;
@@ -377,6 +387,7 @@ describe("HolidayReviewResolveService", () => {
             expect(s.clientService.update).toHaveBeenCalledWith(BRANCH, 7, {
                 endDate: "2026-11-16",
                 expectedEndDate: "2026-11-13",
+                expectedServiceDays: NO_SERVICE_DAYS,
             }, expect.any(Function));
             expect(s.repository.claimOpenItemForFix).toHaveBeenCalledWith(BRANCH, EVENT_ID, { ...open, status: "open" }, USER, {});
             expect(s.clientWrite).toHaveBeenCalledTimes(1);
@@ -392,6 +403,97 @@ describe("HolidayReviewResolveService", () => {
             expect(s.calendarService.forBranch).toHaveBeenCalledTimes(1);
             expect(s.calendarService.forBranch).toHaveBeenCalledWith(BRANCH, { fresh: true });
             expect(s.calendar.calcEndDateBusinessDays).toHaveBeenCalledWith("2026-11-02", 10);
+        });
+
+        it("recomputes a service-day-enabled client's end date on the client's own calendar, the branch calendar for a default one", async () => {
+            const enabled = item({ clientId: 1, storedEnd: "2026-11-13", recalculatedEnd: "2026-11-13" });
+            const plain = item({ clientId: 2 });
+            const s = makeService({
+                items: [enabled, plain],
+                snapshots: {
+                    1: snapshot({ allowHolidayService: true }),
+                    2: snapshot(),
+                },
+                recalculated: "2026-11-16",
+            });
+            // The client's own calendar sits behind `withServiceDays`; it answers differently.
+            const clientCalendar = { calcEndDateBusinessDays: jest.fn(() => "2026-11-12") };
+            Object.assign(s.calendar, { withServiceDays: jest.fn(() => clientCalendar) });
+            await resolveFix(s, [enabled.id, plain.id]);
+
+            expect((s.calendar as unknown as { withServiceDays: jest.Mock }).withServiceDays)
+                .toHaveBeenCalledTimes(1);
+            expect((s.calendar as unknown as { withServiceDays: jest.Mock }).withServiceDays)
+                .toHaveBeenCalledWith({ saturday: false, sunday: false, holiday: true });
+            expect(clientCalendar.calcEndDateBusinessDays).toHaveBeenCalledWith("2026-11-02", 10);
+            expect(s.calendar.calcEndDateBusinessDays).toHaveBeenCalledTimes(1);
+        });
+
+        describe("service-day flags flipping between the snapshot and the locked write", () => {
+            // Saturday-enabled client, 10 service days from Mon 2026-11-02, with 11-10 newly a holiday:
+            // 11-13 on its own calendar, 11-16 once Saturday is off.
+            const holidayCalendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-11-10"], {
+                version: "test-with-2026-11-10",
+                supportedYears: [2024, 2025, 2026, 2027],
+            });
+            const SATURDAY_ON = { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false };
+
+            /** ClientService stand-in whose locked row can differ from the snapshot; it enforces the guard like the real one. */
+            function lockedWorld(lockedFlags: typeof SATURDAY_ON) {
+                const open = item({ storedEnd: "2026-11-12", recalculatedEnd: "2026-11-13" });
+                const s = makeService({ items: [open] });
+                s.calendarService.forBranch.mockResolvedValue(holidayCalendar as never);
+                s.repository.findFixSnapshot.mockResolvedValue(
+                    snapshot({ endDate: "2026-11-12", ...SATURDAY_ON }),
+                );
+                const written: unknown[] = [];
+                s.clientService.update.mockImplementation(async (_b, _id, params, beforeWrite) => {
+                    const p = params as { endDate: string; expectedServiceDays?: typeof SATURDAY_ON };
+                    const before = open.status;
+                    try {
+                        await beforeWrite?.({} as Prisma.TransactionClient);
+                        if (p.expectedServiceDays !== undefined && (
+                            p.expectedServiceDays.allowSaturdayService !== lockedFlags.allowSaturdayService
+                            || p.expectedServiceDays.allowSundayService !== lockedFlags.allowSundayService
+                            || p.expectedServiceDays.allowHolidayService !== lockedFlags.allowHolidayService
+                        )) {
+                            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+                        }
+                        written.push(p.endDate);
+                        return {} as never;
+                    } catch (error) {
+                        open.status = before;
+                        throw error;
+                    }
+                });
+                return { s, open, written };
+            }
+
+            it("rejects the write and keeps the item open when the flags changed under the lock", async () => {
+                const { s, open, written } = lockedWorld({ ...SATURDAY_ON, allowSaturdayService: false });
+
+                await expect(resolveFix(s, [open.id])).resolves.toEqual({
+                    fixed: 0,
+                    kept: 0,
+                    skipped: [{ itemId: open.id, code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" }],
+                });
+                expect(s.clientService.update).toHaveBeenCalledWith(
+                    BRANCH,
+                    7,
+                    expect.objectContaining({ endDate: "2026-11-13", expectedServiceDays: SATURDAY_ON }),
+                    expect.any(Function),
+                );
+                expect(written).toEqual([]);
+                expect(open.status).toBe("open");
+            });
+
+            it("writes the end date on the client's own calendar when the flags did not move", async () => {
+                const { s, open, written } = lockedWorld(SATURDAY_ON);
+
+                await expect(resolveFix(s, [open.id])).resolves.toEqual({ fixed: 1, kept: 0, skipped: [] });
+                expect(written).toEqual(["2026-11-13"]);
+                expect(open.status).toBe("fixed");
+            });
         });
 
         it("fixes items one after another, in request order", async () => {
@@ -600,6 +702,7 @@ describe("HolidayReviewResolveService", () => {
                 expect(s.clientService.update).toHaveBeenCalledWith(BRANCH, 7, {
                     endDate: "2026-11-17",
                     expectedEndDate: "2026-11-13",
+                    expectedServiceDays: NO_SERVICE_DAYS,
                 }, expect.any(Function));
             });
         });

@@ -4,6 +4,7 @@ import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/s
 import {
     EformsignDocumentWorkflowState,
     EformsignService,
+    StaffCompletionPrefillAmounts,
 } from "application/services/eformsign.service";
 import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
 import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
@@ -40,6 +41,7 @@ export interface FinalizeHeadlessParams {
     /** Authenticated tenant branch. Direct unit callers may omit this for compatibility. */
     branchId?: string;
     prefillEndDate?: string;
+    prefillAmounts?: StaffCompletionPrefillAmounts;
     progressId?: string;
     onProgress?: (step: EformsignHeadlessProgressStep) => void | Promise<void>;
 }
@@ -254,6 +256,7 @@ export class FinalizeDocumentHeadlessUsecase {
                     .update(JSON.stringify({
                         documentId: params.documentId,
                         prefillEndDate: params.prefillEndDate ?? null,
+                        ...(params.prefillAmounts ? { prefillAmounts: params.prefillAmounts } : {}),
                         templateId: target.document.templateId,
                         generation,
                     }))
@@ -308,6 +311,7 @@ export class FinalizeDocumentHeadlessUsecase {
                 accessToken,
                 refreshToken,
                 params.prefillEndDate,
+                params.prefillAmounts,
             )) as Record<string, unknown>;
 
             if (lease && !lease.isHeld()) {

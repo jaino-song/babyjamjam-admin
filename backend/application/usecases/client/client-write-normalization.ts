@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE, clientDurationOutOfRangeMessage } from "domain/entities/client.entity";
+import { CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE, clientDurationOutOfRangeMessage, serviceDayPolicyOf } from "domain/entities/client.entity";
 import type { ClientEntity } from "domain/entities/client.entity";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { normalizeClientPricing } from "domain/services/client-pricing";
@@ -14,7 +14,7 @@ export type ClientWriteInput = Omit<UpdateClientParams, DateField | "eDocId"> & 
 };
 export type ClientWriteExisting = Pick<ClientEntity,
     "voucherClient" | "type" | "fullPrice" | "grant" | "actualPrice" | "duration" | "startDate" | "endDate"
->;
+> & Partial<Pick<ClientEntity, "allowSaturdayService" | "allowSundayService" | "allowHolidayService">>;
 type ClientPricingUpdate = Pick<ClientWriteInput, "voucherClient" | "type" | "duration" | "fullPrice" | "grant" | "actualPrice">;
 
 export function normalizeMergedClientPricing(existing: ClientWriteExisting, updates: ClientPricingUpdate): ReturnType<typeof normalizeClientPricing> | undefined {
@@ -107,7 +107,9 @@ export function normalizeClientUpdateInput(
         dueDate: parseClientDate(updates.dueDate, "dueDate"),
         birthDate: parseClientDate(updates.birthDate, "birthDate"),
     };
-    const derived = validatedDerivedDuration(existing, parsed, calendar);
+    // The client's own service-day policy decides which days count, so an
+    // edit of a Saturday-enabled client is judged on its weekend sessions too.
+    const derived = validatedDerivedDuration(existing, parsed, calendar.withServiceDays(serviceDayPolicyOf(existing)));
     // A contracted count is authoritative. Omission fills only an absent count;
     // it must never replace an existing count with the length of an extended period.
     const duration = parsed.duration !== undefined ? parsed.duration

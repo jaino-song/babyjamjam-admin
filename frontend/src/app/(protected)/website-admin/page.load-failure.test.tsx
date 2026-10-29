@@ -3,6 +3,20 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import WebsiteAdminPage from "./page";
 
+let mockDocumentJobsActive = false;
+jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {
+  const actual = jest.requireActual("@/features/document-jobs/DocumentJobsProvider");
+  return {
+    ...actual,
+    useDocumentJobs: () => ({
+      ...actual.useDocumentJobs(),
+      summary: { activeCount: mockDocumentJobsActive ? 1 : 0, unresolvedCount: 0 },
+      total: mockDocumentJobsActive ? 1 : 0,
+      unresolvedCount: 0,
+    }),
+  };
+});
+
 jest.mock("@tanstack/react-query", () => ({
   ...jest.requireActual("@tanstack/react-query"), useQuery: jest.fn(),
 }));
@@ -32,6 +46,21 @@ function renderPage(overrides: Partial<typeof query>) {
 
 describe("WebsiteAdminPage ribbon load", () => {
   beforeEach(() => refetch.mockClear());
+
+  it.each([false, true])("renders a first-child jobs-only row only when active: %s", (active) => {
+    mockDocumentJobsActive = active;
+    const { container, unmount } = renderPage({ data: config });
+    const row = container.querySelector('[data-component="website-admin_stats"]');
+    if (active) {
+      expect(row?.parentElement?.firstElementChild).toBe(row);
+      expect(row?.firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
+      expect(row?.children).toHaveLength(1);
+    } else {
+      expect(row).not.toBeInTheDocument();
+    }
+    unmount();
+    mockDocumentJobsActive = false;
+  });
 
   it("replaces an unknown failed config with a retry panel, not an editable default", () => {
     const { container } = renderPage({ isError: true, status: "error" });

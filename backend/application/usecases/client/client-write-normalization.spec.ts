@@ -87,3 +87,30 @@ describe("client write descriptor with a branch calendar", () => {
         ).duration).toBe(3);
     });
 });
+
+describe("client write descriptor honours the existing client's service days", () => {
+    // 2026-12-14 is a Monday. Ten weekday sessions end 12-28 (12-25 is a holiday); with
+    // Saturday service the tenth session is 12-24.
+    const period = {
+        ...existing,
+        duration: 10,
+        startDate: new Date("2026-12-14T00:00:00Z"),
+        endDate: new Date("2026-12-28T00:00:00Z"),
+    };
+    const shorten = { endDate: "2026-12-24", duration: 10 };
+
+    it("accepts the Saturday-inclusive period when the client allows Saturday service", () => {
+        const write = normalizeClientUpdateInput({ ...period, allowSaturdayService: true }, shorten, KR_BUILTIN_CALENDAR);
+        expect(write).toMatchObject({ endDate: new Date("2026-12-24T00:00:00Z"), duration: 10 });
+    });
+
+    it("rejects the same period when Saturday service is off or the flags are absent", () => {
+        expect(() => normalizeClientUpdateInput({ ...period, allowSaturdayService: false }, shorten, KR_BUILTIN_CALENDAR))
+            .toThrow("1일 이상 9일 이하");
+        expect(() => normalizeClientUpdateInput(period, shorten, KR_BUILTIN_CALENDAR)).toThrow("1일 이상 9일 이하");
+    });
+
+    it("keeps accepting the weekday end date for a Saturday-enabled client within its larger count", () => {
+        expect(normalizeClientUpdateInput({ ...period, allowSaturdayService: true }, { endDate: "2026-12-28", duration: 10 }, KR_BUILTIN_CALENDAR).duration).toBe(10);
+    });
+});

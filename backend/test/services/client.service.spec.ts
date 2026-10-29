@@ -6,6 +6,7 @@ import { mapHttpProblem, sendProblemResponse } from "../../infrastructure/filter
 
 import { ClientService } from "../../application/services/client.service";
 import { ServiceRecordLifecycleService } from "../../application/services/service-record-lifecycle.service";
+import { ServiceRecordScheduleRealignmentService } from "../../application/services/service-record-schedule-realignment.service";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -368,6 +369,43 @@ describe("ClientService", () => {
         jest.clearAllMocks();
     });
 
+    /**
+     * A service wired with the schedule re-lay collaborator (and optionally the
+     * message-automation branch lock), which the default positional construction
+     * above leaves out.
+     */
+    const createServiceWithRealignment = (
+        realignment: {
+            realignForServiceDayChangeInTransaction: jest.Mock;
+            assertCanCombineWithAssignmentChange?: jest.Mock;
+        },
+        branchLock?: { runExclusive: jest.Mock },
+    ) => new ClientService(
+        createClientUsecase as unknown as CreateClientUsecase,
+        findClientByIdUsecase as unknown as FindClientByIdUsecase,
+        listClientsUsecase as unknown as ListClientsUsecase,
+        listClientsPaginatedUsecase as unknown as ListClientsPaginatedUsecase,
+        updateClientUsecase as unknown as UpdateClientUsecase,
+        deleteClientUsecase as unknown as DeleteClientUsecase,
+        prismaService as unknown as PrismaService,
+        clientRepository,
+        systemSettingService as unknown as SystemSettingService,
+        documentSnapshotService as unknown as EformsignDocumentSnapshotService,
+        messageAutomationIntentService as unknown as MessageAutomationIntentService,
+        holidayCalendar, triggerService as unknown as MessageTriggerService,
+        serviceRecordLinkService as unknown as ServiceRecordLinkService,
+        serviceRecordLifecycleService as unknown as ServiceRecordLifecycleService,
+        configService as unknown as ConfigService,
+        linkMirroredDocumentByPhoneUsecase as unknown as LinkMirroredEformsignDocByPhoneUsecase,
+        undefined,
+        undefined,
+        branchLock as never,
+        {
+            assertCanCombineWithAssignmentChange: jest.fn().mockResolvedValue(undefined),
+            ...realignment,
+        } as unknown as ServiceRecordScheduleRealignmentService,
+    );
+
     // ============================================
     // checkPhoneExists
     // ============================================
@@ -536,6 +574,304 @@ describe("ClientService", () => {
             });
         });
 
+        describe("service-day flags on a reused client", () => {
+            const baseParams = {
+                name: "Service Day Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            };
+
+            it("applies an explicit true to a client stored false in one update", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = false;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                });
+
+                const dayUpdates = prismaService.client.updateMany.mock.calls
+                    .filter(([arg]) => "allowSaturdayService" in arg.data);
+                expect(dayUpdates).toHaveLength(1);
+                expect(dayUpdates[0]![0]).toEqual({
+                    where: { id: reused.id, branchId },
+                    data: { allowSaturdayService: true },
+                });
+                expect(result.allowSaturdayService).toBe(true);
+            });
+
+            it("applies an explicit false to a client stored true, touching only supplied flags", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowSundayService = true;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams, reuseExistingClient: true, allowSaturdayService: false, allowHolidayService: false,
+                });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: reused.id, branchId },
+                    data: { allowSaturdayService: false, allowHolidayService: false },
+                });
+                expect(result.allowSaturdayService).toBe(false);
+                expect(result.allowHolidayService).toBe(false);
+                expect(result.allowSundayService).toBe(true);
+            });
+
+            it("leaves stored flags untouched when the flags are omitted", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowSundayService = false;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, { ...baseParams, reuseExistingClient: true });
+
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(result.allowSaturdayService).toBe(true);
+                expect(result.allowSundayService).toBe(false);
+                expect(result.allowHolidayService).toBe(true);
+            });
+
+            it("treats null flags like omitted ones and never writes null", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowSundayService = false;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams,
+                    reuseExistingClient: true,
+                    allowSaturdayService: null,
+                    allowSundayService: null,
+                    allowHolidayService: null,
+                } as unknown as Parameters<typeof service.create>[1]);
+
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(result.allowSaturdayService).toBe(true);
+                expect(result.allowSundayService).toBe(false);
+                expect(result.allowHolidayService).toBe(true);
+            });
+
+            it("writes only the boolean flag when another flag is null", async () => {
+                const reused = createClientEntity();
+                reused.allowSaturdayService = true;
+                reused.allowHolidayService = true;
+                clientRepository.findByPhone.mockResolvedValue(reused);
+
+                const result = await service.create(branchId, {
+                    ...baseParams,
+                    reuseExistingClient: true,
+                    allowSaturdayService: null,
+                    allowHolidayService: false,
+                } as unknown as Parameters<typeof service.create>[1]);
+
+                const dayUpdates = prismaService.client.updateMany.mock.calls
+                    .filter(([arg]) => "allowHolidayService" in arg.data || "allowSaturdayService" in arg.data);
+                expect(dayUpdates).toHaveLength(1);
+                expect(dayUpdates[0]![0]).toEqual({
+                    where: { id: reused.id, branchId },
+                    data: { allowHolidayService: false },
+                });
+                expect(result.allowSaturdayService).toBe(true);
+                expect(result.allowHolidayService).toBe(false);
+            });
+
+            it("persists false for a new client created with the flags omitted", async () => {
+                createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                await service.create(branchId, baseParams);
+
+                const persisted = createClientUsecase.execute.mock.calls[0]![1];
+                expect(persisted.allowSaturdayService).toBe(false);
+                expect(persisted.allowSundayService).toBe(false);
+                expect(persisted.allowHolidayService).toBe(false);
+            });
+
+            describe("re-laying the remaining sessions", () => {
+                const realign = () => ({
+                    realignForServiceDayChangeInTransaction: jest.fn().mockResolvedValue({ changed: true }),
+                });
+                const reusedClient = (saturday: boolean) => {
+                    const reused = createClientEntity();
+                    reused.allowSaturdayService = saturday;
+                    clientRepository.findByPhone.mockResolvedValue(reused);
+                    return reused;
+                };
+
+                it("writes the flags and re-lays in one locked transaction when a flag changes", async () => {
+                    const realignment = realign();
+                    const reused = reusedClient(false);
+
+                    await createServiceWithRealignment(realignment).create(branchId, {
+                        ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                    });
+
+                    const transactionsBefore = prismaService.$transaction.mock.calls.length;
+                    expect(transactionsBefore).toBeGreaterThanOrEqual(1);
+                    const flagWrite = prismaService.client.updateMany.mock.calls
+                        .findIndex(([arg]) => "allowSaturdayService" in arg.data);
+                    const flagWriteOrder = prismaService.client.updateMany.mock.invocationCallOrder[flagWrite]!;
+                    // The client row is locked (FOR UPDATE) before the flag write, and the re-lay follows it.
+                    expect(prismaService.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(flagWriteOrder);
+                    expect(realignment.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+                    expect(realignment.realignForServiceDayChangeInTransaction.mock.invocationCallOrder[0])
+                        .toBeGreaterThan(flagWriteOrder);
+                    expect(realignment.realignForServiceDayChangeInTransaction).toHaveBeenCalledWith(prismaService, {
+                        branchId,
+                        clientId: reused.id,
+                        calendar: expect.anything(),
+                    });
+                });
+
+                it("runs under the message-automation branch lock when one is wired", async () => {
+                    const branchLock = {
+                        runExclusive: jest.fn(async (_branch: string, work: (tx: unknown) => Promise<void>) => work(prismaService)),
+                    };
+                    const realignment = realign();
+                    reusedClient(false);
+
+                    await createServiceWithRealignment(realignment, branchLock).create(branchId, {
+                        ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                    });
+
+                    expect(branchLock.runExclusive).toHaveBeenCalledWith(branchId, expect.any(Function));
+                    expect(realignment.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+                });
+
+                it("compares against the locked row, not the pre-read copy", async () => {
+                    const realignment = realign();
+                    reusedClient(false);
+                    // Another writer already turned Saturday on while this request was in flight.
+                    prismaService.client.findUnique.mockResolvedValue({
+                        branchId, allowSaturdayService: true, allowSundayService: false, allowHolidayService: false,
+                    });
+
+                    await createServiceWithRealignment(realignment).create(branchId, {
+                        ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                    });
+
+                    expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: 1, branchId },
+                        data: { allowSaturdayService: true },
+                    });
+                    expect(realignment.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+                });
+
+                it("does not touch the re-lay when the flags are omitted", async () => {
+                    const realignment = realign();
+                    reusedClient(true);
+
+                    await createServiceWithRealignment(realignment).create(branchId, {
+                        ...baseParams, reuseExistingClient: true,
+                    });
+
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                    expect(realignment.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+                });
+
+                it("reconciles the period to the planned vector's last date when the flag change moves no session", async () => {
+                    // The real re-lay against a fake transaction: both planned sessions are in the
+                    // past, so nothing moves, yet the stored case/client end must follow the vector.
+                    const realService = new ServiceRecordScheduleRealignmentService();
+                    const realignment = {
+                        realignForServiceDayChangeInTransaction: jest.fn(
+                            (tx: Prisma.TransactionClient, params: Parameters<ServiceRecordScheduleRealignmentService["realignForServiceDayChangeInTransaction"]>[1]) =>
+                                realService.realignForServiceDayChangeInTransaction(tx, params),
+                        ),
+                    };
+                    const reused = reusedClient(false);
+                    const dbDate = (value: string) => new Date(`${value}T00:00:00.000Z`);
+                    const row = {
+                        id: reused.id,
+                        branchId,
+                        startDate: dbDate("2024-05-13"),
+                        endDate: dbDate("2024-05-16"),
+                        allowSaturdayService: false,
+                        allowSundayService: false,
+                        allowHolidayService: false,
+                    };
+                    prismaService.client.findUnique.mockImplementation(async () => ({ ...row }));
+                    prismaService.client.updateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+                        Object.assign(row, data);
+                        return { count: 1 };
+                    });
+                    const plannedSessions = ["2024-05-13", "2024-05-14"].map((serviceDate, index) => ({
+                        sessionIndex: index + 1,
+                        serviceDate,
+                        originalDate: serviceDate,
+                        assignmentId: "a-1",
+                        scheduleId: 11,
+                        employeeId: 7,
+                        provenanceVersion: "1",
+                    }));
+                    const caseUpdate = jest.fn().mockResolvedValue({});
+                    const tokenUpdate = jest.fn().mockResolvedValue({ count: 1 });
+                    // A case exists, so the write-set lock must find exactly that one row.
+                    prismaService.$queryRaw.mockResolvedValue([{ id: "case-1" }]);
+                    const dayUpdate = jest.fn();
+                    const assignmentUpdate = jest.fn();
+                    Object.assign(prismaService, {
+                        service_record_case: {
+                            findMany: jest.fn().mockResolvedValue([]),
+                            findUnique: jest.fn().mockResolvedValue({
+                                id: "case-1",
+                                branchId,
+                                clientId: reused.id,
+                                status: "IN_PROGRESS",
+                                startDate: dbDate("2024-05-13"),
+                                endDate: dbDate("2024-05-16"),
+                                requiredSessionCount: 2,
+                                plannedSessions,
+                                version: 1,
+                            }),
+                            update: caseUpdate,
+                        },
+                        service_record_day: { findMany: jest.fn().mockResolvedValue([]), updateMany: dayUpdate },
+                        service_record_assignment: { updateMany: assignmentUpdate },
+                        service_record_token: { updateMany: tokenUpdate },
+                    });
+
+                    await createServiceWithRealignment(realignment).create(branchId, {
+                        ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                    });
+
+                    expect(realignment.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+                    expect(caseUpdate).toHaveBeenCalledWith({
+                        where: { id: "case-1", branchId },
+                        data: { endDate: dbDate("2024-05-14"), version: { increment: 1 } },
+                    });
+                    expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: reused.id, branchId },
+                        data: { endDate: dbDate("2024-05-14") },
+                    });
+                    expect(row.endDate).toEqual(dbDate("2024-05-14"));
+                    expect(tokenUpdate).toHaveBeenCalledTimes(1);
+                    expect(dayUpdate).not.toHaveBeenCalled();
+                    expect(assignmentUpdate).not.toHaveBeenCalled();
+                    expect(prismaService.employee_schedule.updateMany).not.toHaveBeenCalled();
+                });
+
+                it("does not report the flags as written when the re-lay refuses", async () => {
+                    const refusal = new ConflictException({ code: "REQUEST_CONFLICT", scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE" });
+                    const realignment = realign();
+                    realignment.realignForServiceDayChangeInTransaction.mockRejectedValue(refusal);
+                    const reused = reusedClient(false);
+
+                    await expect(createServiceWithRealignment(realignment).create(branchId, {
+                        ...baseParams, reuseExistingClient: true, allowSaturdayService: true,
+                    })).rejects.toBe(refusal);
+
+                    expect(reused.allowSaturdayService).toBe(false);
+                });
+            });
+        });
+
         it("allows an explicit null phone clear on create", async () => {
             const client = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(client);
@@ -641,6 +977,41 @@ describe("ClientService", () => {
                 });
 
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
+            });
+
+            describe("per-client service days", () => {
+                // 2026-12-14 is a Monday: 10 sessions end 12-28 on weekdays, 12-24 with Saturday service.
+                const saturdayPeriod = { startDate: "2026-12-14", endDate: "2026-12-24" };
+
+                it("counts a Saturday toward the derived duration only when the client allows it", async () => {
+                    createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                    await service.create(branchId, { ...baseParams, ...saturdayPeriod, allowSaturdayService: true });
+                    expect(createdDuration()).toBe(10);
+
+                    createClientUsecase.execute.mockClear();
+                    await service.create(branchId, { ...baseParams, ...saturdayPeriod });
+                    expect(createdDuration()).toBe(9);
+                });
+
+                it("rejects 10 sessions over the Saturday-inclusive period when Saturday service is off", async () => {
+                    await expect(service.create(branchId, {
+                        ...baseParams, ...saturdayPeriod, duration: 10,
+                    })).rejects.toMatchObject({ status: 400 });
+                    expect(createClientUsecase.execute).not.toHaveBeenCalled();
+                });
+
+                it("passes the flags to the create usecase, defaulting each to false, and keeps the plain branch calendar", async () => {
+                    createClientUsecase.execute.mockResolvedValue(createClientEntity());
+
+                    await service.create(branchId, { ...baseParams, ...saturdayPeriod, allowSundayService: true });
+
+                    expect(createClientUsecase.execute).toHaveBeenCalledWith(branchId, expect.objectContaining({
+                        allowSaturdayService: false,
+                        allowSundayService: true,
+                        allowHolidayService: false,
+                    }), expect.anything(), KR_BUILTIN_CALENDAR);
+                });
             });
 
             it("leaves the duration null when no service period was submitted", async () => {
@@ -2310,6 +2681,267 @@ describe("ClientService", () => {
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
         });
 
+        describe("per-client service days", () => {
+            // 2026-12-14 is a Monday: 10 sessions end 12-28 on weekdays, 12-24 with Saturday service.
+            const shorten = { endDate: "2026-12-24", duration: 10 };
+            const ofClient = (allowSaturdayService: boolean) => {
+                const client = createClientEntity();
+                client.startDate = new Date("2026-12-14T00:00:00Z");
+                client.endDate = new Date("2026-12-28T00:00:00Z");
+                client.duration = 10;
+                client.allowSaturdayService = allowSaturdayService;
+                return client;
+            };
+
+            it("accepts the Saturday-inclusive period for a Saturday-enabled client", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+
+                await service.update(branchId, 1, shorten);
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ endDate: new Date("2026-12-24"), duration: 10 }),
+                }));
+            });
+
+            it("rejects the same period for a client without Saturday service", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(false));
+
+                await expect(service.update(branchId, 1, shorten)).rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("judges the period on the flags of this same patch and persists them", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(false));
+
+                await service.update(branchId, 1, { ...shorten, allowSaturdayService: true });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ allowSaturdayService: true, endDate: new Date("2026-12-24") }),
+                }));
+                const data = prismaService.client.updateMany.mock.calls[0]![0].data;
+                expect(data.allowSundayService).toBeUndefined();
+                expect(data.allowHolidayService).toBeUndefined();
+            });
+
+            it("a patch that turns Saturday off rejects a period only Saturday service could hold", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+
+                await expect(service.update(branchId, 1, { ...shorten, allowSaturdayService: false }))
+                    .rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("re-checks the period against the locked row's flags, not the stale preflight copy", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+                prismaService.client.findUnique.mockResolvedValue({
+                    ...ofClient(false),
+                    branchId,
+                });
+
+                await expect(service.update(branchId, 1, shorten)).rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("rejects a null flag before reading the client write", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(ofClient(true));
+
+                await expect(service.update(branchId, 1, { allowSundayService: null } as never))
+                    .rejects.toMatchObject({ status: 400 });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("re-laying the remaining sessions when a service-day flag changes", () => {
+            const realignment = () => ({
+                realignForServiceDayChangeInTransaction: jest.fn().mockResolvedValue({
+                    changed: true,
+                    mode: "planned",
+                    endDate: "2026-12-24",
+                    restoreRequiredSessionCount: null,
+                }),
+            });
+            const storedClient = (flags: { sat?: boolean; sun?: boolean; hol?: boolean } = {}) => {
+                const client = createClientEntity();
+                client.startDate = new Date("2026-12-14T00:00:00Z");
+                client.endDate = new Date("2026-12-28T00:00:00Z");
+                client.duration = 10;
+                client.allowSaturdayService = flags.sat ?? false;
+                client.allowSundayService = flags.sun ?? false;
+                client.allowHolidayService = flags.hol ?? false;
+                return client;
+            };
+            const callOrder = (mock: jest.Mock) => mock.mock.invocationCallOrder[0]!;
+
+            it("re-lays inside the update transaction, after the client write and before the lifecycle sync", async () => {
+                const realign = realignment();
+                const withRealignment = createServiceWithRealignment(realign);
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+
+                await withRealignment.update(branchId, 1, { allowSaturdayService: true });
+
+                expect(realign.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+                expect(realign.realignForServiceDayChangeInTransaction).toHaveBeenCalledWith(prismaService, {
+                    branchId,
+                    clientId: 1,
+                    calendar: expect.anything(),
+                    callerSuppliedEndDate: false,
+                });
+                expect(callOrder(prismaService.client.updateMany))
+                    .toBeLessThan(callOrder(realign.realignForServiceDayChangeInTransaction));
+                expect(callOrder(realign.realignForServiceDayChangeInTransaction))
+                    .toBeLessThan(callOrder(serviceRecordLifecycleService.ensureForClient));
+                // The lifecycle sync runs on the same transaction the re-lay used.
+                expect(serviceRecordLifecycleService.ensureForClient.mock.calls[0]![1]).toBe(prismaService);
+            });
+
+            it.each([
+                ["Sunday", { allowSundayService: true }],
+                ["holiday", { allowHolidayService: true }],
+            ])("re-lays when only the %s flag changes", async (_label, patch) => {
+                const realign = realignment();
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+
+                await createServiceWithRealignment(realign).update(branchId, 1, patch);
+
+                expect(realign.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+            });
+
+            it("does not re-lay when no flag is in the update or the flags equal the stored ones", async () => {
+                const realign = realignment();
+                const withRealignment = createServiceWithRealignment(realign);
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient({ sat: true }));
+
+                await withRealignment.update(branchId, 1, { name: "Renamed" });
+                await withRealignment.update(branchId, 1, { allowSaturdayService: true });
+                await withRealignment.update(branchId, 1, { allowSundayService: false, allowHolidayService: false });
+
+                expect(realign.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(3);
+            });
+
+            it("compares against the locked row, not the stale preflight copy", async () => {
+                const realign = realignment();
+                const withRealignment = createServiceWithRealignment(realign);
+                // The pre-read says Saturday is off, the locked row already has it on: no change.
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient({ sat: false }));
+                prismaService.client.findUnique.mockResolvedValue({ ...storedClient({ sat: true }), branchId });
+                await withRealignment.update(branchId, 1, { allowSaturdayService: true });
+                expect(realign.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+
+                // The pre-read says on, the locked row says off: changed.
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient({ sat: true }));
+                prismaService.client.findUnique.mockResolvedValue({ ...storedClient({ sat: false }), branchId });
+                await withRealignment.update(branchId, 1, { allowSaturdayService: true });
+                expect(realign.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+            });
+
+            it("tells the re-lay when the same update supplied an end date", async () => {
+                const realign = realignment();
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+
+                await createServiceWithRealignment(realign).update(branchId, 1, {
+                    allowSaturdayService: true,
+                    endDate: "2026-12-24",
+                    duration: 10,
+                });
+
+                expect(realign.realignForServiceDayChangeInTransaction).toHaveBeenCalledWith(
+                    prismaService,
+                    expect.objectContaining({ callerSuppliedEndDate: true }),
+                );
+            });
+
+            it("refuses a flag change that arrives with an assignment change, before anything is written", async () => {
+                const realign = realignment();
+                const refusal = new ConflictException({ code: "REQUEST_CONFLICT", scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE" });
+                const assertCombinable = jest.fn().mockRejectedValue(refusal);
+                const withRealignment = createServiceWithRealignment({
+                    ...realign,
+                    assertCanCombineWithAssignmentChange: assertCombinable,
+                });
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 5, primaryEmployeeId: 7, secondaryEmployeeId: null, startDate: new Date("2026-12-14"), endDate: new Date("2026-12-28"),
+                });
+
+                await expect(withRealignment.update(branchId, 1, { allowSaturdayService: true, primaryEmployeeId: 9 }))
+                    .rejects.toBe(refusal);
+
+                expect(assertCombinable).toHaveBeenCalledWith(prismaService, { branchId, clientId: 1 });
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(realign.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+            });
+
+            it("does not consult the assignment guard when no flag changed", async () => {
+                const assertCombinable = jest.fn().mockResolvedValue(undefined);
+                const withRealignment = createServiceWithRealignment({
+                    ...realignment(),
+                    assertCanCombineWithAssignmentChange: assertCombinable,
+                });
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 5, primaryEmployeeId: 7, secondaryEmployeeId: null, startDate: new Date("2026-12-14"), endDate: new Date("2026-12-28"),
+                });
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 6 });
+
+                await withRealignment.update(branchId, 1, { primaryEmployeeId: 9 });
+
+                expect(assertCombinable).not.toHaveBeenCalled();
+            });
+
+            it("restores the session count the lifecycle sync re-capped after a legacy re-lay", async () => {
+                const realign = realignment();
+                realign.realignForServiceDayChangeInTransaction.mockResolvedValue({
+                    changed: true,
+                    mode: "legacy",
+                    endDate: "2026-12-24",
+                    restoreRequiredSessionCount: 10,
+                });
+                const recompute = jest.fn().mockResolvedValue(undefined);
+                (serviceRecordLifecycleService as unknown as { recompute: jest.Mock }).recompute = recompute;
+                serviceRecordLifecycleService.ensureForClient.mockResolvedValue({ id: "case-1", requiredSessionCount: 7 });
+                const caseUpdate = jest.fn();
+                (prismaService.service_record_case as unknown as Record<string, jest.Mock>)["update"] = caseUpdate;
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+
+                await createServiceWithRealignment(realign).update(branchId, 1, { allowSaturdayService: true });
+
+                expect(caseUpdate).toHaveBeenCalledWith({ where: { id: "case-1" }, data: { requiredSessionCount: 10 } });
+                expect(recompute).toHaveBeenCalledWith("case-1", prismaService, expect.anything());
+            });
+
+            it("leaves the session count alone when the sync kept it", async () => {
+                const realign = realignment();
+                realign.realignForServiceDayChangeInTransaction.mockResolvedValue({
+                    changed: true,
+                    mode: "legacy",
+                    endDate: "2026-12-24",
+                    restoreRequiredSessionCount: 10,
+                });
+                const recompute = jest.fn();
+                (serviceRecordLifecycleService as unknown as { recompute: jest.Mock }).recompute = recompute;
+                serviceRecordLifecycleService.ensureForClient.mockResolvedValue({ id: "case-1", requiredSessionCount: 10 });
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+
+                await createServiceWithRealignment(realign).update(branchId, 1, { allowSaturdayService: true });
+
+                expect(recompute).not.toHaveBeenCalled();
+            });
+
+            it("rolls the whole update back when the re-lay refuses", async () => {
+                const refusal = new ConflictException({ code: "REQUEST_CONFLICT", scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE" });
+                const realign = realignment();
+                realign.realignForServiceDayChangeInTransaction.mockRejectedValue(refusal);
+                findClientByIdUsecase.execute.mockResolvedValue(storedClient());
+
+                await expect(createServiceWithRealignment(realign).update(branchId, 1, { allowSaturdayService: true }))
+                    .rejects.toBe(refusal);
+
+                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            });
+        });
+
         describe("smsAutomationEnabled", () => {
             it.each([false, true])("writes only the flag when %s is the sole requested change", async (enabled) => {
                 findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
@@ -2448,6 +3080,61 @@ describe("ClientService", () => {
                         expectedEndDate: "2024-06-01",
                     })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
                     expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+            });
+
+            describe("expectedServiceDays guard", () => {
+                const SATURDAY_ONLY = {
+                    allowSaturdayService: true,
+                    allowSundayService: false,
+                    allowHolidayService: false,
+                };
+
+                it("rejects with SERVICE_RECORD_WRITE_TARGET_CHANGED when the locked row's flags differ from the snapshot", async () => {
+                    const staleClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                    prismaService.client.findUnique.mockResolvedValue({
+                        ...staleClient,
+                        branchId,
+                        allowSaturdayService: false,
+                    });
+
+                    await expect(service.update(branchId, staleClient.id, {
+                        endDate: "2024-05-30",
+                        expectedServiceDays: SATURDAY_ONLY,
+                    })).rejects.toMatchObject({
+                        status: 409,
+                        response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+                    });
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+
+                it("writes normally when the locked flags still match, without persisting the guard", async () => {
+                    const staleClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                    prismaService.client.findUnique.mockResolvedValue({
+                        ...staleClient,
+                        branchId,
+                        allowSaturdayService: true,
+                    });
+
+                    await service.update(branchId, staleClient.id, {
+                        endDate: "2024-05-30",
+                        expectedServiceDays: SATURDAY_ONLY,
+                    });
+
+                    const { data } = prismaService.client.updateMany.mock.calls[0][0];
+                    expect(data.endDate).toEqual(new Date("2024-05-30"));
+                    expect(data).not.toHaveProperty("expectedServiceDays");
+                });
+
+                it("treats a guard on its own as no update", async () => {
+                    const existingClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, { expectedServiceDays: SATURDAY_ONLY }))
+                        .resolves.toBe(existingClient);
+                    expect(prismaService.$transaction).not.toHaveBeenCalled();
                 });
             });
 

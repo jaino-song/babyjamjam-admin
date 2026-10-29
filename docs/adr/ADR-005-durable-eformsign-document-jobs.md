@@ -96,11 +96,57 @@ The queue is intentionally fail-closed and must be enabled in dependency order:
    accepted only after a worker is ready to drain them.
 4. For contract auto-finalization, enable `CONTRACT_AUTO_FINALIZE_ENABLED=true`
    with a valid `CONTRACT_AUTO_FINALIZE_SINCE=YYYY-MM-DD` backlog fence.
-5. Set `NEXT_PUBLIC_FEATURE_EFORMSIGN_DOCUMENT_JOBS=true` for the Production
-   frontend and rebuild it. This public flag is inlined at build time; changing
-   it without a new deployment does not expose the StatMini or asynchronous path.
 
-Rollback reverses the intake first: disable the frontend flag and rebuild, then
-set `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED=false`. Keep the worker enabled
-until already accepted jobs reach a terminal state, then disable it. Preview's
-global scheduler remains disabled, so it is not a valid worker-drain environment.
+Contract creation (including re-issue) and staff finalization always enqueue.
+A running worker is required in every environment where accepting is enabled.
+
+Rollback stops intake first: set `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED=false`.
+Creation fails closed with HTTP 503: the form shows the error and stays open
+with its input preserved. There is no manual iframe entry (the browser
+document-generation routes are retired); once intake is back, staff send again
+from the form, or recover a failed job from the jobs list. Transport failures and
+gateway timeouts show an "outcome unknown" message pointing at the jobs list,
+because a job may already have been accepted.
+Keep the worker enabled until already accepted jobs reach a terminal state, then
+disable it. Preview's global scheduler remains disabled, so it is not a valid
+worker-drain environment.
+
+## Amendment 2026-10-22: failed staff job payload retention
+
+Contract creation and finalization always run as background jobs, so staff must
+be able to finish a stuck job by hand in the eformsign iframe, prefilled with the
+data they submitted. This amendment changes what a terminal staff job keeps. No
+status, column or migration is added.
+
+A *contract job* is a `source = 'staff'` `create_document` or `finalize_document`
+row whose `request_key` does not start with `service-record-` and whose payload
+has no `kind` key. Service-record revision jobs share the table but are not
+contract jobs and keep their existing rules unchanged.
+
+- A contract job's payload is retained when it becomes `failed` or
+  `requires_attention` directly from `processing`. Every other source and job type
+  still clears the payload at a terminal transition, and `active_key` handling is
+  unchanged.
+- A job that entered `reconciling` (or was recovered stale past `preparing`)
+  already had its payload cleared, so it stays NULL. Recovery for those rows
+  returns `payload: null`; they are exactly the cases where a send may have
+  happened.
+- `failed` is reached only before anything was sent, so staff may send the
+  contract by hand (`manual_send`). `requires_attention` may follow a send, so
+  staff verify the result instead (`verify_result`); the system never offers an
+  automatic resend there. The split is by status only, not by error code.
+- Taking a manual claim overwrites `progress_step` with
+  `manual_in_progress:<userId>:<expiryEpochMs>` (10-minute expiry, renewable by the
+  same user, takeable by another user once expired). `last_error_code` is not
+  touched and remains the audit record of the original failure.
+- Resolving a job by hand sets `status = 'completed'`,
+  `progress_step = 'manual_resolved'`, `completed_at`, and clears `payload`,
+  `active_key`, `heartbeat_at` and `lease_token`; `last_error_code` is kept. A
+  `manual_resolved` row is an ordinary `completed` row, so the existing terminal
+  retention deletes it 7 days later. Resolving twice is a success.
+- `failed` rows are deleted 7 days after `completed_at` by the existing terminal
+  retention, which also bounds how long their retained payload lives.
+  `requires_attention` rows are never deleted, so their payload is nulled 7 days
+  after `completed_at` by a separate purge. The purge keeps `active_key`: a
+  `requires_attention` job may already have sent the document, and releasing the
+  key could let a duplicate through.

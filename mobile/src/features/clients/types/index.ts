@@ -64,6 +64,10 @@ export interface Client {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
+    /** 서비스일로 계산하는 주말·공휴일. 백엔드가 항상 내려주지만 옵션으로 읽어요(`?? false`). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     /**
      * When an admin pressed [예약 확정] (rule 고객-04), ISO string; null while the client is still
@@ -103,6 +107,9 @@ export interface CreateClientDto {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
     allowBusinessDayMismatch?: boolean;
@@ -131,6 +138,9 @@ export interface UpdateClientDto {
     careCenter?: boolean;
     voucherClient?: boolean;
     breastPump?: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
     allowBusinessDayMismatch?: boolean;

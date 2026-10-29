@@ -5,7 +5,7 @@ import {
 } from "domain/value-objects/service-status.vo";
 import { assertValidPhone, normalizePhone } from "domain/utils/normalize-phone";
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
-import type { KrBusinessDayCalendar } from "domain/utils/business-days";
+import type { KrBusinessDayCalendar, ServiceDayPolicy } from "domain/utils/business-days";
 
 interface UpdateClientProps {
     name?: string;
@@ -28,6 +28,9 @@ interface UpdateClientProps {
     breastPump?: boolean;
     eDocId?: string | null;
     areaId?: string | null;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
 }
 
 interface CreateClientProps {
@@ -56,6 +59,36 @@ interface CreateClientProps {
     createdAt?: Date | null;
     suppressGreetingSms?: boolean;
     smsAutomationEnabled?: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
+}
+
+type ServiceDayFlags = {
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
+};
+
+/**
+ * The per-client service-day policy carried by a client row, entity, or
+ * request patch. A missing flag means "not allowed", the weekday-only default.
+ */
+export function serviceDayPolicyOf(c: ServiceDayFlags): ServiceDayPolicy {
+    return {
+        saturday: c.allowSaturdayService === true,
+        sunday: c.allowSundayService === true,
+        holiday: c.allowHolidayService === true,
+    };
+}
+
+/** The policy after applying a patch: a flag the patch supplies wins, the others keep their current value. */
+export function mergeServiceDayPolicy(current: ServiceDayFlags, patch: ServiceDayFlags): ServiceDayPolicy {
+    return serviceDayPolicyOf({
+        allowSaturdayService: patch.allowSaturdayService ?? current.allowSaturdayService,
+        allowSundayService: patch.allowSundayService ?? current.allowSundayService,
+        allowHolidayService: patch.allowHolidayService ?? current.allowHolidayService,
+    });
 }
 
 /**
@@ -159,6 +192,10 @@ export class ClientEntity {
          * deliberately leaves the column alone.
          */
         public smsAutomationEnabled: boolean = true,
+        /** Per-client service-day policy: may service run on Saturdays / Sundays / public holidays. */
+        public allowSaturdayService: boolean = false,
+        public allowSundayService: boolean = false,
+        public allowHolidayService: boolean = false,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -196,7 +233,7 @@ export class ClientEntity {
             props.endDate,
             props.duration,
             props.allowBusinessDayMismatch,
-            calendar,
+            calendar.withServiceDays(serviceDayPolicyOf(props)),
         );
         return new ClientEntity(
             0,
@@ -225,6 +262,9 @@ export class ClientEntity {
             phoneNormalized,
             props.bookingConfirmedAt ?? null,
             props.smsAutomationEnabled ?? true,
+            props.allowSaturdayService ?? false,
+            props.allowSundayService ?? false,
+            props.allowHolidayService ?? false,
         );
     }
 
@@ -252,7 +292,7 @@ export class ClientEntity {
                 nextEndDate,
                 props.duration,
                 props.allowBusinessDayMismatch,
-                calendar,
+                calendar.withServiceDays(mergeServiceDayPolicy(this, props)),
             );
         } else if (hasServiceDateUpdate) {
             // An explicit non-null duration requires a complete service
@@ -295,6 +335,9 @@ export class ClientEntity {
         if (props.breastPump !== undefined) this.breastPump = props.breastPump;
         if (props.eDocId !== undefined) this.eDocId = props.eDocId;
         if (props.areaId !== undefined) this.areaId = props.areaId;
+        if (props.allowSaturdayService !== undefined) this.allowSaturdayService = props.allowSaturdayService;
+        if (props.allowSundayService !== undefined) this.allowSundayService = props.allowSundayService;
+        if (props.allowHolidayService !== undefined) this.allowHolidayService = props.allowHolidayService;
     }
 
     /**
@@ -328,6 +371,9 @@ export class ClientEntity {
         phoneNormalized?: string | null,
         bookingConfirmedAt: Date | null = null,
         smsAutomationEnabled: boolean = true,
+        allowSaturdayService: boolean = false,
+        allowSundayService: boolean = false,
+        allowHolidayService: boolean = false,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -360,6 +406,9 @@ export class ClientEntity {
             phoneNormalized,
             bookingConfirmedAt,
             smsAutomationEnabled,
+            allowSaturdayService,
+            allowSundayService,
+            allowHolidayService,
         );
     }
 }

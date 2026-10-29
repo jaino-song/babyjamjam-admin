@@ -69,18 +69,25 @@ export function useEformsignDocumentJobsSummary(isAuthenticated = true) {
 export interface UseEformsignDocumentJobsOptions {
     isAuthenticated?: boolean;
     isPopoverOpen?: boolean;
+    /**
+     * Keep the list warm while any job is active, even with the popover closed.
+     * The app-wide provider turns this off: the list is only needed when someone
+     * can see it, and it would otherwise poll every 3 s on every page.
+     */
+    fetchWhenActive?: boolean;
 }
 
 export function useEformsignDocumentJobs({
     isAuthenticated = true,
     isPopoverOpen = false,
+    fetchWhenActive = true,
 }: UseEformsignDocumentJobsOptions = {}) {
     const activeBranchId = useActiveBranchId();
     const branchContextReady = isBranchContextAligned(activeBranchId);
     const listContextReady = isAuthenticated && branchContextReady;
     const summaryQuery = useEformsignDocumentJobsSummary(isAuthenticated);
     const hasActiveJobs = (summaryQuery.data?.activeCount ?? 0) > 0;
-    const shouldFetchList = listContextReady && (isPopoverOpen || hasActiveJobs);
+    const shouldFetchList = listContextReady && (isPopoverOpen || (fetchWhenActive && hasActiveJobs));
 
     const listQuery = useQuery<EformsignDocumentJobList>({
         queryKey: eformsignDocumentJobsQueryKeys.list(activeBranchId),
