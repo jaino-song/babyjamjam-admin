@@ -263,6 +263,31 @@ describe("ContractCreationForm — contract template query states", () => {
     expect(screen.getByRole("option", { name: "남동구" })).toBeInTheDocument();
   });
 
+  it("shows one option per area when several templates share an areaId, without a duplicate-key error", () => {
+    seedStepOneDraft();
+    Object.assign(mockAreaTemplatesQuery, {
+      data: [
+        areaTemplate,
+        { ...areaTemplate, id: "area-template-2", templateId: "template-2", templateName: "남동구 산모 계약서 (연장)" },
+        { ...areaTemplate, id: "area-template-3", areaId: "Seogu", templateId: "template-3", templateName: "서구 산모 계약서" },
+      ],
+    });
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    renderForm();
+    fireEvent.click(screen.getByRole("combobox", { name: "계약서 선택" }));
+
+    expect(screen.getAllByRole("option", { name: "남동구" })).toHaveLength(1);
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(
+      consoleError.mock.calls.filter((call) => String(call[0]).includes("same key")),
+    ).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("option", { name: "서구" }));
+    expect(useFormStore.getState().area).toBe("Seogu");
+    consoleError.mockRestore();
+  });
+
   it.each(unavailableTemplateStates)(
     "blocks a processing retry after the template query becomes %s",
     async (_stateName, unavailableState) => {
