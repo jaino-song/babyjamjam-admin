@@ -39,6 +39,7 @@ import {
 } from "@/lib/observability/capture-service-record-error";
 
 const MOM_APPROVAL_APPROVED = "approved";
+const AUTH_LOST_PHONE_NOTICE = "안전을 위해 휴대폰 번호를 다시 확인해 주세요.";
 const DRAFT_STORAGE_PREFIX = "daily-service-record-draft";
 const FINALIZED_RECORD_STATUSES = new Set([
     "FINALIZING",
@@ -190,6 +191,7 @@ export default function ServiceRecordPage() {
     const [phone, setPhone] = useState("");
     const [phoneError, setPhoneError] = useState<string | null>(null);
     const [phoneFieldError, setPhoneFieldError] = useState<string | null>(null);
+    const [phoneNotice, setPhoneNotice] = useState<string | null>(null);
     const [ctx, setCtx] = useState<TokenServiceRecordContext | null>(null);
     const [header, setHeader] = useState<Record<string, string>>({ deliveryType: "자연분만" });
     const [day, setDay] = useState(1);
@@ -437,6 +439,22 @@ export default function ServiceRecordPage() {
         },
         [serviceCalendar, ctx, plannedDateVectorValid],
     );
+    /**
+     * A write refused for auth (401 / 403) means the caregiver's access is gone: send them back to phone verification.
+     * The stored form state and `ctx` are left alone, so a new day's draft survives the round trip.
+     * Returns true when the response was an auth refusal, so the caller stops without an error notification.
+     */
+    function handleAuthLost(res: Response): boolean {
+        if (res.status !== 401 && res.status !== 403) return false;
+        setScheduleChangeModalOpen(false);
+        setScheduleChangePreview(null);
+        setScheduleChangeBusy(false);
+        setPhoneError(null);
+        setPhoneFieldError(null);
+        setPhoneNotice(AUTH_LOST_PHONE_NOTICE);
+        navigateTo("phone", { mode: "replace" });
+        return true;
+    }
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
         setBusy(true); setPhoneError(null); setPhoneFieldError(null);
@@ -446,6 +464,7 @@ export default function ServiceRecordPage() {
             });
             const data = await res.json();
             if (data?.ok) {
+                setPhoneNotice(null);
                 await loadContext("push");
             } else {
                 // The mismatch belongs to the phone field, so it shows in that field's message slot.
@@ -480,6 +499,7 @@ export default function ServiceRecordPage() {
         try {
             const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
             if (!response.ok) {
+                if (handleAuthLost(response)) return;
                 const body: unknown = await response.json().catch(() => ({}));
                 setErrorNotificationMessage(problemMessage(response.status, body, "기본정보 저장에 실패했어요."));
                 return;
@@ -547,6 +567,7 @@ export default function ServiceRecordPage() {
             };
             const res = await api(`/sessions/${day}/submit`, { method: "POST", body: JSON.stringify(body) });
             if (!res.ok) {
+                if (handleAuthLost(res)) return;
                 const e: unknown = await res.json().catch(() => ({}));
                 const normalized = normalizeApiError(
                     { response: { status: res.status, data: e } },
@@ -588,6 +609,7 @@ export default function ServiceRecordPage() {
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change/preview");
+            if (handleAuthLost(res)) return;
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 setScheduleChangeModalOpen(false);
@@ -613,6 +635,7 @@ export default function ServiceRecordPage() {
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change", { method: "POST" });
+            if (handleAuthLost(res)) return;
             const data = await res.json().catch(() => ({}));
             // Registered-code comparison only — the raw body text is never read.
             if (res.ok || (res.status === 409 && problemCode(normalizeApiError(
@@ -716,6 +739,7 @@ export default function ServiceRecordPage() {
             phone={phone}
             phoneError={phoneError}
             phoneFieldError={phoneFieldError}
+            phoneNotice={phoneNotice}
             context={ctx}
             header={header}
             day={day}

@@ -98,6 +98,15 @@ describe("MobileServiceRecordScreen", () => {
             fireEvent.change(screen.getByLabelText("휴대폰 번호"), { target: { value: "010" } });
             expect(props.onPhoneChange).toHaveBeenCalledWith("010");
         });
+
+        it("shows the phone notice as a muted line, not an alert, and nothing without one", () => {
+            const { rerender } = render(<MobileServiceRecordScreen {...makeProps({ screen: "phone", context: null })} />);
+            expect(screen.queryByText("안전을 위해 휴대폰 번호를 다시 확인해 주세요.")).not.toBeInTheDocument();
+            rerender(<MobileServiceRecordScreen {...makeProps({ screen: "phone", context: null, phoneNotice: "안전을 위해 휴대폰 번호를 다시 확인해 주세요." })} />);
+            const notice = screen.getByText("안전을 위해 휴대폰 번호를 다시 확인해 주세요.");
+            expect(notice).not.toHaveAttribute("role", "alert");
+            expect(notice).toHaveAttribute("data-component", `${ROOT}_body_phone-notice`);
+        });
     });
 
     describe("service step", () => {
