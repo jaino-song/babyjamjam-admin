@@ -50,6 +50,26 @@ function createRecord(overrides: Record<string, unknown> = {}) {
     };
 }
 
+/** The real lock/read method, so specs exercise the production locking path. */
+const realTokenService = new ServiceRecordTokenService({} as PrismaService);
+const lockAccessTokenForWrite = realTokenService.lockAccessTokenForWrite.bind(realTokenService);
+
+function createToken(overrides: Record<string, unknown> = {}) {
+    return {
+        id: context.tokenId,
+        branchId: BRANCH_ID,
+        scheduleId: context.scheduleId,
+        employeeId: context.employeeId,
+        active: true,
+        revokedAt: null,
+        verifiedAt: new Date("2026-06-01T00:00:00.000Z"),
+        lockedAt: null,
+        failedAttempts: 0,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        ...overrides,
+    };
+}
+
 function createDay(overrides: Record<string, unknown> = {}) {
     return {
         id: "day-1",
@@ -97,6 +117,8 @@ function createHarness(options: {
     holidayCalendar?: HolidayCalendarService;
     /** The client's open end_date_review_item, if any (what the auto-extend sees inside the tx). */
     openReviewItem?: { id: string; recalculatedEnd: Date } | null;
+    /** Overrides for the caregiver token row re-read inside the transaction. */
+    token?: Record<string, unknown> | null;
 } = {}) {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
@@ -140,6 +162,11 @@ function createHarness(options: {
     });
     const transactionClient = {
         $queryRaw: jest.fn().mockResolvedValue([{ id: CASE_ID }]),
+        service_record_token: {
+            findUnique: jest.fn().mockResolvedValue(
+                options.token === null ? null : createToken(options.token),
+            ),
+        },
         service_record_case: {
             findUnique: caseFindUnique,
         },
@@ -176,6 +203,7 @@ function createHarness(options: {
         ensureForClient,
     };
     const tokenService = {
+        lockAccessTokenForWrite,
         extendExpiryForCase: options.extendExpiryForCase ?? jest.fn().mockResolvedValue(undefined),
     };
     const service = new ServiceRecordEntryService(
@@ -1615,6 +1643,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         };
         const { service, transactionClient, upsert, scheduleUpdate } = createHarness({
             schedule: handoverSchedule,
+            token: { scheduleId: 702, employeeId: 32 },
             transactionRecord: createRecord({
                 startDate: new Date("2026-10-01T00:00:00.000Z"),
                 endDate: new Date("2026-10-23T00:00:00.000Z"),
@@ -2296,5 +2325,220 @@ describe("ServiceRecordEntryService client service days", () => {
             isBusinessDay(iso: string): boolean;
         };
         expect(handedOn.isBusinessDay("2026-12-19")).toBe(expectedEnd === "2026-12-19");
+    });
+});
+
+describe("caregiver access token re-check inside the write transaction", () => {
+    const ownedSchedule = {
+        id: 10,
+        clientId: 100,
+        branchId: BRANCH_ID,
+        primaryEmployeeId: 20,
+        secondaryEmployeeId: null,
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        endDate: new Date("2026-07-31T00:00:00.000Z"),
+        replaced: false,
+        primaryEmployee: { name: "제공자" },
+    };
+    const headerDto = {
+        momName: "산모",
+        momBirth: "900101",
+        babyName: "아기",
+        babyBirth: "260701",
+        deliveryType: "자연분만",
+        babyWeight: "3.2",
+    };
+    const unusableTokens: Array<[string, Record<string, unknown> | null]> = [
+        ["revoked", { revokedAt: new Date("2026-06-02T00:00:00.000Z") }],
+        ["inactive (replaced)", { active: false }],
+        ["expired", { expiresAt: new Date(Date.now() - 1000) }],
+        ["locked", { lockedAt: new Date("2026-06-02T00:00:00.000Z") }],
+        ["unverified", { verifiedAt: null }],
+        ["over the failed-attempt limit", { failedAttempts: 5 }],
+        ["reassigned to another schedule", { scheduleId: 11 }],
+        ["reassigned to another employee", { employeeId: 21 }],
+        ["deleted", null],
+    ];
+
+    function expectGuardRefusal(promise: Promise<unknown>) {
+        return expect(promise).rejects.toMatchObject({
+            status: 401,
+            response: { code: "AUTH_REQUIRED" },
+        });
+    }
+
+    function expectNoUpsertWrites(h: ReturnType<typeof createHarness>) {
+        expect(h.upsert).not.toHaveBeenCalled();
+        expect(h.updateMany).not.toHaveBeenCalled();
+        expect(h.editLogCreate).not.toHaveBeenCalled();
+        expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        expect(h.scheduleUpdate).not.toHaveBeenCalled();
+        expect(h.clientUpdate).not.toHaveBeenCalled();
+    }
+
+    describe("upsertSession", () => {
+        it.each(unusableTokens)("refuses a submit with a %s token and writes nothing", async (_name, token) => {
+            const h = createHarness({ schedule: ownedSchedule, token: token === null ? null : token });
+
+            await expectGuardRefusal(h.service.upsertSession(context, 1, createDto(), true));
+            expectNoUpsertWrites(h);
+        });
+
+        it("refuses a draft save with a revoked token and writes nothing", async () => {
+            const h = createHarness({ schedule: ownedSchedule, token: { revokedAt: new Date() } });
+
+            await expectGuardRefusal(h.service.upsertSession(context, 1, createDto(), false));
+            expectNoUpsertWrites(h);
+        });
+
+        it("refuses an edit of a locked session with a revoked token and writes nothing", async () => {
+            const h = createHarness({
+                schedule: ownedSchedule,
+                existing: createDay(),
+                token: { revokedAt: new Date() },
+            });
+
+            await expectGuardRefusal(h.service.upsertSession(context, 1, createDto({ notes: "수정됨" }), true));
+            expectNoUpsertWrites(h);
+        });
+
+        it("locks the token row FOR UPDATE after the write-set locks and before any write", async () => {
+            const h = createHarness({ schedule: ownedSchedule });
+
+            await h.service.upsertSession(context, 1, createDto(), true);
+
+            const forUpdateTables = h.transactionClient.$queryRaw.mock.calls
+                .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+                .filter((query) => query.includes("for update"))
+                .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+            expect(forUpdateTables[forUpdateTables.length - 1]).toBe("service_record_token");
+            expect(forUpdateTables.indexOf("service_record_token")).toBeGreaterThan(
+                forUpdateTables.indexOf("service_record_day"),
+            );
+            expect(forUpdateTables.filter((table) => table === "service_record_token")).toHaveLength(1);
+
+            const tokenLockIndex = h.transactionClient.$queryRaw.mock.calls.findIndex(([query]) =>
+                ((query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "").includes("service_record_token"));
+            const tokenLockOrder = h.transactionClient.$queryRaw.mock.invocationCallOrder[tokenLockIndex] ?? 0;
+            const tokenLockValues = (h.transactionClient.$queryRaw.mock.calls[tokenLockIndex][0] as { values?: unknown[] }).values;
+            expect(tokenLockValues).toEqual([context.tokenId]);
+            expect(h.transactionClient.service_record_token.findUnique.mock.invocationCallOrder[0] ?? 0)
+                .toBeGreaterThan(tokenLockOrder);
+            expect(h.upsert.mock.invocationCallOrder[0] ?? 0).toBeGreaterThan(tokenLockOrder);
+        });
+
+        it("still accepts a submit with a valid token", async () => {
+            const h = createHarness({ schedule: ownedSchedule });
+
+            await expect(h.service.upsertSession(context, 1, createDto(), true)).resolves.toEqual(
+                expect.objectContaining({ sessionIndex: 1, locked: true }),
+            );
+            expect(h.transactionClient.service_record_token.findUnique).toHaveBeenCalledWith({
+                where: { id: context.tokenId },
+            });
+        });
+    });
+
+    describe("saveHeader", () => {
+        function createHeaderHarness(token: Record<string, unknown> | null) {
+            const aggregate = createRecord();
+            const lockOrder: string[] = [];
+            const transaction = {
+                $queryRaw: jest.fn(async (query: { strings?: string[] }) => {
+                    const sql = query.strings?.join(" ").toLowerCase() ?? "";
+                    lockOrder.push(sql.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+                    return [{ id: CASE_ID }];
+                }),
+                service_record_token: {
+                    findUnique: jest.fn().mockResolvedValue(token === null ? null : createToken(token)),
+                },
+                employee_schedule: {
+                    findUnique: jest.fn().mockResolvedValue(null),
+                },
+                service_record_case: {
+                    findUnique: jest.fn().mockResolvedValue(aggregate),
+                    update: jest.fn().mockResolvedValue(aggregate),
+                },
+                service_record_day: {
+                    count: jest.fn().mockResolvedValue(0),
+                },
+                service_record: {
+                    upsert: jest.fn().mockResolvedValue({ ...aggregate, scheduleId: context.scheduleId }),
+                },
+            };
+            const prisma = {
+                service_record_case: { findFirst: jest.fn().mockResolvedValue(aggregate) },
+                service_record_day: { count: jest.fn().mockResolvedValue(0) },
+                $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+            };
+            const lifecycle = { recompute: jest.fn().mockResolvedValue(aggregate) };
+            const service = new ServiceRecordEntryService(
+                prisma as unknown as PrismaService,
+                { lockAccessTokenForWrite } as unknown as ServiceRecordTokenService,
+                lifecycle as unknown as ServiceRecordLifecycleService,
+                createHolidayCalendarStub(),
+            );
+            return { service, transaction, lifecycle, lockOrder };
+        }
+
+        it.each(unusableTokens)("refuses a header save with a %s token and writes nothing", async (_name, token) => {
+            const h = createHeaderHarness(token);
+
+            await expectGuardRefusal(h.service.saveHeader(context, headerDto));
+            expect(h.transaction.service_record_case.update).not.toHaveBeenCalled();
+            expect(h.transaction.service_record.upsert).not.toHaveBeenCalled();
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("locks the token after the case lock and still saves with a valid token", async () => {
+            const h = createHeaderHarness({});
+
+            await h.service.saveHeader(context, headerDto);
+
+            expect(h.lockOrder).toEqual(["service_record_case", "service_record_token"]);
+            expect(h.transaction.service_record.upsert).toHaveBeenCalled();
+        });
+    });
+
+    describe("finalize", () => {
+        function createFinalizeHarness(token: Record<string, unknown> | null) {
+            const aggregate = createRecord();
+            const transaction = {
+                $queryRaw: jest.fn().mockResolvedValue([{ id: context.tokenId }]),
+                service_record_token: {
+                    findUnique: jest.fn().mockResolvedValue(token === null ? null : createToken(token)),
+                },
+            };
+            const prisma = {
+                service_record_case: { findFirst: jest.fn().mockResolvedValue(aggregate) },
+                eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+                $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+            };
+            const lifecycle = { recompute: jest.fn().mockResolvedValue(aggregate) };
+            const service = new ServiceRecordEntryService(
+                prisma as unknown as PrismaService,
+                { lockAccessTokenForWrite } as unknown as ServiceRecordTokenService,
+                lifecycle as unknown as ServiceRecordLifecycleService,
+                createHolidayCalendarStub(),
+            );
+            return { service, transaction, lifecycle };
+        }
+
+        it.each(unusableTokens)("refuses finalize with a %s token before recompute", async (_name, token) => {
+            const h = createFinalizeHarness(token);
+
+            await expectGuardRefusal(h.service.finalize(context));
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("locks the token row and still finalizes with a valid token", async () => {
+            const h = createFinalizeHarness({});
+
+            await expect(h.service.finalize(context)).resolves.toEqual(
+                expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS, chunkCount: 0 }),
+            );
+            expect(h.transaction.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(h.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID);
+        });
     });
 });
