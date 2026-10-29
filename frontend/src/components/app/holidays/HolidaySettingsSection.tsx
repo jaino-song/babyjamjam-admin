@@ -36,7 +36,7 @@ interface HolidaySettingsSectionProps {
 }
 
 /** This section's own cache entry. The calendar hook owns the `["holidays", ...]` prefix (a different data shape). */
-function settingsQueryKey(branchId: string, year?: number) {
+export function settingsQueryKey(branchId: string, year?: number) {
   return year === undefined
     ? (["holiday-settings", branchId] as const)
     : (["holiday-settings", branchId, year] as const);
