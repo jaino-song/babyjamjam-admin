@@ -22,6 +22,9 @@ import { HANDOVER_BANNER_COPY, RESIGN_NOTICE_COPY, SUBMIT_LABEL } from "./ids";
 
 const SOURCE_COMPONENT = "ReviewStep";
 
+/** Shown instead of the edit and submit actions on a day another caregiver submitted. */
+const OTHER_CAREGIVER_NOTICE_COPY = "다른 제공인력이 제출한 회차라 수정할 수 없어요.";
+
 export type ReviewStepProps = Pick<
     ServiceRecordWizardProps,
     | "data-component"
@@ -89,6 +92,9 @@ export function ReviewStep({
     const { currentSession, currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
     });
+    // The server lets only the caregiver who submitted a locked day resubmit it; a day with
+    // no recorded submitter is treated as not editable, like the server does.
+    const readOnlyOther = Boolean(currentSession?.locked) && currentSession?.employeeId !== context?.employee?.id;
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
     const hasInvalidNumericAnswers = Object.keys(getServiceRecordNumericErrors(draft)).length > 0;
@@ -111,7 +117,15 @@ export function ReviewStep({
                     currentServiceDate={currentServiceDate}
                     title={currentDayPage.title}
                 >
-                    {editing && (
+                    {readOnlyOther && (
+                        <div
+                            data-component={child("body_other-caregiver-notice")}
+                            className="rounded-[10px] bg-v3-dim-white px-3 py-2 text-[13px] text-v3-text-muted"
+                        >
+                            <span>{OTHER_CAREGIVER_NOTICE_COPY}</span>
+                        </div>
+                    )}
+                    {editing && !readOnlyOther && (
                         <div
                             data-component={child("body_resign-notice")}
                             className="rounded-[10px] bg-v3-dim-white px-3 py-2 text-[13px] text-v3-text"
@@ -134,7 +148,7 @@ export function ReviewStep({
                             titleId={`${reviewComponent}_section_${section.id}-title`}
                             title={section.title}
                             tone={section.tone === "finish" ? "etc" : section.tone}
-                            onEdit={editing ? () => onEditSection(sectionIndex) : undefined}
+                            onEdit={editing && !readOnlyOther ? () => onEditSection(sectionIndex) : undefined}
                         >
                             {section.fields.map((field) => (
                                 <ReviewFieldRow key={field.key} dataComponent={reviewComponent} field={field} draft={draft} />
@@ -150,11 +164,13 @@ export function ReviewStep({
                     locked={isSignatureLocked}
                 />
             </div>
-            <StickyActionBar data-component={child("body_confirmation-action")}>
-                <Button type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
-                    {SUBMIT_LABEL}
-                </Button>
-            </StickyActionBar>
+            {!readOnlyOther && (
+                <StickyActionBar data-component={child("body_confirmation-action")}>
+                    <Button type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
+                        {SUBMIT_LABEL}
+                    </Button>
+                </StickyActionBar>
+            )}
         </>
     );
 }

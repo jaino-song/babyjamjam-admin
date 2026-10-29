@@ -359,9 +359,13 @@ export default function ServiceRecordPage() {
             }
 
             const targetDay = Math.min(Math.max(target.day, 1), Math.max(ctx.totalSessions, 1));
-            const targetPageIdx = Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             const session = ctx.sessions.find((row) => row.sessionIndex === targetDay);
             const isLockedSession = Boolean(session?.locked);
+            // A day another caregiver submitted is read-only: land on its review page, never on an input page.
+            const isOtherCaregiverSession = isLockedSession && session?.employeeId !== ctx.employee?.id;
+            const targetPageIdx = isOtherCaregiverSession
+                ? DAY_PAGES.length - 1
+                : Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             setEditing(isLockedSession);
             setMomSignature(null);
             if (isLockedSession && session) {
