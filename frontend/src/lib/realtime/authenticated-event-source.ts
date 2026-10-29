@@ -11,7 +11,7 @@ const BOOTSTRAP_TIMEOUT_MS = 20_000;
 export const RECONNECT_BASE_DELAY_MS = 3000;
 export const RECONNECT_MAX_DELAY_MS = 60_000;
 
-/** The session is gone for good: the refresh itself was rejected with 401. */
+/** The session is gone for good: the refresh itself was rejected with 401 or 403. */
 export class AuthSessionEndedError extends Error {
     constructor(message = "Application session ended") {
         super(message);
@@ -89,8 +89,12 @@ async function probeSession(signal: AbortSignal): Promise<number> {
     }
 }
 
-function isUnauthorizedRefresh(error: unknown): boolean {
-    return (error as { response?: { status?: unknown } } | null)?.response?.status === 401;
+// 401 means the refresh token is dead; 403 is how the backend refuses a
+// rejected or pending account (ACCOUNT_REJECTED / PENDING_APPROVAL). Neither
+// heals by retrying, so both end the stream and send the user to login.
+function isTerminalRefreshRejection(error: unknown): boolean {
+    const status = (error as { response?: { status?: unknown } } | null)?.response?.status;
+    return status === 401 || status === 403;
 }
 
 /**
@@ -108,7 +112,7 @@ async function ensureSession(signal: AbortSignal): Promise<void> {
             await abortable(refreshAppAuthSession(), signal);
         } catch (error) {
             if (signal.aborted) throw error;
-            if (isUnauthorizedRefresh(error)) throw new AuthSessionEndedError();
+            if (isTerminalRefreshRejection(error)) throw new AuthSessionEndedError();
             throw new TransientStreamError("Session refresh failed");
         }
         status = await probeSession(signal);

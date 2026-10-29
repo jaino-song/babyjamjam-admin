@@ -525,6 +525,27 @@ describe("useRealtimeInvalidation", () => {
       expect(mockRedirectToLoginOnce).toHaveBeenCalledTimes(1);
     });
 
+    test("a refresh rejected with 403 stops reconnecting and sends the user to login once", async () => {
+      probeResults(401);
+      mockRefreshAppAuthSession.mockRejectedValue(
+        Object.assign(new Error("403"), { response: { status: 403, data: { code: "ACCOUNT_REJECTED" } } }),
+      );
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+
+      await errorAndReconnect(first);
+      expect(mockRedirectToLoginOnce).toHaveBeenCalledTimes(1);
+
+      await advance(300_000);
+      act(() => setVisibility("visible"));
+      await advance(300_000);
+
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(mockRefreshAppAuthSession).toHaveBeenCalledTimes(1);
+      expect(mockRedirectToLoginOnce).toHaveBeenCalledTimes(1);
+    });
+
     test("a probe that is still 401 after a successful refresh ends the session too", async () => {
       probeResults(401, 401);
       mountStream();
