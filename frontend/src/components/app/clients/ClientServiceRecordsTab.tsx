@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { describeScheduleBlockingReasons } from "@/components/app/service-record/service-record-blocking-reasons";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -603,8 +604,8 @@ function ScheduleProjectionAlert({ reasons }: { reasons: ServiceRecordEditPrevie
             <AlertTitle>예정 회차를 확인할 수 없습니다.</AlertTitle>
             <AlertDescription>
                 <ul className="list-disc space-y-1 pl-5">
-                    {reasons.map((reason, index) => (
-                        <li key={`${reason.code}-${reason.sessionIndex ?? "all"}-${index}`}>{reason.message}</li>
+                    {describeScheduleBlockingReasons(reasons).map((line) => (
+                        <li key={line.key} data-slot="schedule-projection-reason">{line.label}</li>
                     ))}
                 </ul>
             </AlertDescription>
