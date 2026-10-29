@@ -73,8 +73,7 @@ KST 17:00에 자동으로 검토 완료 처리한다. 스케줄러는 durable do
   안전하게 drain 가능한지 확인한다.
 - 이어서 `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED=true`,
   `CONTRACT_AUTO_FINALIZE_ENABLED=true`, `CONTRACT_AUTO_FINALIZE_SINCE=<배포일>`을 적용한다.
-- Production frontend의 Vercel build 환경에
-  `NEXT_PUBLIC_FEATURE_EFORMSIGN_DOCUMENT_JOBS=true`를 설정하고 재배포한다. 이 값은 빌드
-  시점에 번들에 포함되므로 환경변수만 추가하고 기존 배포를 그대로 두면 활성화되지 않는다.
+- 계약서 생성·재발행과 직원 검토완료는 항상 큐로 접수한다. 수락을 켜는 환경에는 실행 중인
+  worker가 필요하다. 롤백은 accepting을 끄며, 생성은 503으로 실패하고 수동 입력을 제공한다.
 - Preview는 `SCHEDULERS_ENABLED=false` 정책 때문에 자동 완료와 queue worker를 활성화하지 않는다.
 - DB 패치: 컬럼 3개 SQL 적용 (앱 배포보다 먼저 — eformsign_doc 컬럼 승격 창 메모리 참고).

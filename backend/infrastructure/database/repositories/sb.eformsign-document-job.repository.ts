@@ -2,22 +2,29 @@ import { ConflictException, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
+    DISPATCH_AUTHORIZED_PROGRESS_STEP,
     EformsignDocumentJobEntity,
     EformsignDocumentJobPayload,
     EformsignDocumentJobSource,
     EformsignDocumentJobStatus,
     EformsignDocumentJobType,
+    MANUAL_RESOLVED_PROGRESS_STEP,
+    buildManualClaimStep,
+    parseManualClaim,
 } from "domain/entities/eformsign-document-job.entity";
 import {
     DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
     normalizeContractAutoFinalizeConfig,
 } from "domain/entities/system-setting.entity";
 import {
+    ClaimRecoveryResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
     EnqueueEformsignDocumentJobInput,
     IEformsignDocumentJobRepository,
+    ManualRecoveryInput,
+    ResolveManuallyResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -38,6 +45,7 @@ type RawJob = {
     lease_token: string | null; auto_finalize_outcome_recorded_at: Date | string | null;
     started_at: Date | string | null; completed_at: Date | string | null; last_error_code: string | null;
     created_by_user_id: string | null; created_at: Date | string; updated_at: Date | string;
+    client_name?: string | null;
 };
 
 type DispatchJobSnapshot = Pick<
@@ -111,7 +119,51 @@ function payloadDocumentId(value: Prisma.JsonValue | string | null): string | nu
 
 const ACTIVE_STATUSES = Prisma.sql`('queued', 'processing', 'reconciling')`;
 const TERMINAL_STATUSES = Prisma.sql`('completed', 'failed')`;
+const RECOVERABLE_STATUSES = Prisma.sql`('failed', 'requires_attention')`;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Failed staff jobs are deleted and attention payloads purged this long after completed_at.
+const RECOVERY_RETENTION_MS = 7 * 24 * 60 * 60_000;
+// A claim user id is written into the 80-character progress_step and matched with LIKE:
+// no ':' (the separator) and no LIKE wildcards.
+const MANUAL_CLAIM_USER_PATTERN = /^[0-9A-Za-z-]{1,40}$/;
+
+/**
+ * SQL form of `isContractJob`: a staff create/finalize job from the contract flow.
+ * Service-record revision jobs share the table but are never contract jobs: they
+ * have a `service-record-` request key and a payload `kind`. Pass the table alias
+ * when the query joins another table, so the columns stay unambiguous.
+ */
+function contractJobSql(alias = ""): Prisma.Sql {
+    const column = (name: string) => (alias ? `${alias}.${name}` : name);
+    return Prisma.raw(
+        `(${column("source")} = 'staff'`
+        + ` AND ${column("job_type")} IN ('create_document', 'finalize_document')`
+        + ` AND ${column("request_key")} NOT LIKE 'service-record-%'`
+        + ` AND (${column("payload")} IS NULL OR NOT (${column("payload")} ? 'kind')))`,
+    );
+}
+
+/**
+ * True when `userId` may take or finish the job: it carries no manual claim, the
+ * claim expired, or the claim is this user's. The expiry is cast to bigint only
+ * after the regex proves its shape, and CASE keeps that order.
+ */
+function manualClaimAvailableSql(userId: string, nowMs: number, alias = "j"): Prisma.Sql {
+    const step = Prisma.raw(`${alias}.progress_step`);
+    return Prisma.sql`(
+        COALESCE(${step}, '') NOT LIKE 'manual_in_progress:%'
+        OR (CASE WHEN ${step} ~ '^manual_in_progress:[^:]+:[0-9]{1,15}$'
+                 THEN split_part(${step}, ':', 3)::bigint
+                 ELSE 0 END) < ${String(nowMs)}::bigint
+        OR ${step} LIKE 'manual_in_progress:' || ${userId}::text || ':%'
+    )`;
+}
+
+type RecoveryMiss =
+    | { kind: "not_found" }
+    | { kind: "claimed_by_other"; expiresAt: Date }
+    | { kind: "invalid_state"; status: EformsignDocumentJobStatus }
+    | { kind: "resolved"; row: RawJob };
 
 function payloadContext(value: RawJob["payload"]): ServiceRecordRevisionDispatchContext | null {
     let parsed: unknown = value;
@@ -537,6 +589,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         if (current.lease_token !== input.leaseToken) {
             return { kind: "lost", reason: "lease_lost" } as const;
         }
+        // Only real or possible send evidence blocks authorization. A row that
+        // still carries `dispatch_authorized` from an earlier attempt re-claimed
+        // under a new lease authorizes again: the lease check above already
+        // guarantees a single live owner.
         if (current.progress_step === "creating" || current.progress_step === "sent") {
             return { kind: "lost", reason: "dispatch_already_claimed" } as const;
         }
@@ -556,7 +612,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
         const claimed = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             UPDATE "eformsign_document_job"
-            SET progress_step = 'creating', heartbeat_at = now(), updated_at = now()
+            SET progress_step = ${DISPATCH_AUTHORIZED_PROGRESS_STEP}, heartbeat_at = now(), updated_at = now()
             WHERE id = ${input.jobId}::uuid
               AND lease_token = ${input.leaseToken}::uuid
               AND status = 'processing'
@@ -599,8 +655,20 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     async updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt = new Date()) {
+        // The persisted marker only moves forward: dispatch_authorized ->
+        // creating -> sent. A late write (a delayed heartbeat) computed before
+        // a later step committed must not regress it, so the ordering is
+        // decided here, atomically, against the stored value. The heartbeat
+        // and lease predicates are unchanged: the heartbeat still advances
+        // when the step is kept.
         return this.updateOne(Prisma.sql`
-            UPDATE "eformsign_document_job" SET progress_step = ${progressStep},
+            UPDATE "eformsign_document_job" SET progress_step = CASE
+                    WHEN progress_step = 'sent' THEN progress_step
+                    WHEN progress_step = 'creating' AND ${progressStep}::text <> 'sent' THEN progress_step
+                    WHEN progress_step = ${DISPATCH_AUTHORIZED_PROGRESS_STEP}
+                        AND ${progressStep}::text NOT IN ('creating', 'sent') THEN progress_step
+                    ELSE ${progressStep}::text
+                END,
                 heartbeat_at = ${heartbeatAt}, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling') RETURNING *
@@ -685,20 +753,73 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
-        const rows = await this.prisma.$queryRaw<Array<{ active_count: number; attention_count: number }>>(Prisma.sql`
-            SELECT count(*) FILTER (WHERE status IN ${ACTIVE_STATUSES})::int AS active_count,
-                   count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count
-            FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid
-        `);
-        return { activeCount: Number(rows[0]?.active_count ?? 0), requiresAttentionCount: Number(rows[0]?.attention_count ?? 0) };
+        const unresolved = Prisma.sql`(
+            (status = 'failed' AND completed_at >= now() - interval '7 days')
+            OR status = 'requires_attention'
+        )`;
+        const [rows, unresolvedRows] = await Promise.all([
+            this.prisma.$queryRaw<Array<{
+                active_count: number;
+                attention_count: number;
+                failed_count: number;
+                unresolved_count: number;
+            }>>(Prisma.sql`
+                SELECT count(*) FILTER (WHERE status IN ${ACTIVE_STATUSES})::int AS active_count,
+                       count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count,
+                       count(*) FILTER (
+                           WHERE ${contractJobSql()} AND status = 'failed'
+                             AND completed_at >= now() - interval '7 days'
+                       )::int AS failed_count,
+                       count(*) FILTER (WHERE ${contractJobSql()} AND ${unresolved})::int AS unresolved_count
+                FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid
+            `),
+            this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT id FROM "eformsign_document_job"
+                WHERE branch_id = ${branchId}::uuid AND ${contractJobSql()} AND ${unresolved}
+                ORDER BY completed_at DESC NULLS LAST, created_at DESC
+                LIMIT 50
+            `),
+        ]);
+        return {
+            activeCount: Number(rows[0]?.active_count ?? 0),
+            requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
+            failedCount: Number(rows[0]?.failed_count ?? 0),
+            unresolvedCount: Number(rows[0]?.unresolved_count ?? 0),
+            unresolvedJobIds: unresolvedRows.map((row) => row.id),
+        };
     }
 
     async listForBranch(branchId: string, terminalSince: Date, terminalLimit = 50): Promise<EformsignDocumentJobList> {
         const limit = Math.max(1, Math.min(terminalLimit, 50));
+        const contract = contractJobSql("j");
         const [active, requiresAttention, recent] = await Promise.all([
-            this.prisma.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid AND status IN ${ACTIVE_STATUSES} ORDER BY created_at ASC`),
-            this.prisma.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid AND status = 'requires_attention' ORDER BY updated_at DESC LIMIT 50`),
-            this.prisma.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid AND status IN ${TERMINAL_STATUSES} AND completed_at >= ${terminalSince} ORDER BY completed_at DESC LIMIT ${limit}`),
+            this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+                SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+                LEFT JOIN "client" c ON c.id = j.client_id
+                WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${ACTIVE_STATUSES}
+                ORDER BY j.created_at ASC
+            `),
+            // Contract jobs that failed in the last 7 days sit beside requires_attention:
+            // staff can recover both, so they share one list instead of showing in two.
+            this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+                SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+                LEFT JOIN "client" c ON c.id = j.client_id
+                WHERE j.branch_id = ${branchId}::uuid
+                  AND (
+                      j.status = 'requires_attention'
+                      OR (j.status = 'failed' AND ${contract} AND j.completed_at >= now() - interval '7 days')
+                  )
+                ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                LIMIT 50
+            `),
+            this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+                SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+                LEFT JOIN "client" c ON c.id = j.client_id
+                WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${TERMINAL_STATUSES}
+                  AND j.completed_at >= ${terminalSince}
+                  AND NOT (j.status = 'failed' AND ${contract})
+                ORDER BY j.completed_at DESC LIMIT ${limit}
+            `),
         ]);
         return { active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
     }
@@ -716,6 +837,108 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return Number(count);
     }
 
+    async claimRecovery(input: ManualRecoveryInput): Promise<ClaimRecoveryResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.branchId)) return { kind: "not_found" };
+        const nowMs = this.assertClaimInput(input);
+        const rows = await this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+            WITH claimed AS (
+                UPDATE "eformsign_document_job" AS j
+                SET progress_step = ${buildManualClaimStep(input.userId, nowMs)}, updated_at = now()
+                WHERE j.id = ${input.jobId}::uuid AND j.branch_id = ${input.branchId}::uuid
+                  AND ${contractJobSql("j")}
+                  AND j.status IN ${RECOVERABLE_STATUSES}
+                  AND ${manualClaimAvailableSql(input.userId, nowMs)}
+                RETURNING j.*
+            )
+            SELECT claimed.*, c.name AS client_name
+            FROM claimed LEFT JOIN "client" c ON c.id = claimed.client_id
+        `);
+        if (rows[0]) return { kind: "claimed", job: this.toDomain(rows[0]) };
+        const miss = await this.explainRecoveryMiss(input);
+        // A job that is already resolved is not claimable; the claim never reports it as success.
+        return miss.kind === "resolved"
+            ? { kind: "invalid_state", status: miss.row.status as EformsignDocumentJobStatus }
+            : miss;
+    }
+
+    async resolveManually(input: ManualRecoveryInput): Promise<ResolveManuallyResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.branchId)) return { kind: "not_found" };
+        const nowMs = this.assertClaimInput(input);
+        const rows = await this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+            WITH resolved AS (
+                UPDATE "eformsign_document_job" AS j
+                SET status = 'completed', progress_step = ${MANUAL_RESOLVED_PROGRESS_STEP},
+                    completed_at = ${input.now}, active_key = NULL, payload = NULL,
+                    heartbeat_at = NULL, lease_token = NULL, updated_at = now()
+                WHERE j.id = ${input.jobId}::uuid AND j.branch_id = ${input.branchId}::uuid
+                  AND ${contractJobSql("j")}
+                  AND j.status IN ${RECOVERABLE_STATUSES}
+                  AND ${manualClaimAvailableSql(input.userId, nowMs)}
+                RETURNING j.*
+            )
+            SELECT resolved.*, c.name AS client_name
+            FROM resolved LEFT JOIN "client" c ON c.id = resolved.client_id
+        `);
+        if (rows[0]) return { kind: "resolved", job: this.toDomain(rows[0]) };
+        const miss = await this.explainRecoveryMiss(input);
+        return miss.kind === "resolved" ? { kind: "already_resolved", job: this.toDomain(miss.row) } : miss;
+    }
+
+    async purgeExpiredAttentionPayloads(now: Date): Promise<number> {
+        // The active key stays: a requires_attention job may already have sent the
+        // document, so releasing it here could let a duplicate through.
+        const count = await this.prisma.$executeRaw(Prisma.sql`
+            UPDATE "eformsign_document_job"
+            SET payload = NULL, updated_at = now()
+            WHERE ${contractJobSql()}
+              AND status = 'requires_attention'
+              AND payload IS NOT NULL
+              AND completed_at < ${new Date(now.getTime() - RECOVERY_RETENTION_MS)}
+        `);
+        return Number(count);
+    }
+
+    async listRecentStaffFailures(since: Date): Promise<EformsignDocumentJobEntity[]> {
+        const rows = await this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+            SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+            LEFT JOIN "client" c ON c.id = j.client_id
+            WHERE ${contractJobSql("j")}
+              AND j.status IN ${RECOVERABLE_STATUSES}
+              AND j.completed_at >= ${since}
+            ORDER BY j.completed_at ASC
+        `);
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    private assertClaimInput(input: ManualRecoveryInput): number {
+        if (!MANUAL_CLAIM_USER_PATTERN.test(input.userId)) throw new Error("INVALID_MANUAL_CLAIM_USER");
+        return input.now.getTime();
+    }
+
+    /** Runs only when the guarded UPDATE touched no row: say which guard stopped it. */
+    private async explainRecoveryMiss(input: ManualRecoveryInput): Promise<RecoveryMiss> {
+        const rows = await this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
+            SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+            LEFT JOIN "client" c ON c.id = j.client_id
+            WHERE j.id = ${input.jobId}::uuid AND j.branch_id = ${input.branchId}::uuid
+              AND ${contractJobSql("j")}
+            LIMIT 1
+        `);
+        const row = rows[0];
+        if (!row) return { kind: "not_found" };
+        if (row.status === "completed" && row.progress_step === MANUAL_RESOLVED_PROGRESS_STEP) {
+            return { kind: "resolved", row };
+        }
+        if (row.status !== "failed" && row.status !== "requires_attention") {
+            return { kind: "invalid_state", status: row.status as EformsignDocumentJobStatus };
+        }
+        const claim = parseManualClaim(row.progress_step);
+        // A well-formed live claim by someone else is the only guard left that can have blocked the UPDATE.
+        return claim
+            ? { kind: "claimed_by_other", expiresAt: new Date(claim.expiresAtMs) }
+            : { kind: "invalid_state", status: row.status as EformsignDocumentJobStatus };
+    }
+
     private async terminal(
         id: string,
         leaseToken: string,
@@ -730,6 +953,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     payload = CASE
                         WHEN jsonb_typeof(payload) = 'object'
                             AND payload->>'kind' = 'service_record_revision' THEN payload
+                        WHEN ${contractJobSql()} THEN payload
                         ELSE NULL
                     END,
                     active_key = CASE
@@ -820,6 +1044,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         startedAt: row.started_at ? new Date(row.started_at) : null,
         completedAt: row.completed_at ? new Date(row.completed_at) : null, lastErrorCode: row.last_error_code,
         createdByUserId: row.created_by_user_id, createdAt: new Date(row.created_at), updatedAt: new Date(row.updated_at),
+        clientName: row.client_name ?? null,
     });
 
     private parsePayload(value: RawJob["payload"]): EformsignDocumentJobPayload | null {

@@ -77253,6 +77253,129 @@
       "spec_mapping_note": "documented machine-export exception; record scope and safeguard against API-01"
     },
     {
+      "id": "owner-5cc37a66a047",
+      "path": "backend/application/services/contract-supersede.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by the eformsign document-jobs supersede work (replace an unsigned contract: cancel at the vendor, purge the local mirror); discovered unclassified by the raw-error intake gate, which matches the exception class names themselves rather than only raw bodies. Fully on-contract: every throw already uses a registered problem body. Missing, out-of-scope, signed, terminal, vendor-absent or refused-cancel document -> ConflictException(codeOnlyProblemBody REQUEST_CONFLICT) 409; credentials or vendor read unavailable before the cancel -> ServiceUnavailableException(codeOnlyProblemBody DEPENDENCY_UNAVAILABLE) 503; any other failure, including an ambiguous cancel outcome, -> InternalServerErrorException(uncertainProblemBody INTERNAL_ERROR) 500 carrying the uncertainty marker; an HttpException from a collaborator is rethrown unchanged. No new codes and no status change, so no conversion was needed.",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 3,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 6,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 8,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 95,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 100,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 107,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 109,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 111,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 119,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 132,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 137,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 138,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 147,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "raw-error-intake-gate",
+      "spec_ids": [
+        "EM-ARCH-01",
+        "EM-MAP-04"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT",
+        "DEPENDENCY_UNAVAILABLE",
+        "INTERNAL_ERROR"
+      ],
+      "outcome_evidence": "Each refusal reaches the client as its registered catalog code; covered by contract-supersede.service.spec.ts.",
+      "consumer_paths": [
+        "eformsign document-job worker supersede path",
+        "HTTP eformsign controller supersede"
+      ],
+      "test_evidence": [
+        "backend/test/services/contract-supersede.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "eformsign-jobs-always-on-p5fix-d",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "problem-contract bodies only; ambiguous cancel outcome keeps the uncertainty marker"
+    },
+    {
       "id": "owner-27fa9b1db48c",
       "path": "backend/application/services/service-record-schedule-realignment.service.ts",
       "root": "backend/application/",
