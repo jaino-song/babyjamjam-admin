@@ -22,8 +22,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { isRecoverableJob, recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
 
 const SOURCE_COMPONENT = "ContractDocumentJobsPopover";
@@ -115,16 +123,34 @@ function getJobTitle(job: ContractDocumentJob): string {
 }
 
 /** Machine steps written by the backend; staff see words, never the step name. */
-const MANUAL_STEP_COPY: Readonly<Record<string, string>> = {
-  manual_in_progress: "처리 중",
-  manual_resolved: "처리됨으로 표시",
+const PROGRESS_STEP_COPY: Readonly<Record<string, string>> = {
+  queued: "대기 중",
+  processing: "처리 중",
+  "client-started": "전자문서 연결 중",
+  "info-inserted": "이용자 정보 입력 완료",
+  creating: "전자문서 생성 중",
+  sent: "전송 완료",
+  failed: "실패",
+  reconciling: "결과 확인 중",
   dispatch_authorized: "전송 준비 중",
+  manual_resolved: "처리됨으로 표시",
+  manual_in_progress: "처리 중",
 };
 
+/** A manual claim may be stored as `manual_in_progress:<userId>:<expiry>`; only the prefix is meaningful. */
+const MANUAL_CLAIM_STEP_PREFIX = "manual_in_progress:";
+
+function getProgressStepCopy(progressStep: string | null | undefined): string | undefined {
+  if (!progressStep) return undefined;
+  if (progressStep.startsWith(MANUAL_CLAIM_STEP_PREFIX)) return PROGRESS_STEP_COPY.manual_in_progress;
+  return Object.prototype.hasOwnProperty.call(PROGRESS_STEP_COPY, progressStep)
+    ? PROGRESS_STEP_COPY[progressStep]
+    : undefined;
+}
+
 function getJobSubtitle(job: ContractDocumentJob): string {
-  const manualCopy = job.progressStep ? MANUAL_STEP_COPY[job.progressStep] : undefined;
-  if (manualCopy) return manualCopy;
-  if (job.progressStep) return job.progressStep;
+  const stepCopy = getProgressStepCopy(job.progressStep);
+  if (stepCopy) return stepCopy;
   if (job.documentId) return `문서 ID ${job.documentId}`;
   return "문서 연결 정보 없음";
 }
@@ -303,6 +329,10 @@ export function ContractDocumentJobsPopover({
   const resolvedError = error ?? jobsError ?? null;
   const resolvedRetry = onRetry ?? onRetryJobs;
   const sub = (suffix: string) => (dataComponent ? `${dataComponent}_${suffix}` : undefined);
+  // Below lg the list is a bottom sheet. A Radix popper wrapper is a transformed, fixed box sized
+  // to its content, so a `fixed inset-x-0` child inside it collapses to a sliver; the sheet is a
+  // Dialog portal with no such wrapper.
+  const isMobile = useIsMobile();
 
   const handleOpenChange = (nextOpen: boolean) => {
     setInternalOpen(nextOpen);
@@ -315,18 +345,86 @@ export function ContractDocumentJobsPopover({
     </Button>
   );
 
+  const panelBody = (
+    <>
+      <div data-component={sub("body")} className="max-h-[min(560px,calc(100vh-148px))] min-h-0 space-y-5 overflow-y-auto px-5 py-4 flex-1">
+        <JobSection
+          base={sub("processing")}
+          title="처리 중"
+          icon={Clock3}
+          items={resolvedJobs?.active ?? []}
+          isLoading={resolvedLoading}
+          error={resolvedError}
+          onRetry={resolvedRetry}
+          emptyMessage="처리 중인 전자문서가 없습니다."
+          onNavigate={() => handleOpenChange(false)}
+        />
+        <JobSection
+          base={sub("attention")}
+          title="확인 필요"
+          icon={AlertCircle}
+          items={resolvedJobs?.requiresAttention ?? []}
+          isLoading={resolvedLoading}
+          error={resolvedError}
+          onRetry={resolvedRetry}
+          emptyMessage="확인이 필요한 전자문서가 없습니다."
+          onNavigate={() => handleOpenChange(false)}
+        />
+        <JobSection
+          base={sub("recent")}
+          title="최근 처리"
+          icon={CheckCircle2}
+          items={resolvedJobs?.recent ?? []}
+          isLoading={resolvedLoading}
+          error={resolvedError}
+          onRetry={resolvedRetry}
+          emptyMessage="최근 처리한 전자문서가 없습니다."
+          onNavigate={() => handleOpenChange(false)}
+        />
+      </div>
+    </>
+  );
+
+  const panelHeader = (mobile: boolean) => {
+    const title = <p className="text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-v3-dark">전자문서 작업</p>;
+    const description = <p className="mt-1 text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">읽기 전용 처리 현황</p>;
+    return (
+      <div data-component={sub("header")} className="flex items-center justify-between border-b border-v3-border px-5 py-4">
+        <div>
+          {mobile ? <SheetTitle asChild>{title}</SheetTitle> : title}
+          {mobile ? <SheetDescription asChild>{description}</SheetDescription> : description}
+        </div>
+        <span className="text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
+          {(_summary?.activeCount ?? 0) + (_summary?.requiresAttentionCount ?? 0)}건
+        </span>
+      </div>
+    );
+  };
+
+  if (isMobile) {
+    return (
+      <Sheet open={isOpen} onOpenChange={handleOpenChange}>
+        <SheetTrigger asChild>{resolvedTrigger}</SheetTrigger>
+        <SheetContent
+          side="bottom"
+          data-component={dataComponent}
+          data-slot="document-jobs-popover"
+          data-source-component={SOURCE_COMPONENT}
+          className={cn(
+            "!z-[60] max-h-[85dvh] gap-0 overflow-hidden rounded-t-[28px] border-b-0 p-0 pb-[env(safe-area-inset-bottom)]",
+            className,
+          )}
+        >
+          {panelHeader(true)}
+          {panelBody}
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>{resolvedTrigger}</PopoverTrigger>
-      {isOpen ? (
-        <div
-          data-component={sub("backdrop")}
-          data-slot="popover-backdrop"
-          className="fixed inset-0 z-50 bg-slate-950/30 backdrop-blur-[2px] lg:hidden"
-          aria-hidden="true"
-          onClick={() => handleOpenChange(false)}
-        />
-      ) : null}
       <PopoverContent
         data-component={dataComponent}
         data-slot="document-jobs-popover"
@@ -337,55 +435,11 @@ export function ContractDocumentJobsPopover({
         avoidCollisions
         className={cn(
           "!z-[60] !w-[min(420px,calc(100vw-32px))] max-h-[min(640px,calc(100vh-64px))] overflow-hidden p-0",
-          "max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:top-auto max-lg:!w-full max-lg:!max-w-none max-lg:rounded-b-none max-lg:rounded-t-[28px] max-lg:border-b-0 max-lg:pb-[env(safe-area-inset-bottom)]",
           className,
         )}
       >
-        <div data-component={sub("header")} className="flex items-center justify-between border-b border-v3-border px-5 py-4">
-          <div>
-            <p className="text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-v3-dark">전자문서 작업</p>
-            <p className="mt-1 text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">읽기 전용 처리 현황</p>
-          </div>
-          <span className="text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
-            {(_summary?.activeCount ?? 0) + (_summary?.requiresAttentionCount ?? 0)}건
-          </span>
-        </div>
-
-        <div data-component={sub("body")} className="max-h-[min(560px,calc(100vh-148px))] space-y-5 overflow-y-auto px-5 py-4">
-          <JobSection
-            base={sub("processing")}
-            title="처리 중"
-            icon={Clock3}
-            items={resolvedJobs?.active ?? []}
-            isLoading={resolvedLoading}
-            error={resolvedError}
-            onRetry={resolvedRetry}
-            emptyMessage="처리 중인 전자문서가 없습니다."
-            onNavigate={() => handleOpenChange(false)}
-          />
-          <JobSection
-            base={sub("attention")}
-            title="확인 필요"
-            icon={AlertCircle}
-            items={resolvedJobs?.requiresAttention ?? []}
-            isLoading={resolvedLoading}
-            error={resolvedError}
-            onRetry={resolvedRetry}
-            emptyMessage="확인이 필요한 전자문서가 없습니다."
-            onNavigate={() => handleOpenChange(false)}
-          />
-          <JobSection
-            base={sub("recent")}
-            title="최근 처리"
-            icon={CheckCircle2}
-            items={resolvedJobs?.recent ?? []}
-            isLoading={resolvedLoading}
-            error={resolvedError}
-            onRetry={resolvedRetry}
-            emptyMessage="최근 처리한 전자문서가 없습니다."
-            onNavigate={() => handleOpenChange(false)}
-          />
-        </div>
+        {panelHeader(false)}
+        {panelBody}
       </PopoverContent>
     </Popover>
   );

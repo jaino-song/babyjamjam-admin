@@ -708,6 +708,7 @@ describe("ServiceRecordEditRepository", () => {
         };
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([]),
+            $executeRaw: jest.fn().mockResolvedValue(0),
             service_record_edit_draft,
             service_record_case: {
                 update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
@@ -811,7 +812,7 @@ describe("ServiceRecordEditRepository", () => {
             }),
         });
         expect(service_record_day.updateMany).not.toHaveBeenCalled();
-        const documentStatements = tx.$queryRaw.mock.calls
+        const documentStatements = [...tx.$queryRaw.mock.calls, ...tx.$executeRaw.mock.calls]
             .map(([query]) => sqlTextWithValues(query))
             .filter((query) => query.includes('"eformsign_document_job"'));
         expect(documentStatements.some((query) => (
@@ -1476,12 +1477,13 @@ describe("ServiceRecordEditRepository", () => {
     });
 
     it("fences legacy client-owned eform jobs without payload case metadata and clears message claims", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1489,21 +1491,23 @@ describe("ServiceRecordEditRepository", () => {
             invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
-        expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
-        const documentUpdate = sqlText(tx.$queryRaw.mock.calls[2]?.[0]);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+        const documentUpdate = sqlText(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
         expect(documentUpdate).not.toContain("payload->'context'");
-        const messageUpdate = sqlText(tx.$queryRaw.mock.calls[3]?.[0]);
+        const messageUpdate = sqlText(tx.$executeRaw.mock.calls[1]?.[0]);
         expect(messageUpdate).toContain("claim_token = NULL");
     });
 
     it("preserves revision generation payloads while superseding queued document jobs", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1511,19 +1515,20 @@ describe("ServiceRecordEditRepository", () => {
             invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("payload = CASE");
         expect(documentUpdate).toContain("job.payload->>'kind' = 'service_record_revision'");
         expect(documentUpdate).toContain("ELSE NULL");
     });
 
     it("content-only revisions scope supersession to service-record generation jobs", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1538,7 +1543,7 @@ describe("ServiceRecordEditRepository", () => {
         }).invalidateSupersededJobs(tx, branchId, caseId, 101, "revision_generation")).resolves.toBeUndefined();
 
         const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         for (const statement of [inFlight, documentUpdate]) {
             expect(statement).toContain("job.payload->>'kind' = 'service_record_revision'");
             expect(statement).toContain("COALESCE(job.request_key, '') LIKE 'service-record-revision:%'");
@@ -1638,12 +1643,13 @@ describe("ServiceRecordEditRepository", () => {
     });
 
     it("period-changing revisions retain broad document-job invalidation", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1657,19 +1663,20 @@ describe("ServiceRecordEditRepository", () => {
             ) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101, "all")).resolves.toBeUndefined();
 
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("AND TRUE");
         expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
         expect(documentUpdate).not.toContain("COALESCE(job.payload->>'kind' = 'service_record_revision', false)");
     });
 
     it("uses the same-branch canonical document owner for null-client eform jobs", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1678,7 +1685,7 @@ describe("ServiceRecordEditRepository", () => {
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
         const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         for (const statement of [inFlight, documentUpdate]) {
             expect(statement).toContain('job.client_id IS NULL');
             expect(statement).toContain('"eformsign_doc" AS owner_doc');
