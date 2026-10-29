@@ -2571,10 +2571,12 @@
         "import": "@/components/ui/toaster",
         "file": "mobile/src/components/ui/toaster.tsx",
         "exports": [
-          "Toaster"
+          "Toaster",
+          "ToastAction"
         ],
         "requiredFor": [
-          "mobile shell toast feedback"
+          "mobile shell toast feedback",
+          "service-record public route toast feedback"
         ]
       },
       {

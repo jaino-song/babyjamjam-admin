@@ -105,13 +105,30 @@
 .stage {
   position: relative;
   display: flex;
-  flex: none;
+  /* Shrinks before the caption does on short screens; the demo scales with it (useStageFit). */
+  flex: 1 1 min(430px, 52svh);
   align-items: center;
   justify-content: center;
-  height: min(430px, 52svh);
+  min-height: 160px;
+  max-height: min(430px, 52svh);
   overflow: hidden;
   border-radius: 20px;
+  word-break: keep-all;
   background: linear-gradient(160deg, hsl(var(--v3-primary-light)) 0%, hsl(var(--v3-primary-medium) / 0.55) 100%);
+}
+
+/* Scales with the frame (--fit from useStageFit): the layer is the frame's size in unscaled px, shrunk to fit. */
+.stage-fit {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% / var(--fit, 1));
+  height: calc(100% / var(--fit, 1));
+  transform: scale(var(--fit, 1));
+  transform-origin: 0 0;
 }
 
 .stage::before {
@@ -126,6 +143,7 @@
 }
 
 .cap {
+  flex: none;
   padding: 16px 2px 0;
 }
 
@@ -138,6 +156,8 @@
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: -0.1px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .cap-title {
@@ -147,6 +167,8 @@
   font-weight: 700;
   line-height: 1.35;
   letter-spacing: -0.4px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .cap-body {
@@ -155,6 +177,8 @@
   font-size: 14px;
   line-height: 1.6;
   letter-spacing: -0.2px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .cap-body b {
@@ -357,11 +381,15 @@
   color: hsl(var(--v3-dark));
   font-size: 13px;
   font-weight: 700;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .st-sub {
   color: hsl(var(--v3-text-muted));
   font-size: 11px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- mini app screen (decorative, drawn by guideDemos.ts) ---------- */
@@ -962,13 +990,6 @@
 .m-done b {
   color: hsl(var(--v3-dark));
   font-size: 17px;
-}
-
-/* small phones: shrink the whole mini screen so it still fits in the stage */
-@media (max-height: 720px) {
-  .m {
-    transform: scale(0.82);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
