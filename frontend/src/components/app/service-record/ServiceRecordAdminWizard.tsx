@@ -50,6 +50,7 @@ import {
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
 import { RevisionHistoryView } from "./RevisionHistoryView";
+import { describeScheduleBlockingReasons } from "./service-record-blocking-reasons";
 import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -1050,7 +1051,13 @@ export function ServiceRecordAdminWizard({
             {baseView.scheduleProjectionBlockingReasons.length && !historyOpen ? (
                 <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_schedule-blocked`} variant="warning">
                     <AlertTitle>제공일 수정 불가</AlertTitle>
-                    <AlertDescription>{baseView.scheduleProjectionBlockingReasons.map((reason) => reason.message).join(" ")}</AlertDescription>
+                    <AlertDescription>
+                        <ul data-component={`${ADMIN_WIZARD_COMPONENT}_schedule-blocked_reasons`} className="list-disc pl-4">
+                            {describeScheduleBlockingReasons(baseView.scheduleProjectionBlockingReasons).map((line) => (
+                                <li key={line.key} data-slot="schedule-blocked-reason">{line.label}</li>
+                            ))}
+                        </ul>
+                    </AlertDescription>
                 </Alert>
             ) : null}
             {screen === "day" ? (
