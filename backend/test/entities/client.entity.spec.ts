@@ -168,3 +168,67 @@ describe("ClientEntity branch calendar", () => {
         expect(other.duration).toBe(4);
     });
 });
+
+describe("ClientEntity per-client service days", () => {
+    // 2026-12-14 is a Monday; 12-25 is a public holiday. Ten weekday sessions end 12-28,
+    // ten sessions with Saturday service end 12-24 (the Saturday 12-19 counts as a session).
+    const start = new Date("2026-12-14T00:00:00Z");
+    const props = (overrides: Record<string, unknown> = {}) => ({
+        ...createClient(),
+        startDate: start,
+        endDate: new Date("2026-12-24T00:00:00Z"),
+        duration: 10,
+        ...overrides,
+    });
+
+    it("derives the weekday-only end date when every flag is false", () => {
+        expect(KR_BUILTIN_CALENDAR.addBusinessDays("2026-12-14", 9)).toBe("2026-12-28");
+        const client = ClientEntity.create(props({ endDate: new Date("2026-12-28T00:00:00Z") }), KR_BUILTIN_CALENDAR);
+        expect(client.duration).toBe(10);
+        expect(client.allowSaturdayService).toBe(false);
+        expect(client.allowSundayService).toBe(false);
+        expect(client.allowHolidayService).toBe(false);
+    });
+
+    it("rejects 10 sessions over 12-14..12-24 unless Saturday service is on", () => {
+        expect(() => ClientEntity.create(props(), KR_BUILTIN_CALENDAR)).toThrow("1일 이상 9일 이하");
+        const client = ClientEntity.create(props({ allowSaturdayService: true }), KR_BUILTIN_CALENDAR);
+        expect(client.duration).toBe(10);
+        expect(client.allowSaturdayService).toBe(true);
+    });
+
+    it("treats Sunday and holiday flags as independent switches", () => {
+        // Sunday 12-20 is the tenth session of 12-14..12-24 once Sunday service is on.
+        expect(ClientEntity.create(props({ allowSundayService: true }), KR_BUILTIN_CALENDAR).duration).toBe(10);
+        // Holiday service makes 12-25 count: 12-14..12-25 holds 9 weekdays + the holiday.
+        const holidayRange = { endDate: new Date("2026-12-25T00:00:00Z") };
+        expect(() => ClientEntity.create(props(holidayRange), KR_BUILTIN_CALENDAR)).toThrow("1일 이상 9일 이하");
+        expect(ClientEntity.create(props({ ...holidayRange, allowHolidayService: true }), KR_BUILTIN_CALENDAR).duration).toBe(10);
+    });
+
+    it("update judges dates on the merged policy: a patched flag wins, the others keep their value", () => {
+        const client = ClientEntity.create(props({ allowSaturdayService: true }), KR_BUILTIN_CALENDAR);
+        // Patch only the holiday flag: Saturday stays on, so the 10-session range remains valid.
+        client.update({ allowHolidayService: true, name: "수정" }, KR_BUILTIN_CALENDAR);
+        expect(client.allowSaturdayService).toBe(true);
+        expect(client.allowSundayService).toBe(false);
+        expect(client.allowHolidayService).toBe(true);
+        client.update({ endDate: new Date("2026-12-24T00:00:00Z"), duration: 10 }, KR_BUILTIN_CALENDAR);
+        expect(client.duration).toBe(10);
+
+        // Turning Saturday off in the same patch makes the same range unfittable.
+        expect(() => client.update({
+            allowSaturdayService: false,
+            endDate: new Date("2026-12-24T00:00:00Z"),
+            duration: 10,
+        }, KR_BUILTIN_CALENDAR)).toThrow("1일 이상 9일 이하");
+        // The failed patch changed nothing.
+        expect(client.allowSaturdayService).toBe(true);
+    });
+
+    it("update without a flag patch keeps the current flags", () => {
+        const client = ClientEntity.create(props({ allowSaturdayService: true }), KR_BUILTIN_CALENDAR);
+        client.update({ name: "이름만" }, KR_BUILTIN_CALENDAR);
+        expect(client.allowSaturdayService).toBe(true);
+    });
+});

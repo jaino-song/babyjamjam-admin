@@ -121,6 +121,19 @@ export class CreateClientDto {
     @IsBoolean()
     breastPump!: boolean;
 
+    /** Service allowed on Saturdays; omitted means the weekday-only default (false). */
+    @IsOptional()
+    @IsBoolean()
+    allowSaturdayService?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    allowSundayService?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    allowHolidayService?: boolean;
+
     @IsOptional()
     @IsString()
     areaId?: string | null;
@@ -244,6 +257,18 @@ export class UpdateClientDto {
     @ValidateIf((_, value) => value !== undefined)
     @IsBoolean()
     breastPump?: boolean;
+
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    allowSaturdayService?: boolean;
+
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    allowSundayService?: boolean;
+
+    @ValidateIf((_, value) => value !== undefined)
+    @IsBoolean()
+    allowHolidayService?: boolean;
 
     @IsOptional()
     @IsString()

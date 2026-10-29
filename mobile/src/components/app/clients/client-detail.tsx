@@ -2,7 +2,7 @@
 
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
+import { CalendarCheck, CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
 import { isAxiosError } from "axios";
 
 import { Client } from "@/lib/client/types";
@@ -26,7 +26,7 @@ import {
   resetServiceRecordLink,
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
-import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
+import { approveScheduleChange, fetchClient, rejectScheduleChange } from "@/hooks/useClients";
 import { useConfirmBooking } from "@/features/clients";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,9 @@ import { ClientMessageHistoryDetail } from "@/components/app/clients/client-mess
 import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import { ServiceRecordScheduleSheet } from "@/components/app/service-record/ServiceRecordScheduleSheet";
+import { scheduleText } from "@/components/app/service-record/service-record-schedule-messages";
+import { useLocale } from "@/providers/LocaleProvider";
 import {
   ServiceScheduleContractResendModal,
   type ContractReissueOptions,
@@ -830,6 +833,8 @@ export function ClientDetailContent({
     setSelectedEntry(null);
   };
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
+  const [recordScheduleSheetOpen, setRecordScheduleSheetOpen] = useState(false);
+  const locale = useLocale();
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);
   const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
@@ -961,6 +966,18 @@ export function ClientDetailContent({
       });
     } finally {
       setIsApplyingScheduleChange(false);
+    }
+  };
+
+  // 제공기록지 일정 변경 saved: the toggles and dates it stored live on the client, so reload the client
+  // into the open detail. A failed reload does not undo the save; it only asks for a refresh.
+  const handleServiceRecordScheduleSaved = async ({ sessionCount }: { sessionCount: number }) => {
+    setRecordScheduleSheetOpen(false);
+    toast({ variant: "success", description: scheduleText(locale, "success", { count: sessionCount }) });
+    try {
+      onClientUpdated(await fetchClient(client.id));
+    } catch {
+      toast({ variant: "destructive", description: scheduleText(locale, "client-refresh-failed") });
     }
   };
 
@@ -1345,6 +1362,16 @@ export function ClientDetailContent({
               </DropdownMenuItem>
               {canManageBranchFeatures ? (
                 <DropdownMenuItem
+                  onClick={() => setRecordScheduleSheetOpen(true)}
+                  className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                  data-component={`${dataComponent}_header_menu_edit-service-record-schedule`}
+                >
+                  <CalendarCheck className="size-[15px]" strokeWidth={2} />
+                  제공기록지 일정 변경
+                </DropdownMenuItem>
+              ) : null}
+              {canManageBranchFeatures ? (
+                <DropdownMenuItem
                   onClick={() => setResetLinkModalOpen(true)}
                   className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                   data-component={`${dataComponent}_header_menu_reset-service-record-link`}
@@ -1456,6 +1483,16 @@ export function ClientDetailContent({
         isPending={isSendingReceipt}
         onApprove={() => void handleConfirmReceiptSend()}
       />
+
+      {recordScheduleSheetOpen ? (
+        <ServiceRecordScheduleSheet
+          data-component={`${dataComponent}_service-record-schedule-sheet`}
+          clientId={client.id}
+          clientName={client.name}
+          onClose={() => setRecordScheduleSheetOpen(false)}
+          onSaved={(result) => void handleServiceRecordScheduleSaved(result)}
+        />
+      ) : null}
 
       <ServiceRecordLinkResetResultModal
         data-component={`${dataComponent}_reset-link-result-modal`}

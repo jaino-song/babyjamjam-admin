@@ -49,8 +49,15 @@ import type {
     ServiceRecordRevisionHistoryResponse,
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
-import { buildServiceRecordRevisionChanges } from "application/policies/service-record-revision-changes.policy";
+import {
+    buildServiceRecordCaregiverEditChanges,
+    buildServiceRecordRevisionChanges,
+} from "application/policies/service-record-revision-changes.policy";
 import type { ServiceRecordRevisionChangesResponse } from "interface/dto/admin-service-record-edit.dto";
+import type {
+    ServiceRecordCaregiverEditChangesResponse,
+    ServiceRecordCaregiverEditSummary,
+} from "@babyjamjam/shared/types/service-record";
 
 type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
@@ -172,7 +179,7 @@ export class AdminServiceRecordService {
         clientId: number,
         options: { includeSignatures?: boolean } = {},
     ): Promise<AdminServiceRecordOverviewDto> {
-        const [record, schedules] = await Promise.all([
+        const [record, schedules, clientFlags] = await Promise.all([
             this.prisma.service_record_case.findFirst({
                 where: { branchId, clientId },
                 include: { days: { orderBy: { caseSessionIndex: "asc" } } },
@@ -196,7 +203,23 @@ export class AdminServiceRecordService {
                 },
                 orderBy: { startDate: "desc" },
             }),
+            // Read on its own: the schedules' client include is empty for a client without schedules.
+            this.prisma.client.findFirst({
+                where: { id: clientId, branchId },
+                select: {
+                    allowSaturdayService: true,
+                    allowSundayService: true,
+                    allowHolidayService: true,
+                },
+            }),
         ]);
+        const serviceDays = clientFlags && clientFlags.allowSaturdayService !== undefined
+            ? {
+                saturday: clientFlags.allowSaturdayService ?? false,
+                sunday: clientFlags.allowSundayService ?? false,
+                holiday: clientFlags.allowHolidayService ?? false,
+            }
+            : undefined;
 
         const scheduleIds = schedules.map((schedule) => schedule.id);
         const jobs = scheduleIds.length > 0 ? await this.prisma.message_trigger_job.findMany({
@@ -231,7 +254,10 @@ export class AdminServiceRecordService {
         // repository is available, while retaining the legacy two-key shape
         // for callers that do not register that optional repository.
         // Overview totals and the projection are display-only, so the cached branch calendar is enough.
-        const calendar = await this.holidayCalendar.forBranch(branchId);
+        // The client's own service days decide which dates count, so every projection and
+        // session count below follows the stored toggles.
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
+        const calendar = serviceDays ? branchCalendar.withServiceDays(serviceDays) : branchCalendar;
         const scheduleProjection = this.editRepository
             ? await this.loadScheduleProjection(branchId, clientId, calendar)
             : undefined;
@@ -250,6 +276,7 @@ export class AdminServiceRecordService {
                 calendar,
             )),
             ...(scheduleProjection ? { scheduleProjection } : {}),
+            ...(serviceDays ? { serviceDays } : {}),
         };
     }
 
@@ -266,7 +293,8 @@ export class AdminServiceRecordService {
         // graph.  Keep the editor's explicit unavailable result for tests or
         // legacy modules that omit the optional edit repository.
         if (overview.scheduleProjection) return overview;
-        const calendar = await this.holidayCalendar.forBranch(branchId);
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
+        const calendar = overview.serviceDays ? branchCalendar.withServiceDays(overview.serviceDays) : branchCalendar;
         const scheduleProjection = await this.loadScheduleProjection(branchId, clientId, calendar);
         return { ...overview, scheduleProjection };
     }
@@ -296,6 +324,22 @@ export class AdminServiceRecordService {
         const result = await this.getRevisionStatusRepository().findRevisionForChanges(branchId, clientId, normalizedRevisionId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return buildServiceRecordRevisionChanges(result);
+    }
+
+    /** One caregiver edit (제공인력 수정) of a submitted day. Not a revision. */
+    async getCaregiverEditChanges(
+        branchId: string,
+        clientId: number,
+        editId: string,
+    ): Promise<ServiceRecordCaregiverEditChangesResponse> {
+        const normalizedEditId = normalizePathIdentifier(editId);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedEditId)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        await this.assertClientBelongsToBranch(branchId, clientId);
+        const result = await this.getRevisionStatusRepository().findCaregiverEditForChanges(branchId, clientId, normalizedEditId);
+        if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return buildServiceRecordCaregiverEditChanges(result);
     }
 
     /**
@@ -879,13 +923,33 @@ function normalizeRevisionHistoryResponse(value: unknown): ServiceRecordRevision
             documents,
         };
     });
+    // A missing field (older repository/read model) is an empty list; a present
+    // but malformed one is rejected like any other part of this response.
+    const rawCaregiverEdits = readField(row, ["caregiverEdits", "caregiver_edits"]);
+    if (rawCaregiverEdits !== undefined && rawCaregiverEdits !== null && !Array.isArray(rawCaregiverEdits)) {
+        throw new Error("Invalid service-record caregiver edit history response");
+    }
+    const caregiverEdits = asRows(rawCaregiverEdits ?? []).map(normalizeCaregiverEditSummary);
     return {
         caseId,
         caseVersion,
         currentRevisionId,
         currentUsableRevisionId,
         revisions,
+        caregiverEdits,
     };
+}
+
+function normalizeCaregiverEditSummary(row: Record<string, unknown>): ServiceRecordCaregiverEditSummary {
+    const id = readStringField(row, ["id"]);
+    const editedAt = normalizeIsoDate(readField(row, ["editedAt", "edited_at"]));
+    const sessionIndex = readPositiveIntegerField(row, ["sessionIndex", "session_index"]);
+    const employeeName = readStringField(row, ["employeeName", "employee_name"]);
+    if (!id || !editedAt || sessionIndex === null || !employeeName) {
+        throw new Error("Invalid service-record caregiver edit summary response");
+    }
+    // Only these four fields cross the list boundary; before/after never do.
+    return { id, editedAt, sessionIndex, employeeName };
 }
 
 function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevisionDocumentSummary {

@@ -2034,6 +2034,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 endDate: true,
                 serviceStatus: true,
                 eDocId: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
             },
         });
         if (!client) return null;
@@ -2157,6 +2160,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 startDate: dateOnly(client.startDate),
                 endDate: dateOnly(client.endDate),
                 serviceStatus: client.serviceStatus,
+                allowSaturdayService: client.allowSaturdayService ?? false,
+                allowSundayService: client.allowSundayService ?? false,
+                allowHolidayService: client.allowHolidayService ?? false,
             },
         };
     }
@@ -2317,6 +2323,29 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         } : null;
     }
 
+    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        // Same 404 contract as revisions: a malformed id never reaches the uuid cast.
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editId)) return null;
+        const edit = await this.prisma.service_record_day_edit_log.findFirst({
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId } },
+            select: {
+                id: true,
+                editedAt: true,
+                employeeNameSnapshot: true,
+                caseSessionIndex: true,
+                before: true,
+                after: true,
+            },
+        });
+        return edit ? {
+            ...edit,
+            before: toDomainJson(edit.before),
+            after: toDomainJson(edit.after),
+        } : null;
+    }
+
     async listRevisionHistory(
         branchId: string,
         clientId: number,
@@ -2367,6 +2396,24 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
               AND service_record_case_id = ${ownerCase.caseId}::uuid
             ORDER BY revision_number DESC, id DESC
         `);
+        // Caregiver edits of submitted days (not revisions). Identity only: the
+        // before/after payloads are fetched per edit through the changes route.
+        const caregiverEdits = await rawStateQuery<Array<{
+            id: string;
+            editedAt: Date | string;
+            sessionIndex: number;
+            employeeName: string;
+        }>>(tx, Prisma.sql`
+            SELECT
+                id,
+                edited_at AS "editedAt",
+                case_session_index AS "sessionIndex",
+                employee_name_snapshot AS "employeeName"
+            FROM "service_record_day_edit_log"
+            WHERE branch_id = ${branchId}::uuid
+              AND service_record_case_id = ${ownerCase.caseId}::uuid
+            ORDER BY edited_at DESC, id DESC
+        `);
         const states = await selectRevisionDocumentState(tx, {
             branchId,
             clientId,
@@ -2401,6 +2448,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         canRetry: canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
                     })),
+            })),
+            caregiverEdits: caregiverEdits.map((edit) => ({
+                id: edit.id,
+                editedAt: stateDate(edit.editedAt) ?? "",
+                sessionIndex: edit.sessionIndex,
+                employeeName: edit.employeeName,
             })),
         };
     }
@@ -3225,6 +3278,57 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         let revision: ServiceRecordRevision | null = null;
         let caseVersion = source.caseVersion;
         const documentStatus = plan.status === "no_changes" ? "not_required" : plan.documentStatus;
+        if (plan.clientServiceDays) {
+            // The toggles are a client setting, not part of the service record: a
+            // toggle-only save has no revision or document, so this write sits
+            // outside the confirmed branch (still inside this transaction).
+            await tx.client.updateMany({
+                where: { id: source.client.id, branchId: input.branchId },
+                data: {
+                    allowSaturdayService: plan.clientServiceDays.saturday,
+                    allowSundayService: plan.clientServiceDays.sunday,
+                    allowHolidayService: plan.clientServiceDays.holiday,
+                },
+            });
+            if (plan.materializedPlannedSessions && plan.status === "no_changes") {
+                // A legacy case derives its dates on read, so the new toggles would re-project
+                // the dates the admin kept. Store that vector, and move the stored end dates to
+                // its last date where they differ. No revision, document or start-date change.
+                const materialized = plan.materializedPlannedSessions;
+                const materializedEnd = dateValue(materialized.endDate);
+                const materializedCase = await tx.service_record_case.update({
+                    where: { id: source.caseId },
+                    data: {
+                        plannedSessions: toPrismaJson(materialized.plannedSessions),
+                        ...(materializedEnd && materialized.endDate !== source.endDate
+                            ? { endDate: materializedEnd }
+                            : {}),
+                        version: { increment: 1 },
+                    },
+                    select: { version: true },
+                });
+                caseVersion = materializedCase.version;
+                if (materializedEnd) {
+                    if (materialized.endDate !== source.client.endDate) {
+                        await tx.client.updateMany({
+                            where: { id: source.client.id, branchId: input.branchId },
+                            data: { endDate: materializedEnd },
+                        });
+                    }
+                    const expiresAt = getServiceRecordTokenExpiresAt(materializedEnd);
+                    await tx.service_record_token.updateMany({
+                        where: {
+                            branchId: input.branchId,
+                            serviceRecordCaseId: source.caseId,
+                            active: true,
+                            revokedAt: null,
+                            expiresAt: { not: expiresAt },
+                        },
+                        data: { expiresAt },
+                    });
+                }
+            }
+        }
         if (plan.status === "confirmed") {
             if (plan.revision) {
                 revision = await this.appendRevisionWithClient(tx, plan.revision);

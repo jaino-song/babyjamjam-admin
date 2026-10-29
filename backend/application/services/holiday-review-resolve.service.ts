@@ -12,6 +12,7 @@ import {
     ReviewItemRecord,
 } from "domain/repositories/holiday-review.repository.interface";
 import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 import { HolidayChange } from "domain/utils/holiday-review";
 
 /**
@@ -207,10 +208,12 @@ export class HolidayReviewResolveService {
             }
             // stillMatchesStoredEnd guarantees these.
             const { startDate, duration, facts } = snapshot as ReviewFixSnapshot;
+            // The end date is the CLIENT's service days.
+            const clientCalendar = withClientServiceDays(calendar, snapshot);
 
             let recalculatedEnd: string;
             try {
-                recalculatedEnd = calendar.calcEndDateBusinessDays(startDate as string, duration as number);
+                recalculatedEnd = clientCalendar.calcEndDateBusinessDays(startDate as string, duration as number);
             } catch (error) {
                 if (error instanceof UnsupportedKoreanHolidayYearError) {
                     this.logger.debug(`[Holiday Review] client ${item.clientId}: unsupported calendar year, not fixed`);
@@ -253,7 +256,7 @@ export class HolidayReviewResolveService {
                 return skip("RECALCULATED_CHANGED");
             }
 
-            return this.applyFix(branchId, eventId, item, recalculatedEnd, userId);
+            return this.applyFix(branchId, eventId, item, recalculatedEnd, snapshot as ReviewFixSnapshot, userId);
         };
     }
 
@@ -275,6 +278,9 @@ export class HolidayReviewResolveService {
      *
      * `expectedEndDate` makes the write fail with a 409 if the end date changed after
      * our snapshot, closing the window between the re-read above and the locked write.
+     * `expectedServiceDays` does the same for the client's Saturday / Sunday / holiday
+     * flags the date was computed on; a flip there leaves the item open (the end date
+     * did not move) so the next resolve recomputes on the new flags.
      *
      * The item claim runs inside the client's write transaction, before its write locks.
      * Commit publishes both the fixed item and the client change; failure rolls back
@@ -286,12 +292,18 @@ export class HolidayReviewResolveService {
         eventId: string,
         item: ReviewItemRecord,
         recalculatedEnd: string,
+        snapshot: ReviewFixSnapshot,
         userId: string | null,
     ): Promise<ItemOutcome> {
         try {
             await this.clientService.update(branchId, item.clientId, {
                 endDate: recalculatedEnd,
                 expectedEndDate: item.storedEnd,
+                expectedServiceDays: {
+                    allowSaturdayService: snapshot.allowSaturdayService ?? false,
+                    allowSundayService: snapshot.allowSundayService ?? false,
+                    allowHolidayService: snapshot.allowHolidayService ?? false,
+                },
             }, async (transaction) => {
                 const claimed = await this.repository.claimOpenItemForFix(branchId, eventId, item, userId, transaction);
                 if (!claimed) throw new ConflictException({ code: "ITEM_NOT_OPEN" });

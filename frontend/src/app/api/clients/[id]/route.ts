@@ -8,6 +8,7 @@ import {
     getUpstreamErrorStatus,
     logUpstreamError,
 } from "@/lib/api/route-utils";
+import { pickServiceRecordScheduleErrorExtension } from "@/features/service-records/types/admin-edit";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -27,6 +28,24 @@ function getUpstreamErrorCode(error: unknown): unknown {
     const data = getUpstreamErrorData(error);
     if (!data || typeof data !== "object") return undefined;
     return (data as { code?: unknown }).code;
+}
+
+/**
+ * A client update that cannot re-lay the remaining sessions answers 409 with
+ * `scheduleCode: REALIGNMENT_REQUIRES_MANUAL_SCHEDULE`. The shared sanitizer
+ * drops that member, so it is re-attached (known codes only) for the form to
+ * point the admin at the schedule dialog.
+ */
+async function withScheduleErrorExtension(response: NextResponse, error: unknown): Promise<NextResponse> {
+    const extension = pickServiceRecordScheduleErrorExtension(error);
+    if (!extension?.scheduleCode) return response;
+    const body = await response.json().catch(() => ({}));
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    return NextResponse.json(
+        { ...(typeof body === "object" && body !== null ? body : {}), scheduleCode: extension.scheduleCode },
+        { status: response.status, headers },
+    );
 }
 
 // GET /api/clients/[id] - Get a client by ID
@@ -62,7 +81,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         });
         return NextResponse.json(response.data);
     } catch (error) {
-        return errorResponse(error, "update client", "mutation");
+        return withScheduleErrorExtension(errorResponse(error, "update client", "mutation"), error);
     }
 }
 

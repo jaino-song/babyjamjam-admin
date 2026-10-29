@@ -72,6 +72,7 @@ import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import { serviceDayPolicyOfClient } from "@/lib/date/service-day-policy";
 import {
     DetailPanel,
     InfoCard,
@@ -1901,6 +1902,7 @@ function ClientDetailPanelBody({
                                     layout={layout}
                                     overview={serviceRecordsQuery.data}
                                     clientId={clientId}
+                                    serviceDays={serviceDayPolicyOfClient(client)}
                                     isLoading={isQueryLoadPending(serviceRecordsQuery)}
                                     isError={serviceRecordsQuery.isError}
                                     isRefreshing={

@@ -18,7 +18,10 @@ import {
     START_RECORD_LABEL,
 } from "./ids";
 
+
 const SOURCE_COMPONENT = "OverviewStep";
+/** Reopens the how-to guide from the overview's title row. */
+const OPEN_GUIDE_LABEL = "사용방법";
 
 export type OverviewStepProps = Pick<
     ServiceRecordWizardProps,
@@ -35,6 +38,8 @@ export type OverviewStepProps = Pick<
 > & {
     /** The step only renders with a loaded context (SRW:813). */
     context: NonNullable<ServiceRecordWizardProps["context"]>;
+    /** Reopens the how-to guide; the 사용방법 button is hidden without it. */
+    onOpenGuide?: () => void;
 };
 
 /**
@@ -53,6 +58,7 @@ export function OverviewStep({
     scheduleChangeBusy,
     onOpenDay,
     onOpenScheduleChangePreview,
+    onOpenGuide,
 }: OverviewStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const { displayDateForSession } = resolvePlannedDates({ context, day, adminMode: false, draft, defaultDate });
@@ -66,8 +72,22 @@ export function OverviewStep({
                 data-source-component={SOURCE_COMPONENT}
                 className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 pb-6 pt-4"
             >
-                <div data-component={child("body_overview-title")} className="text-lg font-bold text-v3-dark">
-                    {OVERVIEW_TITLE}
+                <div className="flex items-center justify-between gap-2">
+                    <div data-component={child("body_overview-title")} className="text-lg font-bold text-v3-dark">
+                        {OVERVIEW_TITLE}
+                    </div>
+                    {onOpenGuide ? (
+                        <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            data-component={child("body_overview-guide")}
+                            className="h-auto px-1 py-1 text-[13px] font-semibold text-v3-primary no-underline"
+                            onClick={onOpenGuide}
+                        >
+                            {OPEN_GUIDE_LABEL}
+                        </Button>
+                    ) : null}
                 </div>
                 <p data-component={child("body_overview-help")} className="text-sm text-v3-text-muted">
                     {OVERVIEW_HELP_COPY}

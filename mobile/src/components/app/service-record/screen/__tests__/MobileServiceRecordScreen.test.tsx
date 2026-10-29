@@ -14,7 +14,8 @@ const q = (suffix: string) => document.querySelector(`[data-component="${ROOT}_$
 
 const makeProps = (overrides: Partial<MobileServiceRecordScreenProps> = {}): MobileServiceRecordScreenProps => ({
     "data-component": ROOT, screen: "overview", phone: "", phoneError: null,
-    context: { totalSessions: 3, startDate: "2026-09-21", header: null, sessions: [], org: { name: "테스트 기관" } },
+    // A saved header: with `header: null` the how-to guide opens over the service step (see "how-to guide" below).
+    context: { totalSessions: 3, startDate: "2026-09-21", header: {}, sessions: [], org: { name: "테스트 기관" } },
     header: {}, day: 1, pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS }, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
     scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: (day) => `2026-09-${20 + day}`,
@@ -105,7 +106,7 @@ describe("MobileServiceRecordScreen", () => {
         it("shows the read-only provider rows and 저장 중… while busy", () => {
             render(<MobileServiceRecordScreen {...makeProps({
                 screen: "service", header, busy: true,
-                context: { totalSessions: 3, startDate: "2026-09-21", header: null, sessions: [], employee: { id: 1, name: "김제공" } },
+                context: { totalSessions: 3, startDate: "2026-09-21", header: {}, sessions: [], employee: { id: 1, name: "김제공" } },
             })} />);
             expect(q("body_readonly-row")).toHaveTextContent("김제공");
             expect(q("body_readonly-row-2")).toHaveTextContent("인천 아이미래로");
@@ -267,5 +268,82 @@ describe("MobileServiceRecordScreen: field state survives leaving a step and com
         rerender(<MobileServiceRecordScreen {...props} />);
         expect(document.getElementById("service-record-phone-helper")).toHaveTextContent("010-1234-5678로 입력해 주세요");
         expect(screen.getByLabelText("휴대폰 번호")).toHaveAttribute("aria-invalid", "true");
+    });
+});
+
+describe("MobileServiceRecordScreen: how-to guide", () => {
+    const FIRST_TIME = { totalSessions: 3, startDate: "2026-09-21", header: null, sessions: [], org: { name: "테스트 기관" } };
+    const SAVED = { ...FIRST_TIME, header: {} };
+    const guide = () => screen.queryByRole("dialog", { name: "제공기록지 작성 가이드" });
+
+    // Real timers: the guide's demo runs for real and is stopped by the unmount at the end of each test.
+    beforeEach(() => { jest.useRealTimers(); });
+
+    it("opens over the service step when the customer has no saved header", () => {
+        render(<MobileServiceRecordScreen {...makeProps({ screen: "service", context: FIRST_TIME })} />);
+        expect(guide()).toBeInTheDocument();
+        expect(within(guide() as HTMLElement).getByText("1 / 7")).toBeInTheDocument();
+        expect(q("guide_sheet")).toBe(guide());
+    });
+
+    it("stays closed over the service step when a header is saved", () => {
+        render(<MobileServiceRecordScreen {...makeProps({ screen: "service", context: SAVED })} />);
+        expect(guide()).toBeNull();
+    });
+
+    it("does not open on the other steps without a saved header", () => {
+        const { rerender } = render(<MobileServiceRecordScreen {...makeProps({ screen: "overview", context: FIRST_TIME })} />);
+        expect(guide()).toBeNull();
+        rerender(<MobileServiceRecordScreen {...makeProps({ screen: "day", context: FIRST_TIME })} />);
+        expect(guide()).toBeNull();
+    });
+
+    it("does not reopen by itself once closed, however often the screen re-renders", async () => {
+        const user = userEvent.setup();
+        const props = makeProps({ screen: "service", context: FIRST_TIME });
+        const { rerender } = render(<MobileServiceRecordScreen {...props} />);
+        await user.click(within(guide() as HTMLElement).getByRole("button", { name: "건너뛰기" }));
+        expect(guide()).toBeNull();
+
+        rerender(<MobileServiceRecordScreen {...props} busy />);
+        expect(guide()).toBeNull();
+        rerender(<MobileServiceRecordScreen {...props} screen="overview" />);
+        rerender(<MobileServiceRecordScreen {...props} screen="service" />);
+        expect(guide()).toBeNull();
+        // Nor is anything written to the browser for it.
+        expect(window.localStorage.length).toBe(0);
+    });
+
+    it("saves a first-time (header == null) complete header once the guide is dismissed", async () => {
+        const user = userEvent.setup();
+        const complete = { momName: "이예지", momBirth: "1999-01-01", babyName: "이아기", babyBirth: "2026-06-15", deliveryType: "자연분만", babyWeight: "3.2" };
+        const props = makeProps({ screen: "service", context: FIRST_TIME, header: complete });
+        render(<MobileServiceRecordScreen {...props} />);
+        await user.click(within(guide() as HTMLElement).getByRole("button", { name: "건너뛰기" }));
+        expect(guide()).toBeNull();
+        await user.click(screen.getByRole("button", { name: "다음" }));
+        expect(props.onSaveHeader).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows 사용방법 in the overview title row, which opens the guide on 1 / 7", async () => {
+        const user = userEvent.setup();
+        render(<MobileServiceRecordScreen {...makeProps({ screen: "overview", context: SAVED })} />);
+        expect(guide()).toBeNull();
+        const title = q("body_overview-title") as HTMLElement;
+        expect(title).toHaveTextContent(/^제공기록표$/);
+        const open = screen.getByRole("button", { name: "사용방법" });
+        expect(open).toBe(q("body_overview-guide"));
+        expect(open.parentElement).toBe(title.parentElement);
+
+        await user.click(open);
+        expect(within(guide() as HTMLElement).getByText("1 / 7")).toBeInTheDocument();
+
+        await user.click(within(guide() as HTMLElement).getByRole("button", { name: "다음" }));
+        await user.click(within(guide() as HTMLElement).getByRole("button", { name: "건너뛰기" }));
+        expect(guide()).toBeNull();
+
+        // Opened again, it starts from the first slide.
+        await user.click(screen.getByRole("button", { name: "사용방법" }));
+        expect(within(guide() as HTMLElement).getByText("1 / 7")).toBeInTheDocument();
     });
 });
