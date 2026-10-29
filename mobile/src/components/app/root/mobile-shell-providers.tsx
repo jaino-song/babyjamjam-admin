@@ -10,6 +10,7 @@ import { V3MobileHeader } from "@/components/app/v3/V3MobileHeader";
 import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
 import { Toaster } from "@/components/ui/toaster";
 import { OfflineNotice } from "@/components/app/ui/OfflineNotice";
+import { RealtimeInvalidation } from "@/components/app/realtime/RealtimeInvalidation";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { LocaleProvider } from "@/providers/LocaleProvider";
 import { QueryProvider } from "@/providers/QueryProvider";
@@ -32,6 +33,7 @@ export async function MobileShellProviders({
     <QueryProvider>
       <LocaleProvider locale={locale}>
         <UserProvider user={user}>
+          <RealtimeInvalidation />
           <div
             data-component="mobile_shell_root_app-shell_providers"
             data-slot="app-content"

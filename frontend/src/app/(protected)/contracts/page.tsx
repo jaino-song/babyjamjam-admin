@@ -43,6 +43,7 @@ import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInfiniteContracts";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import type { EformsignDocument, EformsignStatusCountsResponse } from "@/lib/eformsign/types";
 import { useDebounce } from "use-debounce";
 import {
@@ -1540,6 +1541,10 @@ export function ContractDetail({
     mutationFn: (documentId: string) => eformsignApi.sendReceiptLink(documentId),
     onSuccess: (result) => {
       setReceiptSendTarget(null);
+      // 방금 만든 대기 job이 알림 발송 목록에 바로 보이게 한다. 이 화면에는 고객 id가 없어
+      // client-history는 prefix로 무효화한다.
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+      void queryClient.invalidateQueries({ queryKey: [...messageTriggerKeys.all, "client-history"] });
       toast({
         variant: "success",
         title: "서비스 종료 안내 발송 예약",

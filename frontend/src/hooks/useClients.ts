@@ -168,6 +168,7 @@ export function useCreateClient() {
         onSuccess: async () => {
             // Invalidate all client queries (lists + details) using prefix match
             await queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
         },
     });
 }
@@ -189,6 +190,7 @@ export function useUpdateClient() {
             queryClient.setQueryData(clientQueryKeys.detail(variables.id), updatedClient);
 
             await queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
         },
     });
 }

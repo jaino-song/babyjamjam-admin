@@ -4,6 +4,7 @@ import { V3MainContent } from "@/components/app/v3/V3MainContent";
 import { V3MobileHeader } from "@/components/app/v3/V3MobileHeader";
 import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
 import { NotificationPermissionPrompt } from "@/components/app/notification-permission-prompt";
+import { RealtimeInvalidation } from "@/components/app/realtime/RealtimeInvalidation";
 import { MobileBottomNav } from "@/components/app/root/mobile-bottom-nav";
 import { DocumentJobsProvider } from "@/features/document-jobs/DocumentJobsProvider";
 import { getCurrentUser } from "@/lib/auth/cookies";
@@ -22,6 +23,7 @@ export default async function ProtectedLayout({
 
   return (
     <UserProvider user={user}>
+      <RealtimeInvalidation />
       <DocumentJobsProvider>
         <NotificationPermissionPrompt />
         <V3Sidebar />
