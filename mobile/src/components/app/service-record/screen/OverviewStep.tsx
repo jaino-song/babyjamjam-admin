@@ -123,7 +123,7 @@ export function OverviewStep({
                         variant="v3"
                         size="md"
                         data-component={child("body_overview-start")}
-                        className="h-auto min-h-[46px] whitespace-normal py-2 leading-tight"
+                        className="h-auto min-h-[46px] whitespace-normal break-keep py-2 leading-tight"
                         disabled={isRecordFinalized}
                         onClick={() => onOpenDay(nextOpenDay())}
                     >
@@ -134,7 +134,7 @@ export function OverviewStep({
                         variant="v3-outline"
                         size="md"
                         data-component={child("body_overview-schedule-change")}
-                        className="h-auto min-h-[46px] whitespace-normal py-2 leading-tight"
+                        className="h-auto min-h-[46px] whitespace-normal break-keep py-2 leading-tight"
                         disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context.pendingScheduleChange)}
                         onClick={() => onOpenScheduleChangePreview()}
                     >
