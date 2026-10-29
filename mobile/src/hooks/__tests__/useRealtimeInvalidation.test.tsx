@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
-import { allEntityQueryRoots } from "@/lib/realtime/entity-query-keys";
+import { allEntityQueryRoots, queryRootsForKinds } from "@/lib/realtime/entity-query-keys";
 
 import { useRealtimeInvalidation } from "../useRealtimeInvalidation";
 
@@ -180,17 +180,17 @@ describe("useRealtimeInvalidation", () => {
           latest().dispatch("entity-changed", JSON.stringify({ entities: ["client"] }));
         }
       });
-      // 3 immediate passes over the 2 client roots.
-      expect(invalidateSpy).toHaveBeenCalledTimes(6);
+      const clientRoots = queryRootsForKinds(["client"]);
+      // 3 immediate passes over the client roots.
+      expect(invalidateSpy).toHaveBeenCalledTimes(3 * clientRoots.length);
 
       act(() => {
         jest.advanceTimersByTime(FOLLOW_UP);
       });
 
-      expect(invalidatedRoots(invalidateSpy).slice(6).sort()).toEqual([
-        JSON.stringify(["clients"]),
-        JSON.stringify(["dashboard"]),
-      ]);
+      expect(invalidatedRoots(invalidateSpy).slice(3 * clientRoots.length).sort()).toEqual(
+        clientRoots.map((root) => JSON.stringify(root)).sort(),
+      );
     });
 
     it("covers the union of different kinds in the window, each root once", async () => {
@@ -212,15 +212,9 @@ describe("useRealtimeInvalidation", () => {
       const trailing = invalidatedRoots(invalidateSpy).slice(immediate);
       expect(new Set(trailing).size).toBe(trailing.length);
       expect([...trailing].sort()).toEqual(
-        [
-          ["clients"],
-          ["dashboard"],
-          ["eformsign-documents"],
-          ["eformsign-docs"],
-          ["eformsign-doc-client-names"],
-          ["eformsign-document-detail"],
-          ["employees"],
-        ].map((root) => JSON.stringify(root)).sort(),
+        queryRootsForKinds(["client", "document", "employee"])
+          .map((root) => JSON.stringify(root))
+          .sort(),
       );
     });
 
