@@ -33,6 +33,9 @@ type CreateClientParams = {
     eDocId?: string | null;
     areaId?: string | null;
     smsAutomationEnabled?: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
 };
 
 @Injectable()

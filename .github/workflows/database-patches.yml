@@ -472,6 +472,7 @@ jobs:
           DIRECT_URL: ${{ secrets.DEV_DIRECT_URL || secrets.DEVELOPMENT_DIRECT_URL || secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
         run: |
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261027000000_add_client_service_day_flags/migration.sql
 
       - name: Apply and verify service-record caregiver edit log
         working-directory: backend
@@ -1118,6 +1119,7 @@ jobs:
           DIRECT_URL: ${{ secrets.PREVIEW_DIRECT_URL || secrets.PREVIEW_DATABASE_URL }}
         run: |
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261027000000_add_client_service_day_flags/migration.sql
 
       - name: Apply and verify service-record caregiver edit log
         working-directory: backend
@@ -1742,6 +1744,7 @@ jobs:
           DIRECT_URL: ${{ secrets.PRODUCTION_DIRECT_URL || secrets.PROD_DIRECT_URL || secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
         run: |
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261027000000_add_client_service_day_flags/migration.sql
 
       - name: Apply and verify service-record caregiver edit log
         working-directory: backend

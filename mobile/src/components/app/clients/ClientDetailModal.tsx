@@ -118,6 +118,12 @@ export function ClientDetailModal({
 
     if (!client) return null;
 
+    const enabledServiceDays = [
+        client.allowSaturdayService && "clients.form.service-day-saturday",
+        client.allowSundayService && "clients.form.service-day-sunday",
+        client.allowHolidayService && "clients.form.service-day-holiday",
+    ].filter((key): key is string => Boolean(key));
+
     const handleEdit = () => {
         onEdit(client);
         onClose();
@@ -257,6 +263,20 @@ export function ClientDetailModal({
                                 <span className="text-sm text-muted-foreground">-</span>
                             )}
                         </div>
+                        {enabledServiceDays.length > 0 && (
+                            <div className="mt-3 space-y-1">
+                                <span className="text-xs text-muted-foreground">
+                                    {t(locale, "clients.form.section-service-days")}
+                                </span>
+                                <div className="flex flex-wrap gap-2">
+                                    {enabledServiceDays.map((textKey) => (
+                                        <Badge key={textKey} variant="outline">
+                                            {t(locale, textKey)}
+                                        </Badge>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <Separator />

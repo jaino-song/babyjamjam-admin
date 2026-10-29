@@ -5,6 +5,10 @@ import type { ServiceRecordWizardProps } from "../../../packages/service-record-
 import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
 import { dismissServiceRecordGuide } from "@/test-utils/service-record-guide";
 
+// The first-visit 작성 가이드 opens over a record with no saved header and is
+// covered by its own tests; stub it so this file exercises the form beneath.
+jest.mock("@/components/app/service-record/guide", () => ({ ServiceRecordGuide: () => null }));
+
 // jsdom has no canvas: a stand-in for the mobile screen's signature pad (the shared wizard renders none without a slot).
 jest.mock("@/components/app/service-record/SignaturePad", () => ({
     SignaturePad: ({ onChange }: { onChange: (dataUri: string | null) => void }) => (

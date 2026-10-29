@@ -32,6 +32,10 @@ import {
     type ApiScript,
 } from "./service-record-flow.fixtures";
 
+// The first-visit 작성 가이드 opens over a record with no saved header and is
+// covered by its own tests; stub it so this file exercises the form beneath.
+jest.mock("@/components/app/service-record/guide", () => ({ ServiceRecordGuide: () => null }));
+
 jest.mock("next/navigation", () => ({ useParams: () => ({ token: "contract-token" }) }));
 jest.mock("@/hooks/useTokenBusinessDayCalendar", () => ({
     useTokenBusinessDayCalendar: () => ({

@@ -11,6 +11,7 @@ import {
     readJsonObjectBody,
 } from "@/lib/api/route-utils";
 import { jsonResponse } from "@/app/api/admin/service-records/_lib/proxy";
+import { pickServiceRecordScheduleErrorExtension } from "@/features/service-records/types/admin-edit";
 
 type RouteParams = { params: Promise<{ draftId: string }> };
 
@@ -55,6 +56,24 @@ async function withBlockingOperation(response: NextResponse, blocking: BlockingO
     );
 }
 
+/**
+ * The shared problem sanitizer drops members it does not know. A schedule
+ * replacement is refused with a `scheduleCode` (and a locked-session conflict
+ * with `blockingReasons`) that the dialog needs to explain what to change, so
+ * both are re-attached after validating them down to a closed code set.
+ */
+async function withScheduleErrorExtension(response: NextResponse, error: unknown): Promise<NextResponse> {
+    const extension = pickServiceRecordScheduleErrorExtension(error);
+    if (!extension) return response;
+    const body = await response.json().catch(() => ({}));
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    return NextResponse.json(
+        { ...(typeof body === "object" && body !== null ? body : {}), ...extension },
+        { status: response.status, headers },
+    );
+}
+
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = getAuthToken(request);
     if (!token) return authRequiredResponse();
@@ -73,6 +92,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         if (invalidJson) return invalidJson;
         const sanitized = errorResponse(error, "confirm service record draft", "mutation");
         const blocking = readBlockingOperation(error);
-        return blocking ? withBlockingOperation(sanitized, blocking) : sanitized;
+        const withBlocking = blocking ? await withBlockingOperation(sanitized, blocking) : sanitized;
+        return withScheduleErrorExtension(withBlocking, error);
     }
 }

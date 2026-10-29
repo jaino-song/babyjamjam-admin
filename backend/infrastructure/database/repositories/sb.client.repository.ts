@@ -163,6 +163,9 @@ export class SbClientRepository implements IClientRepository {
             eDocId: true,
             suppressGreetingSms: true,
             smsAutomationEnabled: true,
+            allowSaturdayService: true,
+            allowSundayService: true,
+            allowHolidayService: true,
             // Tenant key — every where-clause already relies on this column,
             // and reads must carry it so ClientEntity.branchId is populated.
             branchId: true,

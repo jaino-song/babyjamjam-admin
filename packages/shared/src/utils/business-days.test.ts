@@ -5,6 +5,7 @@ import {
     countBusinessDaysKr,
     diffBusinessDaysKr,
     createKrBusinessDayCalendar,
+    DEFAULT_SERVICE_DAY_POLICY,
     KOREAN_HOLIDAY_CALENDAR_VERSION,
     KOREAN_HOLIDAYS,
     isBusinessDayKr,
@@ -260,5 +261,139 @@ describe("createKrBusinessDayCalendar", () => {
         const calendar = createKrBusinessDayCalendar(["2026-01-01"], { version: "branch-7.v3" });
         expect(() => calendar.assertSupportedYear(2030)).toThrow("version branch-7.v3");
         expect(() => assertSupportedKoreanHolidayYear(2030)).toThrow(`version ${KOREAN_HOLIDAY_CALENDAR_VERSION}`);
+    });
+});
+
+describe("withServiceDays", () => {
+    const policy = (saturday: boolean, sunday: boolean, holiday: boolean) => ({ saturday, sunday, holiday });
+
+    it("returns the very same instance for the default policy on the base calendar", () => {
+        expect(KR_BUILTIN_CALENDAR.withServiceDays(DEFAULT_SERVICE_DAY_POLICY)).toBe(KR_BUILTIN_CALENDAR);
+        expect(KR_BUILTIN_CALENDAR.withServiceDays(policy(false, false, false))).toBe(KR_BUILTIN_CALENDAR);
+        expect(KR_BUILTIN_CALENDAR.version).toBe(KOREAN_HOLIDAY_CALENDAR_VERSION);
+    });
+
+    it("freezes the default policy with every flag false", () => {
+        expect(DEFAULT_SERVICE_DAY_POLICY).toEqual({ saturday: false, sunday: false, holiday: false });
+        expect(Object.isFrozen(DEFAULT_SERVICE_DAY_POLICY)).toBe(true);
+    });
+
+    it.each([
+        [policy(true, false, false), "+sd-100"],
+        [policy(false, true, false), "+sd-010"],
+        [policy(false, false, true), "+sd-001"],
+        [policy(true, true, true), "+sd-111"],
+        [policy(true, false, true), "+sd-101"],
+    ])("appends the policy to the version (%j -> %s)", (p, suffix) => {
+        expect(KR_BUILTIN_CALENDAR.withServiceDays(p).version).toBe(`${KOREAN_HOLIDAY_CALENDAR_VERSION}${suffix}`);
+    });
+
+    it("matches the branch-calendar version shape with a suffix", () => {
+        const branch = createKrBusinessDayCalendar(["2026-01-01"], { version: "kr-db-abc123def456" });
+        expect(branch.withServiceDays(policy(true, false, true)).version).toBe("kr-db-abc123def456+sd-101");
+    });
+
+    it("replaces a previous policy instead of composing with it", () => {
+        const p1 = policy(true, true, false);
+        const p2 = policy(false, false, true);
+        const direct = KR_BUILTIN_CALENDAR.withServiceDays(p2);
+        const rewrapped = KR_BUILTIN_CALENDAR.withServiceDays(p1).withServiceDays(p2);
+        expect(rewrapped.version).toBe(direct.version);
+        for (const iso of ["2026-12-19", "2026-12-20", "2026-12-25", "2026-12-21"]) {
+            expect(rewrapped.isBusinessDay(iso)).toBe(direct.isBusinessDay(iso));
+        }
+        // Saturday/Sunday from p1 must be gone.
+        expect(rewrapped.isBusinessDay("2026-12-19")).toBe(false);
+        expect(rewrapped.isBusinessDay("2026-12-20")).toBe(false);
+        expect(rewrapped.isBusinessDay("2026-12-25")).toBe(true);
+    });
+
+    it("returns to the policy-free base (same instance, base version) when re-wrapped with the default", () => {
+        const wrapped = KR_BUILTIN_CALENDAR.withServiceDays(policy(true, true, true));
+        const back = wrapped.withServiceDays(DEFAULT_SERVICE_DAY_POLICY);
+        expect(back).toBe(KR_BUILTIN_CALENDAR);
+        expect(back.version).toBe(KOREAN_HOLIDAY_CALENDAR_VERSION);
+        expect(back.isBusinessDay("2026-12-19")).toBe(false);
+    });
+
+    it("applies serviceDays passed as a factory option the same way", () => {
+        const viaOption = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, {
+            version: "v",
+            supportedYears: [2026],
+            serviceDays: policy(true, false, false),
+        });
+        expect(viaOption.version).toBe("v+sd-100");
+        expect(viaOption.isBusinessDay("2026-12-19")).toBe(true);
+        expect(viaOption.withServiceDays(DEFAULT_SERVICE_DAY_POLICY).version).toBe("v");
+        expect(viaOption.withServiceDays(DEFAULT_SERVICE_DAY_POLICY).isBusinessDay("2026-12-19")).toBe(false);
+    });
+
+    it("lets Saturday enable only Saturdays, Sunday only Sundays, holiday only weekday holidays", () => {
+        const sat = KR_BUILTIN_CALENDAR.withServiceDays(policy(true, false, false));
+        const sun = KR_BUILTIN_CALENDAR.withServiceDays(policy(false, true, false));
+        const hol = KR_BUILTIN_CALENDAR.withServiceDays(policy(false, false, true));
+        const SAT = "2026-12-19";
+        const SUN = "2026-12-20";
+        const WEEKDAY_HOLIDAY = "2026-12-25"; // Friday, Christmas
+        const WEEKDAY = "2026-12-21";
+
+        expect([sat, sun, hol].map((c) => c.isBusinessDay(WEEKDAY))).toEqual([true, true, true]);
+
+        expect(sat.isBusinessDay(SAT)).toBe(true);
+        expect(sat.isBusinessDay(SUN)).toBe(false);
+        expect(sat.isBusinessDay(WEEKDAY_HOLIDAY)).toBe(false);
+
+        expect(sun.isBusinessDay(SAT)).toBe(false);
+        expect(sun.isBusinessDay(SUN)).toBe(true);
+        expect(sun.isBusinessDay(WEEKDAY_HOLIDAY)).toBe(false);
+
+        expect(hol.isBusinessDay(SAT)).toBe(false);
+        expect(hol.isBusinessDay(SUN)).toBe(false);
+        expect(hol.isBusinessDay(WEEKDAY_HOLIDAY)).toBe(true);
+    });
+
+    it("requires BOTH flags for a Saturday that is also a holiday (all four combinations)", () => {
+        const HOLIDAY_SATURDAY = "2026-08-15"; // Liberation Day, a Saturday
+        expect(KR_HOLIDAYS.has(HOLIDAY_SATURDAY)).toBe(true);
+        const answer = (saturday: boolean, holiday: boolean) =>
+            KR_BUILTIN_CALENDAR.withServiceDays(policy(saturday, false, holiday)).isBusinessDay(HOLIDAY_SATURDAY);
+        expect(answer(false, false)).toBe(false);
+        expect(answer(true, false)).toBe(false);
+        expect(answer(false, true)).toBe(false);
+        expect(answer(true, true)).toBe(true);
+    });
+
+    it("requires BOTH flags for a Sunday that is also a holiday (all four combinations)", () => {
+        const HOLIDAY_SUNDAY = "2026-03-01"; // Independence Movement Day, a Sunday
+        expect(KR_HOLIDAYS.has(HOLIDAY_SUNDAY)).toBe(true);
+        const answer = (sunday: boolean, holiday: boolean) =>
+            KR_BUILTIN_CALENDAR.withServiceDays(policy(false, sunday, holiday)).isBusinessDay(HOLIDAY_SUNDAY);
+        expect(answer(false, false)).toBe(false);
+        expect(answer(true, false)).toBe(false);
+        expect(answer(false, true)).toBe(false);
+        expect(answer(true, true)).toBe(true);
+    });
+
+    it("changes counting and end dates under a policy while the default is untouched", () => {
+        const sat = KR_BUILTIN_CALENDAR.withServiceDays(policy(true, false, false));
+        expect(KR_BUILTIN_CALENDAR.calcEndDateBusinessDays("2026-12-14", 10)).toBe("2026-12-28");
+        expect(sat.calcEndDateBusinessDays("2026-12-14", 10)).toBe("2026-12-24");
+        expect(KR_BUILTIN_CALENDAR.countBusinessDays("2026-12-14", "2026-12-24")).toBe(9);
+        expect(sat.countBusinessDays("2026-12-14", "2026-12-24")).toBe(10);
+        expect(sat.nextBusinessDay("2026-12-18")).toBe("2026-12-19");
+        expect(KR_BUILTIN_CALENDAR.nextBusinessDay("2026-12-18")).toBe("2026-12-21");
+        expect(sat.addBusinessDays("2026-12-18", 2)).toBe("2026-12-21");
+        expect(sat.shiftBusinessDays("2026-12-21", -1)).toBe("2026-12-19");
+        expect(sat.diffBusinessDays("2026-12-21", "2026-12-18")).toBe(2);
+    });
+
+    it("keeps failing closed for an unsupported year on a policy calendar", () => {
+        const all = KR_BUILTIN_CALENDAR.withServiceDays(policy(true, true, true));
+        expect(() => all.isBusinessDay("2028-01-03")).toThrow(UnsupportedKoreanHolidayYearError);
+        expect(() => all.isBusinessDay("2028-01-01")).toThrow(UnsupportedKoreanHolidayYearError); // Saturday
+        expect(() => all.countBusinessDays("2028-01-03", "2028-01-04")).toThrow(UnsupportedKoreanHolidayYearError);
+        expect(() => all.assertSupportedYear(2028)).toThrow(UnsupportedKoreanHolidayYearError);
+        expect(all.isBusinessDay("")).toBe(false);
+        expect(all.isBusinessDay("2026-02-30")).toBe(false);
     });
 });

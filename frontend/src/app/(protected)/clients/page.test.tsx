@@ -35,9 +35,11 @@ jest.mock("use-debounce", () => ({
   useDebounce: <T,>(value: T) => [value],
 }));
 
+let mockAuthUser: { role: string; branchRole: string | null } = { role: "owner", branchRole: null };
+
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "owner", branchRole: null },
+    data: mockAuthUser,
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -196,6 +198,21 @@ jest.mock("@/components/app/clients/ServiceRecordLinkResetResultModal", () => ({
   ServiceRecordLinkResetResultModal: () => null,
 }));
 
+jest.mock("@/components/app/service-record/ServiceRecordScheduleDialog", () => ({
+  ServiceRecordScheduleDialog: ({ clientId, clientName, onOpenChange, onSaved }: {
+    clientId: number;
+    clientName: string;
+    onOpenChange: (open: boolean) => void;
+    onSaved: () => void | Promise<void>;
+  }) => (
+    <div data-testid="service-record-schedule-dialog" data-client-id={clientId}>
+      {clientName}
+      <button onClick={() => onOpenChange(false)}>일정 창 닫기</button>
+      <button onClick={() => void onSaved()}>일정 저장 완료</button>
+    </div>
+  ),
+}));
+
 jest.mock("@/components/app/clients/ServiceScheduleChangeModal", () => ({
   ServiceScheduleChangeModal: ({ onSubmit }: { onSubmit: (allow: boolean) => void }) => (
     <button onClick={() => onSubmit(false)}>일정 변경 적용</button>
@@ -302,6 +319,7 @@ jest.mock("@/services/api", () => ({
 }));
 
 afterEach(() => {
+  mockAuthUser = { role: "owner", branchRole: null };
   mockActiveBranchId = "branch-a";
   mockClientFromParam = undefined;
   mockClientQueryState = IDLE_MOCK_CLIENT_QUERY;
@@ -377,6 +395,22 @@ describe("ClientsPage visual conventions", () => {
     expect(menuItem).toContain('target="_blank"');
     expect(menuItem).toContain('rel="noopener noreferrer"');
     expect(menuItem).toContain("encodeURIComponent");
+  });
+
+  it("offers the service-record schedule change right under the viewer, behind the same branch-management gate", () => {
+    const viewMarker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
+    const scheduleMarker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"');
+    expect(viewMarker).toBeGreaterThan(-1);
+    expect(scheduleMarker).toBeGreaterThan(viewMarker);
+    // No other item sits between the viewer and the schedule item (only the schedule item's own opening tag does).
+    const between = source.slice(viewMarker, scheduleMarker);
+    expect(between.match(/<DropdownMenuItem/g)).toHaveLength(1);
+
+    const gateStart = source.lastIndexOf("{canManageBranchFeatures && (", scheduleMarker);
+    const scheduleItem = source.slice(source.lastIndexOf("<DropdownMenuItem", scheduleMarker), source.indexOf("</DropdownMenuItem>", scheduleMarker));
+    expect(source.slice(gateStart, scheduleMarker)).not.toContain("</DropdownMenuItem>");
+    expect(scheduleItem).toContain("제공기록지 일정 변경");
+    expect(scheduleItem).toContain("setServiceRecordScheduleClient(activeSelectedClient)");
   });
 });
 
@@ -594,6 +628,58 @@ describe("ClientsPage directory subtitle behavior", () => {
     });
 
     expect(screen.getByTestId("client-detail")).toHaveTextContent("지점 A 고객 2");
+  });
+
+  describe("service-record schedule menu item", () => {
+    const selectClient = () => {
+      mockSearchParams = new URLSearchParams("id=8");
+      mockClientFromParam = { id: 8, name: "지점 A 고객 2" };
+      renderClientsPage({ clients: [], data: { pages: [{ data: [], total: 0 }] } });
+    };
+
+    it("sits right below 제공기록지 보기 for a branch manager and opens the dialog for the selected client", () => {
+      selectClient();
+
+      const view = screen.getByText("제공기록지 보기");
+      const item = screen.getByRole("button", { name: "제공기록지 일정 변경" });
+      expect(view.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+
+      fireEvent.click(item);
+
+      const dialog = screen.getByTestId("service-record-schedule-dialog");
+      expect(dialog).toHaveAttribute("data-client-id", "8");
+      expect(dialog).toHaveTextContent("지점 A 고객 2");
+    });
+
+    it("closes the dialog when it asks to, and refreshes the client data after a save", async () => {
+      mockQueryClient.invalidateQueries.mockClear();
+      selectClient();
+      fireEvent.click(screen.getByRole("button", { name: "제공기록지 일정 변경" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "일정 저장 완료" }));
+      await waitFor(() => expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients"] }));
+
+      fireEvent.click(screen.getByRole("button", { name: "일정 창 닫기" }));
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+    });
+
+    it("works for a branch admin or manager too", () => {
+      mockAuthUser = { role: "staff", branchRole: "manager" };
+      selectClient();
+
+      expect(screen.getByRole("button", { name: "제공기록지 일정 변경" })).toBeInTheDocument();
+    });
+
+    it("is absent for a user who cannot manage the branch", () => {
+      mockAuthUser = { role: "staff", branchRole: "employee" };
+      selectClient();
+
+      expect(screen.getByTestId("client-detail")).toBeInTheDocument();
+      expect(screen.queryByText("제공기록지 보기")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "제공기록지 일정 변경" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+    });
   });
 });
 

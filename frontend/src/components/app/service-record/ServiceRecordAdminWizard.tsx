@@ -23,6 +23,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { calendarWithServiceDays } from "@/lib/date/service-day-policy";
 import {
     adminServiceRecordEditApi,
 } from "@/features/service-records/api/admin-service-record-edit.api";
@@ -76,6 +77,8 @@ type EditorAssignment = Omit<ServiceRecordAssignment, "sessions"> & {
 export type AdminServiceRecordEditorOverview = Omit<ServiceRecordOverview, "record" | "assignments"> & {
     record?: EditorCase | null;
     assignments: EditorAssignment[];
+    /** Days this client accepts service on besides plain business days; absent means none. */
+    serviceDays?: { saturday: boolean; sunday: boolean; holiday: boolean };
 };
 
 const ADMIN_WIZARD_COMPONENT = "desktop_service-record-admin_wizard";
@@ -501,7 +504,7 @@ function draftMatchesBatch(
 type BlockingOperationName = "contract_period" | "receipt_refresh" | "record_snapshot";
 
 /** A 409 that says an earlier edit's follow-up work is still running (not a stale record). */
-function readBlockingOperation(body: unknown): BlockingOperationName | null {
+export function readBlockingOperation(body: unknown): BlockingOperationName | null {
     if (!isRecord(body) || !isRecord(body.blockingOperation)) return null;
     const { operation } = body.blockingOperation;
     return operation === "contract_period" || operation === "receipt_refresh" || operation === "record_snapshot"
@@ -514,7 +517,7 @@ function blockingOperationMessage(operation: BlockingOperationName): string {
     return "이전 수정의 기록 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요.";
 }
 
-function createIdempotencyKey(): string {
+export function createIdempotencyKey(): string {
     if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
     const bytes = new Uint8Array(16);
     if (typeof globalThis.crypto?.getRandomValues === "function") {
@@ -528,7 +531,7 @@ function createIdempotencyKey(): string {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function sameSource(left: AdminServiceRecordEditState | null, right: AdminServiceRecordEditState | null): boolean {
+export function sameSource(left: AdminServiceRecordEditState | null, right: AdminServiceRecordEditState | null): boolean {
     return Boolean(left?.sourceFingerprint && right?.sourceFingerprint
         && left.sourceFingerprint === right.sourceFingerprint
         && left.sourceCaseVersion === right.sourceCaseVersion);
@@ -574,12 +577,22 @@ export function ServiceRecordAdminWizard({
         ...baseView.context.sessions.map((session) => session.serviceDate),
     ]), [baseView]);
     const {
-        calendar,
+        calendar: branchCalendar,
         ready: calendarReady,
         error: calendarError,
         retry: retryCalendar,
         refreshForSave,
     } = useBusinessDayCalendar({ extraYears: calendarYears });
+    // Date moves follow the days this client accepts service on, as the server does.
+    const serviceDayPolicy = useMemo(() => ({
+        saturday: overview.serviceDays?.saturday ?? false,
+        sunday: overview.serviceDays?.sunday ?? false,
+        holiday: overview.serviceDays?.holiday ?? false,
+    }), [overview.serviceDays?.saturday, overview.serviceDays?.sunday, overview.serviceDays?.holiday]);
+    const calendar = useMemo(
+        () => calendarWithServiceDays(branchCalendar, serviceDayPolicy),
+        [branchCalendar, serviceDayPolicy],
+    );
     const [sourceIdentity, setSourceIdentity] = useState(initialDraftState);
     // Nothing is saved until 수정 확정: confirmed edits wait here, in this tab only.
     const [pending, setPending] = useState<PendingEdits>(EMPTY_PENDING);
@@ -763,7 +776,7 @@ export function ServiceRecordAdminWizard({
                     return;
                 }
                 try {
-                    const next = moveServiceRecordSessionDate(vector, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), fresh.calendar).entries;
+                    const next = moveServiceRecordSessionDate(vector, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), calendarWithServiceDays(fresh.calendar, serviceDayPolicy)).entries;
                     const previous = dateMoveEntriesRef.current;
                     const recalculated = !previous || next.some((entry) =>
                         previous.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
@@ -1243,7 +1256,7 @@ type ViewerState =
     }
     | { kind: "error"; clientId: string; status: number };
 
-function parseOverview(payload: unknown): AdminServiceRecordEditorOverview | null {
+export function parseOverview(payload: unknown): AdminServiceRecordEditorOverview | null {
     if (!isRecord(payload) || !Array.isArray(payload.assignments)) return null;
     return payload as unknown as AdminServiceRecordEditorOverview;
 }
