@@ -308,7 +308,14 @@ export class EformsignWebhookController {
             reason: "mirror is newer",
             publish: false,
         };
-        if (!this.webhookService.canClaimCompletionFromStoredDetail(storedDetail)) {
+        // Decide from the local row before paying for the strict sync (a second vendor
+        // fetch): an unassigned, purge-requested, missing or non-final row is dropped
+        // exactly as it was before the heal existed.
+        const eligibility = await this.webhookService.resolveCompletionHealEligibility(
+            documentId,
+            storedDetail,
+        );
+        if (!eligibility.eligible) {
             return stale;
         }
         const completionMirror =
@@ -321,12 +328,10 @@ export class EformsignWebhookController {
             };
         }
         const { mirroredDocument, ownershipChanged } = completionMirror;
-        if (
-            !mirroredDocument
-            || !this.webhookService.canClaimCompletionFromStoredDetail(mirroredDocument)
-        ) {
+        if (!mirroredDocument) {
             return { ...stale, publish: ownershipChanged };
         }
+        // The claim re-resolves eligibility against the freshly synced row and detail.
         const claim = await this.webhookService.claimCompletionFromStoredDetail(
             documentId,
             mirroredDocument,

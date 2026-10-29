@@ -14,6 +14,10 @@ import {
 } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { ReconcileCompletedMirroredEformsignDocUsecase } from "application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import {
+    configuredServiceRecordTemplateIds,
+    isServiceRecordEformsignDocument,
+} from "application/utils/eformsign-document-kind";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
 import { NotificationService } from "./notification.service";
@@ -390,23 +394,81 @@ export class EformsignWebhookService {
     }
 
     /**
-     * Whether a stored detail is final enough to claim terminal completion from. A contract
-     * at 062 (participant accepted) may still be awaiting the 제공기관 confirmation, and a
-     * terminal 050 would make the downgrade guard reject the later legitimate 070, so only
-     * a final contract completion qualifies. A service-record snapshot completes at 062 and
-     * keeps the full completed set, exactly as the completed-mirror reconciler treats it.
+     * Whether the stale-drop heal may claim terminal completion for this document from its
+     * stored detail, decided from the persisted local row and the detail together. Loads the
+     * row once, so the controller's pre-check and the claim itself share one rule.
+     *
+     * Eligible only when the row exists, is branch-owned (an unassigned row has no branch to
+     * key the claim by) and is not purge-requested, and the detail is a completion that the
+     * document's kind accepts: a contract must be at a FINAL completion, because 062
+     * (participant accepted) may still await the 제공기관 confirmation and a terminal 050
+     * would make the downgrade guard reject the later legitimate 070; a service-record
+     * snapshot completes at 062 and keeps the full completed set, as the completed-mirror
+     * reconciler treats it.
+     *
+     * The kind is classified exactly as the mirror linker classifies it
+     * (`isServiceRecordEformsignDocument`, with an explicit `contract` kind authoritative):
+     * the persisted `documentKind` first, the configured service-record templates only as the
+     * fallback, so a snapshot row on a since-retired template is still a snapshot.
      */
-    canClaimCompletionFromStoredDetail(
+    async resolveCompletionHealEligibility(
+        documentId: string,
         mirroredDocument: EformsignApiDocumentResponse,
-    ): boolean {
+    ): Promise<
+        | { eligible: false }
+        | { eligible: true; branchId: string; serviceRecordSnapshot: boolean }
+    > {
         const statusType = normalizeEformsignStatusCode(
             mirroredDocument.current_status?.status_type,
         );
         if (!COMPLETED_STATUS_CODES.has(statusType)) {
+            return { eligible: false };
+        }
+        const localDocument = await this.findLocalDocument(documentId);
+        if (!localDocument || localDocument.branchId === null) {
+            return { eligible: false };
+        }
+        const branchId = localDocument.branchId;
+        // The purge-filtered lookup: a purge-requested row is not claimable.
+        let row: EformsignDocEntity | null;
+        try {
+            row = await this.eformsignDocRepository.findByDocumentId(branchId, documentId);
+        } catch (error) {
+            if (error instanceof EformsignDocMappingError) {
+                return { eligible: false };
+            }
+            throw error;
+        }
+        if (!row) {
+            return { eligible: false };
+        }
+        const serviceRecordSnapshot = this.isServiceRecordSnapshotRow(
+            row,
+            mirroredDocument.template?.id,
+        );
+        return serviceRecordSnapshot || isFinalContractCompletionStatus(statusType)
+            ? { eligible: true, branchId, serviceRecordSnapshot }
+            : { eligible: false };
+    }
+
+    private isServiceRecordSnapshotRow(
+        row: EformsignDocEntity,
+        detailTemplateId?: string,
+    ): boolean {
+        // The explicit kind is authoritative for a contract, as in the linker.
+        if (row.documentKind === EFORMSIGN_DOCUMENT_KIND.CONTRACT) {
             return false;
         }
-        return this.isServiceRecordTemplate(mirroredDocument.template?.id)
-            || isFinalContractCompletionStatus(statusType);
+        const configuredTemplateIds = configuredServiceRecordTemplateIds();
+        return [row.templateId, detailTemplateId].some((templateId) =>
+            isServiceRecordEformsignDocument(
+                {
+                    documentKind: row.documentKind,
+                    templateId,
+                },
+                configuredTemplateIds,
+            ),
+        );
     }
 
     /**
@@ -421,22 +483,22 @@ export class EformsignWebhookService {
      * claim a `doc_complete` webhook would, sourced from the stored detail, with completion
      * effects deferred because the mirror sync's detail-driven reconciler already ran them.
      *
-     * Returns undefined when there is nothing to claim: the detail is not a final completion
-     * (see `canClaimCompletionFromStoredDetail`), the row is unassigned (it has no branch to
-     * key the claim by), or no row exists.
+     * Returns undefined when there is nothing to claim: the row is not eligible (see
+     * `resolveCompletionHealEligibility`: not a final completion for its kind, unassigned,
+     * purge-requested or missing).
      */
     async claimCompletionFromStoredDetail(
         documentId: string,
         mirroredDocument: EformsignApiDocumentResponse,
     ): Promise<EformsignWebhookProcessResult | undefined> {
-        if (!this.canClaimCompletionFromStoredDetail(mirroredDocument)) {
+        const eligibility = await this.resolveCompletionHealEligibility(
+            documentId,
+            mirroredDocument,
+        );
+        if (!eligibility.eligible) {
             return undefined;
         }
-        const localDocument = await this.findLocalDocument(documentId);
-        if (!localDocument || localDocument.branchId === null) {
-            return undefined;
-        }
-        const branchId = localDocument.branchId;
+        const { branchId, serviceRecordSnapshot } = eligibility;
         const claimResult = await this.claimDocumentCompletion(
             branchId,
             documentId,
@@ -450,6 +512,7 @@ export class EformsignWebhookService {
             await this.reconcileDeferredServiceRecordSnapshotCompletion(
                 documentId,
                 mirroredDocument.template?.id,
+                serviceRecordSnapshot,
             );
         }
         return { completionClaim: claimResult, completionBranchId: branchId };
@@ -1135,8 +1198,9 @@ export class EformsignWebhookService {
     private async reconcileDeferredServiceRecordSnapshotCompletion(
         documentId: string,
         templateId?: string,
+        serviceRecordSnapshot: boolean = this.isServiceRecordTemplate(templateId),
     ): Promise<boolean> {
-        if (!this.isServiceRecordTemplate(templateId) || !this.completedMirrorReconciler) {
+        if (!serviceRecordSnapshot || !this.completedMirrorReconciler) {
             return false;
         }
         const lifecycleChanged = await this.completedMirrorReconciler

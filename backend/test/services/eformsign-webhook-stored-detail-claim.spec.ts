@@ -213,6 +213,99 @@ describe("EformsignWebhookService.claimCompletionFromStoredDetail (real reposito
         }
     });
 
+    describe("document kind classification (shared with the mirror linker)", () => {
+        const snapshotRow = (overrides: Partial<Row> = {}): Row => baseRow({
+            documentKind: "service_record_snapshot",
+            templateId: "retired-template",
+            ...overrides,
+        });
+        const retiredTemplateDetail = (statusType: string): never => ({
+            ...(storedDetail(statusType) as object),
+            template: { id: "retired-template", name: "retired" },
+        }) as never;
+
+        it("claims 050 for a persisted service-record snapshot on a retired template at 062", async () => {
+            // The template id is no longer in any EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID* config.
+            table = snapshotRow();
+
+            const result = await service.claimCompletionFromStoredDetail(
+                documentId,
+                retiredTemplateDetail("062"),
+            );
+
+            expect(result).toEqual({ completionClaim: "claimed", completionBranchId: branchId });
+            expect(table.statusType).toBe("050");
+        });
+
+        it("reports a retired-template snapshot as eligible at 062", async () => {
+            table = snapshotRow();
+
+            await expect(
+                service.resolveCompletionHealEligibility(
+                    documentId,
+                    retiredTemplateDetail("062"),
+                ),
+            ).resolves.toEqual({
+                eligible: true,
+                branchId,
+                serviceRecordSnapshot: true,
+            });
+        });
+
+        it("keeps the 062 exclusion for an explicitly classified contract, even on a configured service-record template", async () => {
+            process.env["EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"] = "template-1";
+            try {
+                table = baseRow({ documentKind: "contract", templateId: "template-1" });
+
+                await expect(
+                    service.resolveCompletionHealEligibility(documentId, storedDetail("062")),
+                ).resolves.toEqual({ eligible: false });
+                await expect(
+                    service.claimCompletionFromStoredDetail(documentId, storedDetail("062")),
+                ).resolves.toBeUndefined();
+                expect(table.statusType).toBe("060");
+                expect(prisma.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            } finally {
+                delete process.env["EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"];
+            }
+        });
+
+        it("keeps the 062 exclusion for an unclassified contract row on an unconfigured template", async () => {
+            table = baseRow({ documentKind: null, templateId: "template-1" });
+
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("062")),
+            ).resolves.toEqual({ eligible: false });
+        });
+
+        it("is eligible for a contract only at a final completion", async () => {
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({
+                eligible: true,
+                branchId,
+                serviceRecordSnapshot: false,
+            });
+        });
+
+        it("is not eligible when the row is unassigned, purge-requested, or missing", async () => {
+            table = baseRow({ branchId: null as never });
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({ eligible: false });
+
+            table = baseRow({ permanentPurgeRequestedAt: new Date("2026-10-02T00:00:00.000Z") });
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({ eligible: false });
+
+            prisma.eformsign_doc.findUnique.mockResolvedValueOnce(null as never);
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({ eligible: false });
+        });
+    });
+
     it("reports a duplicate when the row is already completed", async () => {
         table = baseRow({ statusType: "050" });
 

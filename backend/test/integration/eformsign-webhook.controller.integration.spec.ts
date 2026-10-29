@@ -22,7 +22,7 @@ describe("EformsignWebhookController (Integration)", () => {
         | "publishCompletionEvent"
         | "publishLocalDocumentChange"
         | "claimCompletionFromStoredDetail"
-        | "canClaimCompletionFromStoredDetail"
+        | "resolveCompletionHealEligibility"
     >>;
     let webhookEventWriter: jest.Mocked<Pick<EformsignWebhookEventWriter, "append">>;
     let documentMirrorService: jest.Mocked<Pick<
@@ -83,11 +83,15 @@ describe("EformsignWebhookController (Integration)", () => {
             publishCompletionEvent: jest.fn(),
             publishLocalDocumentChange: jest.fn(),
             claimCompletionFromStoredDetail: jest.fn().mockResolvedValue(undefined),
-            // The contract rule of the real service (a service-record template is not
-            // configured here); the service spec covers the rule itself.
-            canClaimCompletionFromStoredDetail: jest.fn(
-                (detail: { current_status?: { status_type?: string } }) =>
-                    isFinalContractCompletionStatus(detail.current_status?.status_type),
+            // A branch-owned, non-purged contract row (the service spec covers the rule
+            // itself): eligible only at a final completion.
+            resolveCompletionHealEligibility: jest.fn(
+                async (
+                    _documentId: string,
+                    detail: { current_status?: { status_type?: string } },
+                ) => isFinalContractCompletionStatus(detail.current_status?.status_type)
+                    ? { eligible: true, branchId: "branch-1", serviceRecordSnapshot: false }
+                    : { eligible: false },
             ),
         };
         const mockDocumentMirrorService = {
@@ -287,6 +291,34 @@ describe("EformsignWebhookController (Integration)", () => {
             expect(webhookService.publishLocalDocumentChange).not.toHaveBeenCalled();
             expect(webhookEventWriter.append).toHaveBeenCalledTimes(1);
             expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
+                outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
+                outcomeReason: "mirror is newer",
+            }));
+        });
+
+        it("runs no second sync and records the base stale drop when the row is not eligible (unassigned, purge-requested or missing)", async () => {
+            documentMirrorService.getStoredDetail.mockResolvedValue(completedDetail);
+            webhookService.resolveCompletionHealEligibility.mockResolvedValue({
+                eligible: false,
+            });
+            // Anything only a second vendor fetch / strict sync could raise must not surface.
+            documentMirrorService.syncDocument
+                .mockResolvedValueOnce(undefined as never)
+                .mockRejectedValue(new EformsignApiError("transient getDocument failure", 503));
+
+            await expect(controller.handleWebhook(staleAcceptPayload)).resolves.toEqual({ success: true });
+
+            expect(webhookService.resolveCompletionHealEligibility).toHaveBeenCalledWith(
+                "doc-1",
+                completedDetail,
+            );
+            expect(documentMirrorService.syncDocument).toHaveBeenCalledTimes(1);
+            expect(webhookService.claimCompletionFromStoredDetail).not.toHaveBeenCalled();
+            expect(webhookService.processWebhook).not.toHaveBeenCalled();
+            expect(webhookService.publishLocalDocumentChange).not.toHaveBeenCalled();
+            expect(webhookEventWriter.append).toHaveBeenCalledTimes(1);
+            expect(webhookEventWriter.append).toHaveBeenCalledWith(expect.objectContaining({
+                webhookId: "webhook-stale-1",
                 outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
                 outcomeReason: "mirror is newer",
             }));
