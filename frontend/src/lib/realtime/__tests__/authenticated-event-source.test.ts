@@ -176,6 +176,16 @@ describe("openAuthenticatedEventSource", () => {
         expect(FakeEventSource.instances).toHaveLength(0);
     });
 
+    it("rejects with AuthSessionEndedError when the refresh returns 403 (rejected or pending account)", async () => {
+        probeResults(401);
+        mockAxios.__mockApi.barePost.mockRejectedValue({
+            response: { status: 403, data: { code: "ACCOUNT_REJECTED" } },
+        });
+
+        await expect(openAuthenticatedEventSource(ENDPOINT)).rejects.toBeInstanceOf(AuthSessionEndedError);
+        expect(FakeEventSource.instances).toHaveLength(0);
+    });
+
     it("rejects with AuthSessionEndedError when the probe is still 401 after a successful refresh", async () => {
         probeResults(401, 401);
 
