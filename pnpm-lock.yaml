@@ -12,7 +12,7 @@ overrides:
   browserslist@<4.28.7: 4.28.7
   ip-address@>=10.0.0 <10.7.1: 10.7.1
   fast-uri@>=3.0.0 <3.1.8: 3.1.8
-  undici@>=6.0.0 <6.28.1: 6.28.1
+  undici@>=6.0.0 <6.29.1: 6.29.1
   hono@>=4.0.0 <4.13.11: 4.13.11
   passport-oauth2@<1.6.1: 1.6.1
   effect@<3.20.0: 3.20.0
@@ -8133,8 +8133,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici@6.28.1:
-    resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
+  undici@6.29.1:
+    resolution: {integrity: sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==}
     engines: {node: '>=18.17'}
 
   unified@11.0.5:
@@ -11140,7 +11140,7 @@ snapshots:
     dependencies:
       progress: 2.0.3
       proxy-from-env: 1.1.0
-      undici: 6.28.1
+      undici: 6.29.1
       which: 2.0.2
     optionalDependencies:
       '@sentry/cli-darwin': 3.6.2
@@ -17057,7 +17057,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici@6.28.1: {}
+  undici@6.29.1: {}
 
   unified@11.0.5:
     dependencies:
