@@ -3,6 +3,7 @@ import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
 import { MirrorUnassignedEformsignDocUsecase } from "application/usecases/eformsign-doc/mirror-unassigned-eformsign-doc.usecase";
 import {
+    isFinalContractCompletionStatus,
     UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE,
     UNASSIGNED_REVIEW_STAGE_STATUS_CODES,
     UNASSIGNED_TERMINAL_STATUS_CODES,
@@ -389,6 +390,26 @@ export class EformsignWebhookService {
     }
 
     /**
+     * Whether a stored detail is final enough to claim terminal completion from. A contract
+     * at 062 (participant accepted) may still be awaiting the 제공기관 confirmation, and a
+     * terminal 050 would make the downgrade guard reject the later legitimate 070, so only
+     * a final contract completion qualifies. A service-record snapshot completes at 062 and
+     * keeps the full completed set, exactly as the completed-mirror reconciler treats it.
+     */
+    canClaimCompletionFromStoredDetail(
+        mirroredDocument: EformsignApiDocumentResponse,
+    ): boolean {
+        const statusType = normalizeEformsignStatusCode(
+            mirroredDocument.current_status?.status_type,
+        );
+        if (!COMPLETED_STATUS_CODES.has(statusType)) {
+            return false;
+        }
+        return this.isServiceRecordTemplate(mirroredDocument.template?.id)
+            || isFinalContractCompletionStatus(statusType);
+    }
+
+    /**
      * Heal a branch-owned row whose last delivery was dropped as stale while the stored
      * detail already shows the document completed.
      *
@@ -400,17 +421,15 @@ export class EformsignWebhookService {
      * claim a `doc_complete` webhook would, sourced from the stored detail, with completion
      * effects deferred because the mirror sync's detail-driven reconciler already ran them.
      *
-     * Returns undefined when there is nothing to claim: the detail is not completed, the row
-     * is unassigned (it has no branch to key the claim by), or no row exists.
+     * Returns undefined when there is nothing to claim: the detail is not a final completion
+     * (see `canClaimCompletionFromStoredDetail`), the row is unassigned (it has no branch to
+     * key the claim by), or no row exists.
      */
     async claimCompletionFromStoredDetail(
         documentId: string,
         mirroredDocument: EformsignApiDocumentResponse,
     ): Promise<EformsignWebhookProcessResult | undefined> {
-        const mirroredStatusType = normalizeEformsignStatusCode(
-            mirroredDocument.current_status?.status_type,
-        );
-        if (!COMPLETED_STATUS_CODES.has(mirroredStatusType)) {
+        if (!this.canClaimCompletionFromStoredDetail(mirroredDocument)) {
             return undefined;
         }
         const localDocument = await this.findLocalDocument(documentId);

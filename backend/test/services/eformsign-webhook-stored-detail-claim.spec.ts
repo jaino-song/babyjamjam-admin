@@ -151,7 +151,7 @@ describe("EformsignWebhookService.claimCompletionFromStoredDetail (real reposito
         expect(table.updatedDate).toEqual(new Date("2026-10-02T09:00:00.000Z"));
     });
 
-    it.each(["060", "070", "061"])(
+    it.each(["060", "070", "061", "062"])(
         "does nothing when the stored detail is %s",
         async (statusType) => {
             const before = { ...table };
@@ -166,6 +166,52 @@ describe("EformsignWebhookService.claimCompletionFromStoredDetail (real reposito
             expect(prisma.eformsign_doc.updateMany).not.toHaveBeenCalled();
         },
     );
+
+    it("does not turn a 062 (participant accepted) contract into terminal completion, so a later 070 still lands", async () => {
+        const claim = await service.claimCompletionFromStoredDetail(
+            documentId,
+            storedDetail("062"),
+        );
+        expect(claim).toBeUndefined();
+        expect(table.statusType).toBe("060");
+
+        await service.processWebhook(
+            {
+                webhook_id: "wh-070",
+                webhook_name: "contract-status",
+                company_id: "company-1",
+                event_type: "document",
+                document: {
+                    id: documentId,
+                    document_title: "계약서",
+                    template_id: "template-1",
+                    template_name: "template",
+                    workflow_seq: 3,
+                    workflow_name: "제공기관 확인",
+                    status: "doc_request_reviewer",
+                    updated_date: Date.parse("2026-10-02T09:30:00.000Z"),
+                },
+            } as never,
+            { mirroredDocument: storedDetail("070", "2026-10-02T09:30:00.000Z") },
+        );
+
+        expect(table.statusType).toBe("070");
+    });
+
+    it("keeps the full completed set for a service-record snapshot, which completes at 062", async () => {
+        process.env["EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"] = "template-1";
+        try {
+            const result = await service.claimCompletionFromStoredDetail(
+                documentId,
+                storedDetail("062"),
+            );
+
+            expect(result).toEqual({ completionClaim: "claimed", completionBranchId: branchId });
+            expect(table.statusType).toBe("050");
+        } finally {
+            delete process.env["EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"];
+        }
+    });
 
     it("reports a duplicate when the row is already completed", async () => {
         table = baseRow({ statusType: "050" });
