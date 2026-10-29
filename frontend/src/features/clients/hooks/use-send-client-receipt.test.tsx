@@ -1,10 +1,17 @@
 import { act, renderHook } from '@testing-library/react';
 
+import { messageTriggerKeys } from '@/features/message-triggers/hooks/keys';
+
 import { eformsignApi } from '@/services/api';
 
 import { useSendClientReceipt } from './use-send-client-receipt';
 
 const mockToast = jest.fn();
+const mockInvalidateQueries = jest.fn();
+jest.mock('@tanstack/react-query', () => ({
+  ...jest.requireActual('@tanstack/react-query'),
+  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+}));
 jest.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: mockToast }) }));
 jest.mock('@/services/api', () => ({
   eformsignApi: { prepareReceiptLink: jest.fn(), sendReceiptLink: jest.fn() },
@@ -31,6 +38,13 @@ describe('useSendClientReceipt', () => {
     expect(send).toHaveBeenCalledWith('receipt-document', { clientId: 117, recipientPhone: '01000000000' });
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ title: '본인부담금 영수증 발송 예약' }));
     expect(result.current.isSending).toBe(false);
+  });
+
+  it('refreshes the client message lists right after the job is queued', async () => {
+    const { result } = renderHook(() => useSendClientReceipt());
+    await act(async () => { await result.current.sendReceipt(117); });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.clientHistory(117) });
   });
 
   it('does not send when preparation belongs to another client', async () => {
@@ -74,6 +88,7 @@ describe('useSendClientReceipt', () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(mockToast).toHaveBeenCalledTimes(1);
     expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' }));
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
     expect(result.current.isSending).toBe(false);
   });
 });

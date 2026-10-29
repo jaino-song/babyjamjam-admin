@@ -16,7 +16,7 @@ import {
   type ClientRegistrationPolicyPatch,
 } from "@/services/api";
 
-const QUERY_KEY = ["settings", "client-registration-policy"] as const;
+export const QUERY_KEY = ["settings", "client-registration-policy"] as const;
 
 // Shared problem contract resolution — a registered body surfaces its
 // catalog copy; the locally authored fallback covers unverified failures.
