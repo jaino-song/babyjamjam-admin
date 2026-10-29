@@ -4,7 +4,6 @@ import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/Ser
 import { hasServiceRecordHeaderValues, isServiceRecordHeaderComplete } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
 import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
-import { dismissServiceRecordGuide } from "@/test-utils/service-record-guide";
 
 // The first-visit 작성 가이드 opens over a record with no saved header and is
 // covered by its own tests; stub it so this file exercises the form beneath.
@@ -111,11 +110,9 @@ describe.each(ROWS)("service record validation scope: employee header ($name)", 
     beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-21T00:00:00Z")); });
     afterEach(() => jest.useRealTimers());
 
-    it("validates the full legacy header: a press cannot save and surfaces the first problem", async () => {
+    it("validates the full legacy header: a press cannot save and surfaces the first problem", () => {
         const props = makeProps();
         render(<Component {...props} />);
-        // Only the mobile screen opens the how-to guide over a first-time header step.
-        if (Component === MobileServiceRecordScreen) await dismissServiceRecordGuide();
         const next = screen.getByRole("button", { name: "다음" });
         expect(next).toBeEnabled();
         fireEvent.click(next);

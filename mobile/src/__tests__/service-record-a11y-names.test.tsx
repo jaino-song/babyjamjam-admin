@@ -3,7 +3,6 @@ import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/Ser
 import { DEFAULT_DAILY_ANSWERS } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
 import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
-import { dismissServiceRecordGuide } from "@/test-utils/service-record-guide";
 
 // The first-visit 작성 가이드 opens over a record with no saved header and is
 // covered by its own tests; stub it so this file exercises the form beneath.
@@ -46,10 +45,8 @@ describe.each(ROWS)("service record accessible names ($name)", ({ Component }) =
         expect(screen.getByRole("radiogroup", { name: /좌욕/ })).toBeInTheDocument();
     });
 
-    it("names the delivery type group on the header step", async () => {
+    it("names the delivery type group on the header step", () => {
         render(<Component {...makeProps({ screen: "service" })} />);
-        // Only the mobile screen opens the how-to guide over a first-time header step.
-        if (Component === MobileServiceRecordScreen) await dismissServiceRecordGuide();
         const group = screen.getByRole("radiogroup", { name: "분만형태" });
         expect(within(group).getByRole("button", { name: /자연분만/ })).toBeInTheDocument();
     });

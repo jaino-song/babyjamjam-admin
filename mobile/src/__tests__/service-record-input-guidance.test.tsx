@@ -4,7 +4,6 @@ import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/Ser
 import { DEFAULT_DAILY_ANSWERS } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
 import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
-import { dismissServiceRecordGuide } from "@/test-utils/service-record-guide";
 
 // The first-visit 작성 가이드 opens over a record with no saved header and is
 // covered by its own tests; stub it so this file exercises the form beneath.
@@ -72,21 +71,17 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
     const { Component } = row;
     beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-21T00:00:00Z")); });
     afterEach(() => jest.useRealTimers());
-    // On the mobile screen a header-less context opens the how-to guide over this form; a user skips it first.
-    const skipGuide = async () => { if (row === MOBILE_ROW) await dismissServiceRecordGuide(); };
 
-    it("shows no message on a first render of the basic-information step", async () => {
+    it("shows no message on a first render of the basic-information step", () => {
         const { container } = render(<Harness Component={Component} />);
-        await skipGuide();
         expect(row.messageSlots(container)).toHaveLength(6);
         for (const slot of row.messageSlots(container)) expect(slot).toBeEmptyDOMElement();
         expect(container.querySelector(".field-helper")).toBeNull();
         expect(container.querySelector('[aria-invalid="true"]')).toBeNull();
     });
 
-    it("renders every message in a one-line slot inside the label row, never below the input", async () => {
+    it("renders every message in a one-line slot inside the label row, never below the input", () => {
         render(<Harness Component={Component} />);
-        await skipGuide();
         const name = screen.getByLabelText("산모 성명");
         const slot = slotOf(name);
         expect(slot).toHaveAttribute("aria-live", "polite");
@@ -94,10 +89,9 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
         expect(slot.parentElement!.nextElementSibling).toBe(name);
     });
 
-    it("computes its own field errors and blocks Next with every problem shown in its slot", async () => {
+    it("computes its own field errors and blocks Next with every problem shown in its slot", () => {
         const save = jest.fn();
         render(<Harness Component={Component} onSave={save} />);
-        await skipGuide();
         const name = screen.getByLabelText("산모 성명");
         expect(name).not.toHaveAttribute("aria-invalid", "true");
         fireEvent.compositionStart(name);
@@ -118,11 +112,10 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
         expect(save).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps Next enabled on an empty form, shows each required message after pressing it and focuses the first problem", async () => {
+    it("keeps Next enabled on an empty form, shows each required message after pressing it and focuses the first problem", () => {
         const save = jest.fn();
         const empty = { momName: "", momBirth: "", babyName: "", babyBirth: "", deliveryType: "", babyWeight: "" };
         render(<Component {...makeProps({ header: empty, onSaveHeader: save })} />);
-        await skipGuide();
         const next = screen.getByRole("button", { name: "다음" });
         expect(next).toBeEnabled();
         fireEvent.click(next);
@@ -140,9 +133,8 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
     it.each([
         ["산모 생년월일", "1994-03-15", "산모 생년월일을 입력해 주세요"],
         ["신생아 출생일자", "2026-09-20", "신생아 출생일자를 입력해 주세요"],
-    ])("formats incremental digits, hints while focused and errors after leaving for %s", async (label, placeholder, required) => {
+    ])("formats incremental digits, hints while focused and errors after leaving for %s", (label, placeholder, required) => {
         render(<Harness Component={Component} />);
-        await skipGuide();
         const birth = screen.getByLabelText(label);
         expect(birth).toHaveAttribute("placeholder", placeholder);
         expect(birth).toHaveAttribute("inputmode", "numeric");
@@ -175,10 +167,9 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
         expect(birth).not.toHaveAttribute("aria-invalid", "true");
         expect(slotOf(birth)).toBeEmptyDOMElement();
     });
-    it("formats compact, spaced and hyphenated date input before saving parent state and keeps the payload unchanged", async () => {
+    it("formats compact, spaced and hyphenated date input before saving parent state and keeps the payload unchanged", () => {
         const save = jest.fn();
         render(<Harness Component={Component} onSave={save} />);
-        await skipGuide();
         const momBirth = screen.getByLabelText("산모 생년월일");
         const babyBirth = screen.getByLabelText("신생아 출생일자");
         for (const value of ["19990101", "1999 01 01", "1999-01-01"]) {
@@ -195,10 +186,9 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
             deliveryType: "자연분만", babyWeight: "3.2",
         });
     });
-    it("submits the brief's example birthday and weight exactly as before", async () => {
+    it("submits the brief's example birthday and weight exactly as before", () => {
         const save = jest.fn();
         render(<Harness Component={Component} onSave={save} />);
-        await skipGuide();
         fireEvent.change(screen.getByLabelText("산모 생년월일"), { target: { value: "19940315" } });
         fireEvent.change(screen.getByLabelText("신생아 출생일자"), { target: { value: "20260920" } });
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
@@ -208,9 +198,8 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
         ["19990229", "존재하지 않는 날짜예요"],
         ["20260922", "미래 날짜는 입력할 수 없어요"],
         ["990101", "8자리로 입력해 주세요"],
-    ])("does not accept an invalid or incomplete formatted birthday: %s", async (value, message) => {
+    ])("does not accept an invalid or incomplete formatted birthday: %s", (value, message) => {
         render(<Harness Component={Component} />);
-        await skipGuide();
         const birth = screen.getByLabelText("산모 생년월일");
         fireEvent.change(birth, { target: { value } });
         fireEvent.blur(birth);
@@ -222,18 +211,16 @@ describe.each(ROWS)("employee service record inline guidance ($name)", (row) => 
         expect(birth).toHaveValue("2000-02-29");
         expect(birth).not.toHaveAttribute("aria-invalid", "true");
     });
-    it("passes formatted birthdays through the shared callback in adminMode=false", async () => {
+    it("passes formatted birthdays through the shared callback in adminMode=false", () => {
         const onHeaderChange = jest.fn();
         render(<Component {...makeProps({ onHeaderChange })} />);
-        await skipGuide();
         fireEvent.change(screen.getByLabelText("산모 생년월일"), { target: { value: "19990101" } });
         fireEvent.change(screen.getByLabelText("신생아 출생일자"), { target: { value: "20260615" } });
         expect(onHeaderChange).toHaveBeenCalledWith("momBirth", "1999-01-01");
         expect(onHeaderChange).toHaveBeenCalledWith("babyBirth", "2026-06-15");
     });
-    it("shows a missing-field message after a value was cleared and removes it after correction", async () => {
+    it("shows a missing-field message after a value was cleared and removes it after correction", () => {
         render(<Harness Component={Component} />);
-        await skipGuide();
         const weight = screen.getByLabelText("신생아 몸무게 (kg)");
         fireEvent.change(weight, { target: { value: "" } });
         expect(slotOf(weight)).toHaveTextContent("신생아 몸무게를 입력해 주세요");
