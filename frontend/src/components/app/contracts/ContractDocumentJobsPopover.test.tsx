@@ -297,18 +297,91 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.getByText("최근 완료")).toBeInTheDocument();
   });
 
-  it("closes on Escape and mobile backdrop clicks", () => {
+  it("closes the desktop popover on Escape and renders no sheet or backdrop", () => {
     const onOpenChange = jest.fn();
     renderOpenPopover({ onOpenChange });
 
     const content = screen.getByRole("dialog");
+    expect(content).toHaveAttribute("data-slot", "document-jobs-popover");
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toContainElement(content);
+    expect(document.querySelector('[data-slot="sheet-overlay"]')).not.toBeInTheDocument();
     fireEvent.keyDown(content, { key: "Escape" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
 
-    const backdrop = document.querySelector('[data-slot="popover-backdrop"]');
-    expect(backdrop).toBeInTheDocument();
-    fireEvent.click(backdrop as HTMLElement);
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+  describe("below the lg breakpoint", () => {
+    const originalWidth = window.innerWidth;
+
+    beforeEach(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalWidth });
+    });
+
+    it("renders the list in a bottom sheet outside any popper wrapper, with its rows and header", () => {
+      renderOpenPopover({ "data-component": "jobs_popover" });
+
+      const sheet = screen.getByRole("dialog", { name: "전자문서 작업" });
+      expect(sheet).toHaveAttribute("data-slot", "document-jobs-popover");
+      expect(sheet).toHaveAttribute("data-side", "bottom");
+      expect(sheet).toHaveAttribute("data-component", "jobs_popover");
+      expect(sheet).toHaveAttribute("data-source-component", "ContractDocumentJobsPopover");
+      // The popper wrapper is a transformed, content-sized box that collapses a fixed child.
+      expect(document.querySelector("[data-radix-popper-content-wrapper]")).not.toBeInTheDocument();
+      expect(sheet.closest("[data-radix-popper-content-wrapper]")).toBeNull();
+      expect(sheet).toHaveTextContent("읽기 전용 처리 현황");
+      expect(sheet).toHaveTextContent("5건");
+      expect(screen.getByRole("heading", { name: "처리 중" })).toBeInTheDocument();
+      expect(screen.getByText("전자문서 생성 중")).toBeInTheDocument();
+      expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+        "/contracts?recoverJobId=job-attention",
+        "/contracts?documentId=document-3",
+      ]);
+    });
+
+    it("closes on Escape and on a backdrop (overlay) click", async () => {
+      const onOpenChange = jest.fn();
+      renderOpenPopover({ onOpenChange });
+      // Radix registers its outside-pointer listener on the next tick.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+
+      onOpenChange.mockClear();
+      const overlay = document.querySelector('[data-slot="sheet-overlay"]');
+      expect(overlay).toBeInTheDocument();
+      fireEvent.pointerDown(overlay as HTMLElement);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("closes after navigating through a job link", () => {
+      const onOpenChange = jest.fn();
+      renderOpenPopover({ onOpenChange });
+
+      fireEvent.click(screen.getAllByRole("link")[0]);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("opens from its trigger", () => {
+      const onOpenChange = jest.fn();
+      render(
+        <ContractDocumentJobsPopover
+          onOpenChange={onOpenChange}
+          documentJobs={JOBS}
+          trigger={<button type="button">전자문서 처리중</button>}
+        />,
+      );
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중" }));
+      expect(onOpenChange).toHaveBeenCalledWith(true);
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toBeInTheDocument();
+    });
   });
 
   it("shows safe copy and no navigation for a completed job without a document id", () => {
