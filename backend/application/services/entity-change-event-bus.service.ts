@@ -2,7 +2,18 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Observable, Subject } from "rxjs";
 
 /** Closed set shared with the web/mobile clients; never widen it without updating both. */
-export type EntityChangeKind = "client" | "employee" | "document" | "message" | "service-record";
+export type EntityChangeKind =
+    | "client"
+    | "employee"
+    | "document"
+    | "message"
+    | "service-record"
+    | "inquiry"
+    | "call"
+    | "file"
+    | "holiday"
+    | "settings"
+    | "notification";
 
 export interface EntityChangeInput {
     /** `null` means "branch unknown / system scope": delivered to every subscriber. */

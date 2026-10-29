@@ -17,7 +17,7 @@ import { tenantContextStore } from "../tenant/tenant-context.store";
 const logger = new Logger("EntityChangeExtension");
 
 /** Prisma model names (== table names; the schema has no `@@map`) to the kind clients refetch. */
-const ENTITY_KIND_BY_MODEL: Readonly<Record<string, EntityChangeKind>> = {
+export const ENTITY_KIND_BY_MODEL: Readonly<Record<string, EntityChangeKind>> = {
     client: "client",
     employee: "employee",
     eformsign_doc: "document",
@@ -28,7 +28,54 @@ const ENTITY_KIND_BY_MODEL: Readonly<Record<string, EntityChangeKind>> = {
     service_record: "service-record",
     service_record_day: "service-record",
     service_record_case: "service-record",
+    service_record_revision: "service-record",
+    service_record_day_edit_log: "service-record",
+    service_record_revision_document_state: "service-record",
+    employee_schedule: "service-record",
+    service_record_token: "service-record",
+    message_template: "message",
+    message_trigger_rule: "message",
+    message_trigger_rule_branch_override: "message",
+    consultation_inquiry: "inquiry",
+    call_record: "call",
+    client_draft: "call",
+    // The file library; unrelated to the eformsign `document` kind above despite the model name.
+    document: "file",
+    document_category: "file",
+    public_holiday: "holiday",
+    branch_holiday_override: "holiday",
+    holiday_year_snapshot: "holiday",
+    holiday_calendar_revision: "holiday",
+    holiday_change_event: "holiday",
+    end_date_review_item: "holiday",
+    system_setting: "settings",
+    area: "settings",
+    doc_template: "settings",
+    voucher_price_info: "settings",
+    out_of_pocket_price_info: "settings",
+    bank_account_info: "settings",
+    system_template: "settings",
+    branch: "settings",
+    notification: "notification",
 };
+
+/**
+ * Models with no `branchId` column: one row set shared by every branch. A write is always
+ * broadcast (`branchId: null`) - falling back to the requester's branch would leave every other
+ * branch showing stale data.
+ */
+export const GLOBAL_MODELS: ReadonlySet<string> = new Set([
+    "voucher_price_info",
+    "out_of_pocket_price_info",
+    "public_holiday",
+    "holiday_year_snapshot",
+    "holiday_calendar_revision",
+    "system_template",
+    "system_setting",
+    "doc_template",
+    "bank_account_info",
+    "branch",
+]);
 
 const ROW_WRITE_OPERATIONS: ReadonlySet<string> = new Set(["create", "update", "upsert", "delete"]);
 const COUNT_WRITE_OPERATIONS: ReadonlySet<string> = new Set(["createMany", "updateMany", "deleteMany"]);
@@ -79,7 +126,8 @@ function changedSomething(operation: string, result: unknown): boolean {
  * Branches to notify: the returned row(s) first, then the ambient tenant store, else `null`
  * (broadcast). Never re-reads the DB to find a branch.
  */
-function resolveBranchIds(operation: string, result: unknown): Array<string | null> {
+function resolveBranchIds(model: string, operation: string, result: unknown): Array<string | null> {
+    if (GLOBAL_MODELS.has(model)) return [null];
     const fromRows = new Set<string | null>();
     if (ARRAY_WRITE_OPERATIONS.has(operation) && Array.isArray(result)) {
         for (const row of result) {
@@ -133,7 +181,7 @@ export async function handleEntityModelOperation(
 
     try {
         if (changedSomething(operation, result)) {
-            safeEmit(bus, resolveBranchIds(operation, result), [kind]);
+            safeEmit(bus, resolveBranchIds(model as string, operation, result), [kind]);
         }
     } catch (error) {
         logger.warn(`entity-change resolve failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -221,10 +269,19 @@ export function stripSqlNonCode(sql: string): string {
 }
 
 export function watchedKindsInSql(sql: string): Set<EntityChangeKind> {
-    const kinds = new Set<EntityChangeKind>();
+    return new Set(watchedWritesInSql(sql).keys());
+}
+
+/** Watched kinds a statement writes; `global` = at least one written table is in `GLOBAL_MODELS`. */
+function watchedWritesInSql(sql: string): Map<EntityChangeKind, { global: boolean }> {
+    const kinds = new Map<EntityChangeKind, { global: boolean }>();
     for (const match of stripSqlNonCode(sql).matchAll(RAW_WRITE_PATTERN)) {
-        const kind = ENTITY_KIND_BY_MODEL[(match[1] ?? "").toLowerCase()];
-        if (kind) kinds.add(kind);
+        const table = (match[1] ?? "").toLowerCase();
+        const kind = ENTITY_KIND_BY_MODEL[table];
+        if (!kind) continue;
+        const entry = kinds.get(kind) ?? { global: false };
+        entry.global = entry.global || GLOBAL_MODELS.has(table);
+        kinds.set(kind, entry);
     }
     return kinds;
 }
@@ -245,9 +302,14 @@ export async function handleEntityRawOperation(
     const result = await query(args);
 
     try {
-        const kinds = watchedKindsInSql(rawSqlText(args));
+        const kinds = watchedWritesInSql(rawSqlText(args));
         if (kinds.size > 0 && rawChangedSomething(result)) {
-            safeEmit(bus, [tenantContextStore.get()?.branchId ?? null], kinds);
+            const tenantBranch = tenantContextStore.get()?.branchId ?? null;
+            // A shared (branch-less) table must reach every branch even when the statement ran in
+            // one branch's context; branch-owned kinds in the same statement keep the tenant branch.
+            for (const [kind, { global }] of kinds) {
+                safeEmit(bus, [global ? null : tenantBranch], [kind]);
+            }
         }
     } catch (error) {
         logger.warn(`entity-change raw resolve failed: ${error instanceof Error ? error.message : String(error)}`);
