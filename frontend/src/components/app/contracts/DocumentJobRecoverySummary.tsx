@@ -103,9 +103,12 @@ function buildRows(
   }
 
   const data = input.request.contractData as unknown as Record<string, unknown>;
-  const duration =
-    readText(data, "contractDuration")
-    ?? [readText(data, "startDate"), readText(data, "endDate")].filter(Boolean).join(" ~ ");
+  const startDate = readText(data, "startDate");
+  const endDate = readText(data, "endDate");
+  // The dates are the source of truth; contractDuration is only a fallback when neither exists.
+  const duration = startDate || endDate
+    ? [startDate ?? "", endDate ?? ""].join(" ~ ").trim()
+    : readText(data, "contractDuration");
   const voucher = [readText(data, "type"), readText(data, "days")].filter(Boolean).join(" · ");
 
   push("client", "고객", job.clientName?.trim() || readText(data, "customerName"));
