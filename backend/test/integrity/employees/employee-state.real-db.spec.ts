@@ -24,8 +24,8 @@ import { RowTracker } from "../helpers/tracker";
  *
  * - SI-EMP-01: the delete guard (`hasActiveAssignments`) must judge by the KST
  *   business date, exactly like `findWorkHistoryByEmployee` does with
- *   `isoDateInKorea()`. It computes process-local midnight instead, so a
- *   process not running in Asia/Seoul disagrees with the business calendar.
+ *   `isoDateInKorea()`. It computes process-local midnight instead, whose UTC
+ *   date in an Asia/Seoul process is one day behind the business calendar.
  * - SI-EMP-02: a soft-deleted employee is NotFound (404-class domain error) and
  *   invisible to GET by id. `findById` does not filter `deletedAt`, so the
  *   PATCH / open-status usecases pass their guard and then explode inside
@@ -45,17 +45,11 @@ import { RowTracker } from "../helpers/tracker";
  *   so the guard is off by one (a schedule that ended KST-yesterday still
  *   counts as active, blocking delete) at EVERY hour; the same truncation makes
  *   a UTC process correct whenever the local UTC date equals the KST date.
- * - Two knownDefects pin that observable:
- *     * the Asia/Seoul one runs UNPATCHED in the ambient process timezone
- *       (the jest config does not pin TZ; the runner is Asia/Seoul, and the
- *       boundary-date precondition makes the reachability explicit);
- *     * the simulated one reproduces the same local-midnight instant for a
- *       UTC+5 process with a scoped `Date.prototype.setHours` patch, because
- *       jest workers only see the timezone the process STARTED with (a runtime
- *       `process.env.TZ` switch never re-resolves `new Date()` local methods
- *       there) and the boundary-date precondition makes the simulation exact.
- *   Both restore/never leak the patch and stay hermetic; every other test in
- *   the suite is timezone-neutral.
+ * - One knownDefect reproduces that previous-UTC-date boundary for a UTC+5
+ *   process with a scoped `Date.prototype.setHours` patch. It derives the
+ *   pinned midnight from the KST business date rather than the ambient process
+ *   timezone, exercises the real repository/delete guard, and restores the
+ *   method in `finally`. No ambient-timezone precondition is required.
  */
 
 /** `YYYY-MM-DD` shifted by whole days, keeping UTC midnight anchoring. */
@@ -89,60 +83,6 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
         if (tracker) await tracker.cleanup(handle.raw);
         if (handle) await closeIntegrityPrisma(handle);
     });
-
-    knownDefect(
-        "SI-EMP-01",
-        "delete guard judges by the KST business date (Asia/Seoul process, no clock patch)",
-        async () => {
-            // Runs with NO patching in the ambient process timezone of the real
-            // integrity runner. In an Asia/Seoul process the guard's
-            // `setHours(0,0,0,0)` boundary is `…T15:00Z` of the PREVIOUS UTC
-            // date, which Postgres truncates to the DATE `kstYesterday`, so a
-            // schedule that ended KST-yesterday still counts as active at
-            // EVERY hour of today (`sb.employee.repository.ts:121-137`).
-            const branchRow = await createBranch(handle.raw, tracker);
-            const employeeRow = await createEmployee(handle.raw, tracker, { branchId: branchRow.id });
-            const clientRow = await createClient(handle.raw, tracker, { branchId: branchRow.id });
-
-            // The guard's effective boundary: the UTC calendar DATE of local
-            // midnight. `kstYesterday` is that value in an Asia/Seoul process
-            // at every hour; a plain expect turns any non-Asia/Seoul runner
-            // (where this precondition need not hold) RED instead of silently
-            // green-passing a false CONFIRMED.
-            const kstToday = isoDateInKorea();
-            const kstYesterday = shiftIsoDate(kstToday, -1);
-            const boundaryDate = new Date(new Date().setHours(0, 0, 0, 0)).toISOString().slice(0, 10);
-            expect(boundaryDate).toBe(kstYesterday);
-
-            // App-writer convention: DATE columns are stored as UTC-midnight
-            // instants of the KST calendar date.
-            const scheduleRow = await handle.raw.employee_schedule.create({
-                data: {
-                    clientId: clientRow.id,
-                    branchId: branchRow.id,
-                    primaryEmployeeId: employeeRow.id,
-                    secondaryEmployeeId: null,
-                    workAddress: "서울시 강남구 테헤란로 123",
-                    startDate: new Date(`${shiftIsoDate(kstYesterday, -7)}T00:00:00.000Z`),
-                    endDate: new Date(`${kstYesterday}T00:00:00.000Z`),
-                },
-            });
-            tracker.track("employee_schedule", scheduleRow.id);
-
-            // The defect observable: the deletion is refused although the
-            // assignment ended before the KST business date.
-            const isActive = await repository.hasActiveAssignments(branchRow.id, employeeRow.id);
-            if (isActive) {
-                throw new Error(
-                    "SI-EMP-01 defect: hasActiveAssignments still reports active a schedule that ended before the KST business date — the process-local midnight boundary truncates to KST yesterday",
-                );
-            }
-            // The correctness half, reached only when the defect is fixed: the
-            // assignment must be inactive and the employee deletable.
-            await deleteEmployeeUsecase.execute(branchRow.id, employeeRow.id);
-        },
-        /hasActiveAssignments still reports active a schedule that ended before the KST business date/,
-    );
 
     knownDefect(
         "SI-EMP-01",
