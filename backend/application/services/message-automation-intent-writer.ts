@@ -134,17 +134,18 @@ async function persistMessageAutomationIntent(
         });
     }
 
-    // The recovery-marker rule is created once; `update: {}` on an existing row would still read as a
-    // message change to the realtime hint. Keep the upsert for the first creation (a concurrent create
-    // resolves in the database; catching P2002 here would abort the caller's transaction).
+    // The recovery-marker rule is created once. Skip the write when it exists (a write that returns the row
+    // reads as a message change to the realtime hint). The first creation is an atomic
+    // `createMany({ skipDuplicates })`, i.e. INSERT ... ON CONFLICT DO NOTHING: `upsert({ update: {} })` is a
+    // read then an insert in Prisma, so concurrent first creators raise P2002 and abort the caller's
+    // transaction (25P02). A losing creator gets `count: 0`, which is success and emits no hint.
     const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
         where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
         select: { id: true },
     });
     if (!existingMarkerRule) {
-        await transaction.message_trigger_rule.upsert({
-            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-            create: {
+        await transaction.message_trigger_rule.createMany({
+            data: [{
                 id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
                 branchId: null,
                 name: "메시지 자동화 생성 복구 표식",
@@ -156,8 +157,8 @@ async function persistMessageAutomationIntent(
                 templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
                 isDefault: false,
                 jobsStale: false,
-            },
-            update: {},
+            }],
+            skipDuplicates: true,
         });
     }
     const taskAutomationReference = params.taskAutomationReference

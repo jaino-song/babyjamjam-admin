@@ -212,7 +212,7 @@ describe("AgentAutomationRecordStoreService internal marker rule", () => {
     const markerRuleTx = (stored: { id: string } | null) => ({
         message_trigger_rule: {
             findUnique: jest.fn().mockResolvedValue(stored),
-            upsert: jest.fn().mockResolvedValue(undefined),
+            createMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
     });
     // `ensureInternalRule` is private on purpose (only the write path calls it); the write path needs a
@@ -231,7 +231,7 @@ describe("AgentAutomationRecordStoreService internal marker rule", () => {
             where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
             select: { id: true },
         });
-        expect(tx.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        expect(tx.message_trigger_rule.createMany).not.toHaveBeenCalled();
     });
 
     it("writes the marker rule exactly once, as an inactive branchless row, when it is missing", async () => {
@@ -239,11 +239,17 @@ describe("AgentAutomationRecordStoreService internal marker rule", () => {
 
         await ensure(tx);
 
-        expect(tx.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
-        expect(tx.message_trigger_rule.upsert).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-            update: {},
-            create: expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, isActive: false }),
-        }));
+        expect(tx.message_trigger_rule.createMany).toHaveBeenCalledTimes(1);
+        expect(tx.message_trigger_rule.createMany).toHaveBeenCalledWith({
+            data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, isActive: false })],
+            skipDuplicates: true,
+        });
+    });
+
+    it("treats a lost creation race (count 0) as success", async () => {
+        const tx = markerRuleTx(null);
+        tx.message_trigger_rule.createMany.mockResolvedValue({ count: 0 });
+
+        await expect(ensure(tx)).resolves.toBeUndefined();
     });
 });

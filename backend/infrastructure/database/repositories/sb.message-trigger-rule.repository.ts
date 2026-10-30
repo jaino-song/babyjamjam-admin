@@ -364,14 +364,14 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         // just this upsert. See eslint.system-scope.allowlist.mjs for the matching entry.
         await runSystemScope(async () => {
             const client = transaction ?? this.prisma;
-            // `update: {}` on an existing row still reads as a change to the realtime hint; skip the write
-            // when the rule exists. The upsert stays for the first creation so a concurrent create resolves
-            // in the database (never catch P2002 here: inside a transaction it would abort it).
+            // Skip the write when the rule exists (a write that returns the row reads as a change to the
+            // realtime hint). The first creation is an atomic `createMany({ skipDuplicates })`, i.e.
+            // INSERT ... ON CONFLICT DO NOTHING: `upsert({ update: {} })` is a read then an insert in Prisma,
+            // so concurrent first creators raise P2002 and abort a surrounding transaction (25P02).
             const existing = await client.message_trigger_rule.findUnique({ where: { id: rule.id }, select: { id: true } });
             if (existing) return;
-            await client.message_trigger_rule.upsert({
-                where: { id: rule.id },
-                create: {
+            await client.message_trigger_rule.createMany({
+                data: [{
                     id: rule.id,
                     branchId: null,
                     name: rule.name,
@@ -386,8 +386,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     jobsStale: rule.jobsStale,
                     targetClientStatus: rule.targetClientStatus,
                     retryOnFailure: rule.retryOnFailure,
-                },
-                update: {},
+                }],
+                skipDuplicates: true,
             });
         });
     }

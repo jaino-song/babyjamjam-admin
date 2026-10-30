@@ -45,7 +45,7 @@ describe("MessageAutomationIntentService", () => {
         const transaction = {
             message_trigger_rule: {
                 findUnique: jest.fn().mockResolvedValue(null),
-                upsert: jest.fn().mockResolvedValue(undefined),
+                createMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             message_trigger_job: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -82,9 +82,10 @@ describe("MessageAutomationIntentService", () => {
             intentAt,
         });
 
-        expect(transaction.message_trigger_rule.upsert).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID } }),
-        );
+        expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID })],
+            skipDuplicates: true,
+        }));
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
                 create: expect.objectContaining({
@@ -1059,7 +1060,7 @@ describe("MessageAutomationIntentService", () => {
                 where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 select: { id: true },
             });
-            expect(transaction.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            expect(transaction.message_trigger_rule.createMany).not.toHaveBeenCalled();
             expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
         });
 
@@ -1069,7 +1070,21 @@ describe("MessageAutomationIntentService", () => {
 
             await persist(service, transaction);
 
-            expect(transaction.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledWith({
+                data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, isActive: false })],
+                skipDuplicates: true,
+            });
+            expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("treats a lost marker creation race (count 0) as success and still stores the intent", async () => {
+            const { service, transaction } = setup();
+            transaction.message_trigger_rule.findUnique.mockResolvedValue(null);
+            transaction.message_trigger_rule.createMany.mockResolvedValue({ count: 0 });
+
+            await persist(service, transaction);
+
             expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
         });
     });

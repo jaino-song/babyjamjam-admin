@@ -44,6 +44,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         create: jest.fn(),
         update: jest.fn(),
         upsert: jest.fn(),
+        createMany: jest.fn(),
         updateMany: jest.fn(),
         deleteMany: jest.fn(),
         $queryRaw: jest.fn(),
@@ -286,7 +287,7 @@ describe("SbMessageTriggerRuleRepository", () => {
 
         it("creates the branchless system rule row inside runSystemScope when it does not exist", async () => {
             messageTriggerRuleModel.findUnique.mockResolvedValue(null);
-            messageTriggerRuleModel.upsert.mockResolvedValue(createRow());
+            messageTriggerRuleModel.createMany.mockResolvedValue({ count: 1 });
 
             await repository.ensureSystemRule(systemRule());
 
@@ -295,10 +296,10 @@ describe("SbMessageTriggerRuleRepository", () => {
                 where: { id: "system:service_end_notice" },
                 select: { id: true },
             });
-            expect(messageTriggerRuleModel.upsert).toHaveBeenCalledTimes(1);
-            expect(messageTriggerRuleModel.upsert).toHaveBeenCalledWith({
-                where: { id: "system:service_end_notice" },
-                create: {
+            expect(messageTriggerRuleModel.createMany).toHaveBeenCalledTimes(1);
+            expect(messageTriggerRuleModel.createMany).toHaveBeenCalledWith({
+                skipDuplicates: true,
+                data: [{
                     id: "system:service_end_notice",
                     branchId: null,
                     name: "서비스 종료 안내 (수동 발송)",
@@ -313,9 +314,15 @@ describe("SbMessageTriggerRuleRepository", () => {
                     jobsStale: false,
                     targetClientStatus: "all",
                     retryOnFailure: true,
-                },
-                update: {},
+                }],
             });
+        });
+
+        it("treats a lost creation race (count 0) as success", async () => {
+            messageTriggerRuleModel.findUnique.mockResolvedValue(null);
+            messageTriggerRuleModel.createMany.mockResolvedValue({ count: 0 });
+
+            await expect(repository.ensureSystemRule(systemRule())).resolves.toBeUndefined();
         });
 
         it("writes nothing when the system rule row already exists", async () => {
@@ -323,18 +330,18 @@ describe("SbMessageTriggerRuleRepository", () => {
 
             await repository.ensureSystemRule(systemRule());
 
-            expect(messageTriggerRuleModel.upsert).not.toHaveBeenCalled();
+            expect(messageTriggerRuleModel.createMany).not.toHaveBeenCalled();
         });
 
         it("reads and writes on the supplied transaction client, not on the root client", async () => {
-            const transactionRule = { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue(createRow()) };
+            const transactionRule = { findUnique: jest.fn().mockResolvedValue(null), createMany: jest.fn().mockResolvedValue({ count: 1 }) };
 
             await repository.ensureSystemRule(systemRule(), { message_trigger_rule: transactionRule } as never);
 
             expect(transactionRule.findUnique).toHaveBeenCalledTimes(1);
-            expect(transactionRule.upsert).toHaveBeenCalledTimes(1);
+            expect(transactionRule.createMany).toHaveBeenCalledTimes(1);
             expect(messageTriggerRuleModel.findUnique).not.toHaveBeenCalled();
-            expect(messageTriggerRuleModel.upsert).not.toHaveBeenCalled();
+            expect(messageTriggerRuleModel.createMany).not.toHaveBeenCalled();
         });
     });
 
