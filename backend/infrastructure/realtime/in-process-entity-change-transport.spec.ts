@@ -80,6 +80,25 @@ describe("InProcessEntityChangeTransport", () => {
         expect(transport.position()).toBe(`${transport.ring.epoch}:1`);
     });
 
+    it("cannot overrun a live subscriber: a flood far past retention is still delivered whole and in order, only an old cursor is refused", async () => {
+        // Unlike the Valkey reader (which reads the stream later, in batches, while writers keep trimming it),
+        // the ring appends and hands the batch to every subscriber in the same synchronous call, so retention can
+        // only ever matter for a cursor a client brings back, never for a connection that is listening.
+        const bus = new Subject<EntityChangedEvent>();
+        const transport = new InProcessEntityChangeTransport({ events$: bus.asObservable() }, 3);
+        const seen: TransportSignal[] = [];
+        transport.signals$.subscribe((s) => seen.push(s));
+
+        for (let i = 0; i < 25; i += 1) bus.next(event("a", i % 2 === 0 ? "document" : "call"));
+
+        expect(seen.map((s) => s.type === "batch" && s.cursor)).toEqual(
+            Array.from({ length: 25 }, (_, i) => `${transport.ring.epoch}:${i + 1}`),
+        );
+        expect(await transport.replayAfter(`${transport.ring.epoch}:5`)).toEqual({ honoured: false });
+        const recent = await transport.replayAfter(`${transport.ring.epoch}:22`);
+        expect(recent.honoured && recent.batches.map((b) => b.cursor)).toEqual([`${transport.ring.epoch}:23`, `${transport.ring.epoch}:24`, `${transport.ring.epoch}:25`]);
+    });
+
     it("replays from its ring", async () => {
         const bus = new Subject<EntityChangedEvent>();
         const transport = new InProcessEntityChangeTransport({ events$: bus.asObservable() });

@@ -408,7 +408,7 @@ describe("RealtimeController", () => {
                 ["a truncated token", ({ token }) => token(1).slice(0, -4)],
                 ["a token with the wrong length", () => randomBytes(30).toString("base64url")],
                 ["a valid token of another process epoch", ({ transport }) => transport.cursors.encode("deadbeef0000:1")],
-                ["a valid token of the Valkey id space", ({ transport }) => transport.cursors.encode("1700000000000-0")],
+                ["a valid token of the Valkey id space", ({ transport }) => transport.cursors.encode("1700000000000-0@0123456789abcdef")],
                 ["a valid token ahead of anything this process issued", ({ transport, epoch }) => transport.cursors.encode(`${epoch}:99`)],
             ])("%s", async (_label, build) => {
                 const ctx = setup();
@@ -547,7 +547,7 @@ describe("RealtimeController", () => {
             readonly subject = new Subject<TransportSignal>();
             readonly signals$: Observable<TransportSignal> = this.subject.asObservable();
             readonly cursors = codec;
-            current = "100-0";
+            current = "100-0@0123456789abcdef";
             result: ReplayResult = { honoured: false };
             position(): string {
                 return this.current;
@@ -566,19 +566,19 @@ describe("RealtimeController", () => {
 
         it("compares cursors numerically: 100-10 follows 100-9 and is not dropped as a duplicate, 100-9 is", async () => {
             const transport = new ScriptedTransport();
-            transport.result = { honoured: true, batches: [batch("100-9")] };
+            transport.result = { honoured: true, batches: [batch("100-9@0123456789abcdef")] };
             const controller = new RealtimeController({ events$: new Subject() } as unknown as EntityChangeEventBus, transport);
             const received: Received = [];
-            const subscription = controller.events({ branchId: "branch-a" }, codec.encode("100-8")).subscribe((e) => received.push(e));
+            const subscription = controller.events({ branchId: "branch-a" }, codec.encode("100-8@0123456789abcdef")).subscribe((e) => received.push(e));
 
-            transport.subject.next(batch("100-9")); // held, duplicate of the replayed one
-            transport.subject.next(batch("100-10")); // held, newer: string order would wrongly drop it
+            transport.subject.next(batch("100-9@0123456789abcdef")); // held, duplicate of the replayed one
+            transport.subject.next(batch("100-10@0123456789abcdef")); // held, newer: string order would wrongly drop it
             await settle();
 
             expect(idsAndTypes(received)).toEqual([
-                ["100-8", "ready"],
-                ["100-9", "entity-changed"],
-                ["100-10", "entity-changed"],
+                ["100-8@0123456789abcdef", "ready"],
+                ["100-9@0123456789abcdef", "entity-changed"],
+                ["100-10@0123456789abcdef", "entity-changed"],
             ]);
             subscription.unsubscribe();
         });
@@ -589,13 +589,13 @@ describe("RealtimeController", () => {
             const received: Received = [];
             const subscription = controller.events({ branchId: "branch-a" }).subscribe((e) => received.push(e));
 
-            transport.subject.next(batch("100-1"));
+            transport.subject.next(batch("100-1@0123456789abcdef"));
             transport.subject.next({ type: "reset", position: "abcdef012345:0" });
             transport.subject.next({ type: "batch", cursor: "abcdef012345:1", branchId: "branch-a", entities: ["call"] });
 
             expect(received.map((e) => [codec.decode(e.id as string), e.type, e.data])).toEqual([
-                ["100-0", "ready", { resumed: false }],
-                ["100-1", "entity-changed", { entities: ["client"] }],
+                ["100-0@0123456789abcdef", "ready", { resumed: false }],
+                ["100-1@0123456789abcdef", "entity-changed", { entities: ["client"] }],
                 ["abcdef012345:0", "reset", {}],
                 ["abcdef012345:1", "entity-changed", { entities: ["call"] }],
             ]);
@@ -612,24 +612,24 @@ describe("RealtimeController", () => {
             transport.subject.next({ type: "reset", position: "abcdef012345:0" });
 
             const ids = received.map((e) => e.id as string);
-            expect(ids.map((id) => codec.decode(id))).toEqual(["100-0", "abcdef012345:0", "abcdef012345:0"]);
+            expect(ids.map((id) => codec.decode(id))).toEqual(["100-0@0123456789abcdef", "abcdef012345:0", "abcdef012345:0"]);
             expect(new Set(ids).size).toBe(3);
             subscription.unsubscribe();
         });
 
         it("a reset that arrives during the replay read is delivered after ready and the replay", async () => {
             const transport = new ScriptedTransport();
-            transport.result = { honoured: true, batches: [batch("100-9")] };
+            transport.result = { honoured: true, batches: [batch("100-9@0123456789abcdef")] };
             const controller = new RealtimeController({ events$: new Subject() } as unknown as EntityChangeEventBus, transport);
             const received: Received = [];
-            const subscription = controller.events({ branchId: "branch-a" }, codec.encode("100-8")).subscribe((e) => received.push(e));
+            const subscription = controller.events({ branchId: "branch-a" }, codec.encode("100-8@0123456789abcdef")).subscribe((e) => received.push(e));
 
             transport.subject.next({ type: "reset", position: "abcdef012345:0" });
             await settle();
 
             expect(idsAndTypes(received)).toEqual([
-                ["100-8", "ready"],
-                ["100-9", "entity-changed"],
+                ["100-8@0123456789abcdef", "ready"],
+                ["100-9@0123456789abcdef", "entity-changed"],
                 ["abcdef012345:0", "reset"],
             ]);
             subscription.unsubscribe();
@@ -640,11 +640,11 @@ describe("RealtimeController", () => {
             transport.replayAfter = () => Promise.reject(new Error("valkey down"));
             const controller = new RealtimeController({ events$: new Subject() } as unknown as EntityChangeEventBus, transport);
             const received: Received = [];
-            const subscription = controller.events({ branchId: "branch-a" }, codec.encode("100-8")).subscribe((e) => received.push(e));
+            const subscription = controller.events({ branchId: "branch-a" }, codec.encode("100-8@0123456789abcdef")).subscribe((e) => received.push(e));
             await settle();
 
             expect(received.map((e) => [codec.decode(e.id as string), e.type, e.data])).toEqual([
-                ["100-0", "ready", { resumed: false }],
+                ["100-0@0123456789abcdef", "ready", { resumed: false }],
             ]);
             subscription.unsubscribe();
         });

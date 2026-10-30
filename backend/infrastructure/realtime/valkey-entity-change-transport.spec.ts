@@ -36,16 +36,16 @@ function explicitPortUrl(raw: string | undefined): string | undefined {
 }
 
 const VALKEY_URL = explicitPortUrl(process.env["REALTIME_TEST_VALKEY_URL"] ?? process.env["VALKEY_URL"]);
-const STREAM_CURSOR = /^\d+-\d+$/;
+const STREAM_CURSOR = /^\d+-\d+@[0-9a-f]{16}$/;
 const RING_CURSOR = /^[0-9a-f]+:\d+$/;
 // The desktop and mobile proxies validate a cursor with exactly this expression.
 const CLIENT_CURSOR = /^[0-9A-Za-z:._-]{1,64}$/;
 // Every instance derives the same key from the shared JWT secret.
 const CURSOR_KEY = deriveRealtimeCursorKey("realtime-test-secret");
 
-async function waitFor(predicate: () => boolean, what: string, timeoutMs = 8000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 8000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
-    while (!predicate()) {
+    while (!(await predicate())) {
         if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
         await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -82,6 +82,7 @@ function instance(url: string, streamKey: string, extra: { maxLen?: number; curs
     return { bus, transport, controller, subscribe, cursorOf, destroy };
 }
 
+const incarnationOf = (position: string) => position.split("@")[1] as string;
 const changes = (received: Received) => received.filter((e) => e.type === "entity-changed");
 
 describe("ValkeyEntityChangeTransport without a reachable Valkey", () => {
@@ -230,10 +231,12 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
 
     async function seedOnA(): Promise<string[]> {
         const cursors: string[] = [];
+        let previous = b.transport.position();
         for (const [branchId, kind] of [["branch-a", "client"], ["branch-b", "employee"], [null, "settings"], ["branch-a", "document"]] as const) {
             a.bus.emit({ branchId, kind });
-            await waitFor(() => b.transport.position() !== (cursors.at(-1) ?? "0-0") && b.transport.position() !== "0-0", "batch to land");
-            cursors.push(b.transport.position());
+            await waitFor(() => b.transport.position() !== previous, "batch to land");
+            previous = b.transport.position();
+            cursors.push(previous);
             await pause(30);
         }
         return cursors;
@@ -259,12 +262,13 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
     });
 
     it("a position like 0-0 on a never-trimmed stream still resumes and replays everything", async () => {
+        const origin = `0-0@${incarnationOf(b.transport.position())}`;
         const cursors = await seedOnA();
 
-        const replayed = b.subscribe("branch-a", "0-0");
+        const replayed = b.subscribe("branch-a", origin);
         await waitFor(() => changes(replayed).length === 3, "full replay");
 
-        expect(b.cursorOf(replayed[0]?.id)).toBe("0-0");
+        expect(b.cursorOf(replayed[0]?.id)).toBe(origin);
         expect(replayed[0]?.data).toEqual({ resumed: true });
         expect(changes(replayed).map((e) => b.cursorOf(e.id))).toEqual([cursors[0], cursors[2], cursors[3]]);
     });
@@ -303,7 +307,7 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
 
         const older = b.subscribe("branch-a", cursors[2]);
         const newest = b.subscribe("branch-a", cursors[3]);
-        const origin = b.subscribe("branch-a", "0-0");
+        const origin = b.subscribe("branch-a", `0-0@${incarnationOf(b.transport.position())}`);
         await waitFor(() => older.length >= 1 && newest.length >= 1 && origin.length >= 1, "ready messages");
 
         expect(older[0]?.data).toEqual({ resumed: false });
@@ -314,7 +318,7 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
     it("a cursor from the future of the stream, a ring cursor and a raw (unencrypted) id are not honoured", async () => {
         await seedOnA();
 
-        const future = b.subscribe("branch-a", "99999999999999-0");
+        const future = b.subscribe("branch-a", `99999999999999-0@${incarnationOf(b.transport.position())}`);
         const ring = b.subscribe("branch-a", "abcdef012345:1");
         const raw: Received = [];
         const sub = b.controller.events({ branchId: "branch-a" }, "1793326101367-0").subscribe((e) => raw.push(e));
@@ -345,6 +349,175 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         } finally {
             late.destroy();
         }
+    });
+
+    /** Connects with a token and returns what the connection said first (and anything replayed). */
+    async function reconnect(instanceUnderTest: ReturnType<typeof instance>, branchId: string, token: string, settleMs = 150) {
+        const received: Received = [];
+        const sub = instanceUnderTest.controller.events({ branchId }, token).subscribe((e) => received.push(e));
+        await waitFor(() => received.length >= 1, "ready");
+        await pause(settleMs);
+        sub.unsubscribe();
+        return received;
+    }
+
+    describe("stream incarnation (a deleted and recreated stream)", () => {
+        /** A real token for branch-a, then a document hint for branch-a that only the stream knows about. */
+        async function tokenThenOwnBranchHint(): Promise<string> {
+            const onB = b.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "first batch");
+            const token = changes(onB)[0]?.id as string;
+            const before = b.transport.position();
+            a.bus.emit({ branchId: "branch-a", kind: "document" }); // the hint a resume must not lose
+            await waitFor(() => b.transport.position() !== before, "document hint delivered");
+            return token;
+        }
+
+        it("DEL + raw XADD: a token from the destroyed history is not honoured (the document hint is not silently skipped)", async () => {
+            const oldToken = await tokenThenOwnBranchHint();
+
+            await admin.del(streamKey);
+            await admin.xadd(streamKey, "*", "b", "branch-b", "e", '["employee"]');
+
+            const received = await reconnect(b, "branch-a", oldToken);
+            // (the reader may add its own reset a moment later; what matters is the first answer and no replay)
+            expect([received[0]?.type, received[0]?.data]).toEqual(["ready", { resumed: false }]);
+            expect(changes(received)).toEqual([]);
+        });
+
+        it("DEL + an XADD through the transport: same outcome", async () => {
+            const oldToken = await tokenThenOwnBranchHint();
+
+            await admin.del(streamKey);
+            a.bus.emit({ branchId: "branch-b", kind: "employee" });
+            await waitFor(() => admin.exists(streamKey).then((n) => n === 1), "stream recreated");
+
+            const received = await reconnect(b, "branch-a", oldToken);
+            expect(received[0]?.data).toEqual({ resumed: false });
+        });
+
+        it("DEL alone (stream absent): a token from the destroyed history is not honoured", async () => {
+            const oldToken = await tokenThenOwnBranchHint();
+
+            await admin.del(streamKey);
+
+            const received = await reconnect(b, "branch-a", oldToken);
+            expect(received[0]?.data).toEqual({ resumed: false });
+        });
+
+        it("tokens issued after the recreation are the current history and still resume", async () => {
+            await tokenThenOwnBranchHint();
+            await admin.del(streamKey);
+            await admin.xadd(streamKey, "*", "b", "branch-b", "e", '["employee"]');
+
+            const onA = a.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onA).length === 1, "batch after the recreation");
+            const freshToken = changes(onA)[0]?.id as string;
+            a.bus.emit({ branchId: "branch-a", kind: "call" });
+            await waitFor(() => changes(onA).length === 2, "second batch");
+
+            const received = await reconnect(b, "branch-a", freshToken);
+            expect(received[0]?.data).toEqual({ resumed: true });
+            expect(changes(received).map((e) => e.data)).toEqual([{ entities: ["call"] }]);
+        });
+
+        it("the reader notices a recreation on its own and resets connections, then keeps delivering", async () => {
+            const onB = b.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "first batch");
+
+            await admin.del(streamKey);
+            await admin.xadd(streamKey, "*", "b", "branch-b", "e", '["employee"]');
+            await waitFor(() => onB.some((e) => e.type === "reset"), "a reset after the recreation");
+
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onB).length === 2, "delivery on the new stream");
+            expect(changes(onB)[1]?.data).toEqual({ entities: ["message"] });
+        });
+
+        it("fresh origin: a token taken while the stream does not exist yet still resumes once the first batch creates it", async () => {
+            expect(await admin.exists(streamKey)).toBe(0);
+            const onB = b.subscribe("branch-a");
+            const originToken = onB[0]?.id as string;
+            expect(b.cursorOf(originToken)).toMatch(/^0-0@[0-9a-f]{16}$/);
+
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "first batch creating the stream");
+
+            const received = await reconnect(b, "branch-a", originToken);
+            expect(received[0]?.data).toEqual({ resumed: true });
+            expect(changes(received).map((e) => e.data)).toEqual([{ entities: ["client"] }]);
+        });
+
+        it("every transport (also ones racing at start-up) converges on one incarnation", async () => {
+            const racing = [instance(VALKEY_URL as string, `${streamKey}:race`), instance(VALKEY_URL as string, `${streamKey}:race`), instance(VALKEY_URL as string, `${streamKey}:race`)];
+            try {
+                await waitFor(() => racing.every((r) => r.transport.activeMode === "valkey"), "racing transports on the stream");
+
+                expect(new Set(racing.map((r) => incarnationOf(r.transport.position()))).size).toBe(1);
+                // and the two from beforeEach, which also started together
+                expect(incarnationOf(a.transport.position())).toBe(incarnationOf(b.transport.position()));
+            } finally {
+                racing.forEach((r) => r.destroy());
+                await admin.del(`${streamKey}:race`, `${streamKey}:race:incarnation`);
+            }
+        });
+    });
+
+    describe("reader overrunning retention", () => {
+        // One atomic script: an own-branch document hint, then 10,200 other-branch batches (the stream trims
+        // the hint away), then an own-branch call hint that survives. The reader cannot run in between.
+        const OVERRUN = `
+            redis.call('XADD', KEYS[1], '*', 'b', 'branch-a', 'e', '["document"]')
+            for i = 1, 10200 do
+              redis.call('XADD', KEYS[1], 'MAXLEN', '~', '10000', '*', 'b', 'branch-b', 'e', '["employee"]')
+            end
+            redis.call('XADD', KEYS[1], 'MAXLEN', '~', '10000', '*', 'b', 'branch-a', 'e', '["call"]')
+            return 1
+        `;
+
+        it("sends a reset before the surviving batch, never delivers the trimmed hint, and a resume from the post-reset token is honoured", async () => {
+            const onB = b.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "reader is positioned on the stream");
+            const messagesBefore = onB.length;
+
+            await admin.eval(OVERRUN, 1, streamKey);
+            const rows = await admin.xrange(streamKey, "-", "+");
+            expect(rows.some(([, fields]) => fields.includes('["document"]'))).toBe(false); // really trimmed away
+            await waitFor(() => changes(onB).some((e) => JSON.stringify(e.data) === '{"entities":["call"]}'), "the surviving call batch", 15000);
+
+            const after = onB.slice(messagesBefore);
+            const resetIndex = after.findIndex((e) => e.type === "reset");
+            const callIndex = after.findIndex((e) => e.type === "entity-changed");
+            expect(resetIndex).toBeGreaterThanOrEqual(0);
+            expect(resetIndex).toBeLessThan(callIndex); // the client is told before it sees survivors
+            expect(after.some((e) => e.type === "entity-changed" && JSON.stringify(e.data).includes("document"))).toBe(false);
+
+            const resetToken = after[resetIndex]?.id as string;
+            const callToken = after[callIndex]?.id as string;
+            const fromReset = await reconnect(b, "branch-a", resetToken);
+            const fromCall = await reconnect(b, "branch-a", callToken);
+            expect(fromReset[0]?.data).toEqual({ resumed: true });
+            expect(fromCall[0]?.data).toEqual({ resumed: true });
+            expect(changes(fromCall)).toHaveLength(0);
+        });
+
+        it("a reader that has kept up is not reset by normal trimming", async () => {
+            const onB = b.subscribe("branch-a");
+            for (let i = 0; i < 3; i += 1) {
+                a.bus.emit({ branchId: "branch-a", kind: "client" });
+                await waitFor(() => changes(onB).length === i + 1, "batch");
+                await pause(30);
+            }
+            await admin.xtrim(streamKey, "MAXLEN", 1);
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onB).length === 4, "batch after the trim");
+
+            expect(onB.filter((e) => e.type === "reset")).toEqual([]);
+        });
     });
 
     it("keeps null, empty-string and real branch ids apart across the stream", async () => {

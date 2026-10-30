@@ -9,21 +9,25 @@ import { parseCursor } from "./entity-change-cursor";
  * compact binary form of the internal cursor, with a fresh random IV per token: the same cursor
  * never produces the same string twice, and nothing about it can be read, compared or forged.
  *
- * Layout: base64url( iv(12) ‖ ciphertext ‖ tag(16) ). Valkey cursor payload = 1 + 8 + 8 bytes
- * → 45 bytes → 60 chars; ring payload = 1 + 6 + 8 bytes → 43 bytes → 58 chars. Both fit the
- * contract's 64-char cursor limit and its `[0-9A-Za-z:._-]` charset.
+ * Layout: base64url( iv(12) ‖ ciphertext ‖ tag(16) ). Valkey cursor payload = 1 + 6 (ms) + 4 (seq)
+ * + 8 (stream incarnation) bytes → 47 bytes → 63 chars; ring payload = 1 + 6 + 8 bytes → 43 bytes
+ * → 58 chars. Both fit the contract's 64-char cursor limit and its `[0-9A-Za-z:._-]` charset; the
+ * ms/seq widths are what makes room for the incarnation (ms < 2^48 is the year 10889, a stream
+ * sequence needs 4 billion entries within one millisecond to overflow).
  */
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const KEY_BYTES = 32;
 const STREAM_TAG = 1;
 const RING_TAG = 2;
-const STREAM_PAYLOAD = 1 + 8 + 8;
+const STREAM_PAYLOAD = 1 + 6 + 4 + 8;
 const RING_PAYLOAD = 1 + 6 + 8;
 const AAD = Buffer.from("realtime-cursor-v1");
 const TOKEN_CHARSET = /^[A-Za-z0-9_-]+$/;
 const RING_EPOCH = /^[0-9a-f]{12}$/;
 const U64_MAX = (1n << 64n) - 1n;
+const U48_MAX = (1n << 48n) - 1n;
+const U32_MAX = (1n << 32n) - 1n;
 
 export class CursorCodec {
     constructor(private readonly key: Buffer) {
@@ -77,9 +81,31 @@ function u64(value: bigint): Buffer {
     return out;
 }
 
+function u48(value: bigint): Buffer {
+    if (value > U48_MAX) throw new Error("cursor component out of range");
+    return u64(value).subarray(2);
+}
+
+function u32(value: bigint): Buffer {
+    if (value > U32_MAX) throw new Error("cursor component out of range");
+    return u64(value).subarray(4);
+}
+
+/** Whether `encode` would accept it; lets a reader skip a foreign, absurd stream id instead of failing every connection. */
+export function isEncodableCursor(cursor: string): boolean {
+    try {
+        serialize(cursor);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function serialize(cursor: string): Buffer {
     const parsed = parseCursor(cursor);
-    if (parsed?.kind === "stream") return Buffer.concat([Buffer.from([STREAM_TAG]), u64(parsed.ms), u64(parsed.seq)]);
+    if (parsed?.kind === "stream") {
+        return Buffer.concat([Buffer.from([STREAM_TAG]), u48(parsed.ms), u32(parsed.seq), Buffer.from(parsed.inc, "hex")]);
+    }
     if (parsed?.kind === "ring" && RING_EPOCH.test(parsed.epoch)) {
         return Buffer.concat([Buffer.from([RING_TAG]), Buffer.from(parsed.epoch, "hex"), u64(parsed.seq)]);
     }
@@ -88,7 +114,8 @@ function serialize(cursor: string): Buffer {
 
 function deserialize(payload: Buffer): string | null {
     if (payload[0] === STREAM_TAG && payload.length === STREAM_PAYLOAD) {
-        return `${payload.readBigUInt64BE(1)}-${payload.readBigUInt64BE(9)}`;
+        const ms = payload.readUIntBE(1, 6);
+        return `${ms}-${payload.readUInt32BE(7)}@${payload.subarray(11, 19).toString("hex")}`;
     }
     if (payload[0] === RING_TAG && payload.length === RING_PAYLOAD) {
         return `${payload.subarray(1, 7).toString("hex")}:${payload.readBigUInt64BE(7)}`;
