@@ -48,8 +48,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     let handle: IntegrityPrisma;
     let tracker: RowTracker;
     let jobRepository: SbMessageTriggerJobRepository;
-    let branchId: string;
-    let ruleId: string;
+    const branchIds: string[] = [];
 
     beforeAll(async () => {
         assertThrowawayTarget();
@@ -60,20 +59,21 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
 
     afterAll(async () => {
         if (tracker) {
-            await deleteAreaRowsByBranch(handle.raw, branchId ? [branchId] : []);
+            await deleteAreaRowsByBranch(handle.raw, branchIds);
             await tracker.cleanup(handle.raw);
         }
         if (handle) await closeIntegrityPrisma(handle);
     });
 
-    async function seedBranchAndRule(): Promise<void> {
+    async function seedBranchAndRule(): Promise<{ branchId: string; ruleId: string }> {
         const branchRow = await createBranch(handle.raw, tracker);
-        branchId = branchRow.id;
+        const branchId = branchRow.id;
+        branchIds.push(branchId);
         const ruleRow = await createMessageTriggerRule(handle.raw, tracker, { branchId });
-        ruleId = ruleRow.id;
+        return { branchId, ruleId: ruleRow.id };
     }
 
-    function jobOverrides(dedupeKey: string) {
+    function jobOverrides(branchId: string, dedupeKey: string) {
         return {
             branchId,
             recipientType: MessageTriggerRecipientType.CLIENT,
@@ -83,9 +83,9 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     }
 
     invariant("SI-SMS-01", "a stale claim token cannot rewrite the job it no longer owns (positive fence control)", async () => {
-        await seedBranchAndRule();
+        const { branchId, ruleId } = await seedBranchAndRule();
         const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
-            ...jobOverrides(`si-01-fence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+            ...jobOverrides(branchId, `si-01-fence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
             status: "processing",
             claimToken: "claim-token-current",
         });
@@ -102,9 +102,9 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     });
 
     knownDefect("SI-SMS-01", "a claimToken-less entity cannot rewrite a terminal (sent) job", async () => {
-        await seedBranchAndRule();
+        const { branchId, ruleId } = await seedBranchAndRule();
         const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
-            ...jobOverrides(`si-01-sent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+            ...jobOverrides(branchId, `si-01-sent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
             status: "pending",
         });
         tracker.track("message_trigger_job", created.id);
@@ -131,9 +131,9 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     }, /terminal job was rewritten/);
 
     knownDefect("SI-SMS-01", "a claimToken-less entity cannot cancel-then-resurrect a sent job over a canceled row", async () => {
-        await seedBranchAndRule();
+        const { branchId, ruleId } = await seedBranchAndRule();
         const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
-            ...jobOverrides(`si-01-cancel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+            ...jobOverrides(branchId, `si-01-cancel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
             status: "pending",
         });
         const first = toEntity(created, "pending", null);
@@ -156,7 +156,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     }, /canceled job was rewritten/);
 
     invariant("SI-SMS-06", "processing without a claim token is rejected by the existing DB CHECK", async () => {
-        await seedBranchAndRule();
+        const { branchId, ruleId } = await seedBranchAndRule();
         const suffix = `si-06-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         await expect(
             handle.raw.$executeRaw`
@@ -169,6 +169,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     });
 
     invariant("SI-SMS-06", "an out-of-set provider_acceptance_state is rejected by the existing DB CHECK", async () => {
+        const { branchId } = await seedBranchAndRule();
         await expect(
             handle.raw.$executeRaw`
                 INSERT INTO "message_log"
@@ -180,7 +181,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     });
 
     knownDefect("SI-SMS-06", "an out-of-set message_trigger_job.status is rejected by the database", async () => {
-        await seedBranchAndRule();
+        const { branchId, ruleId } = await seedBranchAndRule();
         let rejected = false;
         try {
             await handle.raw.$executeRaw`
@@ -202,6 +203,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     }, /accepted out-of-set status/);
 
     knownDefect("SI-SMS-06", "an out-of-set message_log.status is rejected by the database", async () => {
+        const { branchId } = await seedBranchAndRule();
         let rejected = false;
         try {
             await handle.raw.$executeRaw`
@@ -223,6 +225,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
     }, /accepted out-of-set status/);
 
     knownDefect("SI-SMS-06", "an out-of-set message_log.carrier_result_state is rejected by the database", async () => {
+        const { branchId } = await seedBranchAndRule();
         const inserted = await handle.raw.message_log.create({
             data: {
                 branchId,

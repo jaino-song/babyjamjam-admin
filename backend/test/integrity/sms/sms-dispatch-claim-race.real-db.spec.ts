@@ -38,8 +38,7 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;
     let tracker: RowTracker;
     let jobRepository: SbMessageTriggerJobRepository;
-    let branchId: string;
-    let ruleId: string;
+    const branchIds: string[] = [];
 
     beforeAll(async () => {
         assertThrowawayTarget();
@@ -50,19 +49,21 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
 
     afterAll(async () => {
         if (tracker) {
-            if (branchId) await deleteAreaRowsByBranch(handle.raw, [branchId]);
+            await deleteAreaRowsByBranch(handle.raw, branchIds);
             await tracker.cleanup(handle.raw);
         }
         if (handle) await closeIntegrityPrisma(handle);
     });
 
-    async function seedPendingJob(): Promise<{ jobId: string; claimToken: string | null }> {
-        if (!branchId) {
-            const branchRow = await createBranch(handle.raw, tracker);
-            branchId = branchRow.id;
-            const ruleRow = await createMessageTriggerRule(handle.raw, tracker, { branchId });
-            ruleId = ruleRow.id;
-        }
+    async function seedBranchAndRule(): Promise<{ branchId: string; ruleId: string }> {
+        const branch = await createBranch(handle.raw, tracker);
+        branchIds.push(branch.id);
+        const rule = await createMessageTriggerRule(handle.raw, tracker, { branchId: branch.id });
+        return { branchId: branch.id, ruleId: rule.id };
+    }
+
+    async function seedPendingJob(): Promise<{ jobId: string; branchId: string }> {
+        const { branchId, ruleId } = await seedBranchAndRule();
         const job = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
             branchId,
             recipientType: MessageTriggerRecipientType.CLIENT,
@@ -71,7 +72,7 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
             status: "pending",
             scheduledFor: new Date(Date.now() - 60 * 1000),
         });
-        return { jobId: job.id, claimToken: job.claimToken };
+        return { jobId: job.id, branchId };
     }
 
     function toLiveEntity(row: Awaited<ReturnType<typeof createMessageTriggerJob>>): MessageTriggerJobEntity {
@@ -100,7 +101,7 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
     }
 
     invariant("SI-SMS-03", "a claimed job cannot be re-claimed by a second dispatcher (row-lock serialization)", async () => {
-        const { jobId } = await seedPendingJob();
+        const { jobId, branchId } = await seedPendingJob();
 
         // Dispatcher A wins the job row lock (its claim's UPDATE would take it).
         const lock = await handle.raw.$transaction(async (tx) => {
@@ -123,7 +124,7 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
     });
 
     invariant("SI-SMS-03", "two queued claims of one pending job yield exactly one claim token", async () => {
-        const { jobId } = await seedPendingJob();
+        const { jobId, branchId } = await seedPendingJob();
 
         // Hold the row lock, queue BOTH claims behind it, prove both wait, then
         // release without changing the row: both UPDATEs then run for real,
@@ -148,6 +149,7 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
     });
 
     invariant("SI-SMS-03", "a duplicate dispatch converges on the started attempt and never calls the provider twice", async () => {
+        const { branchId, ruleId } = await seedBranchAndRule();
         const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
             branchId,
             recipientType: MessageTriggerRecipientType.CLIENT,

@@ -2,7 +2,7 @@
 
 Audit only: real PostgreSQL and real SMS services/repositories, with local
 provider doubles (no network sends). Paths are repository-relative. Correction
-base: `217e863d3`; application code, schema, migrations and shared helpers are
+base: `d7682f75f`; application code, schema, migrations and shared helpers are
 unchanged. Backend: 5 suites / 24 tests. Mobile: 1 suite / 7 tests.
 
 ## Verdict table
@@ -16,7 +16,7 @@ unchanged. Backend: 5 suites / 24 tests. Mobile: 1 suite / 7 tests.
 | SI-SMS-05 | backend | REFUTED | — | Forced concurrent retries produce one attempt and one provider call; loser must be `ConflictException` with HTTP 409, not an arbitrary error / P2002 | `backend/infrastructure/database/repositories/sb.message-log.repository.ts:302-416`; `backend/application/services/sms-retry.service.ts:139-157,697-747` | `backend/test/integrity/sms/sms-retry-family-race.real-db.spec.ts::SI-SMS-05 two concurrent manual retries of one failed log produce exactly one send` | — |
 | SI-SMS-06 | backend | CONFIRMED | low | Raw SQL accepts bogus job/log statuses and carrier state (DB defense-in-depth gap); no production TypeScript writer of these bogus values was found | `backend/prisma/schema.prisma:1059,1079,1145`; existing CHECKs only processing-claim-token and provider-acceptance-state | `backend/test/integrity/sms/sms-job-state-fences.real-db.spec.ts::SI-SMS-06 an out-of-set {message_trigger_job.status / message_log.status / message_log.carrier_result_state} is rejected by the database` | `message_trigger_job accepted out-of-set status 'bogus'`; `message_log accepted out-of-set status 'bogus'`; `message_log accepted out-of-set carrier_result_state 'bogus'` |
 | SI-SMS-07 | backend | REFUTED | — | Current eligibility is re-read: deactivating a rule AFTER job creation cancels it; jobsStale prevents claiming; opting a client out BETWEEN claim and dispatch authorization cancels with recipient safeguard reason. Each has zero provider calls | `backend/application/services/message-trigger.service.ts:3162-3197,3635-3640`; `backend/application/services/sms-automation-safeguard.service.ts:159-176,187-198`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:353-418` | `backend/test/integrity/sms/sms-dispatching-reconciliation.real-db.spec.ts::SI-SMS-07 *` (5 invariants, including 3 new live-dispatch probes) | — |
-| SI-SMS-08 | mobile | CONFIRMED | low | Retry/resend/cancel miss `messages/logs/all` (30-minute default freshness); cancel adds a terminal-job history row that changes rule counts; manual-send invalidates neither all-logs nor trigger history. Per-client optional invalidation is desktop parity, not a mobile defect; that view has staleTime 0 | `mobile/src/features/message-triggers/hooks/use-message-triggers.ts:325-338,412-440`; `mobile/src/components/app/mobile-redesign/MessageTriggerList.tsx:173,189-201`; `backend/interface/controllers/message-trigger.controller.ts:136-146`; `backend/application/services/message-trigger.service.ts:800-812,882-902`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:554-568`; `mobile/src/lib/queryClient.ts:40`; `mobile/src/hooks/useClientMessageHistory.ts:19`; `mobile/src/app/(shell)/messages/new/page.tsx:1541-1560`; desktop `frontend/src/features/message-triggers/hooks/use-message-triggers.ts:292-294,329-331` | `mobile/src/__integrity__/sms/message-trigger-invalidation.integrity.test.tsx::SI-SMS-08 *` (3 invariants + 4 knownDefects) | `the all-logs view was not invalidated after the change: retry`; `…: resend`; `the all-logs view was not invalidated after the change: cancel`; `the manual send did not invalidate the message views (allLogs=false history=false)` |
+| SI-SMS-08 | mobile | CONFIRMED | low | Self-healing cache via realtime/refetch: retry/resend/cancel miss `messages/logs/all` (30-minute default freshness); cancel adds a terminal-job history row that changes rule counts; manual-send invalidates neither all-logs nor trigger history. Per-client optional invalidation is desktop parity, not a mobile defect; that view has staleTime 0 | `mobile/src/features/message-triggers/hooks/use-message-triggers.ts:325-338,412-440`; `mobile/src/components/app/mobile-redesign/MessageTriggerList.tsx:173,189-201`; `backend/interface/controllers/message-trigger.controller.ts:136-146`; `backend/application/services/message-trigger.service.ts:800-812,882-902`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:554-568`; `mobile/src/lib/queryClient.ts:40`; `mobile/src/hooks/useClientMessageHistory.ts:19`; `mobile/src/app/(shell)/messages/new/page.tsx:1541-1560`; desktop `frontend/src/features/message-triggers/hooks/use-message-triggers.ts:292-294,329-331` | `mobile/src/__integrity__/sms/message-trigger-invalidation.integrity.test.tsx::SI-SMS-08 *` (3 invariants + 4 knownDefects) | `the all-logs view was not invalidated after the change: retry`; `…: resend`; `the all-logs view was not invalidated after the change: cancel`; `the manual send did not invalidate the message views (allLogs=false history=false)` |
 | SI-SMS-09 | backend | NEEDS-PRODUCT-DECISION | — | A slow original worker can overwrite reclaimed failed/uncertain→sent with the SAME retained claim token. double-send REFUTED: one provider call; final state matches the provider outcome; not re-sendable while failed/uncertain. Decide terminal immutability versus accepting a late provider success | `backend/application/services/message-trigger.service.ts:3385-3386,4063-4089,4564-4611`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:268-275` | `backend/test/integrity/sms/sms-dispatching-reconciliation.real-db.spec.ts::SI-SMS-09 a late worker rewriting a reconciled failed job to sent is reachable today` (invariant pins current reachability) | — |
 
 ## Coverage boundaries
@@ -66,6 +66,8 @@ unchanged. Backend: 5 suites / 24 tests. Mobile: 1 suite / 7 tests.
 - **SI-SMS-01 (low, latent)** — Guard terminal entity transitions and restrict
   token-less repository writes to non-terminal source rows. No production
   caller was found; do not treat this as demonstrated live data loss.
+  This must not be implemented before the SI-SMS-09 decision; if late provider
+  success should win, exempt the reclaim-uncertain → sent reconciliation.
   Not SENSITIVE (application-only suggestion).
 - **SI-SMS-02 (medium)** — Preserve job audit history via archival/soft deletion
   or refuse rule deletion when historical jobs exist, consistently for plain
@@ -120,6 +122,27 @@ the expected-failure wrappers were restored. No application mutation remains.
 
 ## Verification
 
+- **Correction round 3 / order independence:** reproduced the isolated
+  SI-SMS-03 duplicate-dispatch failure (`Argument rule is missing`) before the
+  repair. Each claim/dispatch test now creates its own branch/rule and keeps
+  fixture IDs local. The same audit found three SI-SMS-06 tests reading IDs
+  seeded by siblings; all state-fence tests now use local, freshly created IDs.
+  Cleanup covers every branch created by these two specs, not only the last.
+- Checked all other SMS specs for shared mutable state: reconciliation creates
+  a fresh branch/rule/client at the start of every test before helper reads;
+  rule deletion does the same through `seedBranchWithRule`; retry-family has
+  one test and creates its branch/source itself. Their suite-level handles,
+  repositories and tracker are infrastructure, not fixtures inherited from
+  another test. All counts/reads under assertion are scoped to the test's
+  job, rule, retry source, or freshly created branch. Mobile tests each create
+  their own QueryClient and configure the HTTP response they use.
+- PASS randomized real-DB suite (5 suites / 24 tests, zero skips) with
+  `--runInBand --randomize --showSeed --seed=<seed> --cacheDirectory .jest-cache-sms`:
+  seeds **-1240350712**, **864994450**, **20261031**; plus **314159** with
+  `TZ=UTC`. All used the throwaway URLs and real-DB flags above. After mutation
+  cleanup and recreating the DB from migrations, seed **-1240350712** passed
+  again. The duplicate-dispatch test and each of the three previously dependent
+  SI-SMS-06 tests also passed in separate `-t` invocations.
 - PASS `STATE_INTEGRITY_REAL_DB=1 E2E_VENDOR_STUBS=1 NODE_ENV=test pnpm test test/integrity/sms --runInBand --cacheDirectory .jest-cache-sms` (backend, own throwaway URLs): 24 tests (17 invariants, 7 expected defects), no skips.
 - PASS `env -u DATABASE_URL -u DIRECT_URL -u STATE_INTEGRITY_REAL_DB -u E2E_VENDOR_STUBS pnpm test test/integrity/sms` (backend): 24 real-DB tests skipped; no DB connection made by the specs.
 - PASS `pnpm --filter ./mobile exec jest src/__integrity__/sms --runInBand` twice: 7 tests each (3 invariants, 4 expected defects).
@@ -128,7 +151,28 @@ the expected-failure wrappers were restored. No application mutation remains.
   SQL values parameterized, throwaway guard retained, no dependency/auth/schema
   changes. No network dependency audit was run (dependencies unchanged).
 - No desktop tests or source were added, so desktop Jest/TypeScript are N/A.
-- Scope check: `git diff 217e863d3 --name-only` contains only backend SMS area
-  and mobile SMS area files. Temporary production mutations reverted exactly.
+- Scope check: `git diff d7682f75f --name-only` contains only backend SMS area
+  files. No application, schema, migration, shared-helper or mobile file changed
+  in correction round 3; severities are unchanged.
 - Cleanup checks are repeated after committing: no `.jest-cache-*`, no
-  `bjj_si_sms_throwaway`, empty `git status --short`.
+   `bjj_si_sms_throwaway`, empty `git status --short`.
+
+### Correction round 3 mutation proofs
+
+To keep all file writes inside the owned SMS paths, application guards were
+mutated at runtime using temporary test-local spies, not edits to application
+files. All spies were removed afterwards. DB CHECK mutations affected only
+`bjj_si_sms_throwaway`; the database was then dropped, recreated and migrated
+from unchanged migration files. No mutation is part of the committed specs.
+
+| id / repaired tests | production guard and temporary mutation | observed RED result |
+|---|---|---|
+| SI-SMS-03 / both claim tests | Runtime substitution for `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:394-423`: retain the candidate/rule-lock/update structure but omit pending-state predicates | `second dispatcher claimed a sent job`; `expected exactly one claim token, got 2 of 2` |
+| SI-SMS-03 / duplicate dispatch | Runtime wrapper of `SmsProviderAcceptanceService.prepare` returns the real persisted values on the incoming object, defeating the identity condition in `backend/application/services/sms-trigger-delivery.service.ts:619-620` | Expected the read-side `already in progress or requires reconciliation` message, received the downstream `REQUEST_CONFLICT` refusal from `sms-provider-acceptance.service.ts:97-98`. This proves the read-side characterization, not a second send or prepared→started CAS race |
+| SI-SMS-01 / stale token and two terminal-write tests | Runtime wrapper of repository `update` (`sb.message-trigger-job.repository.ts:268-297`): remove the presented token before the real update; return the current row instead for sent/canceled sources | Positive fence RED: `claim-token fence lost: status=sent claimToken=null`; both terminal knownDefects RED: `Failing test passed even though it was supposed to fail` |
+| SI-SMS-06 / two existing-CHECK controls | Drop the processing/token CHECK (migration `20260829140000`) and provider-acceptance-state CHECK (migration `20260829000000`) on the own throwaway DB only | Both RED: `Received promise resolved instead of rejected`, resolved value `1` |
+| SI-SMS-06 / three vocabulary knownDefects | Add throwaway-only CHECKs rejecting `bogus` on job status, log status and carrier_result_state (schema evidence `backend/prisma/schema.prisma:1059,1079,1145`) | All three RED: `Failing test passed even though it was supposed to fail` |
+
+An initial claim runtime substitution used a plain UPDATE, so wait detection
+failed on the changed SQL shape. That attempt is excluded as proof; the
+candidate-CTE substitution above produced the actual state/count failures.
