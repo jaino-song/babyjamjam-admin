@@ -76,6 +76,7 @@ VR_PROJECT=$PROJECT
 VR_VOLUME=$VOLUME
 VR_MARKER="$WORK/state/valkey-restore-fence"
 VR_REPLACED_ROOT="$WORK/replaced"
+VR_SNAPSHOT_ROOT="$WORK/snapshots"
 VR_ATTEMPTS=60
 vr_reopen_decision() { VR_REOPEN_MODE=passive; VR_REOPEN_REASON=""; }
 vr_reopen_wait_ready() { # health of the stand-in API container
@@ -105,6 +106,10 @@ cli XADD realtime:entity-changes 1000-1 e one >/dev/null
 cli XADD realtime:entity-changes 1000-2 e two >/dev/null
 cli SAVE >/dev/null
 docker cp "$VC:/data/dump.rdb" "$WORK/backups/backup.rdb"
+# a value-only variant: same keys, same types, same stream ids, different value of plan:b
+cli SET plan:b TAMPERED >/dev/null; cli SAVE >/dev/null
+docker cp "$VC:/data/dump.rdb" "$WORK/backups/value-swapped.rdb"
+cli SET plan:b 2 >/dev/null
 cli BGREWRITEAOF >/dev/null
 for _ in $(seq 1 30); do [[ "$(cli INFO persistence | awk -F: '$1=="aof_rewrite_in_progress"{print $2}')" == 0 ]] && break; sleep 1; done
 sleep 1
@@ -125,7 +130,8 @@ running "$AC" && running "$VC" && [[ "$(run_id)" == "$OLD_RUN" ]] || fail "missi
 ok "missing flag: refused, API and Valkey untouched, no marker"
 
 # ---- 2. the naive copy: RDB beside a live appendonlydir is shadowed (fingerprint mismatch)
-( vr_resolve_target; vr_inspect_backup "$WORK/backups/backup.rdb"; VR_STAMP=naive-$$; vr_backup_fingerprint; printf '%s\n' "$VR_EXPECTED_FP" >"$WORK/rdb.fp" )
+( vr_resolve_target; vr_source_check "$WORK/backups/backup.rdb"; VR_STAMP=naive-$$; vr_snapshot_take; vr_backup_fingerprint; printf '%s\n' "$VR_EXPECTED_FP" >"$WORK/rdb.fp" )
+vr_snapshot_purge
 cat "$WORK/rdb.fp" | sed 's/^/   expected: /'
 grep -q '^stream_last_id=1000-2$' "$WORK/rdb.fp" || fail "backup fingerprint should end at 1000-2"
 docker stop "$AC" >/dev/null; docker stop -t 60 "$VC" >/dev/null
@@ -192,6 +198,27 @@ running "$AC" || fail "API not started"
 [[ ! -e "$VR_MARKER" ]] || fail "marker not cleared"
 ok "reopen: API started (same container), marker cleared"
 
+# ---- 7b. F1: the operator input is swapped (same keys/types/stream ids, different VALUE of plan:b)
+#          after the preflight and after the last hash, i.e. while the replaced data is being kept.
+#          The fingerprint cannot see a value-only change; the byte binding must.
+cli SET plan:z 9 >/dev/null
+cp "$WORK/backups/backup.rdb" "$WORK/operator-input.rdb"; chmod a+r "$WORK/operator-input.rdb"
+APPROVED_SHA="$(sha256sum "$WORK/backups/backup.rdb" | cut -d' ' -f1)"
+[[ "$(sha256sum "$WORK/backups/value-swapped.rdb" | cut -d' ' -f1)" != "$APPROVED_SHA" ]] || fail "fixture: the value-swapped RDB must differ"
+vr_copy_replaced_real=$(declare -f vr_copy_replaced)
+eval "${vr_copy_replaced_real/vr_copy_replaced/vr_copy_replaced_orig}"
+vr_copy_replaced() { cp "$WORK/backups/value-swapped.rdb" "$WORK/operator-input.rdb"; vr_copy_replaced_orig "$@"; }
+RUN3="$(run_id)"
+( valkey_restore "$WORK/operator-input.rdb" --confirm-fence ) >"$WORK/out7b.txt" 2>"$WORK/err7b.txt" || { cat "$WORK/err7b.txt"; fail "value-swap restore failed"; }
+eval "$vr_copy_replaced_real"
+[[ "$(sha256sum "$WORK/operator-input.rdb" | cut -d' ' -f1)" != "$APPROVED_SHA" ]] || fail "the input was not swapped (the hook did not run)"
+[[ "$(get plan:b)" == 2 ]] || fail "the swapped value was restored (plan:b=$(get plan:b)): the restore did not use the verified bytes"
+[[ "$(get plan:b)" != TAMPERED && -z "$(get plan:z)" && "$(get plan:a)" == 1 ]] || fail "dataset is not the approved backup"
+[[ "$(run_id)" != "$RUN3" && "$(vr_marker_get stage)" == verified && "$(vr_marker_get backup_digest)" == "$APPROVED_SHA" ]] || fail "marker / run_id after the value-swap restore"
+ok "value-only swap after the last hash: the approved value (plan:b=2) was restored from the snapshot, not TAMPERED"
+( valkey_restore --reopen --confirm-reopen ) >/dev/null 2>"$WORK/err7c.txt" || { cat "$WORK/err7c.txt"; fail "reopen after the value-swap restore failed"; }
+running "$AC" || fail "API not started"
+
 # ---- 8. AOF backup restore after more divergence
 cli SET plan:d 4 >/dev/null; cli XADD realtime:entity-changes 3000-1 e four >/dev/null
 RUN2="$(run_id)"
@@ -203,9 +230,57 @@ sed 's/^/   /' "$WORK/out4.txt"
 ! running "$AC" || fail "API running before reopen (AOF)"
 ok "AOF restore: new run_id, data rolled back, API stopped"
 
-# ---- 9. abort path
+# ---- 9. F3: fenced rollback to the data the AOF restore replaced (plan:d=4, stream 3000-1),
+#          with the fence held for the whole run and every start path refused meanwhile.
+# (production runs as root and can read the kept copies; this harness is a plain user)
+readable() { docker run --rm --network none -v "$1:/c" alpine:latest sh -c 'chmod -R a+rX /c' >/dev/null; }
+KEPT_NEWEST="$VR_REPLACED_ROOT/$(ls -1 "$VR_REPLACED_ROOT" | tail -n 1)"
+KEPT_OLDEST="$VR_REPLACED_ROOT/$(ls -1 "$VR_REPLACED_ROOT" | head -n 1)"
+readable "$KEPT_NEWEST"; readable "$KEPT_OLDEST"
+[[ -d "$KEPT_NEWEST/appendonlydir" && -d "$KEPT_OLDEST/appendonlydir" ]] || fail "kept copies missing"
+RUN4="$(run_id)"
+# 9a. outside the replaced-data root: refused, nothing touched
+cp "$VR_MARKER" "$WORK/marker.before"
+for bad in "$WORK/backups/backup.rdb" "$WORK/backups/aof-backup" "$KEPT_NEWEST" "$VR_REPLACED_ROOT/../backups/backup.rdb"; do
+    if ( valkey_restore --rollback "$bad" --confirm-fence ) >/dev/null 2>"$WORK/err9a.txt"; then fail "rollback accepted '$bad'"; fi
+    grep -q 'accepts only' "$WORK/err9a.txt" || fail "no explanation for '$bad'"
+done
+cmp -s "$VR_MARKER" "$WORK/marker.before" && [[ "$(run_id)" == "$RUN4" ]] && running "$VC" && ! running "$AC" || fail "a refused rollback touched something"
+ok "rollback outside valkey-replaced: refused, marker/Valkey/API untouched"
+# 9b. rollback to the newest kept copy, with a poller proving the marker never disappears and start paths stay refused
+rm -f "$WORK/poll.missing" "$WORK/poll.allowed"
+( valkey_restore --rollback "$KEPT_NEWEST/appendonlydir" --confirm-fence ) >"$WORK/out9.txt" 2>"$WORK/err9.txt" &
+RPID=$!
+while kill -0 "$RPID" 2>/dev/null; do
+    [[ -e "$VR_MARKER" ]] || echo missing >>"$WORK/poll.missing"
+    if ( refuse_if_valkey_restore_fenced ) >/dev/null 2>&1; then echo allowed >>"$WORK/poll.allowed"; fi
+    sleep 0.1
+done
+wait "$RPID" || { cat "$WORK/err9.txt"; fail "rollback failed"; }
+[[ ! -e "$WORK/poll.missing" && ! -e "$WORK/poll.allowed" ]] || fail "the fence was missing or a start path was allowed during the rollback"
+sed 's/^/   /' "$WORK/out9.txt"
+[[ "$(run_id)" != "$RUN4" ]] || fail "run_id unchanged after the rollback"
+[[ "$(get plan:d)" == 4 && "$(get plan:b)" == 2 ]] || fail "rollback did not bring back the replaced data"
+[[ "$(cli XINFO STREAM realtime:entity-changes | grep -A1 '^last-generated-id$' | tail -1)" == 3000-1 ]] || fail "rollback stream wrong"
+[[ "$(vr_marker_get stage)" == verified && "$(vr_marker_get mode)" == rollback && -e "$VR_MARKER" ]] && ! running "$AC" || fail "rollback must end verified, fenced, API stopped"
+[[ "$(ls "$VR_SNAPSHOT_ROOT" | wc -l)" -eq 1 ]] || fail "superseded snapshot not dropped"
+ok "rollback to the replaced data: new run_id, plan:d=4 and stream 3000-1 are back, fence held throughout, start paths refused meanwhile"
+# 9c. an injected staging failure in a second rollback leaves the same fenced state; the same command then completes
+vr_stage_data_real2=$(declare -f vr_stage_data)
+eval "${vr_stage_data_real2/vr_stage_data/vr_stage_data_orig2}"
+vr_stage_data() { [[ "$1" != "$VR_VOLUME" ]] || return 1; vr_stage_data_orig2 "$@"; }
+if ( valkey_restore --rollback "$KEPT_OLDEST/appendonlydir" --confirm-fence ) >"$WORK/out9c.txt" 2>"$WORK/err9c.txt"; then fail "rollback succeeded with a failing stage"; fi
+eval "$vr_stage_data_real2"
+[[ -e "$VR_MARKER" && "$(vr_marker_get mode)" == rollback && "$(vr_marker_get stage)" != verified ]] && ! running "$AC" || fail "failed rollback left an unfenced/verified state"
+grep -Fq -- "Resume (idempotent): valkey-restore --rollback '$KEPT_OLDEST/appendonlydir' --confirm-fence" "$WORK/err9c.txt" || fail "no rollback resume instruction"
+( valkey_restore --rollback "$KEPT_OLDEST/appendonlydir" --confirm-fence ) >"$WORK/out9d.txt" 2>"$WORK/err9d.txt" || { cat "$WORK/err9d.txt"; fail "rollback resume failed"; }
+[[ "$(get plan:c)" == 3 && -z "$(get plan:a)" ]] || fail "second rollback did not bring back the oldest kept data"
+[[ "$(vr_marker_get stage)" == verified ]] && ! running "$AC" || fail "second rollback not verified/fenced"
+ok "failed rollback: stays fenced, resumes with the same command, oldest kept copy restored"
+
+# ---- 10. abort path
 ( valkey_restore --abort --confirm-fence ) >"$WORK/out5.txt" 2>&1 || fail "abort failed"
-[[ ! -e "$VR_MARKER" ]] && ! running "$AC" || fail "abort state wrong"
-ok "abort: marker cleared, API stays stopped"
+[[ ! -e "$VR_MARKER" ]] && ! running "$AC" && [[ ! -e "$VR_SNAPSHOT_ROOT" ]] || fail "abort state wrong"
+ok "abort: marker and snapshot cleared, API stays stopped"
 
 echo "REALRUN PASSED"

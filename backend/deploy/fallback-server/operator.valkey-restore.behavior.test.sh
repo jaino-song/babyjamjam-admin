@@ -26,6 +26,7 @@ printf 'REDIS0011\xfa\x09redis-ver\x058.1.11' >"$TMP/backup.rdb"
 mkdir -p "$TMP/aof"
 printf 'file appendonly.aof.1.base.rdb seq 1 type b\n' >"$TMP/aof/appendonly.aof.manifest"
 printf 'REDIS0011' >"$TMP/aof/appendonly.aof.1.base.rdb"
+printf 'REDIS0011\xfa\x09redis-ver\x058.1.11-DIFFERENT-VALUE' >"$TMP/evil.rdb"   # same shape, different bytes
 printf 'not a dump\n' >"$TMP/garbage.rdb"
 mkdir -p "$TMP/noman"; printf x >"$TMP/noman/appendonly.aof.1.base.rdb"
 ln -s "$TMP/backup.rdb" "$TMP/link.rdb"
@@ -37,21 +38,28 @@ world_reset() {
     WORLD_N=$((WORLD_N + 1))
     W="$TMP/world-$WORLD_N"; mkdir -p "$W/state" "$W/replaced"
     VR_PROJECT=tproj; VR_VOLUME=tvolume; VR_ATTEMPTS=3
-    VR_MARKER="$W/state/valkey-restore-fence"; VR_REPLACED_ROOT="$W/replaced"
+    VR_MARKER="$W/state/valkey-restore-fence"; VR_REPLACED_ROOT="$W/replaced"; VR_SNAPSHOT_ROOT="$W/snapshots"
     printf 1 >"$W/api_running"; printf 1 >"$W/valkey_running"
     printf 0 >"$W/runs"; printf 'run-0' >"$W/run_id"; printf master >"$W/role"
     printf '%s' "$FP_BACKUP" >"$W/fp_backup"        # what the backup is
     printf '%s' "$FP_OLD" >"$W/fp_live"             # what the live Valkey holds now
     printf '%s' "$FP_BACKUP" >"$W/fp_after_start"   # what a correct restore yields
     : >"$W/docker.log"; : >"$W/hooks.log"
+    : >"$W/marker_trace"; : >"$W/probe"; rm -rf "$W/vol" "$W/hook_done"
+    HOOK_ON=""; HOOK_CMD=""; STAGE_CORRUPT=0
     FAIL=""; printf 0 >"$W/fail_skip"; NO_BUMP=0
     READY_FAIL=0; STATUS_FAIL=0
     RT_MODE=""; RT_EXPIRY=""; RT_TAG="$TAG"; RT_PERSISTENT=0; RT_MASKS=1; RT_TIMER=1; RT_CLASS=active
 }
 state_of() { case "$1" in "$API") cat "$W/api_running";; "$VALKEY") cat "$W/valkey_running";; *) echo 0;; esac; }
 vr_docker() {
-    local arg svc="" all=0 id fmt c skip
+    local arg svc="" all=0 id fmt c skip prev="" vol="" src="" dst="" form
     printf '%s\n' "$*" >>"$W/docker.log"
+    if [[ -e "$VR_MARKER" ]]; then echo 1 >>"$W/marker_trace"; else echo 0 >>"$W/marker_trace"; fi
+    # One-shot hook: lets a test change the world at an exact docker call.
+    if [[ -n "${HOOK_ON:-}" && "$*" == *"$HOOK_ON"* && ! -e "$W/hook_done" ]]; then
+        : >"$W/hook_done"; eval "$HOOK_CMD"
+    fi
     if [[ -n "$FAIL" && "$*" == *"$FAIL"* ]]; then
         skip="$(cat "$W/fail_skip")"
         if (( skip > 0 )); then printf '%s' "$((skip - 1))" >"$W/fail_skip"; else return 1; fi
@@ -98,7 +106,31 @@ vr_docker() {
                 "CONFIG SET appendonly yes") printf 'OK\r\n' ;;
             esac ;;
         volume) [[ "$2" == ls ]] || true ;;
-        run|rm) : ;;
+        run)
+            case "$*" in
+                *:/backup/dump.rdb:ro*|*:/backup/appendonlydir:ro*)
+                    # staging: the data volume ends up holding exactly what was mounted
+                    for arg in "$@"; do
+                        if [[ "$prev" == -v ]]; then
+                            case "$arg" in
+                                *:/data) vol="${arg%:/data}" ;;
+                                *:/backup/*:ro) src="${arg%%:/backup/*}"; dst="${arg##*:/backup/}"; dst="${dst%:ro}" ;;
+                            esac
+                        fi
+                        prev="$arg"
+                    done
+                    if [[ "$vol" == "$VR_VOLUME" ]]; then
+                        rm -rf "$W/vol"; mkdir -p "$W/vol"; cp -R "$src" "$W/vol/$dst"
+                        if [[ "$STAGE_CORRUPT" == 1 ]]; then
+                            if [[ -f "$W/vol/dump.rdb" ]]; then printf x >>"$W/vol/dump.rdb"; else printf x >>"$W/vol/appendonlydir/appendonly.aof.1.base.rdb"; fi
+                        fi
+                    fi ;;
+                *sha256sum*)
+                    # read-back of the staged volume
+                    form="${*: -1}"
+                    if [[ "$form" == rdb ]]; then sha256sum "$W/vol/dump.rdb" | cut -d' ' -f1; else vr_tree_digest "$W/vol/appendonlydir"; fi ;;
+            esac ;;
+        rm) : ;;
     esac
     return 0
 }
@@ -147,14 +179,56 @@ assert_fenced_and_down() {
     return 0
 }
 
+
+# ---- shared helpers
+want() { [[ -z "${VR_TEST_SECTION:-}" || "$VR_TEST_SECTION" == "$1" ]]; }
+verified_world() { world_reset; run valkey_restore "$TMP/backup.rdb" --confirm-fence; [[ "$RC" == 0 ]] || fail "setup: restore"; : >"$W/docker.log"; }
+expect_started() {
+    [[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "$1: reopen failed (rc $RC)"; }
+    [[ "$(log_count "start $API")" == 1 ]] || fail "$1: the API container should be started exactly once"
+    log_has " up " && fail "$1: reopen must not use compose up"
+    log_has "compose" && fail "$1: reopen must not go through compose"
+    [[ ! -e "$VR_MARKER" ]] || fail "$1: the marker should be cleared"
+    grep -Fq "reopen_mode=$2" "$W/out" && grep -Fqx 'api_started=true' "$W/out" || fail "$1: summary missing"
+    grep -Fqx 'lease_mode=required' "$W/out" || fail "$1: the lease observation should be printed"
+    grep -Fq "ready:$TAG" "$W/hooks.log" && grep -Fq 'hook:status' "$W/hooks.log" || fail "$1: readiness and status verification did not run"
+}
+expect_not_started() {
+    [[ "$RC" -ne 0 ]] || fail "$1: reopen should not succeed"
+    log_has "start $API" && fail "$1: the API must not be started"
+    [[ ! -e "$VR_MARKER" ]] || fail "$1: the verified restore should release the fence"
+    grep -q 'NOT started' "$W/err" && grep -q "$2" "$W/err" || { cat "$W/err" >&2; fail "$1: the message should name the normal flow ($2)"; }
+}
+first_call() { # function that is the first thing each start path calls after the guard
+    case "$1" in
+        adopt_persistent_active_release) automatic_shutdown_disabled() { echo reached >>"$W/reached"; exit 99; } ;;
+        rollback_release) refuse_active_or_unknown_runtime() { echo reached >>"$W/reached"; exit 99; } ;;
+        *) validate_release() { echo reached >>"$W/reached"; exit 99; } ;;
+    esac
+}
+try_start_path() { first_call "$1"; "$1" "$TAG" "sha256:$(printf 'd%.0s' {1..64})"; }
+START_PATHS=(deploy_release temporary_activate_release replace_temporary_active_release \
+             extend_temporary_active_release adopt_persistent_active_release rollback_release)
+# every start path, run (in its own subshell) against the CURRENT world; one "fn:rc" line each
+probe_start_paths() {
+    local fn rc
+    for fn in "${START_PATHS[@]}"; do
+        if ( try_start_path "$fn" ) >/dev/null 2>&1; then rc=0; else rc=$?; fi
+        echo "$fn:$rc" >>"$W/probe"
+    done
+}
+sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+snapshot_dir_of_marker() { vr_marker_get snapshot_dir; }
+
+if want legacy; then
 # ===== 1. happy path, RDB backup: fence -> stop Valkey -> keep copy -> stage -> bootstrap -> convert to AOF -> normal start
 world_reset
 run valkey_restore "$TMP/backup.rdb" --confirm-fence
 [[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "RDB restore failed (rc $RC)"; }
 assert_order "stop $API" "stop -t 60 $VALKEY"
 assert_order "stop -t 60 $VALKEY" "cp -a /data/. /copy/"
-assert_order "cp -a /data/. /copy/" "-v tvolume:/data -v $TMP/backup.rdb:/backup/dump.rdb:ro"
-assert_order "-v tvolume:/data -v $TMP/backup.rdb:/backup/dump.rdb:ro" "run -d --name tproj-vr-bootstrap"
+assert_order "cp -a /data/. /copy/" "-v tvolume:/data -v $W/snapshots/"
+assert_order "-v tvolume:/data -v $W/snapshots/" "run -d --name tproj-vr-bootstrap"
 assert_order "run -d --name tproj-vr-bootstrap" "CONFIG SET appendonly yes"
 assert_order "CONFIG SET appendonly yes" "stop -t 60 tproj-vr-bootstrap"
 assert_order "stop -t 60 tproj-vr-bootstrap" "start $VALKEY"
@@ -175,10 +249,10 @@ echo "ok - RDB happy path"
 world_reset
 run valkey_restore "$TMP/aof" --confirm-fence
 [[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "AOF restore failed (rc $RC)"; }
-log_has "-v $TMP/aof:/backup/appendonlydir:ro" || fail "AOF must be staged as a whole directory"
+log_has "/appendonlydir:/backup/appendonlydir:ro" && log_has "-v $W/snapshots/" || fail "AOF must be staged as a whole directory from the snapshot"
 log_has "tproj-vr-bootstrap" && fail "an AOF restore needs no bootstrap"
 log_has "valkey-check-aof" || fail "the AOF backup must pass the integrity check"
-assert_order "-v tvolume:/data -v $TMP/aof:/backup/appendonlydir:ro" "start $VALKEY"
+assert_order "-v tvolume:/data -v $W/snapshots/" "start $VALKEY"
 [[ "$(marker_stage)" == verified ]] || fail "AOF restore not verified"
 echo "ok - AOF happy path"
 
@@ -217,7 +291,7 @@ echo "ok - preflight failures"
 
 # ===== 6. every failure after the fence leaves the backend stopped and the fence in place
 for rdb_point in \
-    "stop -t 60 $VALKEY" "cp -a /data/. /copy/" "-v tvolume:/data -v $TMP/backup.rdb" \
+    "stop -t 60 $VALKEY" "cp -a /data/. /copy/" "-v tvolume:/data -v $TMP/world-" \
     "run -d --name tproj-vr-bootstrap" "CONFIG SET appendonly yes" "start $VALKEY" \
     "exec $VALKEY valkey-cli --raw PING"; do
     world_reset; FAIL="$rdb_point"
@@ -315,23 +389,6 @@ run valkey_restore --reopen --confirm-reopen
 echo "ok - abort"
 
 # ===== 12. reopen: the gate is re-checked from live state for BOTH active modes
-verified_world() { world_reset; run valkey_restore "$TMP/backup.rdb" --confirm-fence; [[ "$RC" == 0 ]] || fail "setup: restore"; : >"$W/docker.log"; }
-expect_started() {
-    [[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "$1: reopen failed (rc $RC)"; }
-    [[ "$(log_count "start $API")" == 1 ]] || fail "$1: the API container should be started exactly once"
-    log_has " up " && fail "$1: reopen must not use compose up"
-    log_has "compose" && fail "$1: reopen must not go through compose"
-    [[ ! -e "$VR_MARKER" ]] || fail "$1: the marker should be cleared"
-    grep -Fq "reopen_mode=$2" "$W/out" && grep -Fqx 'api_started=true' "$W/out" || fail "$1: summary missing"
-    grep -Fqx 'lease_mode=required' "$W/out" || fail "$1: the lease observation should be printed"
-    grep -Fq "ready:$TAG" "$W/hooks.log" && grep -Fq 'hook:status' "$W/hooks.log" || fail "$1: readiness and status verification did not run"
-}
-expect_not_started() {
-    [[ "$RC" -ne 0 ]] || fail "$1: reopen should not succeed"
-    log_has "start $API" && fail "$1: the API must not be started"
-    [[ ! -e "$VR_MARKER" ]] || fail "$1: the verified restore should release the fence"
-    grep -q 'NOT started' "$W/err" && grep -q "$2" "$W/err" || { cat "$W/err" >&2; fail "$1: the message should name the normal flow ($2)"; }
-}
 # temporary-active, valid window and timer
 verified_world; RT_MODE=temporary-active; RT_EXPIRY=$((NOW + 3600)); RT_CLASS=active
 run valkey_restore --reopen --confirm-reopen; expect_started temporary-active temporary-active
@@ -389,16 +446,7 @@ echo "ok - reopen keeps the fence on failure"
 
 # ===== 14. every START path refuses while fenced, and runs again once the marker is gone;
 #          stop and guard-expiry stay available while fenced
-first_call() { # function that is the first thing each start path calls after the guard
-    case "$1" in
-        adopt_persistent_active_release) automatic_shutdown_disabled() { echo reached >>"$W/reached"; exit 99; } ;;
-        rollback_release) refuse_active_or_unknown_runtime() { echo reached >>"$W/reached"; exit 99; } ;;
-        *) validate_release() { echo reached >>"$W/reached"; exit 99; } ;;
-    esac
-}
-try_start_path() { first_call "$1"; "$1" "$TAG" "sha256:$(printf 'd%.0s' {1..64})"; }
-for fn in deploy_release temporary_activate_release replace_temporary_active_release \
-          extend_temporary_active_release adopt_persistent_active_release rollback_release; do
+for fn in "${START_PATHS[@]}"; do
     world_reset; : >"$W/reached"
     : >"$VR_MARKER"
     run try_start_path "$fn"
@@ -450,11 +498,244 @@ echo "ok - ci deployer"
 
 # ===== 16. leftovers of an interrupted run are removed by the next one, only under this project's prefix
 world_reset
+fake_vr_docker_def="$(declare -f vr_docker)"
 vr_docker() { printf '%s\n' "$*" >>"$W/docker.log"; case "$1 $2" in "ps -aq") echo leftover1;; "volume ls") printf '%s\n' tproj-vr-fp-old other-volume;; esac; return 0; }
 vr_remove_leftovers
 log_has "rm -f leftover1" && log_has "volume rm -f tproj-vr-fp-old" || fail "leftovers were not removed"
 log_has "volume rm -f other-volume" && fail "a foreign volume was removed"
 log_has "--filter name=^/tproj-vr-" || fail "the container filter must be anchored to the project prefix"
+eval "$fake_vr_docker_def"   # the stateful fake again for the sections that follow
 echo "ok - leftovers"
+
+fi
+
+# =============================================================================
+# F1 - restore exactly the bytes that were verified (VR_TEST_SECTION=f1)
+# =============================================================================
+if want f1; then
+ORIG_RDB_SHA="$(sha_of "$TMP/backup.rdb")"
+ORIG_AOF_SHA="$(vr_tree_digest "$TMP/aof")"
+EVIL_RDB_SHA="$(sha_of "$TMP/evil.rdb")"
+[[ "$ORIG_RDB_SHA" != "$EVIL_RDB_SHA" ]] || fail "fixture: the evil RDB must differ"
+
+# ===== F1.1 the operator path is read once: every later step uses the protected snapshot
+world_reset; FAIL="start $VALKEY"          # stop after staging so the fence (and its snapshot) stay for inspection
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" -ne 0 && -e "$VR_MARKER" ]] || fail "setup: the first run should fail and stay fenced"
+snap="$(snapshot_dir_of_marker || true)"
+[[ "$snap" == "$W/snapshots/"* && "$(vr_marker_get backup_digest)" == "$ORIG_RDB_SHA" ]] || fail "the marker must record the snapshot and its digest"
+[[ "$(stat -c %a "$W/snapshots")" == 700 && "$(stat -c %a "$snap")" == 700 && "$(stat -c %a "$snap/dump.rdb")" == 600 ]] \
+    || fail "the snapshot area must be 0700 with a 0600 file"
+[[ "$(sha_of "$snap/dump.rdb")" == "$ORIG_RDB_SHA" ]] || fail "the snapshot is not a byte copy of the backup"
+grep -F -- "$TMP/backup.rdb" "$W/docker.log" && fail "the operator path reached docker: it must be read once, by the snapshot copy"
+grep -Fq -- "-v $snap/dump.rdb:/backup/dump.rdb:ro" "$W/docker.log" || fail "staging must mount the snapshot"
+[[ "$(sha_of "$W/vol/dump.rdb")" == "$ORIG_RDB_SHA" ]] || fail "the staged volume does not hold the snapshot bytes"
+echo "ok - F1.1 snapshot: protected, byte-exact, the only thing docker sees"
+
+# ===== F1.2 operator input replaced AFTER the preflight and after the last hash (the reviewer's repro)
+for point in "stop $API" "cp -a /data/. /copy/"; do
+    world_reset; cp "$TMP/backup.rdb" "$W/operator.rdb"
+    HOOK_ON="$point"; HOOK_CMD='cp "$TMP/evil.rdb" "$W/operator.rdb"'
+    run valkey_restore "$W/operator.rdb" --confirm-fence
+    [[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "F1.2 ($point): the restore from the approved bytes should still succeed"; }
+    [[ "$(sha_of "$W/operator.rdb")" == "$EVIL_RDB_SHA" ]] || fail "F1.2 ($point): the hook did not replace the operator file"
+    [[ "$(sha_of "$W/vol/dump.rdb")" == "$ORIG_RDB_SHA" ]] || fail "F1.2 ($point): a different dataset was restored than the one that was verified"
+    [[ "$(vr_marker_get backup_digest)" == "$ORIG_RDB_SHA" && "$(marker_stage)" == verified ]] || fail "F1.2 ($point): marker does not describe the verified bytes"
+done
+# the same for an AOF directory (one file's bytes swapped after the preflight)
+world_reset; cp -R "$TMP/aof" "$W/operator-aof"
+HOOK_ON="cp -a /data/. /copy/"; HOOK_CMD='printf "REDIS0011-CHANGED" >"$W/operator-aof/appendonly.aof.1.base.rdb"'
+run valkey_restore "$W/operator-aof" --confirm-fence
+[[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "F1.2 aof: restore failed"; }
+[[ "$(vr_tree_digest "$W/vol/appendonlydir")" == "$ORIG_AOF_SHA" ]] || fail "F1.2 aof: a different AOF was restored than the one that was verified"
+echo "ok - F1.2 input replaced after the preflight: the approved bytes are restored"
+
+# ===== F1.3 the snapshot itself is tampered with
+# (a) before the restore starts: the re-hash refuses, Valkey is not even stopped
+world_reset; HOOK_ON="stop $API"; HOOK_CMD='printf x >>"$VR_SNAPSHOT_ROOT"/*/dump.rdb'
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'verified snapshot changed' "$W/err" || fail "F1.3a: a tampered snapshot was accepted"
+assert_fenced_and_down "tampered snapshot"
+log_has "stop -t 60 $VALKEY" && fail "F1.3a: Valkey was stopped before the snapshot was re-verified"
+[[ ! -e "$W/vol" ]] || fail "F1.3a: something was staged from a tampered snapshot"
+# (b) after the re-hash, while the replaced data is being kept: the staged copy is compared to the digest
+world_reset; HOOK_ON="cp -a /data/. /copy/"; HOOK_CMD='printf x >>"$VR_SNAPSHOT_ROOT"/*/dump.rdb'
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'staged data does not match the verified snapshot' "$W/err" || { cat "$W/err" >&2; fail "F1.3b: tampered staging was accepted"; }
+assert_fenced_and_down "tampered staging"
+log_has "start $VALKEY" && fail "F1.3b: Valkey was started on unverified bytes"
+log_has "tproj-vr-bootstrap" && fail "F1.3b: the bootstrap loaded unverified bytes"
+# (c) the staging step itself corrupts what lands in the volume
+world_reset; STAGE_CORRUPT=1
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'staged data does not match the verified snapshot' "$W/err" || fail "F1.3c: a corrupted staged copy was accepted"
+assert_fenced_and_down "corrupted staging"
+log_has "start $VALKEY" && fail "F1.3c: Valkey was started on a corrupted staged copy"
+world_reset; STAGE_CORRUPT=1
+run valkey_restore "$TMP/aof" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'staged data does not match' "$W/err" || fail "F1.3c: a corrupted staged AOF was accepted"
+echo "ok - F1.3 tampered snapshot / staged copy: aborts, stays fenced, never starts on other bytes"
+
+# ===== F1.4 re-runs reuse the recorded snapshot (re-hashed first); a different path/digest stays refused
+world_reset; cp "$TMP/backup.rdb" "$W/operator.rdb"; FAIL="start $VALKEY"
+run valkey_restore "$W/operator.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] || fail "setup: first run"
+snap="$(snapshot_dir_of_marker)"; FAIL=""
+cp "$VR_MARKER" "$W/marker.before"
+cp "$TMP/evil.rdb" "$W/operator.rdb"             # operator input changed since the first run
+run valkey_restore "$W/operator.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'different backup' "$W/err" || fail "F1.4: a re-run with different bytes was accepted"
+cmp -s "$VR_MARKER" "$W/marker.before" || fail "F1.4: the refused re-run changed the marker"
+run valkey_restore "$TMP/aof" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'different backup' "$W/err" || fail "F1.4: a re-run with a different path was accepted"
+cp "$TMP/backup.rdb" "$W/operator.rdb"           # original bytes again
+printf x >>"$snap/dump.rdb"                      # ... but the recorded snapshot was touched
+: >"$W/docker.log"
+run valkey_restore "$W/operator.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'verified snapshot changed' "$W/err" || fail "F1.4: a re-run on a tampered snapshot was accepted"
+log_has "stop " && fail "F1.4: the refused re-run stopped something"
+cp "$TMP/backup.rdb" "$snap/dump.rdb"            # snapshot intact again
+run valkey_restore "$W/operator.rdb" --confirm-fence
+[[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "F1.4: the re-run on the recorded snapshot failed"; }
+[[ "$(ls "$W/snapshots" | wc -l)" -eq 1 && "$(snapshot_dir_of_marker)" == "$snap" ]] || fail "F1.4: the re-run must reuse the recorded snapshot and drop its own copy"
+grep -Fq -- "-v $snap/dump.rdb:/backup/dump.rdb:ro" "$W/docker.log" || fail "F1.4: the re-run did not stage from the recorded snapshot"
+echo "ok - F1.4 re-run reuses the recorded snapshot"
+
+# ===== F1.5 nothing is left behind: failed preflights, reopen and abort
+for bad in "$TMP/garbage.rdb" "$TMP/empty.rdb" "$TMP/noman"; do
+    world_reset; run valkey_restore "$bad" --confirm-fence
+    [[ "$RC" -ne 0 ]] || fail "F1.5: $bad accepted"
+    [[ ! -e "$W/snapshots" || -z "$(ls -A "$W/snapshots")" ]] || fail "F1.5: a refused backup left a snapshot ($bad)"
+done
+world_reset; FAIL="run -d --name tproj-vr-fp-"; run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" -ne 0 && ! -e "$VR_MARKER" ]] && { [[ ! -e "$W/snapshots" ]] || [[ -z "$(ls -A "$W/snapshots")" ]]; } || fail "F1.5: a failed fingerprint left a snapshot"
+verified_world; RT_MODE=temporary-active; RT_EXPIRY=$((NOW + 3600)); RT_CLASS=active
+[[ -d "$W/snapshots" ]] || fail "F1.5: a verified restore must keep its snapshot"
+run valkey_restore --reopen --confirm-reopen; expect_started "F1.5 reopen" temporary-active
+[[ ! -e "$W/snapshots" ]] || fail "F1.5: reopen must remove the snapshot"
+verified_world; run valkey_restore --abort --confirm-fence
+[[ "$RC" == 0 && ! -e "$W/snapshots" ]] || fail "F1.5: abort must remove the snapshot"
+echo "ok - F1.5 snapshots do not outlive their fence"
+fi
+
+# =============================================================================
+# F3 - fenced rollback (VR_TEST_SECTION=f3)
+# =============================================================================
+if want f3; then
+# a verified, fenced world whose kept copy (the OLD dataset) holds an AOF directory
+rollback_world() {
+    verified_world
+    KEPT_TS="$(ls -1 "$W/replaced" | head -n1)"
+    KEPT="$W/replaced/$KEPT_TS"
+    cp -R "$TMP/aof" "$KEPT/appendonlydir"
+    KEPT_SHA="$(vr_tree_digest "$KEPT/appendonlydir")"
+    printf '%s' "$FP_OLD" >"$W/fp_backup"; printf '%s' "$FP_OLD" >"$W/fp_after_start"   # what the kept copy holds
+    : >"$W/marker_trace"; : >"$W/probe"; rm -f "$W/hook_done"
+}
+assert_marker_whole_time() { grep -q 0 "$W/marker_trace" && fail "$1: the fence marker was missing during a docker call"; [[ -s "$W/marker_trace" ]] || fail "$1: no docker call was traced"; return 0; }
+
+# ===== F3.1 rollback from the fenced state after a successful restore: marker kept, start paths refused, reopen works
+rollback_world
+HOOK_ON="start $VALKEY"; HOOK_CMD='probe_start_paths'
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+[[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "F3.1: the rollback failed (rc $RC)"; }
+[[ "$(marker_stage)" == verified && -e "$VR_MARKER" ]] || fail "F3.1: the rollback must end verified and still fenced"
+[[ "$(vr_marker_get mode)" == rollback && "$(vr_marker_get backup_path)" == "$KEPT/appendonlydir" && "$(vr_marker_get backup_digest)" == "$KEPT_SHA" ]] \
+    || fail "F3.1: the new target was not recorded in the marker"
+[[ "$(vr_tree_digest "$W/vol/appendonlydir")" == "$KEPT_SHA" ]] || fail "F3.1: the volume does not hold the kept copy"
+assert_marker_whole_time "F3.1"
+[[ "$(wc -l <"$W/probe")" -eq "${#START_PATHS[@]}" ]] && ! grep -v ':1$' "$W/probe" || { cat "$W/probe" >&2; fail "F3.1: a start path was not refused in the middle of the rollback"; }
+log_has "start $API" && fail "F3.1: a rollback must not start the API"
+assert_order "stop -t 60 $VALKEY" "-v tvolume:/data -v $W/snapshots/"
+[[ "$(ls "$W/snapshots" | wc -l)" -eq 1 && "$(snapshot_dir_of_marker)" == "$W/snapshots/"* ]] || fail "F3.1: the superseded snapshot must be dropped"
+[[ "$(ls "$W/replaced" | wc -l)" -eq 2 ]] || fail "F3.1: the data the rollback replaced must be kept too"
+grep -Fqx 'valkey_restore=verified' "$W/out" && grep -Fqx 'mode=rollback' "$W/out" && grep -Fqx 'fenced=true' "$W/out" || fail "F3.1: summary missing"
+# --reopen is the only way back, and it works
+RT_MODE=temporary-active; RT_EXPIRY=$((NOW + 3600)); RT_CLASS=active; : >"$W/docker.log"; : >"$W/hooks.log"
+run valkey_restore --reopen --confirm-reopen; expect_started "F3.1 reopen" temporary-active
+echo "ok - F3.1 rollback after a successful restore"
+
+# ===== F3.2 rollback after an injected failure (stage 'restoring', Valkey stopped)
+world_reset; FAIL="start $VALKEY"
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" -ne 0 && "$(marker_stage)" == restoring ]] || fail "F3.2 setup: expected a failed restore"
+KEPT_TS="$(ls -1 "$W/replaced" | head -n1)"; KEPT="$W/replaced/$KEPT_TS"; cp -R "$TMP/aof" "$KEPT/appendonlydir"
+printf '%s' "$FP_OLD" >"$W/fp_backup"; printf '%s' "$FP_OLD" >"$W/fp_after_start"
+FAIL=""; : >"$W/marker_trace"; : >"$W/docker.log"
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+[[ "$RC" == 0 ]] || { cat "$W/err" >&2; fail "F3.2: rollback after a failed restore failed"; }
+[[ "$(marker_stage)" == verified && "$(vr_marker_get mode)" == rollback ]] || fail "F3.2: not verified/fenced after the rollback"
+assert_marker_whole_time "F3.2"
+log_has "start $API" && fail "F3.2: a rollback must not start the API"
+[[ "$(vr_tree_digest "$W/vol/appendonlydir")" == "$(vr_tree_digest "$TMP/aof")" ]] || fail "F3.2: the volume does not hold the kept copy"
+echo "ok - F3.2 rollback after an injected failure"
+
+# ===== F3.3 a failing rollback stays fenced, prints the rollback resume command, and the same command resumes
+rollback_world; FAIL="start $VALKEY"
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+[[ "$RC" -ne 0 && -e "$VR_MARKER" ]] && ! api_up || fail "F3.3: a failed rollback must stay fenced with the API stopped"
+[[ "$(marker_stage)" != verified && "$(vr_marker_get mode)" == rollback ]] || fail "F3.3: the failed rollback must not claim a verified state"
+grep -Fq -- "Resume (idempotent): valkey-restore --rollback '$KEPT/appendonlydir' --confirm-fence" "$W/err" || { cat "$W/err" >&2; fail "F3.3: no rollback resume instruction"; }
+grep -Fq -- "valkey-restore --rollback <replaced-copy>/appendonlydir" "$W/err" || fail "F3.3: the rollback instruction is missing"
+assert_marker_whole_time "F3.3"
+FAIL=""; : >"$W/marker_trace"
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+[[ "$RC" == 0 && "$(marker_stage)" == verified ]] || { cat "$W/err" >&2; fail "F3.3: the same rollback command did not resume"; }
+[[ "$(ls "$W/snapshots" | wc -l)" -eq 1 ]] || fail "F3.3: the resumed rollback should reuse one snapshot"
+assert_marker_whole_time "F3.3 resume"
+# a SIGTERM in the middle of a rollback is the same state
+rollback_world
+vr_stage_data_def="$(declare -f vr_stage_data)"; eval "${vr_stage_data_def/vr_stage_data/vr_stage_data_orig}"
+vr_stage_data() { if [[ "$1" == "$VR_VOLUME" ]]; then kill -TERM "$BASHPID"; fi; vr_stage_data_orig "$@"; }
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+eval "$vr_stage_data_def"
+[[ "$RC" == 143 && -e "$VR_MARKER" ]] && ! api_up || fail "F3.3: SIGTERM during a rollback must leave the fence and the API down (rc $RC)"
+echo "ok - F3.3 failing rollback stays fenced and resumes"
+
+# ===== F3.4 only a kept copy under the replaced-data root is accepted; nothing is touched otherwise
+rollback_world
+ln -s "$TMP/backup.rdb" "$KEPT/dump.rdb"
+mkdir -p "$W/replaced/elsewhere"; printf 'not a dump\n' >"$W/replaced/elsewhere/dump.rdb"
+mkdir -p "$TMP/outside"; cp -R "$TMP/aof" "$TMP/outside/appendonlydir"
+ln -s "$TMP/outside" "$W/replaced/linked"
+cp "$VR_MARKER" "$W/marker.before"; : >"$W/docker.log"
+for bad in "$TMP/backup.rdb" "$TMP/aof" "$TMP/outside/appendonlydir" "$W/replaced" "$KEPT" "$KEPT/appendonlydir/appendonly.aof.manifest" \
+           "$W/replaced/../dump.rdb" "$W/replaced/$KEPT_TS/../$KEPT_TS/appendonlydir" "$KEPT/dump.rdb" "$W/replaced/linked/appendonlydir" \
+           "$W/replaced/missing/appendonlydir" "relative/appendonlydir" "$W/replaced//$KEPT_TS/appendonlydir"; do
+    run valkey_restore --rollback "$bad" --confirm-fence
+    [[ "$RC" -ne 0 ]] || fail "F3.4: '$bad' was accepted"
+    grep -Eq 'accepts only|kept copy|symbolic link|absolute path' "$W/err" || { cat "$W/err" >&2; fail "F3.4: no explanation for '$bad'"; }
+    [[ ! -s "$W/docker.log" ]] || fail "F3.4: '$bad' touched docker"
+    cmp -s "$VR_MARKER" "$W/marker.before" || fail "F3.4: '$bad' changed the marker"
+done
+# unusable content inside the root is refused by the preflight, after which the old target and the fence are intact
+run valkey_restore --rollback "$W/replaced/elsewhere/dump.rdb" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -q 'not a Valkey/Redis RDB' "$W/err" || fail "F3.4: an invalid kept copy was accepted"
+cmp -s "$VR_MARKER" "$W/marker.before" && [[ "$(marker_stage)" == verified ]] || fail "F3.4: the failed preflight must leave the marker untouched"
+log_has "stop " && fail "F3.4: the failed preflight stopped something"
+[[ "$(ls "$W/snapshots" | wc -l)" -eq 1 ]] || fail "F3.4: the failed preflight must not leave a snapshot"
+echo "ok - F3.4 rollback path restrictions"
+
+# ===== F3.5 without a fence, or without the confirmation flag, nothing happens
+world_reset; mkdir -p "$W/replaced/x"; cp -R "$TMP/aof" "$W/replaced/x/appendonlydir"
+run valkey_restore --rollback "$W/replaced/x/appendonlydir" --confirm-fence
+[[ "$RC" -ne 0 && ! -s "$W/docker.log" && ! -e "$VR_MARKER" ]] && grep -q 'there is none' "$W/err" || fail "F3.5: a rollback without a fence must be refused"
+api_up || fail "F3.5: a rollback without a fence stopped the API"
+rollback_world; cp "$VR_MARKER" "$W/marker.before"; : >"$W/docker.log"
+run valkey_restore --rollback "$KEPT/appendonlydir"
+[[ "$RC" -ne 0 && ! -s "$W/docker.log" ]] && cmp -s "$VR_MARKER" "$W/marker.before" || fail "F3.5: a rollback without --confirm-fence was accepted"
+run valkey_restore --rollback --confirm-fence
+[[ "$RC" -ne 0 && ! -s "$W/docker.log" ]] || fail "F3.5: a rollback without a path was accepted"
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence --confirm-reopen
+[[ "$RC" -ne 0 && ! -s "$W/docker.log" ]] || fail "F3.5: a rollback with the reopen flag was accepted"
+echo "ok - F3.5 rollback needs an active fence and its flag"
+
+# ===== F3.6 the old recovery text (restore the copy as a normal backup while fenced) no longer deadlocks
+rollback_world; : >"$W/docker.log"
+run valkey_restore "$KEPT/appendonlydir" --confirm-fence
+[[ "$RC" -ne 0 ]] && grep -Fq -- "--rollback <kept-copy> --confirm-fence" "$W/err" || fail "F3.6: the refusal must point at --rollback"
+log_has "stop " && fail "F3.6: the refusal stopped something"
+echo "ok - F3.6 refusal names the rollback command"
+fi
 
 echo 'Fallback Valkey restore behavioral tests passed'

@@ -373,6 +373,11 @@ A Valkey data restore on the Fallback host goes through
   `guard-expiry` are not refused.
 - Finish with `valkey-restore --reopen --confirm-reopen` after a verified
   restore, or discard the fence with `valkey-restore --abort --confirm-fence`.
+  To go back to the data a restore replaced, run `valkey-restore --rollback
+  <valkey-replaced>/<timestamp>/appendonlydir --confirm-fence` while the fence
+  is still in place (the marker is kept throughout and `--reopen` remains the
+  only way back to serving traffic); aborting first would drop the start-path
+  protection.
   If the temporary-active approval expired during the fence, the reopen releases
   the fence without starting the API and the normal `temporary-active` approval
   flow is required.

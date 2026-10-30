@@ -41,6 +41,7 @@ VR_VALKEY_SERVICE="valkey"
 VR_API_SERVICE="api"
 VR_MARKER="$STATE_DIRECTORY/valkey-restore-fence"
 VR_REPLACED_ROOT="$STATE_ROOT/valkey-replaced"
+VR_SNAPSHOT_ROOT="$STATE_ROOT/valkey-restore-snapshot"
 VR_STREAM_KEY="realtime:entity-changes"
 VR_DOCKER_BIN="/usr/bin/docker"
 VR_ATTEMPTS=60
@@ -97,6 +98,7 @@ Usage:
   babyjamjam-fallback-server stop
   babyjamjam-fallback-server valkey-restore <absolute-backup-path> --confirm-fence
   babyjamjam-fallback-server valkey-restore --reopen --confirm-reopen
+  babyjamjam-fallback-server valkey-restore --rollback <kept-copy-path> --confirm-fence
   babyjamjam-fallback-server valkey-restore --abort --confirm-fence
 
 This operator manages the loopback-bound Fallback Server. Ordinary deploy is
@@ -107,6 +109,7 @@ ownership.
 valkey-restore is the only supported way to restore Valkey data: it fences the
 backend, restores into a freshly started Valkey process and verifies the dataset
 before --reopen. While its fence marker exists every start path refuses.
+--rollback is the only way back to data it kept: it runs inside the fence.
 EOF
 }
 
@@ -1209,6 +1212,9 @@ VR_CLEANUP_VOLUMES=()
 VR_BACKUP_PATH=""
 VR_BACKUP_FORM=""
 VR_BACKUP_DIGEST=""
+VR_SNAPSHOT_DIR=""
+VR_PENDING_SNAPSHOT=""
+VR_MODE=restore
 VR_IMAGE=""
 VR_VALKEY_CID=""
 VR_OBSERVED_RUN_ID=""
@@ -1270,6 +1276,23 @@ cp -R /backup/appendonlydir /data/appendonlydir
 chown -R valkey:valkey /data
 chmod -R u+rwX,g+rX,o-rwx /data/appendonlydir
 '
+# Runs in a throwaway container with the data volume mounted read-only: prints
+# the digest of exactly what was staged, with the same algorithm as
+# vr_snapshot_digest (a file hash for an RDB, a hash over the sorted per-file
+# hashes for the AOF directory). Anything else in the volume is an error.
+readonly VALKEY_STAGED_DIGEST_SCRIPT='
+set -eu
+cd /data
+if [ "$1" = rdb ]; then
+  [ "$(ls -A)" = dump.rdb ] || exit 2
+  sha256sum dump.rdb | cut -d" " -f1
+else
+  [ "$(ls -A)" = appendonlydir ] || exit 2
+  cd appendonlydir
+  [ -z "$(find . ! -type f ! -type d)" ] || exit 2
+  find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d" " -f1
+fi
+'
 
 # ---- marker ---------------------------------------------------------------
 
@@ -1282,16 +1305,39 @@ vr_marker_get() {
 
 # Rewritten atomically: a crash between the temp write and the rename leaves the
 # previous complete marker, never a torn one.
-vr_marker_put() {
-    local key="$1" value="$2" temporary
-    [[ "$value" != *$'\n'* ]] || die "valkey-restore: a marker value must be one line."
+vr_marker_put() { vr_marker_put_many "$1=$2"; }
+
+# Several keys in ONE rename, for changes that must never be seen half-applied
+# (a rollback retargets the snapshot, digest and fingerprint together).
+vr_marker_put_many() {
+    local pair temporary keys=""
+    for pair in "$@"; do
+        [[ "$pair" == *=* && "$pair" != *$'\n'* ]] || die "valkey-restore: a marker entry must be one key=value line."
+        keys+="${pair%%=*}"$'\n'
+    done
     temporary="$(/usr/bin/mktemp "${VR_MARKER%/*}/.valkey-restore-fence.XXXXXX")"
     {
-        if [[ -f "$VR_MARKER" ]]; then /usr/bin/awk -F= -v key="$key" '$1 != key' "$VR_MARKER"; fi
-        printf '%s=%s\n' "$key" "$value"
+        if [[ -f "$VR_MARKER" ]]; then
+            /usr/bin/awk -F= -v keys="$keys" '
+                BEGIN { n = split(keys, list, "\n"); for (i = 1; i <= n; i++) if (list[i] != "") drop[list[i]] = 1 }
+                !($1 in drop)
+            ' "$VR_MARKER"
+        fi
+        printf '%s\n' "$@"
     } >"$temporary"
     /usr/bin/chmod 600 "$temporary"
     /usr/bin/mv -f "$temporary" "$VR_MARKER"
+}
+
+# The snapshot is only meaningful while a fence owns it: it goes with the marker.
+vr_snapshot_purge() {
+    [[ -n "$VR_SNAPSHOT_ROOT" && "$VR_SNAPSHOT_ROOT" == /*/* ]] || return 0
+    /usr/bin/rm -rf -- "$VR_SNAPSHOT_ROOT" || vr_note "could not remove $VR_SNAPSHOT_ROOT; remove it by hand."
+}
+
+vr_clear_fence() {
+    /usr/bin/rm -f "$VR_MARKER"
+    vr_snapshot_purge
 }
 
 # ---- cleanup and recovery text --------------------------------------------
@@ -1306,6 +1352,11 @@ vr_cleanup() {
     done
     VR_CLEANUP_CONTAINERS=()
     VR_CLEANUP_VOLUMES=()
+    # A snapshot the fence marker has not adopted yet is nobody's: drop it.
+    if [[ -n "$VR_PENDING_SNAPSHOT" ]]; then
+        /usr/bin/rm -rf -- "$VR_PENDING_SNAPSHOT" || true
+        VR_PENDING_SNAPSHOT=""
+    fi
 }
 
 # Leftovers of an interrupted run: throwaway fingerprint volumes and a bootstrap
@@ -1321,19 +1372,22 @@ vr_remove_leftovers() {
 }
 
 vr_print_recovery() {
-    local stage
+    local stage mode
     if ! fenced_by_valkey_restore; then
         vr_note "stopped before the fence was written: the backend and Valkey were not touched."
         return 0
     fi
     stage="$(vr_marker_get stage 2>/dev/null || echo unknown)"
+    mode="$(vr_marker_get mode 2>/dev/null || echo restore)"
     vr_note "INTERRUPTED at stage '$stage'. The backend stays stopped and the fence marker ($VR_MARKER) stays in place."
     if [[ "$stage" == verified || "$stage" == reopening ]]; then
         vr_note "The restore itself is verified. Retry the reopen: valkey-restore --reopen --confirm-reopen"
+    elif [[ "$mode" == rollback ]]; then
+        vr_note "Resume (idempotent): valkey-restore --rollback '$(vr_marker_get backup_path 2>/dev/null || echo '<kept-copy>')' --confirm-fence"
     else
         vr_note "Resume (idempotent): valkey-restore '$(vr_marker_get backup_path 2>/dev/null || echo '<backup>')' --confirm-fence"
     fi
-    vr_note "Roll back to the data that was replaced: valkey-restore <replaced-copy>/appendonlydir (or dump.rdb) --confirm-fence; copies: $(vr_marker_get replaced_copies 2>/dev/null || echo none)"
+    vr_note "Roll back to the data that was replaced (the fence is kept throughout): valkey-restore --rollback <replaced-copy>/appendonlydir (or <replaced-copy>/dump.rdb) --confirm-fence; copies: $(vr_marker_get replaced_copies 2>/dev/null || echo none)"
     vr_note "Give up without restarting the backend: valkey-restore --abort --confirm-fence"
 }
 
@@ -1416,30 +1470,104 @@ vr_tree_digest() {
     printf '%s\n' "$listing" | /usr/bin/sha256sum | /usr/bin/awk '{ print $1 }'
 }
 
-vr_inspect_backup() {
-    local path="$1" magic
+# The operator-supplied path is read exactly once, by vr_snapshot_take. Every
+# later step (integrity check, throwaway fingerprint load, staging) works on the
+# snapshot, so the bytes that were checked are the bytes that get restored.
+vr_source_check() {
+    local path="$1"
     [[ "$path" =~ ^/[A-Za-z0-9._/+@=-]+$ ]] \
         || die "valkey-restore: the backup must be an absolute path of letters, digits and . _ / + @ = - only."
     [[ ! -L "$path" ]] || die "valkey-restore: the backup must not be a symbolic link."
     if [[ -f "$path" ]]; then
-        [[ -r "$path" && -s "$path" ]] || die "valkey-restore: the backup file is unreadable or empty."
-        magic="$(/usr/bin/head -c 6 "$path" 2>/dev/null || true)"
-        [[ "$magic" == REDIS* || "$magic" == VALKEY ]] \
-            || die "valkey-restore: the backup file is not a Valkey/Redis RDB (bad magic)."
+        [[ -r "$path" ]] || die "valkey-restore: the backup file is unreadable or empty."
         VR_BACKUP_FORM=rdb
-        VR_BACKUP_DIGEST="$(sha256_file "$path")"
     elif [[ -d "$path" ]]; then
-        [[ -f "$path/appendonly.aof.manifest" && ! -L "$path/appendonly.aof.manifest" ]] \
-            || die "valkey-restore: an AOF backup must be the multi-part appendonlydir (appendonly.aof.manifest missing)."
-        [[ -z "$(/usr/bin/find "$path" ! -type f ! -type d -print -quit)" ]] \
-            || die "valkey-restore: the AOF backup directory may contain only regular files."
+        [[ -r "$path" ]] || die "valkey-restore: the AOF backup directory is unreadable."
         VR_BACKUP_FORM=aof
-        VR_BACKUP_DIGEST="$(vr_tree_digest "$path")"
     else
         die "valkey-restore: the backup does not exist."
     fi
-    [[ "$VR_BACKUP_DIGEST" =~ ^[0-9a-f]{64}$ ]] || die "valkey-restore: unable to fingerprint the backup."
     VR_BACKUP_PATH="$path"
+}
+
+vr_snapshot_digest() {
+    if [[ "$VR_BACKUP_FORM" == rdb ]]; then sha256_file "$1/dump.rdb"; else vr_tree_digest "$1/appendonlydir"; fi
+}
+
+vr_snapshot_take() {
+    local dir="$VR_SNAPSHOT_ROOT/$VR_STAMP" magic
+    [[ -n "$VR_SNAPSHOT_ROOT" && "$VR_SNAPSHOT_ROOT" == /*/* ]] || die "valkey-restore: the snapshot area is not configured."
+    [[ ! -L "$VR_SNAPSHOT_ROOT" ]] || die "valkey-restore: the snapshot area must not be a symbolic link."
+    ( umask 077; /usr/bin/install -d -m 700 "$VR_SNAPSHOT_ROOT" "$dir" ) \
+        || die "valkey-restore: unable to create the protected snapshot area."
+    [[ -O "$VR_SNAPSHOT_ROOT" ]] || die "valkey-restore: the snapshot area is not owned by the operator."
+    VR_PENDING_SNAPSHOT="$dir"
+    if [[ "$VR_BACKUP_FORM" == rdb ]]; then
+        ( umask 077; /usr/bin/cp --no-dereference -- "$VR_BACKUP_PATH" "$dir/dump.rdb" ) \
+            || die "valkey-restore: unable to copy the backup into the protected snapshot."
+    else
+        ( umask 077; /usr/bin/cp -R --no-dereference -- "$VR_BACKUP_PATH" "$dir/appendonlydir" ) \
+            || die "valkey-restore: unable to copy the backup into the protected snapshot."
+    fi
+    /usr/bin/chmod -R go-rwx "$dir"
+    # From here on only the snapshot is looked at, never the operator path again.
+    if [[ "$VR_BACKUP_FORM" == rdb ]]; then
+        [[ -f "$dir/dump.rdb" && ! -L "$dir/dump.rdb" && -s "$dir/dump.rdb" ]] \
+            || die "valkey-restore: the backup file is unreadable or empty."
+        magic="$(/usr/bin/head -c 6 "$dir/dump.rdb" 2>/dev/null || true)"
+        [[ "$magic" == REDIS* || "$magic" == VALKEY ]] \
+            || die "valkey-restore: the backup file is not a Valkey/Redis RDB (bad magic)."
+    else
+        [[ -d "$dir/appendonlydir" && ! -L "$dir/appendonlydir" && -f "$dir/appendonlydir/appendonly.aof.manifest" \
+            && ! -L "$dir/appendonlydir/appendonly.aof.manifest" ]] \
+            || die "valkey-restore: an AOF backup must be the multi-part appendonlydir (appendonly.aof.manifest missing)."
+        [[ -z "$(/usr/bin/find "$dir/appendonlydir" ! -type f ! -type d -print -quit)" ]] \
+            || die "valkey-restore: the AOF backup directory may contain only regular files."
+    fi
+    VR_BACKUP_DIGEST="$(vr_snapshot_digest "$dir")"
+    [[ "$VR_BACKUP_DIGEST" =~ ^[0-9a-f]{64}$ ]] || die "valkey-restore: unable to fingerprint the backup."
+    VR_SNAPSHOT_DIR="$dir"
+}
+
+# Re-hash the recorded snapshot: a snapshot someone touched after the preflight
+# is refused (the fence stays), never restored.
+vr_snapshot_verify() {
+    local actual
+    [[ -n "$VR_SNAPSHOT_DIR" && "$VR_SNAPSHOT_DIR" == "$VR_SNAPSHOT_ROOT"/* && -d "$VR_SNAPSHOT_DIR" \
+        && ! -L "$VR_SNAPSHOT_DIR" && -O "$VR_SNAPSHOT_DIR" ]] \
+        || die "valkey-restore: the verified snapshot is missing or not protected. The backend stays stopped; the fence stays in place. Start over with --abort."
+    actual="$(vr_snapshot_digest "$VR_SNAPSHOT_DIR")" \
+        || die "valkey-restore: unable to re-hash the verified snapshot. The backend stays stopped; the fence stays in place."
+    [[ "$actual" == "$VR_BACKUP_DIGEST" ]] \
+        || die "valkey-restore: the verified snapshot changed after the preflight (digest mismatch). Nothing was restored from it. The backend stays stopped; the fence stays in place; use --abort and start over."
+}
+
+# What is in the data volume right now must be the snapshot's bytes, byte for byte.
+vr_verify_staged() {
+    local actual
+    actual="$(vr_docker run --rm --network none --user 0 --entrypoint sh -v "$VR_VOLUME:/data:ro" "$VR_IMAGE" \
+        -c "$VALKEY_STAGED_DIGEST_SCRIPT" sh "$VR_BACKUP_FORM")" \
+        || die "valkey-restore: unable to read back the staged data. The backend stays stopped; the fence stays in place."
+    actual="$(printf '%s' "$actual" | /usr/bin/tr -d '\r\n')"
+    [[ "$actual" == "$VR_BACKUP_DIGEST" ]] \
+        || die "valkey-restore: the staged data does not match the verified snapshot (expected $VR_BACKUP_DIGEST, got ${actual:-<none>}). Valkey was not started on it. The backend stays stopped; the fence stays in place."
+}
+
+# A rollback may only use data this procedure kept itself.
+vr_check_rollback_path() {
+    local path="$1" root="${VR_REPLACED_ROOT%/}" rest real_root
+    [[ "$path" =~ ^/[A-Za-z0-9._/+@=-]+$ && "$path" != *//* ]] \
+        || die "valkey-restore --rollback: the kept copy must be an absolute path of letters, digits and . _ / + @ = - only."
+    [[ "$path" == "$root"/* ]] \
+        || die "valkey-restore --rollback accepts only a kept copy under $root/<timestamp>/ (the data a restore replaced); '$path' is outside it."
+    rest="${path#"$root"/}"
+    [[ "$rest" =~ ^([A-Za-z0-9._-]+)/(appendonlydir|dump\.rdb)$ && "${BASH_REMATCH[1]}" != . && "${BASH_REMATCH[1]}" != .. ]] \
+        || die "valkey-restore --rollback accepts only $root/<timestamp>/appendonlydir or $root/<timestamp>/dump.rdb."
+    [[ ! -L "$root" && ! -L "$root/${rest%%/*}" && ! -L "$path" && -e "$path" ]] \
+        || die "valkey-restore --rollback: the kept copy does not exist or goes through a symbolic link."
+    real_root="$(/usr/bin/realpath -e -- "$root")" \
+        && [[ "$(/usr/bin/realpath -e -- "$path")" == "$real_root/$rest" ]] \
+        || die "valkey-restore --rollback: the kept copy resolves outside $root."
 }
 
 # ---- fingerprint ----------------------------------------------------------
@@ -1486,10 +1614,10 @@ vr_fp_from_line() { printf '%s' "$1" | /usr/bin/tr ';' '\n'; }
 vr_stage_data() {
     local volume="$1" mount script
     if [[ "$VR_BACKUP_FORM" == rdb ]]; then
-        mount="$VR_BACKUP_PATH:/backup/dump.rdb:ro"
+        mount="$VR_SNAPSHOT_DIR/dump.rdb:/backup/dump.rdb:ro"
         script="$VALKEY_STAGE_RDB_SCRIPT"
     else
-        mount="$VR_BACKUP_PATH:/backup/appendonlydir:ro"
+        mount="$VR_SNAPSHOT_DIR/appendonlydir:/backup/appendonlydir:ro"
         script="$VALKEY_STAGE_AOF_SCRIPT"
     fi
     vr_docker run --rm --network none --user 0 --entrypoint sh \
@@ -1553,6 +1681,8 @@ vr_marker_create() {
         "backup_path=$VR_BACKUP_PATH" \
         "backup_form=$VR_BACKUP_FORM" \
         "backup_digest=$VR_BACKUP_DIGEST" \
+        "snapshot_dir=$VR_SNAPSHOT_DIR" \
+        "mode=restore" \
         "project=$VR_PROJECT" \
         "volume=$VR_VOLUME" \
         "valkey_cid=$VR_VALKEY_CID" \
@@ -1563,6 +1693,29 @@ vr_marker_create() {
         "replaced_copies=" >"$temporary"
     /usr/bin/chmod 600 "$temporary"
     /usr/bin/mv -f "$temporary" "$VR_MARKER"
+    VR_PENDING_SNAPSHOT=""
+}
+
+# Rollback inside the fence: the snapshot, its digest and its fingerprint switch
+# together in ONE rename, so an interruption leaves either the old consistent
+# target or the new one, never a mix. The fence marker is never removed.
+vr_marker_retarget() {
+    local old
+    vr_marker_put_many \
+        "mode=rollback" \
+        "stage=fencing" \
+        "backup_path=$VR_BACKUP_PATH" \
+        "backup_form=$VR_BACKUP_FORM" \
+        "backup_digest=$VR_BACKUP_DIGEST" \
+        "snapshot_dir=$VR_SNAPSHOT_DIR" \
+        "expected_fingerprint=$(vr_fp_one_line "$VR_EXPECTED_FP")" \
+        "new_run_id=" \
+        "verified_at_unix="
+    VR_PENDING_SNAPSHOT=""
+    for old in "$VR_SNAPSHOT_ROOT"/*; do
+        [[ "$old" != "$VR_SNAPSHOT_DIR" && -e "$old" ]] || continue
+        /usr/bin/rm -rf -- "$old" || true
+    done
 }
 
 vr_fence() {
@@ -1620,14 +1773,12 @@ vr_aof_rewrite_done() {
 }
 
 vr_restore_data() {
-    local digest
     vr_marker_put stage restoring
-    if [[ "$VR_BACKUP_FORM" == aof ]]; then digest="$(vr_tree_digest "$VR_BACKUP_PATH")"; else digest="$(sha256_file "$VR_BACKUP_PATH")"; fi
-    [[ "$digest" == "$VR_BACKUP_DIGEST" ]] \
-        || die "valkey-restore: the backup changed since the preflight. The backend stays stopped; re-run the restore."
+    vr_snapshot_verify
     vr_container_running "$VR_VALKEY_CID" && vr_stop_container "$VR_VALKEY_CID"
     vr_copy_replaced
     vr_stage_data "$VR_VOLUME" || die "valkey-restore: unable to stage the backup into the data volume. The backend stays stopped."
+    vr_verify_staged
     if [[ "$VR_BACKUP_FORM" == rdb ]]; then vr_bootstrap_rdb; fi
     vr_docker start "$VR_VALKEY_CID" >/dev/null || die "valkey-restore: unable to start Valkey. The backend stays stopped."
     vr_wait "Valkey to answer PING" vr_ping_ok "$VR_VALKEY_CID"
@@ -1658,27 +1809,47 @@ vr_verify() {
 # ---- commands -------------------------------------------------------------
 
 valkey_restore_run() {
-    local backup="$1" marker_digest
+    local source="$1" mode="${2:-restore}"
+    VR_MODE="$mode"
     VR_STAMP="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)-$BASHPID"
     vr_arm_traps
     vr_remove_leftovers
-    vr_inspect_backup "$backup"
+    vr_source_check "$source"
     vr_resolve_target
     if fenced_by_valkey_restore; then
-        marker_digest="$(vr_marker_get backup_digest || true)"
-        [[ "$marker_digest" == "$VR_BACKUP_DIGEST" && "$(vr_marker_get project || true)" == "$VR_PROJECT" ]] \
-            || die "valkey-restore: a fence for a different backup is active ($VR_MARKER). Re-run with that backup, roll back, or --abort first."
-        VR_EXPECTED_FP="$(vr_fp_from_line "$(vr_marker_get expected_fingerprint)")"
-        if [[ "$(vr_marker_get stage || true)" == verified && -n "$VR_OBSERVED_RUN_ID" \
-            && "$VR_OBSERVED_RUN_ID" == "$(vr_marker_get new_run_id || true)" ]] \
-            && vr_fingerprint_matches "$VR_EXPECTED_FP" "$(vr_fingerprint "$VR_VALKEY_CID")"; then
-            vr_note "already restored and verified; nothing to redo."
-            VR_ACTIVE=0
-            printf '%s\n' "environment=fallback-server" "valkey_restore=verified" "fenced=true" \
-                "next=valkey-restore --reopen --confirm-reopen"
-            return 0
+        [[ "$(vr_marker_get project || true)" == "$VR_PROJECT" ]] \
+            || die "valkey-restore: the fence ($VR_MARKER) belongs to another compose project."
+        vr_snapshot_take
+        if [[ "$(vr_marker_get backup_digest || true)" == "$VR_BACKUP_DIGEST" \
+            && "$(vr_marker_get backup_path || true)" == "$VR_BACKUP_PATH" ]]; then
+            # Same backup: resume with the snapshot taken at the first preflight
+            # (re-hashed below), not with the copy that was just made.
+            /usr/bin/rm -rf -- "$VR_PENDING_SNAPSHOT"
+            VR_PENDING_SNAPSHOT=""
+            VR_BACKUP_FORM="$(vr_marker_get backup_form)"
+            VR_BACKUP_DIGEST="$(vr_marker_get backup_digest)"
+            VR_SNAPSHOT_DIR="$(vr_marker_get snapshot_dir || true)"
+            vr_snapshot_verify
+            VR_EXPECTED_FP="$(vr_fp_from_line "$(vr_marker_get expected_fingerprint)")"
+            if [[ "$(vr_marker_get stage || true)" == verified && -n "$VR_OBSERVED_RUN_ID" \
+                && "$VR_OBSERVED_RUN_ID" == "$(vr_marker_get new_run_id || true)" ]] \
+                && vr_fingerprint_matches "$VR_EXPECTED_FP" "$(vr_fingerprint "$VR_VALKEY_CID")"; then
+                vr_note "already restored and verified; nothing to redo."
+                VR_ACTIVE=0
+                printf '%s\n' "environment=fallback-server" "valkey_restore=verified" "fenced=true" \
+                    "next=valkey-restore --reopen --confirm-reopen"
+                return 0
+            fi
+        elif [[ "$mode" == rollback ]]; then
+            vr_backup_fingerprint
+            vr_marker_retarget
+        else
+            die "valkey-restore: a fence for a different backup is active ($VR_MARKER). Re-run with that backup, roll back with 'valkey-restore --rollback <kept-copy> --confirm-fence', or --abort first."
         fi
     else
+        [[ "$mode" == restore ]] || die "valkey-restore --rollback only runs inside an active fence."
+        vr_snapshot_purge
+        vr_snapshot_take
         vr_backup_fingerprint
     fi
     vr_fence
@@ -1689,7 +1860,9 @@ valkey_restore_run() {
         "environment=fallback-server" \
         "valkey_restore=verified" \
         "fenced=true" \
+        "mode=$mode" \
         "backup_form=$VR_BACKUP_FORM" \
+        "backup_digest=$VR_BACKUP_DIGEST" \
         "old_run_id=$(vr_marker_get old_run_id)" \
         "new_run_id=$VR_NEW_RUN_ID" \
         "new_master_replid=${VR_NEW_REPLID:-unknown}" \
@@ -1771,7 +1944,7 @@ vr_release_without_start() {
     local stage="$1"
     shift
     if [[ "$stage" == reopening ]]; then vr_stop_api_again || die "valkey-restore: unable to stop the partially reopened API. The fence stays in place."; fi
-    /usr/bin/rm -f "$VR_MARKER"
+    vr_clear_fence
     VR_ACTIVE=0
     die "valkey-restore: the Valkey restore is verified and the fence is released, but the API was NOT started: $*"
 }
@@ -1798,7 +1971,7 @@ valkey_restore_reopen() {
     fi
     cids="$(vr_marker_get api_cids || true)"
     if [[ "$(vr_marker_get api_was_running)" != 1 ]]; then
-        /usr/bin/rm -f "$VR_MARKER"
+        vr_clear_fence
         VR_ACTIVE=0
         printf '%s\n' "environment=fallback-server" "valkey_restore=reopened" "api_started=false" \
             "reason=the API was not running when the fence began; start it with the normal flow."
@@ -1832,7 +2005,7 @@ valkey_restore_reopen() {
         vr_stop_api_again || true
         die "valkey-restore: the reopened API failed verification; it was stopped again and the fence stays in place."
     fi
-    /usr/bin/rm -f "$VR_MARKER"
+    vr_clear_fence
     VR_ACTIVE=0
     lease="$(lease_status_fields)"
     printf '%s\n' "environment=fallback-server" "valkey_restore=reopened" "api_started=true" "reopen_mode=$VR_REOPEN_MODE"
@@ -1847,7 +2020,7 @@ valkey_restore_abort() {
     local stage
     fenced_by_valkey_restore || die "valkey-restore: no fence is active; nothing to abort."
     stage="$(vr_marker_get stage || echo unknown)"
-    /usr/bin/rm -f "$VR_MARKER"
+    vr_clear_fence
     printf '%s\n' \
         "environment=fallback-server" \
         "valkey_restore=aborted" \
@@ -1862,6 +2035,7 @@ valkey_restore() {
         case "$arg" in
             --reopen) mode=reopen ;;
             --abort) mode=abort ;;
+            --rollback) mode=rollback ;;
             --confirm-fence) confirm_fence=1 ;;
             --confirm-reopen) confirm_reopen=1 ;;
             --*) usage; exit 1 ;;
@@ -1876,6 +2050,17 @@ valkey_restore() {
             [[ "$confirm_fence" == 1 ]] \
                 || die "valkey-restore stops the backend and replaces the Valkey data. Re-run with --confirm-fence to proceed."
             valkey_restore_run "$backup"
+            ;;
+        rollback)
+            [[ -n "$backup" && "$confirm_reopen" == 0 ]] || { usage; exit 1; }
+            [[ "$confirm_fence" == 1 ]] \
+                || die "valkey-restore --rollback replaces the Valkey data with a kept copy, inside the fence. Re-run with --confirm-fence to proceed."
+            # A rollback never opens a fence of its own: without one, a normal
+            # restore (preflight, fence, verify) is the path.
+            fenced_by_valkey_restore \
+                || die "valkey-restore --rollback only runs inside an active fence ($VR_MARKER) and there is none. Restore the kept copy with a normal 'valkey-restore <kept-copy> --confirm-fence' instead."
+            vr_check_rollback_path "$backup"
+            valkey_restore_run "$backup" rollback
             ;;
         reopen)
             [[ -z "$backup" && "$confirm_fence" == 0 ]] || { usage; exit 1; }
@@ -1942,7 +2127,7 @@ main() {
             stop_release
             ;;
         valkey-restore)
-            [[ "$#" -ge 2 && "$#" -le 3 ]] || { usage; exit 1; }
+            [[ "$#" -ge 2 && "$#" -le 4 ]] || { usage; exit 1; }
             valkey_restore "${@:2}"
             ;;
         *)

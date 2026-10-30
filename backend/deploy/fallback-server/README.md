@@ -98,9 +98,12 @@ identity-checked stale lock; do not remove controller lock files by hand or
 create an alternate lock location.
 
 `valkey-restore` also writes `state/valkey-restore-fence` (the fence marker;
-never delete it by hand, use `--reopen` or `--abort`) and keeps the data it
+never delete it by hand, use `--reopen` or `--abort`), keeps the data it
 replaced under `/opt/babyjamjam-fallback-server/valkey-replaced/<timestamp>/`
-(root-owned `0700`; remove old copies by hand once a restore is accepted).
+(root-owned `0700`; remove old copies by hand once a restore is accepted) and,
+while a fence exists, the verified copy of the backup under
+`/opt/babyjamjam-fallback-server/valkey-restore-snapshot/` (root-owned `0700`,
+removed together with the marker).
 
 ## Production DB identity gate
 
@@ -371,6 +374,7 @@ that is what you want.
 ```text
 babyjamjam-fallback-server valkey-restore <absolute-backup-path> --confirm-fence
 babyjamjam-fallback-server valkey-restore --reopen --confirm-reopen
+babyjamjam-fallback-server valkey-restore --rollback <kept-copy-path> --confirm-fence
 babyjamjam-fallback-server valkey-restore --abort --confirm-fence
 ```
 
@@ -381,7 +385,12 @@ container, when they are missing. The backup is an RDB file or the multi-part
 refused. The restore ends fenced and verified; reopening is a separate, flagged
 command because it is the step that exposes traffic.
 
-1. **Preflight.** The backup is validated, hashed and loaded into a throwaway,
+1. **Preflight.** The backup path you pass is read **once**: it is copied into a
+   root-owned `0700`/`0600` snapshot under
+   `/opt/babyjamjam-fallback-server/valkey-restore-snapshot/`. The snapshot is
+   validated and hashed, and from then on the integrity check, the throwaway
+   load and the real staging all use the snapshot, never your path (replacing
+   the file afterwards changes nothing). The snapshot is loaded into a throwaway,
    network-less container on a throwaway volume. Its `DBSIZE`, the realtime
    stream's `last-generated-id` (or its absence) and a hash over a sorted sample
    of persistent key names and types are recorded as the backup *fingerprint*.
@@ -400,8 +409,12 @@ command because it is the step that exposes traffic.
    `aof_last_bgrewrite_status:ok` before Valkey is started with its normal
    command. (Valkey 8 with `appendonly yes` loads only `appendonlydir` and
    ignores `dump.rdb`: copying an RDB next to an existing AOF silently serves the
-   *old* data, and removing the AOF starts empty.) Valkey is started by
-   `docker start` of the same container, which is a fresh process.
+   *old* data, and removing the AOF starts empty.) Before anything is loaded, the
+   snapshot is re-hashed and the staged bytes in the volume are hashed again in a
+   read-only container; both must equal the digest recorded in the preflight, or
+   the run aborts fenced (the fingerprint alone cannot see a value-only change).
+   Valkey is started by `docker start` of the same container, which is a fresh
+   process.
 4. **Verify.** `PING`, `role:master`, the AOF is on, the restored dataset equals
    the backup fingerprint, and `run_id` differs from the recorded one. The
    fingerprint is the real proof (any restart changes `run_id`); persistent keys,
@@ -412,10 +425,28 @@ Any failure or signal at any stage leaves the API stopped and the marker in
 place and prints how to continue. The command is idempotent: re-running it with
 the same backup from a fenced state repeats the stages (each attempt keeps its
 own copy of the data it replaced, the original `run_id` is kept, an already
-verified restore is a no-op). To roll back, restore the kept copy through the
-same command (`<copy>/appendonlydir`, or `<copy>/dump.rdb` when there is no AOF
-directory). `--abort --confirm-fence` removes the marker without starting
+verified restore is a no-op); a re-run reuses the recorded snapshot (re-hashed
+first), and a re-run with a different path or different bytes is refused.
+`--abort --confirm-fence` removes the marker and the snapshot without starting
 anything.
+
+### Rollback (inside the fence)
+
+```text
+babyjamjam-fallback-server valkey-restore --rollback <replaced-root>/<timestamp>/appendonlydir --confirm-fence
+```
+
+To go back to the data a restore replaced, use `--rollback` with the kept copy
+(`.../valkey-replaced/<timestamp>/appendonlydir`, or `.../dump.rdb` when that
+copy has no AOF directory). It only runs while the fence marker exists, and it is
+refused otherwise (a normal restore is the path then); it accepts only an entry
+directly under `valkey-replaced/<timestamp>/` (no symlinks, nothing outside the
+root). The copy goes through the same snapshot, validation, throwaway
+fingerprint, staging check and verification as a new backup. The marker is kept
+the whole time (every start path stays refused), the new target is recorded in
+it, and the run ends verified and still fenced: `--reopen --confirm-reopen` is
+the only way back to serving traffic. The data the rollback replaces is kept too,
+and an interrupted rollback is resumed by running the same command again.
 
 ### The fence outlasts the process
 
