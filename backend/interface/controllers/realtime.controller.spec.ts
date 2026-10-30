@@ -162,15 +162,20 @@ describe("RealtimeController", () => {
             a.subscription.unsubscribe();
         });
 
-        it("a token does not expose the raw cursor (no epoch, no sequence)", () => {
-            const { subject, subscribe, epoch } = setup();
+        it("a token does not expose the raw cursor or the epoch, and decodes back to the cursor", () => {
+            const { subject, subscribe, epoch, cursor, cursorOf } = setup();
             const a = subscribe("branch-a");
             subject.next({ branchId: "branch-a", entities: ["client"] });
 
-            for (const message of a.received) {
-                expect(message.id).not.toContain(epoch);
-                expect(message.id).not.toMatch(/\d+:\d+|\d+-\d+/);
-            }
+            expect(a.received.map((e) => e.type)).toEqual(["ready", "entity-changed"]);
+            // Deterministic: random base64url can contain any digit/separator pattern, so look for the
+            // exact strings an unencrypted id would have carried instead.
+            [cursor(0), cursor(1)].forEach((raw, i) => {
+                const id = a.received[i]?.id as string;
+                expect(id).not.toContain(raw);
+                expect(id).not.toContain(epoch);
+                expect(cursorOf(id)).toBe(raw);
+            });
             a.subscription.unsubscribe();
         });
     });
@@ -193,9 +198,9 @@ describe("RealtimeController", () => {
             a.subscription.unsubscribe();
         });
 
-        it("a ping on an unchanged position reuses the token of the last message (identical id)", () => {
+        it("two consecutive pings on an unchanged position have different ids that decode to the same position", () => {
             jest.useFakeTimers();
-            const { subject, subscribe } = setup();
+            const { subject, subscribe, cursor, cursorOf } = setup();
             const a = subscribe("branch-a");
             subject.next({ branchId: "branch-a", entities: ["client"] });
 
@@ -204,15 +209,33 @@ describe("RealtimeController", () => {
             const changed = a.received.find((e) => e.type === "entity-changed");
             const pings = a.received.filter((e) => e.type === "ping");
             expect(pings).toHaveLength(3);
-            expect(pings.map((p) => p.id)).toEqual([changed?.id, changed?.id, changed?.id]);
+            const ids = [changed?.id, ...pings.map((p) => p.id)] as string[];
+            expect(new Set(ids).size).toBe(ids.length);
+            expect(ids.map(cursorOf)).toEqual([cursor(1), cursor(1), cursor(1), cursor(1)]);
             a.subscription.unsubscribe();
         });
 
-        it("only branch B writing: branch A's connection sees no id change on ping or anything else", () => {
+        it("no two ids on the wire are ever equal, across ready, entity-changed and ping, repeated positions included", () => {
+            jest.useFakeTimers();
+            const { subject, subscribe } = setup();
+            const a = subscribe("branch-a");
+            for (let i = 0; i < 5; i += 1) {
+                subject.next({ branchId: "branch-b", entities: ["employee"] });
+                jest.advanceTimersByTime(30000);
+            }
+            subject.next({ branchId: "branch-a", entities: ["client"] });
+            jest.advanceTimersByTime(60000);
+
+            const ids = a.received.map((e) => e.id as string);
+            expect(ids.length).toBeGreaterThanOrEqual(8);
+            expect(new Set(ids).size).toBe(ids.length);
+            a.subscription.unsubscribe();
+        });
+
+        it("only branch B writing: every id on A's connection is distinct, and each decodes to the same position", () => {
             jest.useFakeTimers();
             const { subject, subscribe, cursor, view } = setup();
             const a = subscribe("branch-a");
-            const readyId = a.received[0]?.id;
 
             subject.next({ branchId: "branch-b", entities: ["employee"] });
             jest.advanceTimersByTime(30000);
@@ -221,8 +244,9 @@ describe("RealtimeController", () => {
             jest.advanceTimersByTime(30000);
 
             expect(a.received.map((e) => e.type)).toEqual(["ready", "ping", "ping"]);
-            expect(new Set(a.received.map((e) => e.id))).toEqual(new Set([readyId]));
-            expect(view(a.received).every((e) => e.id === cursor(0))).toBe(true);
+            const ids = a.received.map((e) => e.id);
+            expect(new Set(ids).size).toBe(ids.length);
+            expect(view(a.received).map((e) => e.id)).toEqual([cursor(0), cursor(0), cursor(0)]);
             a.subscription.unsubscribe();
         });
 
@@ -256,12 +280,15 @@ describe("RealtimeController", () => {
 
             expect(second.received.map((e) => [e.type, e.data])).toEqual([["ready", { resumed: true }]]);
             expect(second.received[0]?.id).not.toBe(oldToken);
+            expect(cursorOf(oldToken)).toBe(cursor(0));
             expect(cursorOf(second.received[0]?.id)).toBe(cursor(0));
             // Nothing is sent for the scanned B batches, but the connection's position now sits past them.
             jest.advanceTimersByTime(30000);
             const ping = second.received.at(-1);
             expect(ping?.type).toBe("ping");
             expect(cursorOf(ping?.id)).toBe(cursor(2));
+            // Whether the position moved during the gap must not show up as (in)equality of ids.
+            expect(ping?.id).not.toBe(second.received[0]?.id);
             second.subscription.unsubscribe();
         });
 
@@ -572,6 +599,21 @@ describe("RealtimeController", () => {
                 ["abcdef012345:0", "reset", {}],
                 ["abcdef012345:1", "entity-changed", { entities: ["call"] }],
             ]);
+            subscription.unsubscribe();
+        });
+
+        it("every message gets its own token, including repeated resets to the same position", () => {
+            const transport = new ScriptedTransport();
+            const controller = new RealtimeController({ events$: new Subject() } as unknown as EntityChangeEventBus, transport);
+            const received: Received = [];
+            const subscription = controller.events({ branchId: "branch-a" }).subscribe((e) => received.push(e));
+
+            transport.subject.next({ type: "reset", position: "abcdef012345:0" });
+            transport.subject.next({ type: "reset", position: "abcdef012345:0" });
+
+            const ids = received.map((e) => e.id as string);
+            expect(ids.map((id) => codec.decode(id))).toEqual(["100-0", "abcdef012345:0", "abcdef012345:0"]);
+            expect(new Set(ids).size).toBe(3);
             subscription.unsubscribe();
         });
 

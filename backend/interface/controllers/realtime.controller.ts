@@ -28,8 +28,10 @@ export class RealtimeController {
      * `Last-Event-ID`) can be resumed without gaps or duplicates.
      *
      * The position advances only on batches this connection actually receives. Batches of other
-     * branches change nothing it can see: ids and pings stay identical while only other branches
-     * write, so a branch cannot count or time another branch's writes. The one exception is the
+     * branches change nothing it can see: while only other branches write, every id still decodes
+     * to the same position, so a branch cannot count or time another branch's writes. No two ids
+     * on the wire are ever equal (a fresh random IV per message), so even "did this id change"
+     * carries no information. The one exception is the
      * connect itself, where the position moves to the end of what the server scanned (everything
      * visible up to there has been delivered), so a quiet branch still resumes later without
      * falling out of retention.
@@ -39,7 +41,7 @@ export class RealtimeController {
      * - `entity-changed` `{entities: [...kinds]}` for the caller's branch or an unscoped system write.
      *   It carries no row data and never the branch id; clients refetch their own lists.
      * - `reset` `{}` when continuity can no longer be promised (transport switch, Valkey loss).
-     * - `ping` every 30s, carrying the current position token.
+     * - `ping` every 30s, carrying a fresh token of the current position.
      */
     @Sse("events")
     events(
@@ -56,15 +58,13 @@ export class RealtimeController {
 
         return new Observable<MessageEvent>((subscriber) => {
             let position = this.transport.position();
-            // Encrypted once per position change and reused, so repeated pings on an unchanged
-            // position carry an identical id.
-            let positionToken: string | null = null;
+            // A fresh token (fresh random IV) for every message, even on an unchanged position: equal ids
+            // on the wire would tell the client "nothing moved in between", which is exactly what other
+            // branches' activity must not be observable through.
             const setPosition = (next: string): void => {
-                if (next === position) return;
                 position = next;
-                positionToken = null;
             };
-            const idOfPosition = (): string => (positionToken ??= codec.encode(position));
+            const idOfPosition = (): string => codec.encode(position);
 
             let ready = false;
             // Highest cursor already sent through replay; live batches at or below it are duplicates.

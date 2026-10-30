@@ -11,7 +11,31 @@ import { ValkeyEntityChangeTransport } from "./valkey-entity-change-transport";
 
 type Received = Array<MessageEvent & { id?: string }>;
 
-const VALKEY_URL = (process.env["REALTIME_TEST_VALKEY_URL"] ?? process.env["VALKEY_URL"])?.trim();
+/**
+ * ioredis silently falls back to localhost:6379 for a URL without a port (`redis://127.0.0.1:` or
+ * `redis://host`), which is where a developer's or host's own Redis lives; this spec writes streams,
+ * trims them and kills client connections, so it must never end up there by accident. An unset URL
+ * still just skips the integration tests.
+ */
+function explicitPortUrl(raw: string | undefined): string | undefined {
+    const url = raw?.trim();
+    if (!url) return undefined;
+    let port = "";
+    try {
+        port = new URL(url).port;
+    } catch {
+        // falls through to the error below
+    }
+    if (port === "") {
+        throw new Error(
+            "REALTIME_TEST_VALKEY_URL / VALKEY_URL must name an explicit port (e.g. redis://127.0.0.1:56379); " +
+                "refusing to let the client default to 6379.",
+        );
+    }
+    return url;
+}
+
+const VALKEY_URL = explicitPortUrl(process.env["REALTIME_TEST_VALKEY_URL"] ?? process.env["VALKEY_URL"]);
 const STREAM_CURSOR = /^\d+-\d+$/;
 const RING_CURSOR = /^[0-9a-f]+:\d+$/;
 // The desktop and mobile proxies validate a cursor with exactly this expression.
