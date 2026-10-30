@@ -36,26 +36,10 @@ export interface StreamEntry {
     /**
      * `g`: the stream incarnation this transport stamped on the entry when it wrote it. It is the
      * evidence that an entry belongs to the history a cursor was issued in; entries written before
-     * `g` existed, or by anything but this transport, have none (`null`) and prove nothing. The
-     * first deploy therefore treats the pre-existing tail as unproven (see `base` in the settle
-     * script, which keeps that from costing a spurious refresh).
+     * `g` existed, or by anything but this transport, have none (`null`) and prove nothing: the
+     * settle script discards a stream holding such an entry and starts a new incarnation.
      */
     incarnation: string | null;
-}
-
-/**
- * The incarnation an entry claims, whatever else is wrong with it (exactly one well-formed `g`, else
- * `null`). Replay and the reader use it as evidence of origin, independently of whether the body decodes.
- */
-export function entryIncarnation(fields: string[]): string | null {
-    let found: string | null = null;
-    for (let i = 0; i + 1 < fields.length; i += 2) {
-        if (fields[i] !== "g") continue;
-        if (found !== null) return null;
-        found = INCARNATION.test(fields[i + 1] as string) ? (fields[i + 1] as string) : null;
-        if (found === null) return null;
-    }
-    return found;
 }
 
 /** Strict reader of one entry: anything unexpected makes the whole entry unusable (`null`) rather than guessed at. */

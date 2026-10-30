@@ -3,6 +3,7 @@ import { Subject } from "rxjs";
 import type { EntityChangedEvent } from "application/services/entity-change-event-bus.service";
 import { createEntityChangeTransport } from "./create-entity-change-transport";
 import { InProcessEntityChangeTransport, RealtimeRingBuffer } from "./in-process-entity-change-transport";
+import { REALTIME_REPLAY_LIMIT } from "./entity-change-transport";
 import type { TransportSignal } from "./entity-change-transport";
 import { ValkeyEntityChangeTransport } from "./valkey-entity-change-transport";
 
@@ -47,6 +48,20 @@ describe("RealtimeRingBuffer", () => {
         const ring = new RealtimeRingBuffer();
         ring.append(event("a"));
         expect(ring.replayAfter(`${ring.epoch}:1`)).toEqual({ honoured: true, batches: [] });
+    });
+
+    it.each<[number, boolean]>([
+        [REALTIME_REPLAY_LIMIT, true],
+        [REALTIME_REPLAY_LIMIT + 1, false],
+    ])("a resume with %i retained batches after the cursor: honoured = %s (the same 2000-row bound as the Valkey transport)", (count, honoured) => {
+        const ring = new RealtimeRingBuffer();
+        ring.append(event("a"));
+        for (let i = 0; i < count; i += 1) ring.append(event("b", "employee"));
+
+        const result = ring.replayAfter(`${ring.epoch}:1`);
+
+        expect(result.honoured).toBe(honoured);
+        expect(result.honoured && result.batches.length).toBe(honoured ? count : false);
     });
 
     it("does not honour an expired, future, foreign-epoch or malformed cursor", () => {

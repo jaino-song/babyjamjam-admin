@@ -22,6 +22,14 @@ export interface TransportReset {
 
 export type TransportSignal = DeliveredBatch | TransportReset;
 
+/**
+ * A resume replays at most this many raw stream rows (all branches, before the controller filters
+ * by branch). A client that missed more gets `resumed: false` and one full refetch instead of a
+ * partial replay presented as complete. Applies to resume replay only: the live reader pages
+ * through any backlog.
+ */
+export const REALTIME_REPLAY_LIMIT = 2000;
+
 export type ReplayResult = { honoured: true; batches: DeliveredBatch[] } | { honoured: false };
 
 /**

@@ -1,5 +1,5 @@
 import type { EntityChangedEvent } from "application/services/entity-change-event-bus.service";
-import { decodeBatchFields, decodeStreamEntry, encodeBatchFields, entryIncarnation } from "./entity-change-stream-codec";
+import { decodeBatchFields, decodeStreamEntry, encodeBatchFields } from "./entity-change-stream-codec";
 
 const G = "0123456789abcdef";
 
@@ -50,23 +50,5 @@ describe("stream entry codec", () => {
         expect(decodeStreamEntry(["e", '["client"]'])).toEqual({ branchId: null, entities: ["client"], incarnation: null });
         expect(decodeBatchFields("1-0", ["g", G, "e", '["client"]'])).toEqual({ type: "batch", cursor: "1-0", branchId: null, entities: ["client"] });
         expect(decodeStreamEntry(["e", '["client"]', "g", G, "h", "1"])).toBeNull();
-    });
-
-    describe("entryIncarnation (evidence of origin, independent of the body)", () => {
-        it("reads exactly one well-formed g, wherever it sits and whatever else is wrong with the entry", () => {
-            expect(entryIncarnation(["b", "b1", "e", '["client"]', "g", G])).toBe(G);
-            expect(entryIncarnation(["g", G])).toBe(G);
-            expect(entryIncarnation(["e", "not json", "x", "1", "g", G])).toBe(G);
-        });
-
-        it.each<[string, string[]]>([
-            ["no g", ["e", '["client"]']],
-            ["an empty entry", []],
-            ["a duplicated g", ["g", G, "g", G]],
-            ["a malformed g", ["g", "xyz"]],
-            ["g appearing as a value rather than a field name", ["b", "g", "e", '["client"]']],
-        ])("is null for %s", (_label, fields) => {
-            expect(entryIncarnation(fields)).toBeNull();
-        });
     });
 });

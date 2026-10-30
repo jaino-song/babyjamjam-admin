@@ -4,6 +4,7 @@ import { Observable, Subject, Subscription } from "rxjs";
 import type { EntityChangedEvent } from "application/services/entity-change-event-bus.service";
 import { formatRingCursor, parseCursor } from "./entity-change-cursor";
 import { CursorCodec, randomRealtimeCursorKey } from "./entity-change-cursor-codec";
+import { REALTIME_REPLAY_LIMIT } from "./entity-change-transport";
 import type { DeliveredBatch, EntityChangeTransport, ReplayResult, TransportSignal } from "./entity-change-transport";
 
 /** Same order of magnitude as the Valkey stream's `MAXLEN ~`. */
@@ -46,7 +47,10 @@ export class RealtimeRingBuffer {
         // be from the future of this process.
         const firstRetainedSeq = this.lastSeq - this.items.length + 1;
         if (seq > this.lastSeq || seq < firstRetainedSeq - 1) return { honoured: false };
-        return { honoured: true, batches: this.items.slice(seq - (firstRetainedSeq - 1)) };
+        const batches = this.items.slice(seq - (firstRetainedSeq - 1));
+        // Same bound as the Valkey transport (see REALTIME_REPLAY_LIMIT): never a partial replay presented as complete.
+        if (batches.length > REALTIME_REPLAY_LIMIT) return { honoured: false };
+        return { honoured: true, batches };
     }
 }
 

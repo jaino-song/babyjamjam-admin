@@ -6,8 +6,9 @@ import { Observable, Subject, Subscription } from "rxjs";
 import type { EntityChangedEvent } from "application/services/entity-change-event-bus.service";
 import { compareCursors, formatStreamCursor, parseCursor } from "./entity-change-cursor";
 import { CursorCodec, isEncodableCursor } from "./entity-change-cursor-codec";
-import { decodeBatchFields, encodeBatchFields, entryIncarnation } from "./entity-change-stream-codec";
+import { decodeBatchFields, encodeBatchFields } from "./entity-change-stream-codec";
 import { REALTIME_RETENTION, RealtimeRingBuffer } from "./in-process-entity-change-transport";
+import { REALTIME_REPLAY_LIMIT } from "./entity-change-transport";
 import type { DeliveredBatch, EntityChangeTransport, ReplayResult, TransportSignal } from "./entity-change-transport";
 
 export const REALTIME_STREAM_KEY = "realtime:entity-changes";
@@ -27,64 +28,125 @@ export interface ValkeyTransportOptions {
 
 type Mode = "valkey" | "fallback";
 
-/** What one round trip to the stream and its incarnation record says about the stream right now. */
+/** One stream row as Valkey returns it: `[id, [field, value, ...]]`. */
+type StreamRow = [string, string[]];
+
+/** Rows a reader takes from the stream per round trip. */
+const READER_PAGE = 100;
+
+/** What one atomic settle says about the stream right now (and, for a range call, the rows after a cursor). */
 interface StreamState {
     incarnation: string;
     lastGeneratedId: string;
     /** Oldest raw stream id whose successors are all still retained, see `oldestHonourable`. */
     oldestHonourableId: string;
+    /** Rows after the requested id, already proven to carry `incarnation`; empty unless a range was asked for. */
+    rows: StreamRow[];
+}
+
+interface SettleOptions {
+    /** Append this entry (the script stamps `g`) after settling. */
+    append?: string[];
+    /** Also return up to `count` rows strictly after the raw stream id `after`. */
+    range?: { after: string; count: number };
 }
 
 /**
- * Atomic "who is this stream" step, run before every append and on every reader check.
- *
- * The incarnation record (`<stream>:incarnation`, a hash) names one life of the stream, and every
- * entry this transport writes carries that name in its `g` field. Counters alone cannot tell a
- * stream from one that was deleted and refilled (a refill with at least as many entries looks like
- * growth), so identity is taken from evidence in the stream itself: the OLDEST surviving entry must
- * carry `g` equal to the recorded incarnation, or be older than `base` (see below).
- * A new incarnation is minted when
- *  - there is no record yet (first use: state `o`, "nothing written", while the stream is absent,
- *    so a cursor taken at the origin keeps resuming once the first batch creates the stream), or
- *  - the stream held history (`w`) and is now absent, or its counters went backwards, or the same
- *    count shows a different newest id (a raw DEL + XADD that no writer of ours saw), or
- *  - the oldest entry lacks our `g` although it is newer than `base`: somebody else wrote it. An
- *    existing stream with no entry left to vouch for it (emptied after writes since `base`) is
- *    treated the same way: no entry, no proof.
- * `base` is the stream's newest id at the moment the incarnation was minted. Entries at or before it
- * predate the incarnation (a stream written before `g` existed, or the survivors of a recreation):
- * they prove nothing and are never replayed to a token (replay requires `g` on every entry after
- * the cursor), but they may sit at the oldest end until trimmed, so they must not re-trigger a
- * mint on every call. The first deploy therefore costs one `resumed:false` and then settles.
- * Mode `2` forces a mint when the record still names the incarnation the caller saw (ARGV[4]), which
- * is how the reader reacts to a foreign entry in the middle of the stream; a caller that lost the
- * race simply gets the winner's incarnation back.
- * Doing it in one script makes concurrent recreations converge on whichever candidate id wins.
- * KEYS = [stream, record]; ARGV = [candidate id, mode "0" settle | "1" append | "2" rotate,
- * maxLen, ...entry fields (mode 2: expected incarnation)]. Needs both keys on one node (a Cluster
- * deployment would need a hash tag).
+ * Exact stream-id comparison for the settle script. Both halves of a stream id are uint64, so they
+ * can exceed 2^53 (explicit ids; the server accepts them), where Lua's `tonumber` doubles collapse
+ * neighbouring ids. Canonical decimal strings (no leading zeros, as the server emits them) compare
+ * by length first, then lexicographically; ms before seq. Exported so a test can run this exact code.
  */
-const SETTLE_SCRIPT = `
+export const STREAM_ID_COMPARE_LUA = `
+local function cmpnum(a, b)
+  if #a ~= #b then return #a < #b and -1 or 1 end
+  if a == b then return 0 end
+  return a < b and -1 or 1
+end
+local function cmpid(a, b)
+  local am, as = string.match(a, '^(%d+)-(%d+)$')
+  local bm, bs = string.match(b, '^(%d+)-(%d+)$')
+  local c = cmpnum(am, bm)
+  if c ~= 0 then return c end
+  return cmpnum(as, bs)
+end
+`;
+
+/**
+ * Atomic "is this still the stream that cursors were issued on" step. One script serves every
+ * caller: before each append, for each resume (with the replay range), and for each reader batch,
+ * so the continuity verdict and the rows handed out always come from the same instant.
+ *
+ * Continuity is proven by three witnesses, all kept server-side next to the stream:
+ *  - the generation record (`<stream>:incarnation`, a hash): the incarnation `inc` (random, named in
+ *    every cursor and stamped as `g` on every entry we write), `st` (`o` = nothing written yet, `w`
+ *    = history exists), `h` (high-water mark: the largest stream id ever generated, which only a
+ *    rollback can lower) and `f`, the runtime identity of the Valkey that wrote it;
+ *  - the runtime identity F = (run_id, master_replid), read from the executing server in this very
+ *    script. A restart from an RDB/AOF, a replica promotion (also a demote and re-promote in one
+ *    process) and a different node all change it; stream, hash, counters and `g` roll back
+ *    together under a restore, so F is the one witness a restore cannot take back with it. `role`
+ *    must be master (anything else: continuity unavailable, the caller falls back to in-process);
+ *  - the stream itself: its first and last entry (and every row a caller is handed) must carry `g`.
+ * A NEW incarnation is minted, the old transport stream discarded (DEL) and clean origin metadata
+ * written (`o`, `h` 0-0, current F) when: the record is missing or invalid; F differs; history was
+ * written and the stream is absent or empty; the stream's newest generated id is below `h`; the
+ * stream was written by someone else while we had written nothing; or a boundary entry / a row we
+ * are about to hand out lacks `g` or carries another one. An append in such a call is written under
+ * the NEW incarnation. Entry counts prove nothing about identity (a refill can be larger) and are
+ * not used for it. Only the explicit origin state (`o`, no stream) keeps a `0-0@g` cursor usable.
+ * Out of scope (supported-recovery contract, A5): live `RESTORE ... REPLACE` of a single key whose
+ * contents are coherent with the record, a coherent forgery by an unrestricted admin, a restore of
+ * the whole VM, and two primaries at once. Dataset restores go through the fenced procedure
+ * (writers stopped, restore into a fresh process, identity verified changed).
+ *
+ * Deployment assumption: the app connects as a user that may run `INFO` (it is in `@dangerous`; an
+ * ACL such as `-@dangerous` or `-info` breaks this). That is not hidden: `INFO` is `pcall`ed and a
+ * refusal comes back as status `unavailable`, which the transport treats like an outage
+ * (in-process delivery, `reset`, resumed:false) rather than as proof of anything. Production uses
+ * the default user.
+ *
+ * KEYS = [stream, record]; ARGV = [candidate incarnation, mode "0" settle | "1" append | "3" range,
+ * maxLen, range-after id, range count, ...entry fields]. Needs both keys on one node (a Cluster
+ * deployment would need a hash tag). Reply: [ "ok", incarnation, last-generated-id, length,
+ * entries-added, recorded-first-entry-id, max-deleted-entry-id, rows ] or [ "unavailable", reason ].
+ */
+const SETTLE_SCRIPT = `${STREAM_ID_COMPARE_LUA}
 local S, I = KEYS[1], KEYS[2]
-local function info()
-  local t = {}
+local mode = ARGV[2]
+
+local srv = redis.pcall('INFO', 'server')
+local rpl = redis.pcall('INFO', 'replication')
+if type(srv) ~= 'string' or type(rpl) ~= 'string' then return { 'unavailable', 'INFO is not permitted' } end
+local runId = string.match(srv, 'run_id:(%x+)')
+local replId = string.match(rpl, 'master_replid:(%x+)')
+if not runId or not replId then return { 'unavailable', 'no runtime identity' } end
+if string.match(rpl, 'role:(%a+)') ~= 'master' then return { 'unavailable', 'not a master' } end
+local F = runId .. ':' .. replId
+
+local function streamInfo()
+  local t = { exists = false, len = 0, added = 0, last = '0-0', first = false, tail = false, firstRecorded = '0-0', deleted = '0-0' }
   if redis.call('EXISTS', S) == 1 then
     local r = redis.call('XINFO', 'STREAM', S)
-    for i = 1, #r, 2 do t[r[i]] = r[i + 1] end
+    local m = {}
+    for i = 1, #r, 2 do m[r[i]] = r[i + 1] end
+    t.exists = true
+    t.len = m['length']
+    t.added = m['entries-added'] or 0
+    t.last = m['last-generated-id']
+    t.first = m['first-entry']
+    t.tail = m['last-entry']
+    t.firstRecorded = m['recorded-first-entry-id'] or '0-0'
+    t.deleted = m['max-deleted-entry-id'] or '0-0'
   end
   return t
 end
-local function parts(id)
-  local ms, seq = string.match(id, '^(%d+)-(%d+)$')
-  return tonumber(ms), tonumber(seq)
-end
-local function after(a, b)
-  local am, as = parts(a)
-  local bm, bs = parts(b)
-  if am ~= bm then return am > bm end
-  return as > bs
-end
-local function incarnationOf(fields)
+
+local rec = redis.call('HMGET', I, 'inc', 'st', 'h', 'f')
+local inc, st, H, f = rec[1], rec[2], rec[3], rec[4]
+local dirty = false
+
+local function gOf(fields)
   local g = nil
   for i = 1, #fields, 2 do
     if fields[i] == 'g' then
@@ -94,74 +156,79 @@ local function incarnationOf(fields)
   end
   return g
 end
-local t = info()
-local exists = next(t) ~= nil
-local added = tonumber(t['entries-added'] or 0)
-local last = t['last-generated-id'] or '0-0'
-local inc = redis.call('HGET', I, 'inc')
-local st = redis.call('HGET', I, 'st')
-local base = redis.call('HGET', I, 'base') or '0-0'
-local recAdded = tonumber(redis.call('HGET', I, 'added') or 0)
-local recLast = redis.call('HGET', I, 'last')
-local unproven = false
-if exists and inc then
-  local first = t['first-entry']
-  if first then
-    unproven = after(first[1], base) and incarnationOf(first[2]) ~= inc
-  else
-    unproven = after(last, base)
-  end
+local function foreign(fields) return gOf(fields) ~= inc end
+
+local s = streamInfo()
+local function mint()
+  redis.call('DEL', S)
+  inc, st, H, f = ARGV[1], 'o', '0-0', F
+  s = streamInfo()
+  dirty = true
 end
-local fresh = false
-if not inc then
-  fresh = true
-elseif unproven then
-  fresh = true
-elseif st == 'w' and ((not exists) or added < recAdded or (added == recAdded and last ~= recLast)) then
-  fresh = true
-elseif ARGV[2] == '2' and inc == ARGV[4] then
-  fresh = true
+
+local newGeneration
+if not inc or not f or (st ~= 'o' and st ~= 'w') or not H or not string.match(H, '^%d+-%d+$') then
+  newGeneration = true
+elseif f ~= F then
+  newGeneration = true
+elseif st == 'w' and ((not s.exists) or s.len == 0) then
+  newGeneration = true
+elseif s.exists and cmpid(s.last, H) < 0 then
+  newGeneration = true
+elseif st == 'o' and s.exists and (s.len > 0 or s.last ~= '0-0') then
+  newGeneration = true
+elseif (s.first and foreign(s.first[2])) or (s.tail and foreign(s.tail[2])) then
+  newGeneration = true
 end
-if fresh then
-  inc = ARGV[1]
-  st = exists and 'w' or 'o'
-  base = exists and last or '0-0'
-elseif exists then
-  st = 'w'
+if newGeneration then
+  mint()
+elseif s.exists and cmpid(s.last, H) > 0 then
+  H = s.last
+  dirty = true
 end
-if ARGV[2] == '1' then
+
+if mode == '1' then
   local args = { 'XADD', S, 'MAXLEN', '~', ARGV[3], '*' }
-  for i = 4, #ARGV do args[#args + 1] = ARGV[i] end
+  for i = 6, #ARGV do args[#args + 1] = ARGV[i] end
   args[#args + 1] = 'g'
   args[#args + 1] = inc
-  last = redis.call(unpack(args))
-  added = added + 1
+  redis.call(unpack(args))
+  s = streamInfo()
+  H = s.last
   st = 'w'
-  t = info()
+  dirty = true
 end
-redis.call('HSET', I, 'inc', inc, 'st', st, 'base', base, 'added', added, 'last', last)
-return {
-  inc,
-  t['last-generated-id'] or '0-0',
-  tostring(t['length'] or 0),
-  tostring(t['entries-added'] or 0),
-  t['recorded-first-entry-id'] or '0-0',
-  t['max-deleted-entry-id'] or '0-0',
-}
+
+local rows = {}
+if mode == '3' then
+  rows = redis.call('XRANGE', S, '(' .. ARGV[4], '+', 'COUNT', ARGV[5])
+  for _, row in ipairs(rows) do
+    if foreign(row[2]) then
+      mint()
+      rows = {}
+      break
+    end
+  end
+end
+
+if dirty then redis.call('HSET', I, 'inc', inc, 'st', st, 'h', H, 'f', f) end
+return { 'ok', inc, s.last, tostring(s.len), tostring(s.added), s.firstRecorded, s.deleted, rows }
 `;
 
 /**
  * Multi-instance transport. Each flushed bus batch is appended to a Valkey Stream; every
  * instance's reader (its own connection, `XREAD BLOCK`) pushes what it reads to its local
  * subscribers, including this instance's own batches, so nothing is delivered twice. The stream
- * id plus the stream's incarnation is the cursor handed to clients.
+ * id plus the stream's incarnation is the cursor handed to clients. `XREAD BLOCK` is only the
+ * wake-up: what is delivered, and whether continuity still holds, come from one atomic settle
+ * call (see SETTLE_SCRIPT), never from a snapshot validated separately.
  *
  * Valkey is optional and must never take the app down or block a write: when it fails, the
  * transport falls back to an in-process ring (delivering the batch that could not be published
  * locally), tells every open connection to `reset`, and switches back — with another `reset`,
  * because the cursors change id space — once the connections are healthy again. The reader also
  * resets connections when it finds it can no longer vouch for continuity (retention overran it, or
- * the stream was recreated).
+ * the generation changed: the stream was recreated, restored or failed over).
  */
 export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     private readonly logger = new Logger(ValkeyEntityChangeTransport.name);
@@ -247,22 +314,23 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
         const parsed = parseCursor(since);
         if (!parsed || parsed.kind !== "stream") return { honoured: false };
         try {
-            // Range first, state check second: a trim that races the read can only make the check fail
-            // (conservative), never leave a hole that goes unnoticed.
-            const rows = await this.publisher.xrange(this.streamKey, `(${parsed.ms}-${parsed.seq}`, "+");
-            // The settle also checks the stream's oldest entry against the recorded incarnation (see
-            // SETTLE_SCRIPT): a recreated or refilled stream comes back as another incarnation.
-            const state = await this.settle(this.publisher);
+            // One atomic call: it settles the generation (a restored, failed-over or refilled stream comes back as
+            // another incarnation), proves every returned row carries it, and reads the range, so the verdict and
+            // the rows below describe the same instant. One row more than the bound is read to tell "exactly the
+            // bound" from "more than the bound".
+            const state = await this.settle(this.publisher, {
+                range: { after: `${parsed.ms}-${parsed.seq}`, count: REALTIME_REPLAY_LIMIT + 1 },
+            });
             if (state.incarnation !== parsed.inc) return { honoured: false };
-            // Every entry the replay would hand out must itself prove it was written in this incarnation.
-            if (rows.some(([, fields]) => entryIncarnation(fields) !== parsed.inc)) return { honoured: false };
+            // Never hand out a partial replay as if it were complete.
+            if (state.rows.length > REALTIME_REPLAY_LIMIT) return { honoured: false };
             const afterNewest = compareCursors(since, formatStreamCursor(state.lastGeneratedId, state.incarnation));
             const beforeOldest = compareCursors(since, formatStreamCursor(state.oldestHonourableId, state.incarnation));
             if (afterNewest === null || beforeOldest === null || afterNewest > 0 || beforeOldest < 0) {
                 return { honoured: false };
             }
             const batches: DeliveredBatch[] = [];
-            for (const [id, fields] of rows) {
+            for (const [id, fields] of state.rows) {
                 const batch = this.toBatch(id, fields, state.incarnation);
                 if (batch) batches.push(batch);
             }
@@ -284,7 +352,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
 
     private async append(event: EntityChangedEvent): Promise<void> {
         try {
-            await this.settle(this.publisher, encodeBatchFields(event));
+            await this.settle(this.publisher, { append: encodeBatchFields(event) });
         } catch (error) {
             if (this.closed) return;
             // The batch is not on the stream, so this instance's own clients must still hear about it.
@@ -305,28 +373,12 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
                     await this.recover();
                     delay = this.retryDelayMs;
                 }
-                const reply = await this.reader.call(
-                    "XREAD", "COUNT", "100", "BLOCK", String(this.blockMs), "STREAMS", this.streamKey, this.lastDelivered,
-                );
+                // Only a wake-up: the reply is ignored, because the rows and the continuity verdict must come from
+                // the same atomic call (below). It also times out when idle, which is when a rolled-back or
+                // failed-over server is noticed.
+                await this.reader.call("XREAD", "COUNT", "1", "BLOCK", String(this.blockMs), "STREAMS", this.streamKey, this.lastDelivered);
                 if (this.closed) return;
-                // One check per read (not per entry): before handing out what was read, make sure this
-                // reader can still vouch for everything between its previous position and it.
-                const lost = await this.checkContinuity();
-                if (lost?.kind === "recreated") {
-                    // The reply came from a history that no longer exists; the reset already covers it. Carry on
-                    // from the new stream's newest id.
-                    this.lastDelivered = lost.newestId;
-                    continue;
-                }
-                if (lost?.kind === "overrun" && !hasEntries(reply)) this.lastDelivered = lost.newestId;
-                // An entry that does not carry this incarnation was not written by this transport (a
-                // recreated or tampered-with stream the record has not caught yet): adopt a new
-                // incarnation and reset, exactly as for a recreation, and carry on from the newest id.
-                if (this.hasForeignEntry(reply)) {
-                    await this.rotate();
-                    continue;
-                }
-                this.deliver(reply);
+                await this.pump();
             } catch (error) {
                 if (this.closed) return;
                 this.enterFallback(error);
@@ -356,62 +408,47 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     }
 
     /**
-     * Continuity is lost when the stream is a different incarnation than the one this reader has
-     * been following, or when retention trimmed past this reader's position (entries between the
-     * two are gone, and a hint that mattered to some branch may have been among them). Connections
-     * are told to `reset`; the surviving entries are then delivered as usual. The reset position is
-     * the stream's newest id: everything up to it was published before this check, so a client that
-     * refetches in response to the reset already sees it.
+     * One page for the reader: the settle call returns the next rows AND whether they are still part of the
+     * history this reader has been following.
+     *
+     * Continuity is lost when the generation changed (the stream was recreated, restored or failed over:
+     * the rows belong to a history that no longer exists, so they are dropped) or when retention trimmed past
+     * this reader's position (entries between the two are gone, and a hint that mattered to some branch may
+     * have been among them; the survivors are then delivered after the reset). Connections are told to
+     * `reset`; the reset position is the stream's newest id, because everything up to it was published
+     * before this check, so a client that refetches in response to the reset already sees it.
      */
-    private async checkContinuity(): Promise<{ kind: "recreated" | "overrun"; newestId: string } | null> {
-        const state = await this.settle(this.publisher);
-        const incarnationChanged = state.incarnation !== this.incarnation;
+    private async pump(): Promise<void> {
+        const state = await this.settle(this.publisher, { range: { after: this.lastDelivered, count: READER_PAGE } });
+        if (this.mode !== "valkey") return;
+        if (state.incarnation !== this.incarnation) {
+            this.logger.warn("Realtime stream generation changed (recreated, restored or failed over); resetting connections");
+            this.incarnation = state.incarnation;
+            this.lastDelivered = state.lastGeneratedId;
+            this.subject.next({ type: "reset", position: formatStreamCursor(state.lastGeneratedId, state.incarnation) });
+            return;
+        }
         const trimmedPast =
-            !incarnationChanged &&
             compareCursors(
                 formatStreamCursor(this.lastDelivered, state.incarnation),
                 formatStreamCursor(state.oldestHonourableId, state.incarnation),
             ) === -1;
-        if (!incarnationChanged && !trimmedPast) return null;
-        this.logger.warn(
-            incarnationChanged
-                ? "Realtime stream was recreated; resetting connections"
-                : "Realtime reader fell behind stream retention; resetting connections",
-        );
-        this.incarnation = state.incarnation;
-        this.subject.next({ type: "reset", position: formatStreamCursor(state.lastGeneratedId, state.incarnation) });
-        return { kind: incarnationChanged ? "recreated" : "overrun", newestId: state.lastGeneratedId };
-    }
-
-    private hasForeignEntry(reply: unknown): boolean {
-        if (!Array.isArray(reply)) return false;
-        for (const stream of reply as Array<[string, Array<[string, string[]]>]>) {
-            for (const [, fields] of stream[1]) {
-                if (entryIncarnation(fields) !== this.incarnation) return true;
-            }
+        if (trimmedPast) {
+            this.logger.warn("Realtime reader fell behind stream retention; resetting connections");
+            this.subject.next({ type: "reset", position: formatStreamCursor(state.lastGeneratedId, state.incarnation) });
+            if (state.rows.length === 0) this.lastDelivered = state.lastGeneratedId;
         }
-        return false;
+        this.deliver(state.rows);
     }
 
-    private async rotate(): Promise<void> {
-        const state = await this.settle(this.publisher, undefined, { from: this.incarnation });
-        this.logger.warn("Realtime stream holds an entry this transport did not write; resetting connections");
-        this.incarnation = state.incarnation;
-        this.lastDelivered = state.lastGeneratedId;
-        this.subject.next({ type: "reset", position: formatStreamCursor(state.lastGeneratedId, state.incarnation) });
-    }
-
-    private deliver(reply: unknown): void {
-        if (!Array.isArray(reply)) return;
-        for (const stream of reply as Array<[string, Array<[string, string[]]>]>) {
-            for (const [id, fields] of stream[1]) {
-                // A stale read can return after the transport already switched; its ids belong to a
-                // position the connections were told to abandon.
-                if (this.mode !== "valkey") return;
-                this.lastDelivered = id;
-                const batch = this.toBatch(id, fields, this.incarnation);
-                if (batch) this.subject.next(batch);
-            }
+    private deliver(rows: StreamRow[]): void {
+        for (const [id, fields] of rows) {
+            // A stale call can return after the transport already switched; its ids belong to a
+            // position the connections were told to abandon.
+            if (this.mode !== "valkey") return;
+            this.lastDelivered = id;
+            const batch = this.toBatch(id, fields, this.incarnation);
+            if (batch) this.subject.next(batch);
         }
     }
 
@@ -438,27 +475,38 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     }
 
     /**
-     * Runs the settle script; with `entryFields` it also appends that entry (stamped with the
-     * incarnation, atomically after settling); with `rotate` it mints a new incarnation unless the
-     * stream is no longer on the one the caller saw.
+     * Runs the settle script (see SETTLE_SCRIPT), optionally appending an entry and/or reading a range in
+     * the same atomic call. "Continuity unavailable" (INFO refused, not a master) is an error here: callers
+     * treat it like any other outage, so it is never mistaken for proof.
      */
-    private async settle(client: Redis, entryFields?: string[], rotate?: { from: string }): Promise<StreamState> {
+    private async settle(client: Redis, options: SettleOptions = {}): Promise<StreamState> {
         const reply = await client.eval(
             SETTLE_SCRIPT,
             2,
             this.streamKey,
             this.incarnationKey,
             randomBytes(8).toString("hex"),
-            entryFields ? "1" : rotate ? "2" : "0",
+            options.append ? "1" : options.range ? "3" : "0",
             String(this.maxLen),
-            ...(entryFields ?? (rotate ? [rotate.from] : [])),
+            options.range?.after ?? "0-0",
+            String(options.range?.count ?? 0),
+            ...(options.append ?? []),
         );
-        if (!Array.isArray(reply) || reply.length !== 6) throw new Error("unexpected reply from the realtime settle script");
-        const [incarnation, last, length, added, first, deleted] = reply.map(String) as [string, string, string, string, string, string];
+        if (!Array.isArray(reply)) throw new Error("unexpected reply from the realtime settle script");
+        if (reply[0] === "unavailable") throw new Error(`realtime continuity unavailable: ${String(reply[1])}`);
+        if (reply[0] !== "ok" || reply.length !== 8) throw new Error("unexpected reply from the realtime settle script");
+        const [, incarnation, last, length, added, first, deleted] = reply.slice(0, 7).map(String) as string[];
         return {
-            incarnation,
-            lastGeneratedId: last,
-            oldestHonourableId: oldestHonourable({ length: Number(length), added: Number(added), first, deleted, last }),
+            incarnation: incarnation as string,
+            lastGeneratedId: last as string,
+            oldestHonourableId: oldestHonourable({
+                length: Number(length),
+                added: Number(added),
+                first: first as string,
+                deleted: deleted as string,
+                last: last as string,
+            }),
+            rows: reply[7] as StreamRow[],
         };
     }
 
@@ -469,10 +517,6 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
             this.sleepTimer.unref?.();
         });
     }
-}
-
-function hasEntries(reply: unknown): boolean {
-    return Array.isArray(reply) && reply.some((stream) => Array.isArray(stream) && Array.isArray(stream[1]) && stream[1].length > 0);
 }
 
 /**
