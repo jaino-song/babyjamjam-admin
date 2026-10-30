@@ -183,13 +183,20 @@ knownDefect("SI-SMS-08", "resend refreshes the mobile all-logs view", EXPECTED_A
     }
 });
 
-invariant("SI-SMS-08", "job-only cancel leaves the unchanged all-logs cache untouched", async () => {
-    apiMock.post.mockResolvedValue({ data: {} });
-    const queryClient = await runMutation(useCancelMessageTriggerJob, "job-1", 7);
-    // cancelJobByUser updates only the job, not message_log. Record the absence
-    // of all-logs invalidation without mislabelling it as stale log data.
-    expect(isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)).toBe(false);
-});
+knownDefect(
+    "SI-SMS-08",
+    "cancel refreshes the mobile all-logs view",
+    EXPECTED_ALL_LOGS_AFTER_CHANGE + ": cancel",
+    async () => {
+        apiMock.post.mockResolvedValue({ data: {} });
+        const queryClient = await runMutation(useCancelMessageTriggerJob, "job-1", 7);
+        // /message-logs merges canceled terminal jobs into the all-logs view even
+        // without a message_log row, so cancellation changes the rule counts too.
+        if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)) {
+            throw new Error(EXPECTED_ALL_LOGS_AFTER_CHANGE + ": cancel");
+        }
+    },
+);
 
 // ---------------------------------------------------------------------------
 // The manual-send page (`mobile/src/app/(shell)/messages/new`).
