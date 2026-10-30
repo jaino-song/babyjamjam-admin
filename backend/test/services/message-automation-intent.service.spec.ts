@@ -88,6 +88,8 @@ describe("MessageAutomationIntentService", () => {
         }));
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
+                // Branch-pinned so the tenant extension accepts it under enforce.
+                where: expect.objectContaining({ branchId: "branch-1" }),
                 create: expect.objectContaining({
                     branchId: "branch-1",
                     clientId: 31,
@@ -143,7 +145,7 @@ describe("MessageAutomationIntentService", () => {
 
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31) },
+                where: { dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31), branchId: "branch-1" },
                 create: expect.objectContaining({
                     branchId: "branch-1",
                     clientId: null,
@@ -181,9 +183,11 @@ describe("MessageAutomationIntentService", () => {
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(2);
         expect(transaction.message_trigger_job.upsert.mock.calls[0]?.[0].where).toEqual({
             dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31),
+            branchId: "branch-1",
         });
         expect(transaction.message_trigger_job.upsert.mock.calls[1]?.[0].where).toEqual({
             dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31),
+            branchId: "branch-1",
         });
         expect(transaction.message_trigger_job.upsert.mock.calls[1]?.[0].update).toEqual(
             expect.objectContaining({

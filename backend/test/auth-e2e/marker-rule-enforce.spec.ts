@@ -5,7 +5,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
 import { entityChangeEventBus, type EntityChangedEvent } from "application/services/entity-change-event-bus.service";
 import { persistClientMessageAutomationIntent } from "application/services/message-automation-intent-writer";
-import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { getClientAutomationIntentDedupeKey, MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { createExtendedPrismaService } from "infrastructure/database/database.module";
 import type { PrismaService } from "infrastructure/database/prisma.service";
 import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
@@ -36,24 +36,13 @@ type Tx = Prisma.TransactionClient;
 const sites: Array<{ name: string; run: (tx: Tx, clientId: number) => Promise<unknown> }> = [
     {
         name: "message-automation-intent-writer",
-        run: async (tx, clientId) => {
-            try {
-                await persistClientMessageAutomationIntent(tx, {
-                    branchId: BRANCH,
-                    clientId,
-                    includePast: false,
-                    suppressGreeting: false,
-                    intentAt: new Date("2026-10-30T00:00:00.000Z"),
-                });
-            } catch (error) {
-                // Separate, pre-existing gap that this unit does not touch: the intent job upsert is keyed by
-                // `where: { dedupeKey }` with no branch pin, so enforce rejects it before the query is sent (the
-                // transaction stays usable). The marker steps under test run before it and are complete here.
-                const isJobUpsertGap = error instanceof TenantIsolationViolationError
-                    && error.model === "message_trigger_job" && error.kind === "unpinned_write";
-                if (!isJobUpsertGap) throw error;
-            }
-        },
+        run: (tx, clientId) => persistClientMessageAutomationIntent(tx, {
+            branchId: BRANCH,
+            clientId,
+            includePast: false,
+            suppressGreeting: false,
+            intentAt: new Date("2026-10-30T00:00:00.000Z"),
+        }),
     },
     {
         name: "agent-automation-record-store (ensureInternalRule)",
@@ -124,6 +113,63 @@ describe("marker rule under TENANT_ISOLATION_MODE=enforce (live Postgres)", () =
             skipDuplicates: true,
         })))).rejects.toBeInstanceOf(TenantIsolationViolationError);
         expect(await markerRows()).toHaveLength(0);
+    });
+
+    describe("message-automation-intent-writer: marker and intent job together", () => {
+        const persist = (tx: Tx, id: number, intentAt: Date) => persistClientMessageAutomationIntent(tx, {
+            branchId: BRANCH, clientId: id, includePast: false, suppressGreeting: false, intentAt,
+        });
+        const dedupeKey = (id: number) => getClientAutomationIntentDedupeKey(BRANCH, id);
+        const jobs = (id: number) => verify.message_trigger_job.findMany({ where: { dedupeKey: dedupeKey(id) } });
+
+        it("first creation commits the marker and the job together; the broadcast arrives only after the commit", async () => {
+            let broadcastsInsideTransaction = -1;
+            await inBranch(() => prisma.$transaction(async (tx) => {
+                await persist(tx, clientId, new Date("2026-10-30T00:00:00.000Z"));
+                await settle();
+                broadcastsInsideTransaction = broadcastMessageEvents().length;
+            }));
+            await settle();
+
+            const [job, ...rest] = await jobs(clientId);
+            expect(rest).toEqual([]);
+            expect(job).toEqual(expect.objectContaining({ branchId: BRANCH, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, clientId, status: "failed" }));
+            expect(await markerRows()).toHaveLength(1);
+            expect(broadcastsInsideTransaction).toBe(0);
+            expect(broadcastMessageEvents()).toEqual([{ branchId: null, entities: ["message"] }]);
+            expect(events).toContainEqual({ branchId: BRANCH, entities: ["message"] });
+        });
+
+        it("rollback leaves neither the marker nor the job", async () => {
+            await expect(inBranch(() => prisma.$transaction(async (tx) => {
+                await persist(tx, clientId, new Date("2026-10-30T00:00:00.000Z"));
+                throw new Error("caller failed after the intent write");
+            }))).rejects.toThrow("caller failed after the intent write");
+            await settle();
+
+            expect(await markerRows()).toHaveLength(0);
+            expect(await jobs(clientId)).toEqual([]);
+            expect(events).toEqual([]);
+        });
+
+        it("a re-run with the same dedupe key updates the same job row (no duplicate) and does not rewrite the marker", async () => {
+            await inBranch(() => prisma.$transaction((tx) => persist(tx, clientId, new Date("2026-10-30T00:00:00.000Z"))));
+            const [first] = await jobs(clientId);
+            const markerBefore = (await markerRows())[0];
+            await settle();
+            events = [];
+
+            const secondIntentAt = new Date("2026-11-02T03:04:05.000Z");
+            await inBranch(() => prisma.$transaction((tx) => persist(tx, clientId, secondIntentAt)));
+            await settle();
+
+            const after = await jobs(clientId);
+            expect(after).toHaveLength(1);
+            expect(after[0]?.id).toBe(first?.id);
+            expect(after[0]?.scheduledFor.toISOString()).toBe(secondIntentAt.toISOString());
+            expect((await markerRows())[0]?.updatedAt.toISOString()).toBe(markerBefore?.updatedAt.toISOString());
+            expect(broadcastMessageEvents()).toEqual([]);
+        });
     });
 
     describe.each(sites)("$name", ({ run }) => {

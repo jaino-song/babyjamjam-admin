@@ -189,8 +189,10 @@ async function persistMessageAutomationIntent(
         },
         ...(taskAutomationReference ? { taskAutomationReference } : {}),
     } satisfies Prisma.InputJsonObject;
+    // `branchId` joins the unique `dedupeKey` (Prisma's extended unique where) so the write is branch-pinned
+    // for the tenant extension; every dedupe key already embeds this branch id, so it matches the same row.
     await transaction.message_trigger_job.upsert({
-        where: { dedupeKey: params.dedupeKey },
+        where: { dedupeKey: params.dedupeKey, branchId: params.branchId },
         create: {
             branchId: params.branchId,
             ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
