@@ -45,7 +45,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy"
   },
-  "_dependencies_warning": "DO NOT REMOVE @nestjs/cli, ts-node, or typescript from dependencies! They are required for Railway production deployment with 'nest start'. Moving them to devDependencies will break deployment. See commit 993b0d63.",
+  "_dependencies_warning": "DO NOT REMOVE ts-node or typescript from dependencies (see commit 993b0d63). @nestjs/cli is a devDependency: Railway installs dev packages for its build step (nest build, sentry-cli) and starts with 'node dist/main', which needs no CLI.",
   "dependencies": {
     "@ai-sdk/google": "^3.0.23",
     "@babyjamjam/shared": "file:vendor/shared-agent",
