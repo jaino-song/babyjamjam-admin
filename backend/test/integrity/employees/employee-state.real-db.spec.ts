@@ -154,7 +154,7 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
         let branchId: string;
         let deletedEmployeeId: number;
 
-        beforeAll(async () => {
+        beforeEach(async () => {
             const branchRow = await createBranch(handle.raw, tracker);
             const employeeRow = await createEmployee(handle.raw, tracker, { branchId: branchRow.id });
             branchId = branchRow.id;

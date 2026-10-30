@@ -1,3 +1,5 @@
+import { ConflictException } from "@nestjs/common";
+
 import type { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { EmployeeService } from "application/services/employee.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
@@ -35,6 +37,7 @@ import {
     ListWorkHistoryByEmployeeUsecase,
 } from "application/usecases/employee/list-work-history-by-employee.usecase";
 import { UpdateEmployeeUsecase } from "application/usecases/employee/update-employee.usecase";
+import { DEFAULT_EMPLOYEE_GRADE } from "domain/constants/employee-grade.constants";
 import { MessageTriggerTemplateKey, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerEventType } from "domain/constants/message-trigger-catalog";
 import { isoDateInKorea } from "domain/utils/business-days";
 import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
@@ -302,6 +305,34 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
 
     invariant(
         "SI-EMP-04",
+        "dispatching a deleted employee's pending assignment SMS is blocked by the send-time gate",
+        async () => {
+            const fixture = await createAssignmentFixture({
+                scheduleStartIso: kstShiftedIsoDate(-40),
+                scheduleEndIso: kstShiftedIsoDate(-10),
+            });
+            expect(await triggerService.syncEmployeeAssignmentRulesForSchedule(
+                fixture.branchId, fixture.scheduleId, true,
+            )).toBe(true);
+            const pending = await pendingAssignmentJob(fixture.scheduleId, fixture.ruleId);
+            expect(pending?.status).toBe("pending");
+            if (!pending) throw new Error("assignment fixture did not materialize a job");
+
+            await employeeService.delete(fixture.branchId, fixture.employeeId);
+            expect(await pendingAssignmentJob(fixture.scheduleId, fixture.ruleId)).toEqual(pending);
+            const { service: dispatchTrigger, sentJobs } = buildDispatchingTriggerService(handle);
+            const dispatched = await dispatchTrigger.dispatchPendingJobNow(pending.id, {
+                expectedBranchId: fixture.branchId,
+            });
+
+            expect(sentJobs).toEqual([]);
+            expect(dispatched.status).toBe("canceled");
+            expect(dispatched.cancelReason).toBe("sms_automation_safeguard:recipient");
+        },
+    );
+
+    invariant(
+        "SI-EMP-04",
         "disabling an employee's SMS automation keeps the pending assignment SMS job for the current assignment it is waiting on",
         async () => {
             const fixture = await createAssignmentFixture({
@@ -424,6 +455,72 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
             );
         },
         /the assignment resync re-armed a pending SMS job addressed to the soft-deleted employee/,
+    );
+
+    invariant(
+        "SI-EMP-10",
+        "recreating a deleted employee with the same phone returns a meaningful 409 rather than 500",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const params = {
+                name: "전화번호 재등록 검사", workArea: [], phone: "01012345678",
+                grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true,
+            };
+            const original = await employeeService.create(branch.id, params);
+            tracker.track("employee", original.id);
+            await employeeService.delete(branch.id, original.id);
+
+            let rejected: unknown;
+            try {
+                const recreated = await employeeService.create(branch.id, params);
+                tracker.track("employee", recreated.id);
+            } catch (error) {
+                rejected = error;
+            }
+            expect(rejected).toMatchObject({
+                status: 409,
+                response: {
+                    code: "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+                    errors: expect.arrayContaining([
+                        expect.objectContaining({ pointer: "/phone", detail: "같은 전화번호의 관리사가 이미 등록되어 있습니다." }),
+                    ]),
+                },
+            });
+        },
+    );
+
+    knownDefect(
+        "SI-EMP-10",
+        "deleting an employee frees the branch phone key so the real create path can register it again",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const params = {
+                name: "삭제 후 재등록 검사", workArea: [], phone: "01012345678",
+                grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true,
+            };
+            const original = await employeeService.create(branch.id, params);
+            tracker.track("employee", original.id);
+            await employeeService.delete(branch.id, original.id);
+            const tombstone = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
+            expect(tombstone.deletedAt).not.toBeNull();
+
+            try {
+                const recreated = await employeeService.create(branch.id, params);
+                tracker.track("employee", recreated.id);
+                expect(recreated.id).not.toBe(original.id);
+                expect(tombstone.phoneNormalized).toBeNull();
+            } catch (error) {
+                // Only the observed, meaningful phone conflict is the defect;
+                // fixture/DB failures must not become false CONFIRMED results.
+                if (error instanceof ConflictException && error.getStatus() === 409
+                    && typeof error.getResponse() === "object"
+                    && (error.getResponse() as { code?: string }).code === "EMPLOYEE_PHONE_ALREADY_REGISTERED") {
+                    throw new Error("SI-EMP-10 defect: a deleted employee still reserves the branch phone key; real create returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED");
+                }
+                throw error;
+            }
+        },
+        /SI-EMP-10 defect: a deleted employee still reserves the branch phone key; real create returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED/,
     );
 
     invariant(

@@ -1,15 +1,17 @@
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
 
-import { employeeQueryKeys, type UpdateEmployeeDto } from "@/hooks/useEmployees";
 import { useRealtimeInvalidation } from "@/hooks/useRealtimeInvalidation";
 
 // The mock factory cannot reference the `MockEventSource` class (imports and
 // the class body are hoisted relative to the jest.mock call), so it resolves
 // through a constructor that the class registers on globalThis at load time.
 jest.mock("@/lib/api/authenticated-fetch", () => ({
-    openAuthenticatedEventSource: (url: string, options?: unknown) => {
+    openAuthenticatedEventSource: (url: string) => {
         const ctor = (
             globalThis as { __siMockEventSourceCtor?: (new (url: string) => unknown) | undefined }
         ).__siMockEventSourceCtor;
@@ -19,9 +21,8 @@ jest.mock("@/lib/api/authenticated-fetch", () => ({
 }));
 
 /**
- * Local equivalents of the backend harness wrappers (the backend helpers are
- * not importable from mobile suites): `invariant(id, title, body)` is a plain
- * `it`; `knownDefect(id, title, body, expectedFailure)` inverts the expectation
+ * Local equivalent of the backend knownDefect wrapper (the backend helpers are
+ * not importable from mobile suites). It inverts the expectation
  * (`it.failing`) but rethrows failures whose message does NOT match
  * `expectedFailure`, so a fixture or infra error turns RED instead of becoming
  * a green false-CONFIRMED. While the defect exists the knownDefect reports
@@ -44,18 +45,11 @@ async function assertDefectFailure(body: IntegrityBody, expectedFailure: Expecte
     const matches =
         typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
     if (matches) throw thrown;
-    // eslint-disable-next-line no-console
     console.error(`[knownDefect] expected failure ${expectedFailure} but failed differently: ${message}`);
 }
 
 function knownDefect(id: string, title: string, body: IntegrityBody, expectedFailure: ExpectedFailure): void {
     it.failing(`${id} ${title}`, () => assertDefectFailure(body, expectedFailure));
-}
-
-function invariant(id: string, title: string, body: IntegrityBody): void {
-    it(`${id} ${title}`, async () => {
-        await body();
-    });
 }
 
 /** jsdom has no EventSource — a controllable fake, mirroring the app's own stream-test harness. */
@@ -175,19 +169,28 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)",
         /employee queries were not invalidated by the service-record entity-changed event/,
     );
 
-    invariant(
+    knownDefect(
         "SI-EMP-08",
-        "DTO parity: the mobile update payload cannot carry smsAutomationEnabled (desktop DTO has it)",
+        "DTO parity: the mobile employee and write DTOs carry smsAutomationEnabled",
         async () => {
-            // Type pin: the field is absent from the mobile DTO today. If the
-            // parity gap is fixed, this directive becomes unused and
-            // `tsc --noEmit` fails on this file, forcing the pin to be flipped.
-            const payload: UpdateEmployeeDto = {
-                openToNextWork: false,
-                // @ts-expect-error SI-EMP-08: mobile UpdateEmployeeDto omits smsAutomationEnabled
-                smsAutomationEnabled: false,
-            };
-            expect(payload["openToNextWork" as keyof UpdateEmployeeDto]).toBe(false);
+            // Interfaces are erased at runtime. Inspect the actual exported
+            // contract, not a cast object that would retain arbitrary fields.
+            const path = join(process.cwd(), "src/hooks/useEmployees.ts");
+            const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+            const contracts = source.statements.filter(ts.isInterfaceDeclaration);
+            const missing: string[] = [];
+            for (const name of ["Employee", "CreateEmployeeDto", "UpdateEmployeeDto"]) {
+                const contract = contracts.find((node) => node.name.text === name);
+                expect(contract).toBeDefined();
+                expect(contract?.members.some((member) => member.name?.getText(source) === "openToNextWork")).toBe(true);
+                if (!contract?.members.some((member) => member.name?.getText(source) === "smsAutomationEnabled")) {
+                    missing.push(name);
+                }
+            }
+            if (missing.length) {
+                throw new Error(`SI-EMP-08 mobile parity defect: smsAutomationEnabled missing from ${missing.join(", ")}`);
+            }
         },
+        /SI-EMP-08 mobile parity defect: smsAutomationEnabled missing from Employee, CreateEmployeeDto, UpdateEmployeeDto/,
     );
 });
