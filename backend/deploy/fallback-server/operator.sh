@@ -1343,7 +1343,7 @@ vr_clear_fence() {
 # ---- cleanup and recovery text --------------------------------------------
 
 vr_cleanup() {
-    local item
+    local item adopted
     for item in ${VR_CLEANUP_CONTAINERS[@]+"${VR_CLEANUP_CONTAINERS[@]}"}; do
         vr_docker rm -f "$item" >/dev/null 2>&1 || true
     done
@@ -1352,9 +1352,17 @@ vr_cleanup() {
     done
     VR_CLEANUP_CONTAINERS=()
     VR_CLEANUP_VOLUMES=()
-    # A snapshot the fence marker has not adopted yet is nobody's: drop it.
+    # A snapshot the fence marker has not adopted yet is nobody's: drop it. The
+    # decision reads the DURABLE marker, not the in-memory flag: a signal can land
+    # right after the marker's atomic rename and before the flag is cleared, and
+    # deleting a snapshot the marker already references would make the printed
+    # resume command fail for good.
     if [[ -n "$VR_PENDING_SNAPSHOT" ]]; then
-        /usr/bin/rm -rf -- "$VR_PENDING_SNAPSHOT" || true
+        adopted=""
+        if fenced_by_valkey_restore; then adopted="$(vr_marker_get snapshot_dir 2>/dev/null || true)"; fi
+        if [[ -z "$adopted" || "$adopted" != "$VR_PENDING_SNAPSHOT" ]]; then
+            /usr/bin/rm -rf -- "$VR_PENDING_SNAPSHOT" || true
+        fi
         VR_PENDING_SNAPSHOT=""
     fi
 }

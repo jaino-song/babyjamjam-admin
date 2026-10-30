@@ -9,7 +9,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 COPY="$TMP/operator.sh"
-sed '$d' "$ROOT/operator.sh" >"$COPY"
+# `/usr/bin/mv` becomes `vr_mv` in the copy under test (a seam for the F4 interruption
+# injection; by default it is exactly /usr/bin/mv).
+sed -e '$d' -e 's#/usr/bin/mv -f#vr_mv -f#' "$ROOT/operator.sh" >"$COPY"
 # shellcheck disable=SC1090
 source "$COPY"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
@@ -135,6 +137,14 @@ vr_docker() {
     return 0
 }
 vr_sleep() { :; }
+MV_TERM=0
+# F4 injection: TERM right after the marker's atomic rename, while a snapshot is still pending.
+vr_mv() {
+    /usr/bin/mv "$@"
+    if [[ "${MV_TERM:-0}" == 1 && -n "$VR_PENDING_SNAPSHOT" && "${*: -1}" == "$VR_MARKER" ]]; then
+        MV_TERM=0; kill -TERM "$BASHPID"
+    fi
+}
 current_unix_time() { echo "$NOW"; }
 runtime_env_for() {
     local key
@@ -861,6 +871,55 @@ printf 1 >"$W/api_running"; FAIL="stop $API"
 run valkey_restore --reopen --confirm-reopen
 [[ "$RC" -ne 0 && -e "$VR_MARKER" ]] && api_up || fail "F2.6: the fence must stay while the API cannot be stopped (api_was_running=0)"
 echo "ok - F2.6 every marker-removing path without a start confirms the API is down first"
+fi
+
+# =============================================================================
+# F4 - an adopted snapshot survives a signal at the adoption boundary (VR_TEST_SECTION=f4)
+# =============================================================================
+if want f4; then
+assert_adopted_snapshot_kept() { # $1 label
+    local dir
+    [[ "$RC" == 143 ]] || { cat "$W/err" >&2; fail "$1: expected exit 143, got $RC"; }
+    [[ -e "$VR_MARKER" ]] || fail "$1: the marker is missing"
+    dir="$(vr_marker_get snapshot_dir)"
+    [[ -n "$dir" && -d "$dir" ]] && { [[ -f "$dir/dump.rdb" ]] || [[ -d "$dir/appendonlydir" ]]; } || fail "$1: the snapshot the marker references was deleted ($dir)"
+    api_up && fail "$1: the API is running while fenced"
+    return 0
+}
+
+# ===== F4.1 first restore: TERM right after the marker was created (snapshot adopted, flag not yet cleared)
+world_reset; MV_TERM=1
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+MV_TERM=0
+assert_adopted_snapshot_kept "F4.1"
+[[ "$(ls -1 "$W/snapshots" | wc -l)" -eq 1 ]] || fail "F4.1: exactly the adopted snapshot should remain"
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+[[ "$RC" == 0 && "$(marker_stage)" == verified ]] || { cat "$W/err" >&2; fail "F4.1: the printed resume command must complete (rc $RC)"; }
+echo "ok - F4.1 restore: TERM after the marker adopted the snapshot, same command resumes"
+
+# ===== F4.2 rollback: TERM right after the marker was retargeted to the new snapshot
+verified_world
+KEPT="$W/replaced/$(ls -1 "$W/replaced" | head -n1)"
+cp -R "$TMP/aof" "$KEPT/appendonlydir"
+printf '%s' "$FP_OLD" >"$W/fp_backup"; printf '%s' "$FP_OLD" >"$W/fp_after_start"
+MV_TERM=1
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+MV_TERM=0
+assert_adopted_snapshot_kept "F4.2"
+[[ "$(vr_marker_get mode)" == rollback && "$(vr_marker_get backup_path)" == "$KEPT/appendonlydir" ]] || fail "F4.2: the marker should already target the kept copy"
+run valkey_restore --rollback "$KEPT/appendonlydir" --confirm-fence
+[[ "$RC" == 0 && "$(marker_stage)" == verified && "$(vr_marker_get mode)" == rollback ]] || { cat "$W/err" >&2; fail "F4.2: the printed resume command must complete (rc $RC)"; }
+echo "ok - F4.2 rollback: TERM after the marker adopted the snapshot, same command resumes"
+
+# ===== F4.3 a snapshot the marker does NOT reference is still dropped (the cleanup is not weakened)
+world_reset
+vr_snapshot_take_orig_f4=$(declare -f vr_snapshot_take)
+eval "${vr_snapshot_take_orig_f4/vr_snapshot_take/vr_snapshot_take_orig_f4}"
+vr_snapshot_take() { vr_snapshot_take_orig_f4; kill -TERM "$BASHPID"; }
+run valkey_restore "$TMP/backup.rdb" --confirm-fence
+eval "$vr_snapshot_take_orig_f4"
+[[ "$RC" == 143 && ! -e "$VR_MARKER" ]] && { [[ ! -d "$W/snapshots" ]] || [[ -z "$(ls -A "$W/snapshots")" ]]; } || fail "F4.3: an un-adopted snapshot must be removed (rc $RC)"
+echo "ok - F4.3 an un-adopted pending snapshot is still removed"
 fi
 
 echo 'Fallback Valkey restore behavioral tests passed'

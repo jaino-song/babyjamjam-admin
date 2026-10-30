@@ -64,12 +64,19 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 COPY="$WORK/operator-copy.sh"
-sed '$d' "$OPERATOR" >"$COPY"
+# `/usr/bin/mv` becomes `vr_mv` in the copy (a seam for the F4 injection; by default exactly /usr/bin/mv).
+sed -e '$d' -e 's#/usr/bin/mv -f#vr_mv -f#' "$OPERATOR" >"$COPY"
 # shellcheck disable=SC1090
 source "$COPY"
 
 fail() { echo "REALRUN FAIL: $*" >&2; exit 1; }
 ok() { echo "ok - $*"; }
+
+MV_TERM=0
+vr_mv() { # F4: TERM right after the marker's atomic rename, while the snapshot is still pending
+    /usr/bin/mv "$@"
+    if [[ "$MV_TERM" == 1 && -n "$VR_PENDING_SNAPSHOT" && "${*: -1}" == "$VR_MARKER" ]]; then MV_TERM=0; kill -TERM "$BASHPID"; fi
+}
 
 # Seams: only identities and the production readiness/state checks are replaced.
 VR_PROJECT=$PROJECT
@@ -142,6 +149,24 @@ if vr_fingerprint_matches "$(cat "$WORK/rdb.fp")" "$NAIVE_FP" 2>"$WORK/naive.err
 cat "$WORK/naive.err" | sed 's/^/   /'
 ok "AOF shadows RDB: the naive copy loads the OLD dataset and the fingerprint rejects it"
 docker start "$AC" >/dev/null
+
+# ---- 2b. F4: a real SIGTERM right after the marker adopted the snapshot must not delete it
+MV_TERM=1; RC2B=0
+( valkey_restore "$WORK/backups/backup.rdb" --confirm-fence ) >"$WORK/out2b.txt" 2>"$WORK/err2b.txt" || RC2B=$?
+MV_TERM=0
+[[ "$RC2B" == 143 ]] || { cat "$WORK/err2b.txt"; fail "F4: expected exit 143, got $RC2B"; }
+[[ -e "$VR_MARKER" ]] || fail "F4: the marker is missing"
+SNAP2B="$(vr_marker_get snapshot_dir)"
+[[ -d "$SNAP2B" && -f "$SNAP2B/dump.rdb" ]] || fail "F4: the snapshot the marker references was deleted ($SNAP2B)"
+! running "$AC" || fail "F4: the API is running while fenced"
+grep -Fq 'INTERRUPTED at stage' "$WORK/err2b.txt" || fail "F4: no recovery text"
+( valkey_restore "$WORK/backups/backup.rdb" --confirm-fence ) >"$WORK/out2c.txt" 2>"$WORK/err2c.txt" || { cat "$WORK/err2c.txt"; fail "F4: the printed resume command failed"; }
+[[ "$(vr_marker_get stage)" == verified ]] || fail "F4: the resumed restore is not verified"
+ok "F4: SIGTERM after the marker adopted the snapshot: snapshot kept, same command resumed to verified"
+( valkey_restore --abort --confirm-fence ) >/dev/null 2>&1 || fail "F4: abort failed"
+[[ ! -e "$VR_MARKER" ]] || fail "F4: marker left"
+docker start "$AC" >/dev/null
+OLD_RUN="$(run_id)"
 
 # ---- 3. an injected failure mid-restore leaves the API stopped and the fence in place
 vr_stage_data_real=$(declare -f vr_stage_data)
