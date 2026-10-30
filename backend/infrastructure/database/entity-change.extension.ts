@@ -171,30 +171,33 @@ interface TransactionScope {
 
 /**
  * The transaction a write belongs to, carried by AsyncLocalStorage because the `query` hooks get no
- * transaction handle (and Prisma's `__internalParams` is deliberately not used). Everything
- * awaited inside the callback of `$transaction` - and everything a batch `$transaction([...])`
- * executes - inherits the scope, so the hooks can tell "inside a transaction" from "outside".
+ * transaction handle (and Prisma's `__internalParams` is deliberately not used).
  *
- * Classification is by async context, not by client: a write issued through the ROOT client from
- * inside a transaction callback runs on its own connection and commits immediately, but is still
- * classified as part of the surrounding transaction. Its hint therefore waits for that
- * transaction to settle, and is lost if the transaction rolls back. That errs towards a missed
- * refetch only for code that bypasses the `tx` handle on purpose; the alternative, emitting on
- * rollback, would re-introduce the false hints this scope exists to remove. A separate
- * `$transaction` started inside the callback opens its own scope and flushes on its own commit.
+ * The scope is NOT set around the whole `$transaction` call for the interactive form: ambient
+ * context is not membership. A continuation created before the transaction can be handed the real
+ * `tx` client later and write through it with no scope in sight, and a root-client write made
+ * inside the callback runs on its own connection and commits immediately. So the callback receives
+ * a thin proxy over `tx` (`bindToScope`) and every call made through that proxy - including the
+ * `then` that actually starts Prisma's lazy query - runs inside the scope. Membership follows the
+ * client handle, wherever and whenever it is used; a root-client write is never held back.
+ *
+ * The batch form `$transaction([...])` takes root-client promises created before the call and has
+ * no `tx` handle to bind, so it runs under the ambient scope (it is executed inside the call).
+ * A separate `$transaction` started inside a callback opens its own scope and flushes on its own
+ * commit.
  */
 const transactionScopeStore = new AsyncLocalStorage<TransactionScope>();
 
 /**
- * Runs `run` (a `$transaction` call) in a fresh scope: hints raised by writes inside are held,
- * flushed in write order once `run` resolves (= committed), and discarded if it rejects. The
- * result or error of `run` is passed through unchanged.
+ * Runs `run` (a `$transaction` call) with a fresh scope: hints raised by writes bound to the scope
+ * are held, flushed in write order once `run` resolves (= committed), and discarded if it rejects.
+ * The result or error of `run` is passed through unchanged.
  */
-export async function runInEntityChangeScope<T>(run: () => Promise<T>): Promise<T> {
+export async function runInEntityChangeScope<T>(run: (scope: TransactionScope) => Promise<T>): Promise<T> {
     const scope: TransactionScope = { settled: false, pending: [] };
     let result: T;
     try {
-        result = await transactionScopeStore.run(scope, run);
+        result = await run(scope);
     } catch (error) {
         scope.settled = true;
         scope.pending = [];
@@ -205,6 +208,61 @@ export async function runInEntityChangeScope<T>(run: () => Promise<T>): Promise<
     scope.pending = [];
     for (const { bus, branchIds, kinds } of committed) safeEmit(bus, branchIds, kinds);
     return result;
+}
+
+function inScope<R>(scope: TransactionScope, fn: () => R): R {
+    return transactionScopeStore.run(scope, fn);
+}
+
+function isThenable(value: unknown): value is object {
+    return (
+        (typeof value === "object" || typeof value === "function") &&
+        value !== null &&
+        typeof (value as { then?: unknown }).then === "function"
+    );
+}
+
+const PROMISE_METHODS: ReadonlySet<PropertyKey> = new Set(["then", "catch", "finally"]);
+
+/** A query result promise whose `then`/`catch`/`finally` - where Prisma starts the query - run in `scope`. */
+function bindThenableToScope(target: object, scope: TransactionScope): object {
+    return new Proxy(target, {
+        get(inner, property) {
+            const value: unknown = Reflect.get(inner, property, inner);
+            if (typeof value !== "function") return value;
+            if (PROMISE_METHODS.has(property)) {
+                return (...args: unknown[]) => inScope(scope, () => value.apply(inner, args) as unknown);
+            }
+            // Fluent API (`findUnique(...).relation()`): the next link is a lazy promise too.
+            return (...args: unknown[]) => bindResultToScope(inScope(scope, () => value.apply(inner, args) as unknown), scope);
+        },
+    });
+}
+
+function bindResultToScope(value: unknown, scope: TransactionScope): unknown {
+    return isThenable(value) ? bindThenableToScope(value, scope) : value;
+}
+
+/**
+ * Wraps the client of an interactive transaction (or one of its model delegates) so that every
+ * method call, and the promise it returns, executes inside `scope`. Property reads and `instanceof`
+ * fall through to the real client, so callers see the same shape and type.
+ */
+function bindToScope<T extends object>(target: T, scope: TransactionScope, isDelegate = false): T {
+    return new Proxy(target, {
+        get(inner, property) {
+            const value: unknown = Reflect.get(inner, property, inner);
+            if (typeof value === "function") {
+                return (...args: unknown[]) =>
+                    bindResultToScope(inScope(scope, () => value.apply(inner, args) as unknown), scope);
+            }
+            // `tx.client`, `tx.employee`, ...: a model delegate. Internals (`_engine`, ...) stay raw.
+            if (!isDelegate && typeof property === "string" && !property.startsWith("_") && typeof value === "object" && value !== null) {
+                return bindToScope(value, scope, true);
+            }
+            return value;
+        },
+    });
 }
 
 /** Suppressed writes emit nothing; writes in an open transaction wait for it; the rest emit now. */
@@ -415,7 +473,17 @@ export function entityChangeExtension(
             // Wraps every `$transaction` call site (interactive and batch; options pass through) so
             // the hints of its writes are held until it commits. Callers do not change.
             async $transaction(this: unknown, ...args: unknown[]) {
-                return runInEntityChangeScope(() => runTransaction.apply(this, args));
+                return runInEntityChangeScope((scope) => {
+                    const [first, ...rest] = args;
+                    if (typeof first === "function") {
+                        // Interactive: bind the callback's tx client to the scope (see the scope store).
+                        const callback = first as (tx: object, ...more: unknown[]) => unknown;
+                        const bound = (tx: object, ...more: unknown[]) => callback(bindToScope(tx, scope), ...more);
+                        return runTransaction.apply(this, [bound, ...rest]);
+                    }
+                    // Batch: root-client promises executed inside this call.
+                    return inScope(scope, () => runTransaction.apply(this, args));
+                });
             },
         },
         query: {

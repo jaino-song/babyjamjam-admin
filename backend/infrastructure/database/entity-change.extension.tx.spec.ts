@@ -217,7 +217,7 @@ describe("entity-change extension: commit-scoped emission", () => {
         expect(emitSpy).toHaveBeenCalledWith({ branchId: "b1", kind: "employee" });
     });
 
-    it("a detached write that finishes after its transaction settled is emitted, not lost", async () => {
+    it("a write through the tx handle that finishes after its transaction settled is emitted, not lost", async () => {
         const { client, bus } = setup();
         const emitSpy = jest.spyOn(bus, "emit");
         let detached: Promise<unknown> = Promise.resolve();
@@ -226,9 +226,9 @@ describe("entity-change extension: commit-scoped emission", () => {
             releaseDetached = resolve;
         });
 
-        await client.$transaction(async () => {
-            // Started inside the callback (inherits the scope) but completes after the commit.
-            detached = gate.then(() => client.employee.update({ where: { id: 1 }, data: {} }));
+        await client.$transaction(async (db: typeof client) => {
+            // Uses the tx handle but only starts after the commit.
+            detached = gate.then(() => db.employee.update({ where: { id: 1 }, data: {} }));
         });
         expect(emitSpy).not.toHaveBeenCalled();
         releaseDetached();
@@ -335,16 +335,106 @@ describe("entity-change extension: commit-scoped emission", () => {
         expect(emitted).toEqual(["employee"]);
     });
 
-    it("a root-client write inside a transaction callback waits for that transaction (documented classification)", async () => {
+    it("a root-client write inside a transaction callback is not part of it: emitted at once, kept on rollback", async () => {
         const { client, bus } = setup();
         const emitSpy = jest.spyOn(bus, "emit");
 
-        await client.$transaction(async () => {
-            await client.client.update({ where: { id: 1 }, data: {} });
+        await expect(
+            client.$transaction(async (db: typeof client) => {
+                await client.employee.update({ where: { id: 1 }, data: {} });
+                // It runs on its own connection and has already committed.
+                expect(emitSpy).toHaveBeenCalledTimes(1);
+                await db.client.update({ where: { id: 1 }, data: {} });
+                expect(emitSpy).toHaveBeenCalledTimes(1);
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+
+        // Only the root write is announced; the tx write was rolled back.
+        expect(emitSpy).toHaveBeenCalledTimes(1);
+        expect(emitSpy).toHaveBeenCalledWith({ branchId: "b1", kind: "employee" });
+    });
+
+    it("a tx handle handed to a continuation created before the transaction is still bound (hint dropped on rollback)", async () => {
+        const { client, events, bus, flush } = setup();
+        const emitSpy = jest.spyOn(bus, "emit");
+        let handOff: (tx: typeof client) => void = () => undefined;
+        const ready = new Promise<typeof client>((resolve) => {
+            handOff = resolve;
+        });
+        // Created BEFORE the transaction: its async context carries no transaction scope.
+        const work = ready.then((tx) => tx.system_setting.update({ where: { id: 1 }, data: {} }));
+
+        await expect(
+            client.$transaction(async (tx: typeof client) => {
+                handOff(tx);
+                await work;
+                // The write has returned; past the bus window nothing may have been published yet.
+                flush();
+                expect(events).toEqual([]);
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+
+        flush();
+        expect(emitSpy).not.toHaveBeenCalled();
+        expect(events).toEqual([]);
+    });
+
+    it("the same handed-off write is announced once, after commit, when the transaction commits", async () => {
+        const { client, events, bus, flush } = setup();
+        const emitSpy = jest.spyOn(bus, "emit");
+        let handOff: (tx: typeof client) => void = () => undefined;
+        const ready = new Promise<typeof client>((resolve) => {
+            handOff = resolve;
+        });
+        const work = ready.then((tx) => tx.system_setting.update({ where: { id: 1 }, data: {} }));
+
+        await client.$transaction(async (tx: typeof client) => {
+            handOff(tx);
+            await work;
             expect(emitSpy).not.toHaveBeenCalled();
         });
 
         expect(emitSpy).toHaveBeenCalledTimes(1);
+        flush();
+        expect(events).toEqual([{ branchId: null, entities: ["settings"] }]);
+    });
+
+    it("a tx raw write handed off the same way follows the transaction too", async () => {
+        const { client, bus } = setup();
+        const emitSpy = jest.spyOn(bus, "emit");
+        let handOff: (tx: typeof client) => void = () => undefined;
+        const ready = new Promise<typeof client>((resolve) => {
+            handOff = resolve;
+        });
+        const work = ready.then((tx) => tx.$executeRawUnsafe("UPDATE employee SET name = $1", "x"));
+
+        await expect(
+            client.$transaction(async (tx: typeof client) => {
+                handOff(tx);
+                await work;
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+
+        expect(emitSpy).not.toHaveBeenCalled();
+    });
+
+    it("the tx handle keeps its shape: prototype, model delegates, and promise chaining still work", async () => {
+        const { client } = setup();
+
+        await client.$transaction(async (tx: typeof client) => {
+            // A Proxy forwards getPrototypeOf, so `instanceof` against the real client's class holds.
+            expect(Object.getPrototypeOf(tx)).toBe(Object.getPrototypeOf(client));
+            expect(typeof tx.client.update).toBe("function");
+            const query = tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>;
+            await expect(query.then(() => "then-ok")).resolves.toBe("then-ok");
+            await (tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>).finally(() => undefined);
+            await expect(
+                (tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>).catch(() => "unused"),
+            ).resolves.toEqual({ id: 1, branchId: "b1" });
+        });
     });
 
     it("passes the arguments (callback, options) and `this` through to the underlying $transaction", async () => {
@@ -356,7 +446,8 @@ describe("entity-change extension: commit-scoped emission", () => {
 
         expect(result).toBe("value");
         expect(seen).toHaveLength(1);
-        expect(seen[0]?.args[0]).toBe(callback);
+        // The callback is wrapped (it receives the bound tx), but called once with the caller's result passed back.
+        expect(typeof seen[0]?.args[0]).toBe("function");
         expect(seen[0]?.args[1]).toBe(options);
         expect(seen[0]?.thisArg).toBeDefined();
     });
