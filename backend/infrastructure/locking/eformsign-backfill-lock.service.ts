@@ -67,6 +67,8 @@ export class EformsignBackfillLockUnavailableError extends Error {
     }
 }
 
+const backfillClientLogger = new Logger("EformsignBackfillRedisClient");
+
 export const EFORMSIGN_BACKFILL_REDIS_CLIENT = Symbol(
     "EFORMSIGN_BACKFILL_REDIS_CLIENT",
 );
@@ -79,12 +81,20 @@ export function createEformsignBackfillRedisClient(
         return null;
     }
 
-    return new Redis(valkeyUrl, {
+    const client = new Redis(valkeyUrl, {
         lazyConnect: true,
         enableOfflineQueue: false,
         maxRetriesPerRequest: 1,
         connectTimeout: 2_000,
-    }) as EformsignBackfillRedisClient;
+    });
+    // Without an 'error' listener ioredis prints a raw stack to the console for every
+    // connection error. Lock acquire/renew/release failures are still raised by their own calls.
+    client.on("error", (error) => {
+        backfillClientLogger.warn(
+            `Valkey client error: ${sanitizeEformsignErrorMessage(error)}`,
+        );
+    });
+    return client as EformsignBackfillRedisClient;
 }
 
 @Injectable()
