@@ -64,7 +64,8 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
 
     // Unique-per-run phones, canonical hyphenated form (safeguard spec shape):
     // a 1-digit tag keeps every number 11 digits.
-    const clientPhone = (tag: string) => `010-5${tag}${RUN.slice(1, 8)}`;
+    // Keep flow 6b distinct from flow 6 after phone normalization strips letters.
+    const clientPhone = (tag: string) => tag === "6b" ? `010-76${RUN.slice(1, 8)}` : `010-5${tag}${RUN.slice(1, 8)}`;
     const employeePhone = (tag: string) => `010-6${tag}${RUN.slice(1, 8)}`;
 
     // Cleanup bookkeeping (FK-safe order handled in afterAll).
@@ -103,6 +104,8 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             data: { smsSenderApprovalStatus: "approved" },
         });
     });
+
+    afterEach(() => jest.useRealTimers());
 
     afterAll(async () => {
         for (const clientId of clientIds) {
@@ -619,6 +622,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
         // The cron writes nextAttemptAt = dueDate (@db.Date UTC midnight,
         // 09:00 KST). The fulfiller requires next_attempt_at <= clock_timestamp(),
         // so only runs before that boundary may leave a marker for reconciliation.
+        // B1b proves in-run fulfillment deterministically, independent of this boundary.
         const inRunPossible = Date.now() >= Date.parse(`${dueDate}T00:00:00Z`);
         expect(intentWritten === null).toBe(inRunPossible);
         if (!inRunPossible) {
@@ -656,6 +660,89 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
         }).toEqual(countsAfterFirstRun);
 
         await dispatchAndAssertClientSends(clientId, [clientPhone("6")]);
+    }, 30_000);
+
+    it("B1b (flow 6, in-run) fulfills the due-date intent inside the same cron run", async () => {
+        const realNow = Date.now();
+        const dayMs = 24 * 60 * 60 * 1000;
+        const kstOffsetMs = 9 * 60 * 60 * 1000;
+        const yesterdayKst = new Date(realNow + kstOffsetMs - dayMs).toISOString().slice(0, 10);
+        const fakeNow = new Date(`${yesterdayKst}T03:00:00Z`); // yesterday 12:00 KST
+        let clientId: number;
+
+        // Fake only Date: the scheduler sees yesterday, but Postgres's real
+        // clock can already claim the intent stamped at yesterday's UTC midnight.
+        // Prisma, supertest and Nest must keep all their actual timers running.
+        jest.useFakeTimers({
+            doNotFake: [
+                "nextTick", "setImmediate", "clearImmediate", "setTimeout", "clearTimeout",
+                "setInterval", "clearInterval", "queueMicrotask", "performance", "hrtime",
+                "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+            ],
+        });
+        try {
+            jest.setSystemTime(fakeNow);
+            expect(kstDate(0)).toBe(yesterdayKst);
+            // Reuse B1's recipe when it ran first, or create it for a focused
+            // B1b run: two identical active rules would produce two SMS jobs.
+            const producerRule = await prisma.message_trigger_rule.upsert({
+                where: { id: `e2e:producer-40:start-plus2:${RUN}` },
+                update: {},
+                create: {
+                    id: `e2e:producer-40:start-plus2:${RUN}`,
+                    branchId: MESSAGE_CRON_BRANCH_ID,
+                    name: `생산자40 실행 내 서비스 시작 2일 후 안내 ${RUN}`,
+                    isActive: true,
+                    eventType: MessageTriggerEventType.SERVICE_START,
+                    offsetType: MessageTriggerOffsetType.AFTER_DAYS,
+                    offsetDays: 2,
+                    sendTime: "09:00",
+                    recipientType: MessageTriggerRecipientType.CLIENT,
+                    templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+                    isDefault: false,
+                    jobsStale: false,
+                },
+            });
+            producerRuleIds.push(producerRule.id);
+            clientId = await createSilentClient("6b", { dueDate: yesterdayKst, smsAutomationEnabled: true });
+            const before = await prisma.client.findUniqueOrThrow({ where: { id: clientId } });
+            expect(before.startDate).toBeNull();
+            expect(before.dueDate?.toISOString().slice(0, 10)).toBe(yesterdayKst);
+            expect(await prisma.message_trigger_job.count({ where: { clientId } })).toBe(0);
+
+            await harness.tick.dueDate();
+        } finally {
+            // Restore before assertions/dispatch: backdating against the fake
+            // clock could violate the DB-side scheduled_for > clock_timestamp() - 24h fence.
+            jest.useRealTimers();
+        }
+
+        const afterFirst = await prisma.client.findUniqueOrThrow({ where: { id: clientId } });
+        expect(afterFirst.startDate?.toISOString().slice(0, 10)).toBe(yesterdayKst);
+        const intentKey = getClientAutomationIntentDedupeKey(MESSAGE_CRON_BRANCH_ID, clientId);
+        // No reconcile tick or marker backdate: the due-date cron itself must consume it.
+        expect(await prisma.message_trigger_job.findUnique({ where: { dedupeKey: intentKey } })).toBeNull();
+        const jobs = await clientGenericJobs(clientId);
+        expect(jobs.length).toBeGreaterThan(0);
+        expect(new Set(jobs.map((job) => job.templateKey))).toContain(MessageTriggerTemplateKey.SERVICE_INFO);
+        // Yesterday + 2 days at 09:00 KST is tomorrow, even on the real clock.
+        expect(jobs.every((job) => job.scheduledFor.getTime() > Date.now())).toBe(true);
+        const countsAfterFirstRun = {
+            jobs: jobs.length,
+            sentLogs: (await sentLogsForClient(clientId)).length,
+        };
+
+        await harness.tick.dueDate();
+
+        const afterSecond = await prisma.client.findUniqueOrThrow({ where: { id: clientId } });
+        expect(afterSecond.startDate?.toISOString().slice(0, 10)).toBe(yesterdayKst);
+        expect(await prisma.message_trigger_job.findUnique({ where: { dedupeKey: intentKey } })).toBeNull();
+        expect({
+            jobs: (await clientGenericJobs(clientId)).length,
+            sentLogs: (await sentLogsForClient(clientId)).length,
+        }).toEqual(countsAfterFirstRun);
+
+        await dispatchAndAssertClientSends(clientId, [clientPhone("6b")]);
     }, 30_000);
 
     it("B2 (flow 7) leaves clients outside the window or with a startDate untouched", async () => {
