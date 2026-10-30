@@ -389,7 +389,7 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
     describe("resolve end to end (real repository, ClientService stood in by a raw end-date write)", () => {
         it("fixes the safe item, keeps another, and leaves a changed client's item obsolete", async () => {
             const event = await makeEvent("2026-11-10", "added");
-            const fixable = await makeClient(branchA, "가");
+            const fixable = await makeClient(branchA, "가", { allowSaturdayService: true });
             const keepable = await makeClient(branchA, "나");
             const moved = await makeClient(branchA, "다", { end: "2026-11-20" }); // saved by someone since the item was filed
             const itemFix = await makeItem(event, branchA, fixable);
@@ -397,7 +397,18 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
             const itemMoved = await makeItem(event, branchA, moved);
             const itemRisk = await makeItem(event, branchA, await makeClient(branchA, "라"), { category: "risk" });
 
-            const calendar = { calcEndDateBusinessDays: () => "2026-11-16" };
+            // Stand-in for the branch calendar. withClientServiceDays re-wraps it through
+            // `withServiceDays(policy)` for a client with any service-day flag on, and that wrapped
+            // calendar computes the end date. The wrapped one answers only for the policy this
+            // test's client really has (Saturday only), so the flags must travel from the row
+            // through findFixSnapshot into the calendar for the fix to go ahead.
+            const calendar = {
+                calcEndDateBusinessDays: () => "2026-11-12", // the weekday-only answer: not what the card showed
+                withServiceDays: jest.fn((policy: { saturday: boolean; sunday: boolean; holiday: boolean }) => ({
+                    calcEndDateBusinessDays: () =>
+                        policy.saturday && !policy.sunday && !policy.holiday ? "2026-11-16" : "2026-11-12",
+                })),
+            };
             const clientService = {
                 update: jest.fn(async (
                     _branch: string,
@@ -447,14 +458,14 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
                 endDate: "2026-11-16",
                 expectedEndDate: "2026-11-13",
                 // The resolve service pins the client's own service-day flags, so a toggle saved
-                // after the item was filed cannot be overwritten by this end-date fix. The stand-in
-                // calendar above only knows the weekday rule, hence the default (all false) flags.
+                // after the item was filed cannot be overwritten by this end-date fix.
                 expectedServiceDays: {
-                    allowSaturdayService: false,
+                    allowSaturdayService: true,
                     allowSundayService: false,
                     allowHolidayService: false,
                 },
             }, expect.any(Function));
+            expect(calendar.withServiceDays).toHaveBeenCalledWith({ saturday: true, sunday: false, holiday: false });
             const status = async (id: string) => (await raw.end_date_review_item.findUniqueOrThrow({ where: { id } }));
             expect(await status(itemFix.id)).toMatchObject({ status: "fixed", resolvedBy: USER });
             expect(await status(itemKeep.id)).toMatchObject({ status: "kept", resolvedBy: USER });
