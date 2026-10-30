@@ -31,9 +31,20 @@ describe("MobileServiceRecordScreen", () => {
     afterEach(() => jest.useRealTimers());
 
     describe("status screens and the header", () => {
-        it("shows the loading copy", () => {
+        it("shows a loading status with placeholder shapes and an indeterminate header bar", () => {
             render(<MobileServiceRecordScreen {...makeProps({ screen: "loading", context: null })} />);
-            expect(screen.getByText("불러오는 중…")).toBeInTheDocument();
+            const status = screen.getByRole("status", { name: "불러오는 중…" });
+            expect(status).toHaveAttribute("aria-busy", "true");
+            expect(status.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+            const bar = screen.getByRole("progressbar");
+            expect(bar).not.toHaveAttribute("aria-valuenow");
+            expect(bar).toHaveAttribute("aria-busy", "true");
+        });
+
+        it("returns the header bar to a determinate percentage once a step is shown", () => {
+            render(<MobileServiceRecordScreen {...makeProps({ screen: "phone", context: null })} />);
+            expect(screen.queryByRole("status", { name: "불러오는 중…" })).not.toBeInTheDocument();
+            expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow");
         });
 
         it("shows the invalid-link state", () => {
@@ -87,9 +98,11 @@ describe("MobileServiceRecordScreen", () => {
     });
 
     describe("phone step", () => {
-        it("shows 확인 중… while busy and disables the submit", () => {
+        it("shows a spinner with 확인 중 while busy and disables the submit", () => {
             render(<MobileServiceRecordScreen {...makeProps({ screen: "phone", context: null, busy: true })} />);
-            expect(screen.getByRole("button", { name: "확인 중…" })).toBeDisabled();
+            const button = screen.getByRole("button", { name: "확인 중" });
+            expect(button).toBeDisabled();
+            expect(button.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
         });
 
         it("forwards typing to onPhoneChange", () => {
@@ -112,14 +125,16 @@ describe("MobileServiceRecordScreen", () => {
     describe("service step", () => {
         const header = { momName: "이예지", momBirth: "1999-01-01", babyName: "이아기", babyBirth: "2026-06-15", deliveryType: "", babyWeight: "3.2" };
 
-        it("shows the read-only provider rows and 저장 중… while busy", () => {
+        it("shows the read-only provider rows and a spinner with 저장 중 while busy", () => {
             render(<MobileServiceRecordScreen {...makeProps({
                 screen: "service", header, busy: true,
                 context: { totalSessions: 3, startDate: "2026-09-21", header: {}, sessions: [], employee: { id: 1, name: "김제공" } },
             })} />);
             expect(q("body_readonly-row")).toHaveTextContent("김제공");
             expect(q("body_readonly-row-2")).toHaveTextContent("인천 아이미래로");
-            expect(screen.getByRole("button", { name: "저장 중…" })).toBeDisabled();
+            const button = screen.getByRole("button", { name: "저장 중" });
+            expect(button).toBeDisabled();
+            expect(button.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
         });
 
         it("selects the delivery type through onDeliveryTypeChange and goes back", async () => {

@@ -10,6 +10,7 @@ import {
 
 import { ServiceRecordStepHeader } from "@/components/app/v3/ServiceRecordStepHeader";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { ServiceRecordGuide } from "../guide";
 import type { MobileServiceRecordWizardProps } from "../ServiceRecordWizard";
@@ -52,6 +53,31 @@ function StatusBody({ "data-component": dataComponent, children }: { "data-compo
             className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-10 text-center"
         >
             {children}
+        </div>
+    );
+}
+
+/**
+ * The loading body: a placeholder shaped like the step that follows (title, two help
+ * lines, a labelled field and the action button), so the layout does not jump when it
+ * resolves. The copy is for assistive technology only; the shapes carry the state.
+ */
+function LoadingBody({ "data-component": dataComponent }: { "data-component": string }) {
+    return (
+        <div
+            data-component={dataComponent}
+            role="status"
+            aria-label={LOADING_COPY}
+            aria-busy="true"
+            className="flex min-w-0 flex-1 flex-col px-4 pb-6 pt-5"
+        >
+            <span className="sr-only">{LOADING_COPY}</span>
+            <Skeleton aria-hidden="true" className="mb-3 h-[22px] w-3/5 rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-2 h-3 w-[90%] rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-6 h-3 w-[70%] rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-2.5 h-3.5 w-[28%] rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-4 h-[50px] w-full rounded-xl bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="h-[46px] w-full rounded-full bg-v3-dim-white" />
         </div>
     );
 }
@@ -149,6 +175,7 @@ export function MobileServiceRecordScreen({
                 )}
                 crumbs={crumbs}
                 progress={progress / 100}
+                indeterminate={screen === "loading"}
             />
             {context && plannedDateVectorProvided && !plannedDateVectorValid ? (
                 <p
@@ -160,11 +187,7 @@ export function MobileServiceRecordScreen({
                 </p>
             ) : null}
 
-            {screen === "loading" && (
-                <StatusBody data-component={child("body")}>
-                    <p data-component={child("body_loading")} className="text-sm text-v3-text-muted">{LOADING_COPY}</p>
-                </StatusBody>
-            )}
+            {screen === "loading" && <LoadingBody data-component={child("body_loading")} />}
 
             {screen === "invalid" && (
                 <StatusBody data-component={child("body")}>
