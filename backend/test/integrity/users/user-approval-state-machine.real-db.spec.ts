@@ -4,7 +4,6 @@ import { knownDefect, invariant } from "../helpers/known-defect";
 import { RowTracker } from "../helpers/tracker";
 
 import {
-    isolateExactTwoOwnerWorld,
     makeUserService,
     ownerActor,
 } from "./users-local.helpers";
@@ -29,7 +28,7 @@ import type { AdminAuditActor } from "application/services/admin-audit-event.ser
  * - SI-USER-02 (NEEDS-PRODUCT-DECISION): `approve` has no check that the target
  *   is pending — approving a REJECTED user resurrects the account and re-grants
  *   the role. Same reasoning: pinned as a reachable-today invariant.
- * - SI-USER-09 (CONFIRMED, missed CRITICAL product defect): `approve` never
+ * - SI-USER-09 (CONFIRMED, high — no UI caller): `approve` never
  *   reads the target before writing and enforces none of the guards `reject`
  *   enforces — approve of an OWNER target demotes them, approve of the CALLER'S
  *   OWN account self-demotes; combined, the owner count reaches 0, which
@@ -46,12 +45,18 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
 
     beforeAll(async () => {
         handle = await createIntegrityPrisma();
-        tracker = new RowTracker();
         service = makeUserService(handle.service);
     });
 
-    afterAll(async () => {
+    beforeEach(() => {
+        tracker = new RowTracker();
+    });
+
+    afterEach(async () => {
         if (tracker) await tracker.cleanup(handle.raw);
+    });
+
+    afterAll(async () => {
         if (handle) await closeIntegrityPrisma(handle);
     });
 
@@ -147,10 +152,9 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
         "approve refuses an owner target and the caller's own account, and the owner count never reaches zero",
         async () => {
             const { ownerA, ownerB, actor, branch } = await createOwnerPair();
-            // isolation: the suite's own earlier tests leave owner-role actor rows
-            // (and earlier runs may have leaked rows); the owner-count evidence is
-            // only valid in a world that starts with EXACTLY these two owners.
-            await isolateExactTwoOwnerWorld(handle.raw, ownerA.id, ownerB.id);
+            // Per-test cleanup, not cross-test demotion, gives exactly these owners.
+            // A leaked fixture must fail setup, never become expected defect evidence.
+            expect(await handle.raw.user.count({ where: { role: "owner" } })).toBe(2);
 
             // Both calls must refuse with ACCESS_DENIED, without changing either
             // owner. Collect successful writes so the knownDefect fails only for

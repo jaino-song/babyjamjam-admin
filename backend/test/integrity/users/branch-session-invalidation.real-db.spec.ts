@@ -46,11 +46,17 @@ describeReal("branch deactivation and owner transfer against live sessions (real
 
     beforeAll(async () => {
         handle = await createIntegrityPrisma();
+    });
+
+    beforeEach(() => {
         tracker = new RowTracker();
     });
 
-    afterAll(async () => {
+    afterEach(async () => {
         if (tracker) await tracker.cleanup(handle.raw);
+    });
+
+    afterAll(async () => {
         if (handle) await closeIntegrityPrisma(handle);
     });
 
@@ -207,7 +213,31 @@ describeReal("branch deactivation and owner transfer against live sessions (real
                 branchRole: "admin",
             } as const;
 
+            // Demotion is conditional on owning no OTHER branch. Pin that
+            // precondition by this user's id, never a suite/branch-wide count.
+            expect(await handle.raw.branch.findMany({
+                where: { ownerId: oldOwner.id },
+                select: { id: true },
+            })).toEqual([{ id: branch.id }]);
+            await expect(strategy.validate(oldTokenPayload)).resolves.toMatchObject({ role: "admin" });
+
             await systemAdmin.updateBranch(branch.id, { ownerId: newOwner.id }, ownerActor(actor.id));
+
+            // updateBranch awaits the transaction commit. Check the independent
+            // raw client BEFORE JwtStrategy so any recurrence distinguishes a
+            // write/fixture failure from a stale strategy read, without sleeps/retries.
+            expect(await handle.raw.branch.findUniqueOrThrow({
+                where: { id: branch.id },
+                select: { ownerId: true },
+            })).toEqual({ ownerId: newOwner.id });
+            expect(await handle.raw.branch.findMany({
+                where: { ownerId: oldOwner.id },
+                select: { id: true },
+            })).toEqual([]);
+            expect(await handle.raw.user.findUniqueOrThrow({
+                where: { id: oldOwner.id },
+                select: { role: true },
+            })).toEqual({ role: "user" });
 
             // jwt.strategy re-reads the GLOBAL role from the database instead of
             // trusting the token: the demoted owner's old token now validates as the

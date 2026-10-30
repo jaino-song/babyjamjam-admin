@@ -9,7 +9,6 @@ import { RowTracker } from "../helpers/tracker";
 import {
     createKnownRefreshToken,
     expectInOrder,
-    isolateExactTwoOwnerWorld,
     makeAuthSessionService,
     makeJwtStrategy,
     makeUserService,
@@ -47,11 +46,17 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
 
     beforeAll(async () => {
         handle = await createIntegrityPrisma();
+    });
+
+    beforeEach(() => {
         tracker = new RowTracker();
     });
 
-    afterAll(async () => {
+    afterEach(async () => {
         if (tracker) await tracker.cleanup(handle.raw);
+    });
+
+    afterAll(async () => {
         if (handle) await closeIntegrityPrisma(handle);
     });
 
@@ -114,7 +119,9 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
             const service = makeUserService(handle.service);
             const ownerA = await createUser(handle.raw, tracker, { role: "owner" });
             const ownerB = await createUser(handle.raw, tracker, { role: "owner" });
-            await isolateExactTwoOwnerWorld(handle.raw, ownerA.id, ownerB.id);
+            // Global last-owner protection requires an otherwise empty owner world.
+            // Fail on leaked fixtures instead of silently demoting another test's rows.
+            expect(await handle.raw.user.count({ where: { role: "owner" } })).toBe(2);
 
             const events: string[] = [];
             let paused = false;
@@ -260,7 +267,7 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
             const service = makeUserService(handle.service);
             const ownerA = await createUser(handle.raw, tracker, { role: "owner" });
             const ownerB = await createUser(handle.raw, tracker, { role: "owner" });
-            await isolateExactTwoOwnerWorld(handle.raw, ownerA.id, ownerB.id);
+            expect(await handle.raw.user.count({ where: { role: "owner" } })).toBe(2);
 
             // With exactly two owners the first delete passes the guard and commits.
             await expect(

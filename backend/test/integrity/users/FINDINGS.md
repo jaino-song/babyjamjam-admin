@@ -14,16 +14,16 @@ membership/ownership removal on reject, which only matters for approved users; t
 the prior status; `test/services/user.service.spec.ts:1753+` rejects an approved owner-of-branch manager
 on purpose; the UI only offers reject/approve for pending users) — the tests are kept as `invariant`s
 pinning today's reachable behaviour and carry no severity. The audit-trail half of SI-USER-02 was split
-into CONFIRMED SI-USER-10. Review evidence found a missed critical product defect in `approve`, filed as
+into CONFIRMED SI-USER-10. Review evidence found a missed authorization defect in `approve`, filed as
 CONFIRMED SI-USER-09.
 
 ## CONFIRMED defects (wrong behaviour reachable today)
 
 | id | layer | verdict | severity proposal | one-line defect | evidence file:line | test file::test name | observed failure message (CONFIRMED only) |
 |---|---|---|---|---|---|---|---|
-| SI-USER-09 | backend | CONFIRMED | critical | `UserService.approve` never reads the target before writing and enforces neither of the two guards `reject` enforces: approving an OWNER target demotes the owner, approving the CALLER'S OWN account self-demotes; two calls drive the owner count to 0, bypassing the `deleteGlobalUser` last-owner guard without deleting a row (권한-02) | backend/application/services/user.service.ts:1108-1245 — target write at 1157 has no owner-target/self guard; compare reject's self guard at 1279 and owner guard at 1292 | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-09 approve refuses an owner target and the caller's own account, and the owner count never reaches zero` | `SI-USER-09: approval authorization invariant violated: owner-target approval succeeded; ownerB role became 'user'; self approval succeeded; ownerA role became 'manager'; owner count went 2 -> 0` |
-| SI-USER-10 | backend | CONFIRMED | medium | The approval audit's `before` payload hardcodes the fresh-sign-up state `{ role: null, approvalStatus: "pending" }` (`user.service.ts:1234`), so every non-pending approval transition is recorded with a `before.approvalStatus` that misdescribes the transition (the audit trail is the accountability record for 권한 changes) | backend/application/services/user.service.ts:1234 (hardcoded literal; the transaction never reads the prior state) | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-10 the approval audit's before.approvalStatus records the real prior status of the target` | `SI-USER-10: the user.approved audit event's before.approvalStatus is 'pending' (before.role 'null') but the target's real pre-transition state was approvalStatus='rejected', role=null — the before payload is hardcoded to the fresh-sign-up state, so the audit trail misdescribes non-pending approval transitions` |
-| SI-USER-08 | frontend/mobile | CONFIRMED | medium | A 403 caused by a server-side role change triggers no authority reset and no re-fetch of the cached auth user; `useGetAuthUser` serves the stale identity from a 30-minute staleTime (now proven behaviourally on both shells), so the UI keeps showing pre-demotion (branch)admin capabilities until the next 401 or manual refetch | frontend/src/lib/api/client.ts:293-317 — only 401 is special-cased (refresh at 222-314, `redirectToLoginOnce` 166-175), 403 falls to the catch-all `captureApiError + reject`; mobile/src/lib/api/authenticated-fetch.ts:6-8/21-37 (`requiresApplicationSessionRefresh` only for 401); the reset exists and works — proven by behaviour on the branch-switch flow: desktop cleared the shared cache before `setCurrentBranch` ran (frontend/src/app/(protected)/select-branch/page.tsx:103-113) and mobile likewise (mobile/src/app/(shell)/select-branch/page.tsx:53-60,122) | CONFIRMED half: frontend/src/__integrity__/users/desktop-authority.client-integrity.test.ts :: `SI-USER-08 a 403 caused by a server-side role change re-fetches the cached authority` (`it.failing`) and mobile/src/__integrity__/users/mobile-session.client-integrity.test.ts :: same-title mirror. The reset/branch-switch contracts are now BEHAVIOURAL green invariants: frontend/src/__integrity__/users/desktop-branch-switch.client-integrity.test.tsx and mobile/src/__integrity__/users/mobile-branch-switch.client-integrity.test.tsx (real page renders against the real shared QueryClient, asserting the cache is cleared BEFORE `setCurrentBranch` — including on a FAILED switch — plus real 30-minute staleTime behaviour of `useGetAuthUser` on both shells). The desktop/mobile 401 halves remain green `invariant`s in the authority/session files | desktop: `SI-USER-08: a 403 ACCESS_DENIED on a protected API left the cached authUser query intact (isInvalidated=false, data still present) — the interceptor triggers no authority re-fetch/reset on 403 …`; mobile: `SI-USER-08: a 403 ACCESS_DENIED on a protected mobile API left the cached authUser query intact (isInvalidated=false, data still present) — authenticatedFetch triggers no authority re-fetch/reset on 403` |
+| SI-USER-09 | backend | CONFIRMED | high | `UserService.approve` never reads the target before writing and enforces neither of the two guards `reject` enforces: approving an OWNER target demotes the owner, approving the CALLER'S OWN account self-demotes; two calls drive the owner count to 0, bypassing the `deleteGlobalUser` last-owner guard without deleting a row (권한-02). Severity: trusted owner making direct API calls, no UI caller; orchestrator HTTP reproduction also observed owner count 2 → 0 | backend/application/services/user.service.ts:1108-1245 — target write at 1157 has no owner-target/self guard; compare reject's self guard at 1279 and owner guard at 1292 | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-09 approve refuses an owner target and the caller's own account, and the owner count never reaches zero` | `SI-USER-09: approval authorization invariant violated: owner-target approval succeeded; ownerB role became 'user'; self approval succeeded; ownerA role became 'manager'; owner count went 2 -> 0` |
+| SI-USER-10 | backend | CONFIRMED | low | The approval audit's `before` payload hardcodes the fresh-sign-up state `{ role: null, approvalStatus: "pending" }` (`user.service.ts:1234`), so every non-pending approval transition is recorded with a `before.approvalStatus` that misdescribes the transition. Severity: no UI caller for non-pending approvals; the UI only approves pending users, where `before: pending` is accurate | backend/application/services/user.service.ts:1234 (hardcoded literal; the transaction never reads the prior state) | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-10 the approval audit's before.approvalStatus records the real prior status of the target` | `SI-USER-10: the user.approved audit event's before.approvalStatus is 'pending' (before.role 'null') but the target's real pre-transition state was approvalStatus='rejected', role=null — the before payload is hardcoded to the fresh-sign-up state, so the audit trail misdescribes non-pending approval transitions` |
+| SI-USER-08 | frontend/mobile | CONFIRMED | low | A 403 caused by a server-side role change triggers no authority reset and no re-fetch of the cached auth user; `useGetAuthUser` serves the stale identity from a 30-minute staleTime, so the UI keeps showing pre-demotion capabilities. Severity: stale UI only, server refusal is authoritative; self-healing cache on refetch/remount after staleness or authority reset | frontend/src/lib/api/client.ts:293-317 — only 401 is special-cased (refresh at 222-314, `redirectToLoginOnce` 166-175), 403 falls to the catch-all `captureApiError + reject`; mobile/src/lib/api/authenticated-fetch.ts:6-8/21-37 (`requiresApplicationSessionRefresh` only for 401); the reset exists and works — proven by behaviour on the branch-switch flow: desktop cleared the shared cache before `setCurrentBranch` ran (frontend/src/app/(protected)/select-branch/page.tsx:103-113) and mobile likewise (mobile/src/app/(shell)/select-branch/page.tsx:53-60,122) | CONFIRMED half: frontend/src/__integrity__/users/desktop-authority.client-integrity.test.ts :: `SI-USER-08 a 403 caused by a server-side role change re-fetches the cached authority` (`it.failing`) and mobile/src/__integrity__/users/mobile-session.client-integrity.test.ts :: same-title mirror. The reset/branch-switch contracts are BEHAVIOURAL green invariants: frontend/src/__integrity__/users/desktop-branch-switch.client-integrity.test.tsx and mobile/src/__integrity__/users/mobile-branch-switch.client-integrity.test.tsx (real page renders against the real shared QueryClient, asserting the cache is cleared BEFORE `setCurrentBranch` — including on a FAILED switch — plus real 30-minute staleTime behaviour of `useGetAuthUser` on both shells). The desktop/mobile 401 halves remain green `invariant`s in the authority/session files | desktop: `SI-USER-08: a 403 ACCESS_DENIED on a protected API left the cached authUser query intact (isInvalidated=false, data still present) — the interceptor triggers no authority re-fetch/reset on 403 …`; mobile: `SI-USER-08: a 403 ACCESS_DENIED on a protected mobile API left the cached authUser query intact (isInvalidated=false, data still present) — authenticatedFetch triggers no authority re-fetch/reset on 403` |
 
 ## NEEDS-PRODUCT-DECISION (behaviour reachable today, intent unresolved — pinned as reachable-today invariants, no severity)
 
@@ -44,7 +44,7 @@ CONFIRMED SI-USER-09.
 
 ## Fix notes
 
-### SI-USER-09 (critical) — SENSITIVE (auth/approval core logic)
+### SI-USER-09 (high) — SENSITIVE (auth/approval core logic)
 Smallest correct fix: give `approve` the same guards `reject` already has, read BEFORE the write —
 inside the `approve` transaction and before `tx.user.update`:
 1. owner-target guard: read the target (`tx.user.findUnique`); if `target.role === "owner"`,
@@ -55,14 +55,14 @@ approval authorization path (audit-id: `approve` is an authz core decision point
 two guards (single hunk before `tx.user.update`). Fixing SI-USER-10's before-payload read (below) naturally
 provides the target read this fix needs.
 
-### SI-USER-10 (medium) — SENSITIVE (approval audit trail inside the auth/approval path)
+### SI-USER-10 (low) — SENSITIVE (approval audit trail inside the auth/approval path)
 Smallest correct fix: in `approve`, read the target's CURRENT state before `tx.user.update`
 (`tx.user.findUnique({ select: { role: true, approvalStatus: true } })`) and write the audit
 `before: { id, role: prior?.role ?? null, approvalStatus: prior?.approvalStatus ?? "pending" }`
 instead of the hardcoded literal at `backend/application/services/user.service.ts:1234`. No schema change.
 Flagged SENSITIVE (inside the approval path; the audit feeds authority review). Rollback: single hunk revert.
 
-### SI-USER-08 (medium) — not SENSITIVE (no schema/deps/approval-core changes)
+### SI-USER-08 (low) — not SENSITIVE (no schema/deps/approval-core changes)
 Smallest correct fix: invalidate the cached authority when a protected call is refused because of an
 identity change, in both shells:
 - Desktop: in `frontend/src/lib/api/client.ts`'s response interceptor, reject-with-reset for a 403 that
@@ -128,6 +128,88 @@ both failed with the exact messages in the CONFIRMED rows (`users-actual-defects
 
 ## Untestable
 None. Every hypothesis was wired to the real DB or the real client code and executed.
+
+## Correction fix2 — SI-USER-04 investigation and order independence
+
+**The original one-off QA failure is not reproduced; its root cause remains unconfirmed.**
+Do not interpret the green runs below or the fixture cleanup as proof that the reported flake is fixed.
+No new CONFIRMED id is assigned without a demonstrated product race.
+
+Code-path evidence (unchanged from combined QA candidate `c05d314dc`):
+- `system-admin.service.ts:170-268`: branch write, membership demotion, `stillOwnsBranch`
+  (`236-239`) and global-role demotion (`240-245`) all use the SAME `tx`; the method awaits
+  `$transaction` before returning (`270`). There is no async/after-commit role write to wait for.
+- `jwt.strategy.ts:62-77,100-106`: each validation reads the session and related user's current role;
+  no strategy cache exists. `PrismaService` adds connection configuration, not a data cache.
+- `helpers/factories.ts:60-74,87-118`: branch creation does not assign an owner by default, and
+  user creation only creates the explicitly requested membership, not another owned branch.
+- SI-USER-04 creates fresh UUID users/branch on each invocation; another database cannot supply
+  an extra owned branch to this database's transaction. The reported other-DB activity alone
+  does not establish a causal link. A same-DB writer or different failing-run fixture state is
+  still unproven; no assertion was weakened and no polling/retry/sleep was added.
+
+Probes against the original SI-USER-04 body: full users suite randomized seed **104**, then
+the branch-session spec randomized seeds **1–10**: all green. The existing code gives no
+supported explanation for an isolated single-branch owner remaining `admin` after the awaited write.
+
+Changes to audit tests only:
+- Branch-session, membership-removal and approval-state suites now create a fresh `RowTracker`
+  per test and clean it in `afterEach`. Every test already creates its own fixtures. The other
+  two suites only use fresh token/session/user ids and scoped counts, with no shared fixture dependency.
+- Removed all calls to `isolateExactTwoOwnerWorld`: tests no longer demote other tests' owner
+  rows to manufacture the required world. SI-USER-06/09 assert exactly their two freshly created
+  owners exist; leaked fixtures now fail setup rather than silently changing unrelated rows.
+- SI-USER-04 asserts its old owner owns exactly the tested branch before transfer, and that the
+  SAME token validates as `admin` before transfer. After the service returns, an independent raw
+  client asserts the branch belongs to the successor, the old owner owns no branch, and the stored
+  user role is `user`, BEFORE checking the strategy result and owner-only refusal.
+  A future failure will therefore identify fixture/ownership/write state separately from JWT reads.
+
+Post-change verification on the own throwaway DB (without resetting it between runs):
+- **15 consecutive full users runs**, each **5 suites / 16 tests passed, 0 skipped**.
+- Full users randomized seeds **104**, **8675309**, **20261031**: each **16/16 passed**.
+- **TZ=UTC**, full users randomized seed **314159**: **16/16 passed**.
+- After removing the mutation transformer/config, full users randomized seed **271828**:
+  **16/16 passed**; backend ESLint and TypeScript re-run exit 0. Own throwaway DB dropped
+  (`psql` database-list check has no matching row); `.jest-cache-users` removed.
+- Fresh no-env run: exit 0; all 16 real-DB tests intentionally skipped.
+- Frontend/mobile users Jest: **2 suites / 5 tests passed each**. Backend/frontend/mobile
+  ESLint and TypeScript checks: all exit 0 (client tsc uses `--incremental false`).
+
+Logs: machine-local `$TMPDIR/opencode/si/out/p2-users-fix2/` (`probe-*.log`, `repeat-1.log`
+through `repeat-15.log`, `random-*.log`, `utc.log`, acceptance logs).
+Reviewer focus: the original flake still needs failing-run evidence from the new ownership/DB-role
+assertions; these changes remove cross-test fixture mutation but do not demonstrate its cause.
+
+### Fix2 mutation proofs
+
+To keep the audit-only/owned-path boundary, temporary Jest transformer/config files INSIDE this
+area replaced the cited production source strings **in memory before ts-jest compiled them**;
+no application, schema or helper file was written. Every replacement matched exactly once and
+the run logged the production source target. `--no-cache` prevented cross-mutant transform reuse.
+The temporary files were removed afterwards. These are real services over the own real DB,
+not mocked service results. All eight focused mutation runs exited **1**, each with exactly one
+failed test for the intended reason (non-target tests skipped by `-t`).
+
+| test | production source target | in-memory mutation | observed RED |
+|---|---|---|---|
+| SI-USER-04 fresh-role read | backend/infrastructure/auth/jwt.strategy.ts:106 | return `payload.role` instead of `user.role` | stored-role assertion passes first; principal role expected `user`, received `admin` |
+| SI-USER-04 demotion precondition/result diagnostics | backend/application/services/system-admin.service.ts:242 | change the demotion update's role filter to `__mutation_skip__` | committed DB-role assertion expected `{role: "user"}`, received `{role: "admin"}` BEFORE strategy validation |
+| SI-USER-06 serial last-owner guard | backend/application/services/user.service.ts:914 | `lockedOwners.length <= 1` → `< 1` | second delete resolved `undefined` instead of rejecting 409 |
+| SI-USER-06 two-owner race | backend/application/services/user.service.ts:903 | disable the sorted owner-row lock calls | `only 0 backend(s) (needed 1) blocked on /FROM\s+"user"[\s\S]*FOR\s+UPDATE/` |
+| SI-USER-09 knownDefect with per-test fixtures | backend/application/services/user.service.ts:1121 | pre-read target; refuse owner/self targets with 403 ACCESS_DENIED | body passes with two owners preserved; `Failing test passed even though it was supposed to fail` |
+| SI-USER-10 knownDefect with per-test fixtures | backend/application/services/user.service.ts:1121,1234 | pre-read and record the real prior role/status in the approval audit | body passes; `Failing test passed even though it was supposed to fail` |
+| SI-USER-01 reachable-today invariant | backend/application/services/user.service.ts:1295 | refuse non-pending reject targets | `Received promise rejected instead of resolved` (ConflictException) |
+| SI-USER-02 reachable-today invariant | backend/application/services/user.service.ts:1121 | refuse non-pending approve targets | `Received promise rejected instead of resolved` (ConflictException) |
+
+Logs: `mutation-freshRole.log`, `mutation-demotion.log`, `mutation-serialOwner.log`,
+`mutation-ownerLocks.log`, `mutation-approvalAuth.log`, `mutation-auditBefore.log`,
+`mutation-rejectStatus.log`, `mutation-approveStatus.log` in the fix2 output directory above.
+
+Security-scope check: only tests and findings changed; no dependency, schema, auth implementation,
+vendor boundary or helper change. Existing env files remain ignored; changed-line secret/dangerous-call
+scan and `git diff --check` are clean. Dependency audit/build/browser QA were not run: no dependencies
+or application/UI implementation changed and the brief requires only the listed test/lint/type checks.
 
 ## Resumed acceptance verification
 
