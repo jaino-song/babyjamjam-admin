@@ -6,6 +6,7 @@ import { Input } from "@/components/app/v3/Input";
 import { ServiceRecordItemLabel } from "@/components/app/v3/ServiceRecordItemLabel";
 import { StickyActionBar } from "@/components/app/v3/StickyActionBar";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 import {
     PHONE_HELP_COPY,
@@ -135,7 +136,7 @@ export function PhoneStep({
                     disabled={busy}
                     onClick={handleSubmitPhone}
                 >
-                    {busy ? PHONE_SUBMIT_BUSY_LABEL : PHONE_SUBMIT_LABEL}
+                    {busy ? <><Spinner size="sm" aria-hidden="true" />{PHONE_SUBMIT_BUSY_LABEL}</> : PHONE_SUBMIT_LABEL}
                 </Button>
             </StickyActionBar>
         </>
