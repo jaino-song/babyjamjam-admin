@@ -54,20 +54,6 @@ const MOCK_DOCUMENT_LIST = {
   skip: 0,
 };
 
-const MOCK_SDK_OPTIONS = {
-  company: { id: "company-id", country_code: "kr", user_key: "staff@example.com" },
-  layout: { lang_code: "ko", zoom: "0.75" },
-  user: { type: "01", id: "staff@example.com", access_token: "fake-token", refresh_token: "fake-refresh" },
-  mode: { type: "02", template_id: "tpl-test", document_id: REVIEW_DOC_ID },
-  prefill: {
-    fields: [
-      { id: "계약 종료 년도", value: "2026", enabled: true, required: false },
-      { id: "계약 종료 월", value: "07", enabled: true, required: false },
-      { id: "계약 종료 일", value: "15", enabled: true, required: false },
-    ],
-  },
-};
-
 async function installCommonRoutes(page: Page) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -177,51 +163,6 @@ async function installCommonRoutes(page: Page) {
   );
 }
 
-async function stubEformsignSdk(page: Page) {
-  // Intercept the SDK script + jQuery loads with no-op responses so
-  // useEformsign.loadScript resolves; then inject a fake EformSignDocument
-  // that records calls and exposes triggers.
-  await page.route("https://www.eformsign.com/**", (route) =>
-    route.fulfill({ status: 200, contentType: "application/javascript", body: "/* stub */" })
-  );
-
-  await page.addInitScript(() => {
-    interface CallRecord {
-      options: unknown;
-      iframeId: string;
-      successCallback?: (response: unknown) => void;
-      errorCallback?: (response: unknown) => void;
-      actionCallback?: (response: unknown) => void;
-    }
-    const w = window as unknown as Record<string, unknown>;
-    w.__eformsignCalls = [] as CallRecord[];
-    w.jQuery = function () { return {}; };
-    class FakeEformSignDocument {
-      private record: CallRecord = { options: null, iframeId: "" };
-      document(
-        options: unknown,
-        iframeId: string,
-        success?: (response: unknown) => void,
-        error?: (response: unknown) => void,
-        action?: (response: unknown) => void,
-      ) {
-        this.record = {
-          options,
-          iframeId,
-          successCallback: success,
-          errorCallback: error,
-          actionCallback: action,
-        };
-      }
-      open() {
-        const calls = (window as unknown as { __eformsignCalls: CallRecord[] }).__eformsignCalls;
-        calls.push(this.record);
-      }
-    }
-    w.EformSignDocument = FakeEformSignDocument;
-  });
-}
-
 async function fillEndDateAndSubmit(page: Page, value: string) {
   const dateInput = page.getByPlaceholder("YYYY-MM-DD");
   await dateInput.fill(value);
@@ -238,13 +179,52 @@ async function createTestPdf(): Promise<Buffer> {
   return Buffer.from(await document.save());
 }
 
-test.describe("Staff finalize iframe + prefill flow", () => {
+
+// Finalizing a review-needed document is queue-only: 완료 POSTs one job to
+// /api/eformsign-docs/jobs/finalization and the backend finishes the document. The browser never opens
+// the eformsign editor (no SDK iframe) and never calls generate-staff-document / finalize-headless.
+const FINALIZE_JOB_ROUTE = "**/api/eformsign-docs/jobs/finalization";
+const FINALIZE_JOB_PATH = "/api/eformsign-docs/jobs/finalization";
+const QUEUED_FINALIZE_JOB = { jobId: "job-finalize-test", status: "queued", existing: false };
+// contracts/page.tsx:1526
+const FINALIZE_STARTED_TOAST = "전자문서 작업을 시작했어요";
+// contracts/page.tsx:1523
+const FINALIZE_ALREADY_RUNNING_TOAST = "이 계약서의 검토완료가 이미 처리 중이에요.";
+// contracts/page.tsx:1513 and :1534
+const FINALIZE_FAILED_TITLE = "최종 확인을 마치지 못했어요";
+// contracts/page.tsx:1514
+const FINALIZE_JOB_LEFT_BEHIND_DESCRIPTION = "이 계약서의 검토완료 작업이 처리중 목록에 남아 있어요. 처리중 목록에서 확인해 주세요.";
+// contracts/page.tsx:1535
+const FINALIZE_RETRY_LATER_DESCRIPTION = "잠시 후 다시 시도해 주세요";
+const REVIEW_TRIGGER = '[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_review-trigger"]';
+
+async function openFinalizeDialog(page: Page) {
+  await gotoContractsPage(page);
+  const reviewItem = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list_item"]').filter({ hasText: "검토 필요" }).first();
+  await expect(reviewItem).toBeVisible();
+  await reviewItem.click();
+  await page.locator(REVIEW_TRIGGER).click();
+}
+
+/** Requests the removed iframe / headless finalize path used to make; the queue flow must make none of them. */
+function trackLegacyFinalizeRequests(page: Page): string[] {
+  const hits: string[] = [];
+  page.on("request", (request) => {
+    const { pathname } = new URL(request.url());
+    if (pathname === "/api/generate-staff-document" || pathname.startsWith("/api/eformsign-docs/finalize-headless")) {
+      hits.push(`${request.method()} ${pathname}`);
+    }
+  });
+  return hits;
+}
+
+test.describe("Staff finalize queue + prefill flow", () => {
   test("previews a review-needed maternity document without starting finalization", async ({ page }) => {
     await installCommonRoutes(page);
 
     const previewPdf = await createTestPdf();
-    let generateStaffDocumentRequests = 0;
-    let finalizeHeadlessRequests = 0;
+    let finalizeJobRequests = 0;
+    const legacyRequests = trackLegacyFinalizeRequests(page);
 
     await page.route(`**/api/eformsign/documents/${REVIEW_DOC_ID}/preview**`, async (route) => {
       if (route.request().method() === "HEAD") {
@@ -263,12 +243,8 @@ test.describe("Staff finalize iframe + prefill flow", () => {
         body: previewPdf,
       });
     });
-    await page.route("**/api/generate-staff-document", async (route) => {
-      generateStaffDocumentRequests += 1;
-      return route.fulfill({ status: 500 });
-    });
-    await page.route("**/api/eformsign-docs/finalize-headless", async (route) => {
-      finalizeHeadlessRequests += 1;
+    await page.route(FINALIZE_JOB_ROUTE, async (route) => {
+      finalizeJobRequests += 1;
       return route.fulfill({ status: 500 });
     });
 
@@ -287,41 +263,26 @@ test.describe("Staff finalize iframe + prefill flow", () => {
     await expect(previewDialog).toBeVisible();
     await expect(previewDialog.getByRole("heading", { name: REVIEW_DOC.document_name })).toBeVisible();
     await expect(previewDialog.getByLabel("PDF 미리보기 확대/축소")).toBeVisible();
-    expect(generateStaffDocumentRequests).toBe(0);
-    expect(finalizeHeadlessRequests).toBe(0);
+    expect(finalizeJobRequests).toBe(0);
+    expect(legacyRequests).toEqual([]);
     await expect(page.getByPlaceholder("YYYY-MM-DD")).not.toBeVisible();
   });
 
-  test("opens dialog, sends prefillEndDate, mounts iframe modal, fires success", async ({ page }) => {
-    await stubEformsignSdk(page);
-    let capturedGenerateBody: Record<string, unknown> | null = null;
+  test("opens dialog, queues the finalize job with prefillEndDate, and closes the dialog", async ({ page }) => {
+    const capturedJobRequests: Array<{ method: string; pathname: string; body: Record<string, unknown> }> = [];
 
     await installCommonRoutes(page);
-    // A 5xx leaves the outcome unknown (the page then asks for a manual status check and never
-    // reopens the editor), so force the iframe fallback with an explicit "nothing was applied" verdict.
-    await page.route("**/api/eformsign-docs/finalize-headless", async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ ok: false, reason: "force iframe fallback", fallbackHint: "iframe", durationMs: 1 }),
-      })
-    );
-    await page.route("**/api/generate-staff-document", async (route) => {
-      capturedGenerateBody = route.request().postDataJSON();
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(MOCK_SDK_OPTIONS) });
+    const legacyRequests = trackLegacyFinalizeRequests(page);
+    await page.route(FINALIZE_JOB_ROUTE, async (route) => {
+      capturedJobRequests.push({
+        method: route.request().method(),
+        pathname: new URL(route.request().url()).pathname,
+        body: route.request().postDataJSON() as Record<string, unknown>,
+      });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(QUEUED_FINALIZE_JOB) });
     });
 
-    await gotoContractsPage(page);
-
-    // Locate the 검토 필요 list item and select it.
-    const reviewItem = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list_item"]').filter({ hasText: "검토 필요" }).first();
-    await expect(reviewItem).toBeVisible();
-    await reviewItem.click();
-
-    // 확인하기 button only appears for 검토 필요 docs.
-    const finalizeTrigger = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_review-trigger"]');
-    await expect(finalizeTrigger).toBeVisible();
-    await finalizeTrigger.click();
+    await openFinalizeDialog(page);
 
     // Dialog opens with the existing end date pre-filled in YYYY-MM-DD form.
     const dateInput = page.getByPlaceholder("YYYY-MM-DD");
@@ -331,57 +292,65 @@ test.describe("Staff finalize iframe + prefill flow", () => {
     await dateInput.fill("2026-07-15");
     await page.getByRole("button", { name: "완료" }).click();
 
-    // Backend was called with the new prefillEndDate.
-    await expect.poll(() => capturedGenerateBody).not.toBeNull();
-    expect(capturedGenerateBody).toMatchObject({
+    // Backend was called once with the new prefillEndDate.
+    await expect.poll(() => capturedJobRequests.length).toBe(1);
+    const [jobRequest] = capturedJobRequests;
+    expect(jobRequest.method).toBe("POST");
+    expect(jobRequest.pathname).toBe(FINALIZE_JOB_PATH);
+    expect(jobRequest.body).toEqual({
+      requestKey: expect.any(String),
       documentId: REVIEW_DOC_ID,
       prefillEndDate: "2026-07-15",
     });
+    expect((jobRequest.body.requestKey as string).length).toBeGreaterThan(0);
 
-    // The eformsign SDK was invoked with the prefill block intact.
-    await expect.poll(async () => {
-      return page.evaluate(() => (window as unknown as { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0);
-    }).toBeGreaterThan(0);
-    const sdkCall = await page.evaluate(() => {
-      const calls = (window as unknown as { __eformsignCalls: Array<{ options: unknown; iframeId: string }> }).__eformsignCalls;
-      return calls[0];
-    });
-    expect(sdkCall.iframeId).toBe("contracts_staff_completion_iframe");
-    expect(sdkCall.options).toMatchObject({
-      mode: { type: "02", document_id: REVIEW_DOC_ID },
-      prefill: {
-        fields: expect.arrayContaining([
-          expect.objectContaining({ id: "계약 종료 년도", value: "2026" }),
-          expect.objectContaining({ id: "계약 종료 월", value: "07" }),
-          expect.objectContaining({ id: "계약 종료 일", value: "15" }),
-        ]),
-      },
-    });
+    // Toast confirms the job was queued, and the dialog closes (there is no iframe modal any more).
+    await expect(page.getByText(FINALIZE_STARTED_TOAST, { exact: true })).toBeVisible();
+    await expect(dateInput).not.toBeVisible();
+    expect(legacyRequests).toEqual([]);
+  });
 
-    // Trigger the SDK success callback to simulate staff approving inside iframe.
-    await page.evaluate(() => {
-      const calls = (window as unknown as {
-        __eformsignCalls: Array<{ successCallback?: (r: unknown) => void }>;
-      }).__eformsignCalls;
-      calls[0].successCallback?.({ code: "-1", type: "document" });
-    });
+  test("an already running finalize job is reported instead of queueing another", async ({ page }) => {
+    await installCommonRoutes(page);
+    await page.route(FINALIZE_JOB_ROUTE, async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ jobId: "job-finalize-existing", status: "processing", existing: true }),
+      })
+    );
 
-    // Toast confirms completion (success path closes the iframe modal too).
-    await expect(page.getByText("최종 확인을 마쳤어요")).toBeVisible();
+    await openFinalizeDialog(page);
+    await fillEndDateAndSubmit(page, "2026-07-15");
+
+    await expect(page.getByText(FINALIZE_ALREADY_RUNNING_TOAST, { exact: true })).toBeVisible();
+    await expect(page.getByText(FINALIZE_STARTED_TOAST, { exact: true })).toHaveCount(0);
+    await expect(page.getByPlaceholder("YYYY-MM-DD")).not.toBeVisible();
+  });
+
+  test("a finalize job left behind in the 처리중 list surfaces an error toast and keeps the dialog open", async ({ page }) => {
+    await installCommonRoutes(page);
+    await page.route(FINALIZE_JOB_ROUTE, async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ jobId: "job-finalize-failed", status: "failed", existing: true }),
+      })
+    );
+
+    await openFinalizeDialog(page);
+    await fillEndDateAndSubmit(page, "2026-07-15");
+
+    await expect(page.getByText(FINALIZE_FAILED_TITLE, { exact: true })).toBeVisible();
+    await expect(page.getByText(FINALIZE_JOB_LEFT_BEHIND_DESCRIPTION, { exact: true })).toBeVisible();
+    await expect(page.getByText(FINALIZE_STARTED_TOAST, { exact: true })).toHaveCount(0);
+    await expect(page.getByPlaceholder("YYYY-MM-DD")).toBeVisible();
   });
 
   test("invalid (incomplete) date keeps 완료 disabled", async ({ page }) => {
-    await stubEformsignSdk(page);
     await installCommonRoutes(page);
-    await page.route("**/api/generate-staff-document", async (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(MOCK_SDK_OPTIONS) })
-    );
 
-    await gotoContractsPage(page);
-    const reviewItem = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list_item"]').filter({ hasText: "검토 필요" }).first();
-    await expect(reviewItem).toBeVisible();
-    await reviewItem.click();
-    await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_review-trigger"]').click();
+    await openFinalizeDialog(page);
 
     const dateInput = page.getByPlaceholder("YYYY-MM-DD");
     await dateInput.fill("");
@@ -392,27 +361,16 @@ test.describe("Staff finalize iframe + prefill flow", () => {
   });
 
   test("backend failure surfaces an error toast and keeps the dialog open", async ({ page }) => {
-    await stubEformsignSdk(page);
     await installCommonRoutes(page);
-    await page.route("**/api/eformsign-docs/finalize-headless", async (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ ok: false, reason: "force iframe fallback", fallbackHint: "iframe", durationMs: 1 }),
-      })
-    );
-    await page.route("**/api/generate-staff-document", (route) =>
+    await page.route(FINALIZE_JOB_ROUTE, (route) =>
       route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) })
     );
 
-    await gotoContractsPage(page);
-    const reviewItem = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list_item"]').filter({ hasText: "검토 필요" }).first();
-    await expect(reviewItem).toBeVisible();
-    await reviewItem.click();
-    await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_review-trigger"]').click();
+    await openFinalizeDialog(page);
     await fillEndDateAndSubmit(page, "2026-07-15");
 
-    await expect(page.getByText("최종 확인을 마치지 못했어요")).toBeVisible();
+    await expect(page.getByText(FINALIZE_FAILED_TITLE, { exact: true })).toBeVisible();
+    await expect(page.getByText(FINALIZE_RETRY_LATER_DESCRIPTION, { exact: true })).toBeVisible();
     // Date dialog remains open so staff can retry.
     await expect(page.getByPlaceholder("YYYY-MM-DD")).toBeVisible();
   });

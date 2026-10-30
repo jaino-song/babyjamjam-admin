@@ -16,6 +16,7 @@ import {
     EformsignDocMappingError,
     EformsignDocOwnershipConflictError,
     EformsignDocStaleUpdateError,
+    EformsignCompletionHealMetadata,
     EformsignDocUnscopedResult,
     EformsignDocStepWriteOptions,
     EformsignContractCandidateRow,
@@ -213,6 +214,44 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             select: { branchId: true },
         });
         return doc?.branchId ?? null;
+    }
+
+    async findCompletionHealMetadata(
+        documentId: string,
+    ): Promise<EformsignCompletionHealMetadata | null> {
+        const select = {
+            branchId: true,
+            documentKind: true,
+            templateId: true,
+            permanentPurgeRequestedAt: true,
+        } as const;
+        try {
+            return await this.prismaService.eformsign_doc.findUnique({
+                where: { documentId },
+                select,
+            });
+        } catch (error) {
+            if (!isPendingEformsignDocColumnError(error)) {
+                throw error;
+            }
+            // A database that has not had a pending migration yet: the missing columns
+            // read as null, exactly as the domain read does.
+            const doc = await readWithEformsignDocCompat(error, (compatSelect) =>
+                this.prismaService.eformsign_doc.findUnique({
+                    where: { documentId },
+                    select: { ...compatSelect, branchId: true },
+                }));
+            if (!doc) {
+                return null;
+            }
+            const row = toCompatDomainRow(doc);
+            return {
+                branchId: doc.branchId,
+                documentKind: row.documentKind,
+                templateId: row.templateId,
+                permanentPurgeRequestedAt: row.permanentPurgeRequestedAt,
+            };
+        }
     }
 
     async claimCompletionStatus(

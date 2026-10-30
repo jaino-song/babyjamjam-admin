@@ -1307,7 +1307,7 @@ export default function ClientsPage() {
                 }}
                 data-component="desktop_clients_modals_reset-service-record-link-approval"
                 title="제공기록지 링크를 재설정하시겠습니까?"
-                description="기존 링크는 만료되고 새 링크가 생성돼요. 메시지는 발송되지 않아요."
+                description="기존 링크가 만료 되었어요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
                 pendingLabel="재설정 중..."
