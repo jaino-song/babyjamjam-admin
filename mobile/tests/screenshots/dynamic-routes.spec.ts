@@ -67,6 +67,16 @@ const feedbackDetailFixture = {
 } as const;
 
 async function mockDynamicRouteData(page: Page) {
+  // The app shell opens one long-lived server-sent-event stream
+  // (useRealtimeInvalidation, since 5fdc1aecf) that the BFF proxy holds open for
+  // up to 50s. Playwright counts an open request as network activity, so
+  // "networkidle" can never settle while it is live. Fail the stream instead:
+  // the realtime hook just schedules a retry (3s apart), leaving the network
+  // idle between attempts, and nothing this capture renders depends on it.
+  await page.route("**/api/realtime/events", async (route: Route) => {
+    await route.abort("failed");
+  });
+
   await page.route("**/api/admin/feedback/feedback-1", async (route: Route) => {
     await route.fulfill({
       status: 200,
