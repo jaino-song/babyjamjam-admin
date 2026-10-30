@@ -1094,5 +1094,48 @@ describe("MessageAutomationIntentService", () => {
             await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 })).resolves.toBe(true);
             expect(observed).toEqual({ claim: true, delete: false });
         });
+
+        it("suppresses the lease release (releaseIntent) after a failure but not a delete", async () => {
+            const { service, prisma, triggerService } = setup();
+            triggerService.syncEmployeeAssignmentRulesForEmployee.mockRejectedValue(new Error("unavailable"));
+            const observed: string[] = [];
+            prisma.message_trigger_job.updateMany.mockImplementation(async () => {
+                observed.push(`release:${isEntityChangeHintsSuppressed()}`);
+                return { count: 1 };
+            });
+            prisma.message_trigger_job.deleteMany.mockImplementation(async () => {
+                observed.push(`delete:${isEntityChangeHintsSuppressed()}`);
+                return { count: 1 };
+            });
+            await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 }))
+                .rejects.toThrow("unavailable");
+            expect(observed).toEqual(["release:true"]);
+
+            observed.length = 0;
+            triggerService.syncEmployeeAssignmentRulesForEmployee.mockResolvedValue(true);
+            await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 })).resolves.toBe(true);
+            expect(observed).toEqual(["delete:false"]);
+        });
+
+        it("still announces the quarantine of a malformed intent and the removal of an orphan", async () => {
+            const { service, prisma } = setup();
+            const version = {
+                branchId: "branch-1", clientId: 31, employeeScheduleId: null,
+                scheduledFor: new Date("2026-08-20T01:02:03.000Z"), updatedAt: new Date("2026-08-20T01:02:04.000Z"),
+            };
+            prisma.message_trigger_job.findMany.mockResolvedValue([
+                { ...version, id: "orphan-intent", payload: { templateVariables: { intentKind: "schedule", includePast: "true" } } },
+                { ...version, id: "malformed-intent", payload: { templateVariables: { intentKind: "unexpected" } } },
+            ]);
+            const observed: string[] = [];
+            prisma.message_trigger_job.updateMany.mockImplementation(async () => {
+                observed.push(`quarantine:${isEntityChangeHintsSuppressed()}`); return { count: 1 };
+            });
+            prisma.message_trigger_job.deleteMany.mockImplementation(async () => {
+                observed.push(`discard:${isEntityChangeHintsSuppressed()}`); return { count: 1 };
+            });
+            await service.reconcilePendingIntents();
+            expect(observed).toEqual(["discard:false", "quarantine:false"]);
+        });
     });
 });

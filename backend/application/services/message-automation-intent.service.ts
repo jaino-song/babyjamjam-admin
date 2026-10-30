@@ -316,7 +316,9 @@ export class MessageAutomationIntentService {
     }
 
     private async releaseIntent(claim: ScheduleIntentClaim): Promise<void> {
-        await this.prisma.message_trigger_job.updateMany({
+        // Giving the lease back only moves `nextAttemptAt` of an internal intent no screen lists, like
+        // the claim above: no realtime hint. Deleting or quarantining an intent below still emits.
+        await withoutEntityChangeHints(() => this.prisma.message_trigger_job.updateMany({
             where: {
                 id: claim.id,
                 ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
@@ -329,7 +331,7 @@ export class MessageAutomationIntentService {
             data: {
                 nextAttemptAt: new Date(Date.now() + RETRY_DELAY_MS),
             },
-        });
+        }));
     }
 
     private async releaseAfterFailure(
