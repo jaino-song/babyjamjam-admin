@@ -123,7 +123,13 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)",
         async () => {
             const queryClient = new QueryClient();
             const targets: Array<unknown> = [];
-            jest.spyOn(queryClient, "invalidateQueries").mockImplementation((() => Promise.resolve()) as never);
+            // Record every invalidateQueries call (the base implementation is
+            // stubbed so the seeded queries never refetch); the defect
+            // assertion below keys on the recorded targets.
+            jest.spyOn(queryClient, "invalidateQueries").mockImplementation(((filters: unknown) => {
+                targets.push(filters);
+                return Promise.resolve();
+            }) as never);
             const wrapper = ({ children }: { children: ReactNode }) => (
                 <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
             );
@@ -153,12 +159,20 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)",
             expect(invalidatedRoots.some((root) => JSON.stringify(root) === JSON.stringify(["service-records"]))).toBe(
                 true,
             );
-            // The CORRECT behavior: mobile employee views must refresh too.
-            expect(invalidatedRoots.some((root) => JSON.stringify(root) === JSON.stringify(["employees"]))).toBe(true);
+            // The correct behavior: mobile employee views must refresh too. The
+            // defect assertion throws with a defect-specific message — the only
+            // one `expectedFailure` matches — so an infra/fixture failure
+            // ("Expected: true"-shaped) turns RED instead of a green
+            // false-CONFIRMED.
+            if (!invalidatedRoots.some((root) => JSON.stringify(root) === JSON.stringify(["employees"]))) {
+                throw new Error(
+                    "SI-EMP-08 mobile defect: employee queries were not invalidated by the service-record entity-changed event",
+                );
+            }
 
             unmount();
         },
-        /Expected: true/,
+        /employee queries were not invalidated by the service-record entity-changed event/,
     );
 
     invariant(

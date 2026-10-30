@@ -34,12 +34,28 @@ import { RowTracker } from "../helpers/tracker";
  *   must persist it (the ordinary update path does); the approved path's
  *   repository contract drops the flag silently.
  *
- * Timezone note (SI-EMP-01): jest workers never re-resolve `new Date()` local
- * methods after a runtime `process.env.TZ` switch, and a shell-pinned TZ would
- * make the suite machine-dependent, so the SI-EMP-01 body simulates the
- * alternative process timezone (UTC+5) by pinning the one midnight instant the
- * guard produces, inside the test body and restored in a finally block. Every
- * other test in the suite is timezone-neutral.
+ * Timezone mechanism (SI-EMP-01), established by this spec:
+ *
+ * - `employee_schedule.endDate` is a PostgreSQL DATE (Prisma reads/writes it as
+ *   a UTC-midnight instant). The guard compares it against `new Date().setHours(0,0,0,0)`
+ *   — midnight at the PROCESS timezone. Postgres truncates that timestamptz
+ *   back to a DATE (UTC session), so the effective boundary date is the UTC
+ *   calendar date of local midnight, NOT the KST business date: in an
+ *   Asia/Seoul process local midnight is `…T15:00Z` of the PREVIOUS UTC date,
+ *   so the guard is off by one (a schedule that ended KST-yesterday still
+ *   counts as active, blocking delete) at EVERY hour; the same truncation makes
+ *   a UTC process correct whenever the local UTC date equals the KST date.
+ * - Two knownDefects pin that observable:
+ *     * the Asia/Seoul one runs UNPATCHED in the ambient process timezone
+ *       (the jest config does not pin TZ; the runner is Asia/Seoul, and the
+ *       boundary-date precondition makes the reachability explicit);
+ *     * the simulated one reproduces the same local-midnight instant for a
+ *       UTC+5 process with a scoped `Date.prototype.setHours` patch, because
+ *       jest workers only see the timezone the process STARTED with (a runtime
+ *       `process.env.TZ` switch never re-resolves `new Date()` local methods
+ *       there) and the boundary-date precondition makes the simulation exact.
+ *   Both restore/never leak the patch and stay hermetic; every other test in
+ *   the suite is timezone-neutral.
  */
 
 /** `YYYY-MM-DD` shifted by whole days, keeping UTC midnight anchoring. */
@@ -76,6 +92,60 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
 
     knownDefect(
         "SI-EMP-01",
+        "delete guard judges by the KST business date (Asia/Seoul process, no clock patch)",
+        async () => {
+            // Runs with NO patching in the ambient process timezone of the real
+            // integrity runner. In an Asia/Seoul process the guard's
+            // `setHours(0,0,0,0)` boundary is `…T15:00Z` of the PREVIOUS UTC
+            // date, which Postgres truncates to the DATE `kstYesterday`, so a
+            // schedule that ended KST-yesterday still counts as active at
+            // EVERY hour of today (`sb.employee.repository.ts:121-137`).
+            const branchRow = await createBranch(handle.raw, tracker);
+            const employeeRow = await createEmployee(handle.raw, tracker, { branchId: branchRow.id });
+            const clientRow = await createClient(handle.raw, tracker, { branchId: branchRow.id });
+
+            // The guard's effective boundary: the UTC calendar DATE of local
+            // midnight. `kstYesterday` is that value in an Asia/Seoul process
+            // at every hour; a plain expect turns any non-Asia/Seoul runner
+            // (where this precondition need not hold) RED instead of silently
+            // green-passing a false CONFIRMED.
+            const kstToday = isoDateInKorea();
+            const kstYesterday = shiftIsoDate(kstToday, -1);
+            const boundaryDate = new Date(new Date().setHours(0, 0, 0, 0)).toISOString().slice(0, 10);
+            expect(boundaryDate).toBe(kstYesterday);
+
+            // App-writer convention: DATE columns are stored as UTC-midnight
+            // instants of the KST calendar date.
+            const scheduleRow = await handle.raw.employee_schedule.create({
+                data: {
+                    clientId: clientRow.id,
+                    branchId: branchRow.id,
+                    primaryEmployeeId: employeeRow.id,
+                    secondaryEmployeeId: null,
+                    workAddress: "서울시 강남구 테헤란로 123",
+                    startDate: new Date(`${shiftIsoDate(kstYesterday, -7)}T00:00:00.000Z`),
+                    endDate: new Date(`${kstYesterday}T00:00:00.000Z`),
+                },
+            });
+            tracker.track("employee_schedule", scheduleRow.id);
+
+            // The defect observable: the deletion is refused although the
+            // assignment ended before the KST business date.
+            const isActive = await repository.hasActiveAssignments(branchRow.id, employeeRow.id);
+            if (isActive) {
+                throw new Error(
+                    "SI-EMP-01 defect: hasActiveAssignments still reports active a schedule that ended before the KST business date — the process-local midnight boundary truncates to KST yesterday",
+                );
+            }
+            // The correctness half, reached only when the defect is fixed: the
+            // assignment must be inactive and the employee deletable.
+            await deleteEmployeeUsecase.execute(branchRow.id, employeeRow.id);
+        },
+        /hasActiveAssignments still reports active a schedule that ended before the KST business date/,
+    );
+
+    knownDefect(
+        "SI-EMP-01",
         "delete guard judges by the KST business date (assignment ended before KST today is inactive in a UTC+5 process)",
         async () => {
             const branchRow = await createBranch(handle.raw, tracker);
@@ -87,18 +157,21 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
             // regardless of the process timezone. A schedule that ended
             // yesterday (KST terms) must therefore be inactive.
             //
-            // The defect anchors on process-local midnight. Jest workers only
-            // see the timezone the process STARTED with (a runtime
-            // `process.env.TZ` switch never re-resolves `new Date()` local
-            // methods there), so instead of shell-pinning TZ the test simulates
-            // a UTC+5 process for exactly one operation: a scoped
-            // `Date.prototype.setHours` patch that turns local-midnight into
-            // the UTC+5 midnight instant (KST today at 00:00+05:00 — an instant
-            // whose UTC calendar date is behind the KST business date at every
-            // wall-clock hour), restoring the original method afterwards.
-            // Simulating the alternative timezone on the clock is the same
-            // observable the production process would expose; the query and
-            // repository under test stay fully real.
+            // The defect anchors on process-local midnight: the boundary it
+            // passes to Prisma (`setHours(0,0,0,0)`) truncates to the UTC
+            // calendar DATE of local midnight, and a UTC+5 (or Asia/Seoul)
+            // process yields the DATE of KST-yesterday — one whole business
+            // day behind the KST boundary `findWorkHistoryByEmployee` uses
+            // (`isoDateInKorea()`). Jest workers only see the timezone the
+            // process STARTED with (a runtime `process.env.TZ` switch never
+            // re-resolves `new Date()` local methods there), so instead of
+            // shell-pinning TZ the test simulates a UTC+5 process for exactly
+            // one operation: a scoped `Date.prototype.setHours` patch that
+            // turns local-midnight into the UTC+5 midnight instant, restoring
+            // the original method afterwards. Simulating the alternative
+            // timezone on the clock is the same observable the production
+            // process would expose; the query and repository under test stay
+            // fully real.
             const kstToday = isoDateInKorea();
             const kstYesterday = shiftIsoDate(kstToday, -1);
             const simulatedUtcPlusFiveMidnight = new Date(`${kstToday}T00:00:00.000+05:00`).getTime();

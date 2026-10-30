@@ -102,9 +102,10 @@ class MockEventSource {
 
 /**
  * Mounts the hook under test with a REAL `QueryClient`; the only thing mocked
- * is the HTTP transport (see the api mock above). Collects every
- * `invalidateQueries` target so a test can ask whether a given query root was
- * invalidated.
+ * is the HTTP transport (see the api mock above). Every `invalidateQueries`
+ * call is RECORDED (the targets array) so a test can ask whether a given query
+ * root was invalidated; the base implementation is stubbed so the seeded
+ * queries (no fetcher attached) never refetch.
  */
 function mountWithRealQueryClient(useHookUnderTest: () => unknown): {
     invalidationTargets: Array<unknown>;
@@ -114,9 +115,10 @@ function mountWithRealQueryClient(useHookUnderTest: () => unknown): {
 } {
     const queryClient = new QueryClient();
     const invalidationTargets: Array<unknown> = [];
-    // Do not let invalidation actually refetch anything: the queries under test
-    // are seeded (no fetcher attached). Only record the invalidation targets.
-    jest.spyOn(queryClient, "invalidateQueries").mockImplementation((() => Promise.resolve()) as never);
+    jest.spyOn(queryClient, "invalidateQueries").mockImplementation(((filters: unknown) => {
+        invalidationTargets.push(filters);
+        return Promise.resolve();
+    }) as never);
     const wrapper = ({ children }: { children: ReactNode }) => (
         <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
@@ -177,13 +179,21 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
 
             // Sanity: the event was consumed and invalidated its own root.
             expect(wasInvalidated(invalidationTargets, ["service-records"])).toBe(true);
-            // The CORRECT behavior: employee queries (status is derived from
-            // active assignments) must be invalidated too.
-            expect(wasInvalidated(invalidationTargets, ["employees"])).toBe(true);
+            // The correct behavior: employee queries (status is derived from
+            // active assignments) must be invalidated too. The defect
+            // assertion throws with a defect-specific message: `expectedFailure`
+            // below matches THIS message and nothing else, so an infra/fixture
+            // failure (whose "Expected: true"-shaped message does not match)
+            // turns RED instead of a green false-CONFIRMED.
+            if (!wasInvalidated(invalidationTargets, ["employees"])) {
+                throw new Error(
+                    "SI-EMP-08 defect: employee queries were not invalidated by the service-record entity-changed event",
+                );
+            }
 
             unmount();
         },
-        /Expected: true/,
+        /employee queries were not invalidated by the service-record entity-changed event/,
     );
 
     knownDefect(
@@ -212,14 +222,19 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
 
             // Sanity: the mutation success ran (client keys invalidated).
             expect(wasInvalidated(invalidationTargets, ["clients"])).toBe(true);
-            // The CORRECT behavior: employee queries must be invalidated — the
+            // The defect: employee queries must be invalidated or not — the
             // response carries only the client row while employee status and
-            // active-client views changed on the server.
-            expect(wasInvalidated(invalidationTargets, ["employees"])).toBe(true);
+            // active-client views changed on the server. The defect-specific
+            // message is the only one `expectedFailure` matches.
+            if (!wasInvalidated(invalidationTargets, ["employees"])) {
+                throw new Error(
+                    "SI-EMP-08 defect: the useUpdateClient success handler does not invalidate employee queries after an assignment change",
+                );
+            }
 
             unmount();
         },
-        /Expected: true/,
+        /the useUpdateClient success handler does not invalidate employee queries after an assignment change/,
     );
 
     invariant(
