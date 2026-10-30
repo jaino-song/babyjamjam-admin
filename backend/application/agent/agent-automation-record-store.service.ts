@@ -624,11 +624,14 @@ export class AgentAutomationRecordStoreService {
         // PostgreSQL runs as INSERT ... ON CONFLICT DO NOTHING. Do NOT use `upsert({ update: {} })` here:
         // Prisma issues that as a read followed by an insert, so two concurrent first creators both insert
         // and one gets P2002, which aborts the surrounding transaction (25P02) and rolls back the receipt
-        // and records. A losing creator gets `count: 0`, which is success: the marker exists, and the hint
-        // fires only for the creator whose row was really inserted (the extension reads `count > 0`).
+        // and records. `createManyAndReturn` returns only the rows it inserted, so a losing creator gets `[]`,
+        // which is success (the marker exists) and raises no hint. The creator whose row was really inserted
+        // gets the row back with `branchId: null`, which the realtime hint reads as "every branch": a count-only
+        // `createMany` would be attributed to the caller's own branch, although the marker is shared. `select`
+        // must keep `branchId` for the same reason.
         const existing = await tx.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, select: { id: true } });
         if (existing) return;
-        await tx.message_trigger_rule.createMany({ data: [{
+        await tx.message_trigger_rule.createManyAndReturn({ select: { id: true, branchId: true }, data: [{
             id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, name: "메시지 자동화 생성 복구 표식", isActive: false,
             eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0,
             recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, isDefault: false, jobsStale: false,

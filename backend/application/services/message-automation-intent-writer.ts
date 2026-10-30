@@ -138,13 +138,17 @@ async function persistMessageAutomationIntent(
     // reads as a message change to the realtime hint). The first creation is an atomic
     // `createMany({ skipDuplicates })`, i.e. INSERT ... ON CONFLICT DO NOTHING: `upsert({ update: {} })` is a
     // read then an insert in Prisma, so concurrent first creators raise P2002 and abort the caller's
-    // transaction (25P02). A losing creator gets `count: 0`, which is success and emits no hint.
+    // transaction (25P02). `createManyAndReturn` returns only the rows it inserted: a losing creator gets `[]`
+    // (success, no hint), while the real creator gets the row back with `branchId: null`, which the hint reads
+    // as "every branch". A count-only `createMany` would be attributed to the caller's own branch although the
+    // marker is shared, so `select` keeps `branchId`.
     const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
         where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
         select: { id: true },
     });
     if (!existingMarkerRule) {
-        await transaction.message_trigger_rule.createMany({
+        await transaction.message_trigger_rule.createManyAndReturn({
+            select: { id: true, branchId: true },
             data: [{
                 id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
                 branchId: null,
