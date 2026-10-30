@@ -5,9 +5,11 @@ SI-CLIENT-03 re-verdicted REFUTED (last-writer-wins on a caller-supplied explici
 value is correct); SI-CLIENT-04's tombstone half re-verdicted REFUTED (retained
 contract history must stay attached) and its phone-edit half added as a test;
 SI-CLIENT-02's catch-all refusal check replaced with an unconditional
-"row unchanged" assertion; the SI-CLIENT-07 claim-race test relabelled as a
-PostgreSQL-semantics proof. Real-PostgreSQL service-layer tests under
-`backend/test/integrity/clients/` (5 suites, 24 tests — 4 `knownDefect`s
+"row unchanged" assertion; the SI-CLIENT-07 claim-race test now drives two
+production `confirmNewClient` calls behind a real held row lock (both UPDATEs
+observed blocked before release), replacing the copied claim statement and
+the redundant timing-dependent double-confirm test. Real-PostgreSQL tests under
+`backend/test/integrity/clients/` (5 suites, 23 tests — 4 `knownDefect`s
 fail-as-expected, the rest are passing invariants) and Jest +
 React-Testing-Library suites under `frontend/src/__integrity__/clients/` and
 `mobile/src/__integrity__/clients/`.
@@ -22,19 +24,28 @@ React-Testing-Library suites under `frontend/src/__integrity__/clients/` and
 | SI-CLIENT-02 | backend | CONFIRMED | high | `completeReplacement` proceeds on ANY status (only logs a warning) and rewrites it with the date-derived status — a `terminated` client is silently un-terminated | `backend/application/services/client.service.ts:3055-3061` | `client-replacement-booking.real-db.spec.ts::SI-CLIENT-02 completeReplacement refuses unless the client is in replacement_requested` | `SI-CLIENT-02: completeReplacement ran on a "terminated" client and moved the status to "active" (outcome completed; only a warning was logged)` |
 | SI-CLIENT-03 | backend | REFUTED | — | The reuse-existing-client `smsAutomationEnabled` write (`updateMany` by id+branchId, outside the write-set lock) is a blind, explicit, SINGLE-COLUMN write of a caller-supplied value: under the forced interleaving (T1 locked update commits first, reuse write observed blocked) nothing but `smsAutomationEnabled` changes — the committed locked `name` write survives, and the caller-supplied `false` lands. Serial order "T1 commits, then reuse(false)" yields `false` too, so nothing is lost; last-writer-wins on an explicit value is correct | `backend/application/services/client.service.ts:1374-1381` | `client-write-races.real-db.spec.ts::SI-CLIENT-03 the reuse-existing-client write is single-column: under the forced interleaving it clobbers only smsAutomationEnabled` | — |
 | SI-CLIENT-04 | backend | REFUTED (tombstone half) | — | A tombstoned client keeps `eDocId`/`eformsign_doc.client_id` BY DESIGN: tombstoning exists because retained history (signed contracts) must stay attached (`sb.client.repository.ts:574-626, 665-676`, rule 고객-06), so detaching the pointers would orphan a legal document. The brief's invariant — a tombstoned client holds no live contract pointer that BLOCKS or RELINKS another client — holds: the reconciler keeps repairing the tombstoned ownership, and a new same-phone client can still claim a NEW contract | `backend/infrastructure/database/repositories/sb.client.repository.ts:574-713` | `client-tombstone.real-db.spec.ts::SI-CLIENT-04 the stale tombstone pointer does not block a new same-phone client from claiming a new contract` and `…the mirror reconciler keeps the tombstoned owner attached to the old contract` | — |
-| SI-CLIENT-04 | backend | REFUTED (phone-edit half) | — | After `ClientService.update` moves a client's phone, the reconciler (`LinkMirroredEformsignDocByPhoneUsecase`) behaves correctly for both phones: the owned old contract stays attached to its owner (`already_linked`), an unowned old-phone contract is left unlinked (no live client holds the edited-away phone), and a new-phone contract links to the edited client | `backend/application/services/client.service.ts:2142-2145` (update writes the new `phoneNormalized`, no doc re-link), `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:626` (owned-doc shortcut), `:688-712` (phone match) | `client-tombstone.real-db.spec.ts::SI-CLIENT-04 after a phone edit the old contract stays owned, an unowned old-phone contract stays unlinked, and the new-phone contract links to the edited client` | — |
+| SI-CLIENT-04 | backend | REFUTED (phone-edit half) | — | After `ClientService.update` moves a client's phone, the reconciler (`LinkMirroredEformsignDocByPhoneUsecase`) behaves correctly for both phones: the owned old contract stays attached to its owner (`already_linked`), an unowned old-phone contract is left unlinked (no live client holds the edited-away phone), and a new-phone contract links to the edited client | `backend/application/services/client.service.ts:2142-2145` (update writes the new `phoneNormalized`, no doc re-link), `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:231-263` (owned-doc repair), `:698-701` (phone match) | `client-tombstone.real-db.spec.ts::SI-CLIENT-04 after a phone edit the old contract stays owned, an unowned old-phone contract stays unlinked, and the new-phone contract links to the edited client` | — |
 | SI-CLIENT-05 | backend | REFUTED | — | Tombstone side effects are complete (hidden row, phone freed, assignment ended, pending automation jobs canceled; open end-date review item remains but is unreachable via the review list's `deletedAt` filter); with the switch disabled (unset + `NODE_ENV=test`) the delete is refused before ANY side effect; a dependency-free client is still physically deleted | `backend/infrastructure/database/repositories/sb.client.repository.ts:574-713` | `client-tombstone.real-db.spec.ts::SI-CLIENT-05 an enabled tombstone hides the client…` / `…refuses before any side effect` / `…dependency-free client is physically deleted` | — |
 | SI-CLIENT-06 | backend | REFUTED | — | Booking confirmation is the only exit from 예약 전: saves cannot move a client into/out of `pre_booking` into a date-derived status (only `terminated` is the deliberate exception), and `confirmBooking` is idempotent (double confirm is a no-op, `bookingConfirmedAt` never rewritten) | `backend/application/usecases/client/client-write-validation.ts:294-338`, `backend/application/services/client.service.ts:3148-3249` | `client-replacement-booking.real-db.spec.ts::SI-CLIENT-06 …` (5 invariants incl. the `terminated` exception and the double-confirm no-op) | — |
-| SI-CLIENT-07 | backend | REFUTED | — | `client_draft` PENDING→CONFIRMING→CONFIRMED\|DISCARDED holds: the conditional claim admits exactly one winner (observed blocked second claimant re-evaluating after the winner commits — PostgreSQL predicate semantics only, see the test's scope note), concurrent `confirmNewClient` creates exactly one client (production path), re-confirmation is refused, and the stuck-CONFIRMING sweep recovers a crashed confirm without touching an in-flight one | `backend/application/services/call-inbox.service.ts:328-476` (claim predicates), `backend/application/services/call-extraction-retry-scheduler.service.ts:154-180` (sweep) | `client-draft-confirm.real-db.spec.ts::SI-CLIENT-07 the PENDING→CONFIRMING claim admits exactly one winner when a second claimant blocks and re-evaluates (PostgreSQL predicate semantics only)` (+ 4 more) | — |
+| SI-CLIENT-07 | backend | REFUTED (claim/recovery paths tested) | — | The production conditional claim admits exactly one winner and creates one client after both real `confirmNewClient` UPDATEs are observed blocked on the same PENDING draft; the loser receives REQUEST_NOT_PENDING. Re-confirmation is refused; the stale-CONFIRMING sweep recovers a crashed claim without touching a recent one. This does NOT prove exactly-once creation across a process crash after client creation (see caveat below), nor exercise DISCARDED | `backend/application/services/call-inbox.service.ts:328-476` (claim predicates), `backend/application/services/call-extraction-retry-scheduler.service.ts:154-180` (sweep) | `client-draft-confirm.real-db.spec.ts::SI-CLIENT-07 the production confirm claim admits exactly one winner after both calls block on the same PENDING draft` (+ 3 invariants) | — |
 | SI-CLIENT-08 | mobile | CONFIRMED | medium | Mobile live `useUpdateClient` (`mobile/src/hooks/useClients.ts:137-155`) invalidates only `clientQueryKeys.*` + `dashboardQueryKeys.analytics()`; it misses `messageTriggerKeys.upcoming()` and the service-record client overview that desktop invalidates/refetches (`frontend/src/features/clients/hooks/use-clients.ts:343-373`) | `mobile/src/hooks/useClients.ts:137-155` vs `frontend/src/features/clients/hooks/use-clients.ts:366-371` | `mobile/src/__integrity__/clients/mobile-clients-state-integrity.test.tsx::SI-CLIENT-08 mobile useUpdateClient invalidates the same dependent caches desktop does…` (`it.failing` locally wrapped) | `SI-CLIENT-08: mobile useUpdateClient left the message-trigger upcoming cache stale (desktop invalidates it); invalidated: {"queryKey":["clients"]} {"queryKey":["clients","detail",42]}` |
 | SI-CLIENT-08 | mobile | REFUTED (delete half) | — | Mobile `useDeleteClient` DOES invalidate `messageTriggerKeys.upcoming()` (line 218) and rolls the optimistic removal back on failure — delete-side parity holds | `mobile/src/hooks/useClients.ts:191-221` | `…mobile useDeleteClient invalidates the message-trigger upcoming cache…` / `…removes the client optimistically and restores the cache when the delete fails` | — |
 | SI-CLIENT-08 | frontend | REFUTED | — | Desktop invariants hold: `useUpdateClient` invalidates `clientKeys.all` + `messageTriggerKeys.upcoming()` + refetches `serviceRecordKeys.clientOverview(id)`; `useDeleteClient` restores the optimistic removal on failure and invalidates on settle | `frontend/src/features/clients/hooks/use-clients.ts:343-373, 422-448` | `frontend/src/__integrity__/clients/desktop-clients-state-integrity.test.tsx::SI-CLIENT-08 desktop …` (2 invariants) | — |
 | SI-CLIENT-09 (extra) | backend | REFUTED | — | The due-date scheduler's `startDate` copy is a self-protecting CONDITIONAL write: with a client row lock held by a concurrent locked update that commits a real start date, the scheduler's blocked `updateMany` re-evaluates `start_date IS NULL` after the commit and skips (no lost start date) | `backend/application/services/client-due-date-scheduler.service.ts:107-138` | `client-write-races.real-db.spec.ts::SI-CLIENT-09 the scheduler's conditional startDate write skips after a concurrent locked update commits a start date` | — |
-| SI-CLIENT-10 (extra) | backend | REFUTED (mitigated) | — | The stale-CONFIRMING sweep flips `CONFIRMING→PENDING` without knowing whether a crashed confirm already created the client, so a half-applied confirm can hand the draft back to PENDING. Worst case is a STUCK draft, not duplicate data: re-confirmation re-runs `create`, the phone-duplicate check (`findClientByNormalizedPhone` + CLIENT_PHONE_ALREADY_REGISTERED conflict) refuses it, and the create-failure path rolls the draft back to PENDING — the sweep's own warn log points staff at possible orphans. No integrity loss | `backend/application/services/call-extraction-retry-scheduler.service.ts:153-158`, `backend/application/services/call-inbox.service.ts:449-469` | — (note-level; the sweep/recovery behaviour is already exercised by the stuck-CONFIRMING invariant) | — |
 
-Extra-ids note: SI-CLIENT-09 (the refuted half of SI-CLIENT-03's two writers,
-split out so the SCOPE invariant stays single-defect) and SI-CLIENT-10 (the
-sweep duplicate-risk note above) are the extra findings (2 of the 4 allowed).
+**SI-CLIENT-07 recovery caveat (inspection note, not a mutation-proven verdict):**
+the sweep (`call-extraction-retry-scheduler.service.ts:153-175`) resets stale
+CONFIRMING to PENDING even if a process died after creating the client but before
+recording CONFIRMED. Re-confirmation can therefore retry creation. The normalized
+phone duplicate check (`client.service.ts:1358-1371`) mitigates this when the
+original phone is still present, and the catch path tries to persist CONFIRMED
+after bookkeeping errors (`call-inbox.service.ts:454-473`); neither is a durable
+exactly-once fence for a process crash. A phone is optional, so do not infer
+"no duplicates possible" from the normal claim/sweep tests. The post-create
+crash window was not fault-injected here; it needs a dedicated recovery test.
+
+Extra-ids note: SI-CLIENT-09 (the refuted scheduler half of SI-CLIENT-03's
+two writers) is the only extra finding (1 of the 4 allowed).
 Notes on hypothesis scope: mobile has **no live terminate hook** —
 `useTerminateService` lives only in the dead
 `mobile/src/features/clients/hooks/use-clients.ts` (live only for
@@ -63,10 +74,13 @@ test) — the update-path gap above is the live defect.
 
 ## Mutation proofs
 
-Per binding rule: every added/repaired test was mutation-proven — the production
-site the test pins was temporarily broken, the test area re-run, the observed
-result recorded, and the mutation reverted exactly (`git diff` shows nothing
-outside the area folders before commit).
+All four added/repaired tests below were re-run by the resumed worker against
+`bjj_si_clients_throwaway`; prior-run claims were not used as proof. Commands
+ran from `backend/` with `DATABASE_URL` and `DIRECT_URL` targeting that database,
+`STATE_INTEGRITY_REAL_DB=1 E2E_VENDOR_STUBS=1 NODE_ENV=test`, and
+`pnpm test test/integrity/clients --runInBand --cacheDirectory .jest-cache-clients`
+(or the single spec named below). Each production mutation was reverted exactly;
+the final diff contains only area-folder tests/FINDINGS.
 
 - **SI-CLIENT-03 invariant**
   (`client-write-races.real-db.spec.ts::…clobbers only smsAutomationEnabled`):
@@ -77,21 +91,17 @@ outside the area folders before commit).
   Reverted exactly.
 - **SI-CLIENT-04 phone-edit invariant**
   (`client-tombstone.real-db.spec.ts::…after a phone edit the old contract stays owned…`):
-  first attempt (recorded for honesty, reverted): removed the inner
-  transaction fence
-  `if (document.clientId !== null) return { status: "already_linked" };` at
-  `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:626`
-  — observed GREEN, a no-op: `execute()` routes an ALREADY-OWNED document
-  through `repairAssignedDocument` before the inner fence is ever reached, so
-  leg 1 does not depend on it. Corrected mutation (observed RED):
-  `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:231-234` —
-  an early `return "no_match"` inserted at the top of `execute()`'s
-  `if (assignedClientId !== null)` branch (line 231), disabling the owned-document repair
-  that keeps the old contract attached to its owner. Observed RED:
-  `SI-CLIENT-04: the reconciler did not keep the owned old contract attached after the phone edit (result "no_match")`
-  (with the repair disabled the owned old contract fell through to the
-  no-match path instead of staying attached). The unowned-doc legs, which
-  route through the phone match, stayed green. Reverted exactly.
+  two separate single-spec runs:
+  1. At `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:231-232`,
+     added `if (assignedClientId > 0) return "no_match";` to bypass owned-document
+     repair. RED, 1 failed / 5 passed:
+     `SI-CLIENT-04: the reconciler did not keep the owned old contract attached after the phone edit (result "no_match")`.
+     An initial unconditional early return caused TypeScript unreachable-code
+     narrowing errors (0 tests executed); that attempt was not counted as proof.
+  2. Reverted (1), then at the same file `:698-701` inverted the normalized-phone
+     match from `=== params.phone` to `!== params.phone`. RED, 2 failed / 4 passed:
+     `SI-CLIENT-04: the new-phone contract was left unlinked or attached elsewhere after the phone edit (result "disabled", clientId null)`;
+     the existing tombstone/new-contract invariant also failed. Reverted exactly.
 - **SI-CLIENT-02 knownDefect**
   (`client-replacement-booking.real-db.spec.ts::SI-CLIENT-02 completeReplacement refuses
   unless the client is in replacement_requested`): mutated
@@ -104,16 +114,41 @@ outside the area folders before commit).
   suite failed, while the companion control invariant
   ("completeReplacement completes a client that IS in replacement_requested")
   stayed green — the mutation affected only the audited test. Reverted exactly.
-- **SI-CLIENT-07 claim-race relabel**
-  (`client-draft-confirm.real-db.spec.ts::…PostgreSQL predicate semantics only`):
-  repaired by relabelling only (title + scope comment) — the test pins
-  PostgreSQL conditional-update re-evaluation, not a product guard, and the
-  production claim statement is a single autocommit update with no holdable
-  lock, so no meaningful production mutation exists for it. Production-path
-  exclusivity is separately pinned by the two concurrent `confirmNewClient`
-  invariants in the same spec, which already go RED if the claim admits two
-  winners (they create duplicate clients / fail the REQUEST_NOT_PENDING
-  refusal). No mutation applied; recorded here for completeness.
+- **SI-CLIENT-07 production claim invariant**
+  (`client-draft-confirm.real-db.spec.ts::…production confirm claim admits exactly one winner…`):
+  removed `status: "PENDING"` from the actual production claim's `where` at
+  `backend/application/services/call-inbox.service.ts:406-408`. The deterministic
+  test went RED after observing BOTH real service UPDATEs blocked:
+  `SI-CLIENT-07: production claim admitted 2 winners / 0 losers after two observed blocked claims`.
+  A single-spec rerun of the final four-test draft suite reported 1 failed /
+  3 passed with successful fixture cleanup. The redundant timing-only race was
+  removed: on the initial whole-area mutation run it also failed, but asserted
+  before tracking its duplicate-created clients, causing a cleanup FK failure.
+  That failure was not used as mutation evidence. Reverted exactly.
+
+## Acceptance rerun (resumed worker)
+
+Run against a freshly recreated `bjj_si_clients_throwaway` after reverting all
+mutations; `prisma migrate deploy` succeeded. No shared integrity runner used.
+
+| command | observed result |
+|---|---|
+| Real-DB exports above + `pnpm test test/integrity/clients --runInBand --cacheDirectory .jest-cache-clients` (backend cwd) | PASS: 5 suites, 23 tests, 0 skipped; 4 knownDefects fail as expected |
+| `env -u DATABASE_URL -u DIRECT_URL -u STATE_INTEGRITY_REAL_DB pnpm test test/integrity/clients` (backend cwd, fresh process) | Exit 0: all 5 real-DB suites / 23 tests skipped |
+| `pnpm --filter ./frontend exec jest src/__integrity__/clients` | PASS: 1 suite / 2 tests |
+| `pnpm --filter ./mobile exec jest src/__integrity__/clients` | PASS: 1 suite / 3 tests (includes expected mobile cache defect) |
+| `pnpm --filter ./backend exec eslint test/integrity/clients` | Exit 0, no diagnostics |
+| `pnpm --filter ./backend exec tsc --noEmit -p tsconfig.json` | Exit 0, no diagnostics |
+| `pnpm --filter ./frontend exec tsc --noEmit` | Exit 0, no diagnostics |
+| `pnpm --filter ./mobile exec tsc --noEmit` | Exit 0, no diagnostics |
+
+Dropped the owned database (`psql -h localhost -U postgres -lqt` has no matching
+database) and removed `backend/.jest-cache-clients`. `git diff 54ef4e253 --name-only`
+contains only the five files in `backend/test/integrity/clients/`; application,
+schema, migrations and shared harness changes are absent. No `DBGWIRE` code.
+Scoped security checks: env files remain ignored, no added credentials or unsafe
+raw-query APIs; the new lock query parameterizes its UUID. No dependency changes.
+The frontend/mobile Jest runs emit the existing Sentry import deprecation warning.
 
 ## Notes for reviewers
 
@@ -121,11 +156,11 @@ outside the area folders before commit).
   (void-fences convention). They hold interactive transactions open, so every
   held transaction passes `{ maxWait: 5000, timeout: 60000 }` (Prisma's 5 s
   interactive-transaction default would otherwise abort the holder mid-wait).
-- Barre Prisma's `PrismaPromise` is LAZY: a query only issues when a `.then` /
-  `await` attaches. The race specs tap/factor every racing statement accordingly
-  (see "TAP REQUIREMENT" in `client-draft-confirm.real-db.spec.ts`); rule for
+- Prisma's `PrismaPromise` is LAZY: a query only issues when a `.then` /
+  `await` attaches. The race specs tap/factor every racing statement accordingly;
+  rule for
   future race specs: never dispatch a racing statement without an immediate tap.
-- Race specs retry the interleaving up to 3 times on a fresh fixture when the
+- Write-race specs retry the interleaving up to 3 times on a fresh fixture when the
   blocked statement is not observed (infra-level dispatch miss); a pass always
   requires actually observed blocking, and retry exhaustion fails the test.
 - The SI-CLIENT-03 scope invariant compares the full committed T1 row image
