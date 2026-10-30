@@ -1,7 +1,5 @@
 import axios from "axios";
 import type { AxiosError, AxiosRequestConfig } from "axios";
-import fs from "node:fs";
-import path from "node:path";
 
 const AUTH_USER_QUERY_KEY = ["authUser"] as const;
 
@@ -55,7 +53,6 @@ type RetryableRequestConfig = AxiosRequestConfig & {
     _appAuthRetry?: boolean;
 };
 const mockAxios = axios as unknown as AxiosFunctionMock;
-const sourceRoot = path.join(__dirname, "..", "..");
 
 /** getResponseRejectedHandler — mirrors frontend/src/lib/api/__tests__/client.test.ts. */
 function getResponseRejectedHandler(): (err: AxiosError) => Promise<unknown> {
@@ -177,21 +174,8 @@ describe("SI-USER-08 desktop authority state integrity (real QueryClient, HTTP l
         "SI-USER-08: a 403 ACCESS_DENIED on a protected API left the cached authUser query intact",
     );
 
-    invariant("SI-USER-08", "the branch switch flow resets the authority state (source contract)", () => {
-        // Both switch paths of the protected select-branch page clear the identity-owned
-        // state before the next authority renders (same contract the page lifecycle
-        // test asserts, recorded here as the area's branch-switch evidence).
-        const source = fs.readFileSync(
-            path.join(sourceRoot, "app", "(protected)", "select-branch", "page.tsx"),
-            "utf8",
-        );
-        expect(source).toContain('import { resetAuthorityState } from "@/lib/auth/authority-state"');
-        expect(source).toContain("await resetAuthorityState(queryClient)");
-    });
-
-    invariant("SI-USER-08", "the auth user query serves from a 30-minute staleTime (severity enabler, recorded)", () => {
-        const source = fs.readFileSync(path.join(sourceRoot, "hooks", "useGetAuthUser.ts"), "utf8");
-        expect(source).toContain("staleTime: 1000 * 60 * 30");
-        expect(source).toContain("retry: false");
-    });
+    // NOTE: the former source-grep contracts for the branch-switch reset and the
+    // 30-minute staleTime were REPLACED by behavioural tests in
+    // ./desktop-branch-switch.client-integrity.test.tsx (real page render against
+    // the real shared QueryClient; real useGetAuthUser staleness behaviour).
 });

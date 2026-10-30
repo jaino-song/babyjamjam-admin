@@ -121,12 +121,8 @@ describe("SI-USER-08 mobile session authority integrity (real authority reset, H
         "SI-USER-08: a 403 ACCESS_DENIED on a protected mobile API left the cached authUser query intact",
     );
 
-    invariant("SI-USER-08", "the mobile auth user query serves from a 30-minute staleTime (severity enabler, recorded)", () => {
-        const source = require("fs").readFileSync(
-            require("path").join(__dirname, "..", "..", "hooks", "useGetAuthUser.ts"),
-            "utf8",
-        );
-        expect(source).toContain("staleTime: 1000 * 60 * 30");
-        expect(source).toContain("retry: false");
-    });
+    // NOTE: the former source-grep staleTime contract was REPLACED by a
+    // behavioural test in ./mobile-branch-switch.client-integrity.test.tsx
+    // (real useGetAuthUser staleness against a real QueryClient). The mobile
+    // branch-switch page contract — previously untested — lives there too.
 });

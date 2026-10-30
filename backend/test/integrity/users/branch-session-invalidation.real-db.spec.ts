@@ -129,15 +129,29 @@ describeReal("branch deactivation and owner transfer against live sessions (real
                 where: { id: ownerBranch.id },
                 data: { ownerId: branchOwner.id },
             });
+            const { session: ownerSession } = await createAuthSession(
+                handle.raw, tracker, { userId: branchOwner.id }, { selectedBranchId: ownerBranch.id },
+            );
+            const ownerToken = {
+                sub: branchOwner.id,
+                sid: ownerSession.id,
+                role: "owner",
+                tokenVersion: branchOwner.tokenVersion,
+                type: "access" as const,
+                branchId: ownerBranch.id,
+            };
+
+            // Allowing control: BEFORE deactivation the same token's claims pass
+            // JwtStrategy and TenantGuard (so the refusal below is deactivation's
+            // effect, not a fixture artefact).
+            await expect(
+                guard.canActivate(tenantRequestContext(await strategy.validate(ownerToken))),
+            ).resolves.toBe(true);
 
             await systemAdmin.updateBranch(ownerBranch.id, { isActive: false }, ownerActor(actor.id));
 
             await expect(
-                guard.canActivate(tenantRequestContext({
-                    userId: branchOwner.id,
-                    role: branchOwner.role,
-                    branchId: ownerBranch.id,
-                })),
+                guard.canActivate(tenantRequestContext(await strategy.validate(ownerToken))),
             ).rejects.toBeInstanceOf(ForbiddenException);
 
             // Cleanup order: clear ownership the tracker's fixed rank cannot express

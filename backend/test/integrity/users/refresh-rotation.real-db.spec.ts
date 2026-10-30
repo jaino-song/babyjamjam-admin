@@ -10,6 +10,7 @@ import {
     expectInOrder,
     makeAuthSessionService,
     waitUntilBlocked,
+    waitUntilBlockedCount,
     withDeadline,
 } from "./users-local.helpers";
 
@@ -160,7 +161,7 @@ describeReal("refresh token rotation (real PostgreSQL)", () => {
                         (value: unknown) => ({ kind: "resolved" as const, value }),
                         (error: unknown) => ({ kind: "rejected" as const, error }),
                     );
-                await waitUntilBlocked(handle.raw, /FROM\s+"auth_session"[\s\S]*FOR\s+UPDATE/);
+                await waitUntilBlockedCount(handle.raw, /FROM\s+"auth_session"[\s\S]*FOR\s+UPDATE/, 2);
                 events.push("BOTH_ROTATIONS_QUEUED_BEHIND_PRIMING_LOCK");
             }), CASE_TIMEOUT_MS, "priming transaction did not settle");
             if (!winner || !challenger) {

@@ -9,11 +9,13 @@ import { RowTracker } from "../helpers/tracker";
 import {
     createKnownRefreshToken,
     expectInOrder,
+    isolateExactTwoOwnerWorld,
     makeAuthSessionService,
     makeJwtStrategy,
     makeUserService,
     ownerActor,
     waitUntilBlocked,
+    waitUntilBlockedCount,
     withDeadline,
 } from "./users-local.helpers";
 
@@ -107,11 +109,12 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
 
     invariant(
         "SI-USER-06",
-        "concurrent deletion of both owners can never leave zero owners (forced interleaving)",
+        "concurrent deletion of both owners can never leave zero owners (forced interleaving, exactly two owners)",
         async () => {
             const service = makeUserService(handle.service);
             const ownerA = await createUser(handle.raw, tracker, { role: "owner" });
             const ownerB = await createUser(handle.raw, tracker, { role: "owner" });
+            await isolateExactTwoOwnerWorld(handle.raw, ownerA.id, ownerB.id);
 
             const events: string[] = [];
             let paused = false;
@@ -192,7 +195,7 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
                         (value: unknown) => ({ kind: "resolved" as const, value }),
                         (error: unknown) => ({ kind: "rejected" as const, error }),
                     );
-                await waitUntilBlocked(handle.raw, /FROM\s+"user"[\s\S]*FOR\s+UPDATE/);
+                await waitUntilBlockedCount(handle.raw, /FROM\s+"user"[\s\S]*FOR\s+UPDATE/, 2);
                 events.push("BOTH_DELETES_QUEUED_BEHIND_PRIMING_LOCK");
             }), CASE_TIMEOUT_MS, "priming transaction did not settle");
             if (!firstDelete || !secondDelete) {
@@ -217,12 +220,77 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
                 "SECOND_DELETE_BLOCKED_ON_OWNER_LOCK",
             ]);
 
-            // The core invariant: exactly one owner of THIS race's two survives.
+            // After the winner commits (its target row ownerA is gone), the loser
+            // resumes: it is blocked on its FOR UPDATE of that same (sorted-first)
+            // owner row, which the winner just deleted. The loser's rejection is
+            // therefore the documented serialization abort (SQLSTATE 40001 "could
+            // not serialize access"), NOT a silent second owner deletion. The
+            // explicit last-owner 409 (REQUEST_CONFLICT) guard itself is proven by
+            // the serial-pair test below.
+            const loserMessage = secondOutcome.error instanceof Error
+                ? secondOutcome.error.message
+                : String(secondOutcome.error);
+            const loserReason = /could not serialize access|40001/.test(loserMessage)
+                ? "serialization-abort"
+                : (/REQUEST_CONFLICT/.test(loserMessage) ? "last-owner-guard" : "unexpected");
+            if (loserReason === "unexpected") {
+                throw new Error(
+                    `SI-USER-06 wrong-reason failure: the losing owner delete failed as neither the documented ` +
+                        `serialization abort nor the last-owner guard: ${loserMessage}`,
+                );
+            }
+
+            // The core invariant holds for the WHOLE world, not just for this race's
+            // two rows: exactly one owner survives, and it is the owner whose delete
+            // was queued last.
+            const ownerCountAfter = await handle.raw.user.count({ where: { role: "owner" } });
             const ownersLeft = await handle.raw.user.findMany({
                 where: { role: "owner", id: { in: [ownerA.id, ownerB.id] } },
                 select: { id: true },
             });
             expect(ownersLeft.map(({ id }) => id)).toEqual([ownerB.id]);
+            expect(ownerCountAfter).toBe(1);
+        },
+    );
+
+    invariant(
+        "SI-USER-06",
+        "after one owner delete succeeds, deleting the now-last owner is refused with 409 REQUEST_CONFLICT (serial guard)",
+        async () => {
+            const service = makeUserService(handle.service);
+            const ownerA = await createUser(handle.raw, tracker, { role: "owner" });
+            const ownerB = await createUser(handle.raw, tracker, { role: "owner" });
+            await isolateExactTwoOwnerWorld(handle.raw, ownerA.id, ownerB.id);
+
+            // With exactly two owners the first delete passes the guard and commits.
+            await expect(
+                service.delete(ownerA.id, undefined, ownerActor(ownerB.id)),
+            ).resolves.toBeUndefined();
+            expect(await handle.raw.user.count({ where: { role: "owner" } })).toBe(1);
+
+            // The second delete now faces a one-owner world. Its actor identity
+            // (ownerA) is already deleted, but the actor check only requires a
+            // distinct userId — and the lock-every-owner last-owner guard must refuse
+            // the deletion of the final owner with 409 REQUEST_CONFLICT.
+            await expect(
+                service.delete(ownerB.id, undefined, ownerActor(ownerA.id)),
+            ).rejects.toMatchObject({
+                status: 409,
+                response: {
+                    code: "REQUEST_CONFLICT",
+                    errors: expect.arrayContaining([
+                        expect.objectContaining({ detail: expect.stringContaining("마지막 글로벌 소유자") }),
+                    ]),
+                },
+            });
+
+            // The refusal leaves the last owner untouched: the world still has one owner.
+            const lastOwner = await handle.raw.user.findUniqueOrThrow({
+                where: { id: ownerB.id },
+                select: { role: true },
+            });
+            expect(lastOwner.role).toBe("owner");
+            expect(await handle.raw.user.count({ where: { role: "owner" } })).toBe(1);
         },
     );
 });

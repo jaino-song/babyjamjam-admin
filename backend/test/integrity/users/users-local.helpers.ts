@@ -76,10 +76,22 @@ export function makeSystemAdminService(prisma: PrismaService): SystemAdminServic
 /**
  * Real JwtStrategy. The strategy constructor reads the JWT secret at construction
  * time, so a local test literal is set before wiring (never a real secret).
+ * The literal is always SET (never inherited) and restored afterwards, so the
+ * helper never leaks environment mutation across suites or processes.
  */
 export function makeJwtStrategy(prisma: PrismaService): JwtStrategy {
-    process.env["JWT_SECRET"] ??= "si-users-local-integrity-test-secret";
-    return new JwtStrategy(prisma);
+    const testSecret = "si-users-local-integrity-test-secret";
+    const previous = process.env["JWT_SECRET"];
+    process.env["JWT_SECRET"] = testSecret;
+    try {
+        return new JwtStrategy(prisma);
+    } finally {
+        if (previous === undefined) {
+            delete process.env["JWT_SECRET"];
+        } else {
+            process.env["JWT_SECRET"] = previous;
+        }
+    }
 }
 
 export function makeTenantGuard(prisma: PrismaService): { guard: TenantGuard; context: TenantContext } {
@@ -143,20 +155,40 @@ export async function waitUntilBlocked(
     statement: RegExp,
     timeoutMs = 5_000,
 ): Promise<void> {
+    await waitUntilBlockedCount(raw, statement, 1, timeoutMs);
+}
+
+/**
+ * Same as {@link waitUntilBlocked} but waits until AT LEAST `minWaiters` backends
+ * are queued on a heavyweight lock matching `statement`. A plain existence check
+ * cannot prove "BOTH" waiter claims: the match from the first waiter satisfies it
+ * even when the second contender never queued. Callers asserting that N racing
+ * transactions are all blocked must use the counting form.
+ */
+export async function waitUntilBlockedCount(
+    raw: PrismaClient,
+    statement: RegExp,
+    minWaiters: number,
+    timeoutMs = 5_000,
+): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let waiting: string[] = [];
     for (;;) {
-        const rows = await raw.$queryRaw<Array<{ query: string }>>(Prisma.sql`
-            SELECT query
+        const rows = await raw.$queryRaw<Array<{ query: string; pid: number }>>(Prisma.sql`
+            SELECT pid, query
             FROM pg_stat_activity
             WHERE datname = current_database()
               AND pid <> pg_backend_pid()
               AND wait_event_type = 'Lock'
         `);
         waiting = rows.map((row) => row.query);
-        if (waiting.some((query) => statement.test(query))) return;
+        const matching = waiting.filter((query) => statement.test(query)).length;
+        if (matching >= minWaiters) return;
         if (Date.now() > deadline) {
-            throw new Error(`no backend was blocked on ${statement}; waiting statements: ${JSON.stringify(waiting)}`);
+            throw new Error(
+                `only ${matching} backend(s) (needed ${minWaiters}) blocked on ${statement}; ` +
+                    `waiting statements: ${JSON.stringify(waiting)}`,
+            );
         }
         await sleep(20);
     }
@@ -186,6 +218,29 @@ export function expectInOrder(events: readonly string[], expected: readonly stri
         events,
         positions: [...positions].sort((left, right) => left - right),
     });
+}
+
+/**
+ * Demotes every global owner row except the given pair so a two-owner invariant
+ * holds in the WHOLE world, then asserts exactly two owners remain. Needed
+ * because sibling tests in one suite (and leaked rows from earlier runs) leave
+ * `role: 'owner'` users behind; without isolation, owner-count assertions and
+ * last-owner guards see a permanently non-zero extra supply. Demotion (not
+ * deletion) keeps other suites' tracker-cleaned rows intact.
+ */
+export async function isolateExactTwoOwnerWorld(
+    raw: PrismaClient,
+    ownerAId: string,
+    ownerBId: string,
+): Promise<void> {
+    await raw.user.updateMany({
+        where: { role: "owner", id: { notIn: [ownerAId, ownerBId] } },
+        data: { role: "user" },
+    });
+    const ownerCount = await raw.user.count({ where: { role: "owner" } });
+    if (ownerCount !== 2) {
+        throw new Error(`owner isolation failed: expected exactly 2 owners, found ${ownerCount}`);
+    }
 }
 
 /**

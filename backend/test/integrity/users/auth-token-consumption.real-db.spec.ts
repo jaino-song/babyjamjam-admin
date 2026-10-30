@@ -13,6 +13,7 @@ import {
     newLocalAuthRows,
     sha256Hex,
     waitUntilBlocked,
+    waitUntilBlockedCount,
     withDeadline,
 } from "./users-local.helpers";
 
@@ -34,6 +35,11 @@ import type { IntegrityPrisma } from "../helpers/real-db";
  *    leaves unconsumed flow states behind. The invariant that must still hold:
  *    such an orphaned state cannot complete a login/link flow — the completion
  *    path re-reads the user and refuses.
+ * 3. Same for the *`_exchange` code: `exchangeCodeForTokens` consumes an
+ *    orphaned `pending_account_onboarding_exchange` state and MINTS an
+ *    additional onboarding state for the deleted user id. Verdict recorded in
+ *    FINDINGS: the mint itself succeeds but grants no access — completing
+ *    onboarding re-reads the user and refuses one step later.
  *
  * Real SbAuthTokenRepository / AuthService over the real database.
  */
@@ -147,7 +153,7 @@ describeReal("single-use tokens and flow state orphans (real PostgreSQL)", () =>
                 events.push("WINNER_QUEUED_BEHIND_PRIMING_LOCK");
                 secondAttempt = handle.raw.$transaction<boolean>((rx) =>
                     rawRepository.consumeWithinTx(rx, hashedTokenValue, "email_verification"));
-                await waitUntilBlocked(handle.raw, /UPDATE[\s\S]*?"auth_token"/);
+                await waitUntilBlockedCount(handle.raw, /UPDATE[\s\S]*?"auth_token"/, 2);
                 events.push("BOTH_CONSUMPTIONS_QUEUED_BEHIND_PRIMING_LOCK");
             }), CASE_TIMEOUT_MS, "priming transaction did not settle");
             if (!firstAttempt || !secondAttempt) {
@@ -209,6 +215,77 @@ describeReal("single-use tokens and flow state orphans (real PostgreSQL)", () =>
             // The orphan stays unconsumed: refused without being marked used.
             const after = await handle.raw.auth_flow_state.findUniqueOrThrow({ where: { id: state.id } });
             expect(after.consumedAt).toBeNull();
+        },
+    );
+
+    invariant(
+        "SI-USER-07",
+        "an orphaned *_exchange code lets exchangeCodeForTokens mint an onboarding state for the deleted user, but its token cannot complete onboarding (verdict: mint is refused one step later — no access gained)",
+        async () => {
+            const rawToken = `si-exchange-${crypto.randomUUID()}`;
+            const user = await createUser(handle.raw, tracker, { role: "user", approvalStatus: "approved" });
+            // kind 'pending_account_onboarding_exchange': exchangeCodeForTokens'
+            // middle branch (application/services/auth.service.ts) consumes it and
+            // mints a fresh `pending_account_onboarding` state for the SAME userId.
+            const exchangeState = await handle.raw.auth_flow_state.create({
+                data: {
+                    kind: "pending_account_onboarding_exchange",
+                    tokenHash: sha256Hex(rawToken),
+                    userId: user.id,
+                    expiresAt: new Date(Date.now() + 30 * 1000),
+                },
+            });
+            localRows.flowStateTokenHashes.push(exchangeState.tokenHash);
+
+            // auth_flow_state.user_id has no FK: the exchange code survives the user deletion.
+            await handle.raw.user.delete({ where: { id: user.id } });
+
+            const authService = new AuthService(
+                handle.service,
+                {} as never,
+                {} as never,
+                {} as never,
+                {} as never,
+            );
+
+            // The exchange itself is NOT refused — the mint happens for the deleted
+            // user's id (the potential defect being graded).
+            const result = await authService.exchangeCodeForTokens(rawToken);
+            expect(result).toMatchObject({
+                onboardingRequired: true,
+                onboardingRoute: "/onboarding",
+            });
+            if (!("pendingAccountOnboardingToken" in result)
+                || typeof result.pendingAccountOnboardingToken !== "string") {
+                throw new Error(
+                    "SI-USER-07 wrong-reason failure: the onboarding exchange result carries no pendingAccountOnboardingToken",
+                );
+            }
+            const mintedToken: string = result.pendingAccountOnboardingToken;
+
+            // A second `pending_account_onboarding` row pointing at the deleted user
+            // now exists; track it for cleanup.
+            const minted = await handle.raw.auth_flow_state.findFirstOrThrow({
+                where: {
+                    kind: "pending_account_onboarding",
+                    userId: user.id,
+                    tokenHash: { not: exchangeState.tokenHash },
+                },
+                orderBy: { createdAt: "desc" },
+            });
+            localRows.flowStateTokenHashes.push(minted.tokenHash);
+
+            // The verdict: the mint does NOT acquire access — completing the
+            // onboarding re-reads the user row and refuses (AUTH_REQUIRED).
+            await expect(
+                authService.getPendingAccountOnboarding(mintedToken),
+            ).rejects.toMatchObject({ response: { code: "AUTH_REQUIRED" } });
+
+            // And the minted state is not silently marked used by the refusal.
+            const mintedAfter = await handle.raw.auth_flow_state.findUniqueOrThrow({
+                where: { id: minted.id },
+            });
+            expect(mintedAfter.consumedAt).toBeNull();
         },
     );
 });
