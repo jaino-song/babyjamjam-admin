@@ -91,7 +91,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                 findUnique: jest.fn().mockResolvedValue(null),
                 findFirst: jest.fn().mockImplementation(async () => ({ effectReceipt })),
             },
-            message_trigger_rule: { upsert: jest.fn().mockResolvedValue(undefined) },
+            message_trigger_rule: { findFirst: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue(undefined) },
             message_trigger_job: { findFirst: jest.fn().mockResolvedValue(null) },
             client: {
                 findFirst: jest.fn().mockImplementation(async ({ where }: { where: { phone?: string } }) => ({
@@ -1348,5 +1348,39 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             create: expect.objectContaining({ isActive: false }),
             update: { isActive: false },
         }));
+    });
+
+    describe("synthetic ad-hoc SMS holder rule writes", () => {
+        const run = async (stored: { isActive: boolean } | null) => {
+            const { prisma, capabilities } = setup();
+            prisma.message_trigger_rule.findFirst.mockResolvedValue(stored);
+            const capability = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
+            await capability.execute(context, { receiver: "01012345678", message: "안내" });
+            return prisma;
+        };
+
+        it("does not write the holder rule when it already exists and is inactive", async () => {
+            const prisma = await run({ isActive: false });
+
+            expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        });
+
+        it("writes the holder rule once when it is missing, reading it branch-pinned first", async () => {
+            const prisma = await run(null);
+
+            expect(prisma.message_trigger_rule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+                where: expect.objectContaining({ branchId: expect.any(String) }),
+            }));
+            expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("forces the holder rule back to inactive once when it exists but is active", async () => {
+            const prisma = await run({ isActive: true });
+
+            expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+            expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                update: { isActive: false },
+            }));
+        });
     });
 });

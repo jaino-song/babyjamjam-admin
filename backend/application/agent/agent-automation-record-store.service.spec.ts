@@ -1,5 +1,6 @@
 import type { AgentAutomationAuthority, AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
 import { agentAutomationEffectDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
 import { AgentAutomationRecordRefusedError, AgentAutomationRecordStoreService } from "./agent-automation-record-store.service";
@@ -204,5 +205,51 @@ describe("AgentAutomationRecordStoreService schedule-write successors", () => {
             operation: "schedule-write",
             effects: [{ ...effect, sourceDigest: "b".repeat(64) }],
         })).rejects.toBeInstanceOf(AgentAutomationRecordRefusedError);
+    });
+});
+
+describe("AgentAutomationRecordStoreService internal marker rule", () => {
+    const markerRuleTx = (stored: { id: string } | null) => ({
+        message_trigger_rule: {
+            findUnique: jest.fn().mockResolvedValue(stored),
+            createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+    });
+    // `ensureInternalRule` is private on purpose (only the write path calls it); the write path needs a
+    // full task artifact to reach it, so the unit under test is exercised directly.
+    const ensure = (tx: ReturnType<typeof markerRuleTx>) =>
+        (new AgentAutomationRecordStoreService({} as never) as unknown as {
+            ensureInternalRule(transaction: unknown): Promise<void>;
+        }).ensureInternalRule(tx);
+
+    it("does not write the marker rule once it exists", async () => {
+        const tx = markerRuleTx({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+
+        await ensure(tx);
+
+        expect(tx.message_trigger_rule.findUnique).toHaveBeenCalledWith({
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            select: { id: true },
+        });
+        expect(tx.message_trigger_rule.createMany).not.toHaveBeenCalled();
+    });
+
+    it("writes the marker rule exactly once, as an inactive branchless row, when it is missing", async () => {
+        const tx = markerRuleTx(null);
+
+        await ensure(tx);
+
+        expect(tx.message_trigger_rule.createMany).toHaveBeenCalledTimes(1);
+        expect(tx.message_trigger_rule.createMany).toHaveBeenCalledWith({
+            data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, isActive: false })],
+            skipDuplicates: true,
+        });
+    });
+
+    it("treats a lost creation race (count 0) as success", async () => {
+        const tx = markerRuleTx(null);
+        tx.message_trigger_rule.createMany.mockResolvedValue({ count: 0 });
+
+        await expect(ensure(tx)).resolves.toBeUndefined();
     });
 });

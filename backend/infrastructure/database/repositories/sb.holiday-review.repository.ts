@@ -467,24 +467,33 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                     obsoleted += result.count;
                 }
                 if (action.createItem) {
-                    await tx.end_date_review_item.upsert({
-                        where: {
-                            changeEventId_clientId: { changeEventId: eventId, clientId: draft.clientId },
-                        },
-                        create: {
-                            changeEventId: eventId,
-                            branchId: draft.branchId,
-                            clientId: draft.clientId,
-                            storedEnd: toDbDate(draft.storedEnd),
-                            recalculatedEnd: toDbDate(draft.recalculatedEnd),
-                            affectedFrom: toDbDate(draft.affectedFrom),
-                            category: draft.category,
-                            reason: draft.reason,
-                        },
-                        // A replay must not reopen or rewrite an item that already exists.
-                        update: {},
+                    // A replay of an already-applied event finds the item and must not write at all: a write
+                    // that returns the row reads as a change to the realtime hint. The first creation is an
+                    // atomic `createMany({ skipDuplicates })` (INSERT ... ON CONFLICT DO NOTHING, which covers
+                    // the (change_event_id, client_id) unique index): `upsert({ update: {} })` is a read then an
+                    // insert in Prisma, so a concurrent creator raises P2002 and aborts this transaction.
+                    // Branch-pinned read. A replay must not reopen or rewrite an item that already exists.
+                    const existingItem = await tx.end_date_review_item.findFirst({
+                        where: { changeEventId: eventId, clientId: draft.clientId, branchId: draft.branchId },
+                        select: { id: true },
                     });
-                    created += 1;
+                    if (!existingItem) {
+                        const inserted = await tx.end_date_review_item.createMany({
+                            data: [{
+                                changeEventId: eventId,
+                                branchId: draft.branchId,
+                                clientId: draft.clientId,
+                                storedEnd: toDbDate(draft.storedEnd),
+                                recalculatedEnd: toDbDate(draft.recalculatedEnd),
+                                affectedFrom: toDbDate(draft.affectedFrom),
+                                category: draft.category,
+                                reason: draft.reason,
+                            }],
+                            skipDuplicates: true,
+                        });
+                        // Counts only items this call really inserted; a replay or a lost race reports 0.
+                        created += inserted.count;
+                    }
                 }
             }
         }

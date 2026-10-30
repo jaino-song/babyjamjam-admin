@@ -8,6 +8,7 @@ import {
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
+import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 
 describe("MessageAutomationIntentService", () => {
     const setup = (schedulerLease: ReturnType<typeof createSchedulerLeaseMock> = createSchedulerLeaseMock()) => {
@@ -43,7 +44,8 @@ describe("MessageAutomationIntentService", () => {
         };
         const transaction = {
             message_trigger_rule: {
-                upsert: jest.fn().mockResolvedValue(undefined),
+                findUnique: jest.fn().mockResolvedValue(null),
+                createMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             message_trigger_job: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -80,9 +82,10 @@ describe("MessageAutomationIntentService", () => {
             intentAt,
         });
 
-        expect(transaction.message_trigger_rule.upsert).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID } }),
-        );
+        expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID })],
+            skipDuplicates: true,
+        }));
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
                 create: expect.objectContaining({
@@ -1035,5 +1038,119 @@ describe("MessageAutomationIntentService", () => {
         await expect(service.reconcilePendingIntents()).resolves.toBe(0);
 
         expect(prisma.message_trigger_job.findMany).not.toHaveBeenCalled();
+    });
+
+    describe("recovery-marker rule write", () => {
+        const persist = (service: MessageAutomationIntentService, transaction: unknown) =>
+            service.persistClientIntent(transaction as never, {
+                branchId: "branch-1",
+                clientId: 31,
+                includePast: true,
+                suppressGreeting: true,
+                intentAt: new Date("2026-08-20T01:02:03.000Z"),
+            });
+
+        it("does not write the marker rule when it already exists, but still stores the intent", async () => {
+            const { service, transaction } = setup();
+            transaction.message_trigger_rule.findUnique.mockResolvedValue({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+
+            await persist(service, transaction);
+
+            expect(transaction.message_trigger_rule.findUnique).toHaveBeenCalledWith({
+                where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                select: { id: true },
+            });
+            expect(transaction.message_trigger_rule.createMany).not.toHaveBeenCalled();
+            expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("writes the marker rule exactly once when it is missing", async () => {
+            const { service, transaction } = setup();
+            transaction.message_trigger_rule.findUnique.mockResolvedValue(null);
+
+            await persist(service, transaction);
+
+            expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledWith({
+                data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, isActive: false })],
+                skipDuplicates: true,
+            });
+            expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("treats a lost marker creation race (count 0) as success and still stores the intent", async () => {
+            const { service, transaction } = setup();
+            transaction.message_trigger_rule.findUnique.mockResolvedValue(null);
+            transaction.message_trigger_rule.createMany.mockResolvedValue({ count: 0 });
+
+            await persist(service, transaction);
+
+            expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("realtime hint suppression", () => {
+        it("suppresses the hint for the lease claim (claimIntent) but not for the status-changing delete", async () => {
+            const { service, prisma } = setup();
+            const observed: Record<string, boolean> = {};
+            prisma.$queryRaw.mockImplementation(async () => {
+                observed["claim"] = isEntityChangeHintsSuppressed();
+                return [{
+                    id: "intent-1",
+                    scheduled_for: new Date("2026-08-20T01:02:03.000Z"),
+                    updated_at: new Date("2026-08-20T01:02:04.000Z"),
+                }];
+            });
+            // A status-changing write of the same service: deleting the fulfilled intent.
+            prisma.message_trigger_job.deleteMany.mockImplementation(async () => {
+                observed["delete"] = isEntityChangeHintsSuppressed();
+                return { count: 1 };
+            });
+            await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 })).resolves.toBe(true);
+            expect(observed).toEqual({ claim: true, delete: false });
+        });
+
+        it("suppresses the lease release (releaseIntent) after a failure but not a delete", async () => {
+            const { service, prisma, triggerService } = setup();
+            triggerService.syncEmployeeAssignmentRulesForEmployee.mockRejectedValue(new Error("unavailable"));
+            const observed: string[] = [];
+            prisma.message_trigger_job.updateMany.mockImplementation(async () => {
+                observed.push(`release:${isEntityChangeHintsSuppressed()}`);
+                return { count: 1 };
+            });
+            prisma.message_trigger_job.deleteMany.mockImplementation(async () => {
+                observed.push(`delete:${isEntityChangeHintsSuppressed()}`);
+                return { count: 1 };
+            });
+            await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 }))
+                .rejects.toThrow("unavailable");
+            expect(observed).toEqual(["release:true"]);
+
+            observed.length = 0;
+            triggerService.syncEmployeeAssignmentRulesForEmployee.mockResolvedValue(true);
+            await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 })).resolves.toBe(true);
+            expect(observed).toEqual(["delete:false"]);
+        });
+
+        it("still announces the quarantine of a malformed intent and the removal of an orphan", async () => {
+            const { service, prisma } = setup();
+            const version = {
+                branchId: "branch-1", clientId: 31, employeeScheduleId: null,
+                scheduledFor: new Date("2026-08-20T01:02:03.000Z"), updatedAt: new Date("2026-08-20T01:02:04.000Z"),
+            };
+            prisma.message_trigger_job.findMany.mockResolvedValue([
+                { ...version, id: "orphan-intent", payload: { templateVariables: { intentKind: "schedule", includePast: "true" } } },
+                { ...version, id: "malformed-intent", payload: { templateVariables: { intentKind: "unexpected" } } },
+            ]);
+            const observed: string[] = [];
+            prisma.message_trigger_job.updateMany.mockImplementation(async () => {
+                observed.push(`quarantine:${isEntityChangeHintsSuppressed()}`); return { count: 1 };
+            });
+            prisma.message_trigger_job.deleteMany.mockImplementation(async () => {
+                observed.push(`discard:${isEntityChangeHintsSuppressed()}`); return { count: 1 };
+            });
+            await service.reconcilePendingIntents();
+            expect(observed).toEqual(["discard:false", "quarantine:false"]);
+        });
     });
 });

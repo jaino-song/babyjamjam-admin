@@ -134,23 +134,33 @@ async function persistMessageAutomationIntent(
         });
     }
 
-    await transaction.message_trigger_rule.upsert({
+    // The recovery-marker rule is created once. Skip the write when it exists (a write that returns the row
+    // reads as a message change to the realtime hint). The first creation is an atomic
+    // `createMany({ skipDuplicates })`, i.e. INSERT ... ON CONFLICT DO NOTHING: `upsert({ update: {} })` is a
+    // read then an insert in Prisma, so concurrent first creators raise P2002 and abort the caller's
+    // transaction (25P02). A losing creator gets `count: 0`, which is success and emits no hint.
+    const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
         where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-        create: {
-            id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
-            branchId: null,
-            name: "메시지 자동화 생성 복구 표식",
-            isActive: false,
-            eventType: MessageTriggerEventType.CLIENT_CREATED,
-            offsetType: MessageTriggerOffsetType.IMMEDIATE,
-            offsetDays: 0,
-            recipientType: MessageTriggerRecipientType.CLIENT,
-            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
-            isDefault: false,
-            jobsStale: false,
-        },
-        update: {},
+        select: { id: true },
     });
+    if (!existingMarkerRule) {
+        await transaction.message_trigger_rule.createMany({
+            data: [{
+                id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+                branchId: null,
+                name: "메시지 자동화 생성 복구 표식",
+                isActive: false,
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                isDefault: false,
+                jobsStale: false,
+            }],
+            skipDuplicates: true,
+        });
+    }
     const taskAutomationReference = params.taskAutomationReference
         ? JSON.parse(JSON.stringify(params.taskAutomationReference)) as Prisma.InputJsonObject
         : undefined;

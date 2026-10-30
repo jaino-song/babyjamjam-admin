@@ -1,4 +1,5 @@
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
 
 const sqlText = (value: unknown): string => {
@@ -624,6 +625,55 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(values).toContain("dispatch_authorized");
             expect(values).toContain(dispatchJobId);
             expect(values).toContain(dispatchLeaseToken);
+        });
+
+        const observeSuppression = (results: unknown[][]) => {
+            const observed: boolean[] = [];
+            queryRaw.mockReset();
+            for (const result of results) {
+                queryRaw.mockImplementationOnce(async () => {
+                    observed.push(isEntityChangeHintsSuppressed());
+                    return result;
+                });
+            }
+            return observed;
+        };
+
+        it("a step change is announced: the step-moving statement runs unsuppressed and matches only a different step", async () => {
+            const observed = observeSuppression([[row({ status: "processing", progress_step: "creating" })]]);
+
+            const updated = await repository.updateProgress(dispatchJobId, dispatchLeaseToken, "creating");
+
+            expect(updated?.progressStep).toBe("creating");
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            expect(observed).toEqual([false]);
+            expect(sqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ")).toContain("progress_step IS DISTINCT FROM");
+        });
+
+        it("a heartbeat-only update (step unchanged) moves only heartbeat_at/updated_at and is suppressed", async () => {
+            const observed = observeSuppression([[], [row({ status: "processing", progress_step: "creating" })]]);
+            const heartbeatAt = new Date("2026-10-28T00:00:30Z");
+
+            const updated = await repository.updateProgress(dispatchJobId, dispatchLeaseToken, "creating", heartbeatAt);
+
+            expect(updated?.id).toBe(row().id);
+            expect(queryRaw).toHaveBeenCalledTimes(2);
+            // First statement (step would move) is not suppressed; the heartbeat-only one is.
+            expect(observed).toEqual([false, true]);
+            const heartbeatOnly = sqlText(queryRaw.mock.calls[1][0]).replace(/\s+/g, " ");
+            expect(heartbeatOnly).toContain("SET heartbeat_at = ");
+            expect(heartbeatOnly).not.toContain("progress_step");
+            expect(heartbeatOnly).toContain("lease_token = ");
+            expect(heartbeatOnly).toContain("status IN ('processing', 'reconciling')");
+            expect((queryRaw.mock.calls[1][0] as { values: unknown[] }).values).toContain(heartbeatAt);
+        });
+
+        it("returns null and writes nothing visible when the lease is gone", async () => {
+            const observed = observeSuppression([[], []]);
+
+            await expect(repository.updateProgress(dispatchJobId, dispatchLeaseToken, "creating")).resolves.toBeNull();
+
+            expect(observed).toEqual([false, true]);
         });
     });
 
