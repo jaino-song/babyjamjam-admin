@@ -436,7 +436,8 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("onLoadMore={() => void directory.fetchNextPage()}");
     expect(source).toContain("isFetchingMore={directory.isFetchingNextPage}");
     expect(source).toContain("directory.isNextPageError");
-    expect(source).toContain("directory.isEndOfList");
+    // The end of the list is not announced: the scope subtitle already says how many are shown.
+    expect(source).not.toContain("모든 검색 결과를 불러왔어요");
   });
 
   it("labels summary scope and dueDate months", () => {
