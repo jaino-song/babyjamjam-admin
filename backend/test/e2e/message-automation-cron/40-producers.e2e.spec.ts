@@ -68,7 +68,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
     const employeePhone = (tag: string) => `010-6${tag}${RUN.slice(1, 8)}`;
 
     // Cleanup bookkeeping (FK-safe order handled in afterAll).
-    const branchIds = new Set<string>([MESSAGE_CRON_BRANCH_ID]);
+    const branchIds = new Set<string>();
     const employeeIds = new Set<number>();
     const clientIds = new Set<number>();
     const scheduleIds = new Set<number>();
@@ -120,7 +120,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } }).catch(() => undefined);
         }
         await prisma.employee.deleteMany({ where: { id: { in: [...employeeIds] } } }).catch(() => undefined);
-        await prisma.branch.deleteMany({ where: { id: { in: [...branchIds] } } }).catch(() => undefined);
+        await prisma.branch.deleteMany({ where: { id: { in: [...branchIds] } } });
         await harness?.close();
     });
 
@@ -616,15 +616,13 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
         const intentWritten = await prisma.message_trigger_job.findUnique({
             where: { dedupeKey: intentKey },
         });
-        if (intentWritten !== null) {
-            // The cron persists the marker with intentAt = dueDate
-            // (client-due-date-scheduler.service.ts:120-126; the writer stores
-            // nextAttemptAt = intentAt on message-automation-intent-writer.ts:189).
-            // The fulfiller's re-claim requires next_attempt_at <= clock time
-            // (fulfiller :48), so on runs whose wall clock precedes the due
-            // date's UTC midnight the same-run fulfillment is clock-blocked.
-            // In that case pull the freshly written marker into the due window
-            // (full-flow.e2e.spec.ts:454-466 precedent) and reconcile it here,
+        // The cron writes nextAttemptAt = dueDate (@db.Date UTC midnight,
+        // 09:00 KST). The fulfiller requires next_attempt_at <= clock_timestamp(),
+        // so only runs before that boundary may leave a marker for reconciliation.
+        const inRunPossible = Date.now() >= Date.parse(`${dueDate}T00:00:00Z`);
+        expect(intentWritten === null).toBe(inRunPossible);
+        if (!inRunPossible) {
+            // Pull the clock-blocked marker into the due window and reconcile it,
             // exactly what a later scheduler cycle would do.
             expect(intentWritten).toEqual(expect.objectContaining({
                 status: "failed",
