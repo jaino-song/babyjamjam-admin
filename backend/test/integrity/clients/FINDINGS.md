@@ -69,10 +69,10 @@ test) — the update-path gap above is the live defect.
   `serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED`. NOT SENSITIVE.
 - **SI-CLIENT-08** — main desktop `frontend/src/hooks/useClients.ts` needs a
   refetch/invalidation of `serviceRecordKeys.clientOverview(id)` after update.
-  Mobile also needs
-  `queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() })`
-  and a `refetchQueries`/invalidate of `serviceRecordQueryKeys.clientOverview(id)`
-  to mobile `useUpdateClient`'s `onSuccess` (secondary desktop parity). NOT SENSITIVE.
+  Mobile `useUpdateClient` in `mobile/src/hooks/useClients.ts` needs its
+  `onSuccess` to invalidate `messageTriggerKeys.upcoming()` and invalidate or
+  refetch `serviceRecordQueryKeys.clientOverview(id)` (secondary desktop parity).
+  NOT SENSITIVE.
 
 ## Mutation proofs
 
@@ -128,7 +128,7 @@ the final diff contains only area-folder tests/FINDINGS.
   before tracking its duplicate-created clients, causing a cleanup FK failure.
   That failure was not used as mutation evidence. Reverted exactly.
 
-### Fix2 mutation proofs (current correction)
+### Fix2 mutation proofs (historical)
 
 Targeted tests used `pnpm test <spec> --runInBand --cacheDirectory
 .jest-cache-clients -t <name>` with the real-DB exports above, or
@@ -230,7 +230,7 @@ The frontend/mobile Jest runs emit the existing Sentry import deprecation warnin
   tracker or deleted by local helpers; service-created `client` rows in the draft
   suite are registered in the tracker explicitly.
 
-## Acceptance rerun (fix2, current)
+## Acceptance rerun (fix2, historical)
 
 The owned database was freshly created and `prisma migrate deploy` exited 0.
 Backend commands below ran in `backend/` with the real-DB exports documented
@@ -259,3 +259,65 @@ unsafe raw-query APIs, dynamic execution or HTML injection added; env files rema
 git-ignored. No dependency changes (dependency audit not rerun). No application
 fixes or UI changes were made, so no build/browser/server was needed. Existing
 Sentry import deprecation warnings remain in frontend/mobile Jest output.
+
+## Fix3 mutation proofs
+
+Both update tests accept either an invalidated overview query or its refetched
+payload (`version=2`), using a real QueryClient and mocked HTTP. Mobile now seeds
+the inactive overview query, rather than requiring a particular refetch call.
+The existing expected-failure guards and missing-upcoming check are retained.
+
+- **SI-CLIENT-08 main desktop**: temporarily imported `serviceRecordKeys` and,
+  after `frontend/src/hooks/useClients.ts:193` (original line numbering), added
+  `await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(variables.id) })`
+  to `useUpdateClient.onSuccess`. Ran
+  `pnpm --filter ./frontend exec jest src/__integrity__/clients --runInBand -t 'main desktop useUpdateClient'`:
+  RED (exit 1, one failed knownDefect), with
+  `Failing test passed even though it was supposed to fail.` Replaced only that
+  call with `await queryClient.refetchQueries(...)` and repeated the same command:
+  identical RED. Thus both valid fixes satisfy the revised assertion. An initial
+  insertion accidentally matched `useCreateClient`, so the targeted update test
+  stayed green; that run is not mutation proof. Both actual update mutations and
+  the temporary import were reverted exactly.
+- **SI-CLIENT-08 mobile**: temporarily imported `serviceRecordQueryKeys` and
+  added upcoming-job invalidation to `mobile/src/hooks/useClients.ts:153`
+  (`useUpdateClient.onSuccess`). With this change alone,
+  `pnpm --filter ./mobile exec jest src/__integrity__/clients --runInBand -t 'mobile useUpdateClient'`
+  stayed green as an expected failure: the overview was still stale. Then added
+  `queryClient.invalidateQueries({ queryKey: serviceRecordQueryKeys.clientOverview(variables.id) })`:
+  RED (exit 1, one failed knownDefect), with
+  `Failing test passed even though it was supposed to fail.` Replaced the overview
+  call with `refetchQueries(...)`: identical RED. Reverted both calls and the
+  temporary import exactly. This also proves the mobile overview check remains
+  necessary independently of the earlier upcoming-job check.
+
+## Acceptance rerun (fix3, current)
+
+Freshly created the owned `bjj_si_clients_throwaway`; `prisma migrate deploy`
+exited 0. Real-DB commands used the exports in the original brief and ran from
+`backend/`. All temporary production mutations were reverted before these runs.
+
+| command | observed result |
+|---|---|
+| `pnpm test test/integrity/clients --runInBand --randomize --seed=-1240350712 --showSeed --cacheDirectory .jest-cache-clients` | PASS: 5 suites / 24 tests, 0 skipped |
+| Same command, `--seed=871230` | PASS: 5 suites / 24 tests, 0 skipped |
+| Same command, `--seed=20261031` (retains fix2's three-run requirement) | PASS: 5 suites / 24 tests, 0 skipped |
+| `TZ=UTC` + same command, `--seed=424242` | PASS: 5 suites / 24 tests, 0 skipped |
+| `env -u DATABASE_URL -u DIRECT_URL -u STATE_INTEGRITY_REAL_DB pnpm test test/integrity/clients` | Exit 0: 5 suites / 24 tests skipped as intended |
+| `pnpm --filter ./frontend exec jest src/__integrity__/clients` | PASS: 1 suite / 3 tests |
+| `pnpm --filter ./mobile exec jest src/__integrity__/clients` | PASS: 1 suite / 3 tests |
+| `pnpm --filter ./backend exec eslint test/integrity/clients` | Exit 0, no diagnostics |
+| `pnpm --filter ./backend exec tsc --noEmit -p tsconfig.json` | Exit 0, no diagnostics |
+| `pnpm --filter ./frontend exec tsc --noEmit` | Exit 0, no diagnostics |
+| `pnpm --filter ./mobile exec tsc --noEmit` | Exit 0, no diagnostics |
+| `git diff --check` | Exit 0 |
+| `git diff --exit-code -- frontend/src/hooks/useClients.ts mobile/src/hooks/useClients.ts` | Exit 0: both production hooks restored exactly |
+| `dropdb -h localhost -U postgres bjj_si_clients_throwaway` then database-list check | Exit 0; no matching database |
+
+Removed `backend/.jest-cache-clients`. Only the two clients test files and this
+FINDINGS file changed. Scoped security checks found no added credential/private
+key patterns, dynamic execution, unsafe raw SQL or HTML injection; env files
+remain ignored. No dependencies changed (dependency audit not rerun). No build,
+server or browser was needed for this audit-only correction. Existing Sentry
+deprecation warnings remain. Reviewer focus: invalidation-or-fresh-payload
+semantics and both mutation forms; no application fix is included.

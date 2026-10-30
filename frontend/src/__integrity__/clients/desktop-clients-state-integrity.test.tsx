@@ -120,7 +120,8 @@ describe("SI-CLIENT-08 desktop client mutation cache invalidation", () => {
       expect(queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
       expect(queryClient.getQueryData(unrelatedKey)).toEqual({ version: "unrelated" });
       const overview = queryClient.getQueryData<{ version: number }>(overviewKey);
-      if (overview?.version !== 2) {
+      const overviewInvalidated = queryClient.getQueryState(overviewKey)?.isInvalidated === true;
+      if (!overviewInvalidated && overview?.version !== 2) {
         throw new Error(`SI-CLIENT-08: main desktop useUpdateClient left the service-record client overview cache stale (version=${String(overview?.version)})`);
       }
     } finally {

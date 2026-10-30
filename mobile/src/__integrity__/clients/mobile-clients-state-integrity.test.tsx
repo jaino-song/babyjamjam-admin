@@ -80,13 +80,11 @@ const client = (id: number): Client => ({
 function setup() {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
   const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
-  const refetchSpy = jest.spyOn(queryClient, "refetchQueries");
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
   const invalidatedKeys = () => invalidateSpy.mock.calls.map((call) => JSON.stringify(call[0]));
-  const refetchedKeys = () => refetchSpy.mock.calls.map((call) => JSON.stringify(call[0]));
-  return { queryClient, invalidatedKeys, refetchedKeys, wrapper };
+  return { queryClient, invalidatedKeys, wrapper };
 }
 
 describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
@@ -99,26 +97,39 @@ describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
     async () => {
       const updated = { ...client(42), name: "수정 고객" };
       apiMock.patch.mockResolvedValue({ data: updated });
-      const { invalidatedKeys, refetchedKeys, wrapper } = setup();
-
-      const { result } = renderHook(() => useUpdateClient(), { wrapper });
-      await act(async () => {
-        await result.current.mutateAsync({ id: 42, dto: { name: "수정 고객" } });
+      const { queryClient, invalidatedKeys, wrapper } = setup();
+      const overviewKey = serviceRecordQueryKeys.clientOverview(42);
+      apiMock.get.mockResolvedValueOnce({ data: { version: 1 } });
+      await queryClient.fetchQuery({
+        queryKey: overviewKey,
+        queryFn: async () => (await api.get("/admin/service-records/client/42")).data,
+        staleTime: Infinity,
       });
+      apiMock.get.mockResolvedValue({ data: { version: 2 } });
+      const { result, unmount } = renderHook(() => useUpdateClient(), { wrapper });
+      try {
+        await act(async () => {
+          await result.current.mutateAsync({ id: 42, dto: { name: "수정 고객" } });
+        });
 
-      // Desktop (frontend/src/features/clients/hooks/use-clients.ts) does both
-      // of these on every update; mobile's update only refreshes clients and
-      // the dashboard counters.
-      const allInvalidations = invalidatedKeys().join("\n");
-      if (!allInvalidations.includes(JSON.stringify(messageTriggerKeys.upcoming()))) {
-        throw new Error(
-          `SI-CLIENT-08: mobile useUpdateClient left the message-trigger upcoming cache stale (desktop invalidates it); invalidated: ${allInvalidations}`,
-        );
-      }
-      if (!refetchedKeys().join("\n").includes(JSON.stringify(serviceRecordQueryKeys.clientOverview(42)))) {
-        throw new Error(
-          `SI-CLIENT-08: mobile useUpdateClient left the service-record client overview cache stale (desktop refetches it); refetched: ${refetchedKeys().join("\n")}`,
-        );
+        // Secondary desktop refreshes both caches. Overview invalidation is
+        // also sufficient: the inactive query will refetch on its next use.
+        const allInvalidations = invalidatedKeys().join("\n");
+        if (!allInvalidations.includes(JSON.stringify(messageTriggerKeys.upcoming()))) {
+          throw new Error(
+            `SI-CLIENT-08: mobile useUpdateClient left the message-trigger upcoming cache stale (desktop invalidates it); invalidated: ${allInvalidations}`,
+          );
+        }
+        const overview = queryClient.getQueryData<{ version: number }>(overviewKey);
+        const overviewInvalidated = queryClient.getQueryState(overviewKey)?.isInvalidated === true;
+        if (!overviewInvalidated && overview?.version !== 2) {
+          throw new Error(
+            `SI-CLIENT-08: mobile useUpdateClient left the service-record client overview cache stale (version=${String(overview?.version)})`,
+          );
+        }
+      } finally {
+        unmount();
+        queryClient.clear();
       }
     },
     /SI-CLIENT-08: mobile useUpdateClient left the (message-trigger upcoming|service-record client overview) cache stale/,
