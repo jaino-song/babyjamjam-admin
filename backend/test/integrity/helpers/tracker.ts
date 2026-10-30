@@ -38,7 +38,10 @@ type SweepModel =
     | "service_record"
     | "service_record_assignment"
     | "service_record_case"
-    | "service_record_day";
+    | "service_record_day"
+    | "service_record_day_edit_log"
+    | "service_record_edit_draft"
+    | "service_record_revision_document_state";
 
 /**
  * Fixed cleanup rank per tracked model — LOWER RUNS FIRST (children before
@@ -52,7 +55,7 @@ type SweepModel =
  *   (SetNull); `message_trigger_job` → rule (Cascade), branch (NoAction!);
  *   `message_trigger_rule.branch_id` → branch (NoAction!).
  * - group 3: `eformsign_doc.branch_id` → branch (NoAction!), client/schedule
- *   (SetNull) and `client.e_doc_id` → eformsign_doc (NoAction); employee_schedule
+ *   (SetNull) and `client.e_doc_id` → eformsign_doc (SetNull); employee_schedule
  *   → client (Cascade), branch (NoAction!), primary employee (Restrict!).
  * - group 4 (in this exact order): employee → branch (NoAction!), client →
  *   branch (NoAction!), branch.owner_id → user (NoAction!), user (leaf).
@@ -85,9 +88,9 @@ interface SweepStep {
 /**
  * Sweep steps, in FK-safe order derived from `prisma/schema.prisma` (children
  * before parents among the swept models: `client_draft` before `call_record`,
- * assignment/day/record before `service_record_case`). Each step deletes the
- * rows that reference ANY tracked parent (OR of the `in` filters) and runs
- * before the ranked tracked deletes.
+ * assignment/day/record and the revision-adjacent rows before
+ * `service_record_case`). Each step deletes the rows that reference ANY tracked
+ * parent (OR of the `in` filters) and runs before the ranked tracked deletes.
  *
  * `admin_audit_event` is deliberately absent: it has no FK constraints at all
  * (so it cannot keep a parent alive) and an append-only trigger (migration
@@ -120,6 +123,18 @@ const SWEEP_STEPS: SweepStep[] = [
     { model: "service_record_assignment", filters: [{ column: "branchId", trackedModel: "branch" }] },
     { model: "service_record_day", filters: [{ column: "branchId", trackedModel: "branch" }] },
     { model: "service_record", filters: [{ column: "branchId", trackedModel: "branch" }] },
+    // Revision-adjacent rows, all NoAction-FK children of tracked parents (and
+    // of swept cases) — none has a DELETE trigger (migrations 20260908000000 /
+    // 20260908030000 / 20261028000000: only `edit_draft` UPDATE is
+    // trigger-guarded), so sweeping them is unconditional. Each must run
+    // before the `service_record_case` sweep and the ranked client/branch
+    // deletes or its NoAction FKs keep those parents alive.
+    {
+        model: "service_record_revision_document_state",
+        filters: [{ column: "branchId", trackedModel: "branch" }, { column: "clientId", trackedModel: "client" }],
+    },
+    { model: "service_record_edit_draft", filters: [{ column: "branchId", trackedModel: "branch" }] },
+    { model: "service_record_day_edit_log", filters: [{ column: "branchId", trackedModel: "branch" }] },
     {
         model: "service_record_case",
         filters: [{ column: "branchId", trackedModel: "branch" }, { column: "clientId", trackedModel: "client" }],

@@ -121,7 +121,9 @@ Rules:
   untracked child rows referencing tracked parents in: `eformsign_doc_file`,
   `client_draft`, `call_record`, `end_date_review_item`,
   `schedule_change_request`, `service_record_assignment`, `service_record_day`,
-  `service_record`, `service_record_case`, `eformsign_document_job`,
+  `service_record`, `service_record_revision_document_state`,
+  `service_record_edit_draft`, `service_record_day_edit_log`,
+  `service_record_case`, `eformsign_document_job`,
   `eformsign_dispatch_intent`, `notification`, and app-created `message_log` /
   `message_trigger_job` rows (by tracked `branchId`/`clientId`).
   `admin_audit_event` is deliberately NOT swept: it has no FK constraints
@@ -136,9 +138,17 @@ Rules:
   for them — the runner drops the whole throwaway database afterwards. Every
   OTHER deletion error is thrown as one `AggregateError` after all remaining
   deletes ran (one failing delete never aborts the rest, and `rows` is always
-  cleared). Do not model deeper revision-adjacent rows
-  (`service_record_revision_document_state`, `service_record_snapshot_chunk`);
-  they only exist alongside a revision, which already leaks their branch.
+  cleared). Revision-adjacent rows WITHOUT an append-only trigger are swept
+  like any other app row: `service_record_revision_document_state` (NoAction
+  `branch_id`/`client_id`), `service_record_edit_draft`, and
+  `service_record_day_edit_log` (NoAction case FKs) all allow DELETE — only
+  `edit_draft` UPDATE is trigger-guarded — so none of them can keep a tracked
+  client, branch, or swept case alive. `service_record_snapshot_chunk` is
+  deliberately NOT swept: a chunk bound to a revision (`revision_id` is
+  NoAction) can never be deleted while that revision is append-only, so
+  sweeping it would turn the revision's intentional leak into a thrown
+  `AggregateError` — and the NoAction parent such a chunk shares with the
+  revision (`branch`) is already leaked by that revision.
 - Do not invent column values. Derive required fields from
   `prisma/schema.prisma`; when a column has a CHECK constraint
   (`prisma/migrations/**/migration.sql`, e.g. `client_service_status_allowed`,

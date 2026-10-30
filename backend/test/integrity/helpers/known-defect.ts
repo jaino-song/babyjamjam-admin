@@ -58,6 +58,18 @@ export function knownDefect(id: string, title: string, body: IntegrityTestBody, 
 export type ExpectedFailurePattern = RegExp | string;
 
 /**
+ * Matches `message` against a RegExp matcher. `lastIndex` is reset first: a
+ * `g`/`y`-flagged pattern keeps `lastIndex` across `.test()` calls, so a
+ * pattern constant shared between tests (or between retries of one test)
+ * would silently mismatch every failure after the first. Resetting is
+ * harmless for flag-free patterns.
+ */
+function testRegExpFailure(pattern: RegExp, message: string): boolean {
+    pattern.lastIndex = 0;
+    return pattern.test(message);
+}
+
+/**
  * The `expectedFailure` guard of {@link knownDefect}. Returns a jest test body
  * (`it.failing` semantics: a thrown error counts as the expected failure and
  * stays green, a normal return counts as an unexpected pass and turns RED):
@@ -89,7 +101,8 @@ export function wrapExpectedFailure(
             return;
         }
         const message = thrown instanceof Error ? thrown.message : String(thrown);
-        const matches = typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
+        const matches =
+            typeof expectedFailure === "string" ? message.includes(expectedFailure) : testRegExpFailure(expectedFailure, message);
         if (matches) {
             throw thrown;
         }

@@ -39,14 +39,17 @@ try {
     // narrows the default scope, so it is used as-is; otherwise `test/integrity`
     // is appended so that flag-only invocations (e.g. `-t harness`) still run
     // ONLY the integrity suites and never the wider unit/e2e suites. A
-    // positional is detected as a non-flag argument that exists on disk — the
-    // VALUE of a flag like `-t harness` is not a path, so it must not suppress
-    // the default path. The path goes last because jest's array options
+    // positional is detected as an argument that BOTH starts with `test/`
+    // (relative to `backend/`) AND exists on disk. The VALUE of a flag like
+    // `-t domain` must never count: it is not a path — and when that value
+    // happens to collide with an unrelated directory (e.g. `domain/`), the old
+    // exists-only check silently suppressed the default path and widened the
+    // run to every suite. The path goes last because jest's array options
     // greedily consume positionals. The jest config's own ignore list
     // (node_modules, dist, e2e) stays in charge — this runner must not replace
     // or override it.
     const userArgs = process.argv.slice(2);
-    const forwardsPositionalPath = userArgs.some((arg) => !arg.startsWith("-") && existsSync(arg));
+    const forwardsPositionalPath = userArgs.some((arg) => arg.startsWith("test/") && existsSync(arg));
     const patternArgs = forwardsPositionalPath ? userArgs : [...userArgs, "test/integrity"];
     run("pnpm", ["exec", "jest", ...patternArgs, "--runInBand"]);
 } finally {

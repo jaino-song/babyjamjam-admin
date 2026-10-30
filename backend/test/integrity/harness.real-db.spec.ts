@@ -251,6 +251,108 @@ describeReal("state integrity harness (real PostgreSQL)", () => {
         expect(await raw.client.findUnique({ where: { id: clientRow.id } })).toBeNull();
     });
 
+    it("sweeps the revision document state so a leaked revision pins only its branch and case, not the tracked client", async () => {
+        const { raw } = handle;
+
+        const branchRow = await createBranch(raw, tracker);
+        const userRow = await createUser(raw, tracker);
+        const clientRow = await createClient(raw, tracker, { branchId: branchRow.id });
+        // Rows a service under test would create around one confirmed case:
+        const caseRow = await raw.service_record_case.create({
+            data: { branchId: branchRow.id, clientId: clientRow.id },
+        });
+        const revisionRow = await raw.service_record_revision.create({
+            data: {
+                branchId: branchRow.id,
+                serviceRecordCaseId: caseRow.id,
+                revisionNumber: 1,
+                confirmedByUserId: userRow.id,
+                payload: {},
+                plannedSessions: [],
+                provenance: {},
+                formVersionAtConfirm: 1,
+            },
+        });
+        // The document state's `client_id` FK is NoAction (migration
+        // 20260908030000): without the sweep it keeps the tracked client alive
+        // even though the revision has already leaked the branch and the case.
+        const documentStateRow = await raw.service_record_revision_document_state.create({
+            data: {
+                branchId: branchRow.id,
+                clientId: clientRow.id,
+                serviceRecordCaseId: caseRow.id,
+                revisionId: revisionRow.id,
+                operation: "contract_period",
+                generation: `si-docstate-${randomUUID()}`,
+                immutableInput: {},
+                inputFingerprint: `${randomUUID()}${randomUUID()}`.replace(/-/g, ""),
+            },
+        });
+
+        const tracked = tracker.size;
+        const { deleted, leaked } = await tracker.cleanup(raw);
+
+        // The client is deleted; only the revision's own parents leak.
+        expect(await raw.client.findUnique({ where: { id: clientRow.id } })).toBeNull();
+        expect(new Set(leaked.map((row) => `${row.model}:${row.id}`))).toEqual(
+            new Set([`service_record_case:${caseRow.id}`, `branch:${branchRow.id}`]),
+        );
+        // The document state itself was swept (DELETE is not trigger-guarded).
+        expect(await raw.service_record_revision_document_state.findUnique({ where: { id: documentStateRow.id } })).toBeNull();
+        // Two of the three tracked rows delete (the leaked branch does not),
+        // plus the one swept document state.
+        expect(deleted).toBe(tracked - 1 + 1);
+    });
+
+    it("sweeps edit drafts and day edit logs so an app-created case without a revision deletes with its branch", async () => {
+        const { raw } = handle;
+
+        const branchRow = await createBranch(raw, tracker);
+        const clientRow = await createClient(raw, tracker, { branchId: branchRow.id });
+        const caseRow = await raw.service_record_case.create({
+            data: { branchId: branchRow.id, clientId: clientRow.id },
+        });
+        // `service_record_edit_draft` (case FK NoAction) and
+        // `service_record_day_edit_log` (same shape): without the sweep both
+        // keep the swept case alive, and the case keeps the branch alive.
+        // Actor ids are scalar audit snapshots (no FK), so plain UUIDs suffice.
+        const editDraftRow = await raw.service_record_edit_draft.create({
+            data: {
+                branchId: branchRow.id,
+                serviceRecordCaseId: caseRow.id,
+                createdByUserId: randomUUID(),
+                updatedByUserId: randomUUID(),
+                sourceCaseVersion: caseRow.version,
+                sourceFingerprint: `si-${randomUUID()}`,
+                sourceSnapshot: {},
+            },
+        });
+        const dayEditLogRow = await raw.service_record_day_edit_log.create({
+            data: {
+                branchId: branchRow.id,
+                serviceRecordCaseId: caseRow.id,
+                caseSessionIndex: 1,
+                serviceRecordDayId: randomUUID(),
+                employeeId: 1,
+                employeeNameSnapshot: "무결성 요보사",
+                before: {},
+                after: {},
+            },
+        });
+
+        const tracked = tracker.size;
+        const { deleted, leaked } = await tracker.cleanup(raw);
+
+        expect(leaked).toEqual([]);
+        // Both child rows + the app-created case were swept.
+        expect(deleted).toBe(tracked + 3);
+        expect(await raw.service_record_edit_draft.findUnique({ where: { id: editDraftRow.id } })).toBeNull();
+        expect(await raw.service_record_day_edit_log.findUnique({ where: { id: dayEditLogRow.id } })).toBeNull();
+        expect(await raw.service_record_case.findUnique({ where: { id: caseRow.id } })).toBeNull();
+        expect(await raw.branch.findUnique({ where: { id: branchRow.id } })).toBeNull();
+        expect(await raw.client.findUnique({ where: { id: clientRow.id } })).toBeNull();
+    });
+
     it("reports every failing delete in one AggregateError and still deletes later models", async () => {
         const { raw } = handle;
 

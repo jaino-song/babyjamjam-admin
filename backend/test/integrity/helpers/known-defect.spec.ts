@@ -76,4 +76,38 @@ describe("knownDefect expectedFailure guard (pure unit)", () => {
         );
         await expect(wrapped()).rejects.toThrow(/violates foreign key constraint/);
     });
+
+    it("keeps matching a g-flagged RegExp across repeated failures (lastIndex must not leak between .test calls)", async () => {
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            // One pattern constant shared by two knownDefect tests — the way a
+            // module-level matcher would be used. A `g` flag makes `.test()`
+            // advance `lastIndex`, so without a reset the second test's
+            // matching failure would be misread as a wrong-reason failure.
+            const sharedPattern = /service_record_edit_draft pinned the case/g;
+            const first = wrapExpectedFailure(
+                "SI-TEST-05",
+                "first failure with a shared g-flagged pattern",
+                async () => {
+                    throw new Error("delete service_record_case#1 failed: service_record_edit_draft pinned the case");
+                },
+                sharedPattern,
+            );
+            await expect(first()).rejects.toThrow(/service_record_edit_draft pinned the case/);
+
+            const second = wrapExpectedFailure(
+                "SI-TEST-06",
+                "second failure with the same shared g-flagged pattern",
+                async () => {
+                    throw new Error("delete service_record_case#2 failed: service_record_edit_draft pinned the case");
+                },
+                sharedPattern,
+            );
+            // Still rethrown: the pattern matched again from the start.
+            await expect(second()).rejects.toThrow(/service_record_edit_draft pinned the case/);
+            expect(consoleError).not.toHaveBeenCalled();
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
 });
