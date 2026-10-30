@@ -278,6 +278,34 @@ grep -Fq -- "Resume (idempotent): valkey-restore --rollback '$KEPT_OLDEST/append
 [[ "$(vr_marker_get stage)" == verified ]] && ! running "$AC" || fail "second rollback not verified/fenced"
 ok "failed rollback: stays fenced, resumes with the same command, oldest kept copy restored"
 
+# ---- 9d. F2: a real SIGTERM after the API was started and before it is ready (the reviewer's
+#          reproduction). The exit path must stop the real container and confirm it; the old code
+#          left it running and printed "backend stays stopped".
+vr_reopen_wait_ready_real=$(declare -f vr_reopen_wait_ready)
+vr_reopen_wait_ready() { running "$AC" && : >"$WORK/f2.started"; kill -TERM "$BASHPID"; }
+rm -f "$WORK/f2.started"; RC9D=0
+( valkey_restore --reopen --confirm-reopen ) >"$WORK/out9d2.txt" 2>"$WORK/err9d2.txt" || RC9D=$?
+eval "$vr_reopen_wait_ready_real"
+[[ -e "$WORK/f2.started" ]] || fail "F2 fixture: the API container was never started before the signal"
+[[ "$RC9D" == 143 ]] || fail "F2: SIGTERM during reopen should exit 143, got $RC9D"
+! running "$AC" || fail "F2: the API container is still running after the interrupted reopen"
+[[ -e "$VR_MARKER" && "$(vr_marker_get stage)" == reopening ]] || fail "F2: the marker must stay at stage reopening"
+grep -Fq 'The backend stays stopped (confirmed' "$WORK/err9d2.txt" && ! grep -Fq 'MAY BE RUNNING' "$WORK/err9d2.txt" || { cat "$WORK/err9d2.txt"; fail "F2: the recovery text must report a confirmed stop"; }
+if ( deploy_release aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ) >/dev/null 2>&1; then fail "F2: deploy ran while fenced"; fi
+ok "SIGTERM after the API start: exit 143, the real container was stopped and confirmed, marker kept at stage reopening"
+sed 's/^/   /' "$WORK/err9d2.txt" | head -3
+
+# ---- 9e. F2: abort while the API is (still) running must stop it before the marker goes
+docker start "$AC" >/dev/null
+running "$AC" || fail "F2 fixture: the API container should be running"
+( valkey_restore --abort --confirm-fence ) >"$WORK/out9e.txt" 2>"$WORK/err9e.txt" || { cat "$WORK/err9e.txt"; fail "abort with a running API failed"; }
+! running "$AC" && [[ ! -e "$VR_MARKER" && ! -e "$VR_SNAPSHOT_ROOT" ]] || fail "F2: abort left the API running or the fence behind"
+grep -Fqx 'api_stopped_confirmed=true' "$WORK/out9e.txt" || fail "F2: abort did not report a confirmed stop"
+ok "abort with the API running: the real container was stopped and confirmed, then the marker and snapshot were removed"
+# rebuild a fenced, verified state for the final abort below
+( valkey_restore "$WORK/backups/backup.rdb" --confirm-fence ) >"$WORK/out9f.txt" 2>"$WORK/err9f.txt" || { cat "$WORK/err9f.txt"; fail "restore before the final abort failed"; }
+[[ -e "$VR_MARKER" ]] || fail "F2 fixture: no fence before the final abort"
+
 # ---- 10. abort path
 ( valkey_restore --abort --confirm-fence ) >"$WORK/out5.txt" 2>&1 || fail "abort failed"
 [[ ! -e "$VR_MARKER" ]] && ! running "$AC" && [[ ! -e "$VR_SNAPSHOT_ROOT" ]] || fail "abort state wrong"

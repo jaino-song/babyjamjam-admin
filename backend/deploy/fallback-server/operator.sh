@@ -1371,6 +1371,30 @@ vr_remove_leftovers() {
     done
 }
 
+# Stops every running API container of the FENCED project (read from the marker:
+# the fence owns that project, whatever this invocation resolved) and returns 0
+# only when a fresh listing shows none running. Anything it cannot confirm is a
+# failure, never a success: callers must not claim "stopped" on a non-zero return.
+vr_ensure_api_stopped() {
+    local marker_project="" global_project="$VR_PROJECT" cid running
+    if fenced_by_valkey_restore; then marker_project="$(vr_marker_get project 2>/dev/null || true)"; fi
+    local VR_PROJECT="${marker_project:-$global_project}"
+    [[ -n "$VR_PROJECT" ]] || return 1
+    running="$(vr_service_containers "$VR_API_SERVICE" running)" || return 1
+    for cid in $running; do
+        vr_docker stop "$cid" >/dev/null 2>&1 || true
+    done
+    running="$(vr_service_containers "$VR_API_SERVICE" running)" || return 1
+    [[ -z "$running" ]]
+}
+
+# The one thing to tell the operator when the API could not be confirmed stopped.
+vr_api_unconfirmed_text() {
+    local project
+    project="$(vr_marker_get project 2>/dev/null || echo "$VR_PROJECT")"
+    printf '%s' "the API could NOT be confirmed stopped and MAY BE RUNNING against a Valkey that is not verified. Stop it now: docker stop \$(docker ps -q --filter label=com.docker.compose.project=${project:-<project>} --filter label=com.docker.compose.service=$VR_API_SERVICE)"
+}
+
 vr_print_recovery() {
     local stage mode
     if ! fenced_by_valkey_restore; then
@@ -1379,7 +1403,13 @@ vr_print_recovery() {
     fi
     stage="$(vr_marker_get stage 2>/dev/null || echo unknown)"
     mode="$(vr_marker_get mode 2>/dev/null || echo restore)"
-    vr_note "INTERRUPTED at stage '$stage'. The backend stays stopped and the fence marker ($VR_MARKER) stays in place."
+    # The API is stopped and the stop confirmed BEFORE any "stays stopped" claim:
+    # a reopen that was interrupted after `docker start` leaves it running.
+    if vr_ensure_api_stopped; then
+        vr_note "INTERRUPTED at stage '$stage'. The backend stays stopped (confirmed: no API container is running) and the fence marker ($VR_MARKER) stays in place."
+    else
+        vr_note "INTERRUPTED at stage '$stage'. WARNING: $(vr_api_unconfirmed_text). The fence marker ($VR_MARKER) stays in place."
+    fi
     if [[ "$stage" == verified || "$stage" == reopening ]]; then
         vr_note "The restore itself is verified. Retry the reopen: valkey-restore --reopen --confirm-reopen"
     elif [[ "$mode" == rollback ]]; then
@@ -1388,12 +1418,15 @@ vr_print_recovery() {
         vr_note "Resume (idempotent): valkey-restore '$(vr_marker_get backup_path 2>/dev/null || echo '<backup>')' --confirm-fence"
     fi
     vr_note "Roll back to the data that was replaced (the fence is kept throughout): valkey-restore --rollback <replaced-copy>/appendonlydir (or <replaced-copy>/dump.rdb) --confirm-fence; copies: $(vr_marker_get replaced_copies 2>/dev/null || echo none)"
-    vr_note "Give up without restarting the backend: valkey-restore --abort --confirm-fence"
+    vr_note "Give up without restarting the backend: valkey-restore --abort --confirm-fence (it stops the API and confirms it before removing the marker)"
 }
 
 vr_on_exit() {
     local status=$?
     trap - EXIT
+    # Cleanup (stopping the API, confirming it) must run to the end: a second
+    # signal now would otherwise hit the `exit` handler and skip it.
+    trap '' INT TERM HUP
     vr_cleanup
     if [[ "$status" -ne 0 && "$VR_ACTIVE" == 1 ]]; then vr_print_recovery; fi
     exit "$status"
@@ -1452,12 +1485,12 @@ vr_wait() {
         if "$@" >/dev/null 2>&1; then return 0; fi
         vr_sleep 1
     done
-    die "valkey-restore: timed out waiting for $what. The backend stays stopped."
+    die "valkey-restore: timed out waiting for $what."
 }
 
 vr_stop_container() {
     vr_docker stop -t 60 "$1" >/dev/null
-    vr_container_running "$1" && die "valkey-restore: container $1 did not stop. The backend stays stopped."
+    vr_container_running "$1" && die "valkey-restore: container $1 did not stop."
     return 0
 }
 
@@ -1535,11 +1568,11 @@ vr_snapshot_verify() {
     local actual
     [[ -n "$VR_SNAPSHOT_DIR" && "$VR_SNAPSHOT_DIR" == "$VR_SNAPSHOT_ROOT"/* && -d "$VR_SNAPSHOT_DIR" \
         && ! -L "$VR_SNAPSHOT_DIR" && -O "$VR_SNAPSHOT_DIR" ]] \
-        || die "valkey-restore: the verified snapshot is missing or not protected. The backend stays stopped; the fence stays in place. Start over with --abort."
+        || die "valkey-restore: the verified snapshot is missing or not protected. The fence stays in place. Start over with --abort."
     actual="$(vr_snapshot_digest "$VR_SNAPSHOT_DIR")" \
-        || die "valkey-restore: unable to re-hash the verified snapshot. The backend stays stopped; the fence stays in place."
+        || die "valkey-restore: unable to re-hash the verified snapshot. The fence stays in place."
     [[ "$actual" == "$VR_BACKUP_DIGEST" ]] \
-        || die "valkey-restore: the verified snapshot changed after the preflight (digest mismatch). Nothing was restored from it. The backend stays stopped; the fence stays in place; use --abort and start over."
+        || die "valkey-restore: the verified snapshot changed after the preflight (digest mismatch). Nothing was restored from it. The fence stays in place; use --abort and start over."
 }
 
 # What is in the data volume right now must be the snapshot's bytes, byte for byte.
@@ -1547,10 +1580,10 @@ vr_verify_staged() {
     local actual
     actual="$(vr_docker run --rm --network none --user 0 --entrypoint sh -v "$VR_VOLUME:/data:ro" "$VR_IMAGE" \
         -c "$VALKEY_STAGED_DIGEST_SCRIPT" sh "$VR_BACKUP_FORM")" \
-        || die "valkey-restore: unable to read back the staged data. The backend stays stopped; the fence stays in place."
+        || die "valkey-restore: unable to read back the staged data. The fence stays in place."
     actual="$(printf '%s' "$actual" | /usr/bin/tr -d '\r\n')"
     [[ "$actual" == "$VR_BACKUP_DIGEST" ]] \
-        || die "valkey-restore: the staged data does not match the verified snapshot (expected $VR_BACKUP_DIGEST, got ${actual:-<none>}). Valkey was not started on it. The backend stays stopped; the fence stays in place."
+        || die "valkey-restore: the staged data does not match the verified snapshot (expected $VR_BACKUP_DIGEST, got ${actual:-<none>}). Valkey was not started on it. The fence stays in place."
 }
 
 # A rollback may only use data this procedure kept itself.
@@ -1754,7 +1787,7 @@ vr_bootstrap_rdb() {
     VR_CLEANUP_CONTAINERS+=("$name")
     vr_docker run -d --name "$name" --network none -v "$VR_VOLUME:/data" "$VR_IMAGE" \
         valkey-server --appendonly no --save "" >/dev/null \
-        || die "valkey-restore: unable to start the bootstrap Valkey. The backend stays stopped."
+        || die "valkey-restore: unable to start the bootstrap Valkey."
     vr_wait "the bootstrap Valkey to answer PING" vr_ping_ok "$name"
     vr_wait "the bootstrap Valkey to finish loading the RDB" vr_loaded "$name"
     [[ "$(vr_cli "$name" CONFIG SET appendonly yes | /usr/bin/tr -d '\r')" == OK ]] \
@@ -1777,10 +1810,10 @@ vr_restore_data() {
     vr_snapshot_verify
     vr_container_running "$VR_VALKEY_CID" && vr_stop_container "$VR_VALKEY_CID"
     vr_copy_replaced
-    vr_stage_data "$VR_VOLUME" || die "valkey-restore: unable to stage the backup into the data volume. The backend stays stopped."
+    vr_stage_data "$VR_VOLUME" || die "valkey-restore: unable to stage the backup into the data volume."
     vr_verify_staged
     if [[ "$VR_BACKUP_FORM" == rdb ]]; then vr_bootstrap_rdb; fi
-    vr_docker start "$VR_VALKEY_CID" >/dev/null || die "valkey-restore: unable to start Valkey. The backend stays stopped."
+    vr_docker start "$VR_VALKEY_CID" >/dev/null || die "valkey-restore: unable to start Valkey."
     vr_wait "Valkey to answer PING" vr_ping_ok "$VR_VALKEY_CID"
     vr_wait "Valkey to finish loading" vr_loaded "$VR_VALKEY_CID"
     vr_marker_put stage restored
@@ -1788,19 +1821,19 @@ vr_restore_data() {
 
 vr_verify() {
     local role aof actual previous
-    vr_ping_ok "$VR_VALKEY_CID" || die "valkey-restore: Valkey does not answer PING. The backend stays stopped."
+    vr_ping_ok "$VR_VALKEY_CID" || die "valkey-restore: Valkey does not answer PING."
     role="$(vr_info_field "$VR_VALKEY_CID" replication role)" || die "valkey-restore: unable to read the Valkey role."
-    [[ "$role" == master ]] || die "valkey-restore: Valkey is not a master (role=$role). The backend stays stopped."
+    [[ "$role" == master ]] || die "valkey-restore: Valkey is not a master (role=$role)."
     aof="$(vr_info_field "$VR_VALKEY_CID" persistence aof_enabled)" || die "valkey-restore: unable to read the AOF state."
-    [[ "$aof" == 1 ]] || die "valkey-restore: the restored Valkey is not running with the AOF. The backend stays stopped."
+    [[ "$aof" == 1 ]] || die "valkey-restore: the restored Valkey is not running with the AOF."
     actual="$(vr_fingerprint "$VR_VALKEY_CID")"
     vr_fingerprint_matches "$VR_EXPECTED_FP" "$actual" \
-        || die "valkey-restore: the restored dataset does not match the backup (an old appendonlydir shadowing the RDB looks exactly like this). The backend stays stopped; the fence stays in place."
+        || die "valkey-restore: the restored dataset does not match the backup (an old appendonlydir shadowing the RDB looks exactly like this). The fence stays in place."
     VR_NEW_RUN_ID="$(vr_info_field "$VR_VALKEY_CID" server run_id)" || die "valkey-restore: unable to read the Valkey run_id."
     VR_NEW_REPLID="$(vr_info_field "$VR_VALKEY_CID" replication master_replid || true)"
     previous="$(vr_marker_get old_run_id)"
     [[ -n "$VR_NEW_RUN_ID" && "$VR_NEW_RUN_ID" != "$previous" && "$VR_NEW_RUN_ID" != "$VR_OBSERVED_RUN_ID" ]] \
-        || die "valkey-restore: the Valkey run_id did not change; the continuity proof would not see this restore. The backend stays stopped."
+        || die "valkey-restore: the Valkey run_id did not change; the continuity proof would not see this restore."
     vr_marker_put new_run_id "$VR_NEW_RUN_ID"
     vr_marker_put verified_at_unix "$(current_unix_time)"
     vr_marker_put stage verified
@@ -1929,21 +1962,21 @@ vr_container_gate_class() {
 vr_reopen_wait_ready() { wait_until_ready "$1"; }
 vr_reopen_status() { status_release; }
 
-vr_stop_api_again() {
-    local cid
-    for cid in $(vr_service_containers "$VR_API_SERVICE" running || true); do
-        vr_docker stop "$cid" >/dev/null 2>&1 || true
-    done
-    [[ -z "$(vr_service_containers "$VR_API_SERVICE" running || true)" ]]
+# A failure after the API was started: stop it, confirm it, and only then say so.
+vr_reopen_fail() {
+    if vr_ensure_api_stopped; then
+        die "valkey-restore: $1; the API was stopped again (confirmed) and the fence stays in place."
+    fi
+    die "valkey-restore: $1; $(vr_api_unconfirmed_text). The fence stays in place."
 }
 
 # Step d already passed, so the restore itself is finished: release the fence but
-# do not start the API, and say which normal flow to use. A partially reopened API
-# (stage 'reopening') is stopped first so "not started" is true.
+# do not start the API, and say which normal flow to use. The API is stopped and
+# confirmed down first (whatever the stage) so "not started" is true; if that
+# cannot be confirmed the marker stays.
 vr_release_without_start() {
-    local stage="$1"
-    shift
-    if [[ "$stage" == reopening ]]; then vr_stop_api_again || die "valkey-restore: unable to stop the partially reopened API. The fence stays in place."; fi
+    vr_ensure_api_stopped \
+        || die "valkey-restore: the Valkey restore is verified but the API could not be confirmed stopped, so the fence stays in place ($(vr_api_unconfirmed_text)). Retry --reopen, or --abort once it is stopped."
     vr_clear_fence
     VR_ACTIVE=0
     die "valkey-restore: the Valkey restore is verified and the fence is released, but the API was NOT started: $*"
@@ -1971,13 +2004,15 @@ valkey_restore_reopen() {
     fi
     cids="$(vr_marker_get api_cids || true)"
     if [[ "$(vr_marker_get api_was_running)" != 1 ]]; then
+        vr_ensure_api_stopped \
+            || die "valkey-restore: the API was not running when the fence began but could not be confirmed stopped now, so the fence stays in place ($(vr_api_unconfirmed_text))."
         vr_clear_fence
         VR_ACTIVE=0
         printf '%s\n' "environment=fallback-server" "valkey_restore=reopened" "api_started=false" \
             "reason=the API was not running when the fence began; start it with the normal flow."
         return 0
     fi
-    vr_reopen_decision || vr_release_without_start "$stage" "$VR_REOPEN_REASON"
+    vr_reopen_decision || vr_release_without_start "$VR_REOPEN_REASON"
     case "$VR_REOPEN_MODE" in
         passive) want=passive ;;
         *) want=active ;;
@@ -1985,25 +2020,23 @@ valkey_restore_reopen() {
     for cid in $cids; do
         class="$(vr_container_gate_class "$cid")"
         [[ "$class" == "$want" ]] \
-            || vr_release_without_start "$stage" "the recorded API container is '$class' while the runtime state says '$VR_REOPEN_MODE'; use the matching normal flow."
+            || vr_release_without_start "the recorded API container is '$class' while the runtime state says '$VR_REOPEN_MODE'; use the matching normal flow."
     done
     tag="$(read_state current-image-tag || true)"
-    [[ "$tag" =~ $SHA_PATTERN ]] || vr_release_without_start "$stage" "no release is recorded; use the normal deploy flow."
+    [[ "$tag" =~ $SHA_PATTERN ]] || vr_release_without_start "no release is recorded; use the normal deploy flow."
     vr_marker_put stage reopening
     # `docker start` of the same container: `up` could recreate it with a new id
     # or restart policy and break the preserved-container invariant of
     # extend-temporary-active.
     for cid in $cids; do
         vr_docker start "$cid" >/dev/null \
-            || { vr_stop_api_again || true; die "valkey-restore: unable to start the API container; it was stopped again and the fence stays in place."; }
+            || vr_reopen_fail "unable to start the API container"
     done
     if ! vr_reopen_wait_ready "$tag"; then
-        vr_stop_api_again || true
-        die "valkey-restore: the API did not become ready; it was stopped again and the fence stays in place."
+        vr_reopen_fail "the API did not become ready"
     fi
     if ! status_output="$(vr_reopen_status)"; then
-        vr_stop_api_again || true
-        die "valkey-restore: the reopened API failed verification; it was stopped again and the fence stays in place."
+        vr_reopen_fail "the reopened API failed verification"
     fi
     vr_clear_fence
     VR_ACTIVE=0
@@ -2016,17 +2049,27 @@ valkey_restore_reopen() {
     printf '%s\n' "$lease"
 }
 
+# The marker is the start-path protection: it goes only after the API is stopped
+# and that is confirmed. If it cannot be confirmed the marker stays and the
+# operator is told how to stop the API.
 valkey_restore_abort() {
     local stage
     fenced_by_valkey_restore || die "valkey-restore: no fence is active; nothing to abort."
+    vr_arm_traps
     stage="$(vr_marker_get stage || echo unknown)"
+    if ! vr_ensure_api_stopped; then
+        VR_ACTIVE=0
+        die "valkey-restore: refusing to abort: $(vr_api_unconfirmed_text). The fence marker stays in place; re-run --abort once the API is stopped."
+    fi
     vr_clear_fence
+    VR_ACTIVE=0
     printf '%s\n' \
         "environment=fallback-server" \
         "valkey_restore=aborted" \
         "aborted_stage=$stage" \
         "api_started=false" \
-        "note=The backend stays stopped. Valkey data may be partially restored until a verified restore or rollback; start the backend only through the normal flow."
+        "api_stopped_confirmed=true" \
+        "note=The backend stays stopped (confirmed). Valkey data may be partially restored until a verified restore or rollback; start the backend only through the normal flow."
 }
 
 valkey_restore() {

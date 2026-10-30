@@ -48,7 +48,7 @@ world_reset() {
     : >"$W/marker_trace"; : >"$W/probe"; rm -rf "$W/vol" "$W/hook_done"
     HOOK_ON=""; HOOK_CMD=""; STAGE_CORRUPT=0
     FAIL=""; printf 0 >"$W/fail_skip"; NO_BUMP=0
-    READY_FAIL=0; STATUS_FAIL=0
+    READY_FAIL=0; STATUS_FAIL=0; READY_SIG=""
     RT_MODE=""; RT_EXPIRY=""; RT_TAG="$TAG"; RT_PERSISTENT=0; RT_MASKS=1; RT_TIMER=1; RT_CLASS=active
 }
 state_of() { case "$1" in "$API") cat "$W/api_running";; "$VALKEY") cat "$W/valkey_running";; *) echo 0;; esac; }
@@ -154,7 +154,12 @@ read_state() {
 automatic_shutdown_disabled() { [[ "$RT_PERSISTENT" == 1 ]]; }
 verify_shutdown_masks() { [[ "$RT_MASKS" == 1 ]]; }
 vr_expiry_timer_active() { [[ "$RT_TIMER" == 1 ]]; }
-vr_reopen_wait_ready() { echo "ready:$1" >>"$W/hooks.log"; [[ "$READY_FAIL" != 1 ]]; }
+vr_reopen_wait_ready() {
+    echo "ready:$1" >>"$W/hooks.log"
+    # the signal arrives after `docker start` and before the API is ready
+    if [[ -n "$READY_SIG" ]]; then kill "-$READY_SIG" "$BASHPID"; fi
+    [[ "$READY_FAIL" != 1 ]]
+}
 vr_reopen_status() { echo "hook:status" >>"$W/hooks.log"; [[ "$STATUS_FAIL" != 1 ]] && echo status_block=ok; }
 lease_status_fields() { printf 'lease_mode=required\nlease_held=true\n'; }
 
@@ -736,6 +741,126 @@ run valkey_restore "$KEPT/appendonlydir" --confirm-fence
 [[ "$RC" -ne 0 ]] && grep -Fq -- "--rollback <kept-copy> --confirm-fence" "$W/err" || fail "F3.6: the refusal must point at --rollback"
 log_has "stop " && fail "F3.6: the refusal stopped something"
 echo "ok - F3.6 refusal names the rollback command"
+fi
+
+# =============================================================================
+# F2 - the API is stopped and confirmed before anything claims it is (VR_TEST_SECTION=f2)
+# =============================================================================
+if want f2; then
+reopen_world() { verified_world; RT_MODE=temporary-active; RT_EXPIRY=$((NOW + 3600)); RT_CLASS=active; }
+stop_line_marker() { sed -n "$(log_line "stop $API")p" "$W/marker_trace"; }
+assert_stopped_fenced_honest() { # $1 label; fenced, API down, and the text says it was confirmed
+    [[ -e "$VR_MARKER" ]] || fail "$1: the marker was removed"
+    api_up && fail "$1: the API is still running"
+    grep -Fq 'confirmed' "$W/err" && ! grep -Fq 'MAY BE RUNNING' "$W/err" || { cat "$W/err" >&2; fail "$1: the text should report a confirmed stop"; }
+}
+assert_unconfirmed_honest() { # $1 label; fenced, API (still) up, and the text says so and never claims it is stopped
+    [[ -e "$VR_MARKER" ]] || fail "$1: the marker was removed"
+    api_up || fail "$1: fixture: the API should still be running"
+    grep -Fq 'MAY BE RUNNING' "$W/err" && grep -Fq 'docker stop $(docker ps -q --filter label=com.docker.compose.project=tproj' "$W/err" \
+        || { cat "$W/err" >&2; fail "$1: the text must say the API may be running and how to stop it"; }
+    ! grep -Fq 'backend stays stopped' "$W/err" && ! grep -Fq 'stopped again (confirmed)' "$W/err" && ! grep -Fq 'NOT started' "$W/err" \
+        || { cat "$W/err" >&2; fail "$1: it claims the backend is stopped without having verified it"; }
+}
+
+# ===== F2.1 a signal after the API was started and before it is ready (the reviewer's repro), for each signal
+for pair in TERM:143 INT:130 HUP:143; do
+    sig="${pair%%:*}"; code="${pair##*:}"
+    reopen_world; READY_SIG="$sig"
+    run valkey_restore --reopen --confirm-reopen
+    [[ "$RC" == "$code" ]] || fail "F2.1 $sig: expected exit $code, got $RC"
+    log_has "start $API" || fail "F2.1 $sig: fixture: the API was never started"
+    log_has "stop $API" || fail "F2.1 $sig: the started API was never stopped (the exit path left it running)"
+    assert_order "start $API" "stop $API"
+    assert_stopped_fenced_honest "F2.1 $sig"
+    [[ "$(marker_stage)" == reopening ]] || fail "F2.1 $sig: the interrupted reopen should be visible in the marker"
+    grep -Fq 'Retry the reopen' "$W/err" || fail "F2.1 $sig: no retry instruction"
+    # the next reopen completes
+    READY_SIG=""; : >"$W/docker.log"; : >"$W/hooks.log"
+    run valkey_restore --reopen --confirm-reopen; expect_started "F2.1 $sig retry" temporary-active
+done
+echo "ok - F2.1 signal during reopen: API stopped and confirmed, marker kept, honest text"
+
+# ===== F2.2 the same signal when the stop cannot be confirmed: marker kept, no "stays stopped" claim
+reopen_world; READY_SIG=TERM; FAIL="stop $API"
+run valkey_restore --reopen --confirm-reopen
+[[ "$RC" == 143 ]] || fail "F2.2: expected exit 143, got $RC"
+assert_unconfirmed_honest "F2.2 TERM, stop fails"
+# failures that are not signals report the same way
+for kind in READY_FAIL STATUS_FAIL; do
+    reopen_world; printf -v "$kind" 1; FAIL="stop $API"
+    run valkey_restore --reopen --confirm-reopen
+    [[ "$RC" -ne 0 ]] || fail "F2.2 $kind: reopen should fail"
+    assert_unconfirmed_honest "F2.2 $kind, stop fails"
+done
+# and a start failure leaves nothing running to confirm, so it reports the stop
+reopen_world; FAIL="start $API"
+run valkey_restore --reopen --confirm-reopen
+[[ "$RC" -ne 0 && -e "$VR_MARKER" ]] && ! api_up && grep -Fq 'stopped again (confirmed)' "$W/err" || fail "F2.2: a failing start must report a confirmed stop"
+echo "ok - F2.2 unconfirmed stop: marker kept, the API is reported as possibly running, with the command to stop it"
+
+# ===== F2.3 a second signal during the cleanup must not skip the stop or drop the marker
+for first in TERM INT; do
+    for second in TERM INT HUP; do
+        reopen_world; READY_SIG="$first"; HOOK_ON="stop $API"; HOOK_CMD="kill -$second \$BASHPID"
+        run valkey_restore --reopen --confirm-reopen
+        [[ -e "$W/hook_done" ]] || fail "F2.3 $first/$second: fixture: the second signal was never sent"
+        [[ "$RC" == 143 || "$RC" == 130 ]] || fail "F2.3 $first/$second: unexpected exit $RC"
+        assert_stopped_fenced_honest "F2.3 $first then $second"
+    done
+done
+echo "ok - F2.3 second signal during cleanup: the stop still happens and the marker stays"
+
+# ===== F2.4 abort with the API running stops it first, confirms it, and only then drops the marker
+verified_world; printf 1 >"$W/api_running"; : >"$W/marker_trace"; : >"$W/docker.log"
+run valkey_restore --abort --confirm-fence
+[[ "$RC" == 0 && ! -e "$VR_MARKER" && ! -e "$W/snapshots" ]] && ! api_up || { cat "$W/err" >&2; fail "F2.4: abort must stop the API, then clear the marker and the snapshot"; }
+log_has "start $API" && fail "F2.4: abort started the API"
+[[ "$(stop_line_marker)" == 1 ]] || fail "F2.4: the API must be stopped while the marker still exists"
+grep -Fqx 'api_stopped_confirmed=true' "$W/out" || fail "F2.4: the summary should say the stop was confirmed"
+# a stopped API is not touched again
+verified_world; : >"$W/docker.log"
+run valkey_restore --abort --confirm-fence
+[[ "$RC" == 0 && ! -e "$VR_MARKER" ]] && ! log_has "stop $API" || fail "F2.4: abort with the API already stopped should only clear the marker"
+echo "ok - F2.4 abort stops the API before it removes the marker"
+
+# ===== F2.5 abort refuses, keeping the marker and the snapshot, when the stop cannot be confirmed
+verified_world; printf 1 >"$W/api_running"; FAIL="stop $API"
+run valkey_restore --abort --confirm-fence
+[[ "$RC" -ne 0 && -e "$VR_MARKER" && -d "$W/snapshots" ]] && api_up || fail "F2.5: abort must refuse and keep the fence while the API cannot be stopped"
+grep -Fq 'refusing to abort' "$W/err" && grep -Fq 'MAY BE RUNNING' "$W/err" && grep -Fq 'docker stop $(docker ps -q' "$W/err" || { cat "$W/err" >&2; fail "F2.5: the refusal must say how to stop the API"; }
+! grep -Fq 'backend stays stopped' "$W/err" || fail "F2.5: it must not claim the backend is stopped"
+FAIL=""
+run valkey_restore --abort --confirm-fence
+[[ "$RC" == 0 && ! -e "$VR_MARKER" ]] && ! api_up || fail "F2.5: abort must succeed once the API can be stopped"
+# a TERM that arrives while abort is stopping the API leaves the marker and reports honestly
+verified_world; printf 1 >"$W/api_running"; HOOK_ON="stop $API"; HOOK_CMD='kill -TERM $BASHPID'
+run valkey_restore --abort --confirm-fence
+[[ "$RC" == 143 && -e "$VR_MARKER" ]] && ! api_up || fail "F2.5: a TERM during abort must keep the marker with the API stopped (rc $RC)"
+echo "ok - F2.5 abort refuses without a confirmed stop"
+
+# ===== F2.6 releasing the fence without starting (verified restore, reopen not allowed) also needs a confirmed stop
+reopen_world; RT_MODE=corrupt; printf 1 >"$W/api_running"
+run valkey_restore --reopen --confirm-reopen
+expect_not_started "F2.6 release stops a running API" "normal deploy flow"
+api_up && fail "F2.6: the API is still running after the fence was released"
+log_has "stop $API" || fail "F2.6: the running API was never stopped"
+reopen_world; RT_MODE=corrupt; printf 1 >"$W/api_running"; FAIL="stop $API"
+run valkey_restore --reopen --confirm-reopen
+[[ "$RC" -ne 0 && -e "$VR_MARKER" ]] && api_up || fail "F2.6: the fence must stay while the API cannot be stopped"
+grep -Fq 'MAY BE RUNNING' "$W/err" && ! grep -Fq 'NOT started' "$W/err" || { cat "$W/err" >&2; fail "F2.6: honest text expected"; }
+# the API was not running when the fence began, but is running now
+world_reset; printf 0 >"$W/api_running"
+run valkey_restore "$TMP/backup.rdb" --confirm-fence; [[ "$RC" == 0 ]] || fail "F2.6 setup"
+printf 1 >"$W/api_running"
+run valkey_restore --reopen --confirm-reopen
+[[ "$RC" == 0 && ! -e "$VR_MARKER" ]] && ! api_up && grep -Fqx 'api_started=false' "$W/out" || fail "F2.6: a not-started release must leave the API stopped"
+world_reset; printf 0 >"$W/api_running"
+run valkey_restore "$TMP/backup.rdb" --confirm-fence; [[ "$RC" == 0 ]] || fail "F2.6 setup"
+printf 1 >"$W/api_running"; FAIL="stop $API"
+run valkey_restore --reopen --confirm-reopen
+[[ "$RC" -ne 0 && -e "$VR_MARKER" ]] && api_up || fail "F2.6: the fence must stay while the API cannot be stopped (api_was_running=0)"
+echo "ok - F2.6 every marker-removing path without a start confirms the API is down first"
 fi
 
 echo 'Fallback Valkey restore behavioral tests passed'

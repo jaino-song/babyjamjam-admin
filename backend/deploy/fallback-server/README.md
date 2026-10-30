@@ -427,8 +427,17 @@ the same backup from a fenced state repeats the stages (each attempt keeps its
 own copy of the data it replaced, the original `run_id` is kept, an already
 verified restore is a no-op); a re-run reuses the recorded snapshot (re-hashed
 first), and a re-run with a different path or different bytes is refused.
-`--abort --confirm-fence` removes the marker and the snapshot without starting
-anything.
+`--abort --confirm-fence` stops any running API container and confirms with a
+fresh listing that none is left, and only then removes the marker and the
+snapshot, without starting anything; if the stop cannot be confirmed it refuses,
+keeps the marker and prints the `docker stop` command. The same holds on every
+unsuccessful exit after the fence was taken, including a signal during
+`--reopen` after the API was started: the exit path stops the API first and only
+then says "the backend stays stopped"; if it cannot confirm that, the text says
+the API MAY BE RUNNING and how to stop it, and the marker stays. A second signal
+during that cleanup is ignored, so the stop is never skipped. Releasing the
+fence without starting the API (the reopen gate refused) goes through the same
+confirmed stop.
 
 ### Rollback (inside the fence)
 

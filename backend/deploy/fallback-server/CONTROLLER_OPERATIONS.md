@@ -377,7 +377,9 @@ A Valkey data restore on the Fallback host goes through
   <valkey-replaced>/<timestamp>/appendonlydir --confirm-fence` while the fence
   is still in place (the marker is kept throughout and `--reopen` remains the
   only way back to serving traffic); aborting first would drop the start-path
-  protection.
+  protection. `--abort` (and an interrupted or failed `--reopen`) stops the API
+  and confirms it before the marker goes; if it cannot confirm, the marker stays
+  and the output says the API may be running and how to stop it.
   If the temporary-active approval expired during the fence, the reopen releases
   the fence without starting the API and the normal `temporary-active` approval
   flow is required.
