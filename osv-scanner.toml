@@ -25,3 +25,16 @@ ignoreUntil = 2027-01-31T00:00:00Z
 # Revisit when sprintf-js ships a fix (then bump and drop this entry), or when
 # the expiry above lapses.
 reason = "No patched sprintf-js release exists; only reachable via jest coverage tooling (argparse/js-yaml), not production runtime or untrusted input."
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2027-01-31T00:00:00Z
+# deepmerge 4.2.0-4.3.1 mergeObject() prototype poisoning of returned objects
+# (published 2026-09-18). No patched release exists (last_affected 4.3.1).
+# Exposure review (2026-10-30): no application code imports deepmerge. It arrives
+# only through @nestjs/cli -> fork-ts-checker-webpack-plugin (build-time type
+# checking of our own tsconfig) and jest-config (developer test config); neither
+# merges untrusted input, and neither runs in the deployed server. Revisit when
+# deepmerge ships a fix (then bump and drop this entry), or when the expiry above
+# lapses.
+reason = "No patched deepmerge release exists; only reachable via Nest CLI build tooling and jest config, which merge developer-authored config, not production runtime or untrusted input."
