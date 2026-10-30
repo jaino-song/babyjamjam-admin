@@ -1,10 +1,20 @@
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
 import { createBranch, createClient } from "../helpers/factories";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import { addDays, dbDate, isoDateInKorea, makeClientService, makeDueDateScheduler, prewarmConnections } from "./test-helpers";
 
 jest.setTimeout(180_000);
+
+/**
+ * Equal under one canonical JSON serialization. Decimal/Date/undefined shapes
+ * serialize identically for identical values, so two full row images that only
+ * differ in one excluded column pass, and a clobbered column fails. Used to
+ * compare the committed T1 row image with the post-reuse row.
+ */
+function sameSerialized(a: unknown, b: unknown): boolean {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
 
 /**
  * Bounded wait for a specific SQL statement to appear BLOCKED on a row lock in
@@ -52,11 +62,15 @@ async function waitForBlockedStatement(
  * candidate read and its write, PostgreSQL re-evaluates the predicate after the
  * lock wait and the scheduler must skip — no lost update.
  *
- * SI-CLIENT-03: the reuse-existing-client `smsAutomationEnabled` write
- * (`client.service.ts`, create()'s reuse branch) is an UNCONDITIONAL
- * `updateMany` by (id, branchId) issued without the write-set lock. A locked
- * concurrent client.update that commits first is overwritten by the reuse
- * writer, which decided its value from an older snapshot — a lost update.
+ * SI-CLIENT-03 (review round 1 re-verdict): the reuse-existing-client
+ * `smsAutomationEnabled` write (`client.service.ts`, create()'s reuse branch)
+ * is a blind, explicit, SINGLE-COLUMN `updateMany` by (id, branchId) issued
+ * without the write-set lock. Last-writer-wins on a caller-supplied explicit
+ * value is correct: a serial order "T1 commits, then reuse(false)" yields
+ * `false` too, so nothing is lost. The invariant pinned here is therefore not
+ * exclusivity but scope: under the forced interleaving the reuse write changes
+ * only `smsAutomationEnabled` and clobbers no other column of the committed
+ * locked update.
  */
 describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced interleaving", () => {
     let handle: IntegrityPrisma;
@@ -179,14 +193,14 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
         },
     );
 
-    knownDefect(
+    invariant(
         "SI-CLIENT-03",
-        "the reuse-existing-client smsAutomationEnabled write overwrites a committed locked client.update",
+        "the reuse-existing-client write is single-column: under the forced interleaving it clobbers only smsAutomationEnabled",
         async () => {
-            // Same evidence-based retry as SI-CLIENT-09: each attempt builds a
-            // fresh same-phone client; a pass requires an observed blocked
-            // reuse write. Retry-exhaustion throws a non-matching error, which
-            // it.failing reports RED (an infra miss must not look like a pass).
+            // Same evidence-based interleaving the removed knownDefect used:
+            // each attempt builds a fresh same-phone client; a pass requires an
+            // observed blocked reuse write. Retry-exhaustion throws a
+            // non-matching error (an infra miss must not look like a pass).
             let observed = false;
             for (let attempt = 1; attempt <= 3 && !observed; attempt += 1) {
                 const phone = `010${String(30_000_000 + Math.floor(Math.random() * 69_999_999)).padStart(8, "0")}`;
@@ -200,13 +214,17 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
                 // T1: the locked writer — the same row lock and write the ordinary
                 // clientService.update issues under the write-set lock. It is
                 // started first, so its FOR UPDATE takes the row lock before
-                // the reuse write below reaches the row.
+                // the reuse write below reaches the row. It commits a column the
+                // reuse write must not touch; its committed row image is reread
+                // inside the transaction (the lock holder sees its own write).
+                let committedRow: Record<string, unknown> | undefined;
                 const lockedUpdate = handle.service.$transaction(async (tx) => {
                     await tx.$executeRaw`SELECT id FROM "client" WHERE "id" = ${client.id} FOR UPDATE`;
                     await tx.client.update({
                         where: { id: client.id },
-                        data: { smsAutomationEnabled: true },
+                        data: { name: "잠금작성" },
                     });
+                    committedRow = (await tx.client.findUniqueOrThrow({ where: { id: client.id } })) as unknown as Record<string, unknown>;
                     // Hold the lock until the reuse write is observed blocked on us.
                     await waitForBlockedStatement(handle.raw, "sms_automation_enabled");
                 }, { maxWait: 5_000, timeout: 60_000 });
@@ -234,15 +252,28 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
                     continue;
                 }
 
-                const reused = await reuseCreate;
+                await reuseCreate;
+                if (!committedRow) {
+                    throw new Error("SI-CLIENT-03: the locked row image was never captured — interleaving not reached");
+                }
+                const committed = committedRow;
+                const after = (await handle.raw.client.findUniqueOrThrow({ where: { id: client.id } })) as unknown as Record<string, unknown>;
 
-                const row = await handle.raw.client.findUniqueOrThrow({
-                    where: { id: client.id },
-                    select: { smsAutomationEnabled: true },
-                });
-                if (row.smsAutomationEnabled !== true || reused.id !== client.id) {
+                // The reuse write must change ONLY `smsAutomationEnabled`
+                // (last-writer-wins on the caller-supplied explicit false).
+                // `client` has no updatedAt column, so any other difference
+                // between the committed T1 image and the post-reuse row is a
+                // clobber.
+                const driftKeys = Object.keys(committed)
+                    .filter((key) => key !== "smsAutomationEnabled" && sameSerialized(committed[key], after[key]) === false);
+                if (driftKeys.length > 0) {
                     throw new Error(
-                        `SI-CLIENT-03: reuse write returned client ${reused.id} with smsAutomationEnabled=${String(row.smsAutomationEnabled)} — the committed locked update (true) was overwritten (false)`,
+                        `SI-CLIENT-03: the reuse write clobbered ${driftKeys.join(", ")} — expected only smsAutomationEnabled to change`,
+                    );
+                }
+                if (after["smsAutomationEnabled"] !== false) {
+                    throw new Error(
+                        `SI-CLIENT-03: the reuse write left smsAutomationEnabled=${String(after["smsAutomationEnabled"])} — the caller-supplied explicit false was not applied`,
                     );
                 }
             }
@@ -252,6 +283,5 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
                 );
             }
         },
-        /SI-CLIENT-03: reuse write returned client \d+ with smsAutomationEnabled=false — the committed locked update \(true\) was overwritten \(false\)/,
     );
 });

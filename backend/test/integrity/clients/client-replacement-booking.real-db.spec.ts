@@ -61,19 +61,18 @@ describeReal("SI-CLIENT-02/06 replacement guard and booking-confirmation exclusi
         async () => {
             const client = await createPeriodClient({ serviceStatus: SERVICE_STATUS.TERMINATED, confirmed: true });
             const service = makeClientService({ prisma: handle.service, raw: handle.raw });
-            let refused = false;
-            try {
-                await service.completeReplacement(branchId, client.id);
-            } catch {
-                refused = true;
-            }
+            const outcome = await service.completeReplacement(branchId, client.id).then(
+                () => "completed" as const,
+                () => "refused" as const,
+            );
             const row = await handle.raw.client.findUniqueOrThrow({
                 where: { id: client.id },
                 select: { serviceStatus: true },
             });
-            if (!refused && row.serviceStatus !== SERVICE_STATUS.TERMINATED) {
+            // Whether or not something threw, the row must be unchanged.
+            if (row.serviceStatus !== SERVICE_STATUS.TERMINATED) {
                 throw new Error(
-                    `SI-CLIENT-02: completeReplacement ran on a "${SERVICE_STATUS.TERMINATED}" client and moved the status to "${row.serviceStatus}" (only a warning was logged)`,
+                    `SI-CLIENT-02: completeReplacement ran on a "${SERVICE_STATUS.TERMINATED}" client and moved the status to "${row.serviceStatus}" (outcome ${outcome}; only a warning was logged)`,
                 );
             }
         },

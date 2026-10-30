@@ -89,8 +89,18 @@ describeReal("SI-CLIENT-07 client_draft confirm state machine", () => {
 
     invariant(
         "SI-CLIENT-07",
-        "the PENDING→CONFIRMING claim admits exactly one winner when a second claimant blocks and re-evaluates",
+        "the PENDING→CONFIRMING claim admits exactly one winner when a second claimant blocks and re-evaluates (PostgreSQL predicate semantics only)",
         async () => {
+            // SCOPE: the production claim (`CallInboxService.confirmNewClientWithDraft`
+            // → `client_draft.updateMany WHERE status = 'PENDING'`,
+            // call-inbox.service.ts ~406-410) is a single autocommit statement
+            // with no lock to hold between the predicate check and the write,
+            // so the forced interleaving below took the same predicate/data in
+            // an explicitly held transaction instead. This test therefore proves
+            // the PostgreSQL conditional-update re-evaluation semantics only —
+            // production-path exclusivity under the real service is proven by
+            // the two concurrent confirmNewClient invariants below (exactly one
+            // client created / re-confirmation refused with REQUEST_NOT_PENDING).
             // TAP REQUIREMENT: a bare `PrismaPromise` is LAZY — its query only
             // issues when some `.then`/`await` attaches, so a promise created
             // (but not immediately tapped) WOULD issue after T1 committed and

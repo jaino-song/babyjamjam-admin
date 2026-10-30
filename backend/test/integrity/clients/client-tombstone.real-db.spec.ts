@@ -5,8 +5,8 @@ import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/efo
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
 import { createBranch, createClient, createEmployee, createEmployeeSchedule, createEformsignDoc, createMessageTriggerRule, createMessageTriggerJob } from "../helpers/factories";
-import { invariant, knownDefect } from "../helpers/known-defect";
-import { addDays, dbDate, isoDateInKorea, calendarStub } from "./test-helpers";
+import { invariant } from "../helpers/known-defect";
+import { addDays, dbDate, isoDateInKorea, calendarStub, makeClientService } from "./test-helpers";
 
 jest.setTimeout(120_000);
 
@@ -37,11 +37,18 @@ async function deleteAreaOrphans(raw: IntegrityPrisma["raw"], branchId: string):
  * (unset under NODE_ENV=test) the delete must be refused BEFORE any side
  * effect. A dependency-free client is still physically deleted.
  *
- * SI-CLIENT-04 — dual contract identity after a tombstone. The tombstone clears
- * `phoneNormalized` but keeps `eDocId` and the `eformsign_doc.client_id`
- * pointer, so the hidden client keeps holding the contract; the invariant is
- * that a tombstoned client holds no live contract pointer, while a new
- * same-phone client can still claim a NEW contract.
+ * SI-CLIENT-04 (review round 1 re-verdict) — dual contract identity. The
+ * tombstone clears `phoneNormalized` but keeps `eDocId` and the
+ * `eformsign_doc.client_id` pointer BY DESIGN: tombstoning exists because
+ * retained history (signed contracts) must stay attached, so detaching those
+ * pointers would orphan a legal document. The hypothesis's invariant — a
+ * tombstoned client holds no live contract pointer that BLOCKS or RELINKS
+ * another client — holds: the reconciler keeps repairing the tombstoned
+ * ownership, a new same-phone client still claims a NEW contract. The
+ * phone-edit half is pinned below: after `ClientService.update` moves the
+ * client's phone, the reconciler keeps the old contract attached to its owner,
+ * leaves an unowned old-phone contract unlinked, and links a new-phone
+ * contract to the edited client.
  */
 describeReal("SI-CLIENT-05/04 tombstone side effects and contract identity", () => {
     let handle: IntegrityPrisma;
@@ -211,45 +218,138 @@ describeReal("SI-CLIENT-05/04 tombstone side effects and contract identity", () 
         },
     );
 
-    knownDefect(
+    invariant(
         "SI-CLIENT-04",
-        "a tombstoned client keeps its live contract pointer (eDocId + eformsign_doc.client_id)",
+        "after a phone edit the old contract stays owned, an unowned old-phone contract stays unlinked, and the new-phone contract links to the edited client",
         async () => {
-            const client = await createClient(handle.raw, tracker, { branchId, name: "계약-텀스톤 고객" });
-            const documentId = await createEformsignDoc(handle.raw, tracker, {
+            const format = (phone: string): string => `${phone.slice(0, 3)}-${phone.slice(3, 7)}-${phone.slice(7)}`;
+            const phone1 = `010${String(41_000_000 + Math.floor(Math.random() * 8_999_999)).padStart(8, "0")}`;
+            const phone2 = `010${String(57_000_000 + Math.floor(Math.random() * 8_999_999)).padStart(8, "0")}`;
+
+            const client = await createClient(handle.raw, tracker, {
+                branchId,
+                name: "김전화",
+                birthday: "1992-03-04",
+                phone: format(phone1),
+                phoneNormalized: phone1,
+            });
+            // One mirrored contract already owned by the client, pointer set.
+            const oldDocumentId = await createEformsignDoc(handle.raw, tracker, {
                 branchId,
                 clientId: client.id,
                 documentKind: "contract",
-                customerPhone: client.phoneNormalized,
-                stepRecipientSms: client.phoneNormalized ?? undefined,
+                statusType: "050",
+                customerPhone: phone1,
+                stepRecipientSms: phone1,
+                syncStatus: "ready",
             }).then((doc) => doc.documentId);
-            await handle.raw.client.update({
-                where: { id: client.id },
-                data: { eDocId: documentId },
-            });
+            await handle.raw.client.update({ where: { id: client.id }, data: { eDocId: oldDocumentId } });
 
-            const repository = new SbClientRepository(handle.service, enabledConfig() as never);
-            const outcome = await repository.delete(branchId, client.id);
-            if (outcome !== "tombstoned") {
-                throw new Error(`SI-CLIENT-04 fixture: expected "tombstoned", got "${outcome}"`);
+            // The client edits their phone on the real ClientService.update path.
+            const service = makeClientService({ prisma: handle.service, raw: handle.raw });
+            await service.update(branchId, client.id, { phone: format(phone2) });
+            const editedRow = await handle.raw.client.findUniqueOrThrow({
+                where: { id: client.id },
+                select: { phoneNormalized: true },
+            });
+            if (editedRow.phoneNormalized !== phone2) {
+                throw new Error(`SI-CLIENT-04 fixture: the phone edit stored "${String(editedRow.phoneNormalized)}", expected ${phone2}`);
             }
 
-            const row = await handle.raw.client.findUniqueOrThrow({
-                where: { id: client.id },
-                select: { deletedAt: true, eDocId: true },
-            });
-            const doc = await handle.raw.eformsign_doc.findUniqueOrThrow({
-                where: { documentId },
+            const linker = new LinkMirroredEformsignDocByPhoneUsecase(
+                handle.service,
+                { get: () => undefined } as never,
+                { getClientAutoRegistrationEnabled: async () => false } as never,
+                calendarStub,
+            );
+
+            // Leg 1 — the reconciler reconciles the OLD contract: it stays
+            // attached to its owner (retained signed-contract history, 고객-06).
+            const oldResult = await linker.execute(oldDocumentId);
+            if (oldResult !== "already_linked") {
+                throw new Error(
+                    `SI-CLIENT-04: the reconciler did not keep the owned old contract attached after the phone edit (result "${oldResult}")`,
+                );
+            }
+            const oldDoc = await handle.raw.eformsign_doc.findUniqueOrThrow({
+                where: { documentId: oldDocumentId },
                 select: { clientId: true },
             });
-            if (!row.deletedAt) throw new Error("SI-CLIENT-04 fixture: client not tombstoned");
-            if (row.eDocId !== null || doc.clientId !== null) {
+            if (oldDoc.clientId !== client.id) {
                 throw new Error(
-                    `SI-CLIENT-04: tombstoned client ${client.id} keeps eDocId=${String(row.eDocId)} and document ${documentId} keeps clientId=${String(doc.clientId)} — the hidden client still holds the live contract`,
+                    `SI-CLIENT-04: the owned old contract moved to client ${String(oldDoc.clientId)} after the phone edit`,
+                );
+            }
+
+            // Leg 2 — a contract for the OLD phone with no owner: the edited
+            // client no longer matches the phone, and with auto-registration
+            // off nothing may claim it (it stays unlinked).
+            const orphanOldDocumentId = await createEformsignDoc(handle.raw, tracker, {
+                branchId,
+                documentKind: "contract",
+                statusType: "050",
+                customerPhone: phone1,
+                stepRecipientSms: phone1,
+                detailPayload: {
+                    document: { id: "integrity-fixture" },
+                    fields: [
+                        { id: "이용자 성명", value: "김전화", type: "text" },
+                        { id: "이용자 생년월일", value: "920304", type: "text" },
+                        { id: "이용자 연락처", value: format(phone1), type: "text" },
+                    ],
+                    recipients: [{ recipient_type: "02", name: "김전화", sms: format(phone1) }],
+                },
+                detailSourceUpdatedDate: new Date(),
+                detailSyncedAt: new Date(),
+                syncStatus: "ready",
+            }).then((doc) => doc.documentId);
+            const orphanResult = await linker.execute(orphanOldDocumentId);
+            const orphanOwners = await handle.raw.client.count({ where: { phoneNormalized: phone1, deletedAt: null } });
+            if (orphanOwners !== 0) {
+                throw new Error(`SI-CLIENT-04: ${orphanOwners} live client(s) still hold the edited-away phone`);
+            }
+            const orphanDoc = await handle.raw.eformsign_doc.findUniqueOrThrow({
+                where: { documentId: orphanOldDocumentId },
+                select: { clientId: true },
+            });
+            if (orphanDoc.clientId !== null || orphanResult === "linked" || orphanResult === "created" || orphanResult === "already_linked") {
+                throw new Error(
+                    `SI-CLIENT-04: the unowned old-phone contract got assigned to client ${String(orphanDoc.clientId)} (result "${orphanResult}") after the phone edit`,
+                );
+            }
+
+            // Leg 3 — a contract for the NEW phone: it must reach the edited
+            // client through the phone match.
+            const newDocumentId = await createEformsignDoc(handle.raw, tracker, {
+                branchId,
+                documentKind: "contract",
+                statusType: "050",
+                customerPhone: phone2,
+                stepRecipientSms: phone2,
+                detailPayload: {
+                    document: { id: "integrity-fixture" },
+                    fields: [
+                        { id: "이용자 성명", value: "김전화", type: "text" },
+                        { id: "이용자 생년월일", value: "920304", type: "text" },
+                        { id: "이용자 연락처", value: format(phone2), type: "text" },
+                    ],
+                    recipients: [{ recipient_type: "02", name: "김전화", sms: format(phone2) }],
+                },
+                detailSourceUpdatedDate: new Date(),
+                detailSyncedAt: new Date(),
+                syncStatus: "ready",
+            }).then((doc) => doc.documentId);
+            const newResult = await linker.execute(newDocumentId);
+            const newDoc = await handle.raw.eformsign_doc.findUniqueOrThrow({
+                where: { documentId: newDocumentId },
+                select: { clientId: true },
+            });
+            if (newResult !== "linked" || newDoc.clientId !== client.id) {
+                throw new Error(
+                    `SI-CLIENT-04: the new-phone contract was left unlinked or attached elsewhere after the phone edit (result "${newResult}", clientId ${String(newDoc.clientId)})`,
                 );
             }
         },
-        /SI-CLIENT-04: tombstoned client \d+ keeps eDocId=.+ and document .+ keeps clientId=\d+ — the hidden client still holds the live contract/,
     );
 
     invariant(
