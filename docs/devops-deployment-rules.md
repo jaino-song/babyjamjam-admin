@@ -175,6 +175,27 @@ Railway 관련 (역사·잔존 — 프로덕션 런타임 아님):
 - Railpack 빌더는 빌드/런타임 이미지가 분리된다. 런타임 apt 패키지(Chromium 라이브러리 등)는 `RAILPACK_DEPLOY_APT_PACKAGES` 변수로, 변수 변경만으로는 리빌드되지 않으니 빈 커밋으로 트리거.
 - `backend/railway.json`은 아직 커밋돼 있고 README 본문도 "Railway for the API"라고 적혀 있다. 둘 다 stale이다 — 정리 시 이 문서 §1-5와 같은 커밋에서 갱신한다. Lightsail `backend.env` 값의 출처가 Railway 환경 변수였다는 점만 역사로 남긴다.
 
+### 4.2 Valkey 복구 — 펜스 절차만 허용 (2026-10-30)
+
+백엔드는 실시간 변경 힌트를 Valkey Stream으로 공유하고, 클라이언트는 커서로 이어받는다. 연속성은 **실행 중인 Valkey 프로세스의 신원**(`run_id`, `master_replid`)으로 증명하는데, 이 값은 Valkey가 재시작·승격될 때마다 바뀐다. 프로세스를 그대로 둔 채 데이터만 되돌리면(아래 금지 목록) 신원이 같아서 클라이언트가 "놓친 게 없다"고 믿고 갱신을 조용히 놓친다. 그래서 Valkey 데이터 복구는 아래 절차로만 한다.
+
+| 항목 | 규칙 |
+|---|---|
+| 유일한 경로 | `babyjamjam-fallback-server valkey-restore <백업 절대경로> --confirm-fence` (백업은 RDB 파일 또는 `appendonly.aof.manifest`가 있는 `appendonlydir`). 확인은 플래그뿐이다 — operator는 root로 비대화식 실행되므로 프롬프트가 없고, 플래그가 없으면 컨테이너를 건드리기 전에 거부한다 |
+| 단계 | ① 사전점검: 백업을 네트워크 없는 임시 컨테이너에 로드해 지문(DBSIZE, `realtime:entity-changes`의 `last-generated-id`, 영구 키 이름·타입 표본 해시) 기록 + 현재 `run_id` 기록 → ② 펜스: 마커 `state/valkey-restore-fence` 기록 후 API 컨테이너 정지·확인(백엔드의 Prisma extension이 힌트의 유일한 작성자이므로 백엔드 정지가 곧 작성자 펜스) → ③ Valkey를 **먼저** 정지하고 교체 전 데이터를 시각 표기 사본으로 보존한 뒤 복구, 새 프로세스로 기동 → ④ 검증: PING, master, 복구된 데이터 = 백업 지문, `run_id` 변경(둘째 조건) → ⑤ **별도 명령** `valkey-restore --reopen --confirm-reopen`으로 API 재기동·헬스 확인 |
+| 중단·재실행 | 어느 단계에서 실패하거나 신호를 받아도 API는 정지 상태, 마커는 유지되고 재개/롤백 방법이 출력된다. 같은 백업으로 다시 실행하면 이어서 끝난다(멱등). 롤백은 보존된 사본을 같은 명령으로 복구한다. 마커만 지우려면 `--abort --confirm-fence`(API는 계속 정지) |
+| 펜스가 프로세스보다 오래 간다 | 마커가 있는 동안 `deploy`, `temporary-active`, `replace-temporary-active`, `extend-temporary-active`, `adopt-persistent-active`, `rollback`, CI deployer(`main` push의 `deploy-lightnode`)는 모두 거부한다. `stop`, `guard-expiry`, 만료 유닛, `status`는 시작 경로가 아니므로 계속 동작한다. 마커는 재기동 성공 또는 `--abort`로만 지워진다 |
+| 재기동 조건 | 실행 직전에 flock 아래에서 다시 확인한다: temporary-active는 만료가 *지금 + 준비 대기(150초)* 이후이고 만료 타이머가 살아 있을 것, persistent-active는 보호된 shutdown 정책과 마스크 유닛이 유효할 것, passive는 컨테이너 게이트가 passive일 것. 그 밖의 상태(승인 만료 등)는 복구 자체는 성공이므로 펜스만 풀고 API는 **시작하지 않으며**, 정상 `temporary-active` 승인 절차 또는 `adopt-persistent-active`를 안내한다. 승인을 우회하지 않는다 |
+| 재기동 방식 | `compose up`이 아니라 기록된 컨테이너를 `docker start`한다(`up`은 컨테이너를 새 ID·재시작 정책으로 재생성해 `extend-temporary-active`의 컨테이너 ID 보존 불변식을 깨뜨릴 수 있다). 이후 정상 `status` 검증을 통과해야 한다. 스케줄러 lease(`scheduler_lease`)는 정지된 API가 SIGTERM에 반납하거나 TTL 90초에 만료되고, 재기동된 API(같은 holder id, 새 instance id)가 다시 잡는다 — `lease_held=true`가 보이기까지 최대 약 90초 |
+
+**금지 — 실시간 Valkey 데이터를 아래 방법으로 되돌리지 않는다:** 실행 중인 서버에 대한 `RESTORE … REPLACE`나 키 복사, 실행 중인 컨테이너 아래의 볼륨 파일 교체, 기존 `appendonlydir`가 있는 상태에서 RDB만 복사(Valkey 8은 `appendonly yes`이면 `appendonlydir`만 읽고 `dump.rdb`를 무시하므로 **옛 데이터가 조용히 서빙된다**. `appendonlydir`를 지우면 빈 상태로 시작한다), 백엔드가 떠 있는 동안의 쓰기. `DEBUG RELOAD`는 Valkey 8에서 기본 비활성(`enable-debug-command no`)이라 지금은 실행되지 않지만, 켜더라도 같은 이유로 금지다. 실제 위험은 실행 중인 서버에 대한 `RESTORE`/키 복사와 펜스 없이 쓰기가 계속되는 구간이다.
+
+**부수 효과를 알고 복구한다.** 이 Valkey에는 실시간 힌트 외에 rate limit, 락(`agent-action-sweep`, eformsign backfill/operation), eFormsign 스냅샷·상태 데이터도 있다. 복구는 이 전부를 백업 시점으로 되돌리며 **남아 있던 락도 함께** 되돌아온다. 실시간 데이터만 문제라면 복구가 필요 없다 — 비어 있는 새 Valkey는 실시간에 항상 안전하다(클라이언트가 한 번 새로 가져올 뿐).
+
+**앱의 Valkey 사용자는 `INFO`(`@dangerous`) 권한을 유지해야 한다.** 막으면 연속성 증명이 fail-closed로 떨어져 모든 재연결이 전체 새로고침을 한다.
+
+Lightsail은 미사용이다. 되살리면 같은 펜스 절차를 적용한다 (Lightsail is unused; if revived, the same fenced steps apply). 절차 상세와 테스트: `backend/deploy/fallback-server/README.md` → "Fenced Valkey restore", `operator.valkey-restore.behavior.test.sh`.
+
 ---
 
 ## 5. 스케줄러·기능 플래그 (플래그는 코드보다 나중에)

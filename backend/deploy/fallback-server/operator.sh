@@ -31,6 +31,19 @@ readonly PROJECT_NAME="babyjamjam-fallback-server"
 readonly LOOPBACK_READY_URL="http://127.0.0.1:3101/health/ready"
 readonly LOOPBACK_LEASE_URL="http://127.0.0.1:3101/health/lease"
 readonly COMPOSE_ENV_FILE="/dev/null"
+readonly VALKEY_RESTORE_READY_WINDOW_SECONDS=150
+# Fenced Valkey restore seams. Plain assignments, NOT `${VAR:-default}`: this
+# operator runs as root, so a caller environment must never redirect it. Tests
+# (and only tests) re-assign these after sourcing the file.
+VR_PROJECT="$PROJECT_NAME"
+VR_VOLUME="babyjamjam-fallback-server-valkey-data"
+VR_VALKEY_SERVICE="valkey"
+VR_API_SERVICE="api"
+VR_MARKER="$STATE_DIRECTORY/valkey-restore-fence"
+VR_REPLACED_ROOT="$STATE_ROOT/valkey-replaced"
+VR_STREAM_KEY="realtime:entity-changes"
+VR_DOCKER_BIN="/usr/bin/docker"
+VR_ATTEMPTS=60
 readonly SHA_PATTERN='^[0-9a-f]{40}$'
 readonly DIGEST_PATTERN='^sha256:[0-9a-f]{64}$'
 readonly REQUIRED_ENV_KEYS=(
@@ -82,17 +95,38 @@ Usage:
   babyjamjam-fallback-server replace-temporary-active <40-character-commit-sha> <sha256-image-digest>
   babyjamjam-fallback-server rollback
   babyjamjam-fallback-server stop
+  babyjamjam-fallback-server valkey-restore <absolute-backup-path> --confirm-fence
+  babyjamjam-fallback-server valkey-restore --reopen --confirm-reopen
+  babyjamjam-fallback-server valkey-restore --abort --confirm-fence
 
 This operator manages the loopback-bound Fallback Server. Ordinary deploy is
 passive; temporary-active requires the separately approved expiry artifact. It
 does not change DNS, Cloudflare, Vercel, AWS, Aligo, migrations, or scheduler
 ownership.
+
+valkey-restore is the only supported way to restore Valkey data: it fences the
+backend, restores into a freshly started Valkey process and verifies the dataset
+before --reopen. While its fence marker exists every start path refuses.
 EOF
 }
 
 die() {
     echo "$*" >&2
     exit 1
+}
+
+# A fenced Valkey restore leaves a durable marker. flock only covers one
+# invocation, and `stop` clears the temporary-active state, so without a marker
+# a later `main` push (ci-deployer) could recreate the API against a
+# half-restored Valkey. Only STARTING paths call this; stop, guard-expiry, the
+# expiry unit and status stay available while fenced.
+fenced_by_valkey_restore() {
+    [[ -e "$VR_MARKER" || -L "$VR_MARKER" ]]
+}
+
+refuse_if_valkey_restore_fenced() {
+    fenced_by_valkey_restore || return 0
+    die "A Valkey restore fence is active ($VR_MARKER); the backend must not be started. Finish with 'valkey-restore --reopen --confirm-reopen' after a verified restore, or discard it with 'valkey-restore --abort --confirm-fence'."
 }
 
 # Persistent operation is an explicit root-owned host policy, never a caller env.
@@ -462,6 +496,9 @@ guard_expiry() {
     automatic_shutdown_disabled && return 0
     local expiry now tag mode container_id gates
     mode="$(read_state runtime-mode || true)"
+    # `tag` was declared but never assigned, so `set -u` aborted the guard at its
+    # first use; the guard could not stop an expired runtime.
+    tag="$(read_state current-image-tag || true)"
     if [[ "$mode" != "temporary-active" ]]; then
         if [[ "$tag" =~ $SHA_PATTERN ]]; then
             container_id="$(container_id_for "$tag" || true)"
@@ -733,6 +770,7 @@ restore_temporary_extension() {
 # recovery. Reuse the protected release/evidence; never invent approval inputs.
 adopt_persistent_active_release() {
     local tag digest container approval_data egress nonce incident evidence lease
+    refuse_if_valkey_restore_fenced
     automatic_shutdown_disabled || die "Persistent operation requires the protected shutdown policy."
     verify_shutdown_masks || die "All automatic shutdown units must remain masked and inactive."
     validate_env_file
@@ -760,6 +798,7 @@ adopt_persistent_active_release() {
 extend_temporary_active_release() {
     local commit_sha="$1" image_digest="$2" approval_data approval_egress_hash approval_nonce incident_id evidence_hash
     local old_expiry old_linkage new_expiry new_linkage current_tag current_digest container_before container_after now
+    refuse_if_valkey_restore_fenced
 
     validate_release "$commit_sha" "$image_digest"
     [[ "$(read_state runtime-mode || true)" == "temporary-active" ]] \
@@ -843,6 +882,7 @@ restore_replaced_active_release() {
 replace_temporary_active_release() {
     local commit_sha="$1" image_digest="$2" approval_data approval_egress_hash approval_nonce incident_id evidence_hash
     local old_tag old_digest old_expiry old_linkage new_expiry new_linkage old_container new_container now
+    refuse_if_valkey_restore_fenced
 
     validate_release "$commit_sha" "$image_digest"
     [[ "$(read_state runtime-mode || true)" == "temporary-active" ]] \
@@ -922,6 +962,7 @@ replace_temporary_active_release() {
 
 temporary_activate_release() {
     local commit_sha="$1" image_digest="$2" approval_data approval_egress_hash approval_nonce incident_id evidence_hash expiry current_tag current_digest container_id
+    refuse_if_valkey_restore_fenced
 
     validate_release "$commit_sha" "$image_digest"
     refuse_active_or_unknown_runtime
@@ -985,6 +1026,7 @@ deploy_release() {
     local image_digest="$2"
     local current_digest=""
     local current_tag=""
+    refuse_if_valkey_restore_fenced
 
     validate_release "$commit_sha" "$image_digest"
     refuse_active_or_unknown_runtime
@@ -1105,6 +1147,7 @@ rollback_release() {
     local current_tag
     local previous_digest
     local previous_tag
+    refuse_if_valkey_restore_fenced
 
     refuse_active_or_unknown_runtime
     current_tag="$(read_state current-image-tag)" || die "No current Fallback Server release is recorded."
@@ -1138,6 +1181,717 @@ stop_release() {
         "public_routing=not_managed"
 }
 
+# --- Fenced Valkey restore ---------------------------------------------------
+# The backend shares realtime change hints through a Valkey Stream and proves
+# stream continuity against the running Valkey process identity (run_id,
+# master_replid). Every Valkey restart changes that identity, so a restore that
+# goes through a freshly started process is always detected by clients. A live
+# in-place restore (RESTORE ... REPLACE, key copies into a running server,
+# swapping the volume under a running container) keeps the identity and would
+# make clients believe they missed nothing. This command is therefore the only
+# supported restore path (amendment A5):
+#   preflight -> fence -> restore into a fresh process -> verify -> (separately) reopen
+# Every stage is idempotent and a failure leaves the backend stopped and the
+# fence marker in place. Nothing here mutates DNS, schemas or scheduler state.
+
+vr_docker() { "$VR_DOCKER_BIN" "$@"; }
+vr_sleep() { /usr/bin/sleep "$1"; }
+vr_note() { printf 'valkey-restore: %s\n' "$*" >&2; }
+vr_cli() {
+    local container="$1"
+    shift
+    vr_docker exec "$container" valkey-cli --raw "$@"
+}
+
+VR_ACTIVE=0
+VR_CLEANUP_CONTAINERS=()
+VR_CLEANUP_VOLUMES=()
+VR_BACKUP_PATH=""
+VR_BACKUP_FORM=""
+VR_BACKUP_DIGEST=""
+VR_IMAGE=""
+VR_VALKEY_CID=""
+VR_OBSERVED_RUN_ID=""
+VR_EXPECTED_FP=""
+VR_NEW_RUN_ID=""
+VR_NEW_REPLID=""
+VR_REOPEN_MODE=""
+VR_REOPEN_REASON=""
+VR_STAMP=""
+
+# Runs inside the container (busybox sh). Prints key=value lines describing what
+# the dataset is: persistent (TTL-less) key count, DBSIZE, the realtime stream's
+# last-generated-id (or none), and a hash over a sorted sample of persistent key
+# names and types. Volatile keys (rate limits, locks) are left out of the exact
+# comparison because they legitimately expire between preflight and verify.
+readonly VALKEY_FINGERPRINT_SCRIPT='
+set -eu
+stream=$1; limit=$2
+cli() { valkey-cli --raw "$@" | tr -d "\r"; }
+ks=$(cli INFO keyspace)
+line=$(printf "%s\n" "$ks" | grep "^db0:" || true)
+keys=0; exp=0
+if [ -n "$line" ]; then
+  keys=${line#*keys=}; keys=${keys%%,*}
+  exp=${line#*expires=}; exp=${exp%%,*}
+fi
+other=$(printf "%s\n" "$ks" | grep -c "^db[1-9]" || true)
+echo "persistent_keys=$((keys-exp))"
+echo "dbsize=$(cli DBSIZE)"
+echo "other_dbs=$other"
+sid=none
+if [ "$(cli EXISTS "$stream")" = 1 ]; then
+  sid=$(cli XINFO STREAM "$stream" | grep -A1 "^last-generated-id\$" | tail -n 1)
+fi
+echo "stream_last_id=${sid:-none}"
+sample=$(cli --scan | sort | while IFS= read -r k; do
+  [ "$(cli TTL "$k")" = -1 ] || continue
+  printf "%s\t%s\n" "$k" "$(cli TYPE "$k")"
+done | head -n "$limit")
+echo "sample_count=$(printf "%s" "$sample" | grep -c . || true)"
+echo "sample_sha256=$(printf "%s" "$sample" | sha256sum | cut -d" " -f1)"
+'
+
+# Staging scripts. The volume is emptied first, so a stale appendonlydir can never
+# shadow a staged RDB (Valkey 8 with appendonly yes loads only appendonlydir and
+# ignores dump.rdb). Ownership is the image's own valkey user: files written by
+# root are 0600 root, which the server (uid 999) cannot read.
+readonly VALKEY_STAGE_RDB_SCRIPT='
+set -eu
+find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+cp /backup/dump.rdb /data/dump.rdb
+chown valkey:valkey /data /data/dump.rdb
+chmod 640 /data/dump.rdb
+'
+readonly VALKEY_STAGE_AOF_SCRIPT='
+set -eu
+find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+cp -R /backup/appendonlydir /data/appendonlydir
+chown -R valkey:valkey /data
+chmod -R u+rwX,g+rX,o-rwx /data/appendonlydir
+'
+
+# ---- marker ---------------------------------------------------------------
+
+vr_marker_get() {
+    /usr/bin/awk -F= -v key="$1" '
+        $1 == key { value = substr($0, index($0, "=") + 1); found = 1; exit }
+        END { if (found) print value; else exit 1 }
+    ' "$VR_MARKER"
+}
+
+# Rewritten atomically: a crash between the temp write and the rename leaves the
+# previous complete marker, never a torn one.
+vr_marker_put() {
+    local key="$1" value="$2" temporary
+    [[ "$value" != *$'\n'* ]] || die "valkey-restore: a marker value must be one line."
+    temporary="$(/usr/bin/mktemp "${VR_MARKER%/*}/.valkey-restore-fence.XXXXXX")"
+    {
+        if [[ -f "$VR_MARKER" ]]; then /usr/bin/awk -F= -v key="$key" '$1 != key' "$VR_MARKER"; fi
+        printf '%s=%s\n' "$key" "$value"
+    } >"$temporary"
+    /usr/bin/chmod 600 "$temporary"
+    /usr/bin/mv -f "$temporary" "$VR_MARKER"
+}
+
+# ---- cleanup and recovery text --------------------------------------------
+
+vr_cleanup() {
+    local item
+    for item in ${VR_CLEANUP_CONTAINERS[@]+"${VR_CLEANUP_CONTAINERS[@]}"}; do
+        vr_docker rm -f "$item" >/dev/null 2>&1 || true
+    done
+    for item in ${VR_CLEANUP_VOLUMES[@]+"${VR_CLEANUP_VOLUMES[@]}"}; do
+        vr_docker volume rm -f "$item" >/dev/null 2>&1 || true
+    done
+    VR_CLEANUP_CONTAINERS=()
+    VR_CLEANUP_VOLUMES=()
+}
+
+# Leftovers of an interrupted run: throwaway fingerprint volumes and a bootstrap
+# container. Matched by this project's reserved prefix only.
+vr_remove_leftovers() {
+    local prefix="$VR_PROJECT-vr-" item
+    for item in $(vr_docker ps -aq --filter "name=^/$prefix" 2>/dev/null || true); do
+        vr_docker rm -f "$item" >/dev/null 2>&1 || true
+    done
+    for item in $(vr_docker volume ls -q 2>/dev/null | /usr/bin/grep -E "^$prefix" || true); do
+        vr_docker volume rm -f "$item" >/dev/null 2>&1 || true
+    done
+}
+
+vr_print_recovery() {
+    local stage
+    if ! fenced_by_valkey_restore; then
+        vr_note "stopped before the fence was written: the backend and Valkey were not touched."
+        return 0
+    fi
+    stage="$(vr_marker_get stage 2>/dev/null || echo unknown)"
+    vr_note "INTERRUPTED at stage '$stage'. The backend stays stopped and the fence marker ($VR_MARKER) stays in place."
+    if [[ "$stage" == verified || "$stage" == reopening ]]; then
+        vr_note "The restore itself is verified. Retry the reopen: valkey-restore --reopen --confirm-reopen"
+    else
+        vr_note "Resume (idempotent): valkey-restore '$(vr_marker_get backup_path 2>/dev/null || echo '<backup>')' --confirm-fence"
+    fi
+    vr_note "Roll back to the data that was replaced: valkey-restore <replaced-copy>/appendonlydir (or dump.rdb) --confirm-fence; copies: $(vr_marker_get replaced_copies 2>/dev/null || echo none)"
+    vr_note "Give up without restarting the backend: valkey-restore --abort --confirm-fence"
+}
+
+vr_on_exit() {
+    local status=$?
+    trap - EXIT
+    vr_cleanup
+    if [[ "$status" -ne 0 && "$VR_ACTIVE" == 1 ]]; then vr_print_recovery; fi
+    exit "$status"
+}
+
+vr_arm_traps() {
+    VR_ACTIVE=1
+    trap vr_on_exit EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+}
+
+# ---- docker lookups -------------------------------------------------------
+
+vr_service_containers() {
+    local flag=-q
+    [[ "$2" == all ]] && flag=-aq
+    vr_docker ps "$flag" \
+        --filter "label=com.docker.compose.project=$VR_PROJECT" \
+        --filter "label=com.docker.compose.service=$1"
+}
+
+vr_single_container() {
+    local ids count
+    ids="$(vr_service_containers "$1" "$2")" || return 1
+    count="$(printf '%s\n' "$ids" | /usr/bin/awk 'NF {c++} END {print c+0}')"
+    [[ "$count" == 1 && "$ids" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    printf '%s\n' "$ids"
+}
+
+vr_container_running() {
+    [[ "$(vr_docker inspect --format '{{.State.Running}}' "$1" 2>/dev/null)" == true ]]
+}
+
+vr_info_field() {
+    local value
+    value="$(vr_cli "$1" INFO "$2" | /usr/bin/tr -d '\r' | /usr/bin/awk -F: -v field="$3" '
+        $1 == field { value = substr($0, index($0, ":") + 1); count += 1 }
+        END { if (count == 1) print value; else exit 1 }
+    ')" || return 1
+    printf '%s\n' "$value"
+}
+
+vr_ping_ok() {
+    [[ "$(vr_cli "$1" PING 2>/dev/null | /usr/bin/tr -d '\r')" == PONG ]]
+}
+
+vr_loaded() {
+    [[ "$(vr_info_field "$1" persistence loading 2>/dev/null || true)" == 0 ]]
+}
+
+vr_wait() {
+    local what="$1" attempt
+    shift
+    for attempt in $(/usr/bin/seq 1 "$VR_ATTEMPTS"); do
+        if "$@" >/dev/null 2>&1; then return 0; fi
+        vr_sleep 1
+    done
+    die "valkey-restore: timed out waiting for $what. The backend stays stopped."
+}
+
+vr_stop_container() {
+    vr_docker stop -t 60 "$1" >/dev/null
+    vr_container_running "$1" && die "valkey-restore: container $1 did not stop. The backend stays stopped."
+    return 0
+}
+
+# ---- backup inspection ----------------------------------------------------
+
+vr_tree_digest() {
+    local listing
+    listing="$(cd "$1" && /usr/bin/find . -type f -print0 | LC_ALL=C /usr/bin/sort -z | /usr/bin/xargs -0 /usr/bin/sha256sum)" \
+        || die "valkey-restore: unable to hash the AOF backup directory."
+    printf '%s\n' "$listing" | /usr/bin/sha256sum | /usr/bin/awk '{ print $1 }'
+}
+
+vr_inspect_backup() {
+    local path="$1" magic
+    [[ "$path" =~ ^/[A-Za-z0-9._/+@=-]+$ ]] \
+        || die "valkey-restore: the backup must be an absolute path of letters, digits and . _ / + @ = - only."
+    [[ ! -L "$path" ]] || die "valkey-restore: the backup must not be a symbolic link."
+    if [[ -f "$path" ]]; then
+        [[ -r "$path" && -s "$path" ]] || die "valkey-restore: the backup file is unreadable or empty."
+        magic="$(/usr/bin/head -c 6 "$path" 2>/dev/null || true)"
+        [[ "$magic" == REDIS* || "$magic" == VALKEY ]] \
+            || die "valkey-restore: the backup file is not a Valkey/Redis RDB (bad magic)."
+        VR_BACKUP_FORM=rdb
+        VR_BACKUP_DIGEST="$(sha256_file "$path")"
+    elif [[ -d "$path" ]]; then
+        [[ -f "$path/appendonly.aof.manifest" && ! -L "$path/appendonly.aof.manifest" ]] \
+            || die "valkey-restore: an AOF backup must be the multi-part appendonlydir (appendonly.aof.manifest missing)."
+        [[ -z "$(/usr/bin/find "$path" ! -type f ! -type d -print -quit)" ]] \
+            || die "valkey-restore: the AOF backup directory may contain only regular files."
+        VR_BACKUP_FORM=aof
+        VR_BACKUP_DIGEST="$(vr_tree_digest "$path")"
+    else
+        die "valkey-restore: the backup does not exist."
+    fi
+    [[ "$VR_BACKUP_DIGEST" =~ ^[0-9a-f]{64}$ ]] || die "valkey-restore: unable to fingerprint the backup."
+    VR_BACKUP_PATH="$path"
+}
+
+# ---- fingerprint ----------------------------------------------------------
+
+vr_fp_get() {
+    printf '%s\n' "$1" | /usr/bin/awk -F= -v key="$2" '$1 == key { print substr($0, index($0, "=") + 1); exit }'
+}
+
+vr_fingerprint() {
+    local output
+    output="$(vr_docker exec "$1" sh -c "$VALKEY_FINGERPRINT_SCRIPT" sh "$VR_STREAM_KEY" 200)" \
+        || die "valkey-restore: unable to fingerprint the dataset."
+    printf '%s\n' "$output" | /usr/bin/tr -d '\r'
+}
+
+# Exact for everything that cannot change without a restore going wrong; DBSIZE
+# may only shrink (expiry) and never below the persistent key count.
+vr_fingerprint_matches() {
+    local expected="$1" actual="$2" key want have bad=0 persistent
+    for key in persistent_keys other_dbs stream_last_id sample_count sample_sha256; do
+        want="$(vr_fp_get "$expected" "$key")"
+        have="$(vr_fp_get "$actual" "$key")"
+        if [[ -z "$want" || "$want" != "$have" ]]; then
+            vr_note "fingerprint mismatch on $key (expected ${want:-<missing>}, got ${have:-<missing>})."
+            bad=1
+        fi
+    done
+    want="$(vr_fp_get "$expected" dbsize)"
+    have="$(vr_fp_get "$actual" dbsize)"
+    persistent="$(vr_fp_get "$actual" persistent_keys)"
+    if ! [[ "$want" =~ ^[0-9]+$ && "$have" =~ ^[0-9]+$ && "$persistent" =~ ^[0-9]+$ ]] \
+        || (( have > want || have < persistent )); then
+        vr_note "fingerprint mismatch on dbsize (expected at most ${want:-<missing>}, got ${have:-<missing>})."
+        bad=1
+    fi
+    return "$bad"
+}
+
+vr_fp_one_line() { printf '%s' "$1" | /usr/bin/tr '\n' ';'; }
+vr_fp_from_line() { printf '%s' "$1" | /usr/bin/tr ';' '\n'; }
+
+# ---- staging and throwaway instance --------------------------------------
+
+vr_stage_data() {
+    local volume="$1" mount script
+    if [[ "$VR_BACKUP_FORM" == rdb ]]; then
+        mount="$VR_BACKUP_PATH:/backup/dump.rdb:ro"
+        script="$VALKEY_STAGE_RDB_SCRIPT"
+    else
+        mount="$VR_BACKUP_PATH:/backup/appendonlydir:ro"
+        script="$VALKEY_STAGE_AOF_SCRIPT"
+    fi
+    vr_docker run --rm --network none --user 0 --entrypoint sh \
+        -v "$volume:/data" -v "$mount" "$VR_IMAGE" -c "$script" >/dev/null
+}
+
+vr_check_staged() {
+    local check
+    if [[ "$VR_BACKUP_FORM" == rdb ]]; then check='valkey-check-rdb /data/dump.rdb'; else check='valkey-check-aof /data/appendonlydir/appendonly.aof.manifest'; fi
+    vr_docker run --rm --network none --user 0 --entrypoint sh -v "$1:/data" "$VR_IMAGE" -c "$check" >/dev/null 2>&1
+}
+
+# Load the backup into a throwaway, network-less instance on a throwaway volume
+# and record what the restored dataset must look like.
+vr_backup_fingerprint() {
+    local volume="$VR_PROJECT-vr-fp-$VR_STAMP" name="$VR_PROJECT-vr-fp-$VR_STAMP" appendonly=no
+    [[ "$VR_BACKUP_FORM" == aof ]] && appendonly=yes
+    VR_CLEANUP_VOLUMES+=("$volume")
+    VR_CLEANUP_CONTAINERS+=("$name")
+    vr_docker volume create "$volume" >/dev/null
+    vr_stage_data "$volume" || die "valkey-restore: unable to stage the backup for inspection."
+    vr_check_staged "$volume" || die "valkey-restore: the backup failed the Valkey integrity check."
+    vr_docker run -d --name "$name" --network none -v "$volume:/data" "$VR_IMAGE" \
+        valkey-server --save "" --appendonly "$appendonly" >/dev/null \
+        || die "valkey-restore: unable to start the throwaway Valkey."
+    vr_wait "the throwaway Valkey to answer PING" vr_ping_ok "$name"
+    vr_wait "the throwaway Valkey to finish loading the backup" vr_loaded "$name"
+    VR_EXPECTED_FP="$(vr_fingerprint "$name")"
+    vr_docker rm -f "$name" >/dev/null 2>&1 || true
+    vr_docker volume rm -f "$volume" >/dev/null 2>&1 || true
+    VR_CLEANUP_CONTAINERS=()
+    VR_CLEANUP_VOLUMES=()
+}
+
+# ---- stages ---------------------------------------------------------------
+
+vr_resolve_target() {
+    local mounted
+    VR_VALKEY_CID="$(vr_single_container "$VR_VALKEY_SERVICE" all)" \
+        || die "valkey-restore: expected exactly one $VR_VALKEY_SERVICE container in compose project $VR_PROJECT."
+    mounted="$(vr_docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$VR_VALKEY_CID")" \
+        || die "valkey-restore: unable to inspect the Valkey container."
+    [[ "$mounted" == "$VR_VOLUME" ]] \
+        || die "valkey-restore: the Valkey container does not use the expected data volume ($VR_VOLUME)."
+    VR_IMAGE="$(vr_docker inspect --format '{{.Image}}' "$VR_VALKEY_CID")" \
+        || die "valkey-restore: unable to resolve the Valkey image."
+    [[ "$VR_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || die "valkey-restore: the Valkey image identity is invalid."
+    VR_OBSERVED_RUN_ID=""
+    if vr_container_running "$VR_VALKEY_CID"; then
+        VR_OBSERVED_RUN_ID="$(vr_info_field "$VR_VALKEY_CID" server run_id || true)"
+    fi
+}
+
+vr_marker_create() {
+    local temporary running="$1" all="$2"
+    temporary="$(/usr/bin/mktemp "${VR_MARKER%/*}/.valkey-restore-fence.XXXXXX")"
+    printf '%s\n' \
+        "schema=1" \
+        "created_at_unix=$(current_unix_time)" \
+        "stage=fencing" \
+        "backup_path=$VR_BACKUP_PATH" \
+        "backup_form=$VR_BACKUP_FORM" \
+        "backup_digest=$VR_BACKUP_DIGEST" \
+        "project=$VR_PROJECT" \
+        "volume=$VR_VOLUME" \
+        "valkey_cid=$VR_VALKEY_CID" \
+        "old_run_id=${VR_OBSERVED_RUN_ID:-none}" \
+        "expected_fingerprint=$(vr_fp_one_line "$VR_EXPECTED_FP")" \
+        "api_cids=$(printf '%s' "$all" | /usr/bin/tr '\n' ' ' | /usr/bin/sed 's/ *$//')" \
+        "api_was_running=$([[ -n "$running" ]] && printf 1 || printf 0)" \
+        "replaced_copies=" >"$temporary"
+    /usr/bin/chmod 600 "$temporary"
+    /usr/bin/mv -f "$temporary" "$VR_MARKER"
+}
+
+vr_fence() {
+    local running all cid
+    if ! fenced_by_valkey_restore; then
+        running="$(vr_service_containers "$VR_API_SERVICE" running)" || die "valkey-restore: unable to list the API containers."
+        all="$(vr_service_containers "$VR_API_SERVICE" all)" || die "valkey-restore: unable to list the API containers."
+        vr_marker_create "$running" "$all"
+    else
+        vr_marker_put stage fencing
+    fi
+    running="$(vr_service_containers "$VR_API_SERVICE" running)" || die "valkey-restore: unable to list the API containers."
+    for cid in $running; do
+        vr_docker stop "$cid" >/dev/null || die "valkey-restore: unable to stop the API container. The fence stays in place."
+    done
+    [[ -z "$(vr_service_containers "$VR_API_SERVICE" running)" ]] \
+        || die "valkey-restore: an API container is still running. The fence stays in place."
+    vr_marker_put stage fenced
+}
+
+vr_copy_replaced() {
+    local destination="$VR_REPLACED_ROOT/$VR_STAMP" existing
+    /usr/bin/install -d -m 700 "$VR_REPLACED_ROOT" "$destination"
+    vr_docker run --rm --network none --user 0 --entrypoint sh \
+        -v "$VR_VOLUME:/data:ro" -v "$destination:/copy" "$VR_IMAGE" -c 'set -eu; cp -a /data/. /copy/' >/dev/null \
+        || die "valkey-restore: unable to keep a copy of the replaced data. Nothing was replaced."
+    existing="$(vr_marker_get replaced_copies 2>/dev/null || true)"
+    vr_marker_put replaced_copies "${existing:+$existing }$destination"
+    vr_note "kept the replaced data in $destination"
+}
+
+# RDB: Valkey 8 with appendonly yes loads only appendonlydir, so an RDB is loaded
+# once with appendonly off and converted to a fresh AOF before the normal start.
+vr_bootstrap_rdb() {
+    local name="$VR_PROJECT-vr-bootstrap-$VR_STAMP"
+    VR_CLEANUP_CONTAINERS+=("$name")
+    vr_docker run -d --name "$name" --network none -v "$VR_VOLUME:/data" "$VR_IMAGE" \
+        valkey-server --appendonly no --save "" >/dev/null \
+        || die "valkey-restore: unable to start the bootstrap Valkey. The backend stays stopped."
+    vr_wait "the bootstrap Valkey to answer PING" vr_ping_ok "$name"
+    vr_wait "the bootstrap Valkey to finish loading the RDB" vr_loaded "$name"
+    [[ "$(vr_cli "$name" CONFIG SET appendonly yes | /usr/bin/tr -d '\r')" == OK ]] \
+        || die "valkey-restore: unable to enable the AOF on the bootstrap Valkey."
+    vr_wait "the AOF rewrite to finish" vr_aof_rewrite_done "$name"
+    vr_docker stop -t 60 "$name" >/dev/null || die "valkey-restore: unable to stop the bootstrap Valkey."
+    vr_docker rm "$name" >/dev/null || die "valkey-restore: unable to remove the bootstrap Valkey."
+    VR_CLEANUP_CONTAINERS=()
+}
+
+vr_aof_rewrite_done() {
+    [[ "$(vr_info_field "$1" persistence aof_enabled)" == 1 \
+        && "$(vr_info_field "$1" persistence aof_rewrite_in_progress)" == 0 \
+        && "$(vr_info_field "$1" persistence aof_rewrite_scheduled)" == 0 \
+        && "$(vr_info_field "$1" persistence aof_last_bgrewrite_status)" == ok ]]
+}
+
+vr_restore_data() {
+    local digest
+    vr_marker_put stage restoring
+    if [[ "$VR_BACKUP_FORM" == aof ]]; then digest="$(vr_tree_digest "$VR_BACKUP_PATH")"; else digest="$(sha256_file "$VR_BACKUP_PATH")"; fi
+    [[ "$digest" == "$VR_BACKUP_DIGEST" ]] \
+        || die "valkey-restore: the backup changed since the preflight. The backend stays stopped; re-run the restore."
+    vr_container_running "$VR_VALKEY_CID" && vr_stop_container "$VR_VALKEY_CID"
+    vr_copy_replaced
+    vr_stage_data "$VR_VOLUME" || die "valkey-restore: unable to stage the backup into the data volume. The backend stays stopped."
+    if [[ "$VR_BACKUP_FORM" == rdb ]]; then vr_bootstrap_rdb; fi
+    vr_docker start "$VR_VALKEY_CID" >/dev/null || die "valkey-restore: unable to start Valkey. The backend stays stopped."
+    vr_wait "Valkey to answer PING" vr_ping_ok "$VR_VALKEY_CID"
+    vr_wait "Valkey to finish loading" vr_loaded "$VR_VALKEY_CID"
+    vr_marker_put stage restored
+}
+
+vr_verify() {
+    local role aof actual previous
+    vr_ping_ok "$VR_VALKEY_CID" || die "valkey-restore: Valkey does not answer PING. The backend stays stopped."
+    role="$(vr_info_field "$VR_VALKEY_CID" replication role)" || die "valkey-restore: unable to read the Valkey role."
+    [[ "$role" == master ]] || die "valkey-restore: Valkey is not a master (role=$role). The backend stays stopped."
+    aof="$(vr_info_field "$VR_VALKEY_CID" persistence aof_enabled)" || die "valkey-restore: unable to read the AOF state."
+    [[ "$aof" == 1 ]] || die "valkey-restore: the restored Valkey is not running with the AOF. The backend stays stopped."
+    actual="$(vr_fingerprint "$VR_VALKEY_CID")"
+    vr_fingerprint_matches "$VR_EXPECTED_FP" "$actual" \
+        || die "valkey-restore: the restored dataset does not match the backup (an old appendonlydir shadowing the RDB looks exactly like this). The backend stays stopped; the fence stays in place."
+    VR_NEW_RUN_ID="$(vr_info_field "$VR_VALKEY_CID" server run_id)" || die "valkey-restore: unable to read the Valkey run_id."
+    VR_NEW_REPLID="$(vr_info_field "$VR_VALKEY_CID" replication master_replid || true)"
+    previous="$(vr_marker_get old_run_id)"
+    [[ -n "$VR_NEW_RUN_ID" && "$VR_NEW_RUN_ID" != "$previous" && "$VR_NEW_RUN_ID" != "$VR_OBSERVED_RUN_ID" ]] \
+        || die "valkey-restore: the Valkey run_id did not change; the continuity proof would not see this restore. The backend stays stopped."
+    vr_marker_put new_run_id "$VR_NEW_RUN_ID"
+    vr_marker_put verified_at_unix "$(current_unix_time)"
+    vr_marker_put stage verified
+}
+
+# ---- commands -------------------------------------------------------------
+
+valkey_restore_run() {
+    local backup="$1" marker_digest
+    VR_STAMP="$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)-$BASHPID"
+    vr_arm_traps
+    vr_remove_leftovers
+    vr_inspect_backup "$backup"
+    vr_resolve_target
+    if fenced_by_valkey_restore; then
+        marker_digest="$(vr_marker_get backup_digest || true)"
+        [[ "$marker_digest" == "$VR_BACKUP_DIGEST" && "$(vr_marker_get project || true)" == "$VR_PROJECT" ]] \
+            || die "valkey-restore: a fence for a different backup is active ($VR_MARKER). Re-run with that backup, roll back, or --abort first."
+        VR_EXPECTED_FP="$(vr_fp_from_line "$(vr_marker_get expected_fingerprint)")"
+        if [[ "$(vr_marker_get stage || true)" == verified && -n "$VR_OBSERVED_RUN_ID" \
+            && "$VR_OBSERVED_RUN_ID" == "$(vr_marker_get new_run_id || true)" ]] \
+            && vr_fingerprint_matches "$VR_EXPECTED_FP" "$(vr_fingerprint "$VR_VALKEY_CID")"; then
+            vr_note "already restored and verified; nothing to redo."
+            VR_ACTIVE=0
+            printf '%s\n' "environment=fallback-server" "valkey_restore=verified" "fenced=true" \
+                "next=valkey-restore --reopen --confirm-reopen"
+            return 0
+        fi
+    else
+        vr_backup_fingerprint
+    fi
+    vr_fence
+    vr_restore_data
+    vr_verify
+    VR_ACTIVE=0
+    printf '%s\n' \
+        "environment=fallback-server" \
+        "valkey_restore=verified" \
+        "fenced=true" \
+        "backup_form=$VR_BACKUP_FORM" \
+        "old_run_id=$(vr_marker_get old_run_id)" \
+        "new_run_id=$VR_NEW_RUN_ID" \
+        "new_master_replid=${VR_NEW_REPLID:-unknown}" \
+        "replaced_copies=$(vr_marker_get replaced_copies)" \
+        "next=valkey-restore --reopen --confirm-reopen"
+}
+
+# The gate that decides whether the API may be started again. Reads the live
+# approval/policy state, never the state recorded at fence time: the expiry guard
+# may have fired meanwhile. Sets VR_REOPEN_MODE or VR_REOPEN_REASON.
+vr_reopen_decision() {
+    local mode expiry now
+    VR_REOPEN_MODE=""
+    VR_REOPEN_REASON=""
+    mode="$(read_state runtime-mode || true)"
+    if [[ -z "$mode" || "$mode" == passive ]]; then
+        if [[ -e "$ACTIVE_EXPIRY_FILE" ]]; then
+            VR_REOPEN_REASON="the runtime state is inconsistent (an active expiry exists without an active mode); use the normal temporary-active flow or 'stop'."
+            return 1
+        fi
+        VR_REOPEN_MODE=passive
+        return 0
+    fi
+    if [[ "$mode" != temporary-active ]]; then
+        VR_REOPEN_REASON="the runtime mode '$mode' is invalid; use the normal deploy flow."
+        return 1
+    fi
+    if automatic_shutdown_disabled; then
+        if ! verify_shutdown_masks; then
+            VR_REOPEN_REASON="persistent operation is on but the shutdown units are not masked and inactive; fix that, then use 'adopt-persistent-active'."
+            return 1
+        fi
+        VR_REOPEN_MODE=persistent-active
+        return 0
+    fi
+    expiry="$(read_state temporary-active-expiry || true)"
+    now="$(current_unix_time)"
+    if ! [[ "$expiry" =~ ^[0-9]{10,}$ ]] || (( expiry <= now + VALKEY_RESTORE_READY_WINDOW_SECONDS )); then
+        VR_REOPEN_REASON="the temporary-active approval has expired or leaves less than ${VALKEY_RESTORE_READY_WINDOW_SECONDS}s; issue a fresh approval and use the normal 'temporary-active' flow."
+        return 1
+    fi
+    if ! vr_expiry_timer_active; then
+        VR_REOPEN_REASON="the temporary-active expiry timer is no longer active; use the normal 'temporary-active' flow."
+        return 1
+    fi
+    VR_REOPEN_MODE=temporary-active
+}
+
+vr_expiry_timer_active() { /usr/bin/systemctl is-active --quiet "$TEMPORARY_STOP_UNIT.timer"; }
+
+vr_container_gate_class() {
+    local env key active=1 passive=1
+    env="$(runtime_env_for "$1" || true)"
+    if [[ -z "$env" ]]; then printf unknown; return 0; fi
+    for key in "${ACTIVE_TRUE_ENV_KEYS[@]}"; do
+        printf '%s\n' "$env" | /usr/bin/grep -Fxq "$key=true" || active=0
+    done
+    for key in "${PASSIVE_ENV_KEYS[@]}"; do
+        printf '%s\n' "$env" | /usr/bin/grep -Fxq "$key=false" || passive=0
+    done
+    if [[ "$active" == 1 ]]; then printf active; elif [[ "$passive" == 1 ]]; then printf passive; else printf unknown; fi
+}
+
+vr_reopen_wait_ready() { wait_until_ready "$1"; }
+vr_reopen_status() { status_release; }
+
+vr_stop_api_again() {
+    local cid
+    for cid in $(vr_service_containers "$VR_API_SERVICE" running || true); do
+        vr_docker stop "$cid" >/dev/null 2>&1 || true
+    done
+    [[ -z "$(vr_service_containers "$VR_API_SERVICE" running || true)" ]]
+}
+
+# Step d already passed, so the restore itself is finished: release the fence but
+# do not start the API, and say which normal flow to use. A partially reopened API
+# (stage 'reopening') is stopped first so "not started" is true.
+vr_release_without_start() {
+    local stage="$1"
+    shift
+    if [[ "$stage" == reopening ]]; then vr_stop_api_again || die "valkey-restore: unable to stop the partially reopened API. The fence stays in place."; fi
+    /usr/bin/rm -f "$VR_MARKER"
+    VR_ACTIVE=0
+    die "valkey-restore: the Valkey restore is verified and the fence is released, but the API was NOT started: $*"
+}
+
+valkey_restore_reopen() {
+    local stage cid expected_run actual_run cids tag class want status_output lease
+    fenced_by_valkey_restore || die "valkey-restore: no fence is active; nothing to reopen."
+    vr_arm_traps
+    stage="$(vr_marker_get stage || true)"
+    [[ "$stage" == verified || "$stage" == reopening ]] \
+        || die "valkey-restore: the restore is not verified (stage '$stage'). Re-run 'valkey-restore <backup> --confirm-fence' or --abort."
+    VR_PROJECT="$(vr_marker_get project)"
+    VR_VALKEY_CID="$(vr_marker_get valkey_cid)"
+    VR_EXPECTED_FP="$(vr_fp_from_line "$(vr_marker_get expected_fingerprint)")"
+    expected_run="$(vr_marker_get new_run_id)"
+    vr_container_running "$VR_VALKEY_CID" || die "valkey-restore: Valkey is not running; the verification no longer holds. Re-run the restore."
+    actual_run="$(vr_info_field "$VR_VALKEY_CID" server run_id || true)"
+    [[ "$actual_run" == "$expected_run" ]] \
+        || die "valkey-restore: Valkey restarted since it was verified; the verification no longer holds. Re-run the restore."
+    vr_ping_ok "$VR_VALKEY_CID" || die "valkey-restore: Valkey does not answer PING."
+    if [[ "$stage" == verified ]]; then
+        vr_fingerprint_matches "$VR_EXPECTED_FP" "$(vr_fingerprint "$VR_VALKEY_CID")" \
+            || die "valkey-restore: the Valkey dataset no longer matches the backup. Re-run the restore."
+    fi
+    cids="$(vr_marker_get api_cids || true)"
+    if [[ "$(vr_marker_get api_was_running)" != 1 ]]; then
+        /usr/bin/rm -f "$VR_MARKER"
+        VR_ACTIVE=0
+        printf '%s\n' "environment=fallback-server" "valkey_restore=reopened" "api_started=false" \
+            "reason=the API was not running when the fence began; start it with the normal flow."
+        return 0
+    fi
+    vr_reopen_decision || vr_release_without_start "$stage" "$VR_REOPEN_REASON"
+    case "$VR_REOPEN_MODE" in
+        passive) want=passive ;;
+        *) want=active ;;
+    esac
+    for cid in $cids; do
+        class="$(vr_container_gate_class "$cid")"
+        [[ "$class" == "$want" ]] \
+            || vr_release_without_start "$stage" "the recorded API container is '$class' while the runtime state says '$VR_REOPEN_MODE'; use the matching normal flow."
+    done
+    tag="$(read_state current-image-tag || true)"
+    [[ "$tag" =~ $SHA_PATTERN ]] || vr_release_without_start "$stage" "no release is recorded; use the normal deploy flow."
+    vr_marker_put stage reopening
+    # `docker start` of the same container: `up` could recreate it with a new id
+    # or restart policy and break the preserved-container invariant of
+    # extend-temporary-active.
+    for cid in $cids; do
+        vr_docker start "$cid" >/dev/null \
+            || { vr_stop_api_again || true; die "valkey-restore: unable to start the API container; it was stopped again and the fence stays in place."; }
+    done
+    if ! vr_reopen_wait_ready "$tag"; then
+        vr_stop_api_again || true
+        die "valkey-restore: the API did not become ready; it was stopped again and the fence stays in place."
+    fi
+    if ! status_output="$(vr_reopen_status)"; then
+        vr_stop_api_again || true
+        die "valkey-restore: the reopened API failed verification; it was stopped again and the fence stays in place."
+    fi
+    /usr/bin/rm -f "$VR_MARKER"
+    VR_ACTIVE=0
+    lease="$(lease_status_fields)"
+    printf '%s\n' "environment=fallback-server" "valkey_restore=reopened" "api_started=true" "reopen_mode=$VR_REOPEN_MODE"
+    printf '%s\n' "$status_output"
+    # The scheduler lease is released by the stopped API (SIGTERM) or lapses
+    # within its 90 s TTL; the restarted instance (same holder id, new instance
+    # id) re-acquires it. Display only, like `status`.
+    printf '%s\n' "$lease"
+}
+
+valkey_restore_abort() {
+    local stage
+    fenced_by_valkey_restore || die "valkey-restore: no fence is active; nothing to abort."
+    stage="$(vr_marker_get stage || echo unknown)"
+    /usr/bin/rm -f "$VR_MARKER"
+    printf '%s\n' \
+        "environment=fallback-server" \
+        "valkey_restore=aborted" \
+        "aborted_stage=$stage" \
+        "api_started=false" \
+        "note=The backend stays stopped. Valkey data may be partially restored until a verified restore or rollback; start the backend only through the normal flow."
+}
+
+valkey_restore() {
+    local mode=restore backup="" confirm_fence=0 confirm_reopen=0 arg
+    for arg in "$@"; do
+        case "$arg" in
+            --reopen) mode=reopen ;;
+            --abort) mode=abort ;;
+            --confirm-fence) confirm_fence=1 ;;
+            --confirm-reopen) confirm_reopen=1 ;;
+            --*) usage; exit 1 ;;
+            *) [[ -z "$backup" ]] || { usage; exit 1; }; backup="$arg" ;;
+        esac
+    done
+    # Explicit flags, no TTY prompt: the operator runs non-interactively as root.
+    # Everything below the flag checks may stop containers; nothing above does.
+    case "$mode" in
+        restore)
+            [[ -n "$backup" && "$confirm_reopen" == 0 ]] || { usage; exit 1; }
+            [[ "$confirm_fence" == 1 ]] \
+                || die "valkey-restore stops the backend and replaces the Valkey data. Re-run with --confirm-fence to proceed."
+            valkey_restore_run "$backup"
+            ;;
+        reopen)
+            [[ -z "$backup" && "$confirm_fence" == 0 ]] || { usage; exit 1; }
+            [[ "$confirm_reopen" == 1 ]] \
+                || die "valkey-restore --reopen starts the backend against the restored Valkey. Re-run with --confirm-reopen to proceed."
+            valkey_restore_reopen
+            ;;
+        abort)
+            [[ -z "$backup" && "$confirm_reopen" == 0 ]] || { usage; exit 1; }
+            [[ "$confirm_fence" == 1 ]] \
+                || die "valkey-restore --abort discards the fence without restarting the backend. Re-run with --confirm-fence to proceed."
+            valkey_restore_abort
+            ;;
+    esac
+}
+
 main() {
     local action="${1:-}"
 
@@ -1154,6 +1908,9 @@ main() {
             ;;
         status)
             [[ "$#" -eq 1 ]] || { usage; exit 1; }
+            # Informational only (stderr keeps the key=value stream the
+            # controller parses unchanged); status never refuses on the fence.
+            if fenced_by_valkey_restore; then echo "A Valkey restore fence is active ($VR_MARKER); the backend is expected to be stopped." >&2; fi
             status_release
             ;;
         deploy)
@@ -1183,6 +1940,10 @@ main() {
         stop)
             [[ "$#" -eq 1 ]] || { usage; exit 1; }
             stop_release
+            ;;
+        valkey-restore)
+            [[ "$#" -ge 2 && "$#" -le 3 ]] || { usage; exit 1; }
+            valkey_restore "${@:2}"
             ;;
         *)
             usage

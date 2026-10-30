@@ -15,6 +15,7 @@ readonly APPROVED_DB_REF_HASH_FILE="$STATE_ROOT/approved-production-db-ref.sha25
 readonly APPROVED_PUBLIC_ROUTING_FILE="$STATE_ROOT/approved-public-routing.sha256"
 readonly AUTOMATION_AUTHORITY_FILE="$STATE_ROOT/automatic-deploy-authority"
 readonly ACTIVE_EXPIRY_FILE="$STATE_DIRECTORY/temporary-active-expiry"
+readonly VALKEY_RESTORE_MARKER="$STATE_DIRECTORY/valkey-restore-fence"
 readonly DEPLOY_USER="babyjamjam-ci-deployer"
 readonly PUBLIC_API_HOST="api.babyjamjam.com"
 readonly SHA_PATTERN='^[0-9a-f]{40}$'
@@ -91,6 +92,14 @@ require_automation_authority() {
         || die "Automatic Fallback deployment authority is invalid."
 }
 
+# A fenced Valkey restore (operator `valkey-restore`) leaves this marker until
+# the restored dataset is verified and the API reopened. An automatic `main`
+# deployment must not recreate the API against a half-restored Valkey.
+require_no_valkey_restore_fence() {
+    [[ ! -e "$VALKEY_RESTORE_MARKER" && ! -L "$VALKEY_RESTORE_MARKER" ]] \
+        || die "A Valkey restore fence is active ($VALKEY_RESTORE_MARKER); an automatic replacement must not start the API. Finish or abort the fenced restore on the host first."
+}
+
 validated_status() {
     local output
     validate_protected_file "$OPERATOR" 750
@@ -163,6 +172,7 @@ replace_release() {
     local before_status after_status backup
     [[ "$commit_sha" =~ $SHA_PATTERN && "$image_digest" =~ $DIGEST_PATTERN ]] \
         || die "The requested Fallback release identity is invalid."
+    require_no_valkey_restore_fence
     require_automation_authority
     require_fallback_route
     before_status="$(validated_status)"
