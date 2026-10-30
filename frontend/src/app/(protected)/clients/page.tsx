@@ -1084,11 +1084,6 @@ export default function ClientsPage() {
                                 </AlertDescription>
                             </Alert>
                         ) : null}
-                        {directory.isEndOfList && clients.length > 0 ? (
-                            <span data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_end-of-list">
-                                모든 검색 결과를 불러왔어요.
-                            </span>
-                        ) : null}
 	                        </div>
 	                </ListPanel>
 
