@@ -1,5 +1,7 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { Logger } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 import {
     entityChangeEventBus,
@@ -7,16 +9,27 @@ import {
     type EntityChangeKind,
 } from "application/services/entity-change-event-bus.service";
 import { tenantContextStore } from "../tenant/tenant-context.store";
+import { isEntityChangeHintsSuppressed } from "./entity-change-suppression";
 
 /**
  * Prisma Client extension that tells the realtime stream "a watched entity changed". Chained
  * after `tenantIsolationExtension()` in `database.module.ts`. It only emits a coalesced hint
  * (see `EntityChangeEventBus`); clients refetch, so no row data leaves this file.
+ *
+ * Only committed writes are announced: a write inside a `$transaction` is buffered and handed to
+ * the bus after the transaction commits, and dropped if it rejects (see `runInEntityChangeScope`).
+ * Writes wrapped in `withoutEntityChangeHints` are never announced.
  */
 
 const logger = new Logger("EntityChangeExtension");
 
-/** Prisma model names (== table names; the schema has no `@@map`) to the kind clients refetch. */
+type EntityChangeBus = { emit(input: EntityChangeInput): void };
+
+/**
+ * Prisma model names (== table names) to the kind clients refetch. The schema has exactly one
+ * `@@map` - `message_trigger_rule_branch_override`, mapping to its own name - so a model name is
+ * always the physical table name and the raw-SQL table matching below holds.
+ */
 export const ENTITY_KIND_BY_MODEL: Readonly<Record<string, EntityChangeKind>> = {
     client: "client",
     employee: "employee",
@@ -143,6 +156,70 @@ function resolveBranchIds(model: string, operation: string, result: unknown): Ar
     return [tenantContextStore.get()?.branchId ?? null];
 }
 
+/** One resolved write waiting for its transaction to settle. Branches are resolved at write time. */
+interface PendingEmission {
+    bus: EntityChangeBus;
+    branchIds: Array<string | null>;
+    kinds: EntityChangeKind[];
+}
+
+interface TransactionScope {
+    /** Set once the transaction committed or rejected; a write arriving later no longer waits. */
+    settled: boolean;
+    pending: PendingEmission[];
+}
+
+/**
+ * The transaction a write belongs to, carried by AsyncLocalStorage because the `query` hooks get no
+ * transaction handle (and Prisma's `__internalParams` is deliberately not used). Everything
+ * awaited inside the callback of `$transaction` - and everything a batch `$transaction([...])`
+ * executes - inherits the scope, so the hooks can tell "inside a transaction" from "outside".
+ *
+ * Classification is by async context, not by client: a write issued through the ROOT client from
+ * inside a transaction callback runs on its own connection and commits immediately, but is still
+ * classified as part of the surrounding transaction. Its hint therefore waits for that
+ * transaction to settle, and is lost if the transaction rolls back. That errs towards a missed
+ * refetch only for code that bypasses the `tx` handle on purpose; the alternative, emitting on
+ * rollback, would re-introduce the false hints this scope exists to remove. A separate
+ * `$transaction` started inside the callback opens its own scope and flushes on its own commit.
+ */
+const transactionScopeStore = new AsyncLocalStorage<TransactionScope>();
+
+/**
+ * Runs `run` (a `$transaction` call) in a fresh scope: hints raised by writes inside are held,
+ * flushed in write order once `run` resolves (= committed), and discarded if it rejects. The
+ * result or error of `run` is passed through unchanged.
+ */
+export async function runInEntityChangeScope<T>(run: () => Promise<T>): Promise<T> {
+    const scope: TransactionScope = { settled: false, pending: [] };
+    let result: T;
+    try {
+        result = await transactionScopeStore.run(scope, run);
+    } catch (error) {
+        scope.settled = true;
+        scope.pending = [];
+        throw error;
+    }
+    scope.settled = true;
+    const committed = scope.pending;
+    scope.pending = [];
+    for (const { bus, branchIds, kinds } of committed) safeEmit(bus, branchIds, kinds);
+    return result;
+}
+
+/** Suppressed writes emit nothing; writes in an open transaction wait for it; the rest emit now. */
+function emitOrBuffer(bus: EntityChangeBus, branchIds: Array<string | null>, kinds: EntityChangeKind[]): void {
+    if (isEntityChangeHintsSuppressed()) return;
+    const scope = transactionScopeStore.getStore();
+    // A write that outlived its transaction (e.g. a detached root-client write) completed after the
+    // flush, so there is nothing left to wait for.
+    if (scope !== undefined && !scope.settled) {
+        scope.pending.push({ bus, branchIds, kinds });
+        return;
+    }
+    safeEmit(bus, branchIds, kinds);
+}
+
 /** Emitting must never fail or slow the write it reports on. */
 function safeEmit(bus: { emit(input: EntityChangeInput): void }, branchIds: Array<string | null>, kinds: Iterable<EntityChangeKind>): void {
     try {
@@ -155,8 +232,6 @@ function safeEmit(bus: { emit(input: EntityChangeInput): void }, branchIds: Arra
         logger.warn(`entity-change emit failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
-
-type EntityChangeBus = { emit(input: EntityChangeInput): void };
 
 /** Exported (like `handleModelOperation`) so tests can drive it with a stubbed `query`. */
 export async function handleEntityModelOperation(
@@ -181,7 +256,7 @@ export async function handleEntityModelOperation(
 
     try {
         if (changedSomething(operation, result)) {
-            safeEmit(bus, resolveBranchIds(model as string, operation, result), [kind]);
+            emitOrBuffer(bus, resolveBranchIds(model as string, operation, result), [kind]);
         }
     } catch (error) {
         logger.warn(`entity-change resolve failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -308,7 +383,7 @@ export async function handleEntityRawOperation(
             // A shared (branch-less) table must reach every branch even when the statement ran in
             // one branch's context; branch-owned kinds in the same statement keep the tenant branch.
             for (const [kind, { global }] of kinds) {
-                safeEmit(bus, [global ? null : tenantBranch], [kind]);
+                emitOrBuffer(bus, [global ? null : tenantBranch], [kind]);
             }
         }
     } catch (error) {
@@ -317,9 +392,32 @@ export async function handleEntityRawOperation(
     return result;
 }
 
-export function entityChangeExtension(bus: EntityChangeBus = entityChangeEventBus) {
+type TransactionRunner = (this: unknown, ...args: unknown[]) => Promise<unknown>;
+
+/**
+ * Prisma's own `$transaction`, i.e. the method the client-level override below replaces. Calling it
+ * with `this` = the extended client keeps the tx client (and so every extension hook) intact; the
+ * extended client exposes no "previous" method to call instead.
+ */
+const prismaTransaction = PrismaClient.prototype.$transaction as unknown as TransactionRunner;
+
+/**
+ * `runTransaction` is a seam for tests (the engine needs a database to open a transaction); the
+ * default is Prisma's own `$transaction`.
+ */
+export function entityChangeExtension(
+    bus: EntityChangeBus = entityChangeEventBus,
+    runTransaction: TransactionRunner = prismaTransaction,
+) {
     return Prisma.defineExtension({
         name: "entity-change",
+        client: {
+            // Wraps every `$transaction` call site (interactive and batch; options pass through) so
+            // the hints of its writes are held until it commits. Callers do not change.
+            async $transaction(this: unknown, ...args: unknown[]) {
+                return runInEntityChangeScope(() => runTransaction.apply(this, args));
+            },
+        },
         query: {
             $allModels: {
                 async $allOperations({ model, operation, args, query }) {

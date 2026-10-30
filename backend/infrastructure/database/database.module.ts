@@ -30,7 +30,8 @@ export function createExtendedPrismaService(): PrismaService {
     const base = new PrismaService();
     // Order matters for the wiring spec: tenant isolation first, then the (read-only observer)
     // entity-change hint, which reuses the process-wide bus singleton rather than injecting one
-    // (see entity-change-event-bus.service.ts).
+    // (see entity-change-event-bus.service.ts). It also wraps `$transaction` (client component of
+    // the same extension, so the chain stays two entries) to announce only committed writes.
     return base
         .$extends(tenantIsolationExtension())
         .$extends(entityChangeExtension()) as unknown as PrismaService;
