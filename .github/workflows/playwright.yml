@@ -20,7 +20,8 @@ jobs:
     if: ${{ !cancelled() && (needs.impact.result != 'success' || needs.impact.outputs.frontend == 'true' || needs.impact.outputs.backend == 'true') }}
     name: frontend auth lifecycle · real backend
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    # pinned: Playwright (@playwright/test 1.58.2 per pnpm-lock.yaml) does not support ubuntu 26.04 (ubuntu-latest); revert to ubuntu-latest once Playwright supports the newer image.
+    runs-on: ubuntu-24.04
     env:
       CI: true
       BASE_URL: http://localhost:3000
