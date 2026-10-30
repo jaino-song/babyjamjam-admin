@@ -254,6 +254,9 @@ describeReal("completion claim vs concurrent claims and void (real PostgreSQL)",
                 allowReadySameVersionRepair: false,
                 syncedAt: newer,
             });
+            // Prove the newer UPDATE has reached Postgres' lock queue before
+            // starting the stale one; promise creation order is not DB order.
+            await waitUntilLocked(raw, EFORMSIGN_DOC_UPDATE, 1);
             const staleWrite = mirrorRepository.saveDetail({
                 documentId: doc.documentId,
                 detailPayload: { marker: "si-detail-stale" } as never,

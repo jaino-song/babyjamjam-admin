@@ -97,12 +97,14 @@ describeReal("eformsign status alias normalization (real PostgreSQL)", () => {
             statusDetail: "서명 요청됨",
         });
         try {
-            await raw.eformsign_doc.update({
-                where: { documentId: doc.documentId },
-                data: { statusType: "50" },
-            });
-        } catch {
-            return; // A CHECK (or equivalent) rejected the alias: the guard holds.
+            await raw.$executeRaw`
+                UPDATE eformsign_doc SET status_type = '50' WHERE document_id = ${doc.documentId}
+            `;
+        } catch (error) {
+            // P2010 wraps PostgreSQL's CHECK violation. An unrelated database
+            // error must not count as evidence that the intended CHECK exists.
+            expect(error).toMatchObject({ code: "P2010", meta: { code: "23514" } });
+            return;
         }
         throw new Error(
             "SI-CONTRACT-07: the database accepted a legacy alias status_type ('50') on eformsign_doc — no CHECK constraint guards the column",

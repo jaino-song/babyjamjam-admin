@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider, type QueryKey } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import * as fs from "fs";
-import * as path from "path";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import type { PropsWithChildren } from "react";
 
 import type { EformsignLinkConfirmation } from "@/services/eformsign";
 import { eformsignApi } from "@/services/api";
 import { clientKeys } from "@/features/clients/hooks/keys";
+import { clientsApi } from "@/features/clients/api/clients.api";
+import { useDeleteEformsignDocument } from "@/hooks/useEformsignDocuments";
+import { useEnqueueEformsignDocumentFinalization } from "@/hooks/useEformsignDocumentJobs";
 import { queryKeyRootsForKinds } from "@/lib/realtime/entity-query-keys";
 
 import { ContractLinkConfirmDialog } from "@/components/app/clients/ContractLinkConfirmDialog";
@@ -55,24 +57,34 @@ function knownDefect(id: string, title: string, body: IntegrityTestBody, expecte
     });
 }
 
-jest.mock("@/features/clients/hooks/use-clients", () => ({
-    useUpdateClient: () => ({ mutateAsync: mockUpdateMutateAsync }),
+jest.mock("@/features/clients/api/clients.api", () => ({
+    clientsApi: { update: jest.fn() },
 }));
 
-jest.mock("@/services/api", () => ({
-    eformsignApi: {
-        adoptDocument: jest.fn(),
-        getLinkConfirmations: jest.fn(),
-    },
-}));
+jest.mock("@/services/api", () => {
+    const actual = jest.requireActual("@/services/api");
+    return {
+        ...actual,
+        eformsignApi: {
+            ...actual.eformsignApi,
+            adoptDocument: jest.fn(),
+            getLinkConfirmations: jest.fn(),
+            deleteDocument: jest.fn(),
+            enqueueDocumentFinalization: jest.fn(),
+        },
+    };
+});
 
-const mockUpdateMutateAsync = jest.fn();
 const adoptDocument = eformsignApi.adoptDocument as jest.Mock;
 
 beforeEach(() => {
     jest.clearAllMocks();
-    mockUpdateMutateAsync.mockResolvedValue({});
+    (clientsApi.update as jest.Mock).mockResolvedValue({ data: { id: 7 } });
     adoptDocument.mockResolvedValue({ documentId: "doc-1" });
+    (eformsignApi.deleteDocument as jest.Mock).mockResolvedValue({});
+    (eformsignApi.enqueueDocumentFinalization as jest.Mock).mockResolvedValue({
+        jobId: "job-1", status: "queued", existing: false,
+    });
 });
 
 describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () => {
@@ -152,45 +164,72 @@ describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () =
                     />
                 </QueryClientProvider>,
             );
-            fireEvent.click(screen.getByRole("radio", { name: "계약서: 박계약" }));
-            fireEvent.click(screen.getByRole("radio", { name: "계약서: 1990-01-02" }));
+            // Keep the client values: no updateClient mutation can supply the
+            // clients invalidation that this control attributes to adoption.
+            fireEvent.click(screen.getByRole("radio", { name: "고객 정보: 김고객" }));
+            fireEvent.click(screen.getByRole("radio", { name: "고객 정보: 1991-03-04" }));
             fireEvent.click(screen.getByRole("button", { name: "확정" }));
 
             await waitFor(() => expect(invalidations.some((key) => key[0] === "clients")).toBe(true));
+            expect(clientsApi.update).not.toHaveBeenCalled();
+            expect(adoptDocument).toHaveBeenCalledWith("doc-1", 7);
             expect(invalidations.some((key) => key[0] === "eformsign-documents")).toBe(true);
             cleanup();
         },
     );
 
-    knownDefect(
-        "SI-CONTRACT-08",
-        "the contracts-page mutations that change contract state invalidate the clients root too (relation-page mutation half of the hypothesis)",
-        async () => {
-            // The contracts page owns the document-state mutations that the
-            // link-confirmation dialog does not cover (re-request, staff
-            // completion/job enqueue, delete, client register). Their cleanups
-            // refresh the documents cache; the client list that renders the
-            // derived contract state must be refreshed by the same cleanup.
-            const source = fs.readFileSync(
-                path.resolve(__dirname, "../../app/(protected)/contracts/page.tsx"),
-                "utf8",
-            );
-
-            // Scan precondition: this really is the page with its mutation
-            // cleanups — otherwise the assertion below is vacuous.
-            expect(source).toMatch(/useMutation/);
-            expect(source).toContain('"eformsign-documents"');
-
-            // The clients-root invalidation the list needs on the same success
-            // path ("clients" literal or the shared clientKeys factory).
-            const refreshesClients = /invalidateQueries\(\{[^}]*queryKey:\s*\[\s*"clients"|clientKeys\./.test(source);
-            if (refreshesClients) {
-                return; // The defect looks fixed — the caller reports RED.
-            }
-            throw new Error(
-                "SI-CONTRACT-08: the contracts-page contract mutations invalidate eformsign-documents but never the clients root (page.tsx carries no clientKeys/[\"clients\"] invalidation), so the client list badges go stale until the next clients-root refetch",
-            );
-        },
-        /never the clients root/,
-    );
+    // Re-request is private page-local useMutation, not one of these hooks.
+    // Register-client is excluded: its real useCreateClient invalidates clients.
+    for (const operation of ["delete", "finalization"] as const) {
+        knownDefect(
+            "SI-CONTRACT-08",
+            `the ${operation} hook invalidates the clients list that renders contract state`,
+            async () => {
+                const queryClient = new QueryClient({
+                    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+                });
+                const key = clientKeys.list({ branchId: "b1", page: 1, limit: 20 });
+                const documentsKey = ["eformsign-documents", "all"] as const;
+                queryClient.setQueryData(key, { data: [{ id: 7, hasSigned: false }] });
+                queryClient.setQueryData(documentsKey, { documents: [], total_rows: 0 });
+                const wrapper = ({ children }: PropsWithChildren) => (
+                    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+                );
+                const { result, unmount } = renderHook(() => ({
+                    deleteDocument: useDeleteEformsignDocument(),
+                    finalizeDocument: useEnqueueEformsignDocumentFinalization(),
+                }), { wrapper });
+                try {
+                    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
+                    await act(async () => {
+                        if (operation === "delete") {
+                            await result.current.deleteDocument.mutateAsync("doc-1");
+                        } else {
+                            await result.current.finalizeDocument.mutateAsync({
+                                requestKey: "request-1", documentId: "doc-1",
+                            });
+                        }
+                    });
+                    if (operation === "delete") {
+                        expect(eformsignApi.deleteDocument).toHaveBeenCalledWith("doc-1");
+                    } else {
+                        expect(eformsignApi.enqueueDocumentFinalization).toHaveBeenCalledWith({
+                            requestKey: "request-1", documentId: "doc-1",
+                        });
+                    }
+                    // This passing control proves the real mutation's cleanup
+                    // ran before the clients-state assertion, not just HTTP.
+                    expect(queryClient.getQueryState(documentsKey)?.isInvalidated).toBe(true);
+                    expect(queryClient.getQueryState(key)).toBeDefined();
+                    if (!queryClient.getQueryState(key)?.isInvalidated) {
+                        throw new Error(`SI-CONTRACT-08: ${operation} succeeded but the clients list query was NOT invalidated`);
+                    }
+                } finally {
+                    unmount();
+                    queryClient.clear();
+                }
+            },
+            `SI-CONTRACT-08: ${operation} succeeded but the clients list query was NOT invalidated`,
+        );
+    }
 });
