@@ -389,7 +389,11 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
 
     const NO_FLAGS = { allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
 
-    function makeTxRepository(currentEnd: Date | null | "missing", flags: Partial<typeof NO_FLAGS> = {}) {
+    function makeTxRepository(
+        currentEnd: Date | null | "missing",
+        flags: Partial<typeof NO_FLAGS> = {},
+        existingItem: { id: string } | null = null,
+    ) {
         const tx = {
             $executeRaw: jest.fn<Promise<number>, [Prisma.Sql]>(async () => 1),
             $queryRaw: jest.fn<Promise<unknown[]>, [Prisma.Sql]>(async () => [{ id: CLIENT }]),
@@ -400,6 +404,8 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
             },
             end_date_review_item: {
                 findMany: jest.fn(async () => []),
+                // The replay pre-read: null = the item for (event, client) does not exist yet.
+                findFirst: jest.fn(async () => existingItem),
                 updateMany: jest.fn(async () => ({ count: 0 })),
                 upsert: jest.fn(async () => ({})),
             },
@@ -429,6 +435,27 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
             },
         });
         expect(tx.end_date_review_item.upsert).toHaveBeenCalledTimes(1);
+        expect(tx.holiday_change_event.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("creates the item exactly once when none exists for the (event, client) pair, reading it branch-pinned first", async () => {
+        const { tx, repository } = makeTxRepository(day("2026-11-13"));
+
+        await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "applied", created: 1, obsoleted: 0 });
+
+        expect(tx.end_date_review_item.findFirst).toHaveBeenCalledWith({
+            where: { changeEventId: EVENT, clientId: CLIENT, branchId: BRANCH },
+            select: { id: true },
+        });
+        expect(tx.end_date_review_item.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("a replay of an already-applied event writes no item and counts none as created, but still marks the event processed", async () => {
+        const { tx, repository } = makeTxRepository(day("2026-11-13"), {}, { id: "existing-item" });
+
+        await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "applied", created: 0, obsoleted: 0 });
+
+        expect(tx.end_date_review_item.upsert).not.toHaveBeenCalled();
         expect(tx.holiday_change_event.update).toHaveBeenCalledTimes(1);
     });
 

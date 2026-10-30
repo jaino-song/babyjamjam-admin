@@ -217,3 +217,130 @@ describe("MessageAutomationActivationService automatic retry rule policy (규칙
         });
     });
 });
+
+describe("MessageAutomationActivationService branch override writes (no-op writes stay quiet)", () => {
+    const branchId = "20000000-0000-4000-8000-000000009701";
+    const ruleId = "30000000-0000-4000-8000-000000009701";
+    const actor = { userId: "10000000-0000-4000-8000-000000009701", globalRole: "owner" };
+    const globalRule = {
+        id: ruleId,
+        branchId: null,
+        name: "Global notice",
+        isActive: true,
+        eventType: "SERVICE_START",
+        offsetType: "BEFORE_DAYS",
+        offsetDays: 1,
+        sendTime: "09:00",
+        recipientType: "CLIENT",
+        templateKey: "SERVICE_INFO",
+        isDefault: false,
+        jobsStale: false,
+        createdAt: new Date("2026-09-16T00:00:00Z"),
+        updatedAt: new Date("2026-09-16T00:00:00Z"),
+    };
+
+    /** `stored` is the branch override row as it exists before the call (undefined = no row). */
+    const build = (stored: { isActive: boolean } | undefined, jobRows: Array<Record<string, unknown>> = []) => {
+        let current = stored;
+        const audit = { append: jest.fn().mockResolvedValue(undefined) };
+        const transaction = {
+            // 1st raw read = lockAutomaticRules, every later one = the job lock inside cancelRuleJobs.
+            $queryRaw: jest.fn().mockResolvedValueOnce([globalRule]).mockResolvedValue(jobRows),
+            system_setting: { findUnique: jest.fn().mockResolvedValue({ value: "true" }) },
+            message_trigger_rule: { findUnique: jest.fn(async () => ({ ...globalRule })) },
+            message_trigger_job: { update: jest.fn().mockResolvedValue(undefined) },
+            message_trigger_rule_branch_override: {
+                // Stateful, like the table: a write is visible to the effective-rule read that follows it.
+                findUnique: jest.fn(async () => (current ? { ...current } : null)),
+                upsert: jest.fn(async ({ create }: { create: { isActive: boolean } }) => {
+                    current = { isActive: create.isActive };
+                }),
+            },
+        };
+        const service = new MessageAutomationActivationService(
+            {} as MessageAutomationDatabase,
+            { runExclusive: jest.fn((_branch, work) => work(transaction)) } as unknown as MessageAutomationBranchLockService,
+            audit as unknown as AdminAuditEventWriter,
+        );
+        return { service, transaction, audit };
+    };
+
+    describe("setGlobalRuleBranchActivation", () => {
+        it("writes nothing when the stored override already equals the target, yet still cancels the rule's jobs", async () => {
+            const { service, transaction } = build({ isActive: false }, [
+                { id: "job-1", status: "pending", cancel_reason: null },
+            ]);
+
+            await service.setGlobalRuleBranchActivation(branchId, ruleId, false, actor);
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).not.toHaveBeenCalled();
+            // cancelRuleJobs still ran: its job lock was read and the pending job was cancelled.
+            expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
+            expect(transaction.message_trigger_job.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("writes the override exactly once and audits the change when the stored value differs", async () => {
+            const { service, transaction, audit } = build({ isActive: true });
+
+            await service.setGlobalRuleBranchActivation(branchId, ruleId, false, actor);
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                where: { branchId_ruleId: { branchId, ruleId } },
+                create: { branchId, ruleId, isActive: false },
+                update: expect.objectContaining({ isActive: false }),
+            }));
+            expect(audit.append).toHaveBeenCalledTimes(1);
+        });
+
+        it("creates the override once when no row exists", async () => {
+            const { service, transaction } = build(undefined);
+
+            await service.setGlobalRuleBranchActivation(branchId, ruleId, true, actor);
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                create: { branchId, ruleId, isActive: true },
+            }));
+        });
+
+        it("writes nothing when re-activating an override that is already on", async () => {
+            const { service, transaction } = build({ isActive: true });
+
+            await service.setGlobalRuleBranchActivation(branchId, ruleId, true, actor);
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("normalizeBranchOff", () => {
+        const run = async (stored: { isActive: boolean } | undefined) => {
+            const { service, transaction } = build(stored);
+            transaction.$queryRaw.mockReset();
+            transaction.$queryRaw.mockResolvedValue([]);
+            await service.normalizeBranchOff(branchId, transaction as never, [globalRule as never]);
+            return transaction;
+        };
+
+        it("does not rewrite a global rule's override that is already off", async () => {
+            const transaction = await run({ isActive: false });
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).not.toHaveBeenCalled();
+        });
+
+        it("turns the override off exactly once when it is missing", async () => {
+            const transaction = await run(undefined);
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                create: { branchId, ruleId, isActive: false },
+            }));
+        });
+
+        it("turns the override off exactly once when it is on", async () => {
+            const transaction = await run({ isActive: true });
+
+            expect(transaction.message_trigger_rule_branch_override.upsert).toHaveBeenCalledTimes(1);
+        });
+    });
+});

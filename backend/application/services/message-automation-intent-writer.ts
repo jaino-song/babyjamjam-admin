@@ -134,23 +134,32 @@ async function persistMessageAutomationIntent(
         });
     }
 
-    await transaction.message_trigger_rule.upsert({
+    // The recovery-marker rule is created once; `update: {}` on an existing row would still read as a
+    // message change to the realtime hint. Keep the upsert for the first creation (a concurrent create
+    // resolves in the database; catching P2002 here would abort the caller's transaction).
+    const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
         where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-        create: {
-            id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
-            branchId: null,
-            name: "메시지 자동화 생성 복구 표식",
-            isActive: false,
-            eventType: MessageTriggerEventType.CLIENT_CREATED,
-            offsetType: MessageTriggerOffsetType.IMMEDIATE,
-            offsetDays: 0,
-            recipientType: MessageTriggerRecipientType.CLIENT,
-            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
-            isDefault: false,
-            jobsStale: false,
-        },
-        update: {},
+        select: { id: true },
     });
+    if (!existingMarkerRule) {
+        await transaction.message_trigger_rule.upsert({
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            create: {
+                id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+                branchId: null,
+                name: "메시지 자동화 생성 복구 표식",
+                isActive: false,
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                isDefault: false,
+                jobsStale: false,
+            },
+            update: {},
+        });
+    }
     const taskAutomationReference = params.taskAutomationReference
         ? JSON.parse(JSON.stringify(params.taskAutomationReference)) as Prisma.InputJsonObject
         : undefined;

@@ -346,7 +346,12 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
 
     async markJobsStale(branchId: string, ruleId: string, transaction?: Prisma.TransactionClient): Promise<void> {
         await (transaction ?? this.prisma).message_trigger_rule.updateMany({
-            where: { id: ruleId, branchId },
+            // `jobsStale: false` keeps an already-stale rule from being rewritten with the same value (the
+            // realtime hint treats any matched row as a change). The `updatedAt` generation fence
+            // (`clearJobsStaleIfUnchanged`) still moves: every caller creates/updates the rule in the same
+            // transaction just before (a Prisma write, which sets `@updatedAt`), so skipping this write
+            // never leaves the fence behind.
+            where: { id: ruleId, branchId, jobsStale: false },
             data: { jobsStale: true },
         });
     }
@@ -357,8 +362,14 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         // flag both the unpinned `where: { id }` lookup and the `branchId: null` create as
         // violations, so this deliberately and explicitly bypasses per-branch isolation for
         // just this upsert. See eslint.system-scope.allowlist.mjs for the matching entry.
-        await runSystemScope(() =>
-            (transaction ?? this.prisma).message_trigger_rule.upsert({
+        await runSystemScope(async () => {
+            const client = transaction ?? this.prisma;
+            // `update: {}` on an existing row still reads as a change to the realtime hint; skip the write
+            // when the rule exists. The upsert stays for the first creation so a concurrent create resolves
+            // in the database (never catch P2002 here: inside a transaction it would abort it).
+            const existing = await client.message_trigger_rule.findUnique({ where: { id: rule.id }, select: { id: true } });
+            if (existing) return;
+            await client.message_trigger_rule.upsert({
                 where: { id: rule.id },
                 create: {
                     id: rule.id,
@@ -377,8 +388,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     retryOnFailure: rule.retryOnFailure,
                 },
                 update: {},
-            }),
-        );
+            });
+        });
     }
 
     async clearJobsStaleIfUnchanged(

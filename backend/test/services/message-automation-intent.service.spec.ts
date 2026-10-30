@@ -8,6 +8,7 @@ import {
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
+import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 
 describe("MessageAutomationIntentService", () => {
     const setup = (schedulerLease: ReturnType<typeof createSchedulerLeaseMock> = createSchedulerLeaseMock()) => {
@@ -43,6 +44,7 @@ describe("MessageAutomationIntentService", () => {
         };
         const transaction = {
             message_trigger_rule: {
+                findUnique: jest.fn().mockResolvedValue(null),
                 upsert: jest.fn().mockResolvedValue(undefined),
             },
             message_trigger_job: {
@@ -1035,5 +1037,62 @@ describe("MessageAutomationIntentService", () => {
         await expect(service.reconcilePendingIntents()).resolves.toBe(0);
 
         expect(prisma.message_trigger_job.findMany).not.toHaveBeenCalled();
+    });
+
+    describe("recovery-marker rule write", () => {
+        const persist = (service: MessageAutomationIntentService, transaction: unknown) =>
+            service.persistClientIntent(transaction as never, {
+                branchId: "branch-1",
+                clientId: 31,
+                includePast: true,
+                suppressGreeting: true,
+                intentAt: new Date("2026-08-20T01:02:03.000Z"),
+            });
+
+        it("does not write the marker rule when it already exists, but still stores the intent", async () => {
+            const { service, transaction } = setup();
+            transaction.message_trigger_rule.findUnique.mockResolvedValue({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+
+            await persist(service, transaction);
+
+            expect(transaction.message_trigger_rule.findUnique).toHaveBeenCalledWith({
+                where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                select: { id: true },
+            });
+            expect(transaction.message_trigger_rule.upsert).not.toHaveBeenCalled();
+            expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("writes the marker rule exactly once when it is missing", async () => {
+            const { service, transaction } = setup();
+            transaction.message_trigger_rule.findUnique.mockResolvedValue(null);
+
+            await persist(service, transaction);
+
+            expect(transaction.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("realtime hint suppression", () => {
+        it("suppresses the hint for the lease claim (claimIntent) but not for the status-changing delete", async () => {
+            const { service, prisma } = setup();
+            const observed: Record<string, boolean> = {};
+            prisma.$queryRaw.mockImplementation(async () => {
+                observed["claim"] = isEntityChangeHintsSuppressed();
+                return [{
+                    id: "intent-1",
+                    scheduled_for: new Date("2026-08-20T01:02:03.000Z"),
+                    updated_at: new Date("2026-08-20T01:02:04.000Z"),
+                }];
+            });
+            // A status-changing write of the same service: deleting the fulfilled intent.
+            prisma.message_trigger_job.deleteMany.mockImplementation(async () => {
+                observed["delete"] = isEntityChangeHintsSuppressed();
+                return { count: 1 };
+            });
+            await expect(service.fulfillEmployeeProfileRefreshIntent({ branchId: "branch-1", employeeId: 31 })).resolves.toBe(true);
+            expect(observed).toEqual({ claim: true, delete: false });
+        });
     });
 });

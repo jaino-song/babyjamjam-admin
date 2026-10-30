@@ -619,6 +619,12 @@ export class AgentAutomationRecordStoreService {
     }
 
     private async ensureInternalRule(tx: Prisma.TransactionClient) {
+        // The `update: {}` upsert still returns the row when it exists, which the realtime hint reads as a
+        // message change. Skip the write once the marker row is there; the upsert below stays for the first
+        // creation so a concurrent create resolves in the database without a P2002 (which would abort the
+        // surrounding transaction and roll back the receipt and records).
+        const existing = await tx.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, select: { id: true } });
+        if (existing) return;
         await tx.message_trigger_rule.upsert({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, update: {}, create: {
             id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, name: "메시지 자동화 생성 복구 표식", isActive: false,
             eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0,

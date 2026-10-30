@@ -467,24 +467,35 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                     obsoleted += result.count;
                 }
                 if (action.createItem) {
-                    await tx.end_date_review_item.upsert({
-                        where: {
-                            changeEventId_clientId: { changeEventId: eventId, clientId: draft.clientId },
-                        },
-                        create: {
-                            changeEventId: eventId,
-                            branchId: draft.branchId,
-                            clientId: draft.clientId,
-                            storedEnd: toDbDate(draft.storedEnd),
-                            recalculatedEnd: toDbDate(draft.recalculatedEnd),
-                            affectedFrom: toDbDate(draft.affectedFrom),
-                            category: draft.category,
-                            reason: draft.reason,
-                        },
-                        // A replay must not reopen or rewrite an item that already exists.
-                        update: {},
+                    // A replay of an already-applied event finds the item and must not write at all: the
+                    // `update: {}` upsert would still return the row, which the realtime hint reads as a
+                    // change. The upsert stays for the first creation so a concurrent create resolves in the
+                    // database (a P2002 caught here would abort this transaction). Branch-pinned read.
+                    const existingItem = await tx.end_date_review_item.findFirst({
+                        where: { changeEventId: eventId, clientId: draft.clientId, branchId: draft.branchId },
+                        select: { id: true },
                     });
-                    created += 1;
+                    if (!existingItem) {
+                        await tx.end_date_review_item.upsert({
+                            where: {
+                                changeEventId_clientId: { changeEventId: eventId, clientId: draft.clientId },
+                            },
+                            create: {
+                                changeEventId: eventId,
+                                branchId: draft.branchId,
+                                clientId: draft.clientId,
+                                storedEnd: toDbDate(draft.storedEnd),
+                                recalculatedEnd: toDbDate(draft.recalculatedEnd),
+                                affectedFrom: toDbDate(draft.affectedFrom),
+                                category: draft.category,
+                                reason: draft.reason,
+                            },
+                            // A replay must not reopen or rewrite an item that already exists.
+                            update: {},
+                        });
+                        // Counts only newly created items; a replay that finds them reports created: 0.
+                        created += 1;
+                    }
                 }
             }
         }
