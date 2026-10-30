@@ -34,8 +34,10 @@ import type { RowTracker } from "./tracker";
  *
  * All generated values are unique per call (UUID suffixes, phone numbers unique
  * per call), so specs can run repeatedly against one database. Each factory
- * registers the created row in the caller's {@link RowTracker}; register parents
- * by creating them first — cleanup deletes children before parents.
+ * registers the created row in the caller's {@link RowTracker}; cleanup deletes
+ * by a fixed FK-safe model rank (see `tracker.ts`), so registration order never
+ * breaks FK safety — factories still take their parents as explicit arguments
+ * so the rows they reference exist before they run.
  */
 export type IntegrityPrisma = PrismaClient | PrismaService;
 
