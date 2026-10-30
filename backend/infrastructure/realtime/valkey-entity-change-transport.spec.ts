@@ -6,7 +6,6 @@ import type { Subscription } from "rxjs";
 import { EntityChangeEventBus } from "application/services/entity-change-event-bus.service";
 import { RealtimeController } from "interface/controllers/realtime.controller";
 import { deriveRealtimeCursorKey } from "./entity-change-cursor-codec";
-import { REALTIME_REPLAY_LIMIT } from "./entity-change-transport";
 import type { DeliveredBatch, TransportSignal } from "./entity-change-transport";
 import { STREAM_ID_COMPARE_LUA, ValkeyEntityChangeTransport } from "./valkey-entity-change-transport";
 
@@ -810,8 +809,9 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         }
 
         it.each<[number, boolean]>([
-            [REALTIME_REPLAY_LIMIT, true],
-            [REALTIME_REPLAY_LIMIT + 1, false],
+            // Literal on purpose: the contract (A6) says 2000 rows, and a fixture derived from the constant would follow it wherever it moved.
+            [2000, true],
+            [2001, false],
         ])("a resume with %i retained rows after the cursor: honoured = %s (the bound is 2000 raw rows)", async (count, honoured) => {
             const token = await tokenAfterFirstBatch();
             await admin.eval(FLOOD, 2, streamKey, `${streamKey}:incarnation`, String(count), "other");
@@ -828,7 +828,7 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
             a.bus.emit({ branchId: "branch-a", kind: "client" });
             await waitFor(() => changes(onB).length === 1, "first batch");
 
-            await admin.eval(FLOOD, 2, streamKey, `${streamKey}:incarnation`, String(REALTIME_REPLAY_LIMIT + 500), "own");
+            await admin.eval(FLOOD, 2, streamKey, `${streamKey}:incarnation`, "2500", "own");
             await waitFor(() => changes(onB).length === 2, "the hint behind the backlog", 15000);
 
             expect(changes(onB)[1]?.data).toEqual({ entities: ["call"] });
@@ -948,6 +948,178 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
                 await admin.call("ACL", "DELUSER", user);
                 await admin.del(key, `${key}:incarnation`);
             }
+        });
+    });
+
+    describe("hints that only the in-process fallback delivered are a gap in the stream", () => {
+        const publisherOf = (t: ReturnType<typeof instance>) => (t.transport as unknown as { publisher: Redis }).publisher;
+        const resetsOf = (received: Received) => received.filter((e) => e.type === "reset").length;
+
+        /** A saved cursor, then the publisher's connection drops and a document hint is published before it is back. */
+        async function cursorThenHintDuringOutage(t: ReturnType<typeof instance>, onT: Received) {
+            t.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onT).length === 1, "first batch");
+            const token = changes(onT)[0]?.id as string;
+            const resets = resetsOf(onT);
+            await pause(40);
+
+            publisherOf(t).disconnect(true);
+            t.bus.emit({ branchId: "branch-a", kind: "document" });
+            await waitFor(() => changes(onT).length === 2, "local delivery of the hint the stream never saw");
+            expect(t.cursorOf(changes(onT)[1]?.id)).toMatch(RING_CURSOR);
+            // Loss, then recovery: two resets, and the stream path is back on the same Valkey runtime.
+            await waitFor(() => resetsOf(onT) >= resets + 2 && t.transport.activeMode === "valkey", "the transport to recover");
+            return token;
+        }
+
+        it("a cursor saved before the publisher dropped is not honoured after the transport recovers on the same Valkey (the hint only the fallback saw)", async () => {
+            const onA = a.subscribe("branch-a");
+            const before = incarnationOf(a.transport.position());
+            const token = await cursorThenHintDuringOutage(a, onA);
+
+            expect(await a.transport.replayAfter(a.cursorOf(token) as string)).toEqual({ honoured: false });
+            const received = await reconnect(a, "branch-a", token);
+            expect([received[0]?.type, received[0]?.data]).toEqual(["ready", { resumed: false }]);
+            expect(changes(received)).toEqual([]);
+            expect(incarnationOf(a.transport.position())).not.toBe(before);
+        });
+
+        it("only one instance fell back: the other instance's clients, holding cursors it issued, are not resumed across the gap either, and its reader is told", async () => {
+            const onA = a.subscribe("branch-a");
+            const onB = b.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "first batch on B");
+            const tokenFromB = changes(onB)[0]?.id as string;
+            const seen = onB.length;
+            await pause(40);
+
+            publisherOf(a).disconnect(true);
+            a.bus.emit({ branchId: "branch-a", kind: "document" });
+            await waitFor(() => changes(onA).length === 2, "local delivery on A");
+            await waitFor(() => a.transport.activeMode === "valkey" && resetsOf(onA) >= 2, "A back on the stream");
+
+            expect(changes(onB)).toHaveLength(1); // B never heard of the document hint, and cannot be resumed across it
+            expect(await b.transport.replayAfter(b.cursorOf(tokenFromB) as string)).toEqual({ honoured: false });
+            const received = await reconnect(b, "branch-a", tokenFromB);
+            expect(received[0]?.data).toEqual({ resumed: false });
+            await waitFor(() => onB.slice(seen).some((e) => e.type === "reset"), "a reset for B's active reader");
+
+            // After the fence everything is one history again: a new token resumes and nothing repeats the fence.
+            const incarnation = incarnationOf(b.transport.position());
+            b.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onB).length === 2, "a batch after the fence");
+            const fresh = changes(onB)[1]?.id as string;
+            b.bus.emit({ branchId: "branch-a", kind: "call" });
+            await waitFor(() => changes(onB).length === 3, "the next batch");
+            const resumed = await reconnect(b, "branch-a", fresh);
+            expect(resumed[0]?.data).toEqual({ resumed: true });
+            expect(changes(resumed).map((e) => e.data)).toEqual([{ entities: ["call"] }]);
+            expect(incarnationOf(a.transport.position())).toBe(incarnation);
+        });
+
+        it("positive control: a drop and recovery with no hint delivered locally keeps the history, and the saved cursor still resumes", async () => {
+            const onA = a.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onA).length === 1, "first batch");
+            const token = changes(onA)[0]?.id as string;
+            const before = incarnationOf(a.transport.position());
+
+            await admin.call("CLIENT", "KILL", "TYPE", "normal", "SKIPME", "yes"); // drops every transport connection
+            await waitFor(() => resetsOf(onA) >= 2, "a reset on loss and another on recovery");
+            await waitFor(() => a.transport.activeMode === "valkey" && b.transport.activeMode === "valkey", "both back on the stream");
+            expect(incarnationOf(a.transport.position())).toBe(before);
+
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onA).length === 2, "a batch after the recovery");
+            const received = await reconnect(b, "branch-a", token);
+            expect(received[0]?.data).toEqual({ resumed: true });
+            expect(changes(received).map((e) => e.data)).toEqual([{ entities: ["message"] }]);
+        });
+
+        it("a hint delivered locally while the fence itself is in flight is covered by a second fence", async () => {
+            const onA = a.subscribe("branch-a");
+            type Settle = (client: Redis, options?: { fence?: boolean }) => Promise<{ incarnation: string }>;
+            const target = a.transport as unknown as { settle: Settle };
+            const realSettle = target.settle.bind(a.transport);
+            const fences: string[] = [];
+            const spy = jest.spyOn(target, "settle").mockImplementation(async (client, options) => {
+                const state = await realSettle(client, options);
+                if (options?.fence) {
+                    fences.push(state.incarnation);
+                    // The first fence has been applied; a hint reaches only local subscribers before the switch back.
+                    if (fences.length === 1) a.transport.publish({ branchId: "branch-a", entities: ["call"] });
+                }
+                return state;
+            });
+            try {
+                publisherOf(a).disconnect(true);
+                a.bus.emit({ branchId: "branch-a", kind: "document" });
+                await waitFor(() => a.transport.activeMode === "valkey" && fences.length >= 2, "the transport to recover through a second fence");
+
+                expect(fences).toHaveLength(2);
+                expect(fences[1]).not.toBe(fences[0]);
+                expect(incarnationOf(a.transport.position())).toBe(fences[1]);
+                expect(changes(onA).map((e) => e.data)).toEqual([{ entities: ["document"] }, { entities: ["call"] }]);
+            } finally {
+                spy.mockRestore();
+            }
+        });
+
+        describe("fallback intervals of one instance", () => {
+            it("an in-process cursor from one fallback interval is refused in a later one (publications between would be skipped); a cursor of the current interval resumes", async () => {
+                const user = `rt${randomBytes(4).toString("hex")}`;
+                const url = new URL(VALKEY_URL as string);
+                url.username = user;
+                url.password = "pw";
+                const key = `${streamKey}:rings`;
+                await admin.call("ACL", "SETUSER", user, "on", ">pw", "~*", "&*", "+@all");
+                const c = instance(url.toString(), key);
+                try {
+                    await waitFor(() => c.transport.activeMode === "valkey", "transport on the stream");
+                    const onC = c.subscribe("branch-a");
+                    c.bus.emit({ branchId: "branch-a", kind: "client" });
+                    await waitFor(() => changes(onC).length === 1, "a batch on the stream");
+                    const streamToken = changes(onC)[0]?.id as string;
+
+                    // Interval 1: INFO refused, so everything is delivered in-process.
+                    await admin.call("ACL", "SETUSER", user, "-info");
+                    await waitFor(() => c.transport.activeMode === "fallback", "the first fallback interval");
+                    c.bus.emit({ branchId: "branch-a", kind: "message" });
+                    await waitFor(() => changes(onC).length === 2, "in-process delivery in interval 1");
+                    const ringOne = changes(onC)[1]?.id as string;
+                    expect(c.cursorOf(ringOne)).toMatch(RING_CURSOR);
+
+                    await admin.call("ACL", "SETUSER", user, "+info");
+                    await waitFor(() => c.transport.activeMode === "valkey", "the stream path to return");
+                    // The cursor taken before interval 1 does not cover its hint, and the retries on the way back did not forget it.
+                    expect(await c.transport.replayAfter(c.cursorOf(streamToken) as string)).toEqual({ honoured: false });
+                    c.bus.emit({ branchId: "branch-a", kind: "inquiry" });
+                    await waitFor(() => changes(onC).length === 3, "a batch published on the stream between the intervals");
+
+                    // Interval 2.
+                    await admin.call("ACL", "SETUSER", user, "-info");
+                    await waitFor(() => c.transport.activeMode === "fallback", "the second fallback interval");
+                    c.bus.emit({ branchId: "branch-a", kind: "document" });
+                    await waitFor(() => changes(onC).length === 4, "in-process delivery in interval 2");
+                    const ringTwo = changes(onC)[3]?.id as string;
+                    c.bus.emit({ branchId: "branch-a", kind: "call" });
+                    await waitFor(() => changes(onC).length === 5, "a second in-process batch in interval 2");
+                    expect(c.transport.activeMode).toBe("fallback");
+
+                    // Interval 1's cursor skipped the stream publication of `inquiry`: refused.
+                    const stale = await reconnect(c, "branch-a", ringOne);
+                    expect([stale[0]?.type, stale[0]?.data]).toEqual(["ready", { resumed: false }]);
+                    expect(changes(stale)).toEqual([]);
+                    // This interval's own cursor is honoured and replays what followed it.
+                    const current = await reconnect(c, "branch-a", ringTwo);
+                    expect(current[0]?.data).toEqual({ resumed: true });
+                    expect(changes(current).map((e) => e.data)).toEqual([{ entities: ["call"] }]);
+                } finally {
+                    c.destroy();
+                    await admin.call("ACL", "DELUSER", user);
+                    await admin.del(key, `${key}:incarnation`);
+                }
+            });
         });
     });
 
@@ -1092,10 +1264,17 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         await waitFor(() => a.transport.activeMode === "valkey", "A back on the stream");
         expect(onA.filter((e) => e.type === "reset").length).toBeGreaterThanOrEqual(2);
 
+        // A delivered a hint only locally, so on its way back it fenced: B's reader finds a new generation and tells its
+        // connections to start over. Whether B still sees the batch published right after that, or the reset's position
+        // already covers it, depends on which of the two it reads first; both are correct, so the check is on what follows.
         a.bus.emit({ branchId: "branch-a", kind: "message" });
-        await waitFor(() => changes(onB).length === 1 && changes(onA).length === 2, "delivery on the stream path again");
+        await waitFor(() => changes(onA).length === 2, "delivery on the stream path again");
         expect(a.cursorOf(changes(onA)[1]?.id)).toMatch(STREAM_CURSOR);
-        expect(b.cursorOf(changes(onB)[0]?.id)).toBe(a.cursorOf(changes(onA)[1]?.id));
+        await waitFor(() => onB.some((e) => e.type === "reset"), "B's reset for the new generation");
+
+        a.bus.emit({ branchId: "branch-a", kind: "call" });
+        await waitFor(() => changes(onA).length === 3 && JSON.stringify(changes(onB).at(-1)?.data) === JSON.stringify({ entities: ["call"] }), "the next batch on both");
+        expect(b.cursorOf(changes(onB).at(-1)?.id)).toBe(a.cursorOf(changes(onA)[2]?.id));
     });
 
     it("closes its Valkey connections on destroy", async () => {

@@ -49,6 +49,8 @@ interface SettleOptions {
     append?: string[];
     /** Also return up to `count` rows strictly after the raw stream id `after`. */
     range?: { after: string; count: number };
+    /** Force a new incarnation (mode "4"): every cursor issued so far stops being honoured, on every instance. */
+    fence?: boolean;
 }
 
 /**
@@ -106,7 +108,12 @@ end
  * (in-process delivery, `reset`, resumed:false) rather than as proof of anything. Production uses
  * the default user.
  *
- * KEYS = [stream, record]; ARGV = [candidate incarnation, mode "0" settle | "1" append | "3" range,
+ * Mode "4" (fence) mints unconditionally. It is how an instance that delivered hints only locally while it
+ * could not reach this Valkey (see `ValkeyEntityChangeTransport.recover`) tells every instance's clients that
+ * their cursors no longer cover everything: the stream never saw those hints, so a cursor taken before them
+ * must not resume across the gap.
+ *
+ * KEYS = [stream, record]; ARGV = [candidate incarnation, mode "0" settle | "1" append | "3" range | "4" fence,
  * maxLen, range-after id, range count, ...entry fields]. Needs both keys on one node (a Cluster
  * deployment would need a hash tag). Reply: [ "ok", incarnation, last-generated-id, length,
  * entries-added, recorded-first-entry-id, max-deleted-entry-id, rows ] or [ "unavailable", reason ].
@@ -167,7 +174,9 @@ local function mint()
 end
 
 local newGeneration
-if not inc or not f or (st ~= 'o' and st ~= 'w') or not H or not string.match(H, '^%d+-%d+$') then
+if mode == '4' then
+  newGeneration = true
+elseif not inc or not f or (st ~= 'o' and st ~= 'w') or not H or not string.match(H, '^%d+-%d+$') then
   newGeneration = true
 elseif f ~= F then
   newGeneration = true
@@ -226,14 +235,23 @@ return { 'ok', inc, s.last, tostring(s.len), tostring(s.added), s.firstRecorded,
  * Valkey is optional and must never take the app down or block a write: when it fails, the
  * transport falls back to an in-process ring (delivering the batch that could not be published
  * locally), tells every open connection to `reset`, and switches back — with another `reset`,
- * because the cursors change id space — once the connections are healthy again. The reader also
- * resets connections when it finds it can no longer vouch for continuity (retention overran it, or
- * the generation changed: the stream was recreated, restored or failed over).
+ * because the cursors change id space — once the connections are healthy again. A hint delivered
+ * only locally is a hole in the stream every other client's cursor would silently skip, so before
+ * the stream path is re-enabled such an instance fences: it forces a new incarnation, which no
+ * older cursor (on any instance) survives. Each fallback interval also gets its own ring epoch, so
+ * an in-process cursor is never honoured across two separate intervals (the stream publications in
+ * between would be skipped). A recovery without any locally delivered hint fences nothing and
+ * cursors keep resuming across it.
+ *
+ * The reader also resets connections when it finds it can no longer vouch for continuity (retention
+ * overran it, or the generation changed: the stream was recreated, restored or failed over, or
+ * another instance fenced).
  */
 export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     private readonly logger = new Logger(ValkeyEntityChangeTransport.name);
     private readonly subject = new Subject<TransportSignal>();
-    private readonly fallback: RealtimeRingBuffer;
+    /** The in-process ring of the current fallback interval; a fresh one (new epoch) for every interval. */
+    private fallback: RealtimeRingBuffer;
     private readonly publisher: Redis;
     private readonly reader: Redis;
     private readonly busSubscription: Subscription;
@@ -245,6 +263,8 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     private readonly blockMs: number;
 
     private mode: Mode = "fallback";
+    /** Hints delivered to local subscribers only (never on the stream) since the last successful fence. */
+    private localHints = 0;
     private lastDelivered = "0-0";
     private incarnation = "";
     private closed = false;
@@ -355,13 +375,16 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
             await this.settle(this.publisher, { append: encodeBatchFields(event) });
         } catch (error) {
             if (this.closed) return;
-            // The batch is not on the stream, so this instance's own clients must still hear about it.
-            this.deliverLocally(event);
+            // The batch is not on the stream, so this instance's own clients must still hear about it. The
+            // interval starts first, so the hint lands in the new ring (after the reset) and not in a stale one.
             this.enterFallback(error);
+            this.deliverLocally(event);
         }
     }
 
     private deliverLocally(event: EntityChangedEvent): void {
+        // No other instance will ever see this hint: `recover` has to fence before the stream is used again.
+        this.localHints += 1;
         this.subject.next(this.fallback.append(event));
     }
 
@@ -396,7 +419,23 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
         // Start from the newest id, never `$`: `$` is resolved by the server at read time, so entries
         // added between this call and the read would be skipped, and the id handed to clients as the
         // "current position" would not be where the reader actually starts.
-        const state = await this.settle(this.publisher);
+        //
+        // Hints that only local subscribers heard (delivered while this instance could not publish) are missing
+        // from the stream, so any cursor issued before them, on any instance, would resume across the gap and
+        // never learn of them. Before the stream path is back, force a new incarnation. If the fence fails we
+        // stay in fallback (the error propagates) and the next attempt fences again, because `localHints` is
+        // only cleared below. A hint delivered locally while the fence was in flight is not covered by it, so
+        // the check and the switch to "valkey" happen with no await in between, and the fence repeats until
+        // nothing slipped through. A recovery with no such hint mints nothing (healthy restarts and brief
+        // blips keep resuming).
+        let state: StreamState;
+        for (;;) {
+            const unfenced = this.localHints;
+            state = await this.settle(this.publisher, unfenced > 0 ? { fence: true } : {});
+            if (this.closed) return;
+            if (this.localHints === unfenced) break;
+        }
+        this.localHints = 0;
         this.incarnation = state.incarnation;
         this.lastDelivered = state.lastGeneratedId;
         this.mode = "valkey";
@@ -466,6 +505,9 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
         }
         if (this.mode === "fallback") return;
         this.mode = "fallback";
+        // A new interval, a new epoch: an in-process cursor from an earlier interval skipped whatever was
+        // published on the stream in between, so it must not be honoured now.
+        this.fallback = new RealtimeRingBuffer(this.maxLen);
         this.subject.next({ type: "reset", position: this.fallback.position() });
     }
 
@@ -486,7 +528,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
             this.streamKey,
             this.incarnationKey,
             randomBytes(8).toString("hex"),
-            options.append ? "1" : options.range ? "3" : "0",
+            options.fence ? "4" : options.append ? "1" : options.range ? "3" : "0",
             String(this.maxLen),
             options.range?.after ?? "0-0",
             String(options.range?.count ?? 0),
