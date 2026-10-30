@@ -18614,14 +18614,6 @@
       "discovery_task_id": "1.1.09"
     },
     {
-      "path": "frontend/tests/contract-creation.headless.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
       "path": "frontend/tests/contract-creation.smoke.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
@@ -18743,14 +18735,6 @@
     },
     {
       "path": "frontend/tests/screenshots/route-manifest.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/staff-finalize.headless.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
       "candidate_count": 0,
