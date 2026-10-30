@@ -14,6 +14,7 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 interface PersistIntentParams {
@@ -138,13 +139,22 @@ async function persistMessageAutomationIntent(
     // reads as a message change to the realtime hint). The first creation is an atomic
     // `createMany({ skipDuplicates })`, i.e. INSERT ... ON CONFLICT DO NOTHING: `upsert({ update: {} })` is a
     // read then an insert in Prisma, so concurrent first creators raise P2002 and abort the caller's
-    // transaction (25P02). A losing creator gets `count: 0`, which is success and emits no hint.
-    const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
-        where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-        select: { id: true },
-    });
-    if (!existingMarkerRule) {
-        await transaction.message_trigger_rule.createMany({
+    // transaction (25P02). `createManyAndReturn` returns only the rows it inserted: a losing creator gets `[]`
+    // (success, no hint), while the real creator gets the row back with `branchId: null`, which the hint reads
+    // as "every branch". A count-only `createMany` would be attributed to the caller's own branch although the
+    // marker is shared, so `select` keeps `branchId`.
+    // Only these two statements run in system scope: the marker is a fixed-id, branchless row written lazily
+    // from inside a branch request, which the tenant extension would reject (`branch_mutation`) under enforce
+    // and roll the caller's transaction back. They stay on the caller's `transaction` (see
+    // eslint.system-scope.allowlist.mjs).
+    await runSystemScope(async () => {
+        const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            select: { id: true },
+        });
+        if (existingMarkerRule) return;
+        await transaction.message_trigger_rule.createManyAndReturn({
+            select: { id: true, branchId: true },
             data: [{
                 id: MESSAGE_AUTOMATION_INTENT_RULE_ID,
                 branchId: null,
@@ -160,7 +170,7 @@ async function persistMessageAutomationIntent(
             }],
             skipDuplicates: true,
         });
-    }
+    });
     const taskAutomationReference = params.taskAutomationReference
         ? JSON.parse(JSON.stringify(params.taskAutomationReference)) as Prisma.InputJsonObject
         : undefined;
@@ -179,8 +189,10 @@ async function persistMessageAutomationIntent(
         },
         ...(taskAutomationReference ? { taskAutomationReference } : {}),
     } satisfies Prisma.InputJsonObject;
+    // `branchId` joins the unique `dedupeKey` (Prisma's extended unique where) so the write is branch-pinned
+    // for the tenant extension; every dedupe key already embeds this branch id, so it matches the same row.
     await transaction.message_trigger_job.upsert({
-        where: { dedupeKey: params.dedupeKey },
+        where: { dedupeKey: params.dedupeKey, branchId: params.branchId },
         create: {
             branchId: params.branchId,
             ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,

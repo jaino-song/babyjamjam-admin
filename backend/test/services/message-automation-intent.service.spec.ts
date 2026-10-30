@@ -45,7 +45,7 @@ describe("MessageAutomationIntentService", () => {
         const transaction = {
             message_trigger_rule: {
                 findUnique: jest.fn().mockResolvedValue(null),
-                createMany: jest.fn().mockResolvedValue({ count: 1 }),
+                createManyAndReturn: jest.fn().mockResolvedValue([{ id: "marker", branchId: null }]),
             },
             message_trigger_job: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -82,12 +82,14 @@ describe("MessageAutomationIntentService", () => {
             intentAt,
         });
 
-        expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        expect(transaction.message_trigger_rule.createManyAndReturn).toHaveBeenCalledWith(expect.objectContaining({
             data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID })],
             skipDuplicates: true,
         }));
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
+                // Branch-pinned so the tenant extension accepts it under enforce.
+                where: expect.objectContaining({ branchId: "branch-1" }),
                 create: expect.objectContaining({
                     branchId: "branch-1",
                     clientId: 31,
@@ -143,7 +145,7 @@ describe("MessageAutomationIntentService", () => {
 
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31) },
+                where: { dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31), branchId: "branch-1" },
                 create: expect.objectContaining({
                     branchId: "branch-1",
                     clientId: null,
@@ -181,9 +183,11 @@ describe("MessageAutomationIntentService", () => {
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(2);
         expect(transaction.message_trigger_job.upsert.mock.calls[0]?.[0].where).toEqual({
             dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31),
+            branchId: "branch-1",
         });
         expect(transaction.message_trigger_job.upsert.mock.calls[1]?.[0].where).toEqual({
             dedupeKey: getEmployeeAutomationIntentDedupeKey("branch-1", 31),
+            branchId: "branch-1",
         });
         expect(transaction.message_trigger_job.upsert.mock.calls[1]?.[0].update).toEqual(
             expect.objectContaining({
@@ -1060,7 +1064,7 @@ describe("MessageAutomationIntentService", () => {
                 where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
                 select: { id: true },
             });
-            expect(transaction.message_trigger_rule.createMany).not.toHaveBeenCalled();
+            expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
             expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
         });
 
@@ -1070,18 +1074,20 @@ describe("MessageAutomationIntentService", () => {
 
             await persist(service, transaction);
 
-            expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledTimes(1);
-            expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledWith({
+            expect(transaction.message_trigger_rule.createManyAndReturn).toHaveBeenCalledTimes(1);
+            expect(transaction.message_trigger_rule.createManyAndReturn).toHaveBeenCalledWith({
                 data: [expect.objectContaining({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, isActive: false })],
+                // `branchId` must stay selected: the realtime hint reads the inserted row's null branch to broadcast.
+                select: { id: true, branchId: true },
                 skipDuplicates: true,
             });
             expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
         });
 
-        it("treats a lost marker creation race (count 0) as success and still stores the intent", async () => {
+        it("treats a lost marker creation race (no rows returned) as success and still stores the intent", async () => {
             const { service, transaction } = setup();
             transaction.message_trigger_rule.findUnique.mockResolvedValue(null);
-            transaction.message_trigger_rule.createMany.mockResolvedValue({ count: 0 });
+            transaction.message_trigger_rule.createManyAndReturn.mockResolvedValue([]);
 
             await persist(service, transaction);
 

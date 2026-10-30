@@ -126,7 +126,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             },
             message_trigger_rule: {
                 findUnique: jest.fn().mockResolvedValue(null),
-                createMany: jest.fn().mockResolvedValue({ count: 1 }),
+                createManyAndReturn: jest.fn().mockResolvedValue([{ id: "marker", branchId: null }]),
             },
             message_trigger_job: {
                 upsert: jest.fn().mockResolvedValue(undefined),
@@ -1229,7 +1229,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 autoRegisteredClient: true,
             },
         });
-        expect(transaction.message_trigger_rule.createMany).toHaveBeenCalledTimes(1);
+        expect(transaction.message_trigger_rule.createManyAndReturn).toHaveBeenCalledTimes(1);
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
                 create: expect.objectContaining({
@@ -1627,7 +1627,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
-        expect(transaction.message_trigger_rule.createMany).not.toHaveBeenCalled();
+        expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
     });
@@ -1677,7 +1677,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
-        expect(transaction.message_trigger_rule.createMany).not.toHaveBeenCalled();
+        expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
