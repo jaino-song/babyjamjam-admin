@@ -301,18 +301,27 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         expect(b.cursorOf(atOldest[0]?.id)).toBe(cursors[3]);
     });
 
-    it("a stream trimmed to nothing honours only its newest id", async () => {
+    it("a stream trimmed to nothing proves nothing: no cursor is honoured, not even its newest id", async () => {
+        // An empty stream has no entry left to show which incarnation it belongs to, so after writes the
+        // transport refuses to vouch for it (the decision documented in SETTLE_SCRIPT) and starts a new one.
         const cursors = await seedOnA();
+        const before = incarnationOf(cursors[3] as string);
         await admin.xtrim(streamKey, "MAXLEN", 0);
 
         const older = b.subscribe("branch-a", cursors[2]);
         const newest = b.subscribe("branch-a", cursors[3]);
-        const origin = b.subscribe("branch-a", `0-0@${incarnationOf(b.transport.position())}`);
+        const origin = b.subscribe("branch-a", `0-0@${before}`);
         await waitFor(() => older.length >= 1 && newest.length >= 1 && origin.length >= 1, "ready messages");
 
         expect(older[0]?.data).toEqual({ resumed: false });
         expect(origin[0]?.data).toEqual({ resumed: false });
-        expect(newest[0]?.data).toEqual({ resumed: true });
+        expect(newest[0]?.data).toEqual({ resumed: false });
+
+        // ...and the stream is usable again under the new incarnation.
+        const onA = a.subscribe("branch-a");
+        await waitFor(() => incarnationOf(a.transport.position()) !== before, "a new incarnation after the emptying");
+        a.bus.emit({ branchId: "branch-a", kind: "message" });
+        await waitFor(() => changes(onA).length === 1, "batch on the emptied stream");
     });
 
     it("a cursor from the future of the stream, a ring cursor and a raw (unencrypted) id are not honoured", async () => {
@@ -408,10 +417,11 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
 
         it("tokens issued after the recreation are the current history and still resume", async () => {
             await tokenThenOwnBranchHint();
+            const onA = a.subscribe("branch-a");
             await admin.del(streamKey);
             await admin.xadd(streamKey, "*", "b", "branch-b", "e", '["employee"]');
+            await waitFor(() => onA.some((e) => e.type === "reset"), "the reset that follows the recreation");
 
-            const onA = a.subscribe("branch-a");
             a.bus.emit({ branchId: "branch-a", kind: "message" });
             await waitFor(() => changes(onA).length === 1, "batch after the recreation");
             const freshToken = changes(onA)[0]?.id as string;
@@ -466,15 +476,166 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         });
     });
 
+    describe("identity from evidence in the stream (`g`)", () => {
+        /** A real token for branch-a, then a document hint for branch-a that only the stream knows about. */
+        async function tokenThenOwnBranchHint(): Promise<string> {
+            const onB = b.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "first batch");
+            const token = changes(onB)[0]?.id as string;
+            const before = b.transport.position();
+            a.bus.emit({ branchId: "branch-a", kind: "document" });
+            await waitFor(() => b.transport.position() !== before, "document hint delivered");
+            return token;
+        }
+
+        // One atomic script, so nothing (no reader, no writer) runs in between: the destroyed stream is
+        // recreated and holds MORE entries (3) than the 2 the companion record last saw. Counter growth
+        // used to be taken as proof of identity.
+        const REFILL = `
+            redis.call('DEL', KEYS[1])
+            for i = 1, 3 do
+              redis.call('XADD', KEYS[1], '*', 'b', 'branch-b', 'e', '["employee"]')
+            end
+            return 1
+        `;
+
+        it("an atomic DEL + 3 raw XADD (more entries than recorded) does not honour the old token, and the document hint is not skipped", async () => {
+            const oldToken = await tokenThenOwnBranchHint();
+            const oldInternal = b.cursorOf(oldToken) as string;
+
+            await admin.eval(REFILL, 1, streamKey);
+            expect(await admin.xlen(streamKey)).toBe(3);
+
+            // Straight at the replay path, immediately after the refill...
+            expect(await b.transport.replayAfter(oldInternal)).toEqual({ honoured: false });
+            // ...and through the connection a client would open.
+            const received = await reconnect(b, "branch-a", oldToken);
+            expect([received[0]?.type, received[0]?.data]).toEqual(["ready", { resumed: false }]);
+            expect(changes(received)).toEqual([]);
+        });
+
+        it("the same refill while a reader is live makes the reader send a reset", async () => {
+            const onB = b.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "reader positioned on the stream");
+            const before = incarnationOf(b.transport.position());
+            const seen = onB.length;
+
+            await admin.eval(REFILL, 1, streamKey);
+            await waitFor(() => onB.slice(seen).some((e) => e.type === "reset"), "a reset after the refill");
+
+            const reset = onB.slice(seen).find((e) => e.type === "reset");
+            expect(incarnationOf(b.cursorOf(reset?.id) as string)).not.toBe(before); // a new incarnation
+            expect(onB.slice(seen).filter((e) => e.type === "entity-changed")).toEqual([]);
+            // delivery continues on the new incarnation
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onB).length === 2, "delivery after the reset");
+            expect(changes(onB)[1]?.data).toEqual({ entities: ["message"] });
+        });
+
+        it("a raw entry appended on top of a healthy stream is a foreign writer: reset, old tokens refused, new ones resume", async () => {
+            const oldToken = await tokenThenOwnBranchHint();
+            const onB = b.subscribe("branch-a");
+            const seen = onB.length;
+
+            await admin.xadd(streamKey, "*", "b", "branch-a", "e", '["call"]'); // no `g`
+            await waitFor(() => onB.slice(seen).some((e) => e.type === "reset"), "a reset after the foreign entry");
+            expect(onB.slice(seen).filter((e) => e.type === "entity-changed")).toEqual([]); // the foreign entry is never delivered
+
+            const refused = await reconnect(b, "branch-a", oldToken);
+            expect(refused[0]?.data).toEqual({ resumed: false });
+
+            const onA = a.subscribe("branch-a");
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => changes(onA).length === 1, "batch under the new incarnation");
+            const token = changes(onA)[0]?.id as string;
+            a.bus.emit({ branchId: "branch-a", kind: "call" });
+            await waitFor(() => changes(onA).length === 2, "second batch");
+            const resumed = await reconnect(b, "branch-a", token);
+            expect(resumed[0]?.data).toEqual({ resumed: true });
+            expect(changes(resumed).map((e) => e.data)).toEqual([{ entities: ["call"] }]);
+        });
+
+        it("a replay range that contains an entry without our `g` is not honoured, even when the incarnation record still matches", async () => {
+            const oldToken = await tokenThenOwnBranchHint();
+            const oldInternal = b.cursorOf(oldToken) as string;
+            // Freeze the record so only the per-entry evidence can tell: add a foreign entry at the end of
+            // the range without any reader or writer getting to settle first.
+            await admin.xadd(streamKey, "*", "b", "branch-a", "e", '["call"]');
+            const rows = await admin.xrange(streamKey, `(${oldInternal.split("@")[0]}`, "+");
+            expect(rows.length).toBeGreaterThan(0);
+            expect(await b.transport.replayAfter(oldInternal)).toEqual({ honoured: false });
+        });
+
+        it("fresh origin still resumes (a token taken before the stream existed, once the first batch creates it)", async () => {
+            expect(await admin.exists(streamKey)).toBe(0);
+            const onB = b.subscribe("branch-a");
+            const originToken = onB[0]?.id as string;
+
+            a.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onB).length === 1, "first batch creating the stream");
+            const rows = await admin.xrange(streamKey, "-", "+");
+            expect(rows[0]?.[1]).toContain(incarnationOf(b.transport.position())); // the first entry carries `g`
+
+            const received = await reconnect(b, "branch-a", originToken);
+            expect(received[0]?.data).toEqual({ resumed: true });
+            expect(changes(received).map((e) => e.data)).toEqual([{ entities: ["client"] }]);
+        });
+
+        it("normal trimming of the transport's own entries keeps tokens at or after the oldest retained entry resumable, under the same incarnation", async () => {
+            const cursors = await seedOnA();
+            const before = incarnationOf(cursors[3] as string);
+            await admin.xtrim(streamKey, "MAXLEN", 2); // oldest retained is cursors[2]'s successor, i.e. cursors[2]+1
+            const rows = await admin.xrange(streamKey, "-", "+");
+            expect(rows).toHaveLength(2);
+            const oldestRetained = `${rows[0]?.[0]}@${before}`;
+
+            const atOldest = await reconnect(b, "branch-a", b.transport.cursors.encode(oldestRetained));
+            const atNewest = await reconnect(b, "branch-a", b.transport.cursors.encode(cursors[3] as string));
+            expect(atOldest[0]?.data).toEqual({ resumed: true });
+            expect(atNewest[0]?.data).toEqual({ resumed: true });
+            expect(incarnationOf(b.transport.position())).toBe(before); // trimming alone never rotates
+            expect(changes(atNewest)).toEqual([]);
+        });
+
+        it("a stream written before `g` existed (no record, entries without it): the first transport adopts it, and resumption works from then on", async () => {
+            const legacyKey = `${streamKey}:legacy`;
+            await admin.xadd(legacyKey, "*", "b", "branch-a", "e", '["client"]');
+            await admin.xadd(legacyKey, "*", "b", "branch-a", "e", '["document"]');
+            const c = instance(VALKEY_URL as string, legacyKey);
+            try {
+                await waitFor(() => c.transport.activeMode === "valkey", "transport on the legacy stream");
+                const onC = c.subscribe("branch-a");
+                c.bus.emit({ branchId: "branch-a", kind: "message" });
+                await waitFor(() => changes(onC).length === 1, "first batch of ours");
+                const token = changes(onC)[0]?.id as string;
+                c.bus.emit({ branchId: "branch-a", kind: "call" });
+                await waitFor(() => changes(onC).length === 2, "second batch of ours");
+
+                // The legacy entries still sit at the oldest end of the stream; they must not keep refusing tokens.
+                const received = await reconnect(c, "branch-a", token);
+                expect(received[0]?.data).toEqual({ resumed: true });
+                expect(changes(received).map((e) => e.data)).toEqual([{ entities: ["call"] }]);
+                expect(onC.filter((e) => e.type === "reset")).toEqual([]);
+            } finally {
+                c.destroy();
+                await admin.del(legacyKey, `${legacyKey}:incarnation`);
+            }
+        });
+    });
+
     describe("reader overrunning retention", () => {
         // One atomic script: an own-branch document hint, then 10,200 other-branch batches (the stream trims
         // the hint away), then an own-branch call hint that survives. The reader cannot run in between.
+        // The entries carry the stream's own incarnation (`g`), as a writer of ours would stamp them.
         const OVERRUN = `
-            redis.call('XADD', KEYS[1], '*', 'b', 'branch-a', 'e', '["document"]')
+            local g = redis.call('HGET', KEYS[2], 'inc')
+            redis.call('XADD', KEYS[1], '*', 'b', 'branch-a', 'e', '["document"]', 'g', g)
             for i = 1, 10200 do
-              redis.call('XADD', KEYS[1], 'MAXLEN', '~', '10000', '*', 'b', 'branch-b', 'e', '["employee"]')
+              redis.call('XADD', KEYS[1], 'MAXLEN', '~', '10000', '*', 'b', 'branch-b', 'e', '["employee"]', 'g', g)
             end
-            redis.call('XADD', KEYS[1], 'MAXLEN', '~', '10000', '*', 'b', 'branch-a', 'e', '["call"]')
+            redis.call('XADD', KEYS[1], 'MAXLEN', '~', '10000', '*', 'b', 'branch-a', 'e', '["call"]', 'g', g)
             return 1
         `;
 
@@ -484,7 +645,7 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
             await waitFor(() => changes(onB).length === 1, "reader is positioned on the stream");
             const messagesBefore = onB.length;
 
-            await admin.eval(OVERRUN, 1, streamKey);
+            await admin.eval(OVERRUN, 2, streamKey, `${streamKey}:incarnation`);
             const rows = await admin.xrange(streamKey, "-", "+");
             expect(rows.some(([, fields]) => fields.includes('["document"]'))).toBe(false); // really trimmed away
             await waitFor(() => changes(onB).some((e) => JSON.stringify(e.data) === '{"entities":["call"]}'), "the surviving call batch", 15000);
@@ -536,28 +697,32 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
             expect(seen.map((s) => s.branchId)).toEqual([null, "", "branch-a"]);
             // What is physically on the stream: no `b` field for the broadcast.
             const rows = await admin.xrange(streamKey, "-", "+");
+            // Every entry also carries the incarnation (`g`) that proves it was written by this transport.
+            const g = incarnationOf(b.transport.position());
             expect(rows.map(([, fields]) => fields)).toEqual([
-                ["e", '["settings"]'],
-                ["b", "", "e", '["client"]'],
-                ["b", "branch-a", "e", '["message"]'],
+                ["e", '["settings"]', "g", g],
+                ["b", "", "e", '["client"]', "g", g],
+                ["b", "branch-a", "e", '["message"]', "g", g],
             ]);
         } finally {
             sub.unsubscribe();
         }
     });
 
-    it("skips a malformed entry on the stream instead of delivering or crashing, and keeps reading", async () => {
+    it("skips an entry of ours whose body is malformed instead of delivering or crashing, and keeps reading", async () => {
         const seen: DeliveredBatch[] = [];
         const sub = b.transport.signals$.subscribe((s: TransportSignal) => {
             if (s.type === "batch") seen.push(s);
         });
         try {
-            await admin.xadd(streamKey, "*", "b", "x", "unexpected", "1", "e", '["client"]');
-            await admin.xadd(streamKey, "*", "e", '["not-a-kind"]');
+            const g = incarnationOf(b.transport.position());
+            await admin.xadd(streamKey, "*", "b", "x", "unexpected", "1", "e", '["client"]', "g", g);
+            await admin.xadd(streamKey, "*", "e", '["not-a-kind"]', "g", g);
             a.bus.emit({ branchId: "branch-a", kind: "message" });
             await waitFor(() => seen.length === 1, "the well-formed batch");
 
             expect(seen[0]).toMatchObject({ branchId: "branch-a", entities: ["message"] });
+            expect(incarnationOf(b.transport.position())).toBe(g); // our own bad entries are not a foreign writer
         } finally {
             sub.unsubscribe();
         }
