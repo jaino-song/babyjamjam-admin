@@ -1,11 +1,13 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
+import { EformsignDocumentJobReconciliationService } from "application/services/eformsign-document-job-reconciliation.service";
+import { FetchEformsignDocFromApiUsecase } from "application/usecases/eformsign-doc/fetch-eformsign-doc-from-api.usecase";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG } from "domain/entities/system-setting.entity";
 
-import { createContractDoc } from "./contracts-fixture";
+import { createContractDoc, mirrorDetail } from "./contracts-fixture";
 import { closeIntegrityPrisma, createIntegrityPrisma, describeReal, assertThrowawayTarget, type IntegrityPrisma } from "../helpers/real-db";
 import { invariant } from "../helpers/known-defect";
 import { RowTracker } from "../helpers/tracker";
@@ -156,15 +158,25 @@ describeReal("eformsign document job lifecycle (real PostgreSQL)", () => {
         expect(afterRecovery.status).toBe("queued");
         expect(afterRecovery.leaseToken).toBeNull();
 
-        // The old worker wakes up and tries to complete with its dead lease:
-        // the lease_token predicate must reject the write.
-        expect(await jobRepository.markCompleted(job.id, oldLease!)).toBeNull();
-        expect((await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("queued");
-
-        // Another worker claims the reclaimed job and finishes it.
+        // Another worker claims the reclaimed job and holds a NEW live lease:
+        // now the lease_token predicate is decisive (the status is `processing`
+        // again), and the dead worker's terminal writes must all be rejected.
         const newLease = await claimOnce(job.id);
         expect(newLease).not.toBeNull();
         expect(newLease).not.toBe(oldLease);
+        expect((await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("processing");
+
+        // The expired worker waking up very late: with a live status and a
+        // different lease in charge, markCompleted returns null...
+        expect(await jobRepository.markCompleted(job.id, oldLease!)).toBeNull();
+        // ...as does markFailed with its error path.
+        expect(await jobRepository.markFailed(job.id, oldLease!, "SI_LATE")).toBeNull();
+        // Status and the live lease were untouched by both writes.
+        const stillNewLease = await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } });
+        expect(stillNewLease.status).toBe("processing");
+        expect(stillNewLease.leaseToken).toBe(newLease);
+
+        // The new lease finishes the job.
         expect(await jobRepository.markCompleted(job.id, newLease!, doc.documentId)).not.toBeNull();
         const terminal = await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } });
         expect(terminal.status).toBe("completed");
@@ -200,6 +212,74 @@ describeReal("eformsign document job lifecycle (real PostgreSQL)", () => {
         expect(second.job.id).not.toBe(firstJob.id);
         expect(await raw.eformsign_document_job.count({ where: { documentId: doc.documentId } })).toBe(2);
         await drainJob(second.job.id);
+    });
+
+    invariant("SI-CONTRACT-05", "a claimDue arriving while another transaction holds a queued row skips it (FOR UPDATE SKIP LOCKED) and takes a different job", async () => {
+        // Two queued jobs of two DIFFERENT documents (the same document would
+        // converge on one active job). Any queued job the claim takes must be
+        // driven to terminal before the case ends.
+        const docA = await createContractDoc(handle, tracker, branchId, { clientId: null });
+        const docB = await createContractDoc(handle, tracker, branchId, { clientId: null });
+        const jobA = (
+            await jobService.enqueueFinalizeDocument({
+                branchId,
+                documentId: docA.documentId,
+                requestKey: `si-skip-a-${docA.documentId}`,
+                source: "staff",
+            })
+        ).job;
+        const jobB = (
+            await jobService.enqueueFinalizeDocument({
+                branchId,
+                documentId: docB.documentId,
+                requestKey: `si-skip-b-${docB.documentId}`,
+                source: "staff",
+            })
+        ).job;
+
+        // A separate connection holds the row lock of jobA WITHOUT the
+        // repository's advisory gate, so the next claimDue really reaches its
+        // `FOR UPDATE SKIP LOCKED` scan while jobA's row is locked.
+        const holderConnection = new PrismaClient();
+        await holderConnection.$connect();
+        try {
+            let release!: () => void;
+            let locked!: () => void;
+            const lockedPromise = new Promise<void>((resolve) => {
+                locked = resolve;
+            });
+            const held = holderConnection.$transaction(async (tx) => {
+                await tx.$executeRaw(Prisma.sql`
+                    SELECT id FROM "eformsign_document_job" WHERE id = ${jobA.id}::uuid FOR UPDATE
+                `);
+                locked();
+                await new Promise<void>((resolve) => {
+                    release = resolve;
+                });
+            });
+            // Only start the claim once the row lock of jobA is really held.
+            await lockedPromise;
+
+            const claimed = await jobRepository.claimDue(2);
+            // The locked jobA was skipped, not waited on and not stolen: the
+            // claim only took the unlocked job.
+            expect(claimed.map((row) => row.id)).toEqual([jobB.id]);
+            expect((await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: jobB.id } })).status).toBe("processing");
+            expect((await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: jobA.id } })).status).toBe("queued");
+
+            release();
+            await held;
+
+            // Leave both jobs terminal for the later cases.
+            const leaseB = claimed[0]?.leaseToken ?? "";
+            await jobRepository.markCompleted(jobB.id, leaseB, docB.documentId);
+            const leaseA = await claimOnce(jobA.id);
+            if (leaseA) {
+                await jobRepository.markCompleted(jobA.id, leaseA, docA.documentId);
+            }
+        } finally {
+            await holderConnection.$disconnect();
+        }
     });
 
     invariant("SI-CONTRACT-06", "an auto-finalize failure increments the document attempt counter exactly once per failed job and releases the active key while the budget lasts", async () => {
@@ -264,5 +344,81 @@ describeReal("eformsign document job lifecycle (real PostgreSQL)", () => {
         expect(blocked.existing).toBe(true);
         expect(blocked.job.id).toBe(lastJobId);
         expect(await raw.eformsign_document_job.count({ where: { documentId: doc.documentId } })).toBe(maxAttempts);
+    });
+
+    /** A counted vendor double: records every call, so "no second provider call" is an assertion. */
+    function countingProviderStub(completedUpdatedAt: Date) {
+        const calls = { reads: 0, writes: 0 };
+        const client = {
+            getDocument: async (_token: string, documentId: string) => {
+                calls.reads += 1;
+                return mirrorDetail({ documentId, statusType: "050", updatedDate: completedUpdatedAt });
+            },
+            createDocument: async () => {
+                calls.writes += 1;
+                throw new Error("PROVIDER_WRITE_DURING_RECONCILIATION");
+            },
+        };
+        return { calls, client };
+    }
+
+    invariant("SI-CONTRACT-06", "a crash between the provider finalize and the terminal write is recovered to `reconciling` with an orphan lease, keeps the active key and the attempt budget, and is reconciled without a second provider call", async () => {
+        const doc = await createContractDoc(handle, tracker, branchId, { clientId: null });
+        const job = (
+            await jobService.enqueueFinalizeDocument({
+                branchId,
+                documentId: doc.documentId,
+                requestKey: `si-crash-${doc.documentId}`,
+                source: "auto_finalize",
+            })
+        ).job;
+
+        const crashLease = await claimOnce(job.id);
+        expect(crashLease).not.toBeNull();
+        // The real worker reports the same headless progress steps for
+        // finalize runs; `sent` is the step recorded after the provider send
+        // was accepted. The run then died before markCompleted.
+        expect(await jobRepository.updateProgress(job.id, crashLease!, "sent")).not.toBeNull();
+
+        // Recovery: progress past the requeue fence -> status `reconciling`
+        // with a NEW orphan lease, the active key retained for the document,
+        // and the attempt budget untouched (no failed outcome was recorded).
+        const recovered = await jobRepository.recoverStale(new Date(Date.now() + 60 * 60 * 1000));
+        const recoveredJob = recovered.find((row) => row.id === job.id);
+        expect(recoveredJob?.status).toBe("reconciling");
+        expect(recoveredJob?.leaseToken).not.toBeNull();
+        expect(recoveredJob?.leaseToken).not.toBe(crashLease);
+        expect(recoveredJob?.activeKey).not.toBeNull();
+        expect((await raw.eformsign_doc.findUniqueOrThrow({ where: { documentId: doc.documentId } })).autoFinalizeAttempts).toBe(0);
+
+        // Reconciliation drives the REAL job repository and the REAL provider
+        // read usecase over a counted vendor double: one document read, zero
+        // mutating provider calls, then the terminal write with the orphan lease.
+        const { calls, client } = countingProviderStub(new Date());
+        const reconciliationService = new EformsignDocumentJobReconciliationService(
+            jobRepository,
+            {
+                withCredentials: async (_principal: unknown, _capability: string, fn: (token: { accessToken: string }) => Promise<unknown>) =>
+                    fn({ accessToken: "si-integrity-token" }),
+            } as never,
+            { execute: async () => [] } as never,
+            new FetchEformsignDocFromApiUsecase(client as never),
+            { execute: async () => undefined } as never,
+            undefined,
+            undefined,
+        );
+        const result = await reconciliationService.reconcile(recoveredJob!, { branchId } as never);
+        expect(result.status).toBe("completed");
+        expect(result.documentId).toBe(doc.documentId);
+        expect(calls.reads).toBe(1);
+        expect(calls.writes).toBe(0);
+
+        const done = await raw.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } });
+        expect(done.status).toBe("completed");
+        expect(done.activeKey).toBeNull();
+        expect(done.leaseToken).toBeNull();
+        // The completed reconciliation records no failed attempt: the
+        // counter still says the crash never burned budget.
+        expect((await raw.eformsign_doc.findUniqueOrThrow({ where: { documentId: doc.documentId } })).autoFinalizeAttempts).toBe(0);
     });
 });

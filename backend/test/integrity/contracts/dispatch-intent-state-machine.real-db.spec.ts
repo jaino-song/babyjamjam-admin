@@ -112,29 +112,38 @@ describeReal("eformsign dispatch intent state machine (real PostgreSQL)", () => 
             }
         };
 
-        /** Shares one read-before-write barrier across the two connections. */
+        /**
+         * Shares one read-before-write barrier across BOTH connections (per
+         * connection its first `findFirst` is gated; the waiters and the arrival
+         * count are closed over here so the two wrapped clients coordinate):
+         * each claim's read must observe the untouched row (attemptCount 0)
+         * before either claim proceeds, so only the UPDATE's WHERE clause
+         * decides the winner.
+         */
         const barrierPrisma = (client: PrismaClient): PrismaService => {
-            let armed = true;
+            let firstReadArmed = true;
             const wrapDelegate = (delegate: unknown): unknown => new Proxy(delegate as Record<string, unknown>, {
                 get(inner: Record<string, unknown>, method: string | symbol, receiver: unknown) {
                     if (method !== "findFirst") return Reflect.get(inner, method, receiver);
                     const original = Reflect.get(inner, method, receiver) as (...args: unknown[]) => Promise<unknown>;
                     return async (...args: unknown[]) => {
-                        const row = await original.apply(inner, args);
-                        if (armed) {
-                            armed = false;
+                        const row = await original.apply(inner, args) as { attemptCount: number } | null;
+                        if (firstReadArmed) {
+                            firstReadArmed = false;
                             arrivals += 1;
+                            expect(row).not.toBeNull();
+                            // Both raced claims must read the row the claim CAS
+                            // is about to write: attemptCount is still 0.
+                            expect(row?.attemptCount).toBe(0);
                             if (arrivals < 2) {
-                                // Forced interleaving: hold the first claim's
-                                // read until the second claim's read arrived, so
-                                // both CAS updates see attemptCount 0 and only
-                                // the UPDATE's WHERE clause decides the winner.
+                                // Hold this claim's read until the other claim's
+                                // read arrived on its own connection.
                                 await Promise.race([
                                     new Promise<void>((resolve) => barrierWaiters.push(resolve)),
-                                    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("claim barrier timed out")), 5_000)),
+                                    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("claim barrier timed out")), 10_000)),
                                 ]).catch(() => undefined);
-                                releaseBarrier();
                             }
+                            releaseBarrier();
                         }
                         return row;
                     };
@@ -164,6 +173,8 @@ describeReal("eformsign dispatch intent state machine (real PostgreSQL)", () => 
                 secondRepository.claim(prepared.id, branchId),
             ]);
 
+            // The barrier really engaged on both connections.
+            expect(arrivals).toBe(2);
             expect(first?.intent.attemptCount).toBe(1);
             const winners = [first, second].filter((result) => result?.claimed === true);
             expect(winners.length).toBe(1);
@@ -184,7 +195,7 @@ describeReal("eformsign dispatch intent state machine (real PostgreSQL)", () => 
 
         // A provider attempt still in flight cannot be called not-delivered:
         // that would release the durable claim while the provider may accept.
-        expect(() => boundary.reconcile({
+        await expect(boundary.reconcile({
             intentId,
             branchId,
             actorUserId: "22222222-2222-4222-8222-222222222222",
@@ -219,7 +230,7 @@ describeReal("eformsign dispatch intent state machine (real PostgreSQL)", () => 
         if (!accepted) throw new Error("accepted intent missing");
         const intentId = accepted.id;
 
-        expect(() => boundary.reconcile({
+        await expect(boundary.reconcile({
             intentId,
             branchId,
             actorUserId: "22222222-2222-4222-8222-222222222222",

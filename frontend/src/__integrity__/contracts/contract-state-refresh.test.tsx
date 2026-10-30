@@ -1,5 +1,7 @@
 import { QueryClient, QueryClientProvider, type QueryKey } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import * as fs from "fs";
+import * as path from "path";
 
 import type { EformsignLinkConfirmation } from "@/services/eformsign";
 import { eformsignApi } from "@/services/api";
@@ -158,5 +160,37 @@ describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () =
             expect(invalidations.some((key) => key[0] === "eformsign-documents")).toBe(true);
             cleanup();
         },
+    );
+
+    knownDefect(
+        "SI-CONTRACT-08",
+        "the contracts-page mutations that change contract state invalidate the clients root too (relation-page mutation half of the hypothesis)",
+        async () => {
+            // The contracts page owns the document-state mutations that the
+            // link-confirmation dialog does not cover (re-request, staff
+            // completion/job enqueue, delete, client register). Their cleanups
+            // refresh the documents cache; the client list that renders the
+            // derived contract state must be refreshed by the same cleanup.
+            const source = fs.readFileSync(
+                path.resolve(__dirname, "../../app/(protected)/contracts/page.tsx"),
+                "utf8",
+            );
+
+            // Scan precondition: this really is the page with its mutation
+            // cleanups — otherwise the assertion below is vacuous.
+            expect(source).toMatch(/useMutation/);
+            expect(source).toContain('"eformsign-documents"');
+
+            // The clients-root invalidation the list needs on the same success
+            // path ("clients" literal or the shared clientKeys factory).
+            const refreshesClients = /invalidateQueries\(\{[^}]*queryKey:\s*\[\s*"clients"|clientKeys\./.test(source);
+            if (refreshesClients) {
+                return; // The defect looks fixed — the caller reports RED.
+            }
+            throw new Error(
+                "SI-CONTRACT-08: the contracts-page contract mutations invalidate eformsign-documents but never the clients root (page.tsx carries no clientKeys/[\"clients\"] invalidation), so the client list badges go stale until the next clients-root refetch",
+            );
+        },
+        /never the clients root/,
     );
 });
