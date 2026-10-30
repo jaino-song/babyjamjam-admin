@@ -10,9 +10,9 @@ import { GET, maxDuration } from "../route";
 const mockFetch = jest.fn();
 const originalFetch = global.fetch;
 
-function createRequest(options: { cookie?: boolean; signal?: AbortSignal; headers?: Record<string, string> } = {}): NextRequest {
-  const { cookie = true, signal, headers } = options;
-  return new NextRequest("http://localhost/api/realtime/events", {
+function createRequest(options: { cookie?: boolean; signal?: AbortSignal; headers?: Record<string, string>; search?: string } = {}): NextRequest {
+  const { cookie = true, signal, headers, search = "" } = options;
+  return new NextRequest(`http://localhost/api/realtime/events${search}`, {
     headers: {
       ...(cookie ? { cookie: "auth_token=auth-token" } : {}),
       ...headers,
@@ -89,6 +89,46 @@ describe("GET /api/realtime/events", () => {
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
     expect(response.headers.get("Cache-Control")).toBe("no-cache, no-transform");
     await expect(response.text()).resolves.toBe('event: entity-changed\ndata: {"entities":["client"]}\n\n');
+  });
+
+  describe("resume cursor", () => {
+    const upstreamUrlFor = async (search: string, headers?: Record<string, string>) => {
+      mockFetch.mockResolvedValue(new Response(sseBody(), { status: 200 }));
+      await GET(createRequest({ search, headers }));
+      return mockFetch.mock.calls[0] as [string, RequestInit];
+    };
+
+    it("forwards a valid since as the backend query", async () => {
+      const [url] = await upstreamUrlFor("?since=1730000000000-3");
+      expect(url).toMatch(/\/realtime\/events\?since=1730000000000-3$/);
+    });
+
+    it("forwards an epoch:seq cursor", async () => {
+      const [url] = await upstreamUrlFor(`?since=${encodeURIComponent("e1:42")}`);
+      expect(url).toMatch(/\/realtime\/events\?since=e1%3A42$/);
+    });
+
+    it.each([
+      ["empty", "?since="],
+      ["with a space", "?since=a%20b"],
+      ["too long", `?since=${"x".repeat(65)}`],
+      ["with a slash", "?since=a%2Fb"],
+      ["injecting a parameter", "?since=1%26admin%3D1"],
+    ])("drops a since that is %s", async (_label, search) => {
+      const [url] = await upstreamUrlFor(search);
+      expect(url).toMatch(/\/realtime\/events$/);
+    });
+
+    it("still forwards Last-Event-ID next to since", async () => {
+      const [url, init] = await upstreamUrlFor("?since=9-1", { "Last-Event-ID": "9-0" });
+      expect(url).toMatch(/\/realtime\/events\?since=9-1$/);
+      expect(new Headers(init.headers).get("Last-Event-ID")).toBe("9-0");
+    });
+
+    it("sends no query when there is no since", async () => {
+      const [url] = await upstreamUrlFor("");
+      expect(url).toMatch(/\/realtime\/events$/);
+    });
   });
 
   it("passes only the upstream status when the backend rejects the stream, never its body", async () => {
