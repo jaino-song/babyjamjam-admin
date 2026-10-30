@@ -16,11 +16,11 @@ import { deleteAreaRowsByBranch, wireMessageTriggerService } from "./sms-wiring.
  * `message_trigger_job.rule_id` carries `onDelete: Cascade` (schema.prisma), so
  * a hard rule delete erases every job of the rule — `sent` jobs included. The
  * approved delete path (`deleteIfTargetMatchesAndFenceJobs`) deliberately
- * REFUSES while a sent/processing/dispatching job exists, which is the
- * application's own statement of the invariant under audit: sent-job history
- * survives rule deletion. The plain `MessageTriggerService.deleteRule` path
- * (agent capabilities) cancels pending jobs and then hard-deletes the rule with
- * no such guard.
+ * refuses processing/dispatching jobs and sends with sent_at >= fenceStartedAt,
+ * not older sent history. The plain `MessageTriggerService.deleteRule` path
+ * (agent capabilities) cancels pending jobs and then hard-deletes the rule.
+ * message_log survives via SetNull; dedupe is rule-scoped, so this demonstrates
+ * loss of job history, not loss of the send log or a duplicate send.
  */
 describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;

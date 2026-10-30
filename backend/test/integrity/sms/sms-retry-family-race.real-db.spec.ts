@@ -1,3 +1,4 @@
+import { ConflictException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
@@ -146,6 +147,19 @@ describeReal("SMS concurrent manual retry family (real PostgreSQL)", () => {
                         message: failure.error instanceof Error ? failure.error.message : String(failure.error),
                     })),
                 )}`,
+            );
+        }
+
+        // The loser must surface the catalog conflict (HTTP 409 REQUEST_CONFLICT),
+        // not an unclassified failure such as the P2002 unique-violation the fence
+        // would leak if the family re-read under the advisory lock and the
+        // source-row CAS were removed together: only the calibrated 409 lets the
+        // UI/agent distinguish "someone already retried this" from a crash.
+        const loserError = failed[0]!.error;
+        if (!(loserError instanceof ConflictException) || loserError.getStatus() !== 409) {
+            throw new Error(
+                `the losing retry did not surface ConflictException (409): ` +
+                    `${loserError instanceof Error ? `${loserError.name}: ${loserError.message}` : String(loserError)}`,
             );
         }
 

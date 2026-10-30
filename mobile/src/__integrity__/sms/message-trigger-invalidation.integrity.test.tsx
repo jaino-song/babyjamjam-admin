@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, type UseMutationResult } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { queryRootsForKinds } from "@/lib/realtime/entity-query-keys";
@@ -53,7 +53,6 @@ function knownDefect(id: string, title: string, expectedFailure: RegExp | string
         if (matches) {
             throw thrown; // expected failure — it.failing keeps the suite green
         }
-        // eslint-disable-next-line no-console
         console.error(
             `[knownDefect] ${testName}: expected failure ${String(expectedFailure)} but the test failed for a different reason: ${message}`,
         );
@@ -63,7 +62,7 @@ function knownDefect(id: string, title: string, expectedFailure: RegExp | string
 /** The client-history key family `useClientMessageHistory` subscribes to. */
 const CLIENT_HISTORY_KEY = ["messages", "logs", "client", 7] as const;
 const CLIENT_HISTORY_KEY_ALL = ["messages", "logs", "all"] as const;
-const EXPECTED_CLIENT_HISTORY_AFTER_CHANGE = "the client history view was not invalidated after the change";
+const EXPECTED_ALL_LOGS_AFTER_CHANGE = "the all-logs view was not invalidated after the change";
 
 const apiMock = api as unknown as {
     get: jest.Mock;
@@ -74,11 +73,12 @@ const apiMock = api as unknown as {
 
 function freshQueryClient(): QueryClient {
     const queryClient = new QueryClient({
-        defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+        // Match mobile's default: the all-logs view stays fresh for 30 minutes.
+        defaultOptions: { mutations: { retry: false }, queries: { retry: false, staleTime: 30 * 60 * 1000 } },
     });
     // Seed every view the invariant talks about so stale-marking is observable.
     queryClient.setQueryData(CLIENT_HISTORY_KEY, { logs: [], hasMore: false });
-    queryClient.setQueryData(CLIENT_HISTORY_KEY_ALL, { logs: [], hasMore: false });
+    queryClient.setQueryData(CLIENT_HISTORY_KEY_ALL, []);
     queryClient.setQueryData(messageTriggerKeys.history(), []);
     queryClient.setQueryData(messageTriggerKeys.upcoming(), []);
     return queryClient;
@@ -163,31 +163,33 @@ invariant(
     },
 );
 
-knownDefect(
-    "SI-SMS-08",
-    "the mobile retry mutation run from the messages tab still refreshes the client history view (same as desktop)",
-    EXPECTED_CLIENT_HISTORY_AFTER_CHANGE,
-    async () => {
-        apiMock.post.mockResolvedValue({ data: {} });
-        const queryClient = await runMutation(useRetryMessageHistory, 1042);
-        if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY)) {
-            throw new Error(EXPECTED_CLIENT_HISTORY_AFTER_CHANGE + ": retry");
-        }
-    },
-);
+// The optional clientId conditional is shared with desktop. Per-client history
+// uses staleTime: 0 and refetches on remount; it is not a mobile parity defect.
+// The separately keyed all-logs view has the 30-minute default and is missed
+// even when a caller supplies clientId. Pin that actual stale-view defect.
+knownDefect("SI-SMS-08", "retry refreshes the mobile all-logs view", EXPECTED_ALL_LOGS_AFTER_CHANGE, async () => {
+    apiMock.post.mockResolvedValue({ data: {} });
+    const queryClient = await runMutation(useRetryMessageHistory, 1042, 7);
+    if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)) {
+        throw new Error(EXPECTED_ALL_LOGS_AFTER_CHANGE + ": retry");
+    }
+});
 
-knownDefect(
-    "SI-SMS-08",
-    "the mobile resend mutation run from the messages tab still refreshes the client history view (same as desktop)",
-    EXPECTED_CLIENT_HISTORY_AFTER_CHANGE,
-    async () => {
-        apiMock.post.mockResolvedValue({ data: {} });
-        const queryClient = await runMutation(useResendMessageTriggerJob, "job-1");
-        if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY)) {
-            throw new Error(EXPECTED_CLIENT_HISTORY_AFTER_CHANGE + ": resend");
-        }
-    },
-);
+knownDefect("SI-SMS-08", "resend refreshes the mobile all-logs view", EXPECTED_ALL_LOGS_AFTER_CHANGE, async () => {
+    apiMock.post.mockResolvedValue({ data: {} });
+    const queryClient = await runMutation(useResendMessageTriggerJob, "job-1", 7);
+    if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)) {
+        throw new Error(EXPECTED_ALL_LOGS_AFTER_CHANGE + ": resend");
+    }
+});
+
+invariant("SI-SMS-08", "job-only cancel leaves the unchanged all-logs cache untouched", async () => {
+    apiMock.post.mockResolvedValue({ data: {} });
+    const queryClient = await runMutation(useCancelMessageTriggerJob, "job-1", 7);
+    // cancelJobByUser updates only the job, not message_log. Record the absence
+    // of all-logs invalidation without mislabelling it as stale log data.
+    expect(isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)).toBe(false);
+});
 
 // ---------------------------------------------------------------------------
 // The manual-send page (`mobile/src/app/(shell)/messages/new`).
@@ -202,7 +204,7 @@ const mockUseBankAccountInfos = jest.fn();
 const mockUseVoucherPriceInfos = jest.fn();
 const mockUseMessagesPermissionGuard = jest.fn();
 const mockClipboardWriteText = jest.fn();
-let mockSearchParams = new URLSearchParams();
+const mockSearchParams = new URLSearchParams();
 
 beforeAll(() => {
     Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
@@ -364,7 +366,6 @@ knownDefect(
         });
 
         const queryClient = freshQueryClient();
-        const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
         render(
             <QueryClientProvider client={queryClient}>
                 <NewMessagePage />
@@ -377,21 +378,14 @@ knownDefect(
             expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
         });
 
-        const invalidateOptions = invalidateSpy.mock.calls.map((call) => call[0] as { queryKey?: unknown[] } | undefined);
-        const touchedClientHistory = invalidateOptions.some(
-            (options) => JSON.stringify(options?.queryKey) === JSON.stringify(CLIENT_HISTORY_KEY),
-        );
-        const touchedHistory = invalidateOptions.some(
-            (options) => JSON.stringify(options?.queryKey) === JSON.stringify(messageTriggerKeys.history()),
-        );
-        const touchedUpcoming = invalidateOptions.some(
-            (options) => JSON.stringify(options?.queryKey) === JSON.stringify(messageTriggerKeys.upcoming()),
-        );
-        if (!touchedClientHistory || !touchedHistory || !touchedUpcoming) {
+        const touchedAllLogs = isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL);
+        const touchedHistory = isInvalidated(queryClient, messageTriggerKeys.history());
+        // Immediate sends add history, not upcoming scheduled jobs. Assert the
+        // actual cache state so correct prefix invalidation satisfies the test.
+        if (!touchedAllLogs || !touchedHistory) {
             throw new Error(
                 `the manual send did not invalidate the message views ` +
-                    `(clientHistory=${touchedClientHistory} history=${touchedHistory} upcoming=${touchedUpcoming}, ` +
-                    `all invalidate calls=${JSON.stringify(invalidateOptions.map((options) => options?.queryKey))})`,
+                    `(allLogs=${touchedAllLogs} history=${touchedHistory})`,
             );
         }
     },

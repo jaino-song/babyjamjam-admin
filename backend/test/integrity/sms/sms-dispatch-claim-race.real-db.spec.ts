@@ -26,11 +26,13 @@ import { deleteAreaRowsByBranch, waitUntilBlocked, wireSmsProviderAcceptanceServ
  *
  * 1. The claim: `claimPendingWithRuleFence` is one UPDATE gated on
  *    `status = 'pending'` + a rule lock; a second claim must find nothing.
- * 2. The provider acceptance boundary: the durable attempt row is keyed by
+ * 2. The read-side provider acceptance gate: the durable attempt row is keyed by
  *    `providerAcceptanceKey = sms:digest({scope:"automation", identity:
  *    "branchId:jobId"})` with a UNIQUE constraint; a duplicate dispatch
- *    converges on the started row and must refuse to cross the provider
+ *    finds the already-started row and must refuse to cross the provider
  *    boundary again ("already in progress or requires reconciliation").
+ *    This does NOT force two readers past the prepared-state check: neither
+ *    the prepared→started CAS nor P2002 create convergence is proven here.
  */
 describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;

@@ -15,6 +15,7 @@ import { SmsAutomationSafeguardService } from "application/services/sms-automati
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import type { SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import type { IMessageTriggerRuleBranchOverrideRepository } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
@@ -79,7 +80,9 @@ function stubCollaborators(branchId: string) {
  * taken) but never touches the network, the message_log table, or the system
  * template service: the delivery snapshot is resolved from the job's own
  * payload message (`triggerType: "agent_scheduled"`), exactly like the real
- * resolver does for payload-message jobs.
+ * resolver does for payload-message jobs. It consults the SAME
+ * `AgentAutomationDeliveryGateService` instance the service is wired with, so
+ * the capabilities the service prepares/consumes are one state.
  */
 export class RecordingDeliveryStub {
     readonly providerCalls: Array<{ jobId: string; receiver: string; message: string }> = [];
@@ -90,8 +93,9 @@ export class RecordingDeliveryStub {
         database: PrismaService,
         lock: MessageAutomationBranchLockService,
         authority: AgentAutomationJobAuthorityService,
+        gate?: AgentAutomationDeliveryGateService,
     ) {
-        this.gate = new AgentAutomationDeliveryGateService(database, lock, authority);
+        this.gate = gate ?? new AgentAutomationDeliveryGateService(database, lock, authority);
     }
 
     /** Same contract as the real service, minus rendering and log writes. */
@@ -108,22 +112,73 @@ export class RecordingDeliveryStub {
             job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
             return null;
         }
-        const serializedSnapshot = JSON.stringify({ templateKey: job.templateKey, receiver: job.payload.recipientPhone });
-        job.payload.templateVariables["smsDeliverySnapshot"] = serializedSnapshot;
+        // Match this double's canonical renderer: the real dispatch gate compares
+        // the two snapshot digests before granting the provider capability.
+        const snapshot = {
+            templateKey: job.templateKey,
+            receiver: job.payload.recipientPhone ?? "",
+            message: job.payload.messageBody ?? "",
+        };
+        const serializedSnapshot = JSON.stringify(snapshot);
+        job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = serializedSnapshot;
         return Object.freeze({
-            snapshot: { templateKey: job.templateKey, receiver: job.payload.recipientPhone ?? "" },
+            snapshot,
             serializedSnapshot,
         } as unknown as SmsTriggerDeliveryPreparation);
     }
 
     async sendPreparedJob(job: MessageTriggerJobEntity, preparation: SmsTriggerDeliveryPreparation): Promise<boolean> {
         await this.gate.consumeDispatch(job, preparation);
+        return this.completePreparedDelivery(job);
+    }
+
+    /** Provider crossing + record; a subclass hook where interleaving tests pause. */
+    protected async completePreparedDelivery(job: MessageTriggerJobEntity): Promise<boolean> {
         this.providerCalls.push({
             jobId: job.id,
             receiver: job.payload.recipientPhone ?? "",
             message: job.payload.messageBody ?? "",
         });
         return true;
+    }
+}
+
+/**
+ * A delivery double that can pause the original worker AFTER it consumed the
+ * dispatch capability (the production seam between the dispatch CAS and the
+ * finishing `persistTriggerJobStatus` write), so a second scheduler tick can
+ * reclaim the row in that window.
+ */
+export class GatedDeliveryStub extends RecordingDeliveryStub {
+    reached: Promise<void> = Promise.resolve();
+
+    private reach: (() => void) | null = null;
+
+    private pendingPause: Promise<void> | null = null;
+
+    private openPause: (() => void) | null = null;
+
+    /** The next prepared delivery pauses right where the provider is crossed. */
+    arm(): void {
+        this.reached = new Promise<void>((resolve) => { this.reach = resolve; });
+        this.openPause = null;
+        this.pendingPause = new Promise<void>((resolve) => {
+            this.openPause = resolve;
+        });
+    }
+
+    open(): void {
+        this.openPause?.();
+        this.openPause = null;
+    }
+
+    protected override async completePreparedDelivery(job: MessageTriggerJobEntity): Promise<boolean> {
+        const pause = this.pendingPause;
+        this.pendingPause = null;
+        const sent = await super.completePreparedDelivery(job);
+        this.reach?.();
+        if (pause) await pause;
+        return sent;
     }
 }
 
@@ -141,7 +196,16 @@ export interface WiredMessageTriggerService {
  * only the provider boundary (delivery stub) and the sender-approval/system-
  * template collaborators are stubbed. `branchId` only feeds the approval stub.
  */
-export function wireMessageTriggerService(handle: IntegrityPrisma, branchId: string): WiredMessageTriggerService {
+export function wireMessageTriggerService(
+    handle: IntegrityPrisma,
+    branchId: string,
+    DeliveryClass: new (
+        database: PrismaService,
+        lock: MessageAutomationBranchLockService,
+        authority: AgentAutomationJobAuthorityService,
+        gate: AgentAutomationDeliveryGateService,
+    ) => RecordingDeliveryStub = RecordingDeliveryStub,
+): WiredMessageTriggerService {
     const service = handle.service;
     const jobRepository = new SbMessageTriggerJobRepository(service);
     const ruleRepository = new SbMessageTriggerRuleRepository(service);
@@ -167,7 +231,8 @@ export function wireMessageTriggerService(handle: IntegrityPrisma, branchId: str
             getDefaultSenderPolicy: () => ({ availability: "unavailable" }),
         } as unknown as ConstructorParameters<typeof AligoDefaultSenderPolicyService>[0]),
     );
-    const delivery = new RecordingDeliveryStub(service, branchLock, authority);
+    const deliveryGate = new AgentAutomationDeliveryGateService(service, branchLock, authority);
+    const delivery = new DeliveryClass(service, branchLock, authority, deliveryGate);
 
     const triggerService = new MessageTriggerService(
         service,
@@ -183,7 +248,7 @@ export function wireMessageTriggerService(handle: IntegrityPrisma, branchId: str
         activation,
         branchLock,
         sourceReader,
-        new AgentAutomationDeliveryGateService(service, branchLock, authority),
+        deliveryGate,
         undefined,
         safeguard,
     );
