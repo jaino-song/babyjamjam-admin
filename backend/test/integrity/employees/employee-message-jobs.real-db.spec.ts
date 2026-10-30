@@ -1,5 +1,3 @@
-import { ConflictException } from "@nestjs/common";
-
 import type { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { EmployeeService } from "application/services/employee.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
@@ -459,7 +457,7 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
 
     invariant(
         "SI-EMP-10",
-        "recreating a deleted employee with the same phone returns a meaningful 409 rather than 500",
+        "BJJ-275: a deleted employee still reserves the phone; recreating returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED",
         async () => {
             const branch = await createBranch(handle.raw, tracker);
             const params = {
@@ -487,40 +485,6 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
                 },
             });
         },
-    );
-
-    knownDefect(
-        "SI-EMP-10",
-        "deleting an employee frees the branch phone key so the real create path can register it again",
-        async () => {
-            const branch = await createBranch(handle.raw, tracker);
-            const params = {
-                name: "삭제 후 재등록 검사", workArea: [], phone: "01012345678",
-                grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true,
-            };
-            const original = await employeeService.create(branch.id, params);
-            tracker.track("employee", original.id);
-            await employeeService.delete(branch.id, original.id);
-            const tombstone = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
-            expect(tombstone.deletedAt).not.toBeNull();
-
-            try {
-                const recreated = await employeeService.create(branch.id, params);
-                tracker.track("employee", recreated.id);
-                expect(recreated.id).not.toBe(original.id);
-                expect(tombstone.phoneNormalized).toBeNull();
-            } catch (error) {
-                // Only the observed, meaningful phone conflict is the defect;
-                // fixture/DB failures must not become false CONFIRMED results.
-                if (error instanceof ConflictException && error.getStatus() === 409
-                    && typeof error.getResponse() === "object"
-                    && (error.getResponse() as { code?: string }).code === "EMPLOYEE_PHONE_ALREADY_REGISTERED") {
-                    throw new Error("SI-EMP-10 defect: a deleted employee still reserves the branch phone key; real create returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED");
-                }
-                throw error;
-            }
-        },
-        /SI-EMP-10 defect: a deleted employee still reserves the branch phone key; real create returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED/,
     );
 
     invariant(
