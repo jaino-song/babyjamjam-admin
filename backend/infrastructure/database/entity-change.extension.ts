@@ -224,14 +224,25 @@ function isThenable(value: unknown): value is object {
 
 const PROMISE_METHODS: ReadonlySet<PropertyKey> = new Set(["then", "catch", "finally"]);
 
-/** A query result promise whose `then`/`catch`/`finally` - where Prisma starts the query - run in `scope`. */
+/**
+ * A query result promise whose `then`/`catch`/`finally` - where Prisma starts the query - run in
+ * `scope`, while the callbacks passed to them still run in the caller's own context.
+ */
 function bindThenableToScope(target: object, scope: TransactionScope): object {
     return new Proxy(target, {
         get(inner, property) {
             const value: unknown = Reflect.get(inner, property, inner);
             if (typeof value !== "function") return value;
             if (PROMISE_METHODS.has(property)) {
-                return (...args: unknown[]) => inScope(scope, () => value.apply(inner, args) as unknown);
+                return (...args: unknown[]) => {
+                    // Only starting the query belongs to the transaction: `then()` is where Prisma's lazy
+                    // promise executes. Everything the caller attaches is chained OUTSIDE the scope, so
+                    // its callbacks, the promise they derive, and any lazy promise they return (adopted
+                    // in the derived promise's context) keep the caller's context. A root-client write
+                    // made from one is therefore never held, or lost on rollback, with this transaction.
+                    const started = Promise.resolve(inScope(scope, () => (inner as PromiseLike<unknown>).then(undefined, undefined)));
+                    return (started as unknown as Record<PropertyKey, (...a: unknown[]) => unknown>)[property]?.(...args);
+                };
             }
             // Fluent API (`findUnique(...).relation()`): the next link is a lazy promise too.
             return (...args: unknown[]) => bindResultToScope(inScope(scope, () => value.apply(inner, args) as unknown), scope);

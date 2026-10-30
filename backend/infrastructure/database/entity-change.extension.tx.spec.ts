@@ -401,6 +401,84 @@ describe("entity-change extension: commit-scoped emission", () => {
         expect(events).toEqual([{ branchId: null, entities: ["settings"] }]);
     });
 
+    it("a root-client write made from a then-callback on a tx query is not part of the transaction (immediate, kept on rollback)", async () => {
+        const { client, events, bus, flush } = setup();
+        const emitSpy = jest.spyOn(bus, "emit");
+        let handOff: (tx: typeof client) => void = () => undefined;
+        const ready = new Promise<typeof client>((resolve) => {
+            handOff = resolve;
+        });
+        // The callback is registered through a tx-bound promise from a context outside the transaction.
+        const work = ready.then((tx) =>
+            (tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>).then(() =>
+                client.employee.update({ where: { id: 1 }, data: {} }),
+            ),
+        );
+
+        await expect(
+            client.$transaction(async (tx: typeof client) => {
+                handOff(tx);
+                await work;
+                // The independent root write has committed and is announced now; the tx write is held.
+                expect(emitSpy).toHaveBeenCalledTimes(1);
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+
+        flush();
+        expect(events).toEqual([{ branchId: "b1", entities: ["employee"] }]);
+    });
+
+    it.each(["then", "catch", "finally"] as const)(
+        "a root-client write from a %s callback runs in the caller's context, and the tx write still waits for the commit",
+        async (method) => {
+            const { client, bus } = setup();
+            const emitted: string[] = [];
+            jest.spyOn(bus, "emit").mockImplementation(({ kind }) => {
+                emitted.push(kind);
+            });
+
+            await client.$transaction(async (tx: typeof client) => {
+                const query = tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>;
+                const rootWrite = () => client.employee.update({ where: { id: 1 }, data: {} });
+                // `catch` only fires on rejection, so give it a rejecting tx query to chain from.
+                if (method === "catch") {
+                    await (Promise.reject(new Error("x")) as Promise<unknown>).catch(rootWrite);
+                } else if (method === "then") {
+                    await query.then(rootWrite);
+                } else {
+                    await query.finally(rootWrite as () => void);
+                }
+                // Immediate: the root write is not deferred to the commit.
+                expect(emitted).toContain("employee");
+                if (method !== "catch") expect(emitted).not.toContain("client");
+            });
+
+            expect(emitted).toContain("employee");
+            if (method !== "catch") expect(emitted).toContain("client");
+        },
+    );
+
+    it("fluent chains and thenables returned from callbacks keep working, and callbacks see their own tenant context", async () => {
+        const { client } = setup();
+
+        const seen = await tenantContextStore.run({ origin: "http", branchId: "b-cb" }, async () =>
+            client.$transaction(async (tx: typeof client) => {
+                let inCallback: string | undefined;
+                const value = await (tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>).then(
+                    async (row) => {
+                        inCallback = tenantContextStore.get()?.branchId;
+                        return row;
+                    },
+                );
+                expect(value).toEqual({ id: 1, branchId: "b1" });
+                return inCallback;
+            }),
+        );
+
+        expect(seen).toBe("b-cb");
+    });
+
     it("a tx raw write handed off the same way follows the transaction too", async () => {
         const { client, bus } = setup();
         const emitSpy = jest.spyOn(bus, "emit");
