@@ -47,6 +47,10 @@ export class CursorCodec {
     decode(token: string): string | null {
         if (!TOKEN_CHARSET.test(token)) return null;
         const raw = Buffer.from(token, "base64url");
+        // Canonical form only: Node's decoder ignores the unused trailing bits of the last character
+        // (47 bytes fill 376 of a 63-char token's 378 bits), so several strings would otherwise decode
+        // to the same authentic token. Re-encoding and comparing removes that malleability.
+        if (raw.toString("base64url") !== token) return null;
         const payloadLength = raw.length - IV_BYTES - TAG_BYTES;
         if (payloadLength !== STREAM_PAYLOAD && payloadLength !== RING_PAYLOAD) return null;
         try {

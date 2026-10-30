@@ -46,15 +46,28 @@ describe("CursorCodec", () => {
         expect(codec.encode("abcdef012345:3")).not.toContain("abcdef012345");
     });
 
-    it("rejects a token that was altered anywhere (every position, flipped)", () => {
-        const token = codec.encode(`1793326101367-5@${INC}`);
-        for (let i = 0; i < token.length; i += 1) {
-            const replacement = token[i] === "A" ? "B" : "A";
-            expect({ i, decoded: codec.decode(`${token.slice(0, i)}${replacement}${token.slice(i + 1)}`) }).toEqual({
-                i,
-                decoded: null,
-            });
+    it("rejects a token that was altered anywhere: every position, every other alphabet character", () => {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        for (const cursor of [`1793326101367-5@${INC}`, "abcdef012345:3"]) {
+            const token = codec.encode(cursor);
+            for (let i = 0; i < token.length; i += 1) {
+                for (const replacement of alphabet) {
+                    if (replacement === token[i]) continue;
+                    const altered = `${token.slice(0, i)}${replacement}${token.slice(i + 1)}`;
+                    // Includes the last character, whose low bits Node's decoder would otherwise ignore.
+                    if (codec.decode(altered) !== null) throw new Error(`${cursor}: position ${i} -> ${replacement} still decodes`);
+                }
+            }
         }
+    });
+
+    it("accepts only the canonical encoding: padding and every non-canonical last character are refused", () => {
+        const token = codec.encode(`1793326101367-5@${INC}`);
+
+        expect(codec.decode(token)).toBe(`1793326101367-5@${INC}`);
+        expect(codec.decode(`${token}=`)).toBeNull();
+        expect(token.length).toBe(63);
+        expect(codec.decode(token.slice(0, -1))).toBeNull();
     });
 
     it("rejects a token issued under another key, including one derived from a different secret", () => {
