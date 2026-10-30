@@ -29,6 +29,7 @@ import {
 } from "domain/repositories/eformsign.client.interface";
 import {
     EFORMSIGN_DOC_REPOSITORY,
+    type EformsignCompletionHealMetadata,
     EformsignDocMappingError,
     EformsignDocOwnershipConflictError,
     EformsignDocStaleUpdateError,
@@ -424,24 +425,25 @@ export class EformsignWebhookService {
         if (!COMPLETED_STATUS_CODES.has(statusType)) {
             return { eligible: false };
         }
-        const localDocument = await this.findLocalDocument(documentId);
-        if (!localDocument || localDocument.branchId === null) {
-            return { eligible: false };
-        }
-        const branchId = localDocument.branchId;
-        // The purge-filtered lookup: a purge-requested row is not claimable.
-        let row: EformsignDocEntity | null;
+        // Plain columns only: rebuilding the whole entity here would throw on a legacy row
+        // that violates an entity invariant (e.g. updatedDate before createdDate), and the
+        // claim writes straight to columns, so it never needs the entity either.
+        let row: EformsignCompletionHealMetadata | null;
         try {
-            row = await this.eformsignDocRepository.findByDocumentId(branchId, documentId);
+            row = await this.eformsignDocRepository.findCompletionHealMetadata(documentId);
         } catch (error) {
-            if (error instanceof EformsignDocMappingError) {
-                return { eligible: false };
-            }
-            throw error;
-        }
-        if (!row) {
+            this.logger.warn(
+                `Failed to read completion-heal metadata for ${documentId}: ` +
+                sanitizeEformsignErrorMessage(error),
+            );
             return { eligible: false };
         }
+        // An unassigned row has no branch to key the claim by, and a purge-requested row
+        // is not claimable.
+        if (!row || row.branchId === null || row.permanentPurgeRequestedAt !== null) {
+            return { eligible: false };
+        }
+        const branchId = row.branchId;
         const serviceRecordSnapshot = this.isServiceRecordSnapshotRow(
             row,
             mirroredDocument.template?.id,
@@ -452,7 +454,7 @@ export class EformsignWebhookService {
     }
 
     private isServiceRecordSnapshotRow(
-        row: EformsignDocEntity,
+        row: Pick<EformsignCompletionHealMetadata, "documentKind" | "templateId">,
         detailTemplateId?: string,
     ): boolean {
         // The explicit kind is authoritative for a contract, as in the linker.

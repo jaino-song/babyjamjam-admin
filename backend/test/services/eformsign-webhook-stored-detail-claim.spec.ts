@@ -306,6 +306,86 @@ describe("EformsignWebhookService.claimCompletionFromStoredDetail (real reposito
         });
     });
 
+    describe("legacy rows the entity invariant rejects (updatedDate before createdDate)", () => {
+        // The shape the eligibility lookup must survive: reconstructing the entity from it
+        // throws, so eligibility has to read plain columns instead.
+        const legacyRow = (overrides: Partial<Row> = {}): Row => baseRow({
+            createdDate: new Date("2026-10-02T00:00:00.000Z"),
+            updatedDate: new Date("2026-10-01T00:00:00.000Z"),
+            ...overrides,
+        });
+
+        it("claims 050 for a configured-template service-record snapshot at 062 and repairs the ordering", async () => {
+            process.env["EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"] = "template-1";
+            try {
+                table = legacyRow({
+                    documentKind: "service_record_snapshot",
+                    templateId: "template-1",
+                });
+
+                await expect(
+                    service.resolveCompletionHealEligibility(
+                        documentId,
+                        storedDetail("062", "2026-10-03T09:00:00.000Z"),
+                    ),
+                ).resolves.toEqual({
+                    eligible: true,
+                    branchId,
+                    serviceRecordSnapshot: true,
+                });
+                const result = await service.claimCompletionFromStoredDetail(
+                    documentId,
+                    storedDetail("062", "2026-10-03T09:00:00.000Z"),
+                );
+
+                expect(result).toEqual({ completionClaim: "claimed", completionBranchId: branchId });
+                expect(table.statusType).toBe("050");
+                expect(table.updatedDate).toEqual(new Date("2026-10-03T09:00:00.000Z"));
+            } finally {
+                delete process.env["EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID"];
+            }
+        });
+
+        it("claims 050 for a contract at a final completion", async () => {
+            table = legacyRow();
+
+            const result = await service.claimCompletionFromStoredDetail(
+                documentId,
+                storedDetail("003", "2026-10-03T09:00:00.000Z"),
+            );
+
+            expect(result).toEqual({ completionClaim: "claimed", completionBranchId: branchId });
+            expect(table.statusType).toBe("050");
+            expect(table.updatedDate).toEqual(new Date("2026-10-03T09:00:00.000Z"));
+        });
+
+        it("keeps the 062 exclusion and the purge and unassigned checks for a legacy row", async () => {
+            table = legacyRow({ documentKind: "contract", templateId: "template-1" });
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("062")),
+            ).resolves.toEqual({ eligible: false });
+
+            table = legacyRow({ permanentPurgeRequestedAt: new Date("2026-10-02T00:00:00.000Z") });
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({ eligible: false });
+
+            table = legacyRow({ branchId: null as never });
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({ eligible: false });
+            expect(prisma.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("reports not eligible instead of throwing when the metadata lookup itself fails", async () => {
+            prisma.eformsign_doc.findUnique.mockRejectedValueOnce(new Error("db down") as never);
+
+            await expect(
+                service.resolveCompletionHealEligibility(documentId, storedDetail("003")),
+            ).resolves.toEqual({ eligible: false });
+        });
+    });
+
     it("reports a duplicate when the row is already completed", async () => {
         table = baseRow({ statusType: "050" });
 

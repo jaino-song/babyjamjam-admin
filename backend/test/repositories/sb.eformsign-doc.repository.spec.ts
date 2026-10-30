@@ -802,6 +802,58 @@ describe("SbEformsignDocRepository", () => {
         expect(result?.document.documentName).toBe("외부 문서");
     });
 
+    describe("findCompletionHealMetadata", () => {
+        it("reads only the classification columns and never builds the entity, even for a legacy-ordered row", async () => {
+            const purgeRequestedAt = new Date("2026-10-02T00:00:00.000Z");
+            eformsignDocModel.findUnique.mockResolvedValue({
+                branchId: "branch-1",
+                documentKind: "service_record_snapshot",
+                templateId: "template-1",
+                permanentPurgeRequestedAt: purgeRequestedAt,
+                // A full-row mapper would reject this ordering; the narrow read ignores it.
+                createdDate: new Date("2026-10-02T00:00:00.000Z"),
+                updatedDate: new Date("2026-10-01T00:00:00.000Z"),
+            });
+
+            await expect(repository.findCompletionHealMetadata("doc-1")).resolves.toEqual(
+                expect.objectContaining({
+                    branchId: "branch-1",
+                    documentKind: "service_record_snapshot",
+                    templateId: "template-1",
+                    permanentPurgeRequestedAt: purgeRequestedAt,
+                }),
+            );
+            expect(eformsignDocModel.findUnique).toHaveBeenCalledWith({
+                where: { documentId: "doc-1" },
+                select: {
+                    branchId: true,
+                    documentKind: true,
+                    templateId: true,
+                    permanentPurgeRequestedAt: true,
+                },
+            });
+        });
+
+        it("returns null when no row exists", async () => {
+            eformsignDocModel.findUnique.mockResolvedValue(null);
+
+            await expect(repository.findCompletionHealMetadata("doc-1")).resolves.toBeNull();
+        });
+
+        it("reads the missing pending columns as null when the database has not had their migration", async () => {
+            eformsignDocModel.findUnique
+                .mockRejectedValueOnce(pendingColumnError)
+                .mockResolvedValueOnce({ ...legacyRow, branchId: "branch-1" });
+
+            await expect(repository.findCompletionHealMetadata("doc-1")).resolves.toEqual({
+                branchId: "branch-1",
+                documentKind: null,
+                templateId: null,
+                permanentPurgeRequestedAt: null,
+            });
+        });
+    });
+
     it("loads page display fields with one branch-scoped query", async () => {
         eformsignDocModel.findMany.mockResolvedValue([
             {
