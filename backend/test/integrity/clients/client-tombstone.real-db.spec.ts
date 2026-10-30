@@ -118,7 +118,7 @@ describeReal("SI-CLIENT-05/04 tombstone side effects and contract identity", () 
         "SI-CLIENT-05",
         "an enabled tombstone hides the client, frees the phone, ends assignments, cancels pending jobs and hides the review item",
         async () => {
-            const { client, schedule, job } = await createClientWithDependencies("톰스톤-사이드이펙트");
+            const { client, schedule, job, eventId } = await createClientWithDependencies("톰스톤-사이드이펙트");
             const repository = new SbClientRepository(handle.service, enabledConfig() as never);
 
             const outcome = await repository.delete(branchId, client.id);
@@ -165,7 +165,11 @@ describeReal("SI-CLIENT-05/04 tombstone side effects and contract identity", () 
                 throw new Error("SI-CLIENT-05: fixture review item missing before the reachability check");
             }
             const summariesForBranch = await reviewRepository.listOpenEventSummaries(branchId);
-            const totalOpen = summariesForBranch.reduce((sum, entry) => sum + entry.safeOpen + entry.riskOpen, 0);
+            // This event belongs only to this client's fixture. Other tests may
+            // retain live clients with open items in the same branch.
+            const totalOpen = summariesForBranch
+                .filter((entry) => entry.id === eventId)
+                .reduce((sum, entry) => sum + entry.safeOpen + entry.riskOpen, 0);
             if (totalOpen !== 0) {
                 throw new Error(
                     `SI-CLIENT-05: the tombstoned client's open review item is still listed (${totalOpen} open item(s) counted)`,

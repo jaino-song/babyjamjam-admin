@@ -9,7 +9,7 @@ SI-CLIENT-02's catch-all refusal check replaced with an unconditional
 production `confirmNewClient` calls behind a real held row lock (both UPDATEs
 observed blocked before release), replacing the copied claim statement and
 the redundant timing-dependent double-confirm test. Real-PostgreSQL tests under
-`backend/test/integrity/clients/` (5 suites, 23 tests — 4 `knownDefect`s
+`backend/test/integrity/clients/` (5 suites, 24 tests — 4 `knownDefect`s
 fail-as-expected, the rest are passing invariants) and Jest +
 React-Testing-Library suites under `frontend/src/__integrity__/clients/` and
 `mobile/src/__integrity__/clients/`.
@@ -21,17 +21,17 @@ React-Testing-Library suites under `frontend/src/__integrity__/clients/` and
 | SI-CLIENT-01 | backend | CONFIRMED | low | Every audited date writer (ordinary update, due-date scheduler, schedule-change move) leaves `client.service_status` stale until the lazy background CAS on the next branch list read. Accurate impact: dispatch reads the EFFECTIVE (recomputed) status, so it is not fooled; the only raw-column consumer is the dashboard count (`backend/infrastructure/database/repositories/prisma-client-dashboard.repository.ts:14`), which drifts with time on its own. Note write-time recompute alone does not fix time-based drift (a stored "computed" status still goes stale as dates pass), so the raw-column consumers need an on-read recompute regardless | `backend/application/services/client.service.ts:2493-2528` (status written only when supplied), `backend/application/services/client-due-date-scheduler.service.ts:107-138`, `backend/application/services/schedule-change.service.ts:656-659` | `client-status-drift.real-db.spec.ts::SI-CLIENT-01 an ordinary date edit via ClientService.update leaves the stored serviceStatus stale` (+ scheduler + applyAdminChange variants) | `SI-CLIENT-01 (ClientService.update endDate edit): stored serviceStatus "active" drifted from computed "completed" after a date write` |
 | SI-CLIENT-01 | backend | CONFIRMED | low | (same id, scheduler writer) | see above | `client-status-drift.real-db.spec.ts::SI-CLIENT-01 the due-date scheduler's startDate copy leaves the stored serviceStatus stale` | `SI-CLIENT-01 (due-date scheduler startDate copy): stored serviceStatus "waiting" drifted from computed "active" after a date write` |
 | SI-CLIENT-01 | backend | CONFIRMED | low | (same id, session-move writer) | see above | `client-status-drift.real-db.spec.ts::SI-CLIENT-01 an admin session move via ScheduleChangeService.applyAdminChange leaves the stored serviceStatus stale` | `SI-CLIENT-01 (ScheduleChangeService.applyAdminChange): stored serviceStatus "active" drifted from computed "waiting" after a date write` |
-| SI-CLIENT-02 | backend | CONFIRMED | high | `completeReplacement` proceeds on ANY status (only logs a warning) and rewrites it with the date-derived status — a `terminated` client is silently un-terminated | `backend/application/services/client.service.ts:3055-3061` | `client-replacement-booking.real-db.spec.ts::SI-CLIENT-02 completeReplacement refuses unless the client is in replacement_requested` | `SI-CLIENT-02: completeReplacement ran on a "terminated" client and moved the status to "active" (outcome completed; only a warning was logged)` |
+| SI-CLIENT-02 | backend | CONFIRMED | medium | `completeReplacement` proceeds on ANY status (only logs a warning), silently moving `terminated` to `active`. Combined QA also reproduced this over HTTP `PATCH /clients/:id/complete-replacement`; calibrated medium because `useCompleteReplacement` has no UI caller, so only a direct API call reaches it | `backend/application/services/client.service.ts:3055-3061` | `client-replacement-booking.real-db.spec.ts::SI-CLIENT-02 completeReplacement refuses unless the client is in replacement_requested` | `SI-CLIENT-02: completeReplacement ran on a "terminated" client and moved the status to "active" (outcome completed; only a warning was logged)` |
 | SI-CLIENT-03 | backend | REFUTED | — | The reuse-existing-client `smsAutomationEnabled` write (`updateMany` by id+branchId, outside the write-set lock) is a blind, explicit, SINGLE-COLUMN write of a caller-supplied value: under the forced interleaving (T1 locked update commits first, reuse write observed blocked) nothing but `smsAutomationEnabled` changes — the committed locked `name` write survives, and the caller-supplied `false` lands. Serial order "T1 commits, then reuse(false)" yields `false` too, so nothing is lost; last-writer-wins on an explicit value is correct | `backend/application/services/client.service.ts:1374-1381` | `client-write-races.real-db.spec.ts::SI-CLIENT-03 the reuse-existing-client write is single-column: under the forced interleaving it clobbers only smsAutomationEnabled` | — |
 | SI-CLIENT-04 | backend | REFUTED (tombstone half) | — | A tombstoned client keeps `eDocId`/`eformsign_doc.client_id` BY DESIGN: tombstoning exists because retained history (signed contracts) must stay attached (`sb.client.repository.ts:574-626, 665-676`, rule 고객-06), so detaching the pointers would orphan a legal document. The brief's invariant — a tombstoned client holds no live contract pointer that BLOCKS or RELINKS another client — holds: the reconciler keeps repairing the tombstoned ownership, and a new same-phone client can still claim a NEW contract | `backend/infrastructure/database/repositories/sb.client.repository.ts:574-713` | `client-tombstone.real-db.spec.ts::SI-CLIENT-04 the stale tombstone pointer does not block a new same-phone client from claiming a new contract` and `…the mirror reconciler keeps the tombstoned owner attached to the old contract` | — |
 | SI-CLIENT-04 | backend | REFUTED (phone-edit half) | — | After `ClientService.update` moves a client's phone, the reconciler (`LinkMirroredEformsignDocByPhoneUsecase`) behaves correctly for both phones: the owned old contract stays attached to its owner (`already_linked`), an unowned old-phone contract is left unlinked (no live client holds the edited-away phone), and a new-phone contract links to the edited client | `backend/application/services/client.service.ts:2142-2145` (update writes the new `phoneNormalized`, no doc re-link), `backend/application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase.ts:231-263` (owned-doc repair), `:698-701` (phone match) | `client-tombstone.real-db.spec.ts::SI-CLIENT-04 after a phone edit the old contract stays owned, an unowned old-phone contract stays unlinked, and the new-phone contract links to the edited client` | — |
 | SI-CLIENT-05 | backend | REFUTED | — | Tombstone side effects are complete (hidden row, phone freed, assignment ended, pending automation jobs canceled; open end-date review item remains but is unreachable via the review list's `deletedAt` filter); with the switch disabled (unset + `NODE_ENV=test`) the delete is refused before ANY side effect; a dependency-free client is still physically deleted | `backend/infrastructure/database/repositories/sb.client.repository.ts:574-713` | `client-tombstone.real-db.spec.ts::SI-CLIENT-05 an enabled tombstone hides the client…` / `…refuses before any side effect` / `…dependency-free client is physically deleted` | — |
 | SI-CLIENT-06 | backend | REFUTED | — | Booking confirmation is the only exit from 예약 전: saves cannot move a client into/out of `pre_booking` into a date-derived status (only `terminated` is the deliberate exception), and `confirmBooking` is idempotent (double confirm is a no-op, `bookingConfirmedAt` never rewritten) | `backend/application/usecases/client/client-write-validation.ts:294-338`, `backend/application/services/client.service.ts:3148-3249` | `client-replacement-booking.real-db.spec.ts::SI-CLIENT-06 …` (5 invariants incl. the `terminated` exception and the double-confirm no-op) | — |
 | SI-CLIENT-07 | backend | REFUTED (claim/recovery paths tested) | — | The production conditional claim admits exactly one winner and creates one client after both real `confirmNewClient` UPDATEs are observed blocked on the same PENDING draft; the loser receives REQUEST_NOT_PENDING. Re-confirmation is refused; the stale-CONFIRMING sweep recovers a crashed claim without touching a recent one. This does NOT prove exactly-once creation across a process crash after client creation (see caveat below), nor exercise DISCARDED | `backend/application/services/call-inbox.service.ts:328-476` (claim predicates), `backend/application/services/call-extraction-retry-scheduler.service.ts:154-180` (sweep) | `client-draft-confirm.real-db.spec.ts::SI-CLIENT-07 the production confirm claim admits exactly one winner after both calls block on the same PENDING draft` (+ 3 invariants) | — |
-| SI-CLIENT-08 | mobile | CONFIRMED | medium | Mobile live `useUpdateClient` (`mobile/src/hooks/useClients.ts:137-155`) invalidates only `clientQueryKeys.*` + `dashboardQueryKeys.analytics()`; it misses `messageTriggerKeys.upcoming()` and the service-record client overview that desktop invalidates/refetches (`frontend/src/features/clients/hooks/use-clients.ts:343-373`) | `mobile/src/hooks/useClients.ts:137-155` vs `frontend/src/features/clients/hooks/use-clients.ts:366-371` | `mobile/src/__integrity__/clients/mobile-clients-state-integrity.test.tsx::SI-CLIENT-08 mobile useUpdateClient invalidates the same dependent caches desktop does…` (`it.failing` locally wrapped) | `SI-CLIENT-08: mobile useUpdateClient left the message-trigger upcoming cache stale (desktop invalidates it); invalidated: {"queryKey":["clients"]} {"queryKey":["clients","detail",42]}` |
-| SI-CLIENT-08 | mobile | REFUTED (delete half) | — | Mobile `useDeleteClient` DOES invalidate `messageTriggerKeys.upcoming()` (line 218) and rolls the optimistic removal back on failure — delete-side parity holds | `mobile/src/hooks/useClients.ts:191-221` | `…mobile useDeleteClient invalidates the message-trigger upcoming cache…` / `…removes the client optimistically and restores the cache when the delete fails` | — |
-| SI-CLIENT-08 | frontend | REFUTED | — | Desktop invariants hold: `useUpdateClient` invalidates `clientKeys.all` + `messageTriggerKeys.upcoming()` + refetches `serviceRecordKeys.clientOverview(id)`; `useDeleteClient` restores the optimistic removal on failure and invalidates on settle | `frontend/src/features/clients/hooks/use-clients.ts:343-373, 422-448` | `frontend/src/__integrity__/clients/desktop-clients-state-integrity.test.tsx::SI-CLIENT-08 desktop …` (2 invariants) | — |
-| SI-CLIENT-09 (extra) | backend | REFUTED | — | The due-date scheduler's `startDate` copy is a self-protecting CONDITIONAL write: with a client row lock held by a concurrent locked update that commits a real start date, the scheduler's blocked `updateMany` re-evaluates `start_date IS NULL` after the commit and skips (no lost start date) | `backend/application/services/client-due-date-scheduler.service.ts:107-138` | `client-write-races.real-db.spec.ts::SI-CLIENT-09 the scheduler's conditional startDate write skips after a concurrent locked update commits a start date` | — |
+| SI-CLIENT-08 | frontend + mobile | CONFIRMED | low | Self-healing cache: main desktop `useUpdateClient`, used by `ClientFormDialog` on clients/filtered/contracts pages, invalidates clients/upcoming jobs but leaves the service-record overview stale. Mobile live update misses both upcoming jobs and overview. Refetch/remount/realtime repairs the cache; the secondary desktop hook is NOT evidence for the main edit form | `frontend/src/hooks/useClients.ts:185-205`, `frontend/src/components/app/clients/ClientFormDialog.tsx:20`, `mobile/src/hooks/useClients.ts:137-155` | `frontend/src/__integrity__/clients/desktop-clients-state-integrity.test.tsx::SI-CLIENT-08 main desktop useUpdateClient refreshes the service-record client overview after a ClientFormDialog edit`; `mobile/src/__integrity__/clients/mobile-clients-state-integrity.test.tsx::SI-CLIENT-08 mobile useUpdateClient refreshes message-trigger upcoming and service-record client overview caches (secondary desktop parity)` (both guarded knownDefects) | Desktop: `SI-CLIENT-08: main desktop useUpdateClient left the service-record client overview cache stale (version=1)`; mobile: `SI-CLIENT-08: mobile useUpdateClient left the message-trigger upcoming cache stale (desktop invalidates it)` |
+| SI-CLIENT-08 | mobile | REFUTED (delete half) | — | Mobile `useDeleteClient` DOES invalidate `messageTriggerKeys.upcoming()` (line 218) and rolls the optimistic removal back on failure — delete-side parity holds | `mobile/src/hooks/useClients.ts:191-221` | `mobile/src/__integrity__/clients/mobile-clients-state-integrity.test.tsx::SI-CLIENT-08 mobile useDeleteClient invalidates the message-trigger upcoming cache (delete-side parity holds)`; `…::SI-CLIENT-08 mobile useDeleteClient removes the client optimistically and restores the cache when the delete fails` (named invariants) | — |
+| SI-CLIENT-08 | frontend | REFUTED (secondary hook only) | — | Secondary desktop hook (update caller: `ContractLinkConfirmDialog`) invalidates clients/upcoming jobs and refetches overview; its delete restores optimistic removals on failure and invalidates on settle. These do not cover `ClientFormDialog` | `frontend/src/features/clients/hooks/use-clients.ts:343-373, 422-448`, `frontend/src/components/app/clients/ContractLinkConfirmDialog.tsx:18` | `frontend/src/__integrity__/clients/desktop-clients-state-integrity.test.tsx::SI-CLIENT-08 secondary desktop useUpdateClient invalidates clientKeys.all, messageTriggerKeys.upcoming() and refetches the service-record client overview`; `…::SI-CLIENT-08 secondary desktop useDeleteClient removes the client optimistically and restores the cache when the delete fails` (named invariants) | — |
+| SI-CLIENT-09 (extra) | backend | REFUTED | — | Both production-wired transactional and optional-provider fallback `startDate` copies re-evaluate `start_date IS NULL` after a concurrent row-lock holder commits a real start date, then skip. The transactional test supplies real lifecycle and automation-intent instances over real Prisma; dispatch counters assert the intended branch ran | `backend/application/services/client-due-date-scheduler.service.ts:107-138` | `client-write-races.real-db.spec.ts::SI-CLIENT-09 the transactional scheduler's conditional startDate write skips after a concurrent locked update commits a start date`; same title with `fallback` | — |
 
 **SI-CLIENT-07 recovery caveat (inspection note, not a mutation-proven verdict):**
 the sweep (`call-extraction-retry-scheduler.service.ts:153-175`) resets stale
@@ -67,10 +67,12 @@ test) — the update-path gap above is the live defect.
 - **SI-CLIENT-02** — throw `BadRequestException`/`ConflictException` (or return
   the client untouched) instead of the logged warning unless
   `serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED`. NOT SENSITIVE.
-- **SI-CLIENT-08** — add
+- **SI-CLIENT-08** — main desktop `frontend/src/hooks/useClients.ts` needs a
+  refetch/invalidation of `serviceRecordKeys.clientOverview(id)` after update.
+  Mobile also needs
   `queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() })`
   and a `refetchQueries`/invalidate of `serviceRecordQueryKeys.clientOverview(id)`
-  to mobile `useUpdateClient`'s `onSuccess` (desktop parity). NOT SENSITIVE.
+  to mobile `useUpdateClient`'s `onSuccess` (secondary desktop parity). NOT SENSITIVE.
 
 ## Mutation proofs
 
@@ -126,7 +128,63 @@ the final diff contains only area-folder tests/FINDINGS.
   before tracking its duplicate-created clients, causing a cleanup FK failure.
   That failure was not used as mutation evidence. Reverted exactly.
 
-## Acceptance rerun (resumed worker)
+### Fix2 mutation proofs (current correction)
+
+Targeted tests used `pnpm test <spec> --runInBand --cacheDirectory
+.jest-cache-clients -t <name>` with the real-DB exports above, or
+`pnpm --filter ./frontend|./mobile exec jest src/__integrity__/clients
+--runInBand -t <name>`. Every mutation below exited 1; all production changes
+were reverted exactly before the final acceptance runs.
+
+- **SI-CLIENT-09 transactional**, then **fallback** (separate mutations/runs):
+  removed `startDate: null` only from the transactional `updateMany` at
+  `backend/application/services/client-due-date-scheduler.service.ts:111`, ran
+  both SI-CLIENT-09 cases: transactional RED, fallback PASS. Restored it, then
+  removed the fallback predicate at `:135`: fallback RED, transactional PASS.
+  Both failures: `SI-CLIENT-09: scheduler wrote 1 row(s) although a committed
+  start date existed — lost update`. Each passing or failing race first observed
+  the actual SQL blocked through `pg_stat_activity`; the transaction uses real
+  lifecycle and automation services, with dispatch counters pinning the branch.
+  An initial transactional mutation caught an overly broad timing tap (it also
+  counted a lifecycle metadata write, `Expected: 1 / Received: 2`); the tap was
+  restricted to the scheduler's dueDate predicate and the mutation rerun yielded
+  the lost-update assertion above. That initial error is not the proof.
+- **SI-CLIENT-05**: removed `client: { deletedAt: null }` from
+  `backend/infrastructure/database/repositories/sb.holiday-review.repository.ts:192`.
+  Enabled-tombstone invariant RED: `SI-CLIENT-05: the tombstoned client's open
+  review item is still listed (1 open item(s) counted)`. The corrected assertion
+  scopes summaries to the unique fixture event (which has exactly this client's
+  item), not all events/clients in the shared branch.
+- **SI-CLIENT-08 main desktop knownDefect**: first ran its body as ordinary
+  `it`, observing RED: `SI-CLIENT-08: main desktop useUpdateClient left the
+  service-record client overview cache stale (version=1)`. Real QueryClient
+  state proved client/upcoming invalidation and detail merge succeeded, unrelated
+  overview state stayed untouched, but the target overview kept its old payload.
+  Temporarily imported `serviceRecordKeys` and added an awaited
+  `refetchQueries({ queryKey: serviceRecordKeys.clientOverview(variables.id) })`
+  to `frontend/src/hooks/useClients.ts:203-204`: knownDefect RED with
+  `Failing test passed even though it was supposed to fail.` (fresh payload 2).
+- **SI-CLIENT-08 secondary desktop update invariant**: changed overview key
+  to `clientOverview(id + 1)` at
+  `frontend/src/features/clients/hooks/use-clients.ts:369`. RED:
+  `SI-CLIENT-08: desktop useUpdateClient did not refetch the service-record client overview`.
+- **SI-CLIENT-08 secondary desktop delete invariant**: bypassed
+  `restoreQueries` at the same file `:441`. RED:
+  `SI-CLIENT-08: desktop useDeleteClient did not restore the optimistic removal on failure`.
+- **SI-CLIENT-08 mobile delete invariants**: bypassed `restoreQueries` at
+  `mobile/src/hooks/useClients.ts:212` and removed upcoming invalidation at
+  `:218`. Both named invariants RED: `SI-CLIENT-08: mobile useDeleteClient no
+  longer invalidates the message-trigger upcoming cache` and `SI-CLIENT-08:
+  mobile useDeleteClient did not restore the optimistic removal on failure
+  (list=false, all=false)`.
+- **SI-CLIENT-08 mobile update knownDefect**: added upcoming invalidation and
+  overview refetch to `mobile/src/hooks/useClients.ts:153-154` (temporary
+  `serviceRecordQueryKeys` import). RED:
+  `Failing test passed even though it was supposed to fail.` QueryClient methods
+  in both client suites now execute normally (spies call through); only HTTP
+  and the secondary hook's irrelevant branch-context boundary are doubled.
+
+## Acceptance rerun (fix1 resumed worker, historical)
 
 Run against a freshly recreated `bjj_si_clients_throwaway` after reverting all
 mutations; `prisma migrate deploy` succeeded. No shared integrity runner used.
@@ -171,3 +229,33 @@ The frontend/mobile Jest runs emit the existing Sentry import deprecation warnin
   `schedule_change_request` / `end_date_review_item` rows are either swept by the
   tracker or deleted by local helpers; service-created `client` rows in the draft
   suite are registered in the tracker explicitly.
+
+## Acceptance rerun (fix2, current)
+
+The owned database was freshly created and `prisma migrate deploy` exited 0.
+Backend commands below ran in `backend/` with the real-DB exports documented
+above (except the explicit no-env run). No shared integrity runner was used.
+
+| command | observed result |
+|---|---|
+| `pnpm test test/integrity/clients --runInBand --randomize --seed=-1240350712 --showSeed --cacheDirectory .jest-cache-clients` | PASS: 5 suites / 24 tests, 0 skipped; reproducer seed now green |
+| Same command, `--seed=871230` | PASS: 5 suites / 24 tests, 0 skipped |
+| Same command, `--seed=20261031` | PASS: 5 suites / 24 tests, 0 skipped |
+| `TZ=UTC` + same command, `--seed=424242` | PASS: 5 suites / 24 tests, 0 skipped |
+| `env -u DATABASE_URL -u DIRECT_URL -u STATE_INTEGRITY_REAL_DB pnpm test test/integrity/clients` | Exit 0: all 5 real-DB suites / 24 tests skipped as intended |
+| `pnpm --filter ./frontend exec jest src/__integrity__/clients` | PASS: 1 suite / 3 tests (main-hook knownDefect + 2 secondary-hook invariants) |
+| `pnpm --filter ./mobile exec jest src/__integrity__/clients` | PASS: 1 suite / 3 tests (update knownDefect + 2 delete invariants) |
+| `pnpm --filter ./backend exec eslint test/integrity/clients` | Exit 0, no diagnostics |
+| `pnpm --filter ./backend exec tsc --noEmit -p tsconfig.json` | Exit 0, no diagnostics |
+| `pnpm --filter ./frontend exec tsc --noEmit` | Exit 0, no diagnostics |
+| `pnpm --filter ./mobile exec tsc --noEmit` | Exit 0, no diagnostics |
+| `git diff --check` | Exit 0 |
+| `dropdb -h localhost -U postgres bjj_si_clients_throwaway` then `psql -h localhost -U postgres -lqt \| grep bjj_si_clients_throwaway` | Drop exit 0; no database match |
+
+Removed `backend/.jest-cache-clients`. Final changed paths are confined to the
+three clients audit folders; no application/schema/shared-helper changes remain.
+Security checks were scoped to the audit diff: no credential/private-key patterns,
+unsafe raw-query APIs, dynamic execution or HTML injection added; env files remain
+git-ignored. No dependency changes (dependency audit not rerun). No application
+fixes or UI changes were made, so no build/browser/server was needed. Existing
+Sentry import deprecation warnings remain in frontend/mobile Jest output.

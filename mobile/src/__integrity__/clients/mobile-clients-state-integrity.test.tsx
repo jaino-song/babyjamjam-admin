@@ -33,6 +33,10 @@ jest.mock("@/lib/api/client", () => ({
 
 const apiMock = api as unknown as Record<"get" | "post" | "patch" | "put" | "delete", jest.Mock>;
 
+function invariant(id: string, title: string, body: () => Promise<void>): void {
+    it(`${id} ${title}`, body);
+}
+
 /**
  * Local knownDefect semantics (same contract as the backend harness helper):
  * `it.failing` expects the test to fail; an `expectedFailure` pattern closes the
@@ -75,8 +79,8 @@ const client = (id: number): Client => ({
 
 function setup() {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
-  const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries").mockImplementation(async () => undefined);
-  const refetchSpy = jest.spyOn(queryClient, "refetchQueries").mockImplementation(async () => ({ pages: 1 } as never));
+  const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+  const refetchSpy = jest.spyOn(queryClient, "refetchQueries");
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
@@ -86,9 +90,12 @@ function setup() {
 }
 
 describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
+  beforeEach(() => {
+    for (const mock of Object.values(apiMock)) mock.mockReset();
+  });
   knownDefect(
     "SI-CLIENT-08",
-    "mobile useUpdateClient invalidates the same dependent caches desktop does (message-trigger upcoming + service-record client overview)",
+    "mobile useUpdateClient refreshes message-trigger upcoming and service-record client overview caches (secondary desktop parity)",
     async () => {
       const updated = { ...client(42), name: "수정 고객" };
       apiMock.patch.mockResolvedValue({ data: updated });
@@ -117,8 +124,9 @@ describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
     /SI-CLIENT-08: mobile useUpdateClient left the (message-trigger upcoming|service-record client overview) cache stale/,
   );
 
-  it(
-    "SI-CLIENT-08 mobile useDeleteClient invalidates the message-trigger upcoming cache (delete-side parity holds)",
+  invariant(
+    "SI-CLIENT-08",
+    "mobile useDeleteClient invalidates the message-trigger upcoming cache (delete-side parity holds)",
     async () => {
       apiMock.delete.mockResolvedValue(undefined);
       const { invalidatedKeys, wrapper } = setup();
@@ -137,8 +145,9 @@ describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
     },
   );
 
-  it(
-    "SI-CLIENT-08 mobile useDeleteClient removes the client optimistically and restores the cache when the delete fails",
+  invariant(
+    "SI-CLIENT-08",
+    "mobile useDeleteClient removes the client optimistically and restores the cache when the delete fails",
     async () => {
       const { queryClient, wrapper } = setup();
       const listKey = clientQueryKeys.list(1, 10);

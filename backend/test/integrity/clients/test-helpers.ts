@@ -2,6 +2,8 @@ import { PrismaClient } from "@prisma/client";
 
 import { ClientService } from "application/services/client.service";
 import { ClientDueDateSchedulerService } from "application/services/client-due-date-scheduler.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { CreateClientUsecase } from "application/usecases/client/create-client.usecase";
@@ -103,13 +105,25 @@ export async function prewarmConnections(
 }
 
 /**
- * `ClientDueDateSchedulerService` with a fake lease holder and no trigger,
- * lifecycle or automation-intent services: the copy loop takes its plain
- * conditional `updateMany` path.
+ * The transactional mode supplies real lifecycle/intent services over the same
+ * database, as ClientModule does. The skipped-write race never sends messages;
+ * vendor-facing trigger/link collaborators are irrelevant on that path.
+ * Fallback explicitly exercises the optional-provider compatibility path.
  */
-export function makeDueDateScheduler(prisma: PrismaService): ClientDueDateSchedulerService {
+export function makeDueDateScheduler(
+    prisma: PrismaService,
+    mode: "transactional" | "fallback" = "fallback",
+): ClientDueDateSchedulerService {
     const lease = { holdsLease: () => true };
-    return new ClientDueDateSchedulerService(prisma, lease as never);
+    return new ClientDueDateSchedulerService(
+        prisma,
+        lease as never,
+        undefined,
+        mode === "transactional" ? new ServiceRecordLifecycleService(prisma, calendarStub) : undefined,
+        mode === "transactional"
+            ? new MessageAutomationIntentService(prisma, {} as never, {} as never, lease as never)
+            : undefined,
+    );
 }
 
 /** `ScheduleChangeService` with a real prisma and inert token writes. */

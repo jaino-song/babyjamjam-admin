@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
 import { createBranch, createClient } from "../helpers/factories";
@@ -96,9 +98,9 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
         if (handle) await closeIntegrityPrisma(handle);
     });
 
-    invariant(
+    for (const mode of ["transactional", "fallback"] as const) invariant(
         "SI-CLIENT-09",
-        "the scheduler's conditional startDate write skips after a concurrent locked update commits a start date",
+        `the ${mode} scheduler's conditional startDate write skips after a concurrent locked update commits a start date`,
         async () => {
             // The interleaving is retried on a fresh client when the scheduler's
             // blocked write is not observed within the window (an infra-level
@@ -120,23 +122,38 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
                 const schedulerMayWrite = new Promise<void>((resolve) => { releaseScheduler = resolve; });
 
                 let issuedUpdate: Promise<{ count: number }> | undefined;
-                const realUpdateMany = handle.service.client.updateMany.bind(handle.service.client);
-                // The scheduler only touches `client.findMany` /
-                // `client.updateMany` on this path (no lifecycle/intent
-                // services are wired).
-                const schedulerPrisma = {
-                    client: {
-                        findMany: handle.service.client.findMany.bind(handle.service.client),
-                        updateMany: async (...args: Parameters<typeof handle.service.client.updateMany>) => {
+                let transactionWrites = 0;
+                let fallbackWrites = 0;
+                // Pause the actual production statement, not a copied predicate.
+                // Proxy only dispatch timing; every read/write uses real Prisma.
+                const gatedClient = (delegate: Prisma.TransactionClient["client"], transactional: boolean) =>
+                    new Proxy(delegate, { get(target, key) {
+                        if (key === "updateMany") return async (...args: Parameters<typeof delegate.updateMany>) => {
+                            // Lifecycle may issue its own client metadata write
+                            // after a mutant bypasses the scheduler guard.
+                            if (!args[0]?.where || !("dueDate" in args[0].where)) return target.updateMany(...args);
+                            if (transactional) transactionWrites += 1;
+                            else fallbackWrites += 1;
                             candidatesRead(); // the candidate read (startDate IS NULL) completed
                             await schedulerMayWrite;
-                            issuedUpdate = realUpdateMany(...args);
+                            // Await inside the promise so Prisma's lazy statement
+                            // is dispatched immediately and can be observed blocked.
+                            issuedUpdate = (async () => target.updateMany(...args))();
                             return issuedUpdate;
-                        },
-                    },
-                } as unknown as typeof handle.service;
+                        };
+                        return Reflect.get(target, key);
+                    } });
+                const schedulerPrisma = new Proxy(handle.service, { get(target, key) {
+                    if (key === "client") return gatedClient(target.client, false);
+                    if (key === "$transaction") return (body: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+                        target.$transaction((tx) => body(new Proxy(tx, { get(transaction, property) {
+                            return property === "client" ? gatedClient(transaction.client, true) : Reflect.get(transaction, property);
+                        } })), { maxWait: 5_000, timeout: 60_000 });
+                    const value: unknown = Reflect.get(target, key);
+                    return typeof value === "function" ? value.bind(target) : value;
+                } });
 
-                const scheduler = makeDueDateScheduler(schedulerPrisma);
+                const scheduler = makeDueDateScheduler(schedulerPrisma, mode);
                 const schedulerCopy = scheduler.copyUpcomingDueDatesToStartDates();
                 await candidatesPromise;
 
@@ -164,6 +181,8 @@ describeReal("SI-CLIENT-03/09 writes outside the write-set lock under forced int
                     continue;
                 }
                 const copied = await schedulerCopy;
+                expect(transactionWrites).toBe(mode === "transactional" ? 1 : 0);
+                expect(fallbackWrites).toBe(mode === "fallback" ? 1 : 0);
                 if (!issuedUpdate) {
                     throw new Error("SI-CLIENT-09: scheduler never issued its conditional write — interleaving not reached");
                 }
