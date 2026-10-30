@@ -293,11 +293,18 @@ export class MessageAutomationActivationService {
 
             const before = await this.readEffectiveRule(transaction, branchId, rule);
 
-            await transaction.message_trigger_rule_branch_override.upsert({
+            // Re-applying the stored value would still write (and emit a realtime hint); the job
+            // cancellation and the before/after audit below run either way.
+            const existingOverride = await transaction.message_trigger_rule_branch_override.findUnique({
                 where: { branchId_ruleId: { branchId, ruleId } },
-                create: { branchId, ruleId, isActive },
-                update: { isActive, updatedAt: new Date() },
             });
+            if (existingOverride?.isActive !== isActive) {
+                await transaction.message_trigger_rule_branch_override.upsert({
+                    where: { branchId_ruleId: { branchId, ruleId } },
+                    create: { branchId, ruleId, isActive },
+                    update: { isActive, updatedAt: new Date() },
+                });
+            }
             if (!isActive) await this.cancelRuleJobs(branchId, ruleId, transaction);
             const refreshed = await transaction.message_trigger_rule.findUnique({ where: { id: ruleId } });
             if (!refreshed) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -431,6 +438,11 @@ export class MessageAutomationActivationService {
             }
         }
         for (const ruleId of globalRuleIds) {
+            // Skip an override that is already off: rewriting it would only bump updatedAt.
+            const existingOverride = await transaction.message_trigger_rule_branch_override.findUnique({
+                where: { branchId_ruleId: { branchId, ruleId } },
+            });
+            if (existingOverride?.isActive === false) continue;
             await transaction.message_trigger_rule_branch_override.upsert({
                 where: { branchId_ruleId: { branchId, ruleId } },
                 create: { branchId, ruleId, isActive: false },

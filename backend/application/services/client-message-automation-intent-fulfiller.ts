@@ -6,6 +6,7 @@ import {
 } from "domain/constants/message-automation-intent";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import { MessageTriggerService } from "./message-trigger.service";
 
 const CLAIM_LEASE_MINUTES = 10;
@@ -24,7 +25,11 @@ export async function fulfillClientMessageAutomationIntent(params: {
     const dedupeKey = getClientAutomationIntentDedupeKey(params.branchId, params.clientId);
     // Internal intent rows start at attempts=0. The first approved claim promotes the row to 1
     // while persisting its batch anchor; later claims retain that anchor for deterministic retries.
-    const claimed = await params.prisma.$queryRaw<Array<{
+    // Lease claim on an internal intent row (rule MESSAGE_AUTOMATION_INTENT_RULE_ID, which every user-facing
+    // job list excludes): it only moves scheduled_for / attempts / next_attempt_at / updated_at, none of
+    // which a screen renders, so it emits no realtime hint. The deletes and the jobs this fulfilment creates
+    // (syncClientRulesForClient) are not wrapped.
+    const claimed = await withoutEntityChangeHints(() => params.prisma.$queryRaw<Array<{
         id: string;
         scheduled_for: Date | string;
     }>>(Prisma.sql`
@@ -74,7 +79,7 @@ export async function fulfillClientMessageAutomationIntent(params: {
         SELECT id, scheduled_for
         FROM updated
         WHERE is_approved;
-    `);
+    `));
     const claim = claimed[0];
     if (!claim) return false;
 
@@ -143,7 +148,8 @@ async function releaseClientIntent(
     id: string,
     resetStableBatch = false,
 ): Promise<void> {
-    await prisma.message_trigger_job.updateMany({
+    // Releasing the lease: same invisible fields as the claim, so no realtime hint.
+    await withoutEntityChangeHints(() => prisma.message_trigger_job.updateMany({
         where: {
             id,
             ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
@@ -155,5 +161,5 @@ async function releaseClientIntent(
             ...(resetStableBatch ? { attempts: 0 } : {}),
             nextAttemptAt: new Date(Date.now() + RETRY_DELAY_MS),
         },
-    });
+    }));
 }

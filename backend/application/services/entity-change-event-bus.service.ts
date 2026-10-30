@@ -26,7 +26,11 @@ export interface EntityChangedEvent {
     entities: EntityChangeKind[];
 }
 
-/** Trailing window, long enough for an enclosing `$transaction` to commit before clients refetch. */
+/**
+ * Trailing window that coalesces a burst of writes into one event per branch, so a bulk operation wakes
+ * clients once, not once per row. It is not what orders hints after a commit: the extension holds a
+ * transaction's hints and emits them only after it commits.
+ */
 export const ENTITY_CHANGE_COALESCE_MS = 300;
 
 interface PendingBatch {

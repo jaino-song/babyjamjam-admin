@@ -51,7 +51,11 @@ function setup() {
     const controller = new RealtimeController(bus);
     const subscribe = (branchId: string) => {
         const received: Array<{ type?: string; data: unknown }> = [];
-        const subscription = controller.events({ branchId }).subscribe((e) => received.push(e));
+        // Cursor ids and the opening `ready` are the transport's concern (realtime.controller.spec.ts);
+        // these assertions are about which entity-changed hints reach which branch.
+        const subscription = controller.events({ branchId }).subscribe(({ type, data }) => {
+            if (type !== "ready") received.push({ type, data });
+        });
         return { received, subscription };
     };
 

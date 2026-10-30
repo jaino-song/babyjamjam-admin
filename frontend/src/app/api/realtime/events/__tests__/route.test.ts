@@ -51,6 +51,73 @@ describe("realtime events SSE proxy", () => {
         expect(upstreamHeaders?.get("Last-Event-ID")).toBe("event-7");
     });
 
+    describe("resume cursor", () => {
+        const captureUpstream = () => {
+            const captured: { url: string; headers?: Headers } = { url: "" };
+            globalThis.fetch = jest.fn((input, init) => {
+                captured.url = String(input);
+                captured.headers = new Headers(init?.headers);
+                return Promise.resolve(new Response(null, { status: 204 }));
+            }) as typeof fetch;
+            return captured;
+        };
+        const get = (query: string, headers: Record<string, string> = {}) =>
+            GET(
+                new NextRequest(`${REQUEST_URL}${query}`, {
+                    headers: { cookie: "auth_token=auth-token", ...headers },
+                }),
+            );
+
+        it("forwards a valid since as the backend ?since= query", async () => {
+            const upstream = captureUpstream();
+
+            await get("?since=1700000000000-3");
+
+            expect(new URL(upstream.url).searchParams.get("since")).toBe("1700000000000-3");
+        });
+
+        it("forwards an epoch:seq cursor, and Last-Event-ID alongside it", async () => {
+            const upstream = captureUpstream();
+
+            await get(`?since=${encodeURIComponent("abc.1:42")}`, { "Last-Event-ID": "event-7" });
+
+            expect(new URL(upstream.url).searchParams.get("since")).toBe("abc.1:42");
+            expect(upstream.headers?.get("Last-Event-ID")).toBe("event-7");
+        });
+
+        it("sends no query when the request has no since", async () => {
+            const upstream = captureUpstream();
+
+            await get("");
+
+            expect(new URL(upstream.url).search).toBe("");
+        });
+
+        it.each([
+            ["empty", "?since="],
+            ["a space", "?since=a%20b"],
+            ["a slash", "?since=a%2Fb"],
+            ["a newline", "?since=a%0Ab"],
+            ["more than 64 chars", `?since=${"x".repeat(65)}`],
+        ])("drops an invalid since (%s) instead of forwarding it", async (_label, query) => {
+            const upstream = captureUpstream();
+
+            await get(query, { "Last-Event-ID": "event-7" });
+
+            expect(new URL(upstream.url).search).toBe("");
+            expect(upstream.headers?.get("Last-Event-ID")).toBe("event-7");
+        });
+
+        it("accepts a cursor of exactly 64 chars", async () => {
+            const upstream = captureUpstream();
+            const cursor = "x".repeat(64);
+
+            await get(`?since=${cursor}`);
+
+            expect(new URL(upstream.url).searchParams.get("since")).toBe(cursor);
+        });
+    });
+
     it("keeps the Vercel safety-net duration shared with the other SSE proxies", () => {
         expect(maxDuration).toBe(60);
     });
