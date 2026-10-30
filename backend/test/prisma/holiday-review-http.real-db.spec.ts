@@ -107,7 +107,14 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
     async function makeClient(
         branchId: string,
         name: string,
-        partial: { start?: string; end?: string; status?: string | null } = {},
+        partial: {
+            start?: string;
+            end?: string;
+            status?: string | null;
+            allowSaturdayService?: boolean;
+            allowSundayService?: boolean;
+            allowHolidayService?: boolean;
+        } = {},
     ): Promise<number> {
         const row = await raw.client.create({
             data: {
@@ -117,6 +124,9 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
                 startDate: d(partial.start ?? "2026-11-02"),
                 endDate: d(partial.end ?? "2026-11-13"),
                 duration: 10,
+                allowSaturdayService: partial.allowSaturdayService ?? false,
+                allowSundayService: partial.allowSundayService ?? false,
+                allowHolidayService: partial.allowHolidayService ?? false,
                 serviceStatus: partial.status === undefined ? "active" : partial.status,
                 bookingConfirmedAt: partial.status === "pre_booking" ? null : new Date("2026-01-01"),
             },
@@ -339,7 +349,8 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
 
     describe("findFixSnapshot", () => {
         it("returns dates, duration, termination and the case facts; other branches' clients are invisible", async () => {
-            const live = await makeClient(branchA, "가");
+            // Non-default flags, so the snapshot is shown to carry each one rather than a constant false.
+            const live = await makeClient(branchA, "가", { allowSaturdayService: true, allowHolidayService: true });
             const terminated = await makeClient(branchA, "나", { status: "terminated" });
             const other = await makeClient(branchB, "다");
             const record = await raw.service_record_case.create({
@@ -364,6 +375,9 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
                 duration: 10,
                 terminated: false,
                 finished: false,
+                allowSaturdayService: true,
+                allowSundayService: false,
+                allowHolidayService: true,
                 facts: { caseStatus: "COMPLETED", days: [{ date: "2026-11-03", locked: true }] },
             });
             expect((await asBranch(branchA, () => repository.findFixSnapshot(branchA, terminated)))?.terminated).toBe(true);
@@ -432,6 +446,14 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
             expect(clientService.update).toHaveBeenCalledWith(branchA, fixable, {
                 endDate: "2026-11-16",
                 expectedEndDate: "2026-11-13",
+                // The resolve service pins the client's own service-day flags, so a toggle saved
+                // after the item was filed cannot be overwritten by this end-date fix. The stand-in
+                // calendar above only knows the weekday rule, hence the default (all false) flags.
+                expectedServiceDays: {
+                    allowSaturdayService: false,
+                    allowSundayService: false,
+                    allowHolidayService: false,
+                },
             }, expect.any(Function));
             const status = async (id: string) => (await raw.end_date_review_item.findUniqueOrThrow({ where: { id } }));
             expect(await status(itemFix.id)).toMatchObject({ status: "fixed", resolvedBy: USER });
