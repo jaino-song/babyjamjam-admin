@@ -69,6 +69,14 @@ async function setupRoutes(page: Page, options: { task?: boolean } = {}) {
     const latestTask = makeTask(2, "김철수");
     await page.route("**/api/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(authResponse) }));
     await page.route("**/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(authResponse) }));
+    // The protected layout mounts DocumentJobsProvider, which polls the eformsign job summary on every page.
+    // This spec runs on a fake, unsigned session, so an unmocked call is rejected by the real backend and the
+    // client treats that 401 (plus the failed refresh) as an ended session and redirects to /login.
+    await page.route("**/api/eformsign-docs/jobs/summary", (route) => route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] }),
+    }));
     await page.route("**/api/ai/chat/history**", (route) => route.fulfill({
         status: 200,
         contentType: "application/json",
