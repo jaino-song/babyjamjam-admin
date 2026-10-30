@@ -67,7 +67,7 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
 });
 test('mobile advisory keeps every step/service and full suite; only relevance and direct dependency change',()=>{
   const a=parse(old('mobile-ci.yml')).jobs.e2e,b=parse(read('mobile-ci.yml')).jobs.e2e;
-  assert.deepEqual(needs(b),['verify','impact']);assert.deepEqual({...b,needs:a.needs,if:a.if},a);
+  assert.deepEqual(needs(b),['verify','impact']);assert.deepEqual({...b,needs:a.needs,if:a.if,'runs-on':a['runs-on']},a);assert.equal(b['runs-on'],'ubuntu-24.04','mobile advisory e2e is pinned to ubuntu-24.04');
   assert.equal(b['continue-on-error'],undefined);assert.ok(b.steps.some(s=>s.run==='pnpm --filter ./mobile run test:e2e'));
 });
 test('reusable classification and completion are self-contained protected-base authority with full bootstrap',()=>{
@@ -121,7 +121,8 @@ test('Playwright conditions the full service job, preserves the full lane and ev
   assert.deepEqual(needs(w.jobs.test), ['impact']);
   assert.match(w.jobs.test.if, /!cancelled\(\)/);
   const {needs: _needs, if: _if, ...heavy} = w.jobs.test;
-  assert.deepEqual(heavy, before.jobs.test, 'services, fixtures, commands, artifacts and timeout remain unchanged');
+  assert.equal(heavy['runs-on'], 'ubuntu-24.04', 'frontend auth lifecycle job is pinned to ubuntu-24.04');
+  assert.deepEqual({...heavy, 'runs-on': before.jobs.test['runs-on']}, before.jobs.test, 'services, fixtures, commands, artifacts and timeout remain unchanged');
   const visited = new Set(), active = new Set();
   function visit(id) {
     assert.ok(w.jobs[id], `missing job ${id}`);assert.equal(active.has(id), false, `cycle at ${id}`);
