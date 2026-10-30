@@ -1,6 +1,7 @@
 import type { Observable } from "rxjs";
 
 import type { EntityChangeKind } from "application/services/entity-change-event-bus.service";
+import type { CursorCodec } from "./entity-change-cursor-codec";
 
 /** One flushed bus batch, stamped with the cursor of the stream it travelled on. */
 export interface DeliveredBatch {
@@ -30,6 +31,8 @@ export type ReplayResult = { honoured: true; batches: DeliveredBatch[] } | { hon
  */
 export interface EntityChangeTransport {
     readonly signals$: Observable<TransportSignal>;
+    /** Turns internal cursors into the opaque ids clients see (shared key on every Valkey instance). */
+    readonly cursors: CursorCodec;
     /** Cursor of the last batch this instance has delivered; never ahead of what `signals$` emitted. */
     position(): string;
     /**

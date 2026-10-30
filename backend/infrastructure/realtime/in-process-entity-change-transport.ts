@@ -3,6 +3,7 @@ import { Observable, Subject, Subscription } from "rxjs";
 
 import type { EntityChangedEvent } from "application/services/entity-change-event-bus.service";
 import { formatRingCursor, parseCursor } from "./entity-change-cursor";
+import { CursorCodec, randomRealtimeCursorKey } from "./entity-change-cursor-codec";
 import type { DeliveredBatch, EntityChangeTransport, ReplayResult, TransportSignal } from "./entity-change-transport";
 
 /** Same order of magnitude as the Valkey stream's `MAXLEN ~`. */
@@ -59,8 +60,14 @@ export class InProcessEntityChangeTransport implements EntityChangeTransport {
     private readonly subscription: Subscription;
 
     readonly signals$: Observable<TransportSignal> = this.subject.asObservable();
+    readonly cursors: CursorCodec;
 
-    constructor(bus: { events$: Observable<EntityChangedEvent> }, capacity: number = REALTIME_RETENTION) {
+    constructor(
+        bus: { events$: Observable<EntityChangedEvent> },
+        capacity: number = REALTIME_RETENTION,
+        cursorKey: Buffer = randomRealtimeCursorKey(),
+    ) {
+        this.cursors = new CursorCodec(cursorKey);
         this.ring = new RealtimeRingBuffer(capacity);
         this.subscription = bus.events$.subscribe((event) => this.publish(event));
     }

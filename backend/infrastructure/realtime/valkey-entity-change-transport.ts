@@ -2,8 +2,10 @@ import { Logger } from "@nestjs/common";
 import Redis from "ioredis";
 import { Observable, Subject, Subscription } from "rxjs";
 
-import type { EntityChangedEvent, EntityChangeKind } from "application/services/entity-change-event-bus.service";
+import type { EntityChangedEvent } from "application/services/entity-change-event-bus.service";
 import { compareCursors, parseCursor } from "./entity-change-cursor";
+import { CursorCodec } from "./entity-change-cursor-codec";
+import { decodeBatchFields, encodeBatchFields } from "./entity-change-stream-codec";
 import { REALTIME_RETENTION, RealtimeRingBuffer } from "./in-process-entity-change-transport";
 import type { DeliveredBatch, EntityChangeTransport, ReplayResult, TransportSignal } from "./entity-change-transport";
 
@@ -11,6 +13,8 @@ export const REALTIME_STREAM_KEY = "realtime:entity-changes";
 
 export interface ValkeyTransportOptions {
     url: string;
+    /** 32-byte key for client cursor tokens; must be the same on every instance (see `deriveRealtimeCursorKey`). */
+    cursorKey: Buffer;
     streamKey?: string;
     maxLen?: number;
     /** First wait after a Valkey failure; doubles up to `maxRetryDelayMs`. */
@@ -61,8 +65,10 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     private wake: (() => void) | null = null;
 
     readonly signals$: Observable<TransportSignal> = this.subject.asObservable();
+    readonly cursors: CursorCodec;
 
     constructor(bus: { events$: Observable<EntityChangedEvent> }, options: ValkeyTransportOptions) {
+        this.cursors = new CursorCodec(options.cursorKey);
         this.streamKey = options.streamKey ?? REALTIME_STREAM_KEY;
         this.maxLen = options.maxLen ?? REALTIME_RETENTION;
         this.retryDelayMs = options.retryDelayMs ?? 250;
@@ -120,7 +126,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
             }
             const batches: DeliveredBatch[] = [];
             for (const [id, fields] of rows) {
-                const batch = toBatch(id, fields);
+                const batch = decodeBatchFields(id, fields);
                 if (batch) batches.push(batch);
             }
             return { honoured: true, batches };
@@ -147,10 +153,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
                 "~",
                 this.maxLen,
                 "*",
-                "b",
-                event.branchId ?? "",
-                "e",
-                JSON.stringify(event.entities),
+                ...encodeBatchFields(event),
             );
         } catch (error) {
             if (this.closed) return;
@@ -212,7 +215,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
                 // position the connections were told to abandon.
                 if (this.mode !== "valkey") return;
                 this.lastDelivered = id;
-                const batch = toBatch(id, fields);
+                const batch = decodeBatchFields(id, fields);
                 if (batch) this.subject.next(batch);
             }
         }
@@ -282,21 +285,4 @@ function oldestHonourable(fields: Map<string, unknown>, lastGeneratedId: string)
     }
     const deleted = fields.get("max-deleted-entry-id");
     return typeof deleted === "string" && compareCursors(deleted, floor) === 1 ? deleted : floor;
-}
-
-function toBatch(id: string, fields: string[]): DeliveredBatch | null {
-    let branch: string | null = null;
-    let entities: unknown;
-    for (let i = 0; i + 1 < fields.length; i += 2) {
-        if (fields[i] === "b") branch = fields[i + 1] ?? "";
-        else if (fields[i] === "e") {
-            try {
-                entities = JSON.parse(fields[i + 1] ?? "");
-            } catch {
-                return null;
-            }
-        }
-    }
-    if (!Array.isArray(entities) || entities.some((kind) => typeof kind !== "string")) return null;
-    return { type: "batch", cursor: id, branchId: branch === "" ? null : branch, entities: entities as EntityChangeKind[] };
 }

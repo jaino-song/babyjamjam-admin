@@ -5,6 +5,8 @@ import type { Subscription } from "rxjs";
 
 import { EntityChangeEventBus } from "application/services/entity-change-event-bus.service";
 import { RealtimeController } from "interface/controllers/realtime.controller";
+import { deriveRealtimeCursorKey } from "./entity-change-cursor-codec";
+import type { DeliveredBatch, TransportSignal } from "./entity-change-transport";
 import { ValkeyEntityChangeTransport } from "./valkey-entity-change-transport";
 
 type Received = Array<MessageEvent & { id?: string }>;
@@ -12,6 +14,10 @@ type Received = Array<MessageEvent & { id?: string }>;
 const VALKEY_URL = (process.env["REALTIME_TEST_VALKEY_URL"] ?? process.env["VALKEY_URL"])?.trim();
 const STREAM_CURSOR = /^\d+-\d+$/;
 const RING_CURSOR = /^[0-9a-f]+:\d+$/;
+// The desktop and mobile proxies validate a cursor with exactly this expression.
+const CLIENT_CURSOR = /^[0-9A-Za-z:._-]{1,64}$/;
+// Every instance derives the same key from the shared JWT secret.
+const CURSOR_KEY = deriveRealtimeCursorKey("realtime-test-secret");
 
 async function waitFor(predicate: () => boolean, what: string, timeoutMs = 8000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
@@ -23,28 +29,40 @@ async function waitFor(predicate: () => boolean, what: string, timeoutMs = 8000)
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function instance(url: string, streamKey: string, extra: { maxLen?: number } = {}) {
+function instance(url: string, streamKey: string, extra: { maxLen?: number; cursorKey?: Buffer } = {}) {
     const bus = new EntityChangeEventBus(10);
-    const transport = new ValkeyEntityChangeTransport(bus, { url, streamKey, retryDelayMs: 50, maxRetryDelayMs: 200, blockMs: 500, ...extra });
+    const transport = new ValkeyEntityChangeTransport(bus, {
+        url,
+        streamKey,
+        cursorKey: CURSOR_KEY,
+        retryDelayMs: 50,
+        maxRetryDelayMs: 200,
+        blockMs: 500,
+        ...extra,
+    });
     const controller = new RealtimeController(bus, transport);
     const subscriptions: Subscription[] = [];
+    /** `since` is the internal stream/ring cursor; it is turned into the token a client would hold. */
     const subscribe = (branchId: string, since?: string) => {
         const received: Received = [];
-        subscriptions.push(controller.events({ branchId }, since).subscribe((e) => received.push(e)));
+        const token = since === undefined ? undefined : transport.cursors.encode(since);
+        subscriptions.push(controller.events({ branchId }, token).subscribe((e) => received.push(e)));
         return received;
     };
+    /** Internal cursor behind a message id. */
+    const cursorOf = (id: string | undefined) => (id === undefined ? undefined : transport.cursors.decode(id));
     const destroy = () => {
         subscriptions.forEach((s) => s.unsubscribe());
         transport.onModuleDestroy();
     };
-    return { bus, transport, controller, subscribe, destroy };
+    return { bus, transport, controller, subscribe, cursorOf, destroy };
 }
 
 const changes = (received: Received) => received.filter((e) => e.type === "entity-changed");
 
 describe("ValkeyEntityChangeTransport without a reachable Valkey", () => {
-    it("never blocks or throws on a write: batches reach local subscribers in-process, ids are ring cursors", async () => {
-        const { bus, transport, subscribe, destroy } = instance("redis://127.0.0.1:1", `rt-test:${randomBytes(4).toString("hex")}`);
+    it("never blocks or throws on a write: batches reach local subscribers in-process, ids are ring-cursor tokens", async () => {
+        const { bus, transport, subscribe, cursorOf, destroy } = instance("redis://127.0.0.1:1", `rt-test:${randomBytes(4).toString("hex")}`);
         try {
             const received = subscribe("branch-a");
             bus.emit({ branchId: "branch-a", kind: "client" });
@@ -53,7 +71,8 @@ describe("ValkeyEntityChangeTransport without a reachable Valkey", () => {
             expect(transport.activeMode).toBe("fallback");
             expect(received[0]).toMatchObject({ type: "ready", data: { resumed: false } });
             expect(changes(received)[0]).toMatchObject({ data: { entities: ["client"] } });
-            expect(changes(received)[0]?.id).toMatch(RING_CURSOR);
+            expect(changes(received)[0]?.id).toMatch(CLIENT_CURSOR);
+            expect(cursorOf(changes(received)[0]?.id)).toMatch(RING_CURSOR);
         } finally {
             destroy();
         }
@@ -92,7 +111,7 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         await admin.del(streamKey);
     });
 
-    it("an emit on A reaches the subscriber on A and the one on B exactly once, with the same stream-id cursor", async () => {
+    it("an emit on A reaches the subscriber on A and the one on B exactly once, with the same underlying stream-id cursor", async () => {
         const onA = a.subscribe("branch-a");
         const onB = b.subscribe("branch-a");
 
@@ -105,13 +124,52 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         expect(changes(onB)).toHaveLength(1);
         expect(changes(onA)[0]?.data).toEqual({ entities: ["client", "message"] });
         expect(changes(onB)[0]?.data).toEqual({ entities: ["client", "message"] });
-        expect(changes(onA)[0]?.id).toMatch(STREAM_CURSOR);
-        expect(changes(onB)[0]?.id).toBe(changes(onA)[0]?.id);
+        expect(changes(onA)[0]?.id).toMatch(CLIENT_CURSOR);
+        expect(a.cursorOf(changes(onA)[0]?.id)).toMatch(STREAM_CURSOR);
+        // Both instances derive the same key, and the tokens still differ (fresh IV per issue).
+        expect(b.cursorOf(changes(onB)[0]?.id)).toBe(a.cursorOf(changes(onA)[0]?.id));
+        expect(changes(onB)[0]?.id).not.toBe(changes(onA)[0]?.id);
         // The stream is the single source: one entry, not one per instance.
         expect(await admin.xlen(streamKey)).toBe(1);
     });
 
-    it("a batch for another branch reaches only that branch's subscribers but advances every position", async () => {
+    it("a token issued by A resumes on B (same derived key on every instance)", async () => {
+        const onA = a.subscribe("branch-a");
+        a.bus.emit({ branchId: "branch-a", kind: "client" });
+        await waitFor(() => changes(onA).length === 1, "first batch");
+        const tokenFromA = changes(onA)[0]?.id as string;
+        a.bus.emit({ branchId: "branch-a", kind: "message" });
+        await waitFor(() => changes(onA).length === 2, "second batch");
+
+        const received: Received = [];
+        const sub = b.controller.events({ branchId: "branch-a" }, tokenFromA).subscribe((e) => received.push(e));
+        await waitFor(() => changes(received).length === 1, "replay on B");
+        sub.unsubscribe();
+
+        expect(received[0]?.data).toEqual({ resumed: true });
+        expect(changes(received)[0]?.data).toEqual({ entities: ["message"] });
+    });
+
+    it("a token under a different key (another deployment's secret) is not honoured", async () => {
+        const stranger = instance(VALKEY_URL as string, streamKey, { cursorKey: deriveRealtimeCursorKey("someone-elses-secret") });
+        try {
+            const onStranger = stranger.subscribe("branch-a");
+            stranger.bus.emit({ branchId: "branch-a", kind: "client" });
+            await waitFor(() => changes(onStranger).length === 1, "the stranger's batch");
+            const foreignToken = changes(onStranger)[0]?.id as string;
+
+            const received: Received = [];
+            const sub = b.controller.events({ branchId: "branch-a" }, foreignToken).subscribe((e) => received.push(e));
+            await waitFor(() => received.length >= 1, "ready");
+            sub.unsubscribe();
+
+            expect(received[0]?.data).toEqual({ resumed: false });
+        } finally {
+            stranger.destroy();
+        }
+    });
+
+    it("a batch for another branch reaches only that branch's subscribers and leaves the other branch's ids untouched", async () => {
         const branchA = b.subscribe("branch-a");
         const branchB = b.subscribe("branch-b");
 
@@ -119,8 +177,31 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         await waitFor(() => changes(branchB).length === 1, "branch-b delivery");
 
         expect(changes(branchA)).toHaveLength(0);
+        expect(branchA.map((e) => e.type)).toEqual(["ready"]);
         expect(changes(branchB)[0]?.data).toEqual({ entities: ["employee"] });
-        expect(b.transport.position()).toBe(changes(branchB)[0]?.id);
+        expect(b.cursorOf(changes(branchB)[0]?.id)).toBe(b.transport.position());
+    });
+
+    it("only branch B writing across instances: A's connection id never changes and a reconnect with it resumes without B batches", async () => {
+        const onA = a.subscribe("branch-a");
+        const oldToken = onA[0]?.id as string;
+
+        for (let i = 0; i < 3; i += 1) {
+            b.bus.emit({ branchId: "branch-b", kind: "employee" });
+            await waitFor(() => b.transport.position() !== (a.transport.cursors.decode(oldToken) ?? ""), "B batch to land");
+            await pause(40);
+        }
+        await waitFor(() => a.transport.position() === b.transport.position(), "A's reader to see every batch");
+
+        expect(onA.map((e) => e.type)).toEqual(["ready"]);
+        const resumed: Received = [];
+        const sub = a.controller.events({ branchId: "branch-a" }, oldToken).subscribe((e) => resumed.push(e));
+        await waitFor(() => resumed.length >= 1, "ready");
+        await pause(100);
+        sub.unsubscribe();
+
+        expect(resumed.map((e) => [e.type, e.data])).toEqual([["ready", { resumed: true }]]);
+        expect(resumed[0]?.id).not.toBe(oldToken);
     });
 
     async function seedOnA(): Promise<string[]> {
@@ -140,8 +221,10 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         const replayed = b.subscribe("branch-a", first);
         await waitFor(() => changes(replayed).length === 2, "replay");
 
-        expect(replayed[0]).toEqual({ id: first, type: "ready", data: { resumed: true } });
-        expect(changes(replayed).map((e) => [e.id, e.data])).toEqual([
+        expect(replayed[0]?.type).toBe("ready");
+        expect(b.cursorOf(replayed[0]?.id)).toBe(first);
+        expect(replayed[0]?.data).toEqual({ resumed: true });
+        expect(changes(replayed).map((e) => [b.cursorOf(e.id), e.data])).toEqual([
             [third, { entities: ["settings"] }],
             [fourth, { entities: ["document"] }],
         ]);
@@ -157,8 +240,9 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         const replayed = b.subscribe("branch-a", "0-0");
         await waitFor(() => changes(replayed).length === 3, "full replay");
 
-        expect(replayed[0]).toEqual({ id: "0-0", type: "ready", data: { resumed: true } });
-        expect(changes(replayed).map((e) => e.id)).toEqual([cursors[0], cursors[2], cursors[3]]);
+        expect(b.cursorOf(replayed[0]?.id)).toBe("0-0");
+        expect(replayed[0]?.data).toEqual({ resumed: true });
+        expect(changes(replayed).map((e) => b.cursorOf(e.id))).toEqual([cursors[0], cursors[2], cursors[3]]);
     });
 
     it("resuming from the newest cursor is honoured with an empty replay", async () => {
@@ -167,7 +251,8 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         const received = b.subscribe("branch-a", cursors.at(-1));
         await pause(150);
 
-        expect(received).toEqual([{ id: cursors.at(-1), type: "ready", data: { resumed: true } }]);
+        expect(received.map((e) => [e.type, e.data])).toEqual([["ready", { resumed: true }]]);
+        expect(b.cursorOf(received[0]?.id)).toBe(cursors.at(-1));
     });
 
     it("after a trim, a cursor older than the oldest retained entry is not honoured, the oldest retained entry's own cursor is", async () => {
@@ -180,10 +265,12 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         await waitFor(() => expired.length >= 1 && justBeforeOldest.length >= 1 && atOldest.length >= 1, "ready messages");
         await pause(100);
 
-        expect(expired).toEqual([{ id: b.transport.position(), type: "ready", data: { resumed: false } }]);
+        expect(expired.map((e) => [e.type, e.data])).toEqual([["ready", { resumed: false }]]);
+        expect(b.cursorOf(expired[0]?.id)).toBe(b.transport.position());
         // Its successor gap is invisible once trimmed, so the safe answer is "not honoured".
         expect(justBeforeOldest[0]?.data).toEqual({ resumed: false });
-        expect(atOldest).toEqual([{ id: cursors[3], type: "ready", data: { resumed: true } }]);
+        expect(atOldest.map((e) => [e.type, e.data])).toEqual([["ready", { resumed: true }]]);
+        expect(b.cursorOf(atOldest[0]?.id)).toBe(cursors[3]);
     });
 
     it("a stream trimmed to nothing honours only its newest id", async () => {
@@ -200,15 +287,19 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         expect(newest[0]?.data).toEqual({ resumed: true });
     });
 
-    it("a cursor from the future of the stream, a ring cursor and a malformed one are not honoured", async () => {
+    it("a cursor from the future of the stream, a ring cursor and a raw (unencrypted) id are not honoured", async () => {
         await seedOnA();
 
         const future = b.subscribe("branch-a", "99999999999999-0");
         const ring = b.subscribe("branch-a", "abcdef012345:1");
-        await waitFor(() => future.length >= 1 && ring.length >= 1, "ready messages");
+        const raw: Received = [];
+        const sub = b.controller.events({ branchId: "branch-a" }, "1793326101367-0").subscribe((e) => raw.push(e));
+        await waitFor(() => future.length >= 1 && ring.length >= 1 && raw.length >= 1, "ready messages");
+        sub.unsubscribe();
 
         expect(future[0]?.data).toEqual({ resumed: false });
         expect(ring[0]?.data).toEqual({ resumed: false });
+        expect(raw[0]?.data).toEqual({ resumed: false });
     });
 
     it("a fresh connect starts at the reader's position, which is the stream's newest id", async () => {
@@ -216,7 +307,8 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
 
         const fresh = b.subscribe("branch-a");
 
-        expect(fresh).toEqual([{ id: cursors.at(-1), type: "ready", data: { resumed: false } }]);
+        expect(fresh.map((e) => [e.type, e.data])).toEqual([["ready", { resumed: false }]]);
+        expect(b.cursorOf(fresh[0]?.id)).toBe(cursors.at(-1));
     });
 
     it("a transport that starts after entries exist begins at the newest id, not at the origin", async () => {
@@ -228,6 +320,49 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
             expect(late.transport.position()).toBe(cursors.at(-1));
         } finally {
             late.destroy();
+        }
+    });
+
+    it("keeps null, empty-string and real branch ids apart across the stream", async () => {
+        const seen: DeliveredBatch[] = [];
+        const sub = b.transport.signals$.subscribe((s: TransportSignal) => {
+            if (s.type === "batch") seen.push(s);
+        });
+        try {
+            a.bus.emit({ branchId: null, kind: "settings" });
+            await waitFor(() => seen.length === 1, "broadcast batch");
+            a.bus.emit({ branchId: "", kind: "client" });
+            await waitFor(() => seen.length === 2, "empty-branch batch");
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => seen.length === 3, "scoped batch");
+
+            expect(seen.map((s) => s.branchId)).toEqual([null, "", "branch-a"]);
+            // What is physically on the stream: no `b` field for the broadcast.
+            const rows = await admin.xrange(streamKey, "-", "+");
+            expect(rows.map(([, fields]) => fields)).toEqual([
+                ["e", '["settings"]'],
+                ["b", "", "e", '["client"]'],
+                ["b", "branch-a", "e", '["message"]'],
+            ]);
+        } finally {
+            sub.unsubscribe();
+        }
+    });
+
+    it("skips a malformed entry on the stream instead of delivering or crashing, and keeps reading", async () => {
+        const seen: DeliveredBatch[] = [];
+        const sub = b.transport.signals$.subscribe((s: TransportSignal) => {
+            if (s.type === "batch") seen.push(s);
+        });
+        try {
+            await admin.xadd(streamKey, "*", "b", "x", "unexpected", "1", "e", '["client"]');
+            await admin.xadd(streamKey, "*", "e", '["not-a-kind"]');
+            a.bus.emit({ branchId: "branch-a", kind: "message" });
+            await waitFor(() => seen.length === 1, "the well-formed batch");
+
+            expect(seen[0]).toMatchObject({ branchId: "branch-a", entities: ["message"] });
+        } finally {
+            sub.unsubscribe();
         }
     });
 
@@ -244,8 +379,9 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         a.bus.emit({ branchId: "branch-a", kind: "message" });
         await waitFor(() => changes(onB).length === 2, "delivery after the recovery");
         expect(changes(onB)[1]?.data).toEqual({ entities: ["message"] });
-        expect(changes(onB)[1]?.id).toMatch(STREAM_CURSOR);
+        expect(b.cursorOf(changes(onB)[1]?.id)).toMatch(STREAM_CURSOR);
         expect(resets()[0]?.data).toEqual({});
+        expect(resets()[0]?.id).toMatch(CLIENT_CURSOR);
     });
 
     it("an XADD that fails during an outage still reaches local subscribers, then resets, and the stream path resumes", async () => {
@@ -257,7 +393,7 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
         a.bus.emit({ branchId: "branch-a", kind: "client" });
         await waitFor(() => changes(onA).length === 1, "local delivery of the unpublished batch");
 
-        expect(changes(onA)[0]?.id).toMatch(RING_CURSOR);
+        expect(a.cursorOf(changes(onA)[0]?.id)).toMatch(RING_CURSOR);
         expect(onA.some((e) => e.type === "reset")).toBe(true);
         expect(changes(onB)).toHaveLength(0); // never reached the stream, so B cannot have it
 
@@ -266,8 +402,8 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
 
         a.bus.emit({ branchId: "branch-a", kind: "message" });
         await waitFor(() => changes(onB).length === 1 && changes(onA).length === 2, "delivery on the stream path again");
-        expect(changes(onA)[1]?.id).toMatch(STREAM_CURSOR);
-        expect(changes(onB)[0]?.id).toBe(changes(onA)[1]?.id);
+        expect(a.cursorOf(changes(onA)[1]?.id)).toMatch(STREAM_CURSOR);
+        expect(b.cursorOf(changes(onB)[0]?.id)).toBe(a.cursorOf(changes(onA)[1]?.id));
     });
 
     it("closes its Valkey connections on destroy", async () => {

@@ -111,12 +111,12 @@ describe("createEntityChangeTransport", () => {
 
     it("is in-process without VALKEY_URL (unset, empty or blank)", () => {
         for (const env of [{}, { VALKEY_URL: "" }, { VALKEY_URL: "   " }]) {
-            expect(createEntityChangeTransport(bus, env)).toBeInstanceOf(InProcessEntityChangeTransport);
+            expect(createEntityChangeTransport(bus, env, () => "unused")).toBeInstanceOf(InProcessEntityChangeTransport);
         }
     });
 
     it("is the Valkey transport when VALKEY_URL is set, and starts in the in-process path until connected", () => {
-        const transport = createEntityChangeTransport(bus, { VALKEY_URL: "redis://127.0.0.1:1" });
+        const transport = createEntityChangeTransport(bus, { VALKEY_URL: "redis://127.0.0.1:1" }, () => "test-secret");
         try {
             expect(transport).toBeInstanceOf(ValkeyEntityChangeTransport);
             expect((transport as ValkeyEntityChangeTransport).activeMode).toBe("fallback");
