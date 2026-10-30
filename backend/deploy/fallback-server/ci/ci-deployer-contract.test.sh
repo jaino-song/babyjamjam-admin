@@ -48,6 +48,10 @@ assert_contains "$DEPLOYER" 'replace-temporary-active "\$commit_sha" "\$image_di
     "deployer must keep the operator replacement summary out of the status stream"
 assert_contains "$DEPLOYER" 'current_tag' \
     "deployer must verify the final immutable release identity"
+assert_contains "$DEPLOYER" 'valkey-restore-fence' \
+    "deployer must know the Valkey restore fence marker"
+assert_contains "$DEPLOYER" 'require_no_valkey_restore_fence' \
+    "deployer must refuse an automatic replacement while a Valkey restore is fenced"
 assert_not_contains "$DEPLOYER" '(AWS_ACCESS_KEY|AWS_SECRET|docker[[:space:]]+build|git[[:space:]]+checkout)' \
     "deployer must not accept cloud credentials or build mutable source"
 
