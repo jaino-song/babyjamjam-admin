@@ -8,6 +8,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { SystemSettingService } from "application/services/system-setting.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MESSAGE_AUTOMATION_PARENT_DISABLED_REASON } from "application/services/message-automation-activation.service";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -402,15 +403,21 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
     it("5. concurrent dispatch ticks share one execution guard: one send, one log", async () => {
         const dueJob = await insertDuePendingJob("guard", 121);
         const callsBefore = stub.sendCalls.length;
+        const inner = jest.spyOn(harness.app.get(MessageTriggerService, { strict: false }), "dispatchDueJobs");
 
         // Both tick calls resolve the SAME MessageTriggerSchedulerService
         // instance, hence the same SchedulerExecutionGuard: the second
         // tryStart returns null and its tick becomes a no-op.
-        await Promise.all([harness.tick.dispatch(), harness.tick.dispatch()]);
+        try {
+            await Promise.all([harness.tick.dispatch(), harness.tick.dispatch()]);
 
-        expect((await readJob(dueJob.id)).status).toBe("sent");
-        expect(await prisma.message_log.count({ where: { triggerJobId: dueJob.id } })).toBe(1);
-        expect(stub.sendCalls.length - callsBefore).toBe(1);
+            expect(inner).toHaveBeenCalledTimes(1);
+            expect((await readJob(dueJob.id)).status).toBe("sent");
+            expect(await prisma.message_log.count({ where: { triggerJobId: dueJob.id } })).toBe(1);
+            expect(stub.sendCalls.length - callsBefore).toBe(1);
+        } finally {
+            inner.mockRestore();
+        }
     });
 
     it("6. the branch trigger-dispatch gate keeps a due automatic job pending while off, and the same job sends once it re-opens", async () => {
@@ -442,11 +449,15 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         expect(stub.sendCalls.length - callsBefore).toBe(0);
 
         // Re-open dispatch: restore the setting row and the SAME job sends.
-        await prisma.system_setting.upsert({
-            where: { key: TRIGGER_DISPATCH_POLICY_KEY },
-            create: { key: TRIGGER_DISPATCH_POLICY_KEY, value: "true" },
-            update: { value: "true" },
-        });
+        if (policySettingSnapshot !== undefined) {
+            await prisma.system_setting.upsert({
+                where: { key: TRIGGER_DISPATCH_POLICY_KEY },
+                create: { key: TRIGGER_DISPATCH_POLICY_KEY, value: policySettingSnapshot.value },
+                update: { value: policySettingSnapshot.value },
+            });
+        } else {
+            await prisma.system_setting.deleteMany({ where: { key: TRIGGER_DISPATCH_POLICY_KEY } });
+        }
         await harness.tick.dispatch();
 
         expect((await readJob(dueJob.id)).status).toBe("sent");
