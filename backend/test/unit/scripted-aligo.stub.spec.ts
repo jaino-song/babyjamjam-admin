@@ -6,7 +6,7 @@ import {
     SCRIPTED_ALIGO_REJECT_RESULT_CODE,
     SCRIPTED_ALIGO_THROW_MESSAGE,
     ScriptedAligoStub,
-} from "./scripted-aligo.stub";
+} from "../e2e/helpers/scripted-aligo.stub";
 
 describe("ScriptedAligoStub", () => {
     let stub: ScriptedAligoStub;

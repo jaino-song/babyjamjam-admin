@@ -5,6 +5,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { E2eAligoApiStub } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
+import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
 import {
     MESSAGE_CRON_BRANCH_ID,
     type MessageCronHarness,
@@ -17,6 +18,8 @@ const RUN = `${Date.now()}`.slice(-7);
 describeE2E("message-automation cron harness smoke (real DB)", () => {
     let harness: MessageCronHarness;
     let standbyHarness: MessageCronHarness;
+    let aligoStub: E2eAligoApiStub;
+    let standbyAligoStub: E2eAligoApiStub;
     let sendSmsSpy: jest.SpyInstance;
     let standbySendSmsSpy: jest.SpyInstance;
     const createdRuleIds: string[] = [];
@@ -24,13 +27,13 @@ describeE2E("message-automation cron harness smoke (real DB)", () => {
     const createdLogIds: number[] = [];
 
     beforeAll(async () => {
-        const stub = new E2eAligoApiStub();
-        sendSmsSpy = jest.spyOn(stub, "sendSms");
-        harness = await bootMessageCronHarness({ aligo: stub });
+        aligoStub = new E2eAligoApiStub();
+        sendSmsSpy = jest.spyOn(aligoStub, "sendSms");
+        harness = await bootMessageCronHarness({ aligo: aligoStub });
 
-        const standbyStub = new E2eAligoApiStub();
-        standbySendSmsSpy = jest.spyOn(standbyStub, "sendSms");
-        standbyHarness = await bootMessageCronHarness({ aligo: standbyStub, standby: true });
+        standbyAligoStub = new E2eAligoApiStub();
+        standbySendSmsSpy = jest.spyOn(standbyAligoStub, "sendSms");
+        standbyHarness = await bootMessageCronHarness({ aligo: standbyAligoStub, standby: true });
     });
 
     afterAll(async () => {
@@ -54,6 +57,8 @@ describeE2E("message-automation cron harness smoke (real DB)", () => {
         await harness.tick.linkRepair();
         await harness.tick.carrier();
 
+        // The override must actually apply, or "not called" would pass vacuously on a real vendor port.
+        expect(harness.app.get(ALIGO_SMS_API_PORT, { strict: false })).toBe(aligoStub);
         expect(sendSmsSpy).not.toHaveBeenCalled();
     });
 
@@ -62,6 +67,7 @@ describeE2E("message-automation cron harness smoke (real DB)", () => {
 
         await standbyHarness.tick.dispatch();
 
+        expect(standbyHarness.app.get(ALIGO_SMS_API_PORT, { strict: false })).toBe(standbyAligoStub);
         expect(standbySendSmsSpy).not.toHaveBeenCalled();
     });
 

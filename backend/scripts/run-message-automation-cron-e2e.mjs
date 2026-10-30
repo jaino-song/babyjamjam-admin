@@ -10,7 +10,10 @@ const env = {
     E2E_VENDOR_STUBS: "1",
     E2E_SMS_SAFEGUARD_TOMBSTONE: "1",
     EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID: "tpl-test",
+    // Pinned "off" (and dropping any inherited SCHEDULERS_ENABLED below) so a developer .env cannot flip the harness into required lease mode.
+    SCHEDULER_LEASE_MODE: "off",
 };
+delete env.SCHEDULERS_ENABLED;
 
 function run(command, args, options = {}) {
     const result = spawnSync(command, args, { env, stdio: "inherit", ...options });
