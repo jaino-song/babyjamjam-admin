@@ -7,6 +7,7 @@ import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-auto
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import type { AgentContext } from "./agent-context";
 import { recordAgentActionEffect, readAgentActionEffect, type AgentActionEffectReceipt } from "./agent-action-effect-receipt";
@@ -629,13 +630,19 @@ export class AgentAutomationRecordStoreService {
         // gets the row back with `branchId: null`, which the realtime hint reads as "every branch": a count-only
         // `createMany` would be attributed to the caller's own branch, although the marker is shared. `select`
         // must keep `branchId` for the same reason.
-        const existing = await tx.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, select: { id: true } });
-        if (existing) return;
-        await tx.message_trigger_rule.createManyAndReturn({ select: { id: true, branchId: true }, data: [{
-            id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, name: "메시지 자동화 생성 복구 표식", isActive: false,
-            eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0,
-            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, isDefault: false, jobsStale: false,
-        }], skipDuplicates: true });
+        // The marker is a fixed-id, branchless row written lazily from inside a branch request, so the tenant
+        // extension would reject both the unpinned lookup and the `branchId: null` create (`branch_mutation`)
+        // under enforce and roll the caller's transaction back. Only these two statements run in system
+        // scope (see eslint.system-scope.allowlist.mjs); they stay on the caller's `tx` and are awaited inside.
+        await runSystemScope(async () => {
+            const existing = await tx.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, select: { id: true } });
+            if (existing) return;
+            await tx.message_trigger_rule.createManyAndReturn({ select: { id: true, branchId: true }, data: [{
+                id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, name: "메시지 자동화 생성 복구 표식", isActive: false,
+                eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0,
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, isDefault: false, jobsStale: false,
+            }], skipDuplicates: true });
+        });
     }
 
     private async persistTerminalRecord(

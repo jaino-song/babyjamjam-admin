@@ -14,6 +14,7 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 
 interface PersistIntentParams {
@@ -142,11 +143,16 @@ async function persistMessageAutomationIntent(
     // (success, no hint), while the real creator gets the row back with `branchId: null`, which the hint reads
     // as "every branch". A count-only `createMany` would be attributed to the caller's own branch although the
     // marker is shared, so `select` keeps `branchId`.
-    const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
-        where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
-        select: { id: true },
-    });
-    if (!existingMarkerRule) {
+    // Only these two statements run in system scope: the marker is a fixed-id, branchless row written lazily
+    // from inside a branch request, which the tenant extension would reject (`branch_mutation`) under enforce
+    // and roll the caller's transaction back. They stay on the caller's `transaction` (see
+    // eslint.system-scope.allowlist.mjs).
+    await runSystemScope(async () => {
+        const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            select: { id: true },
+        });
+        if (existingMarkerRule) return;
         await transaction.message_trigger_rule.createManyAndReturn({
             select: { id: true, branchId: true },
             data: [{
@@ -164,7 +170,7 @@ async function persistMessageAutomationIntent(
             }],
             skipDuplicates: true,
         });
-    }
+    });
     const taskAutomationReference = params.taskAutomationReference
         ? JSON.parse(JSON.stringify(params.taskAutomationReference)) as Prisma.InputJsonObject
         : undefined;
