@@ -24,13 +24,13 @@ interface SeenTransaction {
     thisArg: unknown;
 }
 
-function terminalStub(model: () => unknown, raw: () => unknown) {
+function terminalStub(model: (modelName: string | undefined) => unknown, raw: () => unknown) {
     return Prisma.defineExtension({
         name: "test-terminal-response",
         query: {
             $allModels: {
-                async $allOperations() {
-                    return model();
+                async $allOperations({ model: modelName }) {
+                    return model(modelName);
                 },
             },
             async $queryRaw() {
@@ -54,7 +54,11 @@ function setup() {
     const events: EntityChangedEvent[] = [];
     bus.events$.subscribe((e) => events.push(e));
     // What `runTransaction` should do after the callback/batch ran: resolve = commit.
-    const control = { settle: async (): Promise<void> => undefined };
+    const control = {
+        settle: async (): Promise<void> => undefined,
+        // Models whose terminal query rejects (a failing tx query: `findUniqueOrThrow` on a missing row).
+        rejectModels: new Set<string>(),
+    };
     const seen: SeenTransaction[] = [];
 
     // Mirrors the engine: an interactive transaction hands the callback a client (here: the same
@@ -71,7 +75,12 @@ function setup() {
 
     const client = new PrismaService()
         .$extends(entityChangeExtension(bus, fakeTransaction))
-        .$extends(terminalStub(() => ({ id: 1, branchId: "b1" }), () => 1));
+        .$extends(
+            terminalStub((modelName) => {
+                if (modelName !== undefined && control.rejectModels.has(modelName)) throw new Error("tx query failed");
+                return { id: 1, branchId: "b1" };
+            }, () => 1),
+        );
     // The `$extends` chain is typed against the generated client, which has no `$transaction` seam
     // knowledge; the spec only needs the call surface.
     const typed = client as unknown as {
@@ -81,6 +90,7 @@ function setup() {
         employee: { update(args: unknown): Promise<unknown> };
         system_setting: { update(args: unknown): Promise<unknown> };
         message_log: { update(args: unknown): Promise<unknown> };
+        document_category: { findUniqueOrThrow(args: unknown): Promise<unknown> };
     };
     const flush = () => jest.advanceTimersByTime(300);
     return { bus, events, control, seen, client: typed, flush };
@@ -429,7 +439,7 @@ describe("entity-change extension: commit-scoped emission", () => {
         expect(events).toEqual([{ branchId: "b1", entities: ["employee"] }]);
     });
 
-    it.each(["then", "catch", "finally"] as const)(
+    it.each(["then", "finally"] as const)(
         "a root-client write from a %s callback runs in the caller's context, and the tx write still waits for the commit",
         async (method) => {
             const { client, bus } = setup();
@@ -441,23 +451,62 @@ describe("entity-change extension: commit-scoped emission", () => {
             await client.$transaction(async (tx: typeof client) => {
                 const query = tx.client.update({ where: { id: 1 }, data: {} }) as unknown as Promise<unknown>;
                 const rootWrite = () => client.employee.update({ where: { id: 1 }, data: {} });
-                // `catch` only fires on rejection, so give it a rejecting tx query to chain from.
-                if (method === "catch") {
-                    await (Promise.reject(new Error("x")) as Promise<unknown>).catch(rootWrite);
-                } else if (method === "then") {
-                    await query.then(rootWrite);
-                } else {
-                    await query.finally(rootWrite as () => void);
-                }
+                if (method === "then") await query.then(rootWrite);
+                else await query.finally(rootWrite as () => void);
                 // Immediate: the root write is not deferred to the commit.
-                expect(emitted).toContain("employee");
-                if (method !== "catch") expect(emitted).not.toContain("client");
+                expect(emitted).toEqual(["employee"]);
             });
 
-            expect(emitted).toContain("employee");
-            if (method !== "catch") expect(emitted).toContain("client");
+            expect(emitted).toEqual(["employee", "client"]);
         },
     );
+
+    // The rejection callbacks are registered on the tx-bound query itself (a fixture-rejected
+    // `findUniqueOrThrow`), not on a native promise, so they go through the proxy's `catch` / `then`.
+    it.each([
+        ["catch", (query: Promise<unknown>, onRejected: () => Promise<unknown>) => query.catch(onRejected)],
+        ["then(undefined, onRejected)", (query: Promise<unknown>, onRejected: () => Promise<unknown>) => query.then(undefined, onRejected)],
+    ] as const)(
+        "a root-client write from a rejection callback (%s) on a failing tx query is immediate and survives the rollback",
+        async (_name, register) => {
+            const { client, control, events, bus, flush } = setup();
+            const emitSpy = jest.spyOn(bus, "emit");
+            control.rejectModels.add("document_category");
+            let handOff: (tx: typeof client) => void = () => undefined;
+            const ready = new Promise<typeof client>((resolve) => {
+                handOff = resolve;
+            });
+            // Registered from a context outside the transaction, on a query bound to it.
+            const work = ready.then((tx) =>
+                register(
+                    tx.document_category.findUniqueOrThrow({ where: { id: 1 } }) as unknown as Promise<unknown>,
+                    () => client.employee.update({ where: { id: 1 }, data: {} }),
+                ),
+            );
+
+            await expect(
+                client.$transaction(async (tx: typeof client) => {
+                    handOff(tx);
+                    await work;
+                    // The independent root write committed and is announced before the rollback.
+                    expect(emitSpy).toHaveBeenCalledTimes(1);
+                    throw new Error("rollback");
+                }),
+            ).rejects.toThrow("rollback");
+
+            flush();
+            expect(events).toEqual([{ branchId: "b1", entities: ["employee"] }]);
+        },
+    );
+
+    it("a failing tx query still rejects through the bound promise (the callback is not swallowed)", async () => {
+        const { client, control } = setup();
+        control.rejectModels.add("document_category");
+
+        await client.$transaction(async (tx: typeof client) => {
+            await expect(tx.document_category.findUniqueOrThrow({ where: { id: 1 } })).rejects.toThrow("tx query failed");
+        });
+    });
 
     it("fluent chains and thenables returned from callbacks keep working, and callbacks see their own tenant context", async () => {
         const { client } = setup();
