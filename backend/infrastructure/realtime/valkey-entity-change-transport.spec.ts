@@ -53,7 +53,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, what: string
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function instance(url: string, streamKey: string, extra: { maxLen?: number; cursorKey?: Buffer } = {}) {
+function instance(url: string, streamKey: string, extra: { maxLen?: number; cursorKey?: Buffer; blockMs?: number; shutdownFenceMs?: number } = {}) {
     const bus = new EntityChangeEventBus(10);
     const transport = new ValkeyEntityChangeTransport(bus, {
         url,
@@ -75,9 +75,9 @@ function instance(url: string, streamKey: string, extra: { maxLen?: number; curs
     };
     /** Internal cursor behind a message id. */
     const cursorOf = (id: string | undefined) => (id === undefined ? undefined : transport.cursors.decode(id));
-    const destroy = () => {
+    const destroy = async () => {
         subscriptions.forEach((s) => s.unsubscribe());
-        transport.onModuleDestroy();
+        await transport.onModuleDestroy();
     };
     return { bus, transport, controller, subscribe, cursorOf, destroy };
 }
@@ -131,8 +131,8 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
     });
 
     afterEach(async () => {
-        a.destroy();
-        b.destroy();
+        await a.destroy();
+        await b.destroy();
         await admin.del(streamKey, `${streamKey}:incarnation`);
     });
 
@@ -1063,6 +1063,128 @@ describeWithValkey("ValkeyEntityChangeTransport (integration, real Valkey)", () 
             } finally {
                 spy.mockRestore();
             }
+        });
+
+        describe("shutdown and a fence that keeps being overtaken", () => {
+            it("graceful shutdown in fallback with a hint, Valkey reachable again but the retry not yet fired: the hook fences, so a pre-outage cursor is refused afterwards", async () => {
+                // A long XREAD block keeps the reader from retrying: the publisher is back, the stream path is not.
+                const c = instance(VALKEY_URL as string, streamKey, { blockMs: 30_000 });
+                try {
+                    await waitFor(() => c.transport.activeMode === "valkey", "transport on the stream");
+                    const onC = c.subscribe("branch-a");
+                    c.bus.emit({ branchId: "branch-a", kind: "client" });
+                    await waitFor(() => changes(onC).length === 1, "a batch on the stream");
+                    const token = changes(onC)[0]?.id as string;
+                    await pause(40);
+
+                    const publisher = publisherOf(c);
+                    publisher.disconnect(true);
+                    c.bus.emit({ branchId: "branch-a", kind: "document" });
+                    await waitFor(() => changes(onC).length === 2, "local delivery of the hint the stream never saw");
+                    await waitFor(() => publisher.status === "ready", "the publisher to be back");
+                    expect(c.transport.activeMode).toBe("fallback");
+                    // Nothing has fenced yet: another instance's view of the old cursor is unchanged.
+                    expect(await b.transport.replayAfter(b.cursorOf(token) as string)).toMatchObject({ honoured: true });
+
+                    await c.transport.onModuleDestroy();
+
+                    expect(await b.transport.replayAfter(b.cursorOf(token) as string)).toEqual({ honoured: false });
+                    const received = await reconnect(b, "branch-a", token);
+                    expect(received[0]?.data).toEqual({ resumed: false });
+                } finally {
+                    await c.destroy();
+                }
+            });
+
+            it("shutdown without any locally delivered hint fences nothing", async () => {
+                const c = instance(VALKEY_URL as string, streamKey);
+                await waitFor(() => c.transport.activeMode === "valkey", "transport on the stream");
+                const onC = c.subscribe("branch-a");
+                c.bus.emit({ branchId: "branch-a", kind: "client" });
+                await waitFor(() => changes(onC).length === 1, "a batch on the stream");
+                const token = changes(onC)[0]?.id as string;
+
+                await c.destroy();
+
+                expect(await b.transport.replayAfter(b.cursorOf(token) as string)).toMatchObject({ honoured: true });
+            });
+
+            it("a fence that never returns does not hold shutdown past its bound, and nothing is thrown", async () => {
+                const c = instance(VALKEY_URL as string, streamKey, { shutdownFenceMs: 300 });
+                try {
+                    await waitFor(() => c.transport.activeMode === "valkey", "transport on the stream");
+                    // As if a hint had been delivered only locally (the transport is on the stream, so set the count directly).
+                    (c.transport as unknown as { localHints: number }).localHints = 1;
+                    const settle = jest.spyOn(c.transport as unknown as { settle: () => Promise<never> }, "settle").mockImplementation(() => new Promise(() => undefined));
+                    const started = Date.now();
+
+                    await expect(c.transport.onModuleDestroy()).resolves.toBeUndefined();
+
+                    expect(Date.now() - started).toBeLessThan(1500);
+                    expect(settle).toHaveBeenCalled();
+                } finally {
+                    await c.destroy();
+                }
+            });
+
+            it("with Valkey unreachable the shutdown hook still returns within its bound", async () => {
+                const c = instance("redis://127.0.0.1:1", `rt-test:${randomBytes(4).toString("hex")}`, { shutdownFenceMs: 500 });
+                const onC = c.subscribe("branch-a");
+                c.bus.emit({ branchId: "branch-a", kind: "client" });
+                await waitFor(() => changes(onC).length === 1, "in-process delivery");
+                const started = Date.now();
+
+                await expect(c.destroy()).resolves.toBeUndefined();
+
+                expect(Date.now() - started).toBeLessThan(2500);
+            });
+
+            it("a fence overtaken by a local hint on every round stops after the cap, stays in fallback and retries, and recovers once hints stop", async () => {
+                const c = instance(VALKEY_URL as string, streamKey);
+                try {
+                    await waitFor(() => c.transport.activeMode === "valkey", "transport on the stream");
+                    const onC = c.subscribe("branch-a");
+                    type Settle = (client: Redis, options?: { fence?: boolean }) => Promise<unknown>;
+                    const target = c.transport as unknown as { settle: Settle };
+                    const realSettle = target.settle.bind(c.transport);
+                    let overtake = true;
+                    let fences = 0;
+                    let attempts = 0;
+                    const realRecover = (c.transport as unknown as { recover: () => Promise<void> }).recover.bind(c.transport);
+                    const recoverSpy = jest.spyOn(c.transport as unknown as { recover: () => Promise<void> }, "recover").mockImplementation(() => {
+                        attempts += 1;
+                        return realRecover();
+                    });
+                    const spy = jest.spyOn(target, "settle").mockImplementation(async (client, options) => {
+                        const state = await realSettle(client, options);
+                        if (options?.fence) {
+                            fences += 1;
+                            if (overtake) c.transport.publish({ branchId: "branch-a", entities: ["call"] });
+                        }
+                        return state;
+                    });
+                    try {
+                        publisherOf(c).disconnect(true);
+                        c.bus.emit({ branchId: "branch-a", kind: "document" });
+                        // 5 rounds per attempt: two full attempts prove it retries on the normal schedule instead of giving up.
+                        await waitFor(() => fences >= 10, "two capped attempts");
+                        expect(c.transport.activeMode).toBe("fallback");
+                        expect(attempts).toBeGreaterThanOrEqual(2); // each attempt gave up after the cap and the schedule started another
+
+                        overtake = false;
+                        await waitFor(() => c.transport.activeMode === "valkey", "the transport to recover once hints stop", 15000);
+                        expect(fences).toBeLessThan(20);
+                        c.bus.emit({ branchId: "branch-a", kind: "message" });
+                        await waitFor(() => changes(onC).some((e) => JSON.stringify(e.data) === JSON.stringify({ entities: ["message"] })), "delivery on the stream again");
+                        expect(c.cursorOf(changes(onC).at(-1)?.id)).toMatch(STREAM_CURSOR);
+                    } finally {
+                        spy.mockRestore();
+                        recoverSpy.mockRestore();
+                    }
+                } finally {
+                    await c.destroy();
+                }
+            });
         });
 
         describe("fallback intervals of one instance", () => {

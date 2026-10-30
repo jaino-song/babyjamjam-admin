@@ -24,12 +24,21 @@ export interface ValkeyTransportOptions {
     maxRetryDelayMs?: number;
     /** `XREAD BLOCK` timeout; also how long a stale read can outlive a transport switch. */
     blockMs?: number;
+    /** Upper bound for the best-effort fence on shutdown (see `onModuleDestroy`); shutdown never waits longer. */
+    shutdownFenceMs?: number;
 }
 
 type Mode = "valkey" | "fallback";
 
 /** One stream row as Valkey returns it: `[id, [field, value, ...]]`. */
 type StreamRow = [string, string[]];
+
+/**
+ * Rounds one recovery may spend fencing while hints keep reaching only local subscribers. Past it the
+ * transport stays in fallback and the normal retry schedule tries again, instead of looping while traffic
+ * never pauses for a round trip.
+ */
+const MAX_FENCE_ROUNDS = 5;
 
 /** Rows a reader takes from the stream per round trip. */
 const READER_PAGE = 100;
@@ -261,6 +270,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
     private readonly retryDelayMs: number;
     private readonly maxRetryDelayMs: number;
     private readonly blockMs: number;
+    private readonly shutdownFenceMs: number;
 
     private mode: Mode = "fallback";
     /** Hints delivered to local subscribers only (never on the stream) since the last successful fence. */
@@ -284,6 +294,7 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
         this.retryDelayMs = options.retryDelayMs ?? 250;
         this.maxRetryDelayMs = options.maxRetryDelayMs ?? 5_000;
         this.blockMs = options.blockMs ?? 5_000;
+        this.shutdownFenceMs = options.shutdownFenceMs ?? 2_000;
         this.fallback = new RealtimeRingBuffer(this.maxLen);
 
         // Fail fast instead of queueing: a batch XADDed "later" would reach clients out of order and
@@ -360,14 +371,44 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
         }
     }
 
-    onModuleDestroy(): void {
+    /**
+     * Nest awaits this hook. If hints reached only local subscribers and the stream path has not been
+     * re-enabled yet, no other instance will ever learn of them unless the stream is fenced, and this process
+     * is the last one that can do it: try once, bounded by `shutdownFenceMs`, and never throw or hold shutdown
+     * longer. (A crash, or a Valkey this process cannot reach, cannot be helped: see `recover`.)
+     */
+    async onModuleDestroy(): Promise<void> {
         this.closed = true;
         this.busSubscription.unsubscribe();
         if (this.sleepTimer) clearTimeout(this.sleepTimer);
         this.wake?.();
+        if (this.localHints > 0) await this.fenceOnShutdown();
         this.reader.disconnect();
         this.publisher.disconnect();
         this.subject.complete();
+    }
+
+    private async fenceOnShutdown(): Promise<void> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const attempt = (async () => {
+            try {
+                await this.ensureReady(this.publisher);
+                await this.settle(this.publisher, { fence: true });
+                this.localHints = 0;
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                this.logger.warn(`Could not fence the realtime stream on shutdown; clients of other instances may resume across hints delivered only locally: ${reason}`);
+            }
+        })();
+        const bound = new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, this.shutdownFenceMs);
+            timer.unref?.();
+        });
+        try {
+            await Promise.race([attempt, bound]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     private async append(event: EntityChangedEvent): Promise<void> {
@@ -428,12 +469,18 @@ export class ValkeyEntityChangeTransport implements EntityChangeTransport {
         // the check and the switch to "valkey" happen with no await in between, and the fence repeats until
         // nothing slipped through. A recovery with no such hint mints nothing (healthy restarts and brief
         // blips keep resuming).
-        let state: StreamState;
-        for (;;) {
+        let state: StreamState | undefined;
+        for (let round = 0; round < MAX_FENCE_ROUNDS && !state; round += 1) {
             const unfenced = this.localHints;
-            state = await this.settle(this.publisher, unfenced > 0 ? { fence: true } : {});
+            const settled = await this.settle(this.publisher, unfenced > 0 ? { fence: true } : {});
             if (this.closed) return;
-            if (this.localHints === unfenced) break;
+            if (this.localHints === unfenced) state = settled;
+        }
+        if (!state) {
+            // Hints kept arriving during every round trip. Stay in fallback (`localHints` is not cleared, so the next
+            // attempt fences again) rather than switch to the stream with a gap nobody fenced.
+            this.logger.warn(`Realtime stream fence did not settle in ${MAX_FENCE_ROUNDS} rounds (hints keep arriving); staying in-process and retrying`);
+            throw new Error("realtime stream fence kept being overtaken by in-process hints");
         }
         this.localHints = 0;
         this.incarnation = state.incarnation;
