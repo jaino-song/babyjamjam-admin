@@ -1,10 +1,13 @@
 -- SI-CONTRACT-07: canonicalize legacy status aliases without advancing CAS timestamps.
--- Read-only production preflight (operator only; do not execute as part of this patch):
+-- Run this read-only preflight SELECT before merging to preview/main
+-- (operator only; do not execute as part of this patch):
 -- SELECT status_type, count(*) FROM eformsign_doc WHERE status_type !~ '^[0-9]{3}$' GROUP BY 1;
 -- Rollback: DROP CONSTRAINT eformsign_doc_status_type_check only if required;
 -- retain canonicalized data and the application normalization/fence fixes.
+-- Unfixable rows abort the entire transaction: no backfill or constraint is retained.
 
 BEGIN;
+SET LOCAL lock_timeout = '5s';
 
 -- Keep this name mapping in sync with domain/utils/eformsign-status-code.ts.
 WITH aliases(name, code) AS (
@@ -40,8 +43,9 @@ WITH aliases(name, code) AS (
         ('face_signature_complete', '092')
 ), trimmed AS (
     SELECT id, status_type,
-        -- ECMAScript String.trim whitespace, including Unicode separators/BOM.
-        lower(btrim(status_type, E' \t\n\r\f\v' || U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')) AS value
+        -- Exact ECMAScript String.prototype.trim WhiteSpace + LineTerminator set.
+        -- PostgreSQL has no \v escape; use hex for U+000B (vertical tab).
+        lower(btrim(status_type, E' \t\n\r\f\x0B' || U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF')) AS value
     FROM eformsign_doc
 ), canonical AS (
     SELECT trimmed.id, COALESCE(aliases.code,
@@ -59,7 +63,23 @@ FROM canonical
 WHERE doc.id = canonical.id AND doc.status_type IS DISTINCT FROM canonical.code;
 
 DO $$
+DECLARE
+    invalid_count bigint;
+    invalid_values json;
 BEGIN
+    SELECT count(*) INTO invalid_count FROM eformsign_doc
+    WHERE status_type !~ '^[0-9]{3}$';
+    IF invalid_count > 0 THEN
+        SELECT json_agg(status_type ORDER BY status_type) INTO invalid_values
+        FROM (
+            SELECT DISTINCT status_type FROM eformsign_doc
+            WHERE status_type !~ '^[0-9]{3}$'
+            ORDER BY status_type
+            LIMIT 20
+        ) AS offending;
+        RAISE EXCEPTION 'eformsign_doc_status_type_check: % invalid rows; offending values (up to 20): %', invalid_count, invalid_values;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'eformsign_doc'::regclass
@@ -67,27 +87,17 @@ BEGIN
     ) THEN
         ALTER TABLE eformsign_doc
             ADD CONSTRAINT eformsign_doc_status_type_check
-            CHECK (status_type ~ '^[0-9]{3}$') NOT VALID;
+            CHECK (status_type ~ '^[0-9]{3}$');
     END IF;
-END $$;
 
-DO $$
-DECLARE
-    invalid_count bigint;
-BEGIN
+    -- Validate a pre-existing NOT VALID constraint on a repeat patch run too.
     IF EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'eformsign_doc'::regclass
           AND conname = 'eformsign_doc_status_type_check'
           AND NOT convalidated
     ) THEN
-        SELECT count(*) INTO invalid_count FROM eformsign_doc
-        WHERE status_type !~ '^[0-9]{3}$';
-        IF invalid_count = 0 THEN
-            ALTER TABLE eformsign_doc VALIDATE CONSTRAINT eformsign_doc_status_type_check;
-        ELSE
-            RAISE NOTICE 'eformsign_doc_status_type_check remains NOT VALID: % invalid rows', invalid_count;
-        END IF;
+        ALTER TABLE eformsign_doc VALIDATE CONSTRAINT eformsign_doc_status_type_check;
     END IF;
 END $$;
 
