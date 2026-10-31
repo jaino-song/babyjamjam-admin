@@ -220,10 +220,30 @@ assert_deploy_standby_contract() {
         "the standby job must carry the deployment timeout"
     local standby_permissions
     standby_permissions="$(awk '/^    permissions:/{f=1; next} f && /^      /{print; next} f{exit}' <<<"$standby_job")"
-    [[ "$(grep -c . <<<"$standby_permissions")" -eq 1 ]] \
-        || fail "the standby job must declare exactly one permission entry"
+    [[ "$(grep -c . <<<"$standby_permissions")" -eq 2 ]] \
+        || fail "the standby job must declare exactly two permission entries"
     assert_text_contains "$standby_permissions" '^      contents:[[:space:]]*read$' \
         "the standby job must grant only read on contents"
+    assert_text_contains "$standby_permissions" '^      actions:[[:space:]]*read$' \
+        "the standby job must grant only read on actions (to list the newer Lightsail deploys)"
+    # The newer-release lookup: fetch and feed only. The decision is executed by
+    # newer-primary-release.test.sh and handed to standby-decision.sh as an input.
+    assert_text_contains "$standby_job" 'GH_TOKEN:[[:space:]]*\$\{\{ github\.token \}\}' \
+        "the newer-release lookup must authenticate with the job token"
+    assert_text_contains "$standby_job" 'actions/workflows/backend-ci\.yml/runs\?branch=main&event=push&per_page=100' \
+        "the newer-release lookup must list the newest main push runs of backend CI"
+    assert_text_contains "$standby_job" 'actions/runs/\$run_id/jobs\?filter=latest&per_page=100' \
+        "the newer-release lookup must read the latest attempt's jobs of each newer run"
+    assert_text_contains "$standby_job" 'bash "\$script" list "\$work/runs\.json"' \
+        "the newer-release lookup must take the runs to inspect from newer-primary-release.sh"
+    assert_text_contains "$standby_job" 'bash "\$script" decide "\$work/runs\.json" "\$work/jobs"' \
+        "the newer-release lookup must take its answer from newer-primary-release.sh"
+    assert_text_contains "$standby_job" 'NEWER_PRIMARY_RELEASE:[[:space:]]*\$\{\{ steps\.newer\.outputs\.newer \}\}' \
+        "the standby decision must receive the newer-release answer"
+    assert_text_contains "$standby_job" 'script=backend/deploy/fallback-server/ci/newer-primary-release\.sh' \
+        "the newer-release lookup must run newer-primary-release.sh"
+    assert_contains "$workflow_file" '^          bash backend/deploy/fallback-server/ci/newer-primary-release\.test\.sh$' \
+        "backend CI must run the newer-release decision tests"
     assert_text_contains "$standby_job" "'standby-status'" \
         "the standby job must read the standby with the forced standby-status command"
     assert_text_contains "$standby_job" '"deploy-standby \$GITHUB_SHA \$IMAGE_DIGEST"' \
@@ -284,6 +304,10 @@ standby_mutations=(
     's/^            superseded)$/            superseded-never)/'
     '/standby-decision.test.sh$/d'
     's/group: lightnode-standby-main/group: lightsail-deploy-main/'
+    '/^      actions: read$/d'
+    's/NEWER_PRIMARY_RELEASE: \${{ steps.newer.outputs.newer }}/NEWER_PRIMARY_RELEASE: none/'
+    '/newer-primary-release.test.sh$/d'
+    's/bash "\$script" decide/bash "$script" list/'
     's/expect_status runtime_mode passive/expect_status runtime_mode active/'
     's/^      # Full history:/      # environment: Full history:/'
 )
