@@ -99,6 +99,42 @@ RC=0
 [[ "$RC" != 0 ]] || fail "a missing status file must refuse"
 echo "ok - status file argument"
 
+# --- a newer release already on Lightsail turns a deploy into superseded, nothing else.
+# History A -> B -> C; the standby is still at A. B's run arrives after C deployed to
+# Lightsail (the standby job for C failed before deploying): B must not deploy.
+expect_newer() { # description sha status-text newer-value expected-decision
+    RC=0
+    (cd "$REPO" && printf '%s\n' "$3" | GITHUB_SHA="$2" NEWER_PRIMARY_RELEASE="$4" bash "$SCRIPT") >"$OUT" 2>"$TMP/err" || RC=$?
+    [[ "$(grep -c '^decision=' "$OUT" || true)" == 1 ]] || { cat "$OUT" "$TMP/err" >&2; fail "$1: expected exactly one decision line"; }
+    grep -Fxq "decision=$5" "$OUT" || { cat "$OUT" "$TMP/err" >&2; fail "$1: expected decision=$5"; }
+    if [[ "$5" == refuse ]]; then
+        [[ "$RC" != 0 ]] || fail "$1: refuse must exit non-zero"
+    else
+        [[ "$RC" == 0 ]] || fail "$1: exit $RC, expected 0"
+    fi
+}
+expect_newer "standby at A, run B, C already deployed"  "$B" "$(status_text present "$A")"              "$C"   superseded
+grep -q "$C" "$OUT" || fail "the superseded reason must name the newer release"
+expect_newer "standby at A, run B, nothing newer"       "$B" "$(status_text present "$A")"              none   deploy
+expect_newer "no release, a newer one deployed"          "$B" "$(status_text none)"                      "$C"   superseded
+expect_newer "no release, nothing newer"                 "$B" "$(status_text none)"                      none   deploy
+expect_newer "unhealthy same release, a newer one deployed" "$C" "$(status_text recorded-unhealthy "$C")" "$D"  superseded
+expect_newer "unhealthy same release, nothing newer"     "$C" "$(status_text recorded-unhealthy "$C")"   none   deploy
+expect_newer "already superseded stays superseded"       "$A" "$(status_text present "$C")"              "$C"   superseded
+expect_newer "already superseded, nothing newer"         "$A" "$(status_text present "$C")"              none   superseded
+# The newer-release input may only turn deploy into superseded; every refusal stands.
+expect_newer "diverged still refuses"                    "$C" "$(status_text present "$D")"              "$C"   refuse
+expect_newer "unknown release still refuses"             "$C" "$(status_text present "$UNKNOWN")"        "$C"   refuse
+expect_newer "wrong route still refuses"                 "$C" "$(status_text none | sed 's/^public_routing=.*/public_routing=fallback/')" "$C" refuse
+expect_newer "bad status still refuses"                  "$C" "$(status_text bogus "$A")"                "$C"   refuse
+expect_newer "empty status still refuses"                "$C" ""                                         "$C"   refuse
+# A malformed newer-release input is a refusal, never "nothing newer".
+expect_newer "empty newer value"                         "$C" "$(status_text none)"                      ""     refuse
+expect_newer "short newer sha"                           "$C" "$(status_text none)"                      "${B:0:12}" refuse
+expect_newer "garbage newer value"                       "$C" "$(status_text none)"                      refuse-me refuse
+expect_newer "uppercase newer sha"                       "$C" "$(status_text none)"                      "$(printf '%s' "$B" | tr 'a-f' 'A-F')" refuse
+echo "ok - a newer Lightsail release supersedes only a deploy"
+
 if [[ -n "${STANDBY_DECISION_SCRIPT:-}" ]]; then
     echo "Standby decision suite passed against $SCRIPT"
     exit 0
@@ -128,6 +164,12 @@ mutate "an unhealthy host is no longer redeployed at the same release" \
     's/== recorded-unhealthy \]\]/== never-matches ]]/'
 mutate "an unhealthy host is no longer treated as having a release" \
     's/present | recorded-unhealthy) ;;/present) ;;/'
+mutate "a newer Lightsail release no longer supersedes a deploy" \
+    's/if \[\[ -n "\${newer_primary:-}" \&\& "\$newer_primary" != none \]\]; then/if false; then/'
+mutate "a malformed newer-release value is accepted" \
+    's/|| refuse "NEWER_PRIMARY_RELEASE is neither.*/|| true/'
+mutate "the newer-release input overrides a refusal" \
+    's/^    refuse "the standby release \$current_tag has diverged.*/    decide_deploy diverged; return 0/'
 mutate "divergence deploys instead of refusing" \
     's/^    refuse "the standby release \$current_tag has diverged.*/    decide deploy diverged; return 0/'
 

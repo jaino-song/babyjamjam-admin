@@ -4,6 +4,11 @@
 #
 #   standby-decision.sh [status-file]     (status on stdin when no file is given)
 #   environment: GITHUB_SHA  the 40-hex commit this run built
+#                NEWER_PRIMARY_RELEASE  optional: `none`, or the 40-hex commit of a
+#                  newer release that already deployed to Lightsail, as found by
+#                  newer-primary-release.sh. When set it can only turn a `deploy`
+#                  into `superseded`; it never overrides a `refuse`. A set but
+#                  malformed value (including an empty one) is a refusal.
 #
 # Prints `decision=deploy|superseded|refuse` and a `reason=` line on stdout.
 # `refuse` exits non-zero; deploy and superseded exit 0.
@@ -26,6 +31,17 @@ refuse() {
     exit 1
 }
 
+# Every path that would deploy goes through here: a release that is no longer the
+# newest to have deployed to Lightsail must not reach the standby, whatever the
+# ancestry says (history O->A->B with the standby still at O: A is not newest).
+decide_deploy() {
+    if [[ -n "${newer_primary:-}" && "$newer_primary" != none ]]; then
+        decide superseded "the newer release $newer_primary already deployed to Lightsail"
+        return 0
+    fi
+    decide deploy "$1"
+}
+
 status_value() {
     awk -F= -v wanted="$1" '$1 == wanted { count += 1; value = substr($0, length($1) + 2) }
         END { if (count == 1 && value != "") print value; else exit 1 }' <<<"$status_output"
@@ -34,8 +50,14 @@ status_value() {
 main() {
     local status_output standby_release current_tag
     local sha="${GITHUB_SHA:-}"
+    local newer_primary=""
 
     [[ "$sha" =~ $SHA_PATTERN ]] || refuse "GITHUB_SHA is not a 40-hex commit"
+    if [[ -n "${NEWER_PRIMARY_RELEASE+set}" ]]; then
+        newer_primary="$NEWER_PRIMARY_RELEASE"
+        [[ "$newer_primary" == none || "$newer_primary" =~ $SHA_PATTERN ]] \
+            || refuse "NEWER_PRIMARY_RELEASE is neither 'none' nor a 40-hex commit"
+    fi
     if [[ "$#" -ge 1 ]]; then
         status_output="$(cat "$1")" || refuse "the standby status file could not be read"
     else
@@ -50,7 +72,7 @@ main() {
 
     case "$standby_release" in
         none)
-            decide deploy "the standby has no release recorded"
+            decide_deploy "the standby has no release recorded"
             return 0
             ;;
         present | recorded-unhealthy) ;;
@@ -66,7 +88,7 @@ main() {
 
     if [[ "$current_tag" == "$sha" ]]; then
         if [[ "$standby_release" == recorded-unhealthy ]]; then
-            decide deploy "the standby records $sha but is not healthy; redeploying it is the recovery"
+            decide_deploy "the standby records $sha but is not healthy; redeploying it is the recovery"
         else
             decide superseded "the standby already runs $sha"
         fi
@@ -77,7 +99,7 @@ main() {
         return 0
     fi
     if git merge-base --is-ancestor "$current_tag" "$sha"; then
-        decide deploy "the standby release $current_tag is an ancestor of $sha"
+        decide_deploy "the standby release $current_tag is an ancestor of $sha"
         return 0
     fi
     refuse "the standby release $current_tag has diverged from $sha"
