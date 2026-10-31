@@ -80,7 +80,7 @@
     "playwright-core": "^1.58.2",
     "prisma": "^6.18.0",
     "reflect-metadata": "^0.2.2",
-    "resend": "^6.9.1",
+    "resend": "^6.34.1",
     "rxjs": "^7.8.1",
     "ts-node": "^10.9.1",
     "typescript": "^5.1.3",
