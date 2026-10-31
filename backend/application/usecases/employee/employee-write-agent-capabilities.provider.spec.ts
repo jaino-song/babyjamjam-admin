@@ -53,6 +53,21 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         }));
     });
 
+    it.each([undefined, false, true])("preserves submitted availability %s before create/restore", async (openToNextWork) => {
+        const { createEmployee, capabilities } = setup(null);
+        createEmployee.execute.mockResolvedValue(EmployeeEntity.reconstitute(
+            7, "직원", ["서울"], "01012345678", "프리미엄", true, new Date(),
+        ));
+        const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
+        const input = { name: "직원", workArea: ["서울"], phone: "01012345678", grade: "프리미엄" };
+        const parsed = create.inputSchema.parse(openToNextWork === undefined ? input : { ...input, openToNextWork });
+        await create.execute(context, parsed);
+        expect(createEmployee.execute).toHaveBeenCalledWith(
+            "branch-a", "직원", ["서울"], "01012345678", "프리미엄", openToNextWork,
+            undefined, undefined, expect.anything(),
+        );
+    });
+
     it("fails soft-deleted employees closed across inspect, revalidate, execute, and reconcile", async () => {
         const deleted = EmployeeEntity.reconstitute(7, "삭제 직원", ["서울"], "01012345678", "A", false, new Date(), undefined, new Date());
         const { updateEmployee, changeAvailability, capabilities } = setup(deleted);
@@ -103,7 +118,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
             grade: "스텐다드",
         });
         expect(createEmployee.execute).toHaveBeenCalledWith(
-            "branch-a", "김길동", ["서울"], "01012345678", "스탠다드", false, undefined, undefined, expect.anything(),
+            "branch-a", "김길동", ["서울"], "01012345678", "스탠다드", undefined, undefined, undefined, expect.anything(),
         );
 
         await update.execute(context, { id: 7, grade: "스텐다드" });
@@ -301,7 +316,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
 
         expect(employeeRepository.findByPhone).toHaveBeenCalledWith("branch-a", "01012345678");
         expect(createEmployee.execute).toHaveBeenCalledWith(
-            "branch-a", "홍길동", ["서울"], "01012345678", "프리미엄", false, undefined, undefined, expect.anything(),
+            "branch-a", "홍길동", ["서울"], "01012345678", "프리미엄", undefined, undefined, undefined, expect.anything(),
         );
     });
 

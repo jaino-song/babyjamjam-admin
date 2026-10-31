@@ -82,7 +82,7 @@ const CreateEmployeeSchema = z.object({
     ),
     phone: z.string().trim().min(1).max(40),
     grade: EmployeeGradeSchema,
-    openToNextWork: z.boolean().default(false),
+    openToNextWork: z.boolean().optional(),
     birthday: EmployeeBirthdaySchema,
 });
 const EMPLOYEE_MUTABLE_FIELD_KEYS = Object.keys(CreateEmployeeSchema.shape);
@@ -92,8 +92,7 @@ const UpdateEmployeeSchema = z.object({
     workArea: CreateEmployeeSchema.shape.workArea.optional(),
     phone: CreateEmployeeSchema.shape.phone.optional(),
     grade: CreateEmployeeSchema.shape.grade.optional(),
-    // CreateEmployeeSchema defaults this field for new employees. An update
-    // must retain the distinction between an omitted field and false.
+    // Both create/restore and update must distinguish omission from false.
     openToNextWork: z.boolean().optional(),
     birthday: CreateEmployeeSchema.shape.birthday.optional(),
 }).superRefine((value, context) => {

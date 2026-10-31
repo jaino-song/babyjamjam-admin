@@ -5,6 +5,7 @@ import { isoDateInKorea } from "domain/utils/business-days";
 import {
     ActiveClientByEmployee,
     EmployeeWorkHistoryByEmployee,
+    EmployeeRestoreProfile,
     IEmployeeRepository,
     PaginatedEmployeeWorkHistory,
 } from "domain/repositories/employee.repository.interface";
@@ -59,6 +60,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
     async createOrRestore(
         branchid: string,
         employee: EmployeeEntity,
+        suppliedProfile: EmployeeRestoreProfile,
         transaction?: Prisma.TransactionClient,
     ): Promise<EmployeeEntity & { restored: boolean }> {
         const apply = async (tx: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> => {
@@ -83,7 +85,19 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
             const restored = await tx.employee.update({
                 where: { id: existing.id, branchId: branchid, deletedAt: { not: null } },
-                data: { ...EmployeeMapper.toPrismaCreate(employee), deletedAt: null },
+                // 복원에는 생성 기본값이 아닌 요청에서 제출한 필드만 적용한다.
+                data: {
+                    name: suppliedProfile.name,
+                    phone: suppliedProfile.phone,
+                    phoneNormalized: employee.phoneNormalized,
+                    workArea: suppliedProfile.workArea,
+                    grade: suppliedProfile.grade === undefined ? undefined : employee.grade,
+                    openToNextWork: suppliedProfile.openToNextWork,
+                    companyRegisteredDate: suppliedProfile.registeredDate,
+                    birthday: suppliedProfile.birthday,
+                    smsAutomationEnabled: suppliedProfile.smsAutomationEnabled,
+                    deletedAt: null,
+                },
             });
             return Object.assign(EmployeeMapper.toDomain(restored), { restored: true });
         };

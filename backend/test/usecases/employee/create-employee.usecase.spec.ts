@@ -17,6 +17,35 @@ describe("CreateEmployeeUsecase", () => {
     });
 
     describe("execute", () => {
+        it("keeps omitted profile and history fields when restoring", async () => {
+            const registeredDate = new Date("2015-02-03T00:00:00.000Z");
+            mockRepository.setData([EmployeeEntity.reconstitute(
+                9, "삭제 직원", ["부산"], "01012345678", "프리미엄", true,
+                registeredDate, "1980-01-02", new Date(), "01012345678", false,
+            )]);
+
+            const restored = await usecase.execute(
+                branchId, "복원 직원", undefined, "010-1234-5678", undefined, undefined,
+            );
+            expect(restored).toMatchObject({
+                id: 9, restored: true, name: "복원 직원", phone: "010-1234-5678",
+                workArea: ["부산"], grade: "프리미엄", openToNextWork: true,
+                registeredDate, birthday: "1980-01-02", smsAutomationEnabled: false,
+            });
+            expect(restored.deletedAt).toBeUndefined();
+        });
+
+        it("applies creation-only defaults to a new name-and-phone employee", async () => {
+            const created = await usecase.execute(
+                branchId, "신규 직원", undefined, "01012345678", undefined, undefined,
+            );
+            expect(created).toMatchObject({
+                restored: false, workArea: [], grade: "스탠다드", openToNextWork: false,
+                smsAutomationEnabled: true,
+            });
+            expect(created.registeredDate).toBeInstanceOf(Date);
+        });
+
         it("restores a deleted employee with the same id and submitted profile", async () => {
             mockRepository.setData([EmployeeEntity.reconstitute(9, "삭제 직원", ["부산"], "01012345678", "베스트", false, new Date(), undefined, new Date())]);
             const restored = await usecase.execute(branchId, "복원 직원", ["서울"], "010-1234-5678", "프리미엄", true, undefined, "1990-01-02", undefined, false);
@@ -164,7 +193,9 @@ describe("CreateEmployeeUsecase", () => {
                 transaction,
             );
 
-            expect(createSpy).toHaveBeenCalledWith(branchId, expect.any(EmployeeEntity), transaction);
+            expect(createSpy).toHaveBeenCalledWith(branchId, expect.any(EmployeeEntity), expect.objectContaining({
+                name: "트랜잭션 직원", registeredDate: undefined, smsAutomationEnabled: undefined,
+            }), transaction);
         });
     });
 });

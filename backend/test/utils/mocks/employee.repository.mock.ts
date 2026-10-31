@@ -1,5 +1,5 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { EmployeeRestoreProfile, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import type { Prisma } from "@prisma/client";
 import { employeeAgentTargetVersion } from "domain/entities/employee-agent-target";
 import { ConflictException } from "@nestjs/common";
@@ -87,17 +87,20 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return employee;
     }
 
-    async createOrRestore(branchid: string, employee: EmployeeEntity, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> {
+    async createOrRestore(branchid: string, employee: EmployeeEntity, suppliedProfile: EmployeeRestoreProfile, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> {
         void transaction;
         const existing = await this.findByPhone(branchid, employee.phoneNormalized ?? "");
         if (existing && !existing.deletedAt) throw new ConflictException("EMPLOYEE_PHONE_ALREADY_REGISTERED");
-        const restored = Boolean(existing);
+        if (!existing) return Object.assign(await this.create(branchid, employee), { restored: false });
+        const profile = suppliedProfile;
         const saved = await this.create(branchid, EmployeeEntity.reconstitute(
-            existing?.id ?? 0, employee.name, employee.workArea, employee.phone,
-            employee.grade, employee.openToNextWork, employee.registeredDate,
-            employee.birthday, undefined, employee.phoneNormalized, employee.smsAutomationEnabled,
+            existing.id, profile.name, profile.workArea ?? existing.workArea, profile.phone,
+            profile.grade ?? existing.grade, profile.openToNextWork ?? existing.openToNextWork,
+            profile.registeredDate === undefined ? existing.registeredDate : profile.registeredDate,
+            profile.birthday ?? existing.birthday, undefined, employee.phoneNormalized,
+            profile.smsAutomationEnabled ?? existing.smsAutomationEnabled,
         ));
-        return Object.assign(saved, { restored });
+        return Object.assign(saved, { restored: true });
     }
 
     async updateIfTargetVersion(

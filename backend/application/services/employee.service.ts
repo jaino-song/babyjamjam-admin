@@ -84,7 +84,7 @@ export class EmployeeService {
 
     async create(
         branchid: string,
-        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean }
+        params: { name: string; workArea?: string[]; phone: string; grade?: string; openToNextWork?: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean }
     ): Promise<EmployeeEntity & { restored: boolean }> {
         assertEmployeePhoneInput(params.phone);
         try {
@@ -93,7 +93,7 @@ export class EmployeeService {
                 params.name,
                 params.workArea,
                 params.phone,
-                normalizeEmployeeGrade(params.grade),
+                params.grade === undefined ? undefined : normalizeEmployeeGrade(params.grade),
                 params.openToNextWork,
                 params.registeredDate ? new Date(params.registeredDate) : undefined,
                 params.birthday,

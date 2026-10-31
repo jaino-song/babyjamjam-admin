@@ -493,6 +493,31 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         },
     );
 
+    invariant("SI-EMP-10", "restoring keeps omitted history fields instead of applying create defaults", async () => {
+        const branch = await createBranch(handle.raw, tracker);
+        const registeredDate = "2015-02-03";
+        const original = await employeeService.create(branch.id, {
+            name: "과거 등록 관리사", phone: "01012345678", workArea: ["부산"],
+            grade: "프리미엄", openToNextWork: true, birthday: "1980-01-02",
+            registeredDate, smsAutomationEnabled: false,
+        });
+        tracker.track("employee", original.id);
+        await employeeService.delete(branch.id, original.id);
+
+        const restored = await new EmployeeController(employeeService).create({ branchId: branch.id }, {
+            name: "복원 이름", phone: "010-1234-5678",
+        });
+        expect(restored).toMatchObject({
+            id: original.id, restored: true, name: "복원 이름", phone: "010-1234-5678",
+            workArea: ["부산"], grade: "프리미엄", openToNextWork: true, birthday: "1980-01-02",
+            registeredDate: new Date(`${registeredDate}T00:00:00.000Z`), smsAutomationEnabled: false,
+        });
+        expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toMatchObject({
+            deletedAt: null, companyRegisteredDate: new Date(`${registeredDate}T00:00:00.000Z`),
+            smsAutomationEnabled: false, birthday: "1980-01-02",
+        });
+    });
+
     invariant("SI-EMP-10", "two creates racing for a deleted phone restore exactly once under the row lock", async () => {
         const branch = await createBranch(handle.raw, tracker);
         const params = { name: "경합 복원", workArea: ["서울"], phone: "01012345678", grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true };

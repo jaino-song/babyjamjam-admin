@@ -125,6 +125,28 @@ describe("EmployeeController (Integration)", () => {
     // POST /employees - Create
     // ============================================
     describe("POST /employees", () => {
+        it("forwards a name-and-phone restore request without injecting create defaults", async () => {
+            employeeService.create.mockResolvedValue(Object.assign(createMockEmployee({ id: 42 }), { restored: true }));
+            const response = await request(app.getHttpServer()).post("/employees").send({
+                name: "복원 직원", phone: "01012345678",
+            });
+            expect(response.status).toBe(201);
+            expect(response.body).toMatchObject({ id: 42, restored: true });
+            const supplied = employeeService.create.mock.calls[0]![1];
+            expect(supplied).toMatchObject({ name: "복원 직원", phone: "01012345678" });
+            for (const field of ["registeredDate", "smsAutomationEnabled", "workArea", "grade", "openToNextWork", "birthday"] as const) {
+                expect(supplied[field]).toBeUndefined();
+            }
+        });
+
+        it.each(["workArea", "grade", "openToNextWork"])("still rejects an explicit null %s", async (field) => {
+            const response = await request(app.getHttpServer()).post("/employees").send({
+                name: "직원", phone: "01012345678", [field]: null,
+            });
+            expect(response.status).toBe(400);
+            expect(employeeService.create).not.toHaveBeenCalled();
+        });
+
         it.each([false, true])("returns restored=%s in the create response", async (restored) => {
             const employee = Object.assign(createMockEmployee({ id: 42 }), { restored });
             employeeService.create.mockResolvedValue(employee);
