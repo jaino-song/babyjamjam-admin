@@ -33,6 +33,7 @@ function dropDatabase() {
 try {
     dropDatabase();
     run("createdb", ["--host", "localhost", "--port", pgPort, "--username", pgUser, databaseName]);
+    run("pnpm", ["exec", "prisma", "generate"]);
     run("pnpm", ["exec", "prisma", "migrate", "deploy"]);
     // Extra CLI args are forwarded to jest. A positional path argument the user
     // passes (e.g. `node scripts/run-state-integrity.mjs test/integrity/clients`)
