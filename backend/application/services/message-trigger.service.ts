@@ -1693,6 +1693,9 @@ export class MessageTriggerService {
         }
         await this.ensureTriggerSchemaReady();
         const rule = await this.getRule(branchId, id);
+        if (rule.isDefault) {
+            throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
+        }
         await this.cancelPendingJobsForRule(branchId, rule, "Rule deleted", false);
         await this.ruleRepository.delete(branchId, id);
     }
@@ -1723,6 +1726,9 @@ export class MessageTriggerService {
                 detail: "Automation rule approval snapshot is missing or stale",
                 location: "body",
             }));
+        }
+        if (expected.isDefault) {
+            throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
         }
         const deleted = await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(
             branchId,

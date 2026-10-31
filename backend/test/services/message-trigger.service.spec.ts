@@ -1827,6 +1827,21 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
     });
 
+    it("refuses default rule deletion with a catalog conflict before canceling jobs", async () => {
+        const { service, ruleRepository, jobRepository } = createService();
+        const rule = createRule({ isDefault: true });
+        ruleRepository.findById.mockResolvedValue(rule);
+        const snapshot = { ...rule, createdAt: rule.createdAt.toISOString(), updatedAt: rule.updatedAt.toISOString() };
+        const version = (service as unknown as { ruleTargetVersion(rule: MessageTriggerRuleEntity): string }).ruleTargetVersion(rule);
+        const refusal = { status: 409, response: { code: "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED", outcome: "NOT_APPLIED", message: "기본 문자 규칙은 삭제할 수 없어요. 대신 비활성화해 주세요." } };
+        await expect(service.deleteRule(branchId, rule.id)).rejects.toMatchObject(refusal);
+        await expect(service.deleteRuleApprovedTarget(branchId, rule.id, version, snapshot)).rejects.toMatchObject(refusal);
+        expect(ruleRepository.delete).not.toHaveBeenCalled();
+        expect(ruleRepository.deleteIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
     it("uses branch-scoped CAS hooks for approved automation updates and deletes", async () => {
         const { service, ruleRepository, jobRepository } = createService();
         const existingRule = createRule({ id: "rule-approved-target" });

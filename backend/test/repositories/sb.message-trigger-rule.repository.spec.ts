@@ -26,12 +26,12 @@ describe("SbMessageTriggerRuleRepository", () => {
         branchId: string | null;
         name: string;
         isActive: boolean;
-        eventType: string;
-        offsetType: string;
+        eventType: MessageTriggerEventType;
+        offsetType: MessageTriggerOffsetType;
         offsetDays: number;
         sendTime: string;
-        recipientType: string;
-        templateKey: string;
+        recipientType: MessageTriggerRecipientType;
+        templateKey: MessageTriggerTemplateKey;
         isDefault: boolean;
         jobsStale: boolean;
         targetClientStatus?: string;
@@ -112,6 +112,22 @@ describe("SbMessageTriggerRuleRepository", () => {
         await expect(repository.deleteIfTargetMatches("branch-1", expected)).resolves.toBe(false);
         await expect(repository.deleteIfTargetMatchesAndFenceJobs("branch-1", expected, "Rule deleted")).resolves.toBe(false);
         expect(messageTriggerRuleModel.updateMany).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$queryRaw).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it("refuses default deletion in all repository paths", async () => {
+        const row = createRow();
+        const expected = MessageTriggerRuleEntity.reconstitute(
+            row.id, row.branchId, row.name, row.isActive, row.eventType, row.offsetType, row.offsetDays,
+            row.recipientType, row.templateKey, row.createdAt, row.updatedAt, true,
+        );
+        messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 0 });
+        await repository.delete("branch-1", row.id);
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: row.id, branchId: "branch-1", deletedAt: null, isDefault: false } }));
+        expect(await repository.deleteIfTargetMatches("branch-1", expected)).toBe(false);
+        expect(await repository.deleteIfTargetMatchesAndFenceJobs("branch-1", expected, "Rule deleted")).toBe(false);
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledTimes(1);
         expect(messageTriggerRuleModel.$queryRaw).not.toHaveBeenCalled();
         expect(messageTriggerRuleModel.$executeRaw).not.toHaveBeenCalled();
     });
@@ -385,7 +401,7 @@ describe("SbMessageTriggerRuleRepository", () => {
             MessageTriggerTemplateKey.SERVICE_INFO,
             createdAt,
             updatedAt,
-            true,
+            false,
             false,
         );
         const next = MessageTriggerRuleEntity.reconstitute(
@@ -554,8 +570,8 @@ describe("SbMessageTriggerRuleRepository", () => {
         });
 
         it("compares and writes both fields in the target-match updates and deletes", async () => {
-            const expected = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }));
-            const next = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }), { name: "변경" });
+            const expected = entityFrom(createRow({ isDefault: false, targetClientStatus: "waiting", retryOnFailure: false }));
+            const next = entityFrom(createRow({ isDefault: false, targetClientStatus: "waiting", retryOnFailure: false }), { name: "변경" });
             messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 1 });
 
             await repository.updateIfTargetMatches("branch-1", expected, next);

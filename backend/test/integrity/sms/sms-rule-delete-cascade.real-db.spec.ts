@@ -148,11 +148,11 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         expect(retained.jobsStale).toBe(false);
     });
 
-    invariant("SI-SMS-02", "a soft-deleted default rule is never recovered or activated and the same default template can be recreated", async () => {
+    invariant("SI-SMS-02", "a legacy soft-deleted default rule is never recovered or activated and the same default template can be recreated", async () => {
         const { ruleId } = await seedBranchWithRule();
-        await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { isDefault: true, isActive: true, jobsStale: true } });
+        // Legacy tombstones can still exist; new default deletions are refused.
+        await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { isDefault: true, deletedAt: new Date(), isActive: false, jobsStale: false } });
         const { service, ruleRepository } = wireMessageTriggerService(handle, branchId);
-        await service.deleteRule(branchId, ruleId);
 
         expect((await ruleRepository.findInactiveDefaultRules()).map(({ id }) => id)).not.toContain(ruleId);
         expect((await ruleRepository.findStaleRules()).map(({ id }) => id)).not.toContain(ruleId);
@@ -174,6 +174,51 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         expect((await ruleRepository.findAll(branchId)).map(({ id }) => id)).toContain(recreated.id);
         await expect(createMessageTriggerRule(handle.raw, tracker, { branchId, templateKey: retained.templateKey, isDefault: true })).rejects.toThrow();
     });
+
+    for (const templateKey of [MessageTriggerTemplateKey.CLIENT_GREETING, MessageTriggerTemplateKey.SERVICE_INFO]) {
+        for (const path of ["service", "approvedService", "delete", "deleteIfTargetMatches", "deleteIfTargetMatchesAndFenceJobs"] as const) {
+            invariant("SI-SMS-02", `${path} refuses deleting a default ${templateKey} without changing its rule or jobs`, async () => {
+                const { ruleId } = await seedBranchWithRule();
+                const before = await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { templateKey, isDefault: true, jobsStale: true } });
+                const jobId = await createJob(ruleId, "pending", `${ruleId}:default`);
+                const jobBefore = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: jobId } });
+                const { service, ruleRepository } = wireMessageTriggerService(handle, branchId);
+                const expected = await ruleRepository.findById(branchId, ruleId);
+                if (!expected) throw new Error("fixture rule missing");
+                const refusal = { status: 409, response: { code: "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED", message: "기본 문자 규칙은 삭제할 수 없어요. 대신 비활성화해 주세요." } };
+                if (path === "service") {
+                    await expect(service.deleteRule(branchId, ruleId)).rejects.toMatchObject(refusal);
+                } else if (path === "approvedService") {
+                    const snapshot = { ...before, createdAt: before.createdAt.toISOString(), updatedAt: before.updatedAt.toISOString() };
+                    const version = (service as unknown as { ruleTargetVersion(rule: RuleEntity): string }).ruleTargetVersion(expected);
+                    await expect(service.deleteRuleApprovedTarget(branchId, ruleId, version, snapshot)).rejects.toMatchObject(refusal);
+                } else if (path === "delete") {
+                    await ruleRepository.delete(branchId, ruleId);
+                } else if (path === "deleteIfTargetMatches") {
+                    expect(await ruleRepository.deleteIfTargetMatches(branchId, expected)).toBe(false);
+                } else {
+                    expect(await ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expected, "Rule deleted")).toBe(false);
+                }
+                expect(await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: ruleId } })).toEqual(before);
+                expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: jobId } })).toEqual(jobBefore);
+            });
+        }
+
+        invariant("SI-SMS-02", `deactivate then list keeps default ${templateKey} inactive without creating rows or jobs`, async () => {
+            const { ruleId } = await seedBranchWithRule();
+            await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { templateKey, isDefault: true } });
+            await createMessageTriggerRule(handle.raw, tracker, { branchId, isDefault: true, templateKey: templateKey === MessageTriggerTemplateKey.CLIENT_GREETING ? MessageTriggerTemplateKey.SERVICE_INFO : MessageTriggerTemplateKey.CLIENT_GREETING });
+            const jobId = await createJob(ruleId, "pending", `${ruleId}:deactivate`);
+            const { service } = wireMessageTriggerService(handle, branchId);
+            await service.updateRule(branchId, ruleId, { isActive: false });
+            const before = await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+            const jobsBefore = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+            expect(jobsBefore.find(({ id }) => id === jobId)?.status).toBe("canceled");
+            expect((await service.listRules(branchId)).find(({ id }) => id === ruleId)?.isActive).toBe(false);
+            expect(await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(before);
+            expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(jobsBefore);
+        });
+    }
 
     invariant("SI-SMS-02", "the target-matched delete retains history and cannot update or delete the tombstone again", async () => {
         const { ruleId } = await seedBranchWithRule();
