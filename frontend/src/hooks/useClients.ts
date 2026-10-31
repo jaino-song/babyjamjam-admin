@@ -3,6 +3,8 @@
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
+import { employeeQueryKeys } from "@/hooks/useEmployees";
 import {
     removeById,
     restoreQueries,
@@ -191,6 +193,10 @@ export function useUpdateClient() {
 
             await queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+            await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(variables.id) });
+            if (variables.dto.primaryEmployeeId !== undefined || variables.dto.secondaryEmployeeId !== undefined) {
+                await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            }
         },
     });
 }

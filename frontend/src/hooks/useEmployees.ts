@@ -153,9 +153,9 @@ export function useEmployeeWorkHistory(employeeId: number, limit = 20) {
 export function useCreateEmployee() {
     const queryClient = useQueryClient();
 
-    return useMutation<Employee, Error, CreateEmployeeDto, EmployeeCacheMutationContext>({
+    return useMutation<Employee & { restored?: boolean }, Error, CreateEmployeeDto, EmployeeCacheMutationContext>({
         mutationFn: async (dto: CreateEmployeeDto) => {
-            const { data } = await api.post<Employee>("/employees", dto);
+            const { data } = await api.post<Employee & { restored?: boolean }>("/employees", dto);
             return data;
         },
         onMutate: async () => {

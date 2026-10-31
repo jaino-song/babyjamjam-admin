@@ -39,24 +39,6 @@ function invariant(id: string, title: string, body: IntegrityTestBody): void {
     it(qualified(id, title), body);
 }
 
-/** Frontend twin of the backend `knownDefect` wrapper (it.failing + expectedFailure). */
-function knownDefect(id: string, title: string, body: IntegrityTestBody, expectedFailure: RegExp | string): void {
-    it.failing(qualified(id, title), async () => {
-        try {
-            await body();
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const matches = typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
-            if (matches) {
-                throw error;
-            }
-            // A failure for any other reason must NOT count as the defect.
-            return;
-        }
-        // The defect looks fixed — return normally so it.failing reports RED.
-    });
-}
-
 jest.mock("@/features/clients/api/clients.api", () => ({
     clientsApi: { update: jest.fn() },
 }));
@@ -90,7 +72,7 @@ beforeEach(() => {
 describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () => {
     afterEach(cleanup);
 
-    knownDefect(
+    invariant(
         "SI-CONTRACT-08",
         "a `document` entity-changed event refreshes the client views that render contract state",
         async () => {
@@ -119,7 +101,6 @@ describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () =
                 throw new Error("SI-CONTRACT-08: the clients list query was NOT invalidated by a `document` entity-changed event (its contract badges went stale)");
             }
         },
-        /NOT invalidated by a `document` entity-changed event/,
     );
 
     invariant(
@@ -181,7 +162,7 @@ describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () =
     // Re-request is private page-local useMutation, not one of these hooks.
     // Register-client is excluded: its real useCreateClient invalidates clients.
     for (const operation of ["delete", "finalization"] as const) {
-        knownDefect(
+        invariant(
             "SI-CONTRACT-08",
             `the ${operation} hook invalidates the clients list that renders contract state`,
             async () => {
@@ -229,7 +210,6 @@ describe("SI-CONTRACT-08 contract state → client view refresh (desktop)", () =
                     queryClient.clear();
                 }
             },
-            `SI-CONTRACT-08: ${operation} succeeded but the clients list query was NOT invalidated`,
         );
     }
 });

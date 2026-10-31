@@ -7,6 +7,11 @@ import { EmployeeFormDialog } from "../EmployeeFormDialog";
 
 const mockCreateEmployeeMutateAsync = jest.fn();
 const mockUpdateEmployeeMutateAsync = jest.fn();
+const mockToast = jest.fn();
+
+jest.mock("@/hooks/use-toast", () => ({
+  useToast: () => ({ toast: mockToast }),
+}));
 
 jest.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ refetchQueries: jest.fn().mockResolvedValue(undefined) }),
@@ -141,6 +146,29 @@ describe("EmployeeFormDialog API errors", () => {
     expect(screen.getByText("입력 형식이 올바르지 않아요.")).toBeInTheDocument();
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
+  });
+
+  it.each([true, false, undefined])("shows the restore success toast only for restored=%s", async (restored) => {
+    const employee = { id: 1, name: "김관리", restored };
+    mockCreateEmployeeMutateAsync.mockResolvedValue(employee);
+    const onSuccess = jest.fn();
+    const onClose = jest.fn();
+    render(<EmployeeFormDialog open onClose={onClose} onSuccess={onSuccess} />);
+    await flushOpenEffect();
+
+    fireEvent.click(await fillRequiredFields());
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onSuccess).toHaveBeenCalledWith(employee);
+    if (restored === true) {
+      expect(mockToast).toHaveBeenCalledTimes(1);
+      expect(mockToast).toHaveBeenCalledWith({
+        title: "삭제된 관리사를 복원했습니다",
+        variant: "success",
+      });
+    } else {
+      expect(mockToast).not.toHaveBeenCalled();
+    }
   });
 
   it("shows the catalog message for a problem 409 duplicate", async () => {
