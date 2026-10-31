@@ -355,6 +355,35 @@ previous verified immutable image, validate state-schema compatibility, and
 rerun `/health`, status, and signed-delivery tests. Code rollback and traffic
 failback are separate operations.
 
+## Fenced Valkey restore and the controller
+
+A Valkey data restore on the Fallback host goes through
+`babyjamjam-fallback-server valkey-restore` only (procedure in the README,
+"Fenced Valkey restore"). For the controller this means:
+
+- The controller never starts or stops the API, so it neither opens nor closes
+  the fence. While the fence marker (`state/valkey-restore-fence`) exists the
+  backend is stopped on purpose: expect the uptime monitor to alert, and do not
+  arm, promote or disarm because of that alert alone. `status` keeps working
+  (it reports the stopped API and notes the fence on stderr).
+- Every start path refuses while the marker exists: the operator's `deploy`,
+  `temporary-active`, `replace-temporary-active`, `extend-temporary-active`,
+  `adopt-persistent-active` and `rollback`, and the CI deployer, so a `main`
+  push cannot recreate the API against a half-restored Valkey. `stop` and
+  `guard-expiry` are not refused.
+- Finish with `valkey-restore --reopen --confirm-reopen` after a verified
+  restore, or discard the fence with `valkey-restore --abort --confirm-fence`.
+  To go back to the data a restore replaced, run `valkey-restore --rollback
+  <valkey-replaced>/<timestamp>/appendonlydir --confirm-fence` while the fence
+  is still in place (the marker is kept throughout and `--reopen` remains the
+  only way back to serving traffic); aborting first would drop the start-path
+  protection. `--abort` (and an interrupted or failed `--reopen`) stops the API
+  and confirms it before the marker goes; if it cannot confirm, the marker stays
+  and the output says the API may be running and how to stop it.
+  If the temporary-active approval expired during the fence, the reopen releases
+  the fence without starting the API and the normal `temporary-active` approval
+  flow is required.
+
 ## Current activation blockers
 
 The latest network preflight records these unresolved blockers:

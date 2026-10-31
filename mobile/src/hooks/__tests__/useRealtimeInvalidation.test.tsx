@@ -37,9 +37,11 @@ class MockEventSource {
     this.listeners.set(type, listeners);
   }
 
-  dispatch(type: string, data?: string) {
+  dispatch(type: string, data?: string, lastEventId?: string) {
     if (type === "open") this.readyState = MockEventSource.OPEN;
-    const event = data === undefined ? new Event(type) : new MessageEvent(type, { data });
+    const event = data === undefined
+      ? new Event(type)
+      : new MessageEvent(type, { data, ...(lastEventId === undefined ? {} : { lastEventId }) });
     this.listeners.get(type)?.forEach((listener) => listener(event));
   }
 
@@ -588,6 +590,339 @@ describe("useRealtimeInvalidation", () => {
 
       expect(attempts).toHaveLength(1);
       expect(attempts[0].signal.aborted).toBe(false);
+    });
+  });
+
+  // Resume cursor + `ready` capability marker (wire contract, cycle 3). Expected
+  // values come from the contract: a reopen is a full refresh unless it sent a
+  // cursor AND this connection's `ready` says `resumed: true`.
+  describe("reconnect catch-up", () => {
+    const READY_TIMEOUT = 5000;
+    const ENDPOINT = "/api/realtime/events";
+    const fullRootKeys = () => allEntityQueryRoots().map((root) => JSON.stringify(root)).sort();
+    const expectFullInvalidations = (count: number) => {
+      expect([...invalidatedRoots(invalidateSpy)].sort()).toEqual(
+        Array.from({ length: count }, () => fullRootKeys()).flat().sort(),
+      );
+    };
+
+    async function mount(identity = IDENTITY) {
+      const view = renderHook(
+        ({ id }: { id: string | null }) => useRealtimeInvalidation(id),
+        { wrapper, initialProps: { id: identity as string | null } },
+      );
+      await flushConnection();
+      return view;
+    }
+
+    async function reconnect() {
+      act(() => {
+        latest().dispatch("error");
+        jest.advanceTimersByTime(3000);
+      });
+      await flushConnection();
+      return latest();
+    }
+
+    const ready = (source: MockEventSource, resumed: boolean, id: string) =>
+      source.dispatch("ready", JSON.stringify({ resumed }), id);
+
+    it("first connect has no since; reconnect carries the last id of ready, ping, reset and entity-changed", async () => {
+      await mount();
+      expect(MockEventSource.instances[0].url).toBe(ENDPOINT);
+
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "100-0");
+      });
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=100-0`);
+
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), true, "100-0");
+        latest().dispatch("ping", "{}", "100-3");
+      });
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=100-3`);
+
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), true, "100-3");
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }), "100-5");
+      });
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=100-5`);
+
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), true, "100-5");
+        latest().dispatch("reset", "{}", "100-9");
+      });
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=100-9`);
+    });
+
+    it("does not remember empty or malformed ids", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "");
+        latest().dispatch("ping", "{}", "has space");
+        latest().dispatch("ping", "{}", "x".repeat(65));
+        latest().dispatch("ping", "{}", "a/b");
+      });
+      expect((await reconnect()).url).toBe(ENDPOINT);
+
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "7-1");
+        latest().dispatch("ping", "{}", "bad id");
+      });
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=7-1`);
+    });
+
+    it("never refreshes on the first connect, whatever ready says", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "1-0");
+      });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    it("resumed true with no change: two reconnects cause zero full refreshes and the second sends the ping id", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+
+      const second = await reconnect();
+      expect(second.url).toBe(`${ENDPOINT}?since=50-0`);
+      act(() => {
+        second.dispatch("open");
+        ready(second, true, "50-0");
+        second.dispatch("ping", "{}", "50-4");
+        jest.advanceTimersByTime(READY_TIMEOUT * 2);
+      });
+
+      const third = await reconnect();
+      expect(third.url).toBe(`${ENDPOINT}?since=50-4`);
+      act(() => {
+        third.dispatch("open");
+        ready(third, true, "50-4");
+        jest.advanceTimersByTime(READY_TIMEOUT * 2);
+      });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    it("a replayed entity-changed invalidates only its kinds' roots", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        ready(second, true, "50-0");
+        second.dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }), "50-2");
+      });
+      expect(invalidatedRoots(invalidateSpy)).toEqual([JSON.stringify(["employees"])]);
+
+      act(() => {
+        jest.advanceTimersByTime(1500);
+      });
+      expect(invalidatedRoots(invalidateSpy)).toEqual([
+        JSON.stringify(["employees"]),
+        JSON.stringify(["employees"]),
+      ]);
+    });
+
+    it("ready with resumed false on a reopen refreshes everything exactly once", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        ready(second, false, "60-0");
+        second.dispatch("ping", "{}", "60-1");
+        jest.advanceTimersByTime(READY_TIMEOUT * 2);
+      });
+      expectFullInvalidations(1);
+    });
+
+    it("a reopen whose first message is not ready refreshes everything once", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        second.dispatch("ping", "{}");
+        second.dispatch("ping", "{}");
+        jest.advanceTimersByTime(READY_TIMEOUT * 2);
+      });
+      expectFullInvalidations(1);
+    });
+
+    it("a reopen that starts with an entity-changed refreshes everything once plus that event's roots", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        second.dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }));
+      });
+      expect([...invalidatedRoots(invalidateSpy)].sort()).toEqual(
+        [...fullRootKeys(), JSON.stringify(["employees"])].sort(),
+      );
+    });
+
+    it("refreshes everything once when no ready arrives within 5 s of open, and a late ready does not repeat it", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        jest.advanceTimersByTime(READY_TIMEOUT - 1);
+      });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expectFullInvalidations(1);
+
+      act(() => {
+        ready(second, true, "50-0");
+        jest.advanceTimersByTime(READY_TIMEOUT * 2);
+      });
+      expectFullInvalidations(1);
+    });
+
+    it("old backend: Nest auto ids without ready are never sent as since, and every reopen refreshes everything once", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        latest().dispatch("entity-changed", JSON.stringify({ entities: ["employee"] }), "1");
+        latest().dispatch("ping", "{}", "2");
+      });
+      invalidateSpy.mockClear();
+
+      const second = await reconnect();
+      expect(second.url).toBe(ENDPOINT);
+      act(() => {
+        second.dispatch("open");
+        second.dispatch("ping", "{}", "1");
+        second.dispatch("entity-changed", JSON.stringify({ entities: ["client"] }), "2");
+      });
+
+      const third = await reconnect();
+      expect(third.url).toBe(ENDPOINT);
+      // Drop the trailing pass of the events above, which fires during the reconnect delay.
+      invalidateSpy.mockClear();
+      act(() => {
+        third.dispatch("open");
+      });
+      expectFullInvalidations(1);
+
+      const fourth = await reconnect();
+      expect(fourth.url).toBe(ENDPOINT);
+    });
+
+    it("a mid-stream reset refreshes everything once and moves the cursor", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        ready(second, true, "50-0");
+      });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      act(() => {
+        second.dispatch("reset", "{}", "70-0");
+      });
+      expectFullInvalidations(1);
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=70-0`);
+    });
+
+    it("a reset on the first connect also refreshes everything once", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+        latest().dispatch("reset", "{}", "51-0");
+      });
+      expectFullInvalidations(1);
+    });
+
+    it("a reset as the first message of a reopen does not double the full refresh", async () => {
+      await mount();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+      });
+      const second = await reconnect();
+      act(() => {
+        second.dispatch("open");
+        second.dispatch("reset", "{}");
+      });
+      expectFullInvalidations(1);
+    });
+
+    it("clears the cursor on an identity change and still refreshes everything on the first open", async () => {
+      const view = await mount("user-1:branch-A");
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), false, "50-0");
+        latest().dispatch("ping", "{}", "50-3");
+      });
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      view.rerender({ id: "user-1:branch-B" });
+      await flushConnection();
+      const forB = latest();
+      expect(forB.url).toBe(ENDPOINT);
+
+      act(() => {
+        forB.dispatch("open");
+      });
+      expectFullInvalidations(1);
+
+      // B's own ready adds nothing, and the old identity's cursor is gone.
+      act(() => {
+        ready(forB, false, "90-0");
+      });
+      expectFullInvalidations(1);
+      expect((await reconnect()).url).toBe(`${ENDPOINT}?since=90-0`);
+    });
+
+    it("an identity change with a resumable cursor still refreshes everything on the first open", async () => {
+      const view = await mount("user-1:branch-A");
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), true, "50-0");
+      });
+      view.rerender({ id: "user-2:branch-A" });
+      await flushConnection();
+      act(() => {
+        latest().dispatch("open");
+        ready(latest(), true, "50-0");
+      });
+      expectFullInvalidations(1);
     });
   });
 

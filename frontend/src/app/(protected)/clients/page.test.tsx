@@ -278,10 +278,11 @@ jest.mock("@/components/app/v3", () => ({
   HeaderActionButton: ({ label, onClick }: { label: ReactNode; onClick: () => void }) => <button type="button" onClick={onClick}>{label}</button>,
   InfoCard: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ListEmptyState: ({ message }: { message: ReactNode }) => <div>{message}</div>,
-  ListPanel: ({ children, emptyState, headerActions, subHeader, subtitle, title }: { children: ReactNode; emptyState?: ReactNode; headerActions?: ReactNode; subHeader?: ReactNode; subtitle?: ReactNode; title: ReactNode }) => (
+  ListPanel: ({ children, emptyState, headerActions, onSearchChange, searchValue, subHeader, subtitle, title }: { children: ReactNode; emptyState?: ReactNode; headerActions?: ReactNode; onSearchChange?: (value: string) => void; searchValue?: string; subHeader?: ReactNode; subtitle?: ReactNode; title: ReactNode }) => (
     <section>
       <h2>{title}</h2>
       {subtitle ? <div data-testid="clients-list-subtitle">{subtitle}</div> : null}
+      <input aria-label="고객 검색" value={searchValue ?? ""} onChange={(event) => onSearchChange?.(event.target.value)} />
       {headerActions}
       {subHeader}
       {emptyState}
@@ -421,6 +422,9 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("limit: 20");
     expect(source).toContain("tab: activeFilter");
     expect(source).toContain("search: debouncedSearchQuery || undefined");
+    // The summary is branch-wide: it takes no search and is not gated on the search debounce.
+    expect(source).toContain("useClientListSummary()");
+    expect(source).toContain("const isSummaryInitialLoading = listSummary.isInitialLoading;");
     expect(source).not.toContain("useClients(1, 50)");
     expect(source).not.toContain("matchesSearchQuery");
     expect(source).not.toContain("const filteredClients");
@@ -428,7 +432,8 @@ describe("ClientsPage directory and summary contracts", () => {
 
   it("keeps the matched total separate from loaded rows and reaches the final page", () => {
     expect(source).toContain("matchedTotal");
-    expect(source).toContain("일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시");
+    expect(source).toContain("`검색 결과 ${matchedTotal}명`");
+    expect(source).not.toContain("명 표시");
     expect(source).toContain("const listScopeSubtitle");
     expect(source).toContain("subtitle={listScopeSubtitle}");
     expect(source).not.toContain('data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope_count"');
@@ -436,16 +441,18 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("onLoadMore={() => void directory.fetchNextPage()}");
     expect(source).toContain("isFetchingMore={directory.isFetchingNextPage}");
     expect(source).toContain("directory.isNextPageError");
-    expect(source).toContain("directory.isEndOfList");
+    // The end of the list is not announced: the scope subtitle already says how many are shown.
+    expect(source).not.toContain("모든 검색 결과를 불러왔어요");
   });
 
-  it("labels summary scope and dueDate months", () => {
+  it("labels dueDate months and keeps the summary unscoped by search", () => {
     expect(source).toContain("이번 달 출산 예정");
     expect(source).toContain("다음 달 출산 예정");
     expect(source).toContain("서비스 종료 예정");
     expect(source).not.toContain("이번달 dueDate");
     expect(source).not.toContain("다음달 dueDate");
-    expect(source).toContain("summaryScopeLabel");
+    expect(source).not.toContain("summaryScopeLabel");
+    expect(source).not.toContain("현재 검색 범위");
     expect(source).not.toContain('data-component="desktop_clients_summary_scope"');
     expect(source).toContain('thisMonthCount: summary?.dueDate.thisMonth ?? "—"');
   });
@@ -567,9 +574,7 @@ describe("ClientsPage directory subtitle behavior", () => {
       isSuccessfulEmpty: true,
     });
 
-    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
-      "현재 지점 전체 · 일치 0명 · 현재 0명 표시",
-    );
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^0명$/);
 
     mockDirectoryState = {
       ...mockDirectoryState,
@@ -580,9 +585,32 @@ describe("ClientsPage directory subtitle behavior", () => {
     };
     rerender(<ClientsPage />);
 
-    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
-      "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
-    );
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^4명$/);
+  });
+
+  it("prefixes the count with 검색 결과 while a search is applied and leaves the stats untouched", () => {
+    mockListSummary.mockReturnValue({
+      data: { dueDate: { thisMonth: 3, nextMonth: 5 }, byTab: { active: 7, waiting: 2 }, serviceEnd: { count: 1 }, total: 89 },
+      isBranchContextReady: true,
+      isInitialError: false,
+      isInitialLoading: false,
+      isRefreshError: false,
+    });
+    renderClientsPage({
+      clients: [{ id: 1, name: "김예지" }],
+      data: { pages: [{ data: [{ id: 1, name: "김예지" }], total: 89 }] },
+      matchedTotal: 89,
+    });
+    const statsBefore = screen.getByTestId("clients-stats").textContent;
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^89명$/);
+
+    mockDirectoryState = { ...mockDirectoryState, matchedTotal: 8 };
+    fireEvent.change(screen.getByLabelText("고객 검색"), { target: { value: "김예지" } });
+
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^검색 결과 8명$/);
+    expect(mockListSummary).toHaveBeenCalled();
+    expect(screen.getByTestId("clients-stats")).toHaveAttribute("data-loading", "false");
+    expect(screen.getByTestId("clients-stats").textContent).toBe(statsBefore);
   });
 
   it("keeps the cached match count visible when a same-scope refresh fails", () => {
@@ -595,9 +623,7 @@ describe("ClientsPage directory subtitle behavior", () => {
       matchedTotal: 4,
     });
 
-    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
-      "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
-    );
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^4명$/);
     expect(screen.getByRole("alert")).toHaveTextContent("최근에 확인된 목록을 표시하고 있어요");
   });
 

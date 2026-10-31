@@ -912,8 +912,9 @@
       "implementation_sha": "3bec2e441",
       "basis_sha": "17e439226",
       "review_scope": "4 consumers adopt outcome-first (UNKNOWN/PARTIALLY_APPLIED) with legacy branches intact; dead useContractCreationFlow chain (8 files) removed; readHeadlessOutcome helpers; UI baseline re-anchored anchors-only.",
+      "test_paths_note": "test_paths[0] originally read frontend/src/components/app/contracts/__tests__/contract-creation.headless.spec.ts, a path that never existed; at 3bec2e441 the spec was frontend/tests/contract-creation.headless.spec.ts. That spec was retired in ci-gate-fixes (2026-10-30) with the headless browser flows; queue-flow coverage is frontend/tests/contract-creation.spec.ts and contract-document-jobs.spec.ts.",
       "test_paths": [
-        "frontend/src/components/app/contracts/__tests__/contract-creation.headless.spec.ts",
+        "frontend/tests/contract-creation.headless.spec.ts",
         "mobile/src/app/(shell)/contracts/new/page.test.ts",
         "mobile/src/components/app/contracts/contract-operation-guard.test.ts"
       ],
@@ -18614,14 +18615,6 @@
       "discovery_task_id": "1.1.09"
     },
     {
-      "path": "frontend/tests/contract-creation.headless.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
       "path": "frontend/tests/contract-creation.smoke.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
@@ -18743,14 +18736,6 @@
     },
     {
       "path": "frontend/tests/screenshots/route-manifest.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/staff-finalize.headless.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
       "candidate_count": 0,

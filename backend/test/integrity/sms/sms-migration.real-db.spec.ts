@@ -2,6 +2,11 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Prisma } from "@prisma/client";
+import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { createBranch, createMessageLog, createMessageTriggerJob, createMessageTriggerRule } from "../helpers/factories";
@@ -24,6 +29,44 @@ describeReal("SMS patch fail-closed validation (real PostgreSQL)", () => {
     afterAll(async () => {
         if (tracker) await tracker.cleanup(handle.raw);
         if (handle) await closeIntegrityPrisma(handle);
+    });
+
+    it("ON CONFLICT system and marker bootstraps coexist with the live-default partial index", async () => {
+        // This suite later recreates the pre-patch index. Remove the deliberately
+        // duplicated historical default before that DDL, even on assertion failure.
+        const tracker = new RowTracker();
+        try {
+            const branch = await createBranch(handle.raw, tracker);
+            const deleted = await createMessageTriggerRule(handle.raw, tracker, {
+                branchId: branch.id, isDefault: true, deletedAt: new Date(),
+            });
+            await createMessageTriggerRule(handle.raw, tracker, {
+                branchId: branch.id, templateKey: deleted.templateKey, isDefault: true,
+            });
+            const system = await createMessageTriggerRule(handle.raw, tracker, { id: `system:si-conflict:${branch.id}` });
+            const repository = new SbMessageTriggerRuleRepository(handle.service);
+            const rule = (await repository.findAll(branch.id)).find(({ id }) => id === system.id)!;
+            await handle.raw.message_trigger_rule.delete({ where: { id: system.id } });
+            const markerExisted = await handle.raw.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID } });
+            if (!markerExisted) tracker.track("message_trigger_rule", MESSAGE_AUTOMATION_INTENT_RULE_ID);
+            await handle.raw.$transaction(async (tx) => {
+                await repository.ensureSystemRule(rule, tx);
+                await repository.ensureSystemRule(rule, tx);
+                const store = new AgentAutomationRecordStoreService(new MessageAutomationBranchLockService(handle.service)) as unknown as {
+                    ensureInternalRule(transaction: Prisma.TransactionClient): Promise<void>;
+                };
+                await store.ensureInternalRule(tx);
+                await store.ensureInternalRule(tx);
+            });
+            for (const id of [system.id, MESSAGE_AUTOMATION_INTENT_RULE_ID]) {
+                expect(MessageTriggerRuleEntity.isReservedId(id)).toBe(true);
+                expect(await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id } })).toMatchObject({
+                    branchId: null, isDefault: false, deletedAt: null,
+                });
+            }
+        } finally {
+            await tracker.cleanup(handle.raw);
+        }
     });
 
     function executeMigration() {

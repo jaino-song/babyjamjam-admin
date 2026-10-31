@@ -395,7 +395,7 @@ const DEMOS: Record<DemoName, (ctx: DemoCtx) => Promise<void>> = {
         await tap(ctx, "#d1", () => { removeClass($(ctx.m, "#d0"), "on"); turnOn(ctx, "#d1"); });
         await type(ctx, "#f5", "3.2");
         await tap(ctx, "#go", async (button) => {
-            button.textContent = "저장 중…";
+            button.textContent = "저장 중";
             await ctx.run.sleep(700);
             button.textContent = "다음";
         });

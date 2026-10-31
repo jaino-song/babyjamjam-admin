@@ -694,7 +694,7 @@ export class ServiceRecordLinkService {
                 return [] as Array<{ id: string; claim_version: string }>;
             }
             const rule = await transaction.message_trigger_rule.findUnique({
-                where: { id: SERVICE_RECORD_LINK_RULE_ID },
+                where: { id: SERVICE_RECORD_LINK_RULE_ID, deletedAt: null },
                 select: { branchId: true, isActive: true },
             });
             const override = await transaction.message_trigger_rule_branch_override.findUnique({
@@ -845,7 +845,7 @@ export class ServiceRecordLinkService {
                 // `message` to every branch each cycle for candidates it then refuses. Only write
                 // when the rule is absent (serialised by the lock above, so no create race).
                 const existingRule = await writeTransaction.message_trigger_rule.findUnique({
-                    where: { id: SERVICE_RECORD_LINK_RULE_ID },
+                    where: { id: SERVICE_RECORD_LINK_RULE_ID, deletedAt: null },
                     select: { id: true },
                 });
                 if (existingRule) return;

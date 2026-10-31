@@ -104,7 +104,7 @@ export async function proxySseStream({
 
     try {
         const upstreamHeaders = new Headers(headers);
-        // Backend replay is not supported yet; preserve the resume cursor for future support.
+        // The backend also accepts `?since=` (which wins); keep forwarding the standard header.
         if (lastEventId) {
             upstreamHeaders.set("Last-Event-ID", lastEventId);
         }

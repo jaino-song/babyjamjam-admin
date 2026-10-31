@@ -15,7 +15,8 @@ jest.mock("@/lib/api/client", () => ({
 
 // jsdom has no EventSource — provide a controllable fake so we can drive
 // open/message/error and inspect how many connections the hook opens.
-type SseListener = (event: { type: string; data?: string }) => void;
+type SseEventLike = { type: string; data?: string; lastEventId?: string };
+type SseListener = (event: SseEventLike) => void;
 
 class MockEventSource {
   static readonly CONNECTING = 0;
@@ -47,12 +48,14 @@ class MockEventSource {
     this.readyState = MockEventSource.CLOSED;
   }
 
-  emit(type: string, data?: unknown) {
-    const event =
+  // `id` mirrors MessageEvent.lastEventId: the browser reports "" for an
+  // event that carried no `id:` field of its own.
+  emit(type: string, data?: unknown, id = "") {
+    const event: SseEventLike =
       type === "open"
         ? { type }
-        : { type, data: typeof data === "string" ? data : JSON.stringify(data ?? {}) };
-    this.listeners.get(type)?.forEach((cb) => cb(event as { type: string; data?: string }));
+        : { type, data: typeof data === "string" ? data : JSON.stringify(data ?? {}), lastEventId: id };
+    this.listeners.get(type)?.forEach((cb) => cb(event));
   }
 
   fireOpen() {
@@ -426,6 +429,249 @@ describe("useRealtimeInvalidation", () => {
     emitEntityChanged(first, ["employee"]);
 
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  describe("resume cursor (reconnect without a full refetch)", () => {
+    const READY_TIMEOUT = 5000;
+    const allRootNames = () => allQueryKeyRoots().map((root) => root[0]);
+    const ready = (source: MockEventSource, resumed: boolean, id = "") =>
+      act(() => source.emit("ready", { resumed }, id));
+    const ping = (source: MockEventSource, id = "") => act(() => source.emit("ping", { at: 1 }, id));
+    const changed = (source: MockEventSource, entities: string[], id = "") =>
+      act(() => source.emit("entity-changed", { entities }, id));
+    // One routine proxy close: error, back off, open the next source.
+    const reconnect = async (from: MockEventSource) => {
+      act(() => from.emit("error"));
+      await advance(3000);
+      const next = MockEventSource.instances[MockEventSource.instances.length - 1];
+      act(() => next.fireOpen());
+      return next;
+    };
+
+    test("the first connect never sends since and a ready{resumed:false} there refetches nothing", () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "1700-0");
+
+      expect(first.url).toBe(ENDPOINT);
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    test("a reconnect echoes the last id (url-encoded) and, once resumed, refetches nothing", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "7:3");
+
+      const second = await reconnect(first);
+      expect(second.url).toBe(`${ENDPOINT}?since=${encodeURIComponent("7:3")}`);
+      ready(second, true, "7:3");
+      await advance(READY_TIMEOUT * 2);
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    test("two quiet reconnects with resumed:true refetch nothing and the second sends the ping's id", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "100-0");
+      ping(first, "100-5");
+
+      const second = await reconnect(first);
+      expect(second.url).toBe(`${ENDPOINT}?since=100-5`);
+      ready(second, true, "100-5");
+      ping(second, "100-9");
+
+      const third = await reconnect(second);
+      expect(third.url).toBe(`${ENDPOINT}?since=100-9`);
+      ready(third, true, "100-9");
+      await advance(READY_TIMEOUT * 2);
+
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    test("the cursor advances on ready, ping, reset and entity-changed ids", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "a1");
+
+      const second = await reconnect(first);
+      expect(second.url).toBe(`${ENDPOINT}?since=a1`);
+      ready(second, true, "a1");
+      changed(second, ["client"], "a2");
+
+      const third = await reconnect(second);
+      expect(third.url).toBe(`${ENDPOINT}?since=a2`);
+      ready(third, true, "a2");
+      ping(third, "a3");
+
+      const fourth = await reconnect(third);
+      expect(fourth.url).toBe(`${ENDPOINT}?since=a3`);
+      ready(fourth, true, "a3");
+      act(() => fourth.emit("reset", {}, "a4"));
+
+      const fifth = await reconnect(fourth);
+      expect(fifth.url).toBe(`${ENDPOINT}?since=a4`);
+    });
+
+    test("a replayed entity-changed invalidates only its kinds' roots, no full refetch", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+
+      const second = await reconnect(first);
+      ready(second, true, "5-0");
+      changed(second, ["employee"], "5-1");
+
+      expect(invalidatedKeys()).toEqual(rootNames(["employee"]));
+      expect(invalidatedKeys()).not.toEqual(allRootNames());
+    });
+
+    test("ready{resumed:false} on a resuming reconnect refetches every root exactly once", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+
+      const second = await reconnect(first);
+      expect(invalidateSpy).not.toHaveBeenCalled(); // waiting for ready
+      ready(second, false, "9-9");
+      await advance(READY_TIMEOUT * 2);
+
+      expect(invalidatedKeys()).toEqual(allRootNames());
+    });
+
+    test("a resuming reconnect whose first message is not ready refetches once", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+
+      const second = await reconnect(first);
+      ping(second, "1"); // an old backend's auto id
+      ping(second, "2");
+      await advance(READY_TIMEOUT * 2);
+
+      expect(invalidatedKeys()).toEqual(allRootNames());
+    });
+
+    test("no ready within 5 s of open refetches once, and not a moment earlier", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+
+      const second = await reconnect(first);
+      await advance(READY_TIMEOUT - 1);
+      expect(invalidateSpy).not.toHaveBeenCalled();
+      await advance(1);
+      expect(invalidatedKeys()).toEqual(allRootNames());
+
+      await advance(READY_TIMEOUT * 2); // keepalive pings only; nothing more
+      ping(second);
+      expect(invalidatedKeys()).toEqual(allRootNames());
+    });
+
+    test("an old backend (no ready, Nest auto ids) never sends since and refetches once per reopen", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      changed(first, ["client"], "1");
+      changed(first, ["client"], "2");
+      ping(first, "3");
+      await advance(2000); // let the events' trailing refresh run before counting
+      invalidateSpy.mockClear();
+
+      const second = await reconnect(first);
+      expect(second.url).toBe(ENDPOINT);
+      expect(invalidatedKeys()).toEqual(allRootNames());
+      ping(second, "1");
+
+      const third = await reconnect(second);
+      expect(third.url).toBe(ENDPOINT);
+      await advance(READY_TIMEOUT * 2);
+
+      expect(invalidatedKeys()).toEqual([...allRootNames(), ...allRootNames()]);
+    });
+
+    test("empty and malformed ids are never remembered", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "good-1");
+      changed(first, ["client"], ""); // no id field
+      ping(first, "has space");
+      ping(first, "x".repeat(65));
+      ping(first, "bad/slash");
+
+      const second = await reconnect(first);
+
+      expect(second.url).toBe(`${ENDPOINT}?since=good-1`);
+    });
+
+    test("a mid-stream reset refetches every root exactly once", () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      act(() => first.emit("reset", {}, "5-7"));
+
+      expect(invalidatedKeys()).toEqual(allRootNames());
+    });
+
+    test("a reset as the first message of a resuming reconnect still refetches only once", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+
+      const second = await reconnect(first);
+      act(() => second.emit("reset", {}, "6-0"));
+      await advance(READY_TIMEOUT * 2);
+
+      expect(invalidatedKeys()).toEqual(allRootNames());
+    });
+
+    test("an identity change clears the cursor: the next reconnect has no since and refetches", async () => {
+      const { rerender } = renderHook(
+        ({ identity }: { identity: string }) => useRealtimeInvalidation(true, identity),
+        { wrapper, initialProps: { identity: "user-1:branch-a" } },
+      );
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "a-5");
+
+      rerender({ identity: "user-1:branch-b" });
+      const direct = MockEventSource.instances[1];
+      expect(direct.url).toBe(ENDPOINT);
+      act(() => direct.fireOpen());
+
+      const next = await reconnect(direct);
+
+      expect(next.url).toBe(ENDPOINT);
+      expect(invalidatedKeys()).toEqual(allRootNames());
+    });
+
+    test("an unresolved resume survives another drop: the cursor is sent again", async () => {
+      mountStream();
+      const first = MockEventSource.instances[0];
+      act(() => first.fireOpen());
+      ready(first, false, "5-0");
+
+      const second = await reconnect(first); // never answers
+      const third = await reconnect(second);
+
+      expect(third.url).toBe(`${ENDPOINT}?since=5-0`);
+      ready(third, true, "5-0");
+      await advance(READY_TIMEOUT * 2);
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("authenticated reconnect", () => {

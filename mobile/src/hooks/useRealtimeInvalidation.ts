@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
+import { isValidRealtimeCursor } from "@/lib/realtime/cursor";
 import {
   allEntityQueryRoots,
   parseEntityChangedKinds,
@@ -28,6 +29,22 @@ const BOOTSTRAP_TIMEOUT_MS = 20_000;
 // lands before a read replica / cache catches up would store the old rows. One
 // more pass shortly after settles that.
 const FOLLOW_UP_INVALIDATE_MS = 1500;
+// A resuming connection's first message is `ready`. One that has not arrived this
+// long after `open` means an old backend (or a rollback) that cannot replay what
+// was missed, so the cache is refreshed in full instead.
+const READY_TIMEOUT_MS = 5000;
+
+// `ready` data is `{"resumed": boolean}`; anything unparseable counts as not resumed
+// so the caller falls back to the full refresh.
+function parseReadyResumed(data: unknown): boolean {
+  if (typeof data !== "string") return false;
+  try {
+    const parsed: unknown = JSON.parse(data);
+    return typeof parsed === "object" && parsed !== null && (parsed as { resumed?: unknown }).resumed === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * App-wide server push: refreshes cached lists when another staff member (or a
@@ -46,8 +63,17 @@ const FOLLOW_UP_INVALIDATE_MS = 1500;
  *   and reopen.
  * - tab becomes visible again while not open → reopen immediately.
  * All three funnel through one reconnect path guarded so there is only ever one
- * connection and one pending timer. After a *re*open succeeds every mapped root
- * is invalidated once to catch up on changes missed while the stream was down.
+ * connection and one pending timer.
+ *
+ * Catching up after a *re*open: every message carries a resume cursor (its
+ * `lastEventId`), remembered once the connection has delivered `ready` (ids on a
+ * connection without `ready` are an old backend's per-connection counters and are
+ * ignored). The reconnect sends it as `?since=`; when this connection's `ready`
+ * says `resumed: true` the backend replays exactly the missed `entity-changed`
+ * events and nothing else is refetched. Every mapped root is invalidated once
+ * instead when no cursor was sent, `ready` says `resumed: false`, the first
+ * message is not `ready`, or no `ready` arrives within {@link READY_TIMEOUT_MS}.
+ * A `reset` message (the backend lost continuity) does the same at any time.
  *
  * The stream is opened through `openAuthenticatedEventSource`, which refreshes
  * an expired session first — a bare `EventSource` cannot do that.
@@ -83,7 +109,14 @@ export function useRealtimeInvalidation(identity: string | null): void {
     // The attempt currently awaiting its authenticated opener; null when idle.
     let bootstrapController: AbortController | null = null;
     let disposed = false;
-    let hasConnectedOnce = previousIdentity !== null && previousIdentity !== identity;
+    let hasConnectedOnce = false;
+    // The cache still holds the previous identity's rows, so the first open
+    // refreshes everything whatever the cursor rules say.
+    let refreshAllOnFirstOpen = previousIdentity !== null && previousIdentity !== identity;
+    // Resume cursor of this identity; the effect re-runs on an identity change,
+    // so a new identity always starts without one.
+    let cursor: string | null = null;
+    let readyTimer: number | null = null;
     // Roots from events still waiting for their follow-up pass.
     let pendingFollowUpRoots: QueryKey[] = [];
 
@@ -121,7 +154,15 @@ export function useRealtimeInvalidation(identity: string | null): void {
       }
     };
 
+    const clearReadyTimer = () => {
+      if (readyTimer !== null) {
+        window.clearTimeout(readyTimer);
+        readyTimer = null;
+      }
+    };
+
     const closeSource = () => {
+      clearReadyTimer();
       if (source) {
         source.close();
         source = null;
@@ -193,27 +234,100 @@ export function useRealtimeInvalidation(identity: string | null): void {
         scheduleReconnect(RECONNECT_DELAY_MS);
       }, BOOTSTRAP_TIMEOUT_MS);
 
+      // The cursor this attempt resumes from; `null` on a page's first connect.
+      const sentCursor = cursor;
+      const url = sentCursor === null ? ENDPOINT : `${ENDPOINT}?since=${encodeURIComponent(sentCursor)}`;
+
       try {
-        const next = await openAuthenticatedEventSource(ENDPOINT, { signal: controller.signal });
+        const next = await openAuthenticatedEventSource(url, { signal: controller.signal });
         if (!owns()) {
           next.close();
           return;
         }
         source = next;
 
+        // Per-connection catch-up state.
+        let isReopen = false;
+        let sawMessage = false;
+        let sawReady = false;
+        let refreshedAll = false;
+
+        // At most one full refresh per reopen, however many reasons pile up.
+        const refreshAllOnce = () => {
+          if (refreshedAll) return;
+          refreshedAll = true;
+          invalidateRoots(allEntityQueryRoots());
+        };
+
         next.addEventListener("open", () => {
           if (source !== next) return;
-          if (hasConnectedOnce) {
-            // Reopened after a gap — catch up on anything missed.
+          if (refreshAllOnFirstOpen) {
+            refreshAllOnFirstOpen = false;
             invalidateRoots(allEntityQueryRoots());
+          } else if (hasConnectedOnce) {
+            isReopen = true;
+            if (sentCursor === null) {
+              // Nothing to resume from — catch up on anything missed.
+              refreshAllOnce();
+            } else {
+              clearReadyTimer();
+              readyTimer = window.setTimeout(() => {
+                readyTimer = null;
+                if (source === next) refreshAllOnce();
+              }, READY_TIMEOUT_MS);
+            }
           }
           hasConnectedOnce = true;
           resetHeartbeat();
         });
 
+        // Common entry for every named message. Returns true when the reopen's
+        // full refresh already covers this message (triggered by it, or done
+        // before it with nothing delivered in between).
+        const onMessage = (type: string, event: Event): boolean => {
+          resetHeartbeat();
+          const isFirstMessage = !sawMessage;
+          sawMessage = true;
+          let refreshedByThis = false;
+          if (isReopen && sentCursor !== null && isFirstMessage && type !== "ready" && !refreshedAll) {
+            // A resuming connection that does not open with `ready` is an old
+            // backend that ignored `since` — nothing was replayed.
+            refreshAllOnce();
+            refreshedByThis = true;
+          }
+          if (type === "ready") {
+            sawReady = true;
+            clearReadyTimer();
+            const resumed = parseReadyResumed((event as MessageEvent).data);
+            if (isReopen && !resumed && !refreshedAll) {
+              refreshAllOnce();
+              refreshedByThis = true;
+            }
+          }
+          if (sawReady) {
+            const id = (event as MessageEvent).lastEventId;
+            if (isValidRealtimeCursor(id)) cursor = id;
+          }
+          // A message that opens a connection already fully refreshed at `open`
+          // (or by the ready timeout) is covered by that refresh too.
+          return refreshedByThis || (isFirstMessage && refreshedAll);
+        };
+
+        next.addEventListener("ready", (event) => {
+          if (source !== next) return;
+          onMessage("ready", event);
+        });
+
+        next.addEventListener("reset", (event) => {
+          if (source !== next) return;
+          // The backend lost continuity: refetch everything, once. Skipped only
+          // when the reopen's full refresh already covers this very message.
+          if (!onMessage("reset", event)) invalidateRoots(allEntityQueryRoots());
+        });
+
         next.addEventListener("entity-changed", (event) => {
           if (source !== next) return;
-          resetHeartbeat();
+          onMessage("entity-changed", event);
           const roots = queryRootsForKinds(
             parseEntityChangedKinds((event as MessageEvent).data),
           );
@@ -222,9 +336,9 @@ export function useRealtimeInvalidation(identity: string | null): void {
           scheduleFollowUp(roots);
         });
 
-        next.addEventListener("ping", () => {
+        next.addEventListener("ping", (event) => {
           if (source !== next) return;
-          resetHeartbeat();
+          onMessage("ping", event);
         });
 
         next.addEventListener("error", () => {

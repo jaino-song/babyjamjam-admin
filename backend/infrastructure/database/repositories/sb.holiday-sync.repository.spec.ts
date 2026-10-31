@@ -184,6 +184,10 @@ describe("SbHolidaySyncRepository", () => {
         expect(h.tx.holiday_calendar_revision.update).not.toHaveBeenCalled();
         expect(h.tx.holiday_year_snapshot.upsert).not.toHaveBeenCalled();
         expect(h.tx.public_holiday.update).not.toHaveBeenCalled();
+        // Unchanged data rewrites no public_holiday row (no fetchedAt refresh): only the snapshot's
+        // validatedAt (the user-visible "last synced") moves, exactly once.
+        expect(h.tx.public_holiday.updateMany).not.toHaveBeenCalled();
+        expect(h.tx.holiday_year_snapshot.update).toHaveBeenCalledTimes(1);
         const refresh = firstArg(h.tx.holiday_year_snapshot.update) as { where: { year: number }; data: { fetchedAt: Date; validatedAt: Date } };
         expect(refresh.where).toEqual({ year: 2026 });
         expect(refresh.data.fetchedAt).toBeInstanceOf(Date);
@@ -221,6 +225,8 @@ describe("SbHolidaySyncRepository", () => {
         expect(h.tx.holiday_change_event.createMany).not.toHaveBeenCalled();
         expect(h.tx.public_holiday.deleteMany).not.toHaveBeenCalled();
         expect(h.tx.holiday_year_snapshot.upsert).not.toHaveBeenCalled();
+        // Only the renamed row is written; the unchanged one is not touched by a bulk refresh.
+        expect(h.tx.public_holiday.updateMany).not.toHaveBeenCalled();
     });
 
     it("first sync with identical dates still writes rows, snapshot and a revision bump (year becomes synced)", async () => {

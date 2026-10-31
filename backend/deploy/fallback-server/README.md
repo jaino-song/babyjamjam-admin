@@ -7,9 +7,15 @@ frontend deployment. The frontend keeps the stable
 `https://api.babyjamjam.com` hostname while traffic ownership is changed by
 the separately controlled Vercel DNS client.
 
-Current status: **controller runtime, installer, systemd unit source, and CLI
-are implemented locally; the controller is not installed or armed, and the host
-is not serving production traffic**.
+Current status (2026-10-31): **LightNode is the permanent warm standby for the
+Lightsail production primary.** It has served production in temporary-active
+mode since 2026-09-03; the move back to Lightsail puts it on passive standby,
+and until that cutover finishes it remains the live host. It is not released
+after failback: it stays running and receives every `main` release passively
+through `deploy-lightnode-standby` (see "Conditional `main` CI replacement").
+The failover controller runtime, installer, systemd unit source, and CLI are
+implemented, but the controller is **not installed or armed** and failover stays
+a manual runbook (`docs/devops-deployment-rules.md` §4.1).
 
 ## Safety boundary
 
@@ -96,6 +102,14 @@ controller state store uses the lock derived from its state file,
 Stale controller lock recovery is automatic and quarantines only an
 identity-checked stale lock; do not remove controller lock files by hand or
 create an alternate lock location.
+
+`valkey-restore` also writes `state/valkey-restore-fence` (the fence marker;
+never delete it by hand, use `--reopen` or `--abort`), keeps the data it
+replaced under `/opt/babyjamjam-fallback-server/valkey-replaced/<timestamp>/`
+(root-owned `0700`; remove old copies by hand once a restore is accepted) and,
+while a fence exists, the verified copy of the backup under
+`/opt/babyjamjam-fallback-server/valkey-restore-snapshot/` (root-owned `0700`,
+removed together with the marker).
 
 ## Production DB identity gate
 
@@ -253,7 +267,53 @@ reported as mathematically zero downtime.
 production target from the current `api.babyjamjam.com` A-record set. The
 canonical A-record hash must match either the protected Lightsail identity or
 the protected LightNode identity. Unknown, mixed, missing, or changed routing
-fails closed before either deployment job starts. Preview remains on Lightsail.
+fails closed before either deployment job starts. Preview never uses this
+resolver path; it always deploys to Cloud Run.
+
+When Lightsail owns the public route, `deploy-lightsail` runs first. If it succeeds,
+`deploy-lightnode-standby` connects the same way as below, but calls the
+restricted `deploy-standby <sha> <digest>`. That command refuses unless the public
+route hash differs from the protected LightNode identity, automation authority
+is present, and the Valkey-restore fence is clear. When the operator `status` is
+readable it must also show a passive host. When it is not readable, the command
+hands over to the operator's own guards, which refuse an active or unknown runtime.
+It then runs the operator's passive `deploy` (every scheduler/document gate false,
+Aligo blank, automatic rollback to the previous image).
+
+Before deploying, the job reads the restricted, read-only `standby-status`, which
+reports `present` (healthy passive), `recorded-unhealthy` (a release is recorded
+in the operator state but the container is stopped or restarting) or `none` (no
+release recorded at all). `backend/deploy/fallback-server/ci/standby-decision.sh`
+then decides by git ancestry:
+
+- `none` → deploy.
+- The recorded tag is an ancestor of this commit → deploy forward.
+- Same tag and `present` → `superseded` (green, nothing to do).
+- Same tag and `recorded-unhealthy` → deploy the same release again. This is the
+  recovery path.
+- The recorded tag is newer than this commit → `superseded`, whatever the health.
+  If that newer standby is unhealthy it stays down, so re-run the
+  `deploy-lightnode-standby` job of the commit the standby records to recover it.
+- Diverged history, an unknown tag, or malformed status → the job fails.
+
+Before that decision, the job asks the GitHub API (`ci/newer-primary-release.sh`,
+newest 100 `main` push runs) whether a strict descendant of this commit already has a
+successful "deploy Lightsail backend" job. If one does, a `deploy` becomes
+`superseded`; a `refuse` is never overridden. An API error, a run commit missing from
+the checkout, or a newer run whose Lightsail job is not listed yet fails the job red
+(re-run it).
+
+The standby therefore converges to the newest backend release that reached
+Lightsail, and an older queued run can never roll it back.
+
+Accepted risk (2026-10-31): the lookup is a snapshot. If a newer release finishes on
+Lightsail after this job's lookup and that newer release's own standby job fails,
+this job can still deploy the older release. Standby is then one release behind,
+and the newer release's failed standby job is red; re-running it deploys forward,
+because the older release is its ancestor. Production is never affected. While LightNode is
+still temporary-active during a cutover drain (DNS already on Lightsail),
+`deploy-lightnode-standby` fails red, because the host is not passive. That is
+expected. Re-run the job after the drain.
 
 When LightNode owns the public route, the workflow joins the tailnet as an
 ephemeral `tag:ci` node and connects only as `babyjamjam-ci-deployer`. That user
@@ -265,7 +325,12 @@ sudo command. The dispatcher permits only:
 ```text
 status
 replace <tag> <digest>
+standby-status
+deploy-standby <tag> <digest>
 ```
+
+`status`/`replace` serve the live (temporary-active) LightNode. `standby-status`/
+`deploy-standby` serve the passive standby while Lightsail owns the route.
 
 The wrapper rechecks public routing, active runtime health, Production DB
 identity, singleton scheduler/document-worker ownership, the immutable release,
@@ -333,17 +398,182 @@ route smoke before temporary-active. If any cutover check fails, reconcile live
 DNS once and use the protected rollback artifact; do not issue a blind second
 PATCH.
 
-For AWS failback, verify AWS readiness and document reconciliation first, then
-PATCH the current captured `api` record back to the protected original AWS
-value and perform a fresh read-after-write. Only after public DNS and HTTPS are
-confirmed on AWS may the operator stop Fallback, Caddy be disabled, the Aligo
-VPS allow-list entry be removed, and the LightNode instance be released.
-Controller/Sentry automatic failback remains out of scope.
+For AWS failback, follow the ordered runbook in `docs/devops-deployment-rules.md`
+§4.1 ("복귀"): lower the `api` TTL, verify Lightsail with a pinned HTTPS check,
+PATCH DNS back to the Lightsail IP with a read-after-write, drain, then run the
+operator `stop` followed by `deploy-standby` of the same release, and confirm that
+Lightsail holds the scheduler lease. **LightNode is not released after failback
+(2026-10-31).** Keep Caddy, Tailscale, the CI deployer user and the Aligo
+allow-list entry in place, because the standby deploy and the next failover need
+them. Controller/Sentry automatic failback remains out of scope.
 
 The backend environment is root-owned, but Docker daemon/root users can inspect
 container environment metadata. This mode does not claim Docker `env_file` is a
 secret-store boundary: it never logs or prints values, and a file-based
 application secret mechanism requires separate application/env-contract approval.
+
+## Fenced Valkey restore
+
+Realtime change hints travel through a Valkey Stream, and clients resume from a
+cursor. The backend proves that the stream it sees is the one the cursor came
+from against the running Valkey process identity (`run_id`, `master_replid`),
+which changes on every Valkey restart. A restore that keeps the process identity
+(a live `RESTORE ... REPLACE`, key copies into a running server, a data volume
+swapped under a running container, any write that lands during an unfenced
+window) can make clients believe they missed nothing. **`valkey-restore` is
+therefore the only supported way to restore Valkey data on this host.** Realtime
+data alone never needs restoring: an empty, freshly started Valkey is always
+safe for it (every client refetches once).
+
+Valkey here also holds rate limits, the `agent-action-sweep` lock, the eFormsign
+backfill and operation locks, and eFormsign snapshot/status data. A restore
+rolls all of that back to the backup, stale locks included; restore only when
+that is what you want.
+
+```text
+babyjamjam-fallback-server valkey-restore <absolute-backup-path> --confirm-fence
+babyjamjam-fallback-server valkey-restore --reopen --confirm-reopen
+babyjamjam-fallback-server valkey-restore --rollback <kept-copy-path> --confirm-fence
+babyjamjam-fallback-server valkey-restore --abort --confirm-fence
+```
+
+The operator has no TTY prompts (it runs as root, non-interactively), so the
+confirmations are explicit flags and the command refuses, before touching any
+container, when they are missing. The backup is an RDB file or the multi-part
+`appendonlydir` (it must contain `appendonly.aof.manifest`); other shapes are
+refused. The restore ends fenced and verified; reopening is a separate, flagged
+command because it is the step that exposes traffic.
+
+1. **Preflight.** The backup path you pass is read **once**: it is copied into a
+   root-owned `0700`/`0600` snapshot under
+   `/opt/babyjamjam-fallback-server/valkey-restore-snapshot/`. The snapshot is
+   validated and hashed, and from then on the integrity check, the throwaway
+   load and the real staging all use the snapshot, never your path (replacing
+   the file afterwards changes nothing). The snapshot is loaded into a throwaway,
+   network-less container on a throwaway volume. Its `DBSIZE`, the realtime
+   stream's `last-generated-id` (or its absence) and a hash over a sorted sample
+   of persistent key names and types are recorded as the backup *fingerprint*.
+   The target compose project, the `/data` volume and the current Valkey
+   `run_id` are recorded.
+2. **Fence.** The marker `state/valkey-restore-fence` is written first, then the
+   API container is stopped (the backend's Prisma extension is the only hint
+   writer, so a stopped backend is the whole writer fence) and confirmed down.
+3. **Restore.** Valkey is stopped *first* (its shutdown save would overwrite a
+   file staged earlier), a timestamped copy of the replaced data is kept under
+   `/opt/babyjamjam-fallback-server/valkey-replaced/`, and the volume is emptied
+   and staged with the backup owned by the image's `valkey` user. An **AOF**
+   backup replaces `appendonlydir` as a whole. An **RDB** backup is loaded once
+   with `--appendonly no`, converted with `CONFIG SET appendonly yes`, and the
+   command waits for `aof_rewrite_in_progress:0` and
+   `aof_last_bgrewrite_status:ok` before Valkey is started with its normal
+   command. (Valkey 8 with `appendonly yes` loads only `appendonlydir` and
+   ignores `dump.rdb`: copying an RDB next to an existing AOF silently serves the
+   *old* data, and removing the AOF starts empty.) Before anything is loaded, the
+   snapshot is re-hashed and the staged bytes in the volume are hashed again in a
+   read-only container; both must equal the digest recorded in the preflight, or
+   the run aborts fenced (the fingerprint alone cannot see a value-only change).
+   Valkey is started by `docker start` of the same container, which is a fresh
+   process.
+4. **Verify.** `PING`, `role:master`, the AOF is on, the restored dataset equals
+   the backup fingerprint, and `run_id` differs from the recorded one. The
+   fingerprint is the real proof (any restart changes `run_id`); persistent keys,
+   stream id and the sample must match exactly, `DBSIZE` may only shrink through
+   expiry. A mismatch aborts and stays fenced.
+
+Any failure or signal at any stage leaves the API stopped and the marker in
+place and prints how to continue. The command is idempotent: re-running it with
+the same backup from a fenced state repeats the stages (each attempt keeps its
+own copy of the data it replaced, the original `run_id` is kept, an already
+verified restore is a no-op); a re-run reuses the recorded snapshot (re-hashed
+first), and a re-run with a different path or different bytes is refused.
+`--abort --confirm-fence` stops any running API container and confirms with a
+fresh listing that none is left, and only then removes the marker and the
+snapshot, without starting anything; if the stop cannot be confirmed it refuses,
+keeps the marker and prints the `docker stop` command. The same holds on every
+unsuccessful exit after the fence was taken, including a signal during
+`--reopen` after the API was started: the exit path stops the API first and only
+then says "the backend stays stopped"; if it cannot confirm that, the text says
+the API MAY BE RUNNING and how to stop it, and the marker stays. A second signal
+during that cleanup is ignored, so the stop is never skipped. Releasing the
+fence without starting the API (the reopen gate refused) goes through the same
+confirmed stop.
+
+### Rollback (inside the fence)
+
+```text
+babyjamjam-fallback-server valkey-restore --rollback <replaced-root>/<timestamp>/appendonlydir --confirm-fence
+```
+
+To go back to the data a restore replaced, use `--rollback` with the kept copy
+(`.../valkey-replaced/<timestamp>/appendonlydir`, or `.../dump.rdb` when that
+copy has no AOF directory). It only runs while the fence marker exists, and it is
+refused otherwise (a normal restore is the path then); it accepts only an entry
+directly under `valkey-replaced/<timestamp>/` (no symlinks, nothing outside the
+root). The copy goes through the same snapshot, validation, throwaway
+fingerprint, staging check and verification as a new backup. The marker is kept
+the whole time (every start path stays refused), the new target is recorded in
+it, and the run ends verified and still fenced: `--reopen --confirm-reopen` is
+the only way back to serving traffic. The data the rollback replaces is kept too,
+and an interrupted rollback is resumed by running the same command again.
+
+### The fence outlasts the process
+
+While the marker exists, `deploy`, `temporary-active`,
+`replace-temporary-active`, `extend-temporary-active`, `adopt-persistent-active`,
+`rollback` and the CI deployer refuse with a message naming the marker. `stop`,
+`guard-expiry`, the transient expiry unit and `status` are not start paths and
+keep working. Only a successful reopen or `--abort` clears it.
+
+### Reopen
+
+`--reopen --confirm-reopen` re-checks everything under the operator lock
+immediately before starting the API: Valkey is still the verified process (same
+`run_id`) and still holds the verified dataset, and the live state allows a start:
+
+- **temporary-active:** `runtime-mode` is `temporary-active`, the expiry is later
+  than now plus the readiness wait (150 s) and the expiry timer is still active;
+- **persistent-active:** the protected shutdown policy holds and the shutdown
+  units are masked and inactive;
+- **passive:** no active mode recorded and the API container carries the passive
+  gates. The container's own gates must match the mode (an expired-and-cleared
+  temporary-active container is never started as passive).
+
+In any other state the fence is released (the restore itself succeeded) but the
+API is **not** started, and the message names the normal flow: a fresh approval
+and `temporary-active`, or `adopt-persistent-active`. The reopen never bypasses
+those approvals and never uses `compose up` (which could recreate the container
+and break the preserved-ID invariant of `extend-temporary-active`): it runs
+`docker start` on the recorded container, waits for readiness, then runs the
+normal `status` verification. A failure after the start stops the API again and
+keeps the fence.
+
+The scheduler lease (`scheduler_lease`, Postgres) is untouched by the restore:
+the stopped API gives it back on SIGTERM (or it lapses within its 90 s TTL), and
+the restarted API, same holder id with a new instance id, re-acquires it on its
+first renew (a stale row of the old instance is taken over after 70 s). `status`
+after the reopen prints `lease_mode=`/`lease_held=`; `lease_held=true` can take
+up to about 90 s to appear, and a persistent host should not be treated as
+healthy until it does.
+
+### Forbidden
+
+Never restore realtime Valkey data by any in-place method: `RESTORE ... REPLACE`
+or any key copy into a running server, replacing the files under a running
+container, copying an RDB beside an existing `appendonlydir`, or writing while
+the backend is up. (`DEBUG RELOAD` is off by default on Valkey 8
+(`enable-debug-command no`); it stays forbidden for the same reason if it is ever
+enabled.) The application's Valkey user must keep `INFO` (`@dangerous`)
+permitted: without it the continuity proof fails closed and every reconnect
+refetches.
+
+The same fenced steps apply on Lightsail, which was chosen on 2026-10-31 to be the
+production primary again. Until the cutover completes, LightNode is still the live
+host; see `docs/devops-deployment-rules.md` §4.1 "현재 상태". A Lightsail↔LightNode cutover copies **no** Valkey data: every key
+family is disposable or rebuildable (rate limits, short locks, the realtime
+stream, eFormsign list snapshots), and durable state lives in Postgres. Do not
+restore the other host's volume, which would only bring back stale locks. While
+both hosts serve during a DNS drain, realtime hints do not cross hosts, so a
+client on one host sees the other host's writes only after its next refetch.
 
 ## Related contracts
 
@@ -353,3 +583,4 @@ application secret mechanism requires separate application/env-contract approval
 - [Network preflight](./NETWORK_PREFLIGHT.md)
 - [Production DB helper](./production-db-identity.sh)
 - [Fallback operator](./operator.sh)
+- [Fenced Valkey restore behaviour tests](./operator.valkey-restore.behavior.test.sh)
