@@ -4,7 +4,7 @@ import { SERVICE_STATUS, type ServiceStatusType } from "domain/value-objects/ser
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
 import { createBranch, createClient, createEmployee, createEmployeeSchedule } from "../helpers/factories";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import {
     addDays,
     dbDate,
@@ -25,10 +25,8 @@ jest.setTimeout(120_000);
  * real writers are audited: the ordinary admin update
  * (`ClientService.update`), the hourly due-date scheduler
  * (`ClientDueDateSchedulerService`), and the admin session move
- * (`ScheduleChangeService.applyAdminChange`). All three write dates without
- * recomputing the stored status; the only repair is the lazy background pass on
- * the next list read (`client.service.ts` updateServiceStatusesInBackground), so
- * raw-column consumers see the stale value until then.
+ * (`ScheduleChangeService.applyAdminChange`). The lazy background pass on the
+ * next list read remains the safety net for time-based drift without a write.
  */
 describeReal("SI-CLIENT-01 stored service_status drifts from dates after real writes", () => {
     let handle: IntegrityPrisma;
@@ -84,7 +82,7 @@ describeReal("SI-CLIENT-01 stored service_status drifts from dates after real wr
         return client;
     };
 
-    knownDefect(
+    invariant(
         "SI-CLIENT-01",
         "an ordinary date edit via ClientService.update leaves the stored serviceStatus stale",
         async () => {
@@ -94,19 +92,14 @@ describeReal("SI-CLIENT-01 stored service_status drifts from dates after real wr
             });
             const service = makeClientService({ prisma: handle.service, raw: handle.raw });
             // The everyday save: dates change, no serviceStatus supplied.
-            // (A save can never repair the automatic column either: the plain
-            // update path keeps the stored value when a supplied status equals
-            // the date-derived one, so the background CAS on the list read is
-            // the only automatic repair — SI-CLIENT-01's own lazy-repair test.)
             await service.update(branchId, client.id, {
                 endDate: addDays(kstToday, -1),
             });
             await assertStoredMatchesComputed(client.id, "ClientService.update endDate edit");
         },
-        /SI-CLIENT-01 \(ClientService\.update endDate edit\): stored serviceStatus "active" drifted from computed "completed"/,
     );
 
-    knownDefect(
+    invariant(
         "SI-CLIENT-01",
         "the due-date scheduler's startDate copy leaves the stored serviceStatus stale",
         async () => {
@@ -133,10 +126,31 @@ describeReal("SI-CLIENT-01 stored service_status drifts from dates after real wr
             }
             await assertStoredMatchesComputed(client.id, "due-date scheduler startDate copy");
         },
-        /SI-CLIENT-01 \(due-date scheduler startDate copy\): stored serviceStatus "waiting" drifted from computed "active"/,
     );
 
-    knownDefect(
+    invariant(
+        "SI-CLIENT-01",
+        "the transactional due-date scheduler stores the recomputed status with the date",
+        async () => {
+            const client = await createClient(handle.raw, tracker, {
+                branchId,
+                dueDate: dbDate(kstToday),
+                endDate: dbDate(addDays(kstToday, 3)),
+                bookingConfirmedAt: new Date(),
+                serviceStatus: SERVICE_STATUS.WAITING,
+            });
+            const scheduler = makeDueDateScheduler(handle.service, "transactional");
+
+            await scheduler.copyUpcomingDueDatesToStartDates();
+
+            const row = await handle.raw.client.findUniqueOrThrow({ where: { id: client.id } });
+            expect(row.startDate).toEqual(dbDate(kstToday));
+            expect(row.serviceStatus).toBe(SERVICE_STATUS.ACTIVE);
+            await assertStoredMatchesComputed(client.id, "transactional due-date scheduler");
+        },
+    );
+
+    invariant(
         "SI-CLIENT-01",
         "an admin session move via ScheduleChangeService.applyAdminChange leaves the stored serviceStatus stale",
         async () => {
@@ -176,7 +190,6 @@ describeReal("SI-CLIENT-01 stored service_status drifts from dates after real wr
             }
             await assertStoredMatchesComputed(client.id, "ScheduleChangeService.applyAdminChange");
         },
-        /SI-CLIENT-01 \(ScheduleChangeService\.applyAdminChange\): stored serviceStatus "active" drifted from computed "waiting"/,
     );
 
     invariant(
@@ -217,4 +230,40 @@ describeReal("SI-CLIENT-01 stored service_status drifts from dates after real wr
             }
         },
     );
+
+    for (const mode of ["transactional", "fallback"] as const) {
+        invariant("SI-CLIENT-01", `${mode} scheduler preserves a manual status committed after the candidate read`, async () => {
+            const client = await createClient(handle.raw, tracker, {
+                branchId,
+                dueDate: dbDate(kstToday),
+                endDate: dbDate(addDays(kstToday, 3)),
+                bookingConfirmedAt: new Date(),
+                serviceStatus: SERVICE_STATUS.WAITING,
+            });
+            // Commit the competing manual transition after the real candidate
+            // SELECT, before the scheduler's conditional UPDATE is dispatched.
+            const candidateRead = jest.spyOn(handle.service.client, "findMany").mockImplementationOnce((args) => {
+                const readThenCommit = (async () => {
+                    const candidates = await handle.raw.client.findMany(args);
+                    await handle.raw.client.update({
+                        where: { id: client.id },
+                        data: { serviceStatus: SERVICE_STATUS.TERMINATED },
+                    });
+                    return candidates;
+                })();
+                // The scheduler awaits this query directly, never passing the
+                // double to Prisma's array-transaction API (which needs its brand).
+                return readThenCommit as ReturnType<typeof handle.service.client.findMany>;
+            });
+            try {
+                await makeDueDateScheduler(handle.service, mode).copyUpcomingDueDatesToStartDates();
+            } finally {
+                candidateRead.mockRestore();
+            }
+
+            const row = await handle.raw.client.findUniqueOrThrow({ where: { id: client.id } });
+            expect(row.serviceStatus).toBe(SERVICE_STATUS.TERMINATED);
+            expect(row.startDate).toBeNull();
+        });
+    }
 });

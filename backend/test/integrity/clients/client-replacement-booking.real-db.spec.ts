@@ -6,17 +6,14 @@ import { BOOKING_STATUS_CONFIRM_ONLY_DETAIL } from "application/usecases/client/
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
 import { createBranch, createClient } from "../helpers/factories";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import { addDays, dbDate, isoDateInKorea, makeClientService } from "./test-helpers";
 
 jest.setTimeout(120_000);
 
 /**
- * SI-CLIENT-02 — `ClientService.completeReplacement` refuses nothing.
- * Invariant: completing a replacement must refuse (or be a no-op) unless the
- * client is in `replacement_requested`. Today the guard is a logged warning;
- * the write proceeds and recomputes the status from the dates, so a
- * `terminated` (or any other) client is silently un-terminated.
+ * SI-CLIENT-02 — completing a replacement must refuse unless the locked
+ * client is in `replacement_requested`, without reviving a terminated client.
  *
  * SI-CLIENT-06 — booking confirmation is the only exit from 예약 전, and
  * confirming twice is a no-op. Invariants: a plain save cannot move a client
@@ -55,7 +52,7 @@ describeReal("SI-CLIENT-02/06 replacement guard and booking-confirmation exclusi
         });
     };
 
-    knownDefect(
+    invariant(
         "SI-CLIENT-02",
         "completeReplacement refuses unless the client is in replacement_requested",
         async () => {
@@ -63,8 +60,15 @@ describeReal("SI-CLIENT-02/06 replacement guard and booking-confirmation exclusi
             const service = makeClientService({ prisma: handle.service, raw: handle.raw });
             const outcome = await service.completeReplacement(branchId, client.id).then(
                 () => "completed" as const,
-                () => "refused" as const,
+                (error: unknown) => {
+                    expect(error).toMatchObject({
+                        status: 409,
+                        response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+                    });
+                    return "refused" as const;
+                },
             );
+            expect(outcome).toBe("refused");
             const row = await handle.raw.client.findUniqueOrThrow({
                 where: { id: client.id },
                 select: { serviceStatus: true },
@@ -76,7 +80,6 @@ describeReal("SI-CLIENT-02/06 replacement guard and booking-confirmation exclusi
                 );
             }
         },
-        /SI-CLIENT-02: completeReplacement ran on a "terminated" client and moved the status to "active"/,
     );
 
     invariant(

@@ -2296,7 +2296,7 @@ export class ClientService {
             // Rule 고객-04: a save cannot move the client into or out of 예약 전;
             // judged on the locked row with the dates as they will be after this
             // save. Throws (nothing is written yet) or yields what to store.
-            const savedServiceStatus = resolveSavedServiceStatus({
+            const validatedServiceStatus = resolveSavedServiceStatus({
                 currentServiceStatus: currentClient.serviceStatus ?? null,
                 bookingConfirmedAt: currentClient.bookingConfirmedAt ?? null,
                 startDate: lockedMergedServicePeriod.startDate,
@@ -2304,6 +2304,14 @@ export class ClientService {
                 suppliedServiceStatus: params.serviceStatus,
             });
             const lockedHasDateUpdate = params.startDate !== undefined || params.endDate !== undefined;
+            const savedServiceStatus = lockedHasDateUpdate
+                ? computeServiceStatus(
+                    validatedServiceStatus ?? currentClient.serviceStatus ?? null,
+                    lockedMergedServicePeriod.startDate,
+                    lockedMergedServicePeriod.endDate,
+                    currentClient.bookingConfirmedAt ?? null,
+                )
+                : validatedServiceStatus;
             const lockedDerivedDuration = deriveClientDuration(
                 lockedMergedServicePeriod.startDate,
                 lockedMergedServicePeriod.endDate,
@@ -3052,13 +3060,6 @@ export class ClientService {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
-        if (client.serviceStatus !== SERVICE_STATUS.REPLACEMENT_REQUESTED) {
-            this.logger.warn(
-                `Client ${clientId} is not in replacement_requested status, ` +
-                `current status: ${client.serviceStatus}`
-            );
-        }
-
         this.logger.log(`Completing replacement for client ${clientId}`);
 
         // SAVED computation: loaded before the transaction opens (see
@@ -3105,6 +3106,9 @@ export class ClientService {
             );
             if (!lockedClient) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+            }
+            if (lockedClient.serviceStatus !== SERVICE_STATUS.REPLACEMENT_REQUESTED) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             const computedStatus = computeServiceStatus(
                 null,
