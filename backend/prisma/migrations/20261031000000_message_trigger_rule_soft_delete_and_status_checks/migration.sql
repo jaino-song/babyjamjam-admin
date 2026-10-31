@@ -1,3 +1,14 @@
+-- Operator preflight: run these read-only queries in EACH environment before merging.
+-- SELECT status, count(*) FROM message_trigger_job WHERE status NOT IN ('pending', 'processing', 'dispatching', 'sent', 'failed', 'needs_setup', 'canceled') GROUP BY 1;
+-- SELECT status, count(*) FROM message_log WHERE status NOT IN ('pending', 'sent', 'failed') GROUP BY 1;
+-- SELECT carrier_result_state, count(*) FROM message_log WHERE carrier_result_state NOT IN ('delivered', 'failed', 'unconfirmed', 'lookup_error') GROUP BY 1;
+-- NULL carrier_result_state is allowed by the CHECK and excluded by NOT IN.
+-- If any query returns rows, reconcile them before applying: the migration fails
+-- closed on violations and rolls back the column, index change and all CHECKs.
+-- ADD CONSTRAINT ... NOT VALID plus VALIDATE in one transaction holds ACCESS
+-- EXCLUSIVE through both the violation and validation scans, blocking reads.
+-- Acceptable at current table sizes; split the transactions if message_log grows.
+-- Rollback: a failed migration is atomic; correct legacy values and rerun.
 -- Keep the column and filtered index on application rollback: an older app
 -- cannot safely interpret deleted rules. Roll forward after the first delete.
 BEGIN;

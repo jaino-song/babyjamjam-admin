@@ -474,7 +474,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261027000000_add_client_service_day_flags/migration.sql
 
-      - name: Apply and verify service-record caregiver edit log
+      - name: Apply and verify 2026-10 patches (caregiver edit log, SMS rule soft delete, eformsign status canonicalize)
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DEV_DATABASE_URL || secrets.DEVELOPMENT_DATABASE_URL }}
@@ -1123,7 +1123,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261027000000_add_client_service_day_flags/migration.sql
 
-      - name: Apply and verify service-record caregiver edit log
+      - name: Apply and verify 2026-10 patches (caregiver edit log, SMS rule soft delete, eformsign status canonicalize)
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
@@ -1750,7 +1750,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261019000000_add_client_deleted_at/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261027000000_add_client_service_day_flags/migration.sql
 
-      - name: Apply and verify service-record caregiver edit log
+      - name: Apply and verify 2026-10 patches (caregiver edit log, SMS rule soft delete, eformsign status canonicalize)
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL || secrets.PROD_DATABASE_URL }}
