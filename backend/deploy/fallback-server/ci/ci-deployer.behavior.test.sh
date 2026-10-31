@@ -210,6 +210,18 @@ for cmd in standby-status deploy-standby; do
     expect_refused "$cmd treated a failing resolver as not-LightNode"
     expect_no_operator_calls "$cmd on a failing resolver"
 
+    # getent printed records but exited non-zero: errexit is not inherited inside
+    # $(...), so this must be refused explicitly, whichever address it printed
+    for ips in "$LIGHTSAIL_IP" "$LIGHTNODE_IP"; do
+        world_reset; ROUTE_IPS="$ips"; GETENT_RC=2
+        status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
+        status_block "$SHA_A" "$DIG_A" passive false >"$W/status.after"
+        run_standby_cmd "$cmd"
+        expect_refused "$cmd accepted records from a failing resolver ('$ips', exit 2)"
+        expect_err "$cmd on a failing resolver with records" "could not be resolved"
+        expect_no_operator_calls "$cmd on a failing resolver with records ('$ips')"
+    done
+
     world_reset; rm -f "$W/root/approved-public-routing.sha256"
     run_standby_cmd "$cmd"
     expect_refused "$cmd ran without the protected routing identity"
@@ -521,6 +533,15 @@ done
 world_reset; ROUTE_IPS=""
 run_main status
 expect_refused "legacy status ran with an unresolvable route"; expect_err "legacy status" "could not be resolved"
+for ips in "$LIGHTSAIL_IP" "$LIGHTNODE_IP"; do   # records printed, resolver exit 2
+    world_reset; ROUTE_IPS="$ips"; GETENT_RC=2
+    status_block "$SHA_A" "$DIG_A" temporary-active true >"$W/status.out"
+    run_main status
+    expect_refused "legacy status accepted records from a failing resolver ('$ips')"; expect_err "legacy status" "could not be resolved"
+    run_main replace "$SHA_B" "$DIG_B"
+    expect_refused "legacy replace accepted records from a failing resolver ('$ips')"; expect_err "legacy replace" "could not be resolved"
+    expect_no_operator_calls "legacy commands on a failing resolver ('$ips')"
+done
 
 world_reset; ROUTE_IPS="$LIGHTNODE_IP"   # LightNode alone is the approved Fallback target
 status_block "$SHA_A" "$DIG_A" temporary-active true >"$W/status.out"
@@ -528,6 +549,18 @@ run_main status
 expect_ok "legacy status on the approved LightNode-only route"
 expect_out_line "legacy status" "public_routing=fallback"
 expect_out_line "legacy status" "runtime_mode=temporary-active"
+# replace succeeds on the approved LightNode-only route; the release is already
+# running, so it is an idempotent no-op that never touches the active-mode operator
+world_reset; ROUTE_IPS="$LIGHTNODE_IP"
+status_block "$SHA_A" "$DIG_A" temporary-active true >"$W/status.out"
+run_main replace "$SHA_A" "$DIG_A"
+expect_ok "legacy replace of the running release on the approved LightNode-only route"
+expect_out_line "legacy replace no-op" "deployment_changed=false"
+expect_out_line "legacy replace no-op" "public_routing=fallback"
+expect_out_line "legacy replace no-op" "current_tag=$SHA_A"
+expect_unique_key "legacy replace no-op" public_routing
+expect_unique_key "legacy replace no-op" deployment_changed
+if grep -q '^replace-temporary-active' "$W/calls.log"; then fail "replace no-op called the active-mode operator"; fi
 echo "ok - status and replace keep their fallback-route behavior"
 
 # ===== 11. the new commands never reach destructive operator commands

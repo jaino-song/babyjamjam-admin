@@ -67,20 +67,27 @@ status_value() {
 }
 
 # One resolver call per guard: prints the sorted unique IPv4 records of the
-# public API host, one per line, and dies when none resolve. Callers assign the
-# result on its own line so `set -e` aborts when it dies in the substitution.
+# public API host, one per line, and dies when none resolve or the resolver
+# fails. Callers assign the result on its own line so `set -e` aborts when it
+# dies in the substitution. errexit is NOT inherited inside `$(...)`, so every
+# step here (and in hash_route_lines) fails explicitly with `|| die`: a getent
+# that prints records but exits non-zero must never look like a good answer.
 resolve_public_route_records() {
     local records
     records="$(getent ahostsv4 "$PUBLIC_API_HOST" \
         | awk '$2 == "STREAM" && $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $1 }' \
-        | sort -u)"
+        | sort -u)" || die "The public API route could not be resolved."
     [[ -n "$records" ]] || die "The public API route could not be resolved."
     printf '%s\n' "$records"
 }
 
 # sha256 of newline-terminated route text: the whole record set, or one record.
 hash_route_lines() {
-    printf '%s\n' "$1" | sha256sum | awk '{ print $1 }'
+    local digest
+    digest="$(printf '%s\n' "$1" | sha256sum | awk '{ print $1 }')" \
+        || die "The public API route could not be hashed."
+    [[ "$digest" =~ $HASH_PATTERN ]] || die "The public API route could not be hashed."
+    printf '%s\n' "$digest"
 }
 
 require_fallback_route() {
@@ -88,7 +95,7 @@ require_fallback_route() {
     validate_protected_file "$APPROVED_PUBLIC_ROUTING_FILE" 400
     approved_hash="$(read_single_line "$APPROVED_PUBLIC_ROUTING_FILE" "$HASH_PATTERN")"
     records="$(resolve_public_route_records)"
-    current_hash="$(hash_route_lines "$records")"
+    current_hash="$(hash_route_lines "$records")" || die "The public API route could not be hashed."
     [[ "$current_hash" == "$approved_hash" ]] \
         || die "The public API route is not the approved Fallback target."
 }
@@ -110,15 +117,16 @@ require_fallback_route() {
 # safety criterion is only "never replace standby while LightNode is a public
 # route". An unknown non-LightNode IP does not route traffic to LightNode.
 require_aws_route() {
-    local approved_hash records current_hash record
+    local approved_hash records current_hash record record_hash
     validate_protected_file "$APPROVED_PUBLIC_ROUTING_FILE" 400
     approved_hash="$(read_single_line "$APPROVED_PUBLIC_ROUTING_FILE" "$HASH_PATTERN")"
     records="$(resolve_public_route_records)"
-    current_hash="$(hash_route_lines "$records")"
+    current_hash="$(hash_route_lines "$records")" || die "The public API route could not be hashed."
     [[ "$current_hash" != "$approved_hash" ]] \
         || die "LightNode is the public route; use replace, not the standby path."
     while IFS= read -r record; do
-        [[ "$(hash_route_lines "$record")" != "$approved_hash" ]] \
+        record_hash="$(hash_route_lines "$record")" || die "The public API route could not be hashed."
+        [[ "$record_hash" != "$approved_hash" ]] \
             || die "A mixed or LightNode public route was refused; LightNode still receives public traffic, so use replace, not the standby path."
     done <<<"$records"
 }
