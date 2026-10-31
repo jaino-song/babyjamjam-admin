@@ -148,7 +148,7 @@ describe("UserController (Integration)", () => {
             expect(response.body[0]).not.toHaveProperty("passwordHash");
         });
 
-        it("should scope directory by branch for owner users with a branch selected", async () => {
+        it("should return every branch's accounts for owner users with a branch selected", async () => {
             mockJwtGuard.canActivate.mockImplementationOnce((context) => {
                 const req = context.switchToHttp().getRequest();
                 req.user = { userId: "owner-user-id", role: "owner", branchId: "org-owner-1" };
@@ -160,7 +160,7 @@ describe("UserController (Integration)", () => {
 
             expect(response.status).toBe(200);
             expect(userService.findDirectory).toHaveBeenCalledWith({
-                branchId: "org-owner-1",
+                branchId: undefined,
                 includeUnassigned: true,
                 callerRole: "owner",
             });
