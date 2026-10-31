@@ -276,10 +276,12 @@ restricted `deploy-standby <sha> <digest>`. That command refuses unless the publ
 route hash differs from the protected LightNode identity, automation authority
 is present, the Valkey-restore fence is clear, and the host is passive. It then
 runs the operator's passive `deploy` (every scheduler/document gate false, Aligo
-blank, automatic rollback to the previous image). The job skips as `superseded`
-when `main` has already moved past its commit, so the standby converges to the
-newest successful production release and an older queued run can never roll it
-back.
+blank, automatic rollback to the previous image). Before deploying, the job reads
+the restricted, read-only `standby-status` and compares the standby's
+`current_tag` with its own commit by git ancestry: an older standby is deployed
+forward, a newer or equal one makes the job exit green as `superseded`, and
+diverged history fails. The standby therefore converges to the newest backend
+release that reached Lightsail, and an older queued run can never roll it back.
 
 When LightNode owns the public route, the workflow joins the tailnet as an
 ephemeral `tag:ci` node and connects only as `babyjamjam-ci-deployer`. That user

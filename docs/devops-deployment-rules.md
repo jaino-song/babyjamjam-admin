@@ -160,7 +160,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 | 항목 | 규칙 |
 |---|---|
-| 역할 | 상시 API-only warm standby(장애 후 Release하지 않음). 프론트 배포 아님. 호스트명 `api.babyjamjam.com`은 그대로 두고 DNS 소유권만 바뀐다. DNS가 Lightsail이면 main push마다 `deploy-lightnode-standby`가 restricted `deploy-standby`로 passive 릴리스를 갱신한다 — 최신 main 릴리스로 수렴하며, main이 이미 앞서 있으면 superseded로 건너뛴다 |
+| 역할 | 상시 API-only warm standby(장애 후 Release하지 않음). 프론트 배포 아님. 호스트명 `api.babyjamjam.com`은 그대로 두고 DNS 소유권만 바뀐다. DNS가 Lightsail이면 main push마다 `deploy-lightnode-standby`가 restricted `deploy-standby`로 passive 릴리스를 갱신한다 — Lightsail에 성공한 최신 백엔드 릴리스로 수렴한다: standby의 `current_tag`가 이 커밋의 조상이면 배포, 이 커밋이 `current_tag`의 조상(또는 같음)이면 superseded로 건너뛰고, 갈라졌으면 실패한다. 상태는 restricted `standby-status`로 읽는다 |
 | 바인딩 | Fallback API `127.0.0.1:3101`, 컨트롤러 `127.0.0.1:3102` (`POST /sentry/uptime-alert`, `GET /health`만) |
 | DB | 프로덕션 DB만. 활성화 전 **Production DB identity hash 게이트**(`approved-production-db-ref.sha256`) 통과 필수 |
 | 비활성 기능 | 스케줄러, 자동완료, eformsign 문서 잡 intake/worker, unlocked reconcile, Aligo — Compose에서 하드 비활성화. 켜지 않는다 |
