@@ -1,5 +1,12 @@
 # LightNode temporary Fallback host
 
+> **2026-10-31: LightNode is now a permanent standby, not a temporary host.** It
+> stays running after failback and is **not** released. Failback ends with the
+> operator `stop` followed by a passive `deploy-standby` of the current release,
+> and every later `main` release reaches it passively. The "Release (not Stop)"
+> and "confirm billing ended" steps below are historical. The purchase,
+> provisioning, egress and approval rules still apply to a rebuilt host.
+
 This is a manual 24–48 hour operation, not automatic Sentry/controller failover. Select **Korea VPS Agency**, Linux x86_64, shared 2 vCPU/4 GB/50 GB NVMe. Do not select Start; do not select dedicated VDS without separate approval. Confirm the console hourly/all-in quote before purchase.
 
 Create fresh Ubuntu with SSH keys only, restrictive cloud firewall/security group, Docker/Compose, Node, systemd and Tailscale. Never place production secrets in images, cloud-init, CLI arguments, console logs, or shell history. Run `lightnode-preflight.sh fresh`, then use a separately approved root-only provisioning channel to install the protected bundle. Run `lightnode-preflight.sh installed` only while that bundle is staged: before any environment file, approval, evidence, passive deployment, or active runtime. After deployment use the Fallback operator `status`, not preflight. The operator validates and consumes root-owned artifacts; it never receives their values in arguments or stdout.

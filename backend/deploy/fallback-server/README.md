@@ -7,9 +7,15 @@ frontend deployment. The frontend keeps the stable
 `https://api.babyjamjam.com` hostname while traffic ownership is changed by
 the separately controlled Vercel DNS client.
 
-Current status: **controller runtime, installer, systemd unit source, and CLI
-are implemented locally; the controller is not installed or armed, and the host
-is not serving production traffic**.
+Current status (2026-10-31): **LightNode is the permanent warm standby for the
+Lightsail production primary.** It has served production in temporary-active
+mode since 2026-09-03; the move back to Lightsail puts it on passive standby,
+and until that cutover finishes it remains the live host. It is not released
+after failback: it stays running and receives every `main` release passively
+through `deploy-lightnode-standby` (see "Conditional `main` CI replacement").
+The failover controller runtime, installer, systemd unit source, and CLI are
+implemented, but the controller is **not installed or armed** and failover stays
+a manual runbook (`docs/devops-deployment-rules.md` §4.1).
 
 ## Safety boundary
 
@@ -261,7 +267,19 @@ reported as mathematically zero downtime.
 production target from the current `api.babyjamjam.com` A-record set. The
 canonical A-record hash must match either the protected Lightsail identity or
 the protected LightNode identity. Unknown, mixed, missing, or changed routing
-fails closed before either deployment job starts. Preview remains on Lightsail.
+fails closed before either deployment job starts. Preview never uses this
+resolver path; it always deploys to Cloud Run.
+
+When Lightsail owns the public route, `deploy-lightsail` runs first. If it succeeds,
+`deploy-lightnode-standby` connects the same way as below, but calls the
+restricted `deploy-standby <sha> <digest>`. That command refuses unless the public
+route hash differs from the protected LightNode identity, automation authority
+is present, the Valkey-restore fence is clear, and the host is passive. It then
+runs the operator's passive `deploy` (every scheduler/document gate false, Aligo
+blank, automatic rollback to the previous image). The job skips as `superseded`
+when `main` has already moved past its commit, so the standby converges to the
+newest successful production release and an older queued run can never roll it
+back.
 
 When LightNode owns the public route, the workflow joins the tailnet as an
 ephemeral `tag:ci` node and connects only as `babyjamjam-ci-deployer`. That user

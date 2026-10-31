@@ -1,5 +1,11 @@
 # Lightsail Backend Environments
 
+> **Production primary again (2026-10-31).** After a period on the LightNode
+> fallback (2026-09-03 onwards), production returns to this host. LightNode stays
+> on as a passive standby that gets every `main` release. The production env file
+> must carry `SCHEDULER_LEASE_MODE=required` and `SCHEDULER_LEASE_HOLDER_ID=lightsail`
+> (ADR-010; `ci-operator.sh` refuses otherwise).
+>
 > **Preview is retired here (2026-09-23, BJJ-341).** The preview backend runs on
 > Google Cloud Run (`backend/deploy/cloudrun/`, runbook
 > `docs/plans/2026-09-23-preview-cloud-run.md`). `resolve-deploy-target` never
