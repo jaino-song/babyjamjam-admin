@@ -26,6 +26,7 @@ describe("UserService", () => {
                 update: jest.fn(),
             },
             branch: {
+                findFirst: jest.fn().mockResolvedValue(null),
                 findMany: jest.fn().mockResolvedValue([]),
                 findUnique: jest.fn().mockResolvedValue({ id: "branch-1" }),
                 update: jest.fn().mockResolvedValue({ id: "branch-1" }),
@@ -1433,6 +1434,31 @@ describe("UserService", () => {
                 where.id === "owner-1"
                     ? { id: "owner-1", role: "owner" }
                     : { id: where.id, role: null, approvalStatus: "pending" });
+        });
+
+        it.each(["user", "manager"])("refuses re-approval as %s while the target owns any branch", async (role) => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: "admin", approvalStatus: "approved" });
+            prismaService.branch.findFirst.mockResolvedValue({ id: "other-owned-branch" });
+            prismaService.user.update.mockResolvedValue({ id: "u1", role, approvalStatus: "approved" });
+
+            await expect(service.approve("u1", {
+                role, approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1",
+            })).rejects.toMatchObject({
+                status: 409,
+                response: { code: "REQUEST_CONFLICT", errors: [{ pointer: "/branchIds", code: "INVALID_VALUE" }] },
+            });
+
+            expect(prismaService.branch.findFirst).toHaveBeenCalledWith({ where: { ownerId: "u1" }, select: { id: true } });
+            expect(prismaService.$queryRaw.mock.invocationCallOrder[0])
+                .toBeLessThan(prismaService.branch.findFirst.mock.invocationCallOrder[0]!);
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.deleteMany).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.branch.update).not.toHaveBeenCalled();
+            expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
         });
 
         it("locks the target user before reading its state and before any write", async () => {
