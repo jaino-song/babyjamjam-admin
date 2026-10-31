@@ -35,6 +35,9 @@ import { api } from "@/lib/api/client";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MobileDetailSlideUp } from "@/components/app/mobile-redesign/mobile-detail-slideup";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { employeeMessages } from "@/features/employees/messages";
+import { getDeletedPhoneMatch, type DeletedPhoneMatch } from "./deleted-phone-match";
 import { DEFAULT_EMPLOYEE_GRADE, normalizeEmployeeGrade } from "@/features/employees/grade";
 import {
     EmployeeFormCard,
@@ -173,6 +176,7 @@ export function EmployeeFormDialog({
     const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
     const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deletedPhoneMatch, setDeletedPhoneMatch] = useState<(DeletedPhoneMatch & { dto: CreateEmployeeDto }) | null>(null);
 
     const createMutation = useCreateEmployee();
     const updateMutation = useUpdateEmployee();
@@ -253,6 +257,7 @@ export function EmployeeFormDialog({
             }
 
             setFormData(nextFormData);
+            setDeletedPhoneMatch(null);
             setWorkAreaTouched(false);
             resetFieldMessages();
             setError(null);
@@ -358,6 +363,7 @@ export function EmployeeFormDialog({
     };
 
     const handleClose = () => {
+        setDeletedPhoneMatch(null);
         setFormData(initialFormData);
         setError(null);
         setIsCheckingPhoneDuplicate(false);
@@ -367,7 +373,8 @@ export function EmployeeFormDialog({
         onClose();
     };
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (onDeletedPhoneMatch?: CreateEmployeeDto["onDeletedPhoneMatch"]) => {
+        if (isLoading) return;
         // Show every field's message, then take the user to the first problem.
         fieldMessages.markSubmitted();
         setWorkAreaTouched(true);
@@ -396,6 +403,7 @@ export function EmployeeFormDialog({
         }
 
         setIsSubmitting(true);
+        let submittedCreateDto: CreateEmployeeDto | undefined;
         try {
             if (isEditMode && employee) {
                 const dto: UpdateEmployeeDto = {
@@ -429,7 +437,10 @@ export function EmployeeFormDialog({
                     smsAutomationEnabled: formData.smsAutomationEnabled,
                     birthday: formData.birthday,
                 };
-                const newEmployee = await createMutation.mutateAsync(dto);
+                submittedCreateDto = onDeletedPhoneMatch && deletedPhoneMatch
+                    ? { ...deletedPhoneMatch.dto, onDeletedPhoneMatch }
+                    : dto;
+                const newEmployee = await createMutation.mutateAsync(submittedCreateDto);
 
                 // Check if the response is an error (has statusCode or code property)
                 if (newEmployee && ('code' in newEmployee || 'statusCode' in newEmployee)) {
@@ -442,8 +453,15 @@ export function EmployeeFormDialog({
                 await queryClient.refetchQueries({ queryKey: employeeQueryKeys.all });
                 onSuccess?.(newEmployee);
             }
+            setDeletedPhoneMatch(null);
             handleClose();
         } catch (error: unknown) {
+            const match = submittedCreateDto ? getDeletedPhoneMatch(error) : null;
+            if (match && submittedCreateDto) {
+                setDeletedPhoneMatch({ ...match, dto: submittedCreateDto });
+                return;
+            }
+            setDeletedPhoneMatch(null);
             console.error("[EmployeeFormDialog] Failed to save employee:", error);
             setMutationError(error);
         } finally {
@@ -490,6 +508,7 @@ export function EmployeeFormDialog({
     };
 
     return (
+        <>
         <MobileDetailSlideUp
             name="employees-form-dialog"
             open={open}
@@ -505,7 +524,7 @@ export function EmployeeFormDialog({
             }}
             primaryAction={{
                 label: submitLabel,
-                onClick: handleSubmit,
+                onClick: () => void handleSubmit(),
                 disabled: isLoading,
                 busy: isLoading,
                 dataComponent: "employees-form-dialog-submit",
@@ -577,5 +596,31 @@ export function EmployeeFormDialog({
                 onWorkAreaTouched={() => setWorkAreaTouched(true)}
             />
         </MobileDetailSlideUp>
+        <MobileTwoButtonModal
+            data-component={`${EMPLOYEE_FORM_DIALOG_BASE}_deleted-phone-choice`}
+            open={open && deletedPhoneMatch !== null}
+            title={employeeMessages[locale].deletedPhoneChoice}
+            description={deletedPhoneMatch?.detail}
+            cancelLabel={employeeMessages[locale].cancel}
+            confirmLabel={deletedPhoneMatch?.name !== undefined
+                ? locale === "en" ? `Restore ${deletedPhoneMatch.name}` : `${deletedPhoneMatch.name}님 복원`
+                : employeeMessages[locale].restoreDeleted}
+            confirmVariant="default"
+            loading={isLoading}
+            onOpenChange={(nextOpen) => { if (!nextOpen && !isLoading) setDeletedPhoneMatch(null); }}
+            onCancel={() => { if (!isLoading) setDeletedPhoneMatch(null); }}
+            onConfirm={() => handleSubmit("restore")}
+        >
+            <Button
+                data-component={`${EMPLOYEE_FORM_DIALOG_BASE}_deleted-phone-choice_register-new`}
+                type="button"
+                variant="outline"
+                disabled={isLoading}
+                onClick={() => void handleSubmit("register_new")}
+            >
+                {employeeMessages[locale].registerNew}
+            </Button>
+        </MobileTwoButtonModal>
+        </>
     );
 }
