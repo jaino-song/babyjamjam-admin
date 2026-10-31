@@ -16,39 +16,7 @@ jest.mock("@/lib/api/client", () => ({
     redirectToLoginOnce: jest.fn().mockResolvedValue(undefined),
 }));
 
-/**
- * Local equivalents of the backend harness wrappers (the backend helpers are
- * not importable from frontend suites): `invariant(id, title, body)` is a plain
- * `it`; `knownDefect(id, title, body, expectedFailure)` inverts the expectation
- * (`it.failing`) but rethrows failures whose message does NOT match
- * `expectedFailure`, so a fixture or infra error turns RED instead of becoming
- * a green false-CONFIRMED. While the defect exists the knownDefect reports
- * green-as-expected-failure; after a fix lands it turns RED and the fixing unit
- * flips it to `invariant`.
- */
-
 type IntegrityBody = () => Promise<void> | void;
-type ExpectedFailure = RegExp | string;
-
-async function assertDefectFailure(body: IntegrityBody, expectedFailure: ExpectedFailure): Promise<void> {
-    let thrown: unknown;
-    try {
-        await body();
-    } catch (error) {
-        thrown = error;
-    }
-    if (thrown === undefined) return;
-    const message = thrown instanceof Error ? thrown.message : String(thrown);
-    const matches =
-        typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
-    if (matches) throw thrown;
-    // eslint-disable-next-line no-console
-    console.error(`[knownDefect] expected failure ${expectedFailure} but failed differently: ${message}`);
-}
-
-function knownDefect(id: string, title: string, body: IntegrityBody, expectedFailure: ExpectedFailure): void {
-    it.failing(`${id} ${title}`, () => assertDefectFailure(body, expectedFailure));
-}
 
 function invariant(id: string, title: string, body: IntegrityBody): void {
     it(`${id} ${title}`, async () => {
@@ -151,7 +119,7 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
         delete (global as unknown as { fetch?: unknown }).fetch;
     });
 
-    knownDefect(
+    invariant(
         "SI-EMP-08",
         "realtime: an assignment change announced as service-record kind invalidates employee queries",
         async () => {
@@ -179,12 +147,7 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
 
             // Sanity: the event was consumed and invalidated its own root.
             expect(wasInvalidated(invalidationTargets, ["service-records"])).toBe(true);
-            // The correct behavior: employee queries (status is derived from
-            // active assignments) must be invalidated too. The defect
-            // assertion throws with a defect-specific message: `expectedFailure`
-            // below matches THIS message and nothing else, so an infra/fixture
-            // failure (whose "Expected: true"-shaped message does not match)
-            // turns RED instead of a green false-CONFIRMED.
+            // Employee status is derived from active assignments.
             if (!wasInvalidated(invalidationTargets, ["employees"])) {
                 throw new Error(
                     "SI-EMP-08 defect: employee queries were not invalidated by the service-record entity-changed event",
@@ -193,10 +156,9 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
 
             unmount();
         },
-        /employee queries were not invalidated by the service-record entity-changed event/,
     );
 
-    knownDefect(
+    invariant(
         "SI-EMP-08",
         "acting user: a client update whose payload changes the assignment invalidates employee queries",
         async () => {
@@ -222,10 +184,8 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
 
             // Sanity: the mutation success ran (client keys invalidated).
             expect(wasInvalidated(invalidationTargets, ["clients"])).toBe(true);
-            // The defect: employee queries must be invalidated or not — the
-            // response carries only the client row while employee status and
-            // active-client views changed on the server. The defect-specific
-            // message is the only one `expectedFailure` matches.
+            // The response carries only the client row while employee status
+            // and active-client views changed on the server.
             if (!wasInvalidated(invalidationTargets, ["employees"])) {
                 throw new Error(
                     "SI-EMP-08 defect: the useUpdateClient success handler does not invalidate employee queries after an assignment change",
@@ -234,7 +194,6 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
 
             unmount();
         },
-        /the useUpdateClient success handler does not invalidate employee queries after an assignment change/,
     );
 
     invariant(
@@ -243,10 +202,8 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (desktop)"
         async () => {
             const serviceRecordRoots = queryKeyRootsForKinds(["service-record"]);
             const employeeRoots = queryKeyRootsForKinds(["employee"]);
-            // The mapping that today hides assignment changes from employee views:
-            expect(JSON.stringify(serviceRecordRoots)).not.toContain('["employees"]');
-            // The employee kind itself is mapped correctly, which is why adding
-            // it to `employee_schedule` announcements is a small, safe fix.
+            // Schedule writes announce service-record, so both kinds reach employees.
+            expect(JSON.stringify(serviceRecordRoots)).toContain('["employees"]');
             expect(JSON.stringify(employeeRoots)).toContain('["employees"]');
         },
     );

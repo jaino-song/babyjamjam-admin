@@ -60,6 +60,7 @@ const REAL_KEYS: Record<RealtimeEntityKind, Array<[label: string, key: QueryKey]
         ["dynamic-select data source (inline literal)", ["data-source", "employees"]],
     ],
     document: [
+        ["clientQueryKeys.detail", clientQueryKeys.detail(1)],
         ["eformsignQueryKeys.documentsByType", eformsignQueryKeys.documentsByType("completed")],
         ["eformsignQueryKeys.clientCandidate", eformsignQueryKeys.clientCandidate("doc-1")],
         ["eformsignDocumentJobsQueryKeys.list", eformsignDocumentJobsQueryKeys.list("branch-1")],
@@ -78,6 +79,7 @@ const REAL_KEYS: Record<RealtimeEntityKind, Array<[label: string, key: QueryKey]
         ["dynamic-select data source (inline literal)", ["data-source", "message-variables"]],
     ],
     "service-record": [
+        ["employeeQueryKeys.detail", employeeQueryKeys.detail(1)],
         ["serviceRecordKeys.clientOverview", serviceRecordKeys.clientOverview(1)],
         ["serviceRecordKeys.revisionHistory", serviceRecordKeys.revisionHistory(1)],
         ["serviceRecordKeys.revisionChanges", serviceRecordKeys.revisionChanges(1, "rev-1")],

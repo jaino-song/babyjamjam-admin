@@ -46,7 +46,7 @@ jest.mock("axios", () => {
 
 import { getQueryClient } from "@/lib/queryClient";
 import "@/lib/api/client";
-import { knownDefect, invariant } from "./client-known-defect";
+import { invariant } from "./client-known-defect";
 
 type RetryableRequestConfig = AxiosRequestConfig & {
     _retry?: boolean;
@@ -132,9 +132,7 @@ describe("SI-USER-08 desktop authority state integrity (real QueryClient, HTTP l
         expect(client.getQueryData(AUTH_USER_QUERY_KEY)).toBeUndefined();
     });
 
-    // If this starts failing because the fix landed (403 now triggers an authority
-    // reset or an authUser re-fetch), flip this call to a plain `invariant`.
-    knownDefect(
+    invariant(
         "SI-USER-08",
         "a 403 caused by a server-side role change re-fetches the cached authority",
         async () => {
@@ -171,7 +169,6 @@ describe("SI-USER-08 desktop authority state integrity (real QueryClient, HTTP l
                     "the pre-demotion admin identity until the next 401 or manual refetch",
             );
         },
-        "SI-USER-08: a 403 ACCESS_DENIED on a protected API left the cached authUser query intact",
     );
 
     // NOTE: the former source-grep contracts for the branch-switch reset and the

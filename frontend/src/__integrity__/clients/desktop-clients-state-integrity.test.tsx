@@ -44,18 +44,6 @@ function invariant(id: string, title: string, body: () => Promise<void>): void {
   it(`${id} ${title}`, body);
 }
 
-function knownDefect(id: string, title: string, body: () => Promise<void>, expectedFailure: RegExp): void {
-  it.failing(`${id} ${title}`, async () => {
-    try {
-      await body();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (expectedFailure.test(message)) throw error;
-      console.error(`[knownDefect] ${id}: unexpected failure: ${message}`);
-    }
-  });
-}
-
 const apiMock = api as unknown as Record<"get" | "post" | "patch" | "put" | "delete", jest.Mock>;
 
 const client = (id: number): Client => ({
@@ -90,7 +78,7 @@ describe("SI-CLIENT-08 desktop client mutation cache invalidation", () => {
     apiMock.delete.mockReset();
   });
 
-  knownDefect("SI-CLIENT-08", "main desktop useUpdateClient refreshes the service-record client overview after a ClientFormDialog edit", async () => {
+  invariant("SI-CLIENT-08", "main desktop useUpdateClient refreshes the service-record client overview after a ClientFormDialog edit", async () => {
     const { queryClient, wrapper } = setup();
     const overviewKey = serviceRecordKeys.clientOverview(42);
     const listKey = clientQueryKeys.list(1, 10);
@@ -128,7 +116,7 @@ describe("SI-CLIENT-08 desktop client mutation cache invalidation", () => {
       unmount();
       queryClient.clear();
     }
-  }, /SI-CLIENT-08: main desktop useUpdateClient left the service-record client overview cache stale \(version=1\)/);
+  });
 
   invariant("SI-CLIENT-08", "secondary desktop useUpdateClient invalidates clientKeys.all, messageTriggerKeys.upcoming() and refetches the service-record client overview", async () => {
     const updated = { ...client(42), name: "수정 고객" };

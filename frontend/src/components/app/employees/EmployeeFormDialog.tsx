@@ -27,6 +27,7 @@ import {
 } from "@/hooks/useEmployees";
 import { useEmployeePhoneDuplicateCheck } from "@/hooks/useEmployeePhoneDuplicateCheck";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import { useToast } from "@/hooks/use-toast";
 import {
     resolveElevenDigitPhoneMessage,
     toFieldMessageView,
@@ -452,6 +453,7 @@ function EmployeeFormContent({
     onDirtyChange,
 }: EmployeeFormDialogProps & Pick<EmployeeFormPanelProps, "renderLayout" | "onDirtyChange"> & { surface: "dialog" | "panel" }) {
     const locale = useLocale();
+    const { toast } = useToast();
     const queryClient = useQueryClient();
     const [formData, setFormData] = useState<FormData>(initialFormData);
     const [touched, setTouched] = useState({ workArea: false });
@@ -736,6 +738,9 @@ function EmployeeFormContent({
                 }
 
                 await queryClient.refetchQueries({ queryKey: employeeQueryKeys.all });
+                if (newEmployee?.restored === true) {
+                    toast({ title: "삭제된 관리사를 복원했습니다", variant: "success" });
+                }
                 onSuccess?.(newEmployee);
             }
 
