@@ -4,17 +4,16 @@ import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { ClientService, type DocumentStatusType } from "application/services/client.service";
 import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-doc/update-eformsign-doc-status.usecase";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
-import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
-import { createContractClient, createContractDoc, d, docRow, type ContractDocOverrides } from "./contracts-fixture";
+import { buildWebhookHarness, createContractClient, createContractDoc, d, deleteWebhookLedgerRows, documentEventPayload, docRow, mirrorDetail, type ContractDocOverrides } from "./contracts-fixture";
+import { applyStatusMigration } from "./status-migration-fixture";
 import { closeIntegrityPrisma, createIntegrityPrisma, describeReal, assertThrowawayTarget, type IntegrityPrisma } from "../helpers/real-db";
 import { invariant } from "../helpers/known-defect";
 import { RowTracker } from "../helpers/tracker";
 
 /**
- * SI-CONTRACT-07 — the DB CHECK prevents new aliases. Seed historical aliases
- * atomically behind a NOT VALID constraint to exercise the rollout state:
- * old rows may remain, but new writes must satisfy the CHECK.
+ * SI-CONTRACT-07 — known aliases are backfilled, but unknown provider status
+ * names remain writable (operator decision 2026-10-31). No DB CHECK is intended.
  * The read-model half is REFUTED: `documentStatus` / `hasSigned` normalize every
  * stored alias consistently. SI-CONTRACT-09 adds the fence side: a completed
  * row stored as an alias must keep the webhook terminal-downgrade protection,
@@ -29,23 +28,7 @@ describeReal("eformsign status alias normalization (real PostgreSQL)", () => {
     let clientService: ClientService;
 
     async function createLegacyDoc(overrides: ContractDocOverrides & { statusType: string }) {
-        const doc = await createContractDoc(handle, tracker, branchId, {
-            ...overrides,
-            statusType: normalizeEformsignStatusCode(overrides.statusType),
-        });
-        await raw.$transaction(async (tx) => {
-            const constraints = await tx.$queryRaw<Array<{ conname: string }>>`
-                SELECT conname FROM pg_constraint
-                WHERE conrelid = 'eformsign_doc'::regclass
-                  AND conname = 'eformsign_doc_status_type_check'
-            `;
-            await tx.$executeRawUnsafe("ALTER TABLE eformsign_doc DROP CONSTRAINT IF EXISTS eformsign_doc_status_type_check");
-            await tx.$executeRaw`UPDATE eformsign_doc SET status_type = ${overrides.statusType} WHERE id = ${doc.id}`;
-            if (constraints.length) {
-                await tx.$executeRawUnsafe("ALTER TABLE eformsign_doc ADD CONSTRAINT eformsign_doc_status_type_check CHECK (status_type ~ '^[0-9]{3}$') NOT VALID");
-            }
-        });
-        return doc;
+        return createContractDoc(handle, tracker, branchId, overrides);
     }
 
     beforeAll(async () => {
@@ -99,41 +82,52 @@ describeReal("eformsign status alias normalization (real PostgreSQL)", () => {
     afterAll(async () => {
         if (tracker) {
             await tracker.cleanup(raw);
-            await raw.$executeRawUnsafe(`DO $$ BEGIN
-                IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'eformsign_doc'::regclass AND conname = 'eformsign_doc_status_type_check' AND NOT convalidated) THEN
-                    ALTER TABLE eformsign_doc VALIDATE CONSTRAINT eformsign_doc_status_type_check;
-                END IF;
-            END $$`);
         }
         if (handle) {
             await closeIntegrityPrisma(handle);
         }
     });
 
-    invariant("SI-CONTRACT-07", "the database refuses a legacy alias value on the eformsign_doc.status_type column", async () => {
+    invariant("SI-CONTRACT-07", "intended (operator decision 2026-10-31): unknown provider status names are stored; known aliases are canonicalized", async () => {
         const client = await createContractClient(handle, tracker, branchId);
-        // A canonical row that a later write tries to move to the documented
-        // legacy alias ("50", the unpadded 050). Once the column carries the
-        // intended CHECK, this write must be rejected at the DB layer.
+        const unknown = "doc_brand_new_event";
+        const providerDoc = await createContractDoc(handle, tracker, branchId, { statusType: unknown });
+        const legacy = await createLegacyDoc({ statusType: "50" });
+        const namedAlias = await createLegacyDoc({ statusType: "doc_complete" });
         const doc = await createContractDoc(handle, tracker, branchId, {
             clientId: client.id,
-            documentId: `si-alias-guard-${client.id}`,
             statusType: "060",
-            statusDetail: "서명 요청됨",
         });
+
+        expect(applyStatusMigration().status).toBe(0);
+        expect((await docRow(handle, legacy.documentId)).statusType).toBe("050");
+        expect((await docRow(handle, namedAlias.documentId)).statusType).toBe("003");
+        expect((await docRow(handle, providerDoc.documentId)).statusType).toBe(unknown);
+
+        // The action webhook projects the mirror's status through the real
+        // status usecase/repository. Start canonical so this must WRITE the name,
+        // not merely leave a previously seeded unknown value untouched.
+        const payload = documentEventPayload({
+            webhookId: `si-unknown-${doc.documentId}`,
+            documentId: doc.documentId,
+            status: unknown,
+            updatedDate: d("2026-10-08"),
+        });
+        payload.event_type = "document_action";
+        payload.document!.action = "doc_open_participant"; // The factory always supplies document.
         try {
-            await raw.$executeRaw`
-                UPDATE eformsign_doc SET status_type = '50' WHERE document_id = ${doc.documentId}
-            `;
-        } catch (error) {
-            // P2010 wraps PostgreSQL's CHECK violation. An unrelated database
-            // error must not count as evidence that the intended CHECK exists.
-            expect(error).toMatchObject({ code: "P2010", meta: { code: "23514" } });
-            return;
+            await buildWebhookHarness(handle).service.processWebhook(payload, {
+                mirroredDocument: mirrorDetail({ documentId: doc.documentId, statusType: unknown, updatedDate: d("2026-10-08") }),
+            });
+            expect(await docRow(handle, doc.documentId)).toMatchObject({
+                statusType: unknown,
+                updatedDate: d("2026-10-08"),
+            });
+            expect(applyStatusMigration().status).toBe(0);
+            expect((await docRow(handle, doc.documentId)).statusType).toBe(unknown);
+        } finally {
+            await deleteWebhookLedgerRows(handle, [doc.documentId]);
         }
-        throw new Error(
-            "SI-CONTRACT-07: the database accepted a legacy alias status_type ('50') on eformsign_doc — no CHECK constraint guards the column",
-        );
     });
 
     invariant("SI-CONTRACT-07", "(read-model half, refuted) the client read model maps every stored completed alias to documentStatus completed with the same hasSigned derivation", async () => {
