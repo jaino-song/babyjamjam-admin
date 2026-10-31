@@ -84,6 +84,8 @@ jobs:
         run: pnpm --filter ./backend run db:migrate:deploy
       - name: Seed auth fixtures
         run: pnpm --filter ./backend run db:seed:auth-e2e
+      - name: Build backend
+        run: pnpm --filter ./backend run build
       - name: Start backend
         run: |
           pnpm --filter ./backend run start > /tmp/bjj-backend.log 2>&1 &
