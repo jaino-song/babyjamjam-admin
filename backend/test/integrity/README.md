@@ -12,6 +12,112 @@ protect live in the database, not in TypeScript. They build on the existing
 real-DB convention in `backend/test/prisma/*.real-db.spec.ts` (same throwaway
 guard, same service-over-`PrismaService` construction).
 
+## Status after fix phase (2026-10-31)
+
+Snapshot: `fix/state-integrity` @ `06dd98d9c`, after the fix merges following
+`e3378a284`. These are documentation dispositions, not a new test run or rollout
+approval. Calibrated severities are unchanged; `—` means no severity assigned.
+The area FINDINGS retain original audit evidence and give fix commits and exact
+current invariant titles: [clients](clients/FINDINGS.md),
+[employees](employees/FINDINGS.md), [SMS](sms/FINDINGS.md),
+[contracts](contracts/FINDINGS.md), [users](users/FINDINGS.md).
+
+| id | final status | severity |
+|---|---|---|
+| SI-CLIENT-01 | OPEN — audited writers FIXED; agent `clients.update` still misses recompute, covered by lazy repair | low |
+| SI-CLIENT-02 | FIXED | medium |
+| SI-CLIENT-03 | REFUTED | — |
+| SI-CLIENT-04 | REFUTED (both halves) | — |
+| SI-CLIENT-05 | REFUTED | — |
+| SI-CLIENT-06 | REFUTED | — |
+| SI-CLIENT-07 | REFUTED (tested claim/recovery paths; post-create crash window untested) | — |
+| SI-CLIENT-08 | FIXED (update); REFUTED (delete/secondary-hook subclaims) | low |
+| SI-CLIENT-09 | REFUTED | — |
+| SI-EMP-01 | FIXED | low |
+| SI-EMP-02 | FIXED | medium |
+| SI-EMP-03 | FIXED | low |
+| SI-EMP-04 | FIXED (delete); REFUTED (openToNextWork / sms-disable) | low |
+| SI-EMP-05 | REFUTED | — |
+| SI-EMP-06 | REFUTED | — |
+| SI-EMP-07 | REFUTED | — |
+| SI-EMP-08 | FIXED (cache and mobile parity) | low |
+| SI-EMP-09 | FIXED | low |
+| SI-EMP-10 | FIXED (operator decision 2026-10-31) — re-add restores the old id with `restored: true`; omitted fields retain stored values, reversing BJJ-275 | — |
+| SI-EMP-10-UX | FIXED (operator decision 2026-10-31) — restore toast | — |
+| SI-SMS-01 | FIXED | low |
+| SI-SMS-02 | FIXED — custom-rule history retained; default rules may only be deactivated, never deleted | medium |
+| SI-SMS-03 | REFUTED | — |
+| SI-SMS-04 | REFUTED | — |
+| SI-SMS-05 | REFUTED | — |
+| SI-SMS-06 | FIXED | low |
+| SI-SMS-07 | REFUTED | — |
+| SI-SMS-08 | FIXED | low |
+| SI-SMS-09 | INTENDED (operator decision 2026-10-31) — late provider success may win | — |
+| SI-CONTRACT-01 | REFUTED | — |
+| SI-CONTRACT-02 | REFUTED | — |
+| SI-CONTRACT-03 | REFUTED | — |
+| SI-CONTRACT-04 | REFUTED | — |
+| SI-CONTRACT-05 | REFUTED | — |
+| SI-CONTRACT-06 | REFUTED | — |
+| SI-CONTRACT-07 | INTENDED (operator decision 2026-10-31) — DB CHECK intentionally dropped; unknown provider names remain storable; known aliases canonicalized | low |
+| SI-CONTRACT-08 | FIXED (tested cache paths; inline re-request runtime coverage remains unproven) | low |
+| SI-CONTRACT-09 | FIXED | medium |
+| SI-USER-01 | INTENDED (operator decision 2026-10-31) — rejecting approved users | — |
+| SI-USER-02 | INTENDED (operator decision 2026-10-31) — re-approving rejected users | — |
+| SI-USER-03 | REFUTED | — |
+| SI-USER-04 | OPEN — one flake with unknown cause; ownership/stored-role diagnostics now in place | — |
+| SI-USER-05 | REFUTED | — |
+| SI-USER-06 | REFUTED | — |
+| SI-USER-07 | REFUTED | — |
+| SI-USER-08 | FIXED | low |
+| SI-USER-09 | FIXED | high |
+| SI-USER-10 | FIXED | low |
+
+The six `SI-TEST-*` strings in `helpers/known-defect.spec.ts` are synthetic
+wrapper-control ids, not findings in any of the five areas. They are listed
+separately so a whole-tree id grep has no unexplained omissions; no new test
+execution is claimed by their documentation status.
+
+| id | final status | severity |
+|---|---|---|
+| SI-TEST-01 | HARNESS CONTROL — asserts matching failure is rethrown | — |
+| SI-TEST-02 | HARNESS CONTROL — asserts mismatch is logged and returned | — |
+| SI-TEST-03 | HARNESS CONTROL — asserts a passing body returns normally | — |
+| SI-TEST-04 | HARNESS CONTROL — asserts substring matching | — |
+| SI-TEST-05 | HARNESS CONTROL — asserts first shared g-RegExp match | — |
+| SI-TEST-06 | HARNESS CONTROL — asserts repeated shared g-RegExp match | — |
+
+### OPEN operational / verification follow-ups
+
+| item | status and reason |
+|---|---|
+| Shared integrity runner | OPEN — fixed database name `bjj_state_integrity_throwaway`; concurrent runner invocations can collide, so serialize them. |
+| `lint:ui-architecture` | OPEN — pre-existing baseline drift on `frontend/src/app/(protected)/contracts/page.tsx`, outside the fix scope. |
+| `holiday-review-http` | OPEN — pre-existing failure remains outside this fix; no successful rerun is claimed here. |
+
+The two open area findings are SI-CLIENT-01 and SI-USER-04 above. Untested
+boundaries in other rows are not silently promoted to proven guarantees.
+
+### Pre-rollout checks
+
+1. **Per environment, inspect SMS vocabulary before applying the migration.**
+   The SMS migration aborts if `message_log` or `message_trigger_job` contains
+   out-of-set statuses (including `carrier_result_state`). Run:
+
+   ```sql
+   SELECT DISTINCT status, carrier_result_state FROM message_log;
+   SELECT DISTINCT status FROM message_trigger_job;
+   ```
+
+   Compare results with the migration's allowed sets and resolve any legacy
+   violations before rollout; do not bypass or weaken the migration checks.
+2. **Run `pnpm install` after pulling**, so the vendored shared package refreshes.
+   Do not rely on an earlier worker's local installed-copy/symlink state.
+3. For contracts, migration
+   `20261031000100_eformsign_doc_status_type_canonicalize` canonicalizes known
+   aliases while preserving unknown eformsign status names. Its intentionally
+   dropped DB CHECK must not be reintroduced as a rollout “repair”.
+
 ## Folder layout
 
 ```
@@ -178,5 +284,6 @@ Every test name is prefixed with an id `SI-<AREA>-<NN>` — e.g. `SI-CLIENT-01`,
   `console.error` names the mismatched error. `helpers/known-defect.spec.ts`
   proves all three outcomes.
 
-Area codes: `CLIENTS`→`CLIENT`, `EMPLOYEES`→`EMPLOYEE`, `SMS`, `CONTRACTS`,
-`USERS`. Number sequentially within an area (`SI-CLIENT-01`, `SI-CLIENT-02`, ...).
+Area codes: `clients`→`CLIENT`, `employees`→`EMP`, `sms`→`SMS`,
+`contracts`→`CONTRACT`, `users`→`USER`. Number sequentially within an area
+(`SI-CLIENT-01`, `SI-CLIENT-02`, ...).
