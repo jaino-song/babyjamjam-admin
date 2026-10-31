@@ -1,7 +1,8 @@
 ---
 plan_id: efsi-2026-05-08-001
 feature: finalize-headless-progress-stepper
-status: approved
+status: superseded
+superseded_note: "The headless dispatch/finalize browser flows were replaced by the always-on document-job queue (833c8cf96, 67582db1d); frontend/tests/*.headless.spec.ts were removed in ci-gate-fixes. HeadlessProgressStepper is still mounted in contracts/page.tsx (finalize dialog) and ContractCreationForm.tsx but never renders: the finalize mount always receives INITIAL_FINALIZE_PROGRESS (step null), and the creation mount resets to step null on every submit/retry and leaves the processing step on failure."
 swagger_base: https://api.eformsign.com/v2.0
 agent_version: v0.4.0
 created_at: 2026-05-08T00:00:00Z

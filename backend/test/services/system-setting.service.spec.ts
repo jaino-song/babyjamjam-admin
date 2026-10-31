@@ -3,6 +3,7 @@ import { SystemSettingService } from "application/services/system-setting.servic
 import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
 import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
+import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 
 describe("SystemSettingService", () => {
     const createMockGetSettingUsecase = () => ({
@@ -433,6 +434,75 @@ describe("SystemSettingService", () => {
                 service.completePwaDigestDelivery(deliveryKey, "stale-token", "sent"),
             ).resolves.toBe(false);
             expect(updateSettingUsecase.executeIfVersion).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("realtime hint suppression for PWA digest bookkeeping", () => {
+        const deliveryKey = "branch:branch-1:daily:2026-08-28";
+        const now = new Date("2026-08-28T00:00:00.000Z");
+        const entity = new SystemSettingEntity("any", "v", now);
+
+        it("runs the digest claim write with hints suppressed", async () => {
+            let suppressed: boolean | undefined;
+            getSettingUsecase.executeEntity.mockResolvedValue(null);
+            updateSettingUsecase.executeIfVersion.mockImplementation(async () => {
+                suppressed = isEntityChangeHintsSuppressed();
+                return entity;
+            });
+
+            await service.claimPwaDigestDelivery(deliveryKey, now);
+
+            expect(suppressed).toBe(true);
+        });
+
+        it("runs the digest completion write with hints suppressed", async () => {
+            let suppressed: boolean | undefined;
+            getSettingUsecase.executeEntity.mockResolvedValue(new SystemSettingEntity(
+                `pwa:daily_digest:${deliveryKey}`,
+                JSON.stringify({ status: "processing", token: "t", leaseExpiresAt: "2026-08-28T00:30:00.000Z" }),
+                now,
+            ));
+            updateSettingUsecase.executeIfVersion.mockImplementation(async () => {
+                suppressed = isEntityChangeHintsSuppressed();
+                return entity;
+            });
+
+            await expect(service.completePwaDigestDelivery(deliveryKey, "t", "sent")).resolves.toBe(true);
+
+            expect(suppressed).toBe(true);
+        });
+
+        it("runs the undelivered-digest watermark write with hints suppressed", async () => {
+            let suppressed: boolean | undefined;
+            updateSettingUsecase.execute.mockImplementation(async () => {
+                suppressed = isEntityChangeHintsSuppressed();
+                return entity;
+            });
+
+            await service.setPwaUndeliveredDigestWatermark("branch-1", now);
+
+            expect(suppressed).toBe(true);
+        });
+
+        it("keeps a user-visible setting write (email notification preference) announced", async () => {
+            let suppressed: boolean | undefined;
+            updateSettingUsecase.execute.mockImplementation(async () => {
+                suppressed = isEntityChangeHintsSuppressed();
+                return entity;
+            });
+
+            await service.setUserEmailNotificationsEnabled("user-1", false);
+
+            expect(suppressed).toBe(false);
+        });
+
+        it("does not leave suppression active after the digest write settles", async () => {
+            getSettingUsecase.executeEntity.mockResolvedValue(null);
+            updateSettingUsecase.executeIfVersion.mockResolvedValue(entity);
+
+            await service.claimPwaDigestDelivery(deliveryKey, now);
+
+            expect(isEntityChangeHintsSuppressed()).toBe(false);
         });
     });
 });

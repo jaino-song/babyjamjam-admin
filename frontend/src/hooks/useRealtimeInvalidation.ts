@@ -20,6 +20,36 @@ const HEARTBEAT_TIMEOUT_MS = 70_000;
 // The server coalesces changes for ~300 ms, but a transaction can still commit
 // after that window. One more refresh this long after an event picks those up.
 const TRAILING_REFRESH_DELAY_MS = 1500;
+// A resuming reconnect waits this long after `open` for the backend's `ready`
+// marker. A backend that never sends one (old version, rollback) can't have
+// honoured the cursor, so silence means "catch up the slow way".
+const READY_TIMEOUT_MS = 5000;
+// Contract: an opaque cursor is at most 64 chars of [0-9A-Za-z:._-]. Anything
+// else is never remembered, so it can never be echoed back.
+const CURSOR_PATTERN = /^[0-9A-Za-z:._-]{1,64}$/;
+
+function isValidCursor(id: unknown): id is string {
+    return typeof id === "string" && CURSOR_PATTERN.test(id);
+}
+
+function parseResumed(data: unknown): boolean {
+    if (typeof data !== "string") return false;
+    try {
+        const parsed: unknown = JSON.parse(data);
+        return (parsed as { resumed?: unknown } | null)?.resumed === true;
+    } catch {
+        return false;
+    }
+}
+
+// What one connection still owes the catch-up decision. A reopen that sent no
+// cursor needs nothing here (it already invalidated everything on `open`).
+interface Connection {
+    // This connection has delivered `ready`: only then are its ids real cursors.
+    ready: boolean;
+    // Reopened with a cursor and not yet told whether the backend honoured it.
+    awaitingResume: boolean;
+}
 
 function parseKinds(data: unknown): unknown[] {
     if (typeof data !== "string") return [];
@@ -39,8 +69,11 @@ function parseKinds(data: unknown): unknown[] {
  *
  * Mirrors {@link useEformsignDocsLiveStream}'s resilience: one owned connection
  * that reopens on error, on a silent ~70 s stall, and when the tab becomes
- * visible again; after any *re*open every known root is invalidated once to
- * catch up on changes missed while the stream was down.
+ * visible again. A reconnect echoes the last cursor the backend gave us
+ * (`?since=`); when the backend's `ready` says it resumed, the missed changes
+ * arrive as ordinary `entity-changed` events and nothing else is refetched.
+ * Every other reopen (no cursor, `resumed: false`, no `ready` — an old
+ * backend — or a mid-stream `reset`) invalidates every known root once.
  *
  * The first connect is a plain EventSource (the middleware just issued fresh
  * cookies). Every reconnect goes through `openAuthenticatedEventSource`, which
@@ -79,6 +112,10 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
         // Set once a reconnect has been scheduled, so the next `open` catches up
         // on changes missed while the stream was down.
         let needsCatchUp = false;
+        // Last cursor handed to us by a `ready`-bearing connection. Lives in this
+        // effect, so an identity change (logout, branch switch) starts clean.
+        let cursor: string | null = null;
+        let readyTimer: number | null = null;
         const backoff = createReconnectBackoff();
 
         const invalidateRoots = (roots: QueryKey[]) => {
@@ -101,6 +138,13 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
             }
         };
 
+        const clearReadyTimer = () => {
+            if (readyTimer !== null) {
+                window.clearTimeout(readyTimer);
+                readyTimer = null;
+            }
+        };
+
         const clearTrailingTimer = () => {
             if (trailingTimer !== null) {
                 window.clearTimeout(trailingTimer);
@@ -109,10 +153,20 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
         };
 
         const closeSource = () => {
+            clearReadyTimer();
             if (source) {
                 source.close();
                 source = null;
             }
+        };
+
+        // Resolves a resuming reconnect's pending catch-up decision, at most once
+        // per connection: a full invalidation (backend could not resume) or none.
+        const settleResume = (state: Connection, fullInvalidation: boolean) => {
+            if (!state.awaitingResume) return;
+            state.awaitingResume = false;
+            clearReadyTimer();
+            if (fullInvalidation) invalidateRoots(allQueryKeyRoots());
         };
 
         const handleEntityChanged = (data: unknown) => {
@@ -165,29 +219,81 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
             }, HEARTBEAT_TIMEOUT_MS);
         }
 
-        function attach(next: EventSource) {
+        // `sentCursor` is the `since` this connection was opened with (null for
+        // the first connect and for reconnects that had nothing to resume from).
+        function attach(next: EventSource, sentCursor: string | null) {
             source = next;
+            const state: Connection = { ready: false, awaitingResume: false };
+
+            // Only a connection that has delivered `ready` is a new backend; ids on
+            // any other are Nest's per-connection auto ids (1, 2, 3…) and must
+            // never become a cursor.
+            const remember = (event: Event) => {
+                if (!state.ready) return;
+                const id = (event as MessageEvent).lastEventId;
+                if (isValidCursor(id)) cursor = id;
+            };
 
             next.addEventListener("open", () => {
                 if (source !== next) return;
                 backoff.reset();
                 if (needsCatchUp) {
-                    // Reopened after a gap — catch up on anything missed.
+                    // Reopened after a gap. Without a cursor nothing can be
+                    // replayed, so refresh everything now; with one, wait for the
+                    // backend to say whether it resumed.
                     needsCatchUp = false;
-                    invalidateRoots(allQueryKeyRoots());
+                    if (sentCursor === null) {
+                        invalidateRoots(allQueryKeyRoots());
+                    } else {
+                        state.awaitingResume = true;
+                        clearReadyTimer();
+                        readyTimer = window.setTimeout(() => {
+                            readyTimer = null;
+                            settleResume(state, true);
+                        }, READY_TIMEOUT_MS);
+                    }
                 }
                 resetHeartbeat();
+            });
+
+            next.addEventListener("ready", (event) => {
+                if (source !== next) return;
+                resetHeartbeat();
+                state.ready = true;
+                // `resumed: true` only when the cursor was honoured and the
+                // missed batches follow as replayed `entity-changed` events.
+                settleResume(state, !parseResumed((event as MessageEvent).data));
+                remember(event);
             });
 
             next.addEventListener("entity-changed", (event) => {
                 if (source !== next) return;
                 resetHeartbeat();
+                // A resuming connection whose first message isn't `ready` is an
+                // old backend: it ignored the cursor.
+                settleResume(state, true);
+                remember(event);
                 handleEntityChanged((event as MessageEvent).data);
             });
 
-            next.addEventListener("ping", () => {
+            next.addEventListener("ping", (event) => {
                 if (source !== next) return;
                 resetHeartbeat();
+                settleResume(state, true);
+                remember(event);
+            });
+
+            next.addEventListener("reset", (event) => {
+                if (source !== next) return;
+                resetHeartbeat();
+                // Continuity is lost: one full invalidation, whether it settles a
+                // pending resume or arrives mid-stream.
+                if (state.awaitingResume) {
+                    settleResume(state, true);
+                } else {
+                    invalidateRoots(allQueryKeyRoots());
+                }
+                remember(event);
             });
 
             next.addEventListener("error", () => {
@@ -205,18 +311,20 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
 
             const controller = new AbortController();
             attemptController = controller;
+            const sentCursor = cursor;
             // A probe may resolve after unmount, an identity change or a newer
             // attempt; only the attempt that still owns the connection may open
             // a source or touch this closure's state.
             const owns = () => !disposed && !controller.signal.aborted && attemptController === controller;
 
             try {
-                const next = await openAuthenticatedEventSource(ENDPOINT, { signal: controller.signal });
+                const url = sentCursor === null ? ENDPOINT : `${ENDPOINT}?since=${encodeURIComponent(sentCursor)}`;
+                const next = await openAuthenticatedEventSource(url, { signal: controller.signal });
                 if (!owns()) {
                     next.close();
                     return;
                 }
-                attach(next);
+                attach(next, sentCursor);
             } catch (error) {
                 if (!owns()) return;
                 if (error instanceof AuthSessionEndedError) {
@@ -244,7 +352,7 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
         document.addEventListener("visibilitychange", handleVisibilityChange);
         // Fresh page load: the middleware just issued current cookies, so open
         // directly. Only reconnects pay for the auth probe.
-        attach(new EventSource(ENDPOINT));
+        attach(new EventSource(ENDPOINT), null);
 
         return () => {
             disposed = true;
@@ -252,6 +360,7 @@ export function useRealtimeInvalidation(enabled = true, identity: string | null 
             clearReconnectTimer();
             clearHeartbeatTimer();
             clearTrailingTimer();
+            clearReadyTimer();
             attemptController?.abort();
             closeSource();
         };

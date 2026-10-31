@@ -27,7 +27,7 @@
     "tenant:models:generate": "ts-node scripts/tenant/generate-tenant-models.ts",
     "lint": "eslint .",
     "verify:pdf-rasterizer": "node scripts/verify-pdf-rasterizer.mjs",
-    "start": "nest start",
+    "start": "node dist/main",
     "start:dev": "node scripts/start-dev-lan.mjs",
     "start:prod": "node dist/main",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
@@ -46,12 +46,11 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy"
   },
-  "_dependencies_warning": "DO NOT REMOVE @nestjs/cli, ts-node, or typescript from dependencies! They are required for Railway production deployment with 'nest start'. Moving them to devDependencies will break deployment. See commit 993b0d63.",
+  "_dependencies_warning": "DO NOT REMOVE ts-node or typescript from dependencies (see commit 993b0d63). @nestjs/cli is a devDependency: Railway installs dev packages for its build step (nest build, sentry-cli) and starts with 'node dist/main', which needs no CLI.",
   "dependencies": {
     "@ai-sdk/google": "^3.0.23",
     "@babyjamjam/shared": "file:vendor/shared-agent",
     "@napi-rs/canvas": "0.1.100",
-    "@nestjs/cli": "^11.0.24",
     "@nestjs/common": "^11.1.28",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.28",
@@ -73,7 +72,7 @@
     "helmet": "^8.2.0",
     "ioredis": "^5.11.1",
     "nanoid": "^5.1.6",
-    "nodemailer": "^10.1.4",
+    "nodemailer": "^10.3.1",
     "passport": "^0.6.0",
     "passport-jwt": "^4.0.1",
     "passport-kakao": "^1.0.1",
@@ -90,6 +89,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
     "@nestjs/testing": "^11.1.28",
     "@sentry/cli": "3.6.2",

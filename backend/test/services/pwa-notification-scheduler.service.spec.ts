@@ -2,7 +2,10 @@ import type { DailyDigestSection, NotificationService } from "application/servic
 import { IBranchRepository } from "domain/repositories/branch.repository.interface";
 import { IClientRepository } from "domain/repositories/client.repository.interface";
 import { IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
+import { SystemSettingService as SystemSettingServiceClass } from "application/services/system-setting.service";
 import type { SystemSettingService } from "application/services/system-setting.service";
+import { SystemSettingEntity } from "domain/entities/system-setting.entity";
+import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import {
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     MessageTriggerRecipientType,
@@ -645,5 +648,61 @@ describe("PwaNotificationSchedulerService", () => {
         await service.sendDailySummaryNotifications();
 
         expect(branchRepository.findAllActive).not.toHaveBeenCalled();
+    });
+
+    it("with the real SystemSettingService: sends the digest once, suppresses only the claim/complete/watermark writes, and a second run does not send again", async () => {
+        const store = new Map<string, SystemSettingEntity>();
+        const suppressedWrites: Array<[string, boolean]> = [];
+        const getSettingUsecase = {
+            executeEntity: jest.fn(async (key: string) => store.get(key) ?? null),
+            execute: jest.fn(async (key: string) => store.get(key)?.value ?? null),
+        };
+        const write = (key: string, value: string) => {
+            suppressedWrites.push([key, isEntityChangeHintsSuppressed()]);
+            const entity = new SystemSettingEntity(key, value, new Date());
+            store.set(key, entity);
+            return entity;
+        };
+        const updateSettingUsecase = {
+            execute: jest.fn(async (key: string, value: string) => write(key, value)),
+            executeIfVersion: jest.fn(async (
+                key: string,
+                value: string,
+                expectedVersion: string,
+                versionOf: (stored: string | null) => string,
+            ) => (versionOf(store.get(key)?.value ?? null) === expectedVersion ? write(key, value) : null)),
+        };
+        const realSettings = new SystemSettingServiceClass(
+            getSettingUsecase as never,
+            updateSettingUsecase as never,
+        );
+        let digestSendSuppressed: boolean | undefined;
+        notificationService.sendDailyDigestToBranchUsers.mockImplementation(async () => {
+            digestSendSuppressed = isEntityChangeHintsSuppressed();
+            return { sent: 2, failed: 0 };
+        });
+        const scheduler = new PwaNotificationSchedulerServiceClass(
+            notificationService as unknown as NotificationService,
+            clientRepository as unknown as IClientRepository,
+            branchRepository as unknown as IBranchRepository,
+            messageTriggerJobRepository as unknown as IMessageTriggerJobRepository,
+            realSettings,
+            createSchedulerLeaseMock(),
+            createHolidayCalendarStub(),
+        );
+
+        await scheduler.sendDailySummaryNotifications();
+        await scheduler.sendDailySummaryNotifications();
+
+        expect(notificationService.sendDailyDigestToBranchUsers).toHaveBeenCalledTimes(1);
+        // The send itself (which writes user-visible notification rows) is never inside a suppressed scope.
+        expect(digestSendSuppressed).toBe(false);
+        // claim (processing), watermark, completion (sent): three settings writes, every one suppressed.
+        expect(suppressedWrites).toHaveLength(3);
+        expect(suppressedWrites.every(([, suppressed]) => suppressed)).toBe(true);
+        expect(suppressedWrites.map(([key]) => key)).toEqual(expect.arrayContaining([
+            expect.stringMatching(/^pwa:daily_digest:branch:branch-1:daily:/),
+            "branch:branch-1:pwa_undelivered_digest_watermark",
+        ]));
     });
 });

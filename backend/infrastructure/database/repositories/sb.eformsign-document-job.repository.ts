@@ -27,6 +27,7 @@ import {
     ResolveManuallyResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import {
     authorizeServiceRecordDispatch,
     deriveServiceRecordDocumentSyncStatus,
@@ -661,18 +662,33 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         // decided here, atomically, against the stored value. The heartbeat
         // and lease predicates are unchanged: the heartbeat still advances
         // when the step is kept.
-        return this.updateOne(Prisma.sql`
-            UPDATE "eformsign_document_job" SET progress_step = CASE
+        const nextStep = Prisma.sql`CASE
                     WHEN progress_step = 'sent' THEN progress_step
                     WHEN progress_step = 'creating' AND ${progressStep}::text <> 'sent' THEN progress_step
                     WHEN progress_step = ${DISPATCH_AUTHORIZED_PROGRESS_STEP}
                         AND ${progressStep}::text NOT IN ('creating', 'sent') THEN progress_step
                     ELSE ${progressStep}::text
-                END,
+                END`;
+        // Two statements, because the realtime hint is decided when a statement runs and the
+        // step is rendered (the contracts job popover shows it). Statement 1 only matches when
+        // the step really moves, so it keeps emitting. Statement 2 is reached when the step is
+        // unchanged (or the lease is gone): it moves only heartbeat_at/updated_at, which no screen
+        // renders, and runs with hints suppressed. Comparing in SQL against the stored value is
+        // race-free; passing the worker's last-known step would not be, since the stored step can
+        // be advanced by another path between the worker's read and this write.
+        const stepMoved = await this.updateOne(Prisma.sql`
+            UPDATE "eformsign_document_job" SET progress_step = ${nextStep},
                 heartbeat_at = ${heartbeatAt}, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
-              AND status IN ('processing', 'reconciling') RETURNING *
+              AND status IN ('processing', 'reconciling')
+              AND progress_step IS DISTINCT FROM (${nextStep}) RETURNING *
         `);
+        if (stepMoved) return stepMoved;
+        return withoutEntityChangeHints(() => this.updateOne(Prisma.sql`
+            UPDATE "eformsign_document_job" SET heartbeat_at = ${heartbeatAt}, updated_at = now()
+            WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
+              AND status IN ('processing', 'reconciling') RETURNING *
+        `));
     }
 
     async scheduleRetry(id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string) {

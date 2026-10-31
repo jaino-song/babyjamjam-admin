@@ -16,6 +16,18 @@ const old = name => execFileSync('git',['show',`${base}:.github/workflows/${name
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
 const apps=['backend','frontend','mobile'];
+// e3929e6b3 made backend `start` run `node dist/main` (no compile), so every job that
+// starts the backend must build it first. Same command as backend-ci.yml and Dockerfile.lightsail.
+const backendBuildStep = {name:'Build backend',run:'pnpm --filter ./backend run build'};
+// Asserts the build step sits immediately before 'Start backend' and returns the job's
+// steps without it, so the caller can still compare every remaining step exactly.
+function stepsWithoutBackendBuild(job,label) {
+  const start=job.steps.findIndex(s=>s.name==='Start backend');
+  assert.ok(start>0,`${label}: Start backend step exists`);
+  assert.deepEqual(job.steps[start-1],backendBuildStep,`${label}: backend is built immediately before it starts`);
+  assert.equal(job.steps.filter(s=>s.name===backendBuildStep.name).length,1,`${label}: exactly one backend build step`);
+  return job.steps.filter((_,index)=>index!==start-1);
+}
 const reusable = parse(read('ci-impact.yml'));
 const loader = reusable.jobs.classify.steps.find(s=>s.id==='impact').run;
 const expectedNames={backend:'backend · type-check · lint · test',frontend:'frontend · type-check · lint · test · build',mobile:'type-check · lint · test · build'};
@@ -67,7 +79,11 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
 });
 test('mobile advisory keeps every step/service and full suite; only relevance and direct dependency change',()=>{
   const a=parse(old('mobile-ci.yml')).jobs.e2e,b=parse(read('mobile-ci.yml')).jobs.e2e;
-  assert.deepEqual(needs(b),['verify','impact']);assert.deepEqual({...b,needs:a.needs,if:a.if},a);
+  assert.deepEqual(needs(b),['verify','impact']);
+  const {steps:_bSteps,...bRest}=b,{steps:aSteps,...aRest}=a;
+  assert.deepEqual({...bRest,needs:a.needs,if:a.if,'runs-on':a['runs-on']},aRest);
+  assert.deepEqual(stepsWithoutBackendBuild(b,'mobile e2e'),aSteps,'every other step is unchanged');
+  assert.equal(b['runs-on'],'ubuntu-24.04','mobile advisory e2e is pinned to ubuntu-24.04');
   assert.equal(b['continue-on-error'],undefined);assert.ok(b.steps.some(s=>s.run==='pnpm --filter ./mobile run test:e2e'));
 });
 test('reusable classification and completion are self-contained protected-base authority with full bootstrap',()=>{
@@ -121,7 +137,10 @@ test('Playwright conditions the full service job, preserves the full lane and ev
   assert.deepEqual(needs(w.jobs.test), ['impact']);
   assert.match(w.jobs.test.if, /!cancelled\(\)/);
   const {needs: _needs, if: _if, ...heavy} = w.jobs.test;
-  assert.deepEqual(heavy, before.jobs.test, 'services, fixtures, commands, artifacts and timeout remain unchanged');
+  assert.equal(heavy['runs-on'], 'ubuntu-24.04', 'frontend auth lifecycle job is pinned to ubuntu-24.04');
+  const {steps: _heavySteps, ...heavyRest} = heavy, {steps: beforeSteps, ...beforeRest} = before.jobs.test;
+  assert.deepEqual({...heavyRest, 'runs-on': before.jobs.test['runs-on']}, beforeRest, 'services, fixtures, artifacts and timeout remain unchanged');
+  assert.deepEqual(stepsWithoutBackendBuild(heavy, 'frontend auth lifecycle'), beforeSteps, 'every other step and command remains unchanged');
   const visited = new Set(), active = new Set();
   function visit(id) {
     assert.ok(w.jobs[id], `missing job ${id}`);assert.equal(active.has(id), false, `cycle at ${id}`);
