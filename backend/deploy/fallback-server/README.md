@@ -7,9 +7,15 @@ frontend deployment. The frontend keeps the stable
 `https://api.babyjamjam.com` hostname while traffic ownership is changed by
 the separately controlled Vercel DNS client.
 
-Current status: **controller runtime, installer, systemd unit source, and CLI
-are implemented locally; the controller is not installed or armed, and the host
-is not serving production traffic**.
+Current status (2026-10-31): **LightNode is the permanent warm standby for the
+Lightsail production primary.** It has served production in temporary-active
+mode since 2026-09-03; the move back to Lightsail puts it on passive standby,
+and until that cutover finishes it remains the live host. It is not released
+after failback: it stays running and receives every `main` release passively
+through `deploy-lightnode-standby` (see "Conditional `main` CI replacement").
+The failover controller runtime, installer, systemd unit source, and CLI are
+implemented, but the controller is **not installed or armed** and failover stays
+a manual runbook (`docs/devops-deployment-rules.md` §4.1).
 
 ## Safety boundary
 
@@ -261,7 +267,53 @@ reported as mathematically zero downtime.
 production target from the current `api.babyjamjam.com` A-record set. The
 canonical A-record hash must match either the protected Lightsail identity or
 the protected LightNode identity. Unknown, mixed, missing, or changed routing
-fails closed before either deployment job starts. Preview remains on Lightsail.
+fails closed before either deployment job starts. Preview never uses this
+resolver path; it always deploys to Cloud Run.
+
+When Lightsail owns the public route, `deploy-lightsail` runs first. If it succeeds,
+`deploy-lightnode-standby` connects the same way as below, but calls the
+restricted `deploy-standby <sha> <digest>`. That command refuses unless the public
+route hash differs from the protected LightNode identity, automation authority
+is present, and the Valkey-restore fence is clear. When the operator `status` is
+readable it must also show a passive host. When it is not readable, the command
+hands over to the operator's own guards, which refuse an active or unknown runtime.
+It then runs the operator's passive `deploy` (every scheduler/document gate false,
+Aligo blank, automatic rollback to the previous image).
+
+Before deploying, the job reads the restricted, read-only `standby-status`, which
+reports `present` (healthy passive), `recorded-unhealthy` (a release is recorded
+in the operator state but the container is stopped or restarting) or `none` (no
+release recorded at all). `backend/deploy/fallback-server/ci/standby-decision.sh`
+then decides by git ancestry:
+
+- `none` → deploy.
+- The recorded tag is an ancestor of this commit → deploy forward.
+- Same tag and `present` → `superseded` (green, nothing to do).
+- Same tag and `recorded-unhealthy` → deploy the same release again. This is the
+  recovery path.
+- The recorded tag is newer than this commit → `superseded`, whatever the health.
+  If that newer standby is unhealthy it stays down, so re-run the
+  `deploy-lightnode-standby` job of the commit the standby records to recover it.
+- Diverged history, an unknown tag, or malformed status → the job fails.
+
+Before that decision, the job asks the GitHub API (`ci/newer-primary-release.sh`,
+newest 100 `main` push runs) whether a strict descendant of this commit already has a
+successful "deploy Lightsail backend" job. If one does, a `deploy` becomes
+`superseded`; a `refuse` is never overridden. An API error, a run commit missing from
+the checkout, or a newer run whose Lightsail job is not listed yet fails the job red
+(re-run it).
+
+The standby therefore converges to the newest backend release that reached
+Lightsail, and an older queued run can never roll it back.
+
+Accepted risk (2026-10-31): the lookup is a snapshot. If a newer release finishes on
+Lightsail after this job's lookup and that newer release's own standby job fails,
+this job can still deploy the older release. Standby is then one release behind,
+and the newer release's failed standby job is red; re-running it deploys forward,
+because the older release is its ancestor. Production is never affected. While LightNode is
+still temporary-active during a cutover drain (DNS already on Lightsail),
+`deploy-lightnode-standby` fails red, because the host is not passive. That is
+expected. Re-run the job after the drain.
 
 When LightNode owns the public route, the workflow joins the tailnet as an
 ephemeral `tag:ci` node and connects only as `babyjamjam-ci-deployer`. That user
@@ -273,7 +325,12 @@ sudo command. The dispatcher permits only:
 ```text
 status
 replace <tag> <digest>
+standby-status
+deploy-standby <tag> <digest>
 ```
+
+`status`/`replace` serve the live (temporary-active) LightNode. `standby-status`/
+`deploy-standby` serve the passive standby while Lightsail owns the route.
 
 The wrapper rechecks public routing, active runtime health, Production DB
 identity, singleton scheduler/document-worker ownership, the immutable release,
@@ -341,12 +398,14 @@ route smoke before temporary-active. If any cutover check fails, reconcile live
 DNS once and use the protected rollback artifact; do not issue a blind second
 PATCH.
 
-For AWS failback, verify AWS readiness and document reconciliation first, then
-PATCH the current captured `api` record back to the protected original AWS
-value and perform a fresh read-after-write. Only after public DNS and HTTPS are
-confirmed on AWS may the operator stop Fallback, Caddy be disabled, the Aligo
-VPS allow-list entry be removed, and the LightNode instance be released.
-Controller/Sentry automatic failback remains out of scope.
+For AWS failback, follow the ordered runbook in `docs/devops-deployment-rules.md`
+§4.1 ("복귀"): lower the `api` TTL, verify Lightsail with a pinned HTTPS check,
+PATCH DNS back to the Lightsail IP with a read-after-write, drain, then run the
+operator `stop` followed by `deploy-standby` of the same release, and confirm that
+Lightsail holds the scheduler lease. **LightNode is not released after failback
+(2026-10-31).** Keep Caddy, Tailscale, the CI deployer user and the Aligo
+allow-list entry in place, because the standby deploy and the next failover need
+them. Controller/Sentry automatic failback remains out of scope.
 
 The backend environment is root-owned, but Docker daemon/root users can inspect
 container environment metadata. This mode does not claim Docker `env_file` is a
@@ -507,7 +566,14 @@ enabled.) The application's Valkey user must keep `INFO` (`@dangerous`)
 permitted: without it the continuity proof fails closed and every reconnect
 refetches.
 
-Lightsail is unused; if revived, the same fenced steps apply.
+The same fenced steps apply on Lightsail, which was chosen on 2026-10-31 to be the
+production primary again. Until the cutover completes, LightNode is still the live
+host; see `docs/devops-deployment-rules.md` §4.1 "현재 상태". A Lightsail↔LightNode cutover copies **no** Valkey data: every key
+family is disposable or rebuildable (rate limits, short locks, the realtime
+stream, eFormsign list snapshots), and durable state lives in Postgres. Do not
+restore the other host's volume, which would only bring back stale locks. While
+both hosts serve during a DNS drain, realtime hints do not cross hosts, so a
+client on one host sees the other host's writes only after its next refetch.
 
 ## Related contracts
 
