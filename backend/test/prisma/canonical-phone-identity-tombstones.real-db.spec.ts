@@ -53,6 +53,11 @@ describe("canonical phone identity migration file (static)", () => {
         const clientBackfill = sql.slice(0, sql.indexOf('UPDATE "public"."client" AS target'));
         expect(clientBackfill).toMatch(/"deleted_at" IS NULL/);
     });
+
+    it("only backfills live employees so released keys stay NULL", () => {
+        const employeeBackfill = sql.slice(sql.indexOf('-- Backfill employees'), sql.indexOf('UPDATE "public"."employee" AS target'));
+        expect(employeeBackfill).toMatch(/"deleted_at" IS NULL/);
+    });
 });
 
 describeReal("canonical phone identity migration vs client tombstones (real PostgreSQL)", () => {
@@ -102,6 +107,7 @@ describeReal("canonical phone identity migration vs client tombstones (real Post
         // Rows from a failed assertion must not poison the next migration replay.
         if (branchIds.length > 0) {
             await prisma.client.deleteMany({ where: { branchId: { in: branchIds } } });
+            await prisma.employee.deleteMany({ where: { branchId: { in: branchIds } } });
             await prisma.branch.deleteMany({ where: { id: { in: branchIds } } });
             branchIds = [];
         }
@@ -124,6 +130,29 @@ describeReal("canonical phone identity migration vs client tombstones (real Post
         const after = await snapshot([tombA, tombB, live]);
         expect(after.filter((row) => row.deletedAt !== null).map((row) => row.phoneNormalized)).toEqual([null, null]);
         expect(after.find((row) => row.id === live)?.phoneNormalized).toBe("01033334444");
+    }, 120_000);
+
+    it("employees: released deleted identities stay NULL across two deploy patches while live identities backfill", async () => {
+        const branchId = await newBranch();
+        const tomb = await prisma.employee.create({ data: {
+            branchId, name: "old person", phone: "010-3333-4444", phoneNormalized: null,
+            deletedAt: new Date(), workArea: ["서울"], grade: "프리미엄",
+        } });
+        const live = await prisma.employee.create({ data: {
+            branchId, name: "new person", phone: "010-3333-4444", phoneNormalized: "01033334444",
+            workArea: [], grade: "스탠다드",
+        } });
+        const needsBackfill = await prisma.employee.create({ data: {
+            branchId, name: "live null", phone: "+82 10-5555-6666", phoneNormalized: null,
+            workArea: [], grade: "스탠다드",
+        } });
+        for (const attempt of [1, 2]) {
+            const run = runPatch(MIGRATION);
+            if (run.status !== 0) throw new Error(`employee patch attempt ${attempt} exited ${run.status}\n${run.output}`);
+            expect(await prisma.employee.findUniqueOrThrow({ where: { id: tomb.id } })).toEqual(tomb);
+            expect(await prisma.employee.findUniqueOrThrow({ where: { id: live.id } })).toEqual(live);
+            expect(await prisma.employee.findUniqueOrThrow({ where: { id: needsBackfill.id } })).toMatchObject({ phoneNormalized: "01055556666", deletedAt: null });
+        }
     }, 120_000);
 
     it("(i-b) still backfills a live client whose key is NULL", async () => {

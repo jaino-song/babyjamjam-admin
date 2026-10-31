@@ -1,4 +1,9 @@
 import type { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import type { Request, Response } from "express";
+import { mapHttpProblem, sendProblemResponse } from "infrastructure/filters/problem-response";
+import { CreateEmployeeDto } from "interface/dto/employee.dto";
 import { EmployeeService } from "application/services/employee.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
@@ -7,6 +12,8 @@ import { MessageTriggerService } from "application/services/message-trigger.serv
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
 import { ChangeEmployeeOpenStatusUsecase } from "application/usecases/employee/change-employee-open-status.usecase";
 import { CreateEmployeeUsecase } from "application/usecases/employee/create-employee.usecase";
+import { EmployeeWriteAgentCapabilitiesProvider } from "application/usecases/employee/employee-write-agent-capabilities.provider";
+import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { DeleteEmployeeUsecase } from "application/usecases/employee/delete-employee.usecase";
 import { FindEmployeeByIdUsecase } from "application/usecases/employee/find-employee-by-id.usecase";
 import {
@@ -480,11 +487,11 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
             expect(await employeeService.checkPhoneExists(branch.id, params.phone)).toBe(false);
 
             const restored = await controller.create({ branchId: branch.id }, {
-                ...params, name: "복원 관리사", workArea: ["서울"], grade: "프리미엄", openToNextWork: false,
+                ...params, name: params.name, workArea: ["서울"], grade: "프리미엄", openToNextWork: false,
                 birthday: "1990-01-02", registeredDate: "2024-01-15", smsAutomationEnabled: false,
             });
             expect(restored).toMatchObject({
-                id: original.id, restored: true, name: "복원 관리사", workArea: ["서울"], grade: "프리미엄",
+                id: original.id, restored: true, name: params.name, workArea: ["서울"], grade: "프리미엄",
                 openToNextWork: false, birthday: "1990-01-02", registeredDate: new Date("2024-01-15T00:00:00.000Z"), smsAutomationEnabled: false,
             });
             expect(await handle.raw.employee.findUnique({ where: { id: original.id } })).toMatchObject({ deletedAt: null });
@@ -505,10 +512,10 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         await employeeService.delete(branch.id, original.id);
 
         const restored = await new EmployeeController(employeeService).create({ branchId: branch.id }, {
-            name: "복원 이름", phone: "010-1234-5678",
+            name: "과거 등록 관리사", phone: "010-1234-5678",
         });
         expect(restored).toMatchObject({
-            id: original.id, restored: true, name: "복원 이름", phone: "010-1234-5678",
+            id: original.id, restored: true, name: "과거 등록 관리사", phone: "010-1234-5678",
             workArea: ["부산"], grade: "프리미엄", openToNextWork: true, birthday: "1980-01-02",
             registeredDate: new Date(`${registeredDate}T00:00:00.000Z`), smsAutomationEnabled: false,
         });
@@ -518,52 +525,178 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         });
     });
 
-    invariant("SI-EMP-10", "two creates racing for a deleted phone restore exactly once under the row lock", async () => {
+    for (const mixedOptions of [false, true]) {
+        invariant("SI-EMP-10", mixedOptions
+            ? "register_new racing restore has exactly one winner under the row lock"
+            : "two creates racing for a deleted phone restore exactly once under the row lock", async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const params = { name: "경합 복원", workArea: ["서울"], phone: "01012345678", grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true };
+            const original = await employeeService.create(branch.id, params);
+            tracker.track("employee", original.id);
+            await employeeService.delete(branch.id, original.id);
+
+            let unlock: () => void = () => undefined;
+            let signalLocked: () => void = () => undefined;
+            const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
+            const holder = handle.raw.$transaction(async (tx) => {
+                await tx.$queryRaw`SELECT id FROM employee WHERE id = ${original.id} FOR UPDATE`;
+                signalLocked();
+                await new Promise<void>((resolve) => { unlock = resolve; });
+            }, { timeout: 15_000 });
+            await locked;
+            const contenders = Promise.allSettled([
+                employeeService.create(branch.id, { ...params, ...(mixedOptions ? { onDeletedPhoneMatch: "register_new" as const } : {}) }),
+                employeeService.create(branch.id, { ...params, ...(mixedOptions ? { onDeletedPhoneMatch: "restore" as const } : {}) }),
+            ]);
+            try {
+                const deadline = Date.now() + 4_000;
+                for (;;) {
+                    const waiting = await handle.raw.$queryRaw<Array<{ pid: number }>>`
+                        SELECT pid FROM pg_stat_activity
+                        WHERE datname = current_database() AND pid <> pg_backend_pid()
+                          AND wait_event_type = 'Lock' AND query LIKE '%phone_normalized%'
+                          AND query LIKE '%FOR UPDATE%'
+                    `;
+                    if (waiting.length === 2) break;
+                    if (Date.now() > deadline) throw new Error("Both restore contenders must be observed waiting on the database row lock");
+                    await new Promise((resolve) => setTimeout(resolve, 20));
+                }
+            } finally {
+                unlock();
+                await holder;
+                for (const outcome of await contenders) if (outcome.status === "fulfilled") tracker.track("employee", outcome.value.id);
+            }
+            const outcomes = await contenders;
+            const winners = outcomes.filter((outcome) => outcome.status === "fulfilled");
+            const losers = outcomes.filter((outcome) => outcome.status === "rejected");
+            expect(winners).toHaveLength(1);
+            expect(losers).toHaveLength(1);
+            const winner = winners[0]?.value;
+            expect(winner).toBeDefined();
+            if (!mixedOptions || winner?.restored) expect(winner).toMatchObject({ id: original.id, restored: true });
+            else expect(winner?.id).not.toBe(original.id);
+            expect(losers[0]?.reason).toMatchObject({ status: 409, response: { code: "EMPLOYEE_PHONE_ALREADY_REGISTERED" } });
+            const persisted = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
+            if (winner?.restored) expect(persisted).toMatchObject({ name: winner.name, deletedAt: null });
+            else expect(persisted).toMatchObject({ phoneNormalized: null, deletedAt: expect.any(Date) });
+        });
+    }
+
+    invariant("SI-EMP-10", "normalized same names (NFC, whitespace, case) restore the same id", async () => {
+        for (const [stored, submitted] of [[" Alice  Kim ", "alice\tKIM"], ["가 관리사", "  가\n관리사 "]] as const) {
+            const branch = await createBranch(handle.raw, tracker);
+            const original = await employeeService.create(branch.id, { name: stored, phone: "01012345678" });
+            tracker.track("employee", original.id);
+            await employeeService.delete(branch.id, original.id);
+            expect(await employeeService.create(branch.id, { name: submitted, phone: "010-1234-5678" }))
+                .toMatchObject({ id: original.id, restored: true, name: submitted });
+        }
+    });
+
+    invariant("SI-EMP-10", "controller conflict body is catalog-backed; explicit restore applies the different name", async () => {
         const branch = await createBranch(handle.raw, tracker);
-        const params = { name: "경합 복원", workArea: ["서울"], phone: "01012345678", grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true };
-        const original = await employeeService.create(branch.id, params);
+        const controller = new EmployeeController(employeeService);
+        const original = await controller.create({ branchId: branch.id }, { name: "이전 사람", phone: "01012345678" });
         tracker.track("employee", original.id);
         await employeeService.delete(branch.id, original.id);
+        const before = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
+        const payload = { name: "다른 사람", phone: "010-1234-5678" };
+        let refusal: unknown;
+        try { await controller.create({ branchId: branch.id }, payload); } catch (error) { refusal = error; }
+        expect(refusal).toMatchObject({ status: 409, response: {
+            code: "EMPLOYEE_PHONE_HELD_BY_DELETED", deletedEmployee: { id: original.id, name: "이전 사람" },
+        } });
+        // Exercise the production HTTP mapping and serializer without starting a server.
+        const response = { locals: {}, setHeader: jest.fn(), status: jest.fn().mockReturnThis(), json: jest.fn() };
+        const problem = mapHttpProblem(refusal, { method: "POST" } as Request, response as unknown as Response);
+        expect(problem).not.toBeNull();
+        sendProblemResponse(response as unknown as Response, problem!);
+        expect(response.status).toHaveBeenCalledWith(409);
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+            code: "EMPLOYEE_PHONE_HELD_BY_DELETED", status: 409,
+            detail: "삭제된 관리사가 이 전화번호를 사용했어요. 그분을 복원하거나 새 관리사로 등록해 주세요.",
+            deletedEmployee: { id: original.id, name: "이전 사람" },
+        }));
+        expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual(before);
+        expect(await handle.raw.employee.count({ where: { branchId: branch.id } })).toBe(1);
+        const restored = await controller.create({ branchId: branch.id }, { ...payload, onDeletedPhoneMatch: "restore" });
+        expect(restored).toMatchObject({ id: original.id, name: payload.name, restored: true });
+        expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toMatchObject({ name: payload.name, deletedAt: null });
+    });
 
-        let unlock: () => void = () => undefined;
-        let signalLocked: () => void = () => undefined;
-        const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
-        const holder = handle.raw.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM employee WHERE id = ${original.id} FOR UPDATE`;
-            signalLocked();
-            await new Promise<void>((resolve) => { unlock = resolve; });
-        }, { timeout: 15_000 });
-        await locked;
-        const contenders = Promise.allSettled([
-            employeeService.create(branch.id, { ...params, name: "경합 A" }),
-            employeeService.create(branch.id, { ...params, name: "경합 B" }),
-        ]);
-        try {
-            const deadline = Date.now() + 4_000;
-            for (;;) {
-                const waiting = await handle.raw.$queryRaw<Array<{ pid: number }>>`
-                    SELECT pid FROM pg_stat_activity
-                    WHERE datname = current_database() AND pid <> pg_backend_pid()
-                      AND wait_event_type = 'Lock' AND query LIKE '%phone_normalized%'
-                      AND query LIKE '%FOR UPDATE%'
-                `;
-                if (waiting.length === 2) break;
-                if (Date.now() > deadline) throw new Error("Both restore contenders must be observed waiting on the database row lock");
-                await new Promise((resolve) => setTimeout(resolve, 20));
-            }
-        } finally {
-            unlock();
-            await holder;
+    invariant("SI-EMP-10", "controller register_new releases only the identity key and preserves the old person's history", async () => {
+        const branch = await createBranch(handle.raw, tracker);
+        const controller = new EmployeeController(employeeService);
+        const params = { name: "이전 사람", phone: "01012345678" };
+        const original = await controller.create({ branchId: branch.id }, params);
+        tracker.track("employee", original.id);
+        const client = await createClient(handle.raw, tracker, { branchId: branch.id });
+        const history = await createEmployeeSchedule(handle.raw, tracker, { clientId: client.id, primaryEmployeeId: original.id }, {
+            branchId: branch.id, startDate: new Date("2020-01-01"), endDate: new Date("2020-01-02"),
+        });
+        await employeeService.delete(branch.id, original.id);
+        const before = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
+        const created = await controller.create({ branchId: branch.id }, { ...params, name: "새 사람", onDeletedPhoneMatch: "register_new" });
+        tracker.track("employee", created.id);
+        expect(created).toMatchObject({ name: "새 사람", restored: false });
+        expect(created.id).not.toBe(original.id);
+        expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual({ ...before, phoneNormalized: null });
+        expect(await handle.raw.employee_schedule.findUniqueOrThrow({ where: { id: history.id } })).toEqual(history);
+        for (const option of [undefined, "restore", "register_new"] as const) {
+            await expect(controller.create({ branchId: branch.id }, { ...params, onDeletedPhoneMatch: option }))
+                .rejects.toMatchObject({ status: 409, response: { code: "EMPLOYEE_PHONE_ALREADY_REGISTERED" } });
         }
-        const outcomes = await contenders;
-        const winners = outcomes.filter((outcome) => outcome.status === "fulfilled");
-        const losers = outcomes.filter((outcome) => outcome.status === "rejected");
-        expect(winners).toHaveLength(1);
-        expect(losers).toHaveLength(1);
-        expect(winners[0]?.value).toMatchObject({ id: original.id, restored: true });
-        expect(losers[0]?.reason).toMatchObject({ status: 409, response: { code: "EMPLOYEE_PHONE_ALREADY_REGISTERED" } });
-        const persisted = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
-        expect(persisted).toMatchObject({ name: winners[0]?.value.name, deletedAt: null });
+    });
+
+    invariant("SI-EMP-10", "options with no deleted match create normally; resolution DTO rejects other values", async () => {
+        const branch = await createBranch(handle.raw, tracker);
+        const controller = new EmployeeController(employeeService);
+        for (const [index, option] of (["restore", "register_new"] as const).entries()) {
+            const dto = plainToInstance(CreateEmployeeDto, { name: "새 사람", phone: `0101234567${index}`, onDeletedPhoneMatch: option });
+            expect(await validate(dto)).toEqual([]);
+            const created = await controller.create({ branchId: branch.id }, dto);
+            tracker.track("employee", created.id);
+            expect(created.restored).toBe(false);
+        }
+        for (const invalid of [null, "other", 1, true]) {
+            const errors = await validate(plainToInstance(CreateEmployeeDto, { name: "사람", phone: "01012345678", onDeletedPhoneMatch: invalid }));
+            expect(errors).toEqual(expect.arrayContaining([expect.objectContaining({ property: "onDeletedPhoneMatch" })]));
+        }
+    });
+
+    invariant("SI-EMP-10", "register_new rolls back the released identity if creating the new person fails", async () => {
+        const branch = await createBranch(handle.raw, tracker);
+        const original = await employeeService.create(branch.id, { name: "이전 사람", phone: "01012345678" });
+        tracker.track("employee", original.id);
+        await employeeService.delete(branch.id, original.id);
+        const before = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
+        const repository = new SbEmployeeRepository(handle.service);
+        const create = jest.spyOn(repository, "create").mockRejectedValueOnce(new Error("injected create failure"));
+        try {
+            await expect(repository.createOrRestore(branch.id, original, { name: "새 사람", phone: original.phone }, undefined, "register_new"))
+                .rejects.toThrow("injected create failure");
+        } finally { create.mockRestore(); }
+        expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual(before);
+    });
+
+    invariant("SI-EMP-10", "agent different-name create is a certain failure and cannot opt into restore", async () => {
+        const branch = await createBranch(handle.raw, tracker);
+        const original = await employeeService.create(branch.id, { name: "이전 사람", phone: "01012345678" });
+        tracker.track("employee", original.id);
+        await employeeService.delete(branch.id, original.id);
+        const before = await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } });
+        const repository = new SbEmployeeRepository(handle.service);
+        const provider = new EmployeeWriteAgentCapabilitiesProvider(
+            new CreateEmployeeUsecase(repository), new UpdateEmployeeUsecase(repository),
+            new ChangeEmployeeOpenStatusUsecase(repository), new FindEmployeeByIdUsecase(repository),
+            repository, handle.service,
+        );
+        const create = provider.getCapabilities().find((capability) => capability.meta.name === "employees.create")!;
+        await expect(create.execute({ principal: { userId: "user", branchId: branch.id, globalRole: "admin", branchRole: "admin" },
+            sessionId: "session", traceId: "trace", locale: "ko", actionId: "action" }, {
+            name: "새 사람", phone: original.phone, workArea: ["서울"], grade: "스탠다드", onDeletedPhoneMatch: "restore",
+        })).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+        expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual(before);
     });
 
     invariant("SI-EMP-10", "a live duplicate returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED", async () => {

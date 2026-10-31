@@ -1,5 +1,5 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { EmployeeRestoreProfile, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { areEmployeeNamesEqual, DeletedEmployeePhoneMatchAction, EmployeeRestoreProfile, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import type { Prisma } from "@prisma/client";
 import { employeeAgentTargetVersion } from "domain/entities/employee-agent-target";
 import { ConflictException } from "@nestjs/common";
@@ -87,11 +87,18 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return employee;
     }
 
-    async createOrRestore(branchid: string, employee: EmployeeEntity, suppliedProfile: EmployeeRestoreProfile, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> {
+    async createOrRestore(branchid: string, employee: EmployeeEntity, suppliedProfile: EmployeeRestoreProfile, transaction?: Prisma.TransactionClient, onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction): Promise<EmployeeEntity & { restored: boolean }> {
         void transaction;
         const existing = await this.findByPhone(branchid, employee.phoneNormalized ?? "");
         if (existing && !existing.deletedAt) throw new ConflictException("EMPLOYEE_PHONE_ALREADY_REGISTERED");
         if (!existing) return Object.assign(await this.create(branchid, employee), { restored: false });
+        if (onDeletedPhoneMatch === "register_new") {
+            existing.phoneNormalized = null;
+            return Object.assign(await this.create(branchid, employee), { restored: false });
+        }
+        if (onDeletedPhoneMatch !== "restore" && !areEmployeeNamesEqual(existing.name, suppliedProfile.name)) {
+            throw new ConflictException({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", deletedEmployee: { id: existing.id, name: existing.name } });
+        }
         const profile = suppliedProfile;
         const saved = await this.create(branchid, EmployeeEntity.reconstitute(
             existing.id, profile.name, profile.workArea ?? existing.workArea, profile.phone,

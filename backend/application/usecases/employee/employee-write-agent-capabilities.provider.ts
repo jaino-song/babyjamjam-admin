@@ -36,7 +36,7 @@ function isEmployeeBranchPhoneUniqueViolation(error: unknown): boolean {
     if (error instanceof ConflictException) {
         const response = error.getResponse();
         return typeof response === "object" && "code" in response
-            && response.code === "EMPLOYEE_PHONE_ALREADY_REGISTERED";
+            && (response.code === "EMPLOYEE_PHONE_ALREADY_REGISTERED" || response.code === "EMPLOYEE_PHONE_HELD_BY_DELETED");
     }
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
 

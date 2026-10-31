@@ -1,7 +1,6 @@
 import {
     PROBLEM_CATALOG,
     ProblemCode,
-    ProblemDetails,
     createProblemDetails,
     normalizeApiError,
     parseProblemDetails,
@@ -11,6 +10,34 @@ import {
 const REQUEST_ID = "req-bjj-319-001";
 
 describe("problem details public contract", () => {
+    it("localizes the deleted employee phone conflict and only accepts its bounded extension", () => {
+        const problem = createProblemDetails({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", requestId: REQUEST_ID });
+        expect(problem.status).toBe(409);
+        expect(problem.detail).toBe("삭제된 관리사가 이 전화번호를 사용했어요. 그분을 복원하거나 새 관리사로 등록해 주세요.");
+        expect(createProblemDetails({ code: problem.code, requestId: REQUEST_ID, locale: "en-US" }).detail).toBe(
+            "A deleted employee used this phone number. Restore them or register a new employee.",
+        );
+        const deletedEmployee = { id: 7, name: "<b>plain text</b>" };
+        expect(parseProblemDetails({ ...problem, deletedEmployee: { ...deletedEmployee, secret: "dropped" }, unknown: true }, 409))
+            .toEqual({ ...problem, deletedEmployee });
+        expect(parseProblemDetails({ ...createProblemDetails({ code: "EMPLOYEE_PHONE_ALREADY_REGISTERED", requestId: REQUEST_ID }), deletedEmployee }, 409))
+            .not.toHaveProperty("deletedEmployee");
+    });
+
+    it.each([
+        { id: 0, name: "name" }, { id: -1, name: "name" }, { id: 1.5, name: "name" },
+        { id: "1", name: "name" }, { id: 1, name: "x".repeat(101) }, { id: 1, name: 1 },
+        null, {},
+    ])("drops invalid deleted employee extension %j", (deletedEmployee) => {
+        const problem = createProblemDetails({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", requestId: REQUEST_ID });
+        expect(parseProblemDetails({ ...problem, deletedEmployee }, 409)).toEqual(problem);
+    });
+
+    it("accepts a deleted employee name at the 100-character boundary", () => {
+        const problem = createProblemDetails({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", requestId: REQUEST_ID });
+        const deletedEmployee = { id: 1, name: "김".repeat(100) };
+        expect(parseProblemDetails({ ...problem, deletedEmployee }, 409)).toEqual({ ...problem, deletedEmployee });
+    });
     it("localizes the default SMS rule delete conflict and preserves its refusal contract", () => {
         const problem = createProblemDetails({ code: "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED", requestId: REQUEST_ID, outcome: "NOT_APPLIED" });
         expect(problem.status).toBe(409);

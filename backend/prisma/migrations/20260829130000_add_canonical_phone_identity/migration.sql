@@ -67,6 +67,7 @@ WITH stripped AS (
         "id",
         regexp_replace("phone", '\D', '', 'g') AS "digits"
     FROM "public"."employee"
+    WHERE "deleted_at" IS NULL
 ), canonical AS (
     SELECT
         "id",

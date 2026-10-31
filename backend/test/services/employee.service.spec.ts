@@ -255,6 +255,7 @@ describe("EmployeeService", () => {
                 undefined,
                 undefined,
                 undefined,
+                undefined,
             );
             expect(result).toBe(mockEmployee);
         });
@@ -287,6 +288,7 @@ describe("EmployeeService", () => {
                 undefined,
                 undefined,
                 undefined,
+                undefined,
             );
         });
 
@@ -313,6 +315,7 @@ describe("EmployeeService", () => {
                 params.phone,
                 params.grade,
                 params.openToNextWork,
+                undefined,
                 undefined,
                 undefined,
                 undefined,
