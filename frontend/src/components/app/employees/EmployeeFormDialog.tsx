@@ -47,6 +47,8 @@ import {
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { getDeletedPhoneMatch, type DeletedPhoneMatch } from "./deleted-phone-match";
 import { FieldMessageText } from "@/components/app/ui/field-message";
 import {
     APP_FORM_CONTROL_CLASS_NAME,
@@ -463,6 +465,7 @@ function EmployeeFormContent({
     // Fields whose server error the user already edited away; set again by each new error.
     const [editedServerErrorFields, setEditedServerErrorFields] = useState<EmployeeFormField[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deletedPhoneMatch, setDeletedPhoneMatch] = useState<(DeletedPhoneMatch & { dto: CreateEmployeeDto }) | null>(null);
     const formDataBaselineRef = useRef<FormData>(initialFormData);
 
     const createMutation = useCreateEmployee();
@@ -554,6 +557,7 @@ function EmployeeFormContent({
             }
 
             setFormData(nextFormData);
+            setDeletedPhoneMatch(null);
             setTouched({ workArea: false });
             resetFieldStates();
             setError(null);
@@ -683,7 +687,8 @@ function EmployeeFormContent({
         });
     };
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (onDeletedPhoneMatch?: CreateEmployeeDto["onDeletedPhoneMatch"]) => {
+        if (isLoading) return;
         fields.setSubmitted(true);
         setTouched({ workArea: true });
         setError(null);
@@ -698,6 +703,7 @@ function EmployeeFormContent({
         if (!isPhoneValid) return;
 
         setIsSubmitting(true);
+        let submittedCreateDto: CreateEmployeeDto | undefined;
         try {
             if (isEditMode && employee) {
                 const dto: UpdateEmployeeDto = {
@@ -730,7 +736,10 @@ function EmployeeFormContent({
                     birthday: formData.birthday,
                 };
 
-                const newEmployee = await createMutation.mutateAsync(dto);
+                submittedCreateDto = onDeletedPhoneMatch && deletedPhoneMatch
+                    ? { ...deletedPhoneMatch.dto, onDeletedPhoneMatch }
+                    : dto;
+                const newEmployee = await createMutation.mutateAsync(submittedCreateDto);
 
                 if (newEmployee && ("code" in newEmployee || "statusCode" in newEmployee)) {
                     setMutationError(newEmployee);
@@ -744,8 +753,15 @@ function EmployeeFormContent({
                 onSuccess?.(newEmployee);
             }
 
+            setDeletedPhoneMatch(null);
             onClose();
         } catch (submitError: unknown) {
+            const match = submittedCreateDto ? getDeletedPhoneMatch(submitError) : null;
+            if (match && submittedCreateDto) {
+                setDeletedPhoneMatch({ ...match, dto: submittedCreateDto });
+                return;
+            }
+            setDeletedPhoneMatch(null);
             console.error("[EmployeeFormDialog] Failed to save employee:", submitError);
             setMutationError(submitError);
         } finally {
@@ -763,6 +779,7 @@ function EmployeeFormContent({
         setTouched({ workArea: false });
         resetFieldStates();
         setError(null);
+        setDeletedPhoneMatch(null);
         onDirtyChange?.(false);
         onClose();
     };
@@ -782,7 +799,7 @@ function EmployeeFormContent({
             <Button
                 variant="positive"
                 size="sm"
-                onClick={handleSubmit}
+                onClick={() => void handleSubmit()}
                 disabled={isLoading || isSubmitBlocked}
                 data-component="desktop_employees_form-dialog_submit"
                 className="w-full sm:flex-1"
@@ -817,7 +834,7 @@ function EmployeeFormContent({
                     type="button"
                     variant="positive"
                     size="sm"
-                    onClick={handleSubmit}
+                    onClick={() => void handleSubmit()}
                     disabled={isLoading || isSubmitBlocked}
                     data-component="desktop_employees_form-panel_submit"
                     className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
@@ -1201,12 +1218,42 @@ function EmployeeFormContent({
         </SteppedWizardPanelContent>
     );
 
+    const choiceBase = `desktop_employees_form-${surface}_deleted-phone-choice`;
+    const deletedPhoneChoice = deletedPhoneMatch ? (
+        <TwoButtonModal
+            data-component={choiceBase}
+            open={open && deletedPhoneMatch !== null}
+            onOpenChange={(nextOpen) => { if (!nextOpen && !isLoading) setDeletedPhoneMatch(null); }}
+            title={locale === "en" ? "Restore or register a new caregiver?" : "삭제된 관리사를 복원할까요?"}
+            description={deletedPhoneMatch?.detail}
+            isDescriptionVisuallyHidden={false}
+            size="detail"
+            cancelLabel={locale === "en" ? "Cancel" : "취소"}
+            approvalLabel={deletedPhoneMatch?.name !== undefined
+                ? locale === "en" ? `Restore ${deletedPhoneMatch.name}` : `${deletedPhoneMatch.name}님 복원`
+                : locale === "en" ? "Restore deleted caregiver" : "삭제된 관리사 복원"}
+            onApprove={() => void handleSubmit("restore")}
+            isPending={isLoading}
+        >
+            <Button
+                data-component={`${choiceBase}_body_register-new`}
+                type="button"
+                variant="outline"
+                disabled={isLoading}
+                onClick={() => void handleSubmit("register_new")}
+            >
+                {locale === "en" ? "Register a new caregiver" : "새 관리사로 등록"}
+            </Button>
+        </TwoButtonModal>
+    ) : null;
+
     if (surface === "panel") {
         if (!open) return null;
 
         return renderLayout ? (
-            <>{renderLayout({ content: panelContent, footer: panelFooter })}</>
+            <>{renderLayout({ content: panelContent, footer: panelFooter })}{deletedPhoneChoice}</>
         ) : (
+            <>
             <div data-component="desktop_employees_form-panel" className="flex h-full min-h-0 flex-col">
                 <div data-component="desktop_employees_form-panel_content-fallback" className="min-h-0 flex-1 overflow-y-auto">
                     {panelContent}
@@ -1215,10 +1262,13 @@ function EmployeeFormContent({
                     {panelFooter}
                 </footer>
             </div>
+            {deletedPhoneChoice}
+            </>
         );
     }
 
     return (
+        <>
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
             <FormDialogShell
                 dataComponent="desktop_employees_form-dialog"
@@ -1232,5 +1282,7 @@ function EmployeeFormContent({
                 {dialogContent}
             </FormDialogShell>
         </Dialog>
+        {deletedPhoneChoice}
+        </>
     );
 }
