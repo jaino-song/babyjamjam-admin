@@ -36,29 +36,6 @@ function invariant(id: string, title: string, body: jest.ProvidesCallback): void
     it(`${id} ${title}`, body);
 }
 
-function knownDefect(id: string, title: string, expectedFailure: RegExp | string, body: jest.ProvidesCallback): void {
-    const testName = `${id} ${title}`;
-    it.failing(testName, async () => {
-        let thrown: unknown;
-        try {
-            await (body as () => Promise<unknown>)();
-        } catch (error) {
-            thrown = error;
-        }
-        if (thrown === undefined) {
-            return; // unexpected pass — it.failing reports RED (defect looks fixed)
-        }
-        const message = thrown instanceof Error ? thrown.message : String(thrown);
-        const matches = typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
-        if (matches) {
-            throw thrown; // expected failure — it.failing keeps the suite green
-        }
-        console.error(
-            `[knownDefect] ${testName}: expected failure ${String(expectedFailure)} but the test failed for a different reason: ${message}`,
-        );
-    });
-}
-
 /** The client-history key family `useClientMessageHistory` subscribes to. */
 const CLIENT_HISTORY_KEY = ["messages", "logs", "client", 7] as const;
 const CLIENT_HISTORY_KEY_ALL = ["messages", "logs", "all"] as const;
@@ -167,7 +144,7 @@ invariant(
 // uses staleTime: 0 and refetches on remount; it is not a mobile parity defect.
 // The separately keyed all-logs view has the 30-minute default and is missed
 // even when a caller supplies clientId. Pin that actual stale-view defect.
-knownDefect("SI-SMS-08", "retry refreshes the mobile all-logs view", EXPECTED_ALL_LOGS_AFTER_CHANGE, async () => {
+invariant("SI-SMS-08", "retry refreshes the mobile all-logs view", async () => {
     apiMock.post.mockResolvedValue({ data: {} });
     const queryClient = await runMutation(useRetryMessageHistory, 1042, 7);
     if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)) {
@@ -175,7 +152,7 @@ knownDefect("SI-SMS-08", "retry refreshes the mobile all-logs view", EXPECTED_AL
     }
 });
 
-knownDefect("SI-SMS-08", "resend refreshes the mobile all-logs view", EXPECTED_ALL_LOGS_AFTER_CHANGE, async () => {
+invariant("SI-SMS-08", "resend refreshes the mobile all-logs view", async () => {
     apiMock.post.mockResolvedValue({ data: {} });
     const queryClient = await runMutation(useResendMessageTriggerJob, "job-1", 7);
     if (!isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL)) {
@@ -183,10 +160,9 @@ knownDefect("SI-SMS-08", "resend refreshes the mobile all-logs view", EXPECTED_A
     }
 });
 
-knownDefect(
+invariant(
     "SI-SMS-08",
     "cancel refreshes the mobile all-logs view",
-    EXPECTED_ALL_LOGS_AFTER_CHANGE + ": cancel",
     async () => {
         apiMock.post.mockResolvedValue({ data: {} });
         const queryClient = await runMutation(useCancelMessageTriggerJob, "job-1", 7);
@@ -322,10 +298,9 @@ async function addManualRecipient(value: string): Promise<void> {
     });
 }
 
-knownDefect(
+invariant(
     "SI-SMS-08",
     "after a successful manual SMS send the mobile message views are refreshed",
-    "the manual send did not invalidate the message views",
     async () => {
         mockGetMessageSenderApproval.mockResolvedValue({
             approvalStatus: "approved",

@@ -5,9 +5,8 @@ import {
   resolveProblemPresentation,
   type NormalizedApiError,
 } from "@babyjamjam/shared";
-
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
@@ -46,6 +45,7 @@ import { useFieldMessages } from "@/hooks/use-field-messages";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
+import { invalidateMessageViews } from "@/lib/messages/invalidate-message-views";
 import { normalizeIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
 import {
   formatKoreanPhoneNumber,
@@ -827,6 +827,7 @@ export default function NewMessagePage() {
 }
 
 function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initialClient }: NewMessageFormProps) {
+  const queryClient = useQueryClient();
   const initialClientPhone = normalizeKoreanPhoneDigits(initialClient?.phone);
   const initialRecipient: RecipientChip | null = initialClient && initialClientPhone
     ? {
@@ -1539,6 +1540,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return data;
     },
     onSuccess: () => {
+      void invalidateMessageViews(queryClient);
       setErrorMessage(null);
       setSendError(null);
       setSendRetryFingerprint(null);
@@ -1548,7 +1550,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
           ? "서비스 종료 안내 발송 요청이 접수되었습니다."
           : "메시지 발송 요청이 접수되었습니다.",
       );
-
       setReceiver("");
       setRecipientNameInputValue("");
       setRecipients([]);
@@ -1556,7 +1557,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setBodyOverride(null);
       submissionRef.current = null;
       setReceiptLinkPreparation(null);
-
     },
     onError: (err) => {
       const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });

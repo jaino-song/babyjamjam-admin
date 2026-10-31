@@ -46,6 +46,7 @@ describe("ENTITY_QUERY_ROOTS", () => {
     expect(ENTITY_QUERY_ROOTS.client).toEqual([clientQueryKeys.all, dashboardQueryKeys.analytics().slice(0, 1)]);
     expect(ENTITY_QUERY_ROOTS.employee).toEqual([employeeQueryKeys.all]);
     expect(ENTITY_QUERY_ROOTS.document).toEqual([
+      clientQueryKeys.all,
       eformsignQueryKeys.documents(),
       ["eformsign-docs"],
       ["eformsign-doc-client-names"],
@@ -59,7 +60,7 @@ describe("ENTITY_QUERY_ROOTS", () => {
       templateQueryKeys.all,
     ]);
     expect(templateQueryKeys.all).toEqual(messageTemplateKeys.all);
-    expect(ENTITY_QUERY_ROOTS["service-record"]).toEqual([serviceRecordQueryKeys.all]);
+    expect(ENTITY_QUERY_ROOTS["service-record"]).toEqual([serviceRecordQueryKeys.all, employeeQueryKeys.all]);
     expect(ENTITY_QUERY_ROOTS.inquiry).toEqual([consultationInquiryQueryKeys.all]);
     expect(ENTITY_QUERY_ROOTS.call).toEqual([callInboxKeys.all]);
     expect(ENTITY_QUERY_ROOTS.file).toEqual([documentQueryKeys.all, documentCategoryQueryKeys.all]);

@@ -7,6 +7,7 @@ interface EmployeeWizardFormData {
   phone: string;
   grade: string;
   openToNextWork: boolean;
+  smsAutomationEnabled: boolean;
 }
 
 interface EmployeeWizardStore extends EmployeeWizardFormData {
@@ -25,6 +26,7 @@ const INITIAL_FORM: EmployeeWizardFormData = {
   phone: "",
   grade: DEFAULT_EMPLOYEE_GRADE,
   openToNextWork: true,
+  smsAutomationEnabled: true,
 };
 
 export const useEmployeeWizardStore = create<EmployeeWizardStore>((set) => ({

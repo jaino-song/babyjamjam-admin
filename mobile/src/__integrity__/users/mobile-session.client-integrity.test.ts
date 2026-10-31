@@ -4,7 +4,7 @@
 import { getQueryClient } from "@/lib/queryClient";
 import { AUTH_USER_QUERY_KEY } from "@/hooks/useGetAuthUser";
 import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
-import { knownDefect, invariant } from "./client-known-defect";
+import { invariant } from "./client-known-defect";
 
 const ACTIVE_ADMIN_USER = {
     id: "user-1",
@@ -87,9 +87,7 @@ describe("SI-USER-08 mobile session authority integrity (real authority reset, H
         });
     });
 
-    // If this starts failing because the fix landed (403 now triggers an authority
-    // reset or an auth-user re-fetch), flip this call to a plain `invariant`.
-    knownDefect(
+    invariant(
         "SI-USER-08",
         "a 403 caused by a server-side role change re-fetches the cached authority",
         async () => {
@@ -118,7 +116,6 @@ describe("SI-USER-08 mobile session authority integrity (real authority reset, H
                     "authenticatedFetch triggers no authority re-fetch/reset on 403",
             );
         },
-        "SI-USER-08: a 403 ACCESS_DENIED on a protected mobile API left the cached authUser query intact",
     );
 
     // NOTE: the former source-grep staleTime contract was REPLACED by a

@@ -1,4 +1,5 @@
 import { refreshApplicationSession } from "@/lib/auth/session-refresh";
+import { invalidateAuthUser } from "@/lib/auth/invalidate-auth-user";
 
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
@@ -28,12 +29,19 @@ export async function authenticatedFetch(
     const signal = requestSignal(input, init);
     const response = await fetch(input, init);
 
+    if (response.status === 403) {
+        await invalidateAuthUser();
+        return response;
+    }
+
     if (!requiresApplicationSessionRefresh(response)) return response;
 
     throwIfAborted(signal);
     await refreshApplicationSession();
     throwIfAborted(signal);
-    return fetch(retryInput, init);
+    const retriedResponse = await fetch(retryInput, init);
+    if (retriedResponse.status === 403) await invalidateAuthUser();
+    return retriedResponse;
 }
 
 export async function openAuthenticatedEventSource(
