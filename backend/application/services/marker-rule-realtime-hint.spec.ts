@@ -34,10 +34,13 @@ function terminalStub(control: Control) {
         name: "test-terminal-response",
         query: {
             $allModels: {
-                async $allOperations({ model, operation }) {
+                async $allOperations({ model, operation, args }) {
                     control.operations.push(`${model}.${operation}`);
                     if (model === "message_trigger_rule") {
-                        if (operation === "findUnique") return control.markerExists ? { id: "marker" } : null;
+                        if (operation === "findUnique") {
+                            expect(args).toMatchObject({ where: { deletedAt: null } });
+                            return control.markerExists ? { id: "marker" } : null;
+                        }
                         if (operation === "createManyAndReturn") {
                             return control.markerExists || control.lostRace ? [] : [{ id: "marker", branchId: null }];
                         }

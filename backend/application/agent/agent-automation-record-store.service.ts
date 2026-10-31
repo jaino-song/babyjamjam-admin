@@ -445,6 +445,7 @@ export class AgentAutomationRecordStoreService {
             const rules = await tx.message_trigger_rule.findMany({
                 where: {
                     OR: [{ branchId: params.branchId }, { branchId: null }],
+                    deletedAt: null,
                     eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
                 },
                 select: { id: true, branchId: true },
@@ -635,7 +636,7 @@ export class AgentAutomationRecordStoreService {
         // under enforce and roll the caller's transaction back. Only these two statements run in system
         // scope (see eslint.system-scope.allowlist.mjs); they stay on the caller's `tx` and are awaited inside.
         await runSystemScope(async () => {
-            const existing = await tx.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID }, select: { id: true } });
+            const existing = await tx.message_trigger_rule.findUnique({ where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID, deletedAt: null }, select: { id: true } });
             if (existing) return;
             await tx.message_trigger_rule.createManyAndReturn({ select: { id: true, branchId: true }, data: [{
                 id: MESSAGE_AUTOMATION_INTENT_RULE_ID, branchId: null, name: "메시지 자동화 생성 복구 표식", isActive: false,

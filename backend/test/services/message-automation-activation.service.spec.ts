@@ -54,6 +54,7 @@ describe("MessageAutomationActivationService send time", () => {
         expect(rule.sendTime).toBe("14:37");
         const selection = transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql;
         expect(selection.sql).toContain('send_time AS "sendTime"');
+        expect(selection.sql).toContain("deleted_at IS NULL");
     });
 });
 
@@ -107,7 +108,7 @@ describe("MessageAutomationActivationService SERVICE_END_NOTICE ownership (BJJ-3
 
         expect(activated.isActive).toBe(true);
         expect(transaction.message_trigger_rule.update).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: rule.id }, data: expect.objectContaining({ isActive: true }) }),
+            expect.objectContaining({ where: { id: rule.id, deletedAt: null }, data: expect.objectContaining({ isActive: true }) }),
         );
     });
 
@@ -178,6 +179,7 @@ describe("MessageAutomationActivationService automatic retry rule policy (규칙
         expect(selection.sql).toContain("target_client_status");
         expect(selection.sql).toContain("retry_on_failure");
         expect(selection.sql).toContain("FOR UPDATE");
+        expect(selection.sql).toContain("deleted_at IS NULL");
     });
 
     it("treats a rule row without the columns as 전체 / 재전송 켬", async () => {
@@ -204,7 +206,7 @@ describe("MessageAutomationActivationService automatic retry rule policy (규칙
             const findUnique = jest.fn().mockResolvedValue({ branchId, rule });
 
             await expect(readWith(findUnique)).resolves.toBe(expected);
-            expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: jobId } }));
+            expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: jobId, rule: { deletedAt: null } } }));
         });
 
         it("answers rule-missing when the rule row or the job is gone", async () => {

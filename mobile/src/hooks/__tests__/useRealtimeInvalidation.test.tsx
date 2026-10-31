@@ -157,13 +157,13 @@ describe("useRealtimeInvalidation", () => {
       jest.advanceTimersByTime(1000);
       latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
 
     act(() => {
       jest.advanceTimersByTime(1500);
     });
 
-    expect(invalidatedRoots(invalidateSpy).slice(2).sort()).toEqual([
+    expect(invalidatedRoots(invalidateSpy).slice(3).sort()).toEqual([
       JSON.stringify(["employees"]),
       JSON.stringify(["service-records"]),
     ]);
@@ -232,17 +232,17 @@ describe("useRealtimeInvalidation", () => {
         jest.advanceTimersByTime(FOLLOW_UP - 100);
         latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(2);
+      expect(invalidateSpy).toHaveBeenCalledTimes(3);
 
       act(() => {
         jest.advanceTimersByTime(99);
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(2);
+      expect(invalidateSpy).toHaveBeenCalledTimes(3);
 
       act(() => {
         jest.advanceTimersByTime(1);
       });
-      expect(invalidatedRoots(invalidateSpy).slice(2).sort()).toEqual([
+      expect(invalidatedRoots(invalidateSpy).slice(3).sort()).toEqual([
         JSON.stringify(["employees"]),
         JSON.stringify(["service-records"]),
       ]);
@@ -250,7 +250,7 @@ describe("useRealtimeInvalidation", () => {
       act(() => {
         jest.advanceTimersByTime(FOLLOW_UP * 2);
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(4);
+      expect(invalidateSpy).toHaveBeenCalledTimes(5);
     });
 
     it("starts a fresh window for an event after the trailing pass fired", async () => {
@@ -269,18 +269,20 @@ describe("useRealtimeInvalidation", () => {
       act(() => {
         latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      expect(invalidateSpy).toHaveBeenCalledTimes(4);
 
       act(() => {
         jest.advanceTimersByTime(FOLLOW_UP - 1);
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      expect(invalidateSpy).toHaveBeenCalledTimes(4);
 
       act(() => {
         jest.advanceTimersByTime(1);
       });
       // Only the new window's root: the earlier window's roots are not replayed.
-      expect(invalidatedRoots(invalidateSpy).slice(3)).toEqual([JSON.stringify(["service-records"])]);
+      expect(invalidatedRoots(invalidateSpy).slice(4)).toEqual([
+        JSON.stringify(["service-records"]), JSON.stringify(["employees"]),
+      ]);
     });
   });
 

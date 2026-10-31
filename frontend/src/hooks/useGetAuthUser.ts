@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { usePathname } from "next/navigation";
 import { isPublicAuthPath } from "@/lib/auth/routes";
+import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 
 // User 타입 정의 (백엔드 응답 기반)
 export interface AuthUser {
@@ -23,7 +24,7 @@ interface UseGetAuthUserOptions {
     initialData?: AuthUser | null;
 }
 
-export const AUTH_USER_QUERY_KEY = ['authUser'] as const;
+export { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 
 // 외부에서 사용할 수 있도록 queryFn export
 export const fetchAuthUser = async (): Promise<AuthUser | null> => {

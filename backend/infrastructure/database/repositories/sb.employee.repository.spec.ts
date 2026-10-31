@@ -1,3 +1,4 @@
+import { NotFoundException } from "@nestjs/common";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { employeeAgentTargetVersion } from "domain/entities/employee-agent-target";
 import { SbEmployeeRepository } from "./sb.employee.repository";
@@ -11,7 +12,7 @@ describe("SbEmployeeRepository", () => {
         const repository = new SbEmployeeRepository(prisma as never);
         const employee = EmployeeEntity.reconstitute(7, "직원", ["서울"], "01012345678", "A", true, new Date());
 
-        await expect(repository.update("branch-a", employee)).rejects.toThrow("not found");
+        await expect(repository.update("branch-a", employee)).rejects.toBeInstanceOf(NotFoundException);
         expect(prisma.employee.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: 7, branchId: "branch-a", deletedAt: null },
         }));

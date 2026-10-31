@@ -94,7 +94,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 1, branchId: branchId },
+                    where: { id: 1, branchId: branchId, deletedAt: null },
                 });
                 expect(result).toBeInstanceOf(EmployeeEntity);
                 expect(result).toMatchObject({
@@ -119,7 +119,7 @@ describe("SbEmployeeRepository", () => {
 
                 // Assert
                 expect(employeeModel.findFirst).toHaveBeenCalledWith({
-                    where: { id: 999, branchId: branchId },
+                    where: { id: 999, branchId: branchId, deletedAt: null },
                 });
                 expect(result).toBeNull();
             });
@@ -537,7 +537,7 @@ describe("SbEmployeeRepository", () => {
             const result = await repository.findByIdForDate(branchId, 7, given);
 
             expect(employeeModel.findFirst).toHaveBeenCalledWith({
-                where: { id: 7, branchId },
+                where: { id: 7, branchId, deletedAt: null },
                 include: {
                     primaryEmployeeSchedules: {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },

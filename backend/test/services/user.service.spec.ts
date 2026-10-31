@@ -1429,7 +1429,99 @@ describe("UserService", () => {
 
     describe("approve", () => {
         beforeEach(() => {
-            prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === "owner-1"
+                    ? { id: "owner-1", role: "owner" }
+                    : { id: where.id, role: null, approvalStatus: "pending" });
+        });
+
+        it("locks the target user before reading its state and before any write", async () => {
+            prismaService.user.update.mockResolvedValue({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await service.approve("u1", { role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1" });
+
+            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
+            const [lockQuery] = prismaService.$queryRaw.mock.calls[0];
+            expect(lockQuery.strings.join(" ")).toContain('SELECT "id" FROM "user"');
+            expect(lockQuery.strings.join(" ")).toContain("FOR UPDATE");
+            expect(lockQuery.values).toEqual(["u1"]);
+            const targetReadIndex = prismaService.user.findUnique.mock.calls
+                .findIndex(([args]: [{ where: { id: string } }]) => args.where.id === "u1");
+            expect(targetReadIndex).toBeGreaterThanOrEqual(0);
+            expect(prismaService.$queryRaw.mock.invocationCallOrder[0])
+                .toBeLessThan(prismaService.user.findUnique.mock.invocationCallOrder[targetReadIndex]!);
+            expect(prismaService.user.findUnique.mock.invocationCallOrder[targetReadIndex])
+                .toBeLessThan(prismaService.user.update.mock.invocationCallOrder[0]!);
+        });
+
+        it("refuses a missing target with 404 before any writes", async () => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" }).mockResolvedValueOnce(null);
+
+            await expect(service.approve("missing", {
+                role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1",
+            })).rejects.toMatchObject({ status: 404, response: { code: "RESOURCE_NOT_FOUND" } });
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it("refuses an owner target with the ACCESS_DENIED problem before any writes", async () => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: "owner", approvalStatus: "approved" });
+
+            await expect(service.approve("u1", {
+                role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1",
+            })).rejects.toMatchObject({
+                status: 403,
+                response: {
+                    code: "ACCESS_DENIED", outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    errors: [{ pointer: "/id", code: "INVALID_VALUE" }],
+                },
+            });
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it.each(["approvedBy", "actor"])("refuses self approval matched by %s independently of target role", async (identity) => {
+            // A non-owner target isolates the self guard from the owner-target guard.
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await expect(service.approve("u1", {
+                role: "manager", branchId: "branch-1",
+                approvedBy: identity === "approvedBy" ? "u1" : "owner-1",
+                actor: identity === "actor" ? { userId: "u1", globalRole: "user" } : ownerActor,
+            })).rejects.toMatchObject({
+                status: 403,
+                response: { code: "ACCESS_DENIED", outcome: "NOT_APPLIED", errors: [{ pointer: "/id", code: "INVALID_VALUE" }] },
+            });
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            { role: null, approvalStatus: "pending" },
+            { role: null, approvalStatus: "rejected" },
+            { role: "manager", approvalStatus: "approved" },
+        ])("audits the real prior state $role/$approvalStatus and keeps the transition allowed", async (prior) => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", ...prior });
+            prismaService.user.update.mockResolvedValue({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await service.approve("u1", { role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1" });
+
+            expect(auditAppend).toHaveBeenCalledWith(prismaService, expect.objectContaining({
+                action: "user.approved", before: { id: "u1", ...prior },
+                after: { id: "u1", role: "user", approvalStatus: "approved", ownerBranchId: null },
+            }));
         });
 
         it("should approve a user in a single transaction, assigning role, approval metadata, and bumping tokenVersion", async () => {

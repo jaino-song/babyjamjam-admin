@@ -125,6 +125,38 @@ describe("EmployeeController (Integration)", () => {
     // POST /employees - Create
     // ============================================
     describe("POST /employees", () => {
+        it("forwards a name-and-phone restore request without injecting create defaults", async () => {
+            employeeService.create.mockResolvedValue(Object.assign(createMockEmployee({ id: 42 }), { restored: true }));
+            const response = await request(app.getHttpServer()).post("/employees").send({
+                name: "복원 직원", phone: "01012345678",
+            });
+            expect(response.status).toBe(201);
+            expect(response.body).toMatchObject({ id: 42, restored: true });
+            const supplied = employeeService.create.mock.calls[0]![1];
+            expect(supplied).toMatchObject({ name: "복원 직원", phone: "01012345678" });
+            for (const field of ["registeredDate", "smsAutomationEnabled", "workArea", "grade", "openToNextWork", "birthday"] as const) {
+                expect(supplied[field]).toBeUndefined();
+            }
+        });
+
+        it.each(["workArea", "grade", "openToNextWork"])("still rejects an explicit null %s", async (field) => {
+            const response = await request(app.getHttpServer()).post("/employees").send({
+                name: "직원", phone: "01012345678", [field]: null,
+            });
+            expect(response.status).toBe(400);
+            expect(employeeService.create).not.toHaveBeenCalled();
+        });
+
+        it.each([false, true])("returns restored=%s in the create response", async (restored) => {
+            const employee = Object.assign(createMockEmployee({ id: 42 }), { restored });
+            employeeService.create.mockResolvedValue(employee);
+            const response = await request(app.getHttpServer()).post("/employees").send({
+                name: employee.name, phone: employee.phone, workArea: employee.workArea,
+                grade: employee.grade, openToNextWork: employee.openToNextWork,
+            });
+            expect(response.status).toBe(201);
+            expect(response.body).toMatchObject({ id: 42, restored });
+        });
         describe("given valid employee data", () => {
             it("should create a new employee and return 201", async () => {
                 // Arrange
@@ -136,7 +168,7 @@ describe("EmployeeController (Integration)", () => {
                     openToNextWork: true,
                 };
                 const createdEmployee = createMockEmployee({ id: 5, ...createDto });
-                employeeService.create.mockResolvedValue(createdEmployee);
+                employeeService.create.mockResolvedValue(Object.assign(createdEmployee, { restored: false }));
 
                 // Act
                 const response = await request(app.getHttpServer())
@@ -166,13 +198,13 @@ describe("EmployeeController (Integration)", () => {
                         openToNextWork: true,
                     };
                     employeeService.create.mockResolvedValue(
-                        EmployeeEntity.create(
+                        Object.assign(EmployeeEntity.create(
                             createDto.name,
                             createDto.workArea,
                             createDto.phone,
                             createDto.grade,
                             createDto.openToNextWork,
-                        ),
+                        ), { restored: false }),
                     );
 
                     const response = await request(app.getHttpServer())
@@ -199,7 +231,7 @@ describe("EmployeeController (Integration)", () => {
                     registeredDate: "2025-06-15",
                 };
                 const createdEmployee = createMockEmployee({ id: 10, name: "Dated Employee" });
-                employeeService.create.mockResolvedValue(createdEmployee);
+                employeeService.create.mockResolvedValue(Object.assign(createdEmployee, { restored: false }));
 
                 // Act
                 const response = await request(app.getHttpServer())
@@ -295,7 +327,7 @@ describe("EmployeeController (Integration)", () => {
         });
 
         describe("given employee does not exist", () => {
-            it("should return null from service", async () => {
+            it("should return 404 when the service cannot find the employee", async () => {
                 // Arrange
                 employeeService.findById.mockResolvedValue(null);
 
@@ -305,7 +337,8 @@ describe("EmployeeController (Integration)", () => {
                     .query({ id: "999" });
 
                 // Assert
-                expect(response.status).toBe(200);
+                expect(response.status).toBe(404);
+                expect(response.body.code).toBe("RESOURCE_NOT_FOUND");
                 expect(employeeService.findById).toHaveBeenCalledWith(expect.any(String), 999);
             });
         });
@@ -628,7 +661,7 @@ describe("EmployeeController (Integration)", () => {
         };
 
         it("forwards an explicit flag on create and update", async () => {
-            employeeService.create.mockResolvedValue(createMockEmployee());
+            employeeService.create.mockResolvedValue(Object.assign(createMockEmployee(), { restored: false }));
             employeeService.update.mockResolvedValue(createMockEmployee());
 
             await request(app.getHttpServer()).post("/employees")

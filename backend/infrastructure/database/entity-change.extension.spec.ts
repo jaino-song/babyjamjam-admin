@@ -244,6 +244,28 @@ describe("entity-change extension (model operations)", () => {
         expect(events).toEqual([{ branchId: null, entities: ["message"] }]);
     });
 
+    it("does not suppress soft-delete hints, but suppresses an already-deleted no-op", async () => {
+        const { bus, events, raw } = setup();
+        const data = { deletedAt: new Date(), isActive: false, jobsStale: false };
+        for (const count of [0, 1]) {
+            await tenantContextStore.run({ origin: "http", branchId: "b1" }, () => handleEntityModelOperation({
+                model: "message_trigger_rule", operation: "updateMany", args: { data },
+                query: jest.fn().mockResolvedValue({ count }),
+            }, bus));
+            jest.advanceTimersByTime(300);
+            expect(events).toHaveLength(count);
+        }
+        expect(events).toEqual([{ branchId: "b1", entities: ["message"] }]);
+        events.length = 0;
+        const sql = ["UPDATE message_trigger_rule SET deleted_at = now(), is_active = false, jobs_stale = false WHERE deleted_at IS NULL RETURNING id"];
+        await raw(sql, []);
+        jest.advanceTimersByTime(300);
+        expect(events).toEqual([]);
+        await raw(sql, [{ id: "rule-1" }]);
+        jest.advanceTimersByTime(300);
+        expect(events).toEqual([{ branchId: null, entities: ["message"] }]);
+    });
+
     it("an emit that throws never fails the write", async () => {
         const throwingBus = {
             emit: jest.fn(() => {

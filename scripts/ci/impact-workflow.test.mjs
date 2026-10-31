@@ -13,6 +13,17 @@ function parse(text) {
 }
 const read = name => readFileSync(resolve(root,'.github/workflows',name),'utf8');
 const old = name => execFileSync('git',['show',`${base}:.github/workflows/${name}`],{cwd:root,encoding:'utf8'});
+function withStateIntegrityRealDatabaseStep(steps) {
+  const name = 'Real-database specs (holiday calendar and review)';
+  assert.equal(steps.filter(step => step.name === name).length, 1);
+  return steps.map(step => step.name !== name ? step : {
+    ...step,
+    run: "psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'\n" +
+      'pnpm --filter ./backend exec prisma migrate deploy\n' +
+      'pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/\n',
+    env: {...step.env, STATE_INTEGRITY_REAL_DB: '1'},
+  });
+}
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
 const apps=['backend','frontend','mobile'];
@@ -97,7 +108,8 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
-  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
+  const previousSteps = parse(old(file)).jobs.verify.steps;
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
   if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -161,7 +173,7 @@ test('backend installs declared compiler before executing CI impact contracts; o
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
   assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { EmployeeWriteAgentCapabilitiesProvider } from "./employee-write-agent-capabilities.provider";
@@ -17,7 +18,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         const employeeRepository = { findByPhone: jest.fn().mockResolvedValue(null) };
         const triggerService = { syncEmployeeAssignmentRulesForEmployee: jest.fn().mockResolvedValue(undefined) };
         const messageAutomationIntentService = { enqueueEmployeeProfileRefreshIntent: jest.fn().mockResolvedValue(undefined) };
-        const transaction = { agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+        const transaction = { agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findFirst: jest.fn() } };
         const prisma = { $transaction: jest.fn(async (operation: (tx: typeof transaction) => Promise<unknown>) => operation(transaction)), agent_action: transaction.agent_action };
         const provider = new EmployeeWriteAgentCapabilitiesProvider(
             createEmployee as never,
@@ -31,6 +32,41 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         );
         return { createEmployee, updateEmployee, changeAvailability, findEmployee, employeeRepository, triggerService, messageAutomationIntentService, transaction, prisma, capabilities: provider.getCapabilities() };
     }
+
+    it("allows a deleted phone through to restore and reconciles its action-bound restored receipt", async () => {
+        const deleted = EmployeeEntity.reconstitute(7, "삭제 직원", ["서울"], "01012345678", "프리미엄", false, new Date(), undefined, new Date());
+        const { createEmployee, employeeRepository, transaction, capabilities } = setup(null);
+        employeeRepository.findByPhone.mockResolvedValue(deleted);
+        createEmployee.execute.mockResolvedValue(Object.assign(
+            EmployeeEntity.reconstitute(7, "복원 직원", ["서울"], "01012345678", "프리미엄", true, new Date()),
+            { restored: true },
+        ));
+        const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
+        const input = { name: "복원 직원", workArea: ["서울"], phone: "010-1234-5678", grade: "프리미엄", openToNextWork: true };
+        const result = await create.execute(context, input);
+        expect(result).toEqual({ id: 7, name: "복원 직원", status: "restored" });
+        const receipt = transaction.agent_action.updateMany.mock.calls[0]![0].data.effectReceipt;
+        transaction.agent_action.findFirst.mockResolvedValue({ effectReceipt: receipt });
+        await expect(create.reconcile!(context, input, null)).resolves.toEqual({ status: "succeeded", result });
+        expect(transaction.agent_action.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: context.actionId, branchId: "branch-a", capability: "employees.create" }),
+        }));
+    });
+
+    it.each([undefined, false, true])("preserves submitted availability %s before create/restore", async (openToNextWork) => {
+        const { createEmployee, capabilities } = setup(null);
+        createEmployee.execute.mockResolvedValue(EmployeeEntity.reconstitute(
+            7, "직원", ["서울"], "01012345678", "프리미엄", true, new Date(),
+        ));
+        const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
+        const input = { name: "직원", workArea: ["서울"], phone: "01012345678", grade: "프리미엄" };
+        const parsed = create.inputSchema.parse(openToNextWork === undefined ? input : { ...input, openToNextWork });
+        await create.execute(context, parsed);
+        expect(createEmployee.execute).toHaveBeenCalledWith(
+            "branch-a", "직원", ["서울"], "01012345678", "프리미엄", openToNextWork,
+            undefined, undefined, expect.anything(),
+        );
+    });
 
     it("fails soft-deleted employees closed across inspect, revalidate, execute, and reconcile", async () => {
         const deleted = EmployeeEntity.reconstitute(7, "삭제 직원", ["서울"], "01012345678", "A", false, new Date(), undefined, new Date());
@@ -82,7 +118,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
             grade: "스텐다드",
         });
         expect(createEmployee.execute).toHaveBeenCalledWith(
-            "branch-a", "김길동", ["서울"], "01012345678", "스탠다드", false, undefined, undefined, expect.anything(),
+            "branch-a", "김길동", ["서울"], "01012345678", "스탠다드", undefined, undefined, undefined, expect.anything(),
         );
 
         await update.execute(context, { id: 7, grade: "스텐다드" });
@@ -208,6 +244,18 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
     });
 
     it.each([
+        ["locked restore conflict", new ConflictException({ code: "EMPLOYEE_PHONE_ALREADY_REGISTERED" })],
+    ])("converts %s into a certain failure without an effect receipt", async (_label, conflict) => {
+        const { createEmployee, transaction, capabilities } = setup(null);
+        createEmployee.execute.mockRejectedValue(conflict);
+        const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
+        await expect(create.execute(context, {
+            name: "경합 직원", workArea: ["서울"], phone: "01012345678", grade: "프리미엄",
+        })).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+        expect(transaction.agent_action.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
         ["constraint name", "employee_branch_id_phone_normalized_key"],
         ["branchId target fields", ["branchId", "phone"]],
         ["branch_id target fields", ["branch_id", "phone"]],
@@ -268,7 +316,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
 
         expect(employeeRepository.findByPhone).toHaveBeenCalledWith("branch-a", "01012345678");
         expect(createEmployee.execute).toHaveBeenCalledWith(
-            "branch-a", "홍길동", ["서울"], "01012345678", "프리미엄", false, undefined, undefined, expect.anything(),
+            "branch-a", "홍길동", ["서울"], "01012345678", "프리미엄", undefined, undefined, undefined, expect.anything(),
         );
     });
 

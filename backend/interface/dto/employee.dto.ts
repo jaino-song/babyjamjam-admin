@@ -9,22 +9,25 @@ export class CreateEmployeeDto {
     @IsString()
     name!: string;
 
+    @ValidateIf((_, value) => value !== undefined)
     @IsArray()
     @IsString({ each: true })
-    workArea!: string[];
+    workArea?: string[];
 
     @IsString()
     @IsNotEmpty()
     @IsCanonicalPhone()
     phone!: string;
 
+    @ValidateIf((_, value) => value !== undefined)
     @IsString()
     @Transform(({ value }) => typeof value === "string" ? normalizeEmployeeGrade(value) : value)
     @IsIn(EMPLOYEE_GRADES)
-    grade!: string;
+    grade?: string;
 
+    @ValidateIf((_, value) => value !== undefined)
     @IsBoolean()
-    openToNextWork!: boolean;
+    openToNextWork?: boolean;
 
     @IsOptional()
     @IsDateString()

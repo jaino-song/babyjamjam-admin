@@ -1688,8 +1688,14 @@ export class MessageTriggerService {
     }
 
     async deleteRule(branchId: string, id: string): Promise<void> {
+        if (MessageTriggerRuleEntity.isReservedId(id)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
         await this.ensureTriggerSchemaReady();
         const rule = await this.getRule(branchId, id);
+        if (rule.isDefault) {
+            throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
+        }
         await this.cancelPendingJobsForRule(branchId, rule, "Rule deleted", false);
         await this.ruleRepository.delete(branchId, id);
     }
@@ -1701,6 +1707,9 @@ export class MessageTriggerService {
         expectedTargetVersion: string,
         targetSnapshot: Record<string, unknown> | undefined,
     ): Promise<void> {
+        if (MessageTriggerRuleEntity.isReservedId(id)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
         const mutationStartedAt = new Date();
         await this.ensureTriggerSchemaReady();
         await this.messageSenderApprovalService.ensureApproved(branchId);
@@ -1717,6 +1726,9 @@ export class MessageTriggerService {
                 detail: "Automation rule approval snapshot is missing or stale",
                 location: "body",
             }));
+        }
+        if (expected.isDefault) {
+            throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
         }
         const deleted = await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(
             branchId,

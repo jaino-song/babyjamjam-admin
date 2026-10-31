@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { computeServiceStatus } from "domain/value-objects/service-status.vo";
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
@@ -86,7 +87,10 @@ export class ClientDueDateSchedulerService {
                 },
                 startDate: null,
             },
-            select: { id: true, branchId: true, dueDate: true },
+            select: {
+                id: true, branchId: true, dueDate: true,
+                serviceStatus: true, endDate: true, bookingConfirmedAt: true,
+            },
         });
 
         let updatedCount = 0;
@@ -102,6 +106,23 @@ export class ClientDueDateSchedulerService {
             // connection. The transaction is about to set startDate to dueDate.
             const calendar = await this.serviceRecordLifecycleService
                 ?.resolveCalendarBeforeTransaction(client.id, { startDate: client.dueDate });
+            // 날짜와 상태를 함께 CAS한다. 사전 조회 이후 수동 상태나 예약·종료일이
+            // 바뀌었다면 건너뛰고 다음 실행에서 새 입력으로 다시 계산한다.
+            const statusInputs = {
+                serviceStatus: client.serviceStatus,
+                endDate: client.endDate,
+                bookingConfirmedAt: client.bookingConfirmedAt,
+            };
+            const dateAndStatus = {
+                startDate: client.dueDate,
+                serviceStatus: computeServiceStatus(
+                    client.serviceStatus,
+                    client.dueDate,
+                    client.endDate,
+                    client.bookingConfirmedAt,
+                    referenceDate,
+                ),
+            };
             const result = this.serviceRecordLifecycleService || this.messageAutomationIntentService
                 ? await this.prisma.$transaction(async (tx) => {
                     const updated = await tx.client.updateMany({
@@ -109,8 +130,9 @@ export class ClientDueDateSchedulerService {
                             id: client.id,
                             dueDate: client.dueDate,
                             startDate: null,
+                            ...statusInputs,
                         },
-                        data: { startDate: client.dueDate },
+                        data: dateAndStatus,
                     });
                     if (updated.count > 0) {
                         if (this.serviceRecordLifecycleService) {
@@ -133,8 +155,9 @@ export class ClientDueDateSchedulerService {
                         id: client.id,
                         dueDate: client.dueDate,
                         startDate: null,
+                        ...statusInputs,
                     },
-                    data: { startDate: client.dueDate },
+                    data: dateAndStatus,
                 });
 
             if (result.count === 0) {

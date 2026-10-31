@@ -141,6 +141,7 @@ const initialFormData: FormData = {
     phone: "",
     grade: DEFAULT_EMPLOYEE_GRADE,
     openToNextWork: true,
+    smsAutomationEnabled: true,
     birthday: "",
 };
 
@@ -238,6 +239,7 @@ export function EmployeeFormDialog({
                 phone: employee.phone,
                 grade: normalizeEmployeeGrade(employee.grade),
                 openToNextWork: employee.openToNextWork,
+                smsAutomationEnabled: employee.smsAutomationEnabled ?? true,
                 birthday: normalizeBirthdayIsoDate(employee.birthday) ?? employee.birthday ?? "",
             }
             : {
@@ -402,6 +404,7 @@ export function EmployeeFormDialog({
                     phone: phoneDigits,
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    smsAutomationEnabled: formData.smsAutomationEnabled,
                     birthday: formData.birthday,
                 };
                 const updatedEmployee = await updateMutation.mutateAsync({ id: employee.id, dto });
@@ -423,6 +426,7 @@ export function EmployeeFormDialog({
                     phone: phoneDigits,
                     grade: formData.grade,
                     openToNextWork: formData.openToNextWork,
+                    smsAutomationEnabled: formData.smsAutomationEnabled,
                     birthday: formData.birthday,
                 };
                 const newEmployee = await createMutation.mutateAsync(dto);

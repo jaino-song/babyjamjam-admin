@@ -197,18 +197,18 @@ describe("useRealtimeInvalidation", () => {
     act(() => source.fireOpen());
 
     emitEntityChanged(source, ["service-record"]);
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
 
     act(() => {
       jest.advanceTimersByTime(1499);
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
 
     act(() => {
       jest.advanceTimersByTime(1);
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
-    expect(invalidatedKeys()).toEqual(["service-records", "service-records"]);
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
+    expect(invalidatedKeys()).toEqual(["service-records", "employees", "service-records", "employees"]);
   });
 
   test("coalesces events inside the window into one trailing refresh covering the union", () => {

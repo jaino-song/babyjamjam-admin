@@ -149,7 +149,7 @@ async function persistMessageAutomationIntent(
     // eslint.system-scope.allowlist.mjs).
     await runSystemScope(async () => {
         const existingMarkerRule = await transaction.message_trigger_rule.findUnique({
-            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID, deletedAt: null },
             select: { id: true },
         });
         if (existingMarkerRule) return;
