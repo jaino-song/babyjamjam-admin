@@ -183,6 +183,15 @@ function fixture(options: { serviceRecordUrl?: string; configBase?: string } = {
 }
 
 describe("AgentAutomationJobAuthorityService service-record-link adapter", () => {
+    // The service checks token expiry against the wall clock; pin it to the
+    // fixture date so the synthetic token is not "expired" once real time passes it.
+    beforeEach(() => {
+        jest.useFakeTimers({ now, doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+    });
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     it("uses the issuer default when ConfigService is absent", async () => {
         const f = fixture();
         const result = await f.service.checkAutomaticJob(f.transaction as never, f.job, "materialize", f.render);
