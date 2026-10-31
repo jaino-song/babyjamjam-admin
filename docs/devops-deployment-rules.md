@@ -31,7 +31,7 @@
 |---|---|---|---|---|
 | `dev` | 통합 대상. 모든 feature/fix PR의 목적지 | 빌드 안 함 (2026-08-06부터, [외부] Ignored Build Step) | 배포 없음. 로컬 `localhost:3001`로 테스트 | `apply-dev` (prisma 경로 push 시) |
 | `preview` | 릴리스 후보 검증 | preview 빌드 | Google Cloud Run `babyjamjam-api-preview` (`*.run.app`, asia-northeast3, min 0 / max 1), push 시 `deploy-cloudrun` 잡이 자동(`apply-production` 뒤, BJJ-341부터). runbook: `docs/plans/2026-09-23-preview-cloud-run.md` | `apply-production` (운영 DB, BJJ-484) |
-| `main` | 프로덕션 | production 빌드 (`admin.babyjamjam.com`, `m.admin.babyjamjam.com`) | **AWS Lightsail**(주 호스트) + **LightNode Fallback**(상시 standby). `api.babyjamjam.com` DNS가 가리키는 쪽이 주 배포 대상이며, push 시 자동(같은 커밋의 `apply-production` 패치 성공 뒤). DNS가 Lightsail이면 LightNode에도 passive로 같은 릴리스가 배포된다(§4.1). 전환 진행 상황은 §4.1 "현재 상태" | `apply-production` |
+| `main` | 프로덕션 | production 빌드 (`admin.babyjamjam.com`, `m.admin.babyjamjam.com`) | **AWS Lightsail**(주 호스트로 2026-10-31 결정, 전환 전까지는 LightNode가 실서빙) + **LightNode Fallback**(전환 후 상시 standby). `api.babyjamjam.com` DNS가 가리키는 쪽이 주 배포 대상이며, push 시 자동(같은 커밋의 `apply-production` 패치 성공 뒤). DNS가 Lightsail이면 LightNode에도 passive로 같은 릴리스가 배포된다(§4.1). 전환 진행 상황은 §4.1 "현재 상태" | `apply-production` |
 
 규칙:
 
@@ -140,7 +140,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 ## 4. 백엔드 배포 (이미지 빌드 · Lightsail)
 
-> **2026-10-31: Lightsail이 다시 프로덕션 주 호스트다** (production 전용 — preview는 Cloud Run). 이미지 빌드(`build-lightsail-image` 잡, `backend/Dockerfile.lightsail`)는 Lightsail, LightNode, Cloud Run이 같이 쓴다. Lightsail 호스트의 preview Compose 스택은 쓰지 않는다.
+> **2026-10-31 결정: Lightsail을 다시 프로덕션 주 호스트로 쓴다** (production 전용 — preview는 Cloud Run). **전환(§4.1 "복귀") 완료 전까지는 LightNode가 계속 실서빙 호스트다** — §4.1 "현재 상태" 참고. 이미지 빌드(`build-lightsail-image` 잡, `backend/Dockerfile.lightsail`)는 Lightsail, LightNode, Cloud Run이 같이 쓴다. Lightsail 호스트의 preview Compose 스택은 쓰지 않는다.
 
 `preview`/`main` push → `backend-ci.yml`이 `backend/Dockerfile.lightsail`로 **불변 커밋 이미지**(`ghcr.io/jaino-song/babyjamjam-admin-backend:<sha>`)를 빌드 → OIDC로 브랜치 스코프 역할을 얻어 **고정 SSM 문서**로 호스트에 그 이미지를 활성화. 호스트는 이미지를 빌드하지 않는다.
 **preview는 BJJ-341(2026-09-23)부터 이 경로를 벗어난다:** 같은 GHCR 이미지를 `deploy-cloudrun` 잡이 Artifact Registry로 복사해 Cloud Run `babyjamjam-api-preview`에 배포하며, preview env는 호스트 `backend.env`가 아니라 **Secret Manager + 매니페스트**(`backend/deploy/cloudrun/service.preview.yaml`)에 산다. runbook: `docs/plans/2026-09-23-preview-cloud-run.md`. 아래 표의 Lightsail 규칙은 main에 적용된다.
@@ -160,12 +160,12 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 | 항목 | 규칙 |
 |---|---|
-| 역할 | 상시 API-only warm standby(장애 후 Release하지 않음). 프론트 배포 아님. 호스트명 `api.babyjamjam.com`은 그대로 두고 DNS 소유권만 바뀐다. DNS가 Lightsail이면 main push마다 `deploy-lightnode-standby`가 restricted `deploy-standby`로 passive 릴리스를 갱신한다 — Lightsail에 성공한 최신 백엔드 릴리스로 수렴한다: standby의 `current_tag`가 이 커밋의 조상이면 배포, 이 커밋이 `current_tag`의 조상(또는 같음)이면 superseded로 건너뛰고, 갈라졌으면 실패한다. 상태는 restricted `standby-status`로 읽는다 |
+| 역할 | 상시 API-only warm standby(장애 후 Release하지 않음). 프론트 배포 아님. 호스트명 `api.babyjamjam.com`은 그대로 두고 DNS 소유권만 바뀐다. DNS가 Lightsail이면 main push마다 `deploy-lightnode-standby`가 restricted `deploy-standby`로 passive 릴리스를 갱신한다 — Lightsail에 성공한 최신 백엔드 릴리스로 수렴한다. 상태는 restricted `standby-status`로 읽는다 (`present`=정상 passive, `recorded-unhealthy`=릴리스 기록은 있으나 컨테이너 중지·재시작 중, `none`=기록 없음). 판정(`ci/standby-decision.sh`): `none` → 배포 · 기록 태그가 이 커밋의 조상 → 배포 · 같은 태그+`present` → superseded · 같은 태그+`recorded-unhealthy` → 같은 릴리스 재배포(복구) · 기록 태그가 더 새 커밋 → 상태와 무관하게 superseded(그 standby가 비정상이면 기록된 커밋의 잡을 재실행해 복구) · 갈라진 히스토리·모르는 태그·잘못된 상태 → 실패. 전환 드레인 중(DNS는 Lightsail, LightNode는 아직 temporary-active)의 main push는 host가 passive가 아니어서 `deploy-lightnode-standby`가 빨갛게 실패한다 — 예상된 동작이며 드레인 뒤 재실행한다 |
 | 바인딩 | Fallback API `127.0.0.1:3101`, 컨트롤러 `127.0.0.1:3102` (`POST /sentry/uptime-alert`, `GET /health`만) |
 | DB | 프로덕션 DB만. 활성화 전 **Production DB identity hash 게이트**(`approved-production-db-ref.sha256`) 통과 필수 |
-| 비활성 기능 | 스케줄러, 자동완료, eformsign 문서 잡 intake/worker, unlocked reconcile, Aligo — Compose에서 하드 비활성화. 켜지 않는다 |
-| 전환 (수동 runbook) | AWS 장애 시: ① Vercel DNS `api`/`A`를 LightNode로 PATCH 후 재조회 ② Caddy가 인증서를 받을 때까지 대기(10분 기한) ③ `temporary-active`(또는 persistent active) 기동 후 `/health/lease`에서 LightNode가 lease를 쥐었는지 확인. 컨트롤러 자동 전환 경로(Sentry Uptime → 컨트롤러)는 코드에만 있고 설치하지 않는다 |
-| 복귀 (failback) | **자동 failback 없음.** ① 미리 `api` TTL을 60초로 ② Lightsail 배포·`curl --resolve`로 고정 IP 헬스+유효 인증서 확인 ③ DNS를 Lightsail로 PATCH·두 리졸버로 확인 ④ 이전 TTL+15분 동안 LightNode가 남은 클라이언트를 계속 서빙(lease·Aligo 유지), 접근 로그에 5분간 새 요청이 없으면 ⑤ LightNode `stop` → `deploy-standby`(같은 릴리스) → Lightsail이 lease를 쥐었는지 확인. Valkey는 옮기지 않는다(전부 폐기·재생성 가능, 상태는 Postgres). 드레인 중에는 실시간 힌트가 호스트를 넘지 않아 다른 호스트의 변경은 다음 재조회 때 보인다. 되돌릴 때는 Lightsail 스케줄러를 먼저 끄고 lease가 비었는지 확인한 뒤 LightNode를 활성화 |
+| 비활성 기능 | 스케줄러, 자동완료, eformsign 문서 잡 intake/worker, unlocked reconcile, Aligo — standby(passive)에서는 Compose에서 하드 비활성화. 켜지 않는다. 예외: 장애 runbook("전환" ③)의 `temporary-active`만 lease 게이트 아래 켠다 |
+| 전환 (수동 runbook) | AWS 장애 시: ① Vercel DNS `api`/`A`를 LightNode로 PATCH 후 재조회 ② Caddy가 인증서를 받을 때까지 대기(10분 기한) ③ 기록된 passive 릴리스와 일치하는 **새 기한부 temporary-active 승인 아티팩트**를 준비(operator `validate_temporary_active_approval`가 검사)하고 `temporary-active`(또는 persistent active) 기동 후 `/health/lease`에서 LightNode가 lease를 쥐었는지 확인. 컨트롤러 자동 전환 경로(Sentry Uptime → 컨트롤러)는 코드에만 있고 설치하지 않는다 |
+| 복귀 (failback) | **자동 failback 없음.** ① 미리 `api` TTL을 60초로 ② Lightsail 배포·`curl --resolve api.babyjamjam.com:443:<고정 IP>`로 헬스+유효 인증서 확인(Caddy 인증서가 만료돼 DNS 전까지 갱신 불가면, 10분 기한을 선언하고 ③ 뒤 기한 안에 인증서가 안 나오면 아래 순서로 되돌린다) ③ DNS를 Lightsail로 PATCH·두 리졸버로 확인 ④ 이전 TTL+15분 동안 LightNode가 남은 클라이언트를 계속 서빙(lease·Aligo 유지), 접근 로그에 5분간 새 요청이 없으면 ⑤ LightNode `stop` → `deploy-standby`(같은 릴리스) → Lightsail이 lease를 쥐었는지 확인. Valkey는 옮기지 않는다(전부 폐기·재생성 가능, 상태는 Postgres). 드레인 중에는 실시간 힌트가 호스트를 넘지 않아 다른 호스트의 변경은 다음 재조회 때 보인다. 되돌리기(rollback): (1) Lightsail 스케줄러를 끈다 — `SCHEDULERS_ENABLED=false`로 재배포하거나 API를 멈춤 (2) `scheduler_lease`가 비었는지 확인 (3) 기록된 passive 릴리스와 일치하는 새 기한부 temporary-active 승인 아티팩트로 LightNode를 temporary-active 재기동하고 lease를 쥐었는지 확인 (4) DNS를 LightNode로 되돌리고 같은 방식으로 드레인 |
 | 사전 점검 | `lightnode-preflight.sh`, `NETWORK_PREFLIGHT.md`. 컨트롤러 arm/disarm은 `CONTROLLER_OPERATIONS.md` |
 | 현재 상태 | 2026-09-03부터 프로덕션 DNS가 Fallback을 가리켜 프로덕션 트래픽을 서빙 중(`runtime_mode=temporary-active`). **2026-10-31 결정: Lightsail로 되돌리고 LightNode는 passive standby로 전환 — 전환 완료 전까지는 이 줄이 현재 상태다.** 컨트롤러는 설치·arm하지 않는다. 바뀌면 README와 이 표를 같이 갱신 |
 
