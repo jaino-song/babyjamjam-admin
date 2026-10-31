@@ -26,8 +26,13 @@ SHA_A="$(printf 'a%.0s' {1..40})"
 SHA_B="$(printf 'b%.0s' {1..40})"
 DIG_A="sha256:$(printf '1%.0s' {1..64})"
 DIG_B="sha256:$(printf '2%.0s' {1..64})"
-FALLBACK_HASH="$(printf 'a%.0s' {1..64})"
-AWS_HASH="$(printf 'b%.0s' {1..64})"
+# Fixture public routing (documentation ranges only). The approved identity is
+# the real hash of LightNode's single IP, exactly as the host installer records
+# it; the resolver is a getent stub that prints `ahostsv4` lines for ROUTE_IPS.
+LIGHTNODE_IP="203.0.113.10"
+LIGHTSAIL_IP="198.51.100.20"
+OTHER_IP="198.51.100.21"
+APPROVED_HASH="$(printf '%s\n' "$LIGHTNODE_IP" | sha256sum | awk '{ print $1 }')"
 
 # --- the deployer copy: no entrypoint, protected paths and operator redirected
 sed -e '$d' \
@@ -90,25 +95,30 @@ status_block() { # tag digest mode schedulers [health] [restarts]
 world_reset() {
     rm -rf "$W"
     mkdir -p "$W/root/state"
-    printf '%s\n' "$FALLBACK_HASH" >"$W/root/approved-public-routing.sha256"
+    printf '%s\n' "$APPROVED_HASH" >"$W/root/approved-public-routing.sha256"
     printf '%s\n' "github-main-lightnode-auto-deploy-v1" >"$W/root/automatic-deploy-authority"
     : >"$W/calls.log"
-    ROUTE_HASH="$AWS_HASH"
+    ROUTE_IPS="$LIGHTSAIL_IP"
+    GETENT_RC=0
 }
 
 # Runs `main <args>` in a fresh shell with the host-only helpers replaced.
 # set -e from the sourced script stays active, as in production.
 run_main() {
     local rc=0
-    STUB_WORLD="$W" STUB_CALLS="$W/calls.log" STUB_ALL_CALLS="$ALL_CALLS" ROUTE_HASH="$ROUTE_HASH" \
+    STUB_WORLD="$W" STUB_CALLS="$W/calls.log" STUB_ALL_CALLS="$ALL_CALLS" ROUTE_IPS="$ROUTE_IPS" GETENT_RC="$GETENT_RC" \
         bash -c '
             source "$1"; shift
             validate_protected_file() {
                 [[ -e "$1" && ! -L "$1" ]] || die "A protected Fallback deployment artifact is missing or unsafe."
             }
-            canonical_public_route_hash() {
-                if [[ "$ROUTE_HASH" == unresolvable ]]; then die "The public API route could not be resolved."; fi
-                printf "%s\n" "$ROUTE_HASH"
+            # Linux `getent ahostsv4`: one line per socket type per address.
+            getent() {
+                local ip
+                for ip in $ROUTE_IPS; do
+                    printf "%s  STREAM %s\n%s  DGRAM\n%s  RAW\n" "$ip" "$2" "$ip" "$ip"
+                done
+                return "$GETENT_RC"
             }
             require_root_and_caller() { :; }
             main "$@"
@@ -152,29 +162,60 @@ run_main bogus; expect_refused "unknown command accepted"; expect_err "unknown c
 expect_no_operator_calls "argument validation"
 echo "ok - identity and argument validation"
 
-# ===== 2. route guard: refuse when LightNode is the public route, and when it cannot be resolved
+# ===== 2. route guard: refuse when LightNode is, or is among, the public routes, and when nothing resolves
+run_standby_cmd() { # command
+    if [[ "$1" == standby-status ]]; then run_main standby-status; else run_main "${DEPLOY_ARGS[@]}"; fi
+}
 for cmd in standby-status deploy-standby; do
-    world_reset; ROUTE_HASH="$FALLBACK_HASH"
+    world_reset; ROUTE_IPS="$LIGHTNODE_IP"
     status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
-    if [[ "$cmd" == standby-status ]]; then run_main standby-status; else run_main "${DEPLOY_ARGS[@]}"; fi
+    run_standby_cmd "$cmd"
     expect_refused "$cmd ran while LightNode is the public route"
     expect_err "$cmd on the fallback route" "LightNode is the public route"
     expect_no_operator_calls "$cmd on the fallback route"
 
-    world_reset; ROUTE_HASH=unresolvable
+    # a mixed answer (Lightsail plus LightNode), in both orders and with a third
+    # address, must not pass just because the whole set hashes differently
+    for mixed in "$LIGHTSAIL_IP $LIGHTNODE_IP" "$LIGHTNODE_IP $LIGHTSAIL_IP" "$LIGHTSAIL_IP $LIGHTNODE_IP $OTHER_IP"; do
+        world_reset; ROUTE_IPS="$mixed"
+        status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
+        run_standby_cmd "$cmd"
+        expect_refused "$cmd ran on the mixed route '$mixed'"
+        expect_err "$cmd on the mixed route '$mixed'" "mixed or LightNode public route was refused"
+        expect_no_operator_calls "$cmd on the mixed route '$mixed'"
+    done
+
+    # no LightNode record: a single or several other addresses are allowed
+    for ok_ips in "$LIGHTSAIL_IP" "$LIGHTSAIL_IP $OTHER_IP"; do
+        world_reset; ROUTE_IPS="$ok_ips"
+        status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
+        status_block "$SHA_A" "$DIG_A" passive false >"$W/status.after"
+        run_standby_cmd "$cmd"
+        expect_ok "$cmd refused the non-LightNode route '$ok_ips'"
+        expect_out_line "$cmd on '$ok_ips'" "public_routing=aws"
+    done
+
+    # nothing resolves: with no answer lines, and with getent itself failing
+    world_reset; ROUTE_IPS=""
     status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
-    if [[ "$cmd" == standby-status ]]; then run_main standby-status; else run_main "${DEPLOY_ARGS[@]}"; fi
+    run_standby_cmd "$cmd"
     expect_refused "$cmd treated an unresolvable route as not-LightNode"
     expect_err "$cmd on an unresolvable route" "could not be resolved"
     if grep -Fq "LightNode is the public route" "$W/err"; then fail "$cmd conflated unresolvable with fallback"; fi
     expect_no_operator_calls "$cmd on an unresolvable route"
 
+    world_reset; ROUTE_IPS=""; GETENT_RC=2
+    status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
+    run_standby_cmd "$cmd"
+    expect_refused "$cmd treated a failing resolver as not-LightNode"
+    expect_no_operator_calls "$cmd on a failing resolver"
+
     world_reset; rm -f "$W/root/approved-public-routing.sha256"
-    if [[ "$cmd" == standby-status ]]; then run_main standby-status; else run_main "${DEPLOY_ARGS[@]}"; fi
+    run_standby_cmd "$cmd"
     expect_refused "$cmd ran without the protected routing identity"
     expect_no_operator_calls "$cmd without the routing identity"
 done
-echo "ok - route guard (fallback route, unresolvable route, missing identity)"
+echo "ok - route guard (LightNode-only, mixed, other routes, unresolvable, missing identity)"
 
 # ===== 3. deploy-standby fence and authority
 world_reset; status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
@@ -466,16 +507,28 @@ expect_refused "standby-status hid a temporary-active host behind its record"
 echo "ok - standby-status keeps the recorded release when health cannot be read"
 
 # ===== 10. existing commands are unchanged: status keeps requiring the fallback route
-world_reset   # route is AWS, the approved identity is the fallback hash
-status_block "$SHA_A" "$DIG_A" passive false >"$W/status.out"
+for ips in "$LIGHTSAIL_IP" "$LIGHTSAIL_IP $LIGHTNODE_IP"; do   # off the route, and mixed (not LightNode alone)
+    world_reset; ROUTE_IPS="$ips"
+    status_block "$SHA_A" "$DIG_A" passive false >"$W/status.out"
+    run_main status
+    expect_refused "legacy status ran while the route '$ips' is not the approved Fallback target"
+    expect_err "legacy status" "not the approved Fallback target"
+    run_main replace "$SHA_A" "$DIG_A"
+    expect_refused "legacy replace ran while the route '$ips' is not the approved Fallback target"
+    expect_err "legacy replace" "not the approved Fallback target"
+    expect_no_operator_calls "legacy commands off the fallback route '$ips'"
+done
+world_reset; ROUTE_IPS=""
 run_main status
-expect_refused "legacy status ran while the route is not the approved Fallback target"
-expect_err "legacy status" "not the approved Fallback target"
-run_main replace "$SHA_A" "$DIG_A"
-expect_refused "legacy replace ran while the route is not the approved Fallback target"
-expect_err "legacy replace" "not the approved Fallback target"
-expect_no_operator_calls "legacy commands off the fallback route"
-echo "ok - status and replace keep their fallback-route refusal"
+expect_refused "legacy status ran with an unresolvable route"; expect_err "legacy status" "could not be resolved"
+
+world_reset; ROUTE_IPS="$LIGHTNODE_IP"   # LightNode alone is the approved Fallback target
+status_block "$SHA_A" "$DIG_A" temporary-active true >"$W/status.out"
+run_main status
+expect_ok "legacy status on the approved LightNode-only route"
+expect_out_line "legacy status" "public_routing=fallback"
+expect_out_line "legacy status" "runtime_mode=temporary-active"
+echo "ok - status and replace keep their fallback-route behavior"
 
 # ===== 11. the new commands never reach destructive operator commands
 if grep -Eq '^(replace-temporary-active|temporary-active|stop|rollback|valkey-restore)( |$)' "$ALL_CALLS"; then

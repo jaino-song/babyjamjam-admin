@@ -80,10 +80,16 @@ assert_not_contains "$DISPATCHER" '(eval|bash -c|sh -c)' \
 
 assert_contains "$DEPLOYER" '^require_aws_route\(\)' \
     "deployer must guard the passive standby path with an AWS-route check"
-assert_contains "$DEPLOYER" '^    current_hash="\$\(canonical_public_route_hash\)"$' \
-    "the AWS-route guard must assign the resolved route on its own line so an unresolvable route aborts"
-assert_not_contains "$DEPLOYER" '\[\[ *"\$\(canonical_public_route_hash\)"' \
+[[ "$(grep -Ec '^    records="\$\(resolve_public_route_records\)"$' "$DEPLOYER")" == 2 ]] \
+    || fail "both route guards must assign the resolved records on their own line so an unresolvable route aborts"
+assert_not_contains "$DEPLOYER" '\[\[ *"\$\(resolve_public_route_records\)"' \
     "the route resolver must never be inlined into a comparison"
+assert_not_contains "$DEPLOYER" 'canonical_public_route_hash' \
+    "the route hash must derive from the single resolver, not a second getent path"
+[[ "$(grep -c 'getent ahostsv4' "$DEPLOYER")" == 1 ]] \
+    || fail "the public route must be resolved by exactly one getent call"
+assert_contains "$DEPLOYER" '^    done <<<"\$records"$' \
+    "the AWS-route guard must check every resolved record, not only the whole set"
 assert_contains "$DEPLOYER" '"\$OPERATOR" deploy "\$commit_sha" "\$image_digest" >&2' \
     "standby deployment must reuse the operator passive deploy and keep its summary on stderr"
 assert_contains "$DEPLOYER" '^        standby-status\)' "deployer must route standby-status"
