@@ -10,9 +10,21 @@ ALTER TABLE "public"."client"
 ALTER TABLE "public"."employee"
     ADD COLUMN IF NOT EXISTS "phone_normalized" TEXT;
 
+-- The backfill below must tell live clients from tombstones. deleted_at is
+-- created by the later 20261019000000_add_client_deleted_at migration, so a
+-- fresh `prisma migrate deploy` replay reaches this file before the column
+-- exists. The identical ADD COLUMN IF NOT EXISTS keeps both orderings valid.
+ALTER TABLE "public"."client"
+    ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMPTZ(6);
+
 -- Backfill clients using the same digit extraction and +82 conversion as the
 -- application canonicalizer. Invalid values are left NULL so the migration
 -- does not invent an identity for an unparseable legacy display value.
+-- Tombstoned clients (deleted_at IS NOT NULL) are skipped: deleting a client
+-- deliberately clears phone_normalized so the phone drops out of identity
+-- matching and can be reused, and this file is re-run on every push, so
+-- recomputing a key here would resurrect a tombstone and collide with its
+-- twin or with a live re-registration on the unique index.
 WITH stripped AS (
     SELECT
         "id",
@@ -21,6 +33,7 @@ WITH stripped AS (
             ELSE regexp_replace("phone", '\D', '', 'g')
         END AS "digits"
     FROM "public"."client"
+    WHERE "deleted_at" IS NULL
 ), canonical AS (
     SELECT
         "id",
@@ -81,6 +94,9 @@ WHERE target."id" = normalized."id";
 
 -- A formatting-equivalent collision is a data error, not a deduplication
 -- opportunity. Abort the transaction with stable, row-identifying evidence.
+-- The client scope here deliberately matches the unique index scope (all rows,
+-- no deleted_at filter): tombstones hold a NULL key, NULL keys never collide
+-- in the index, so they are inert in this check without being excluded.
 DO $$
 DECLARE
     _client_offending_rows jsonb;
