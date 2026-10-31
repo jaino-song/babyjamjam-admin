@@ -1110,6 +1110,7 @@ model message_trigger_rule {
   templateKey   String                @map("template_key")
   isDefault     Boolean               @default(false) @map("is_default")
   jobsStale     Boolean               @default(false) @map("jobs_stale")
+  deletedAt     DateTime?             @map("deleted_at") @db.Timestamptz(6)
   /// 대상 고객 상태 (규칙 메시지-04): all | pre_booking | waiting | active.
   targetClientStatus String           @default("all") @map("target_client_status") @db.VarChar(20)
   /// 실패 시 재전송 (규칙 메시지-04): false면 일시 실패를 자동으로 다시 보내지 않는다.

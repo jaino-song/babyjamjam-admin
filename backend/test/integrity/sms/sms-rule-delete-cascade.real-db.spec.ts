@@ -1,4 +1,8 @@
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { NotFoundException } from "@nestjs/common";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
@@ -7,7 +11,7 @@ import {
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { createBranch, createMessageTriggerJob, createMessageTriggerRule } from "../helpers/factories";
 import { RowTracker } from "../helpers/tracker";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import { deleteAreaRowsByBranch, wireMessageTriggerService } from "./sms-wiring.local";
 
 /**
@@ -18,9 +22,8 @@ import { deleteAreaRowsByBranch, wireMessageTriggerService } from "./sms-wiring.
  * approved delete path (`deleteIfTargetMatchesAndFenceJobs`) deliberately
  * refuses processing/dispatching jobs and sends with sent_at >= fenceStartedAt,
  * not older sent history. The plain `MessageTriggerService.deleteRule` path
- * (agent capabilities) cancels pending jobs and then hard-deletes the rule.
- * message_log survives via SetNull; dedupe is rule-scoped, so this demonstrates
- * loss of job history, not loss of the send log or a duplicate send.
+ * (agent capabilities) now cancels pending jobs and soft-deletes the rule.
+ * The Cascade FK is unchanged; no application delete path hard-deletes rules.
  */
 describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;
@@ -60,7 +63,7 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         return job.id;
     }
 
-    knownDefect("SI-SMS-02", "deleting a rule through MessageTriggerService.deleteRule keeps sent-job history", async () => {
+    invariant("SI-SMS-02", "deleting a rule through MessageTriggerService.deleteRule keeps sent-job history", async () => {
         const { ruleId } = await seedBranchWithRule();
         const sentJobId = await createJob(ruleId, "sent", `si-02-sent-${Date.now()}`);
         const pendingJobId = await createJob(ruleId, "pending", `si-02-pending-${Date.now()}`);
@@ -75,10 +78,11 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
                 `sent job history was erased by rule deletion: sentJob=${sentJob ? sentJob.status : "GONE"}, remaining jobs for rule=${remaining}`,
             );
         }
-        void pendingJobId;
-    }, /sent job history was erased by rule deletion/);
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: pendingJobId } })).toMatchObject({ status: "canceled" });
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: ruleId } })).toMatchObject({ deletedAt: expect.any(Date), isActive: false, jobsStale: false });
+    });
 
-    knownDefect("SI-SMS-02", "deleting a rule through MessageTriggerService.deleteRule keeps its canceled-job audit trail", async () => {
+    invariant("SI-SMS-02", "deleting a rule through MessageTriggerService.deleteRule keeps its canceled-job audit trail", async () => {
         const { ruleId } = await seedBranchWithRule();
         const canceledJobId = await createJob(ruleId, "canceled", `si-02-canceled-${Date.now()}`);
 
@@ -89,7 +93,7 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         if (!canceledJob || canceledJob.status !== "canceled") {
             throw new Error(`canceled job history was erased by rule deletion: canceledJob=${canceledJob ? canceledJob.status : "GONE"}`);
         }
-    }, /canceled job history was erased by rule deletion/);
+    });
 
     type RuleEntity = NonNullable<Parameters<ReturnType<typeof wireMessageTriggerService>["ruleRepository"]["deleteIfTargetMatchesAndFenceJobs"]>[1]>;
 
@@ -125,7 +129,7 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         void sentJobId;
     });
 
-    invariant("SI-SMS-02", "the approved rule-delete path cancels pending jobs and deletes the rule when nothing was sent", async () => {
+    invariant("SI-SMS-02", "the approved rule-delete path cancels and retains pending jobs and soft-deletes the rule when nothing was sent", async () => {
         const { ruleId } = await seedBranchWithRule();
         const pendingJobId = await createJob(ruleId, "pending", `si-02-fence-pending-${Date.now()}`);
         const rule = await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: ruleId } });
@@ -134,11 +138,78 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         const deleted = await ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expectedRuleFor(rule), "Rule deleted");
         if (!deleted) throw new Error("approved rule delete refused a rule with only a pending job");
         const pendingJob = await handle.raw.message_trigger_job.findUnique({ where: { id: pendingJobId } });
-        // The DB Cascade still erases the canceled rows once the rule row goes.
-        if (pendingJob) {
-            throw new Error(`expected the cascade to remove the canceled pending job, found status=${pendingJob.status}`);
+        expect(pendingJob?.status).toBe("canceled");
+        const retained = await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: ruleId } });
+        expect(retained.deletedAt).toBeInstanceOf(Date);
+        expect(retained.isActive).toBe(false);
+        expect(retained.jobsStale).toBe(false);
+    });
+
+    invariant("SI-SMS-02", "a soft-deleted default rule is never recovered or activated and the same default template can be recreated", async () => {
+        const { ruleId } = await seedBranchWithRule();
+        await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { isDefault: true, isActive: true, jobsStale: true } });
+        const { service, ruleRepository } = wireMessageTriggerService(handle, branchId);
+        await service.deleteRule(branchId, ruleId);
+
+        expect((await ruleRepository.findInactiveDefaultRules()).map(({ id }) => id)).not.toContain(ruleId);
+        expect((await ruleRepository.findStaleRules()).map(({ id }) => id)).not.toContain(ruleId);
+        expect(await ruleRepository.findById(branchId, ruleId)).toBeNull();
+        expect(await ruleRepository.findByIdIncludingGlobal(branchId, ruleId)).toBeNull();
+        expect((await ruleRepository.findAll(branchId)).map(({ id }) => id)).not.toContain(ruleId);
+
+        // Execute the actual scheduler recovery paths, not a replacement updater.
+        const scheduler = service as unknown as { recoverApprovedBranches(): Promise<void>; processStaleRuleRebuilds(): Promise<void> };
+        await scheduler.recoverApprovedBranches();
+        await scheduler.processStaleRuleRebuilds();
+        const activation = new MessageAutomationActivationService(handle.service, new MessageAutomationBranchLockService(handle.service), new AdminAuditEventWriter(handle.service));
+        await expect(activation.activateRuleWithParent(branchId, ruleId, { actor: { userId: "10000000-0000-4000-8000-000000009161", globalRole: "owner" } })).rejects.toBeInstanceOf(NotFoundException);
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: ruleId } })).toMatchObject({ deletedAt: expect.any(Date), isActive: false, jobsStale: false });
+
+        const retained = await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: ruleId } });
+        const recreated = await createMessageTriggerRule(handle.raw, tracker, { branchId, name: retained.name, templateKey: retained.templateKey, isDefault: true });
+        expect(recreated.id).not.toBe(ruleId);
+        expect((await ruleRepository.findAll(branchId)).map(({ id }) => id)).toContain(recreated.id);
+        await expect(createMessageTriggerRule(handle.raw, tracker, { branchId, templateKey: retained.templateKey, isDefault: true })).rejects.toThrow();
+    });
+
+    invariant("SI-SMS-02", "the target-matched delete retains history and cannot update or delete the tombstone again", async () => {
+        const { ruleId } = await seedBranchWithRule();
+        const sentJobId = await createJob(ruleId, "sent", `si-02-target-sent-${Date.now()}`);
+        const canceledJobId = await createJob(ruleId, "canceled", `si-02-target-canceled-${Date.now()}`);
+        const { ruleRepository } = wireMessageTriggerService(handle, branchId);
+        const expected = await ruleRepository.findById(branchId, ruleId);
+        if (!expected) throw new Error("fixture rule missing");
+        expect(await ruleRepository.deleteIfTargetMatches(branchId, expected)).toBe(true);
+        expect(await ruleRepository.deleteIfTargetMatches(branchId, expected)).toBe(false);
+        await expect(ruleRepository.update(branchId, expected)).rejects.toThrow();
+        expect(await handle.raw.message_trigger_job.count({ where: { id: { in: [sentJobId, canceledJobId] } } })).toBe(2);
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: ruleId } })).toMatchObject({ deletedAt: expect.any(Date), isActive: false, jobsStale: false });
+    });
+
+    invariant("SI-SMS-02", "the approved delete retains old sent and canceled history alongside the canceled pending job", async () => {
+        const { ruleId } = await seedBranchWithRule();
+        const sentJobId = await createJob(ruleId, "sent", `si-02-approved-sent-${Date.now()}`, new Date(Date.now() - 60_000));
+        const canceledJobId = await createJob(ruleId, "canceled", `si-02-approved-canceled-${Date.now()}`);
+        const pendingJobId = await createJob(ruleId, "pending", `si-02-approved-pending-${Date.now()}`);
+        const { ruleRepository } = wireMessageTriggerService(handle, branchId);
+        const expected = await ruleRepository.findById(branchId, ruleId);
+        if (!expected) throw new Error("fixture rule missing");
+        expect(await ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expected, "Rule deleted", new Date())).toBe(true);
+        for (const [id, status] of [[sentJobId, "sent"], [canceledJobId, "canceled"], [pendingJobId, "canceled"]]) {
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id } })).toMatchObject({ status });
         }
-        const ruleGone = await handle.raw.message_trigger_rule.findUnique({ where: { id: ruleId } });
-        if (ruleGone) throw new Error("rule was not deleted");
+    });
+
+    invariant("SI-SMS-02", "deleted rules are excluded from active and stale readers and job claims even with stale activation flags", async () => {
+        const { ruleId } = await seedBranchWithRule();
+        const jobId = await createJob(ruleId, "pending", `si-02-deleted-claim-${Date.now()}`);
+        const { ruleRepository, jobRepository } = wireMessageTriggerService(handle, branchId);
+        // Simulate a stale writer: deletion is an independent eligibility fence.
+        const rule = await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { deletedAt: new Date(), isActive: true, jobsStale: false } });
+        expect((await ruleRepository.findActiveByEventTypes(branchId, [rule.eventType as Parameters<typeof ruleRepository.findActiveByEventTypes>[1][number]])).map(({ id }) => id)).not.toContain(ruleId);
+        expect(await ruleRepository.findActiveTemplateKeys([rule.templateKey as MessageTriggerTemplateKey], branchId)).not.toContain(rule.templateKey);
+        expect(await jobRepository.claimPendingWithRuleFence(jobId, branchId)).toBeNull();
+        await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { jobsStale: true } });
+        expect((await ruleRepository.findStaleRules()).map(({ id }) => id)).not.toContain(ruleId);
     });
 });

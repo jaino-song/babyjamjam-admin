@@ -234,19 +234,19 @@ export class MessageAutomationActivationService {
                     });
                 }
             } else {
-                const currentRule = await transactionClient.message_trigger_rule.findUnique({ where: { id: ruleId } });
+                const currentRule = await transactionClient.message_trigger_rule.findUnique({ where: { id: ruleId, deletedAt: null } });
                 if (currentRule?.isActive === true) {
                     // The selected local row was already active. Leave it alone
                     // so repeated confirmation is idempotent.
                 } else {
                     await transactionClient.message_trigger_rule.update({
-                        where: { id: ruleId },
+                        where: { id: ruleId, deletedAt: null },
                         data: { isActive: true, jobsStale: true, updatedAt: new Date() },
                     });
                 }
             }
 
-            const afterRule = await transactionClient.message_trigger_rule.findUnique({ where: { id: ruleId } });
+            const afterRule = await transactionClient.message_trigger_rule.findUnique({ where: { id: ruleId, deletedAt: null } });
             if (!afterRule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             const after = await this.readEffectiveRule(transactionClient, branchId, afterRule);
             const parentChanged = !parentWasEnabled;
@@ -299,7 +299,7 @@ export class MessageAutomationActivationService {
                 update: { isActive, updatedAt: new Date() },
             });
             if (!isActive) await this.cancelRuleJobs(branchId, ruleId, transaction);
-            const refreshed = await transaction.message_trigger_rule.findUnique({ where: { id: ruleId } });
+            const refreshed = await transaction.message_trigger_rule.findUnique({ where: { id: ruleId, deletedAt: null } });
             if (!refreshed) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             const after = await this.readEffectiveRule(transaction, branchId, refreshed);
             if (before.isActive !== after.isActive) {
@@ -321,7 +321,7 @@ export class MessageAutomationActivationService {
      */
     async readJobRuleRetryPermission(branchId: string, triggerJobId: string): Promise<RuleRetryPermission> {
         const job = await this.prisma.message_trigger_job.findUnique({
-            where: { id: triggerJobId },
+            where: { id: triggerJobId, rule: { deletedAt: null } },
             select: { branchId: true, rule: { select: { targetClientStatus: true, retryOnFailure: true } } },
         });
         if (!job || job.branchId !== branchId) return "rule-missing";
@@ -341,7 +341,7 @@ export class MessageAutomationActivationService {
         this.requireBranch(branchId);
         return this.branchLock.runExclusive(branchId, async (transaction) => {
             const candidate = await transaction.message_trigger_job.findUnique({
-                where: { id: triggerJobId },
+                where: { id: triggerJobId, rule: { deletedAt: null } },
                 include: { rule: true },
             });
             if (!candidate || candidate.branchId !== branchId) {
@@ -359,6 +359,7 @@ export class MessageAutomationActivationService {
                 SELECT id, branch_id, is_active, template_key, target_client_status, retry_on_failure
                 FROM "message_trigger_rule"
                 WHERE id = ${candidate.ruleId}
+                  AND deleted_at IS NULL
                 ORDER BY id
                 FOR UPDATE
             `);
@@ -377,7 +378,7 @@ export class MessageAutomationActivationService {
             `);
             const lockedJob = jobRows[0];
             const job = await transaction.message_trigger_job.findUnique({
-                where: { id: triggerJobId },
+                where: { id: triggerJobId, rule: { deletedAt: null } },
                 include: { rule: true },
             });
             if (
@@ -425,7 +426,7 @@ export class MessageAutomationActivationService {
             }
             if (rule.isActive || !rule.jobsStale) {
                 await transaction.message_trigger_rule.update({
-                    where: { id: rule.id },
+                    where: { id: rule.id, deletedAt: null },
                     data: { isActive: false, jobsStale: true, updatedAt: new Date() },
                 });
             }
@@ -464,6 +465,7 @@ export class MessageAutomationActivationService {
                 updated_at AS "updatedAt"
             FROM "message_trigger_rule"
             WHERE (branch_id = ${branchId}::uuid OR branch_id IS NULL)
+              AND deleted_at IS NULL
             ORDER BY id
             FOR UPDATE
         `);
@@ -483,6 +485,7 @@ export class MessageAutomationActivationService {
             FROM "message_trigger_job" j
             JOIN "message_trigger_rule" r ON r.id = j.rule_id
             WHERE j.branch_id = ${branchId}::uuid
+              AND r.deleted_at IS NULL
               AND NOT ${manualJob}
               AND (
                     j.status IN ('pending', 'processing')

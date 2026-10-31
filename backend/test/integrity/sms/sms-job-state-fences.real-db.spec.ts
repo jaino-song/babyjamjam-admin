@@ -8,24 +8,21 @@ import { SbMessageTriggerJobRepository } from "infrastructure/database/repositor
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { createBranch, createMessageTriggerJob, createMessageTriggerRule } from "../helpers/factories";
 import { RowTracker } from "../helpers/tracker";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import { deleteAreaRowsByBranch } from "./sms-wiring.local";
 
 /**
  * SI-SMS-01 — job entity transitions and the persistence fence.
  *
- * The entity's `markSent` / `markFailed` / `cancel` / `markNeedsSetup` / `defer`
- * accept any source state. The question is whether an illegal transition can
- * PERSIST. The repository write is fenced by `claimToken` only when the entity
- * carries one; a claimToken-less entity goes through an unconditional
- * `update()`. Invariant under audit: a terminal job (`sent` / `canceled`)
- * cannot be rewritten.
+ * Entity transitions preserve sent/canceled state. Token-less writes also
+ * fence terminal DB rows when the caller holds a stale non-terminal snapshot.
+ * Token-CAS writes retain the intended SI-SMS-09 late-success exception.
  *
- * SI-SMS-06 — DB-layer status vocabularies. Only
+ * SI-SMS-06 — DB-layer status vocabularies supplement the existing
  * `message_trigger_job_processing_claim_token_check` (status <> 'processing' OR
  * claim_token IS NOT NULL, migration 20260829140000) and
  * `message_log_provider_acceptance_state_check` (migration 20260829000000)
- * exist. Invariant under audit: an out-of-set `message_log.status`,
+ * checks. Invariant: an out-of-set `message_log.status`,
  * `message_trigger_job.status` or `message_log.carrier_result_state` is
  * rejected by the database.
  */
@@ -101,7 +98,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         }
     });
 
-    knownDefect("SI-SMS-01", "a claimToken-less entity cannot rewrite a terminal (sent) job", async () => {
+    invariant("SI-SMS-01", "a claimToken-less entity cannot rewrite a terminal (sent) job", async () => {
         const { branchId, ruleId } = await seedBranchAndRule();
         const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
             ...jobOverrides(branchId, `si-01-sent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
@@ -117,8 +114,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         if (sent.status !== "sent") throw new Error(`setup failed: expected sent, got ${sent.status}`);
 
         // The invariant under audit: the terminal row cannot be rewritten.
-        // The entity accepts the illegal transition and the claimToken-less
-        // repository write is unconditional, so this reloads as failed.
+        // Both the entity and the token-less persistence path must preserve it.
         const staleTerminal = toEntity(sent, "sent", null);
         staleTerminal.markFailed("late failure overwrite");
 
@@ -128,9 +124,9 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         if (reloaded.status !== "sent") {
             throw new Error(`terminal job was rewritten: sent job is now status=${reloaded.status} cancelReason=${reloaded.cancelReason}`);
         }
-    }, /terminal job was rewritten/);
+    });
 
-    knownDefect("SI-SMS-01", "a claimToken-less entity cannot cancel-then-resurrect a sent job over a canceled row", async () => {
+    invariant("SI-SMS-01", "a claimToken-less entity cannot cancel-then-resurrect a sent job over a canceled row", async () => {
         const { branchId, ruleId } = await seedBranchAndRule();
         const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
             ...jobOverrides(branchId, `si-01-cancel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
@@ -142,9 +138,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         const canceled = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: created.id } });
         if (canceled.status !== "canceled") throw new Error(`setup failed: expected canceled, got ${canceled.status}`);
 
-        // The entity allows cancel -> sent (canceledAt is even kept), and the
-        // claimToken-less write persists it: a canceled job comes back to life
-        // as sent without any provider evidence.
+        // A canceled job cannot come back to life without provider evidence.
         const second = toEntity(created, "canceled", null);
         second.markSent();
         await jobRepository.update(second);
@@ -153,7 +147,21 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         if (reloaded.status !== "canceled") {
             throw new Error(`canceled job was rewritten: status=${reloaded.status} sentAt=${reloaded.sentAt?.toISOString() ?? "null"}`);
         }
-    }, /canceled job was rewritten/);
+    });
+
+    for (const terminal of ["sent", "canceled"] as const) {
+        invariant("SI-SMS-01", `a stale token-less pending snapshot cannot overwrite a now-${terminal} row`, async () => {
+            const { branchId, ruleId } = await seedBranchAndRule();
+            const created = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, jobOverrides(branchId, `si-01-stale-${terminal}-${Date.now()}`));
+            const stale = toEntity(created, "pending", null);
+            await handle.raw.message_trigger_job.update({ where: { id: created.id }, data: { status: terminal } });
+            const before = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: created.id } });
+            stale.markFailed("stale failure");
+            const returned = await jobRepository.update(stale);
+            expect(returned.status).toBe(terminal);
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: created.id } })).toEqual(before);
+        });
+    }
 
     invariant("SI-SMS-06", "processing without a claim token is rejected by the existing DB CHECK", async () => {
         const { branchId, ruleId } = await seedBranchAndRule();
@@ -180,7 +188,7 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         ).rejects.toThrow(/message_log_provider_acceptance_state_check/);
     });
 
-    knownDefect("SI-SMS-06", "an out-of-set message_trigger_job.status is rejected by the database", async () => {
+    invariant("SI-SMS-06", "an out-of-set message_trigger_job.status is rejected by the database", async () => {
         const { branchId, ruleId } = await seedBranchAndRule();
         let rejected = false;
         try {
@@ -200,9 +208,9 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         if (!rejected) {
             throw new Error("message_trigger_job accepted out-of-set status 'bogus'");
         }
-    }, /accepted out-of-set status/);
+    });
 
-    knownDefect("SI-SMS-06", "an out-of-set message_log.status is rejected by the database", async () => {
+    invariant("SI-SMS-06", "an out-of-set message_log.status is rejected by the database", async () => {
         const { branchId } = await seedBranchAndRule();
         let rejected = false;
         try {
@@ -222,9 +230,9 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         if (!rejected) {
             throw new Error("message_log accepted out-of-set status 'bogus'");
         }
-    }, /accepted out-of-set status/);
+    });
 
-    knownDefect("SI-SMS-06", "an out-of-set message_log.carrier_result_state is rejected by the database", async () => {
+    invariant("SI-SMS-06", "an out-of-set message_log.carrier_result_state is rejected by the database", async () => {
         const { branchId } = await seedBranchAndRule();
         const inserted = await handle.raw.message_log.create({
             data: {
@@ -255,5 +263,5 @@ describeReal("SMS job state fences and DB status vocabularies (real PostgreSQL)"
         if (!rejected) {
             throw new Error("message_log accepted out-of-set carrier_result_state 'bogus'");
         }
-    }, /accepted out-of-set carrier_result_state/);
+    });
 });

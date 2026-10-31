@@ -117,8 +117,12 @@ describe("SmsAutomationSafeguardService", () => {
 
     describe("levels", () => {
         it("allows when rule, recipient and branch are all on", async () => {
-            const { service } = harness();
+            const { service, db } = harness();
             await expect(service.check(clientJob())).resolves.toEqual({ allowed: true });
+            expect(db.message_trigger_rule.findFirst).toHaveBeenCalledWith({
+                where: { id: "rule-1", deletedAt: null },
+                select: { isActive: true, branchId: true },
+            });
         });
 
         it("blocks at the rule level when the rule is inactive, with the other two on", async () => {
