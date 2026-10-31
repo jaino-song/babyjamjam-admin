@@ -19,6 +19,7 @@ import { AdminAuditActor, AdminAuditEventWriter } from "application/services/adm
 import { UserMapper } from "infrastructure/database/mapper/user.mapper";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
 
 const MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS = 3;
 
@@ -226,6 +227,7 @@ export class UserService {
         const callerId = (params.actor ?? currentAdminAuditActor())?.userId;
         const runTransaction = () => this.prismaService.$transaction(async (tx) => {
             await this.assertCallerStillOwner(tx, callerId);
+            await this.lockRow(tx, "user", id);
             const target = await tx.user.findUnique({
                 where: { id },
                 select: {
@@ -478,7 +480,7 @@ export class UserService {
             try {
                 return await runTransaction();
             } catch (error) {
-                if (!isPrismaTransactionWriteConflict(error)) {
+                if (!isTransactionConflict(error)) {
                     throw error;
                 }
                 if (attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
@@ -1421,13 +1423,6 @@ export class UserService {
     }
 }
 
-function isPrismaTransactionWriteConflict(error: unknown): boolean {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "P2034";
-}
-
 async function runSerializableTransaction<T>(
     prisma: PrismaService,
     callback: (tx: Prisma.TransactionClient) => Promise<T>,
@@ -1438,9 +1433,7 @@ async function runSerializableTransaction<T>(
                 isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             });
         } catch (error) {
-            if (!isPrismaTransactionWriteConflict(error) || attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
-                throw error;
-            }
+            if (!isTransactionConflict(error)) throw error;
         }
     }
     throw new ConflictException(problemBody("REQUEST_CONFLICT", {
