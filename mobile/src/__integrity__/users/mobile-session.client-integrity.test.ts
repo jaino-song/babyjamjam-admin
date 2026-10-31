@@ -1,9 +1,14 @@
 /**
  * @jest-environment jsdom
  */
+import { QueryObserver } from "@tanstack/react-query";
+import { waitFor } from "@testing-library/react";
+import { AxiosError, type InternalAxiosRequestConfig } from "axios";
+
 import { getQueryClient } from "@/lib/queryClient";
-import { AUTH_USER_QUERY_KEY } from "@/hooks/useGetAuthUser";
+import { AUTH_USER_QUERY_KEY, fetchAuthUser } from "@/hooks/useGetAuthUser";
 import { authenticatedFetch } from "@/lib/api/authenticated-fetch";
+import { api } from "@/lib/api/client";
 import { invariant } from "./client-known-defect";
 
 const ACTIVE_ADMIN_USER = {
@@ -115,6 +120,54 @@ describe("SI-USER-08 mobile session authority integrity (real authority reset, H
                     `(isInvalidated=${String(state?.isInvalidated ?? "absent")}, data still present) — ` +
                     "authenticatedFetch triggers no authority re-fetch/reset on 403",
             );
+        },
+    );
+
+    invariant(
+        "SI-USER-08",
+        "an axios-path 403 refetches demoted authority without retry, logout, or clearing other caches",
+        async () => {
+            const originalAdapter = api.defaults.adapter;
+            const demotedUser = { ...ACTIVE_ADMIN_USER, role: "user" };
+            const unrelatedKey = ["clients", "list"];
+            const unrelatedData = [{ id: "client-1" }];
+            client.setQueryData(AUTH_USER_QUERY_KEY, ACTIVE_ADMIN_USER);
+            client.setQueryData(unrelatedKey, unrelatedData);
+            const observer = new QueryObserver(client, {
+                queryKey: AUTH_USER_QUERY_KEY,
+                queryFn: fetchAuthUser,
+                staleTime: Infinity,
+                retry: false,
+            });
+            const unsubscribe = observer.subscribe(() => undefined);
+            let refusedError: AxiosError | undefined;
+            const adapter = jest.fn(async (config: InternalAxiosRequestConfig) => {
+                if (config.url === "/auth/me") {
+                    return { config, data: demotedUser, headers: {}, status: 200, statusText: "OK" };
+                }
+                refusedError = new AxiosError("Forbidden", "ERR_BAD_RESPONSE", config, undefined, {
+                    config, data: { code: "ACCESS_DENIED" }, headers: {}, status: 403, statusText: "Forbidden",
+                });
+                throw refusedError;
+            });
+            api.defaults.adapter = adapter;
+
+            try {
+                await withProtectedLocation(async (location) => {
+                    const outcome = await api.get("/clients").catch((error: unknown) => error);
+                    expect(outcome).toBe(refusedError);
+                    await waitFor(() => expect(client.getQueryData(AUTH_USER_QUERY_KEY)).toEqual(demotedUser));
+                    expect(adapter.mock.calls.map(([config]) => config.url)).toEqual(["/clients", "/auth/me"]);
+                    expect(client.getQueryData(unrelatedKey)).toBe(unrelatedData);
+                    expect(client.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+                    expect(location.href).toBe("http://localhost/dashboard");
+                    expect(fetchMock).not.toHaveBeenCalled();
+                });
+            } finally {
+                api.defaults.adapter = originalAdapter;
+                unsubscribe();
+                observer.destroy();
+            }
         },
     );
 

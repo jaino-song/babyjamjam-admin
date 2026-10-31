@@ -1,6 +1,7 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
 import { parse } from "cookie";
 
+import { invalidateAuthUser } from "@/lib/auth/invalidate-auth-user";
 import { refreshApplicationSession } from "@/lib/auth/session-refresh";
 import { getServerRuntimeConfig } from "@/lib/env";
 import { captureServiceRecordError } from "@/lib/observability/capture-service-record-error";
@@ -39,6 +40,15 @@ api.interceptors.response.use(
             _appAuthRetry?: boolean;
         };
         const originalRequestMethod = (originalRequest?.method ?? "get").toLowerCase();
+
+        if (err.response?.status === 403) {
+            const path = originalRequest?.url?.split(/[?#]/)[0].replace(/\/$/, "");
+            // The authority refetch must not invalidate itself on refusal.
+            if (!path?.endsWith("/auth/me")) {
+                await invalidateAuthUser().catch(() => undefined);
+            }
+            return Promise.reject(err);
+        }
 
         // Network error - single retry
         if (
