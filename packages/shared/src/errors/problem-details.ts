@@ -32,6 +32,7 @@ export type ProblemCode =
     | "MESSAGE_SEND_REJECTED"
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
+    | "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"
     // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     | "CLIENT_SERVICE_PERIOD_INVALID"
     | "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE"
@@ -252,6 +253,7 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "MESSAGE_SEND_REJECTED",
     "MESSAGE_SEND_ALREADY_REQUESTED",
     "MESSAGE_REQUEST_KEY_CONFLICT",
+    "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED",
     // Registered client/employee codes (EM-CAT-01 satisfied; spec examples are illustrative). BJJ-319 reconciliation 2026-09-14.
     "CLIENT_SERVICE_PERIOD_INVALID",
     "CLIENT_SERVICE_PERIOD_UNCOMPUTABLE",
@@ -631,6 +633,17 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "같은 문자 발송 요청이 이미 있어 발송 기록을 확인해 주세요.",
             "en-US": "A matching message request already exists, so check its delivery status.",
+        },
+    },
+    MESSAGE_DEFAULT_RULE_DELETE_BLOCKED: {
+        status: 409,
+        title: {
+            "ko-KR": "기본 문자 규칙은 삭제할 수 없어요",
+            "en-US": "Default message rules cannot be deleted",
+        },
+        detail: {
+            "ko-KR": "기본 문자 규칙은 삭제할 수 없어요. 대신 비활성화해 주세요.",
+            "en-US": "Default message rules cannot be deleted. Deactivate the rule instead.",
         },
     },
     MESSAGE_REQUEST_KEY_CONFLICT: {

@@ -157,7 +157,7 @@ export class SmsAutomationSafeguardService {
         job: SmsSafeguardJob,
     ): Promise<SmsAutomationSafeguardDecision | null> {
         const rule = await db.message_trigger_rule.findFirst({
-            where: { id: job.ruleId },
+            where: { id: job.ruleId, deletedAt: null },
             select: { isActive: true, branchId: true },
         });
         if (!rule) return { allowed: false, level: "rule", reason: "automation rule is missing" };

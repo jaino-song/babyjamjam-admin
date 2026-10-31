@@ -131,6 +131,15 @@ describe("MessageTriggerEditor", () => {
       updatedAt: "2026-07-01T00:00:00.000Z",
     };
 
+    it("hides default rule deletion while allowing deactivation", async () => {
+      render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={{ ...storedRule, isDefault: true }} onClose={jest.fn()} />);
+      expect(screen.queryByRole("button", { name: "규칙 삭제" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByLabelText("규칙 활성화"));
+      fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+      await waitFor(() => expect(updateRule).toHaveBeenCalledWith({ id: storedRule.id, dto: expect.objectContaining({ isActive: false }) }));
+      expect(deleteRule).not.toHaveBeenCalled();
+    });
+
     it("renders both controls with the defaults and the four shared status options", () => {
       render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={jest.fn()} />);
 

@@ -11,6 +11,13 @@ import {
 const REQUEST_ID = "req-bjj-319-001";
 
 describe("problem details public contract", () => {
+    it("localizes the default SMS rule delete conflict and preserves its refusal contract", () => {
+        const problem = createProblemDetails({ code: "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED", requestId: REQUEST_ID, outcome: "NOT_APPLIED" });
+        expect(problem.status).toBe(409);
+        expect(problem.detail).toBe("기본 문자 규칙은 삭제할 수 없어요. 대신 비활성화해 주세요.");
+        expect(parseProblemDetails(problem, 409)).toEqual(problem);
+        expect(normalizeApiError({ response: { status: 409, data: problem } }, { operation: "mutation" })).toMatchObject({ verified: true, message: problem.detail });
+    });
     it("creates a localized, catalog-backed problem with empty params", () => {
         const problem = createProblemDetails({
             code: "AUTH_REQUIRED",

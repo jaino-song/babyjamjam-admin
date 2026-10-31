@@ -444,6 +444,7 @@ export class AgentAutomationRecordStoreService {
             const rules = await tx.message_trigger_rule.findMany({
                 where: {
                     OR: [{ branchId: params.branchId }, { branchId: null }],
+                    deletedAt: null,
                     eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
                 },
                 select: { id: true, branchId: true },

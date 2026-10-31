@@ -175,6 +175,7 @@ export class MessageTriggerJobEntity {
     }
 
     markProcessing(claimToken?: string | null): void {
+        if (this.isTerminal()) return;
         this.status = "processing";
         if (claimToken !== undefined) {
             this.claimToken = claimToken;
@@ -189,11 +190,13 @@ export class MessageTriggerJobEntity {
      * by the immutable claim token.
      */
     markDispatchAuthorized(): void {
+        if (this.isTerminal()) return;
         this.status = "dispatching";
         this.updatedAt = new Date();
     }
 
     defer(kind: "transient", reason: string): void {
+        if (this.isTerminal()) return;
         const now = new Date();
 
         this.attempts += 1;
@@ -208,6 +211,7 @@ export class MessageTriggerJobEntity {
     }
 
     markSent(): void {
+        if (this.isTerminal()) return;
         this.status = "sent";
         // A manual resend keeps its setup reason on the in-flight row as the
         // durable resend mark; a sent job reports none.
@@ -218,12 +222,14 @@ export class MessageTriggerJobEntity {
     }
 
     markFailed(reason?: string): void {
+        if (this.isTerminal()) return;
         this.status = "failed";
         this.cancelReason = reason ?? null;
         this.updatedAt = new Date();
     }
 
     cancel(reason: string): void {
+        if (this.isTerminal()) return;
         this.status = "canceled";
         this.cancelReason = reason;
         this.canceledAt = new Date();
@@ -231,11 +237,16 @@ export class MessageTriggerJobEntity {
     }
 
     markNeedsSetup(reason: string): void {
+        if (this.isTerminal()) return;
         this.status = "needs_setup";
         this.cancelReason = reason;
         this.nextAttemptAt = null;
         // Retain the claim token: repository.update() uses it as the write fence.
         this.updatedAt = new Date();
+    }
+
+    private isTerminal(): boolean {
+        return this.status === "sent" || this.status === "canceled";
     }
 
     /**

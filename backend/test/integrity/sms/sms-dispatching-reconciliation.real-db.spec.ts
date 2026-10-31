@@ -414,14 +414,12 @@ describeReal("SMS dispatching reconciliation and eligibility re-check (real Post
      * `dispatchDueJobs()` tick reclaims the stale row through the production
      * reclaim path; releasing the worker lets it finish its CAS write.
      *
-     * NEEDS-PRODUCT-DECISION: this proves a terminal rewrite, not a duplicate
-     * send. A late successful provider result may legitimately resolve an
-     * uncertain failure. Pin reachability until the product chooses terminal
-     * immutability versus late-result precedence; do not call it a defect.
+     * Intended (operator decision 2026-10-31): a late authoritative provider
+     * success resolves the reclaimed uncertain failure without another send.
      */
     invariant(
         "SI-SMS-09",
-        "a late worker rewriting a reconciled failed job to sent is reachable today",
+        "a late worker rewriting a reconciled failed job to sent is intended (operator decision 2026-10-31)",
         async () => {
             await seedBranchRuleClient();
             const client = await handle.raw.client.findFirstOrThrow({ where: { branchId } });

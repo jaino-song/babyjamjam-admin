@@ -124,6 +124,14 @@ describe("AgentAutomationRecordStoreService schedule-write successors", () => {
         });
 
         expect(tx.message_trigger_job.create).toHaveBeenCalledTimes(1);
+        expect(tx.message_trigger_rule.findMany).toHaveBeenCalledWith({
+            where: {
+                OR: [{ branchId }, { branchId: null }],
+                deletedAt: null,
+                eventType: "EMPLOYEE_ASSIGNED",
+            },
+            select: { id: true, branchId: true },
+        });
         const payload = tx.message_trigger_job.create.mock.calls[0]![0].data.payload;
         const terminal = payload[AGENT_AUTOMATION_RECORD_PAYLOAD_KEY];
         expect(terminal.commit).toEqual(expect.objectContaining({
