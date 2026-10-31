@@ -525,9 +525,12 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         });
     });
 
-    for (const mixedOptions of [false, true]) {
+    for (const [firstOption, secondOption] of [
+        [undefined, undefined], ["register_new", "restore"], ["restore", "register_new"],
+    ] as const) {
+        const mixedOptions = firstOption !== undefined;
         invariant("SI-EMP-10", mixedOptions
-            ? "register_new racing restore has exactly one winner under the row lock"
+            ? `${firstOption} first racing ${secondOption} second has exactly one winner under the row lock`
             : "two creates racing for a deleted phone restore exactly once under the row lock", async () => {
             const branch = await createBranch(handle.raw, tracker);
             const params = { name: "경합 복원", workArea: ["서울"], phone: "01012345678", grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true };
@@ -544,11 +547,7 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
                 await new Promise<void>((resolve) => { unlock = resolve; });
             }, { timeout: 15_000 });
             await locked;
-            const contenders = Promise.allSettled([
-                employeeService.create(branch.id, { ...params, ...(mixedOptions ? { onDeletedPhoneMatch: "register_new" as const } : {}) }),
-                employeeService.create(branch.id, { ...params, ...(mixedOptions ? { onDeletedPhoneMatch: "restore" as const } : {}) }),
-            ]);
-            try {
+            async function waitForContenders(count: number): Promise<void> {
                 const deadline = Date.now() + 4_000;
                 for (;;) {
                     const waiting = await handle.raw.$queryRaw<Array<{ pid: number }>>`
@@ -557,16 +556,27 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
                           AND wait_event_type = 'Lock' AND query LIKE '%phone_normalized%'
                           AND query LIKE '%FOR UPDATE%'
                     `;
-                    if (waiting.length === 2) break;
-                    if (Date.now() > deadline) throw new Error("Both restore contenders must be observed waiting on the database row lock");
+                    if (waiting.length === count) break;
+                    if (Date.now() > deadline) throw new Error(`${count} restore contenders must be observed waiting on the database row lock`);
                     await new Promise((resolve) => setTimeout(resolve, 20));
                 }
+            }
+            // Observe the first waiter before launching the second so both lock orders are covered.
+            const contenders = [Promise.allSettled([
+                employeeService.create(branch.id, { ...params, onDeletedPhoneMatch: firstOption }),
+            ])];
+            try {
+                await waitForContenders(1);
+                contenders.push(Promise.allSettled([
+                    employeeService.create(branch.id, { ...params, onDeletedPhoneMatch: secondOption }),
+                ]));
+                await waitForContenders(2);
             } finally {
                 unlock();
                 await holder;
-                for (const outcome of await contenders) if (outcome.status === "fulfilled") tracker.track("employee", outcome.value.id);
+                for (const outcome of (await Promise.all(contenders)).flat()) if (outcome.status === "fulfilled") tracker.track("employee", outcome.value.id);
             }
-            const outcomes = await contenders;
+            const outcomes = (await Promise.all(contenders)).flat();
             const winners = outcomes.filter((outcome) => outcome.status === "fulfilled");
             const losers = outcomes.filter((outcome) => outcome.status === "rejected");
             expect(winners).toHaveLength(1);
@@ -692,10 +702,12 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
             repository, handle.service,
         );
         const create = provider.getCapabilities().find((capability) => capability.meta.name === "employees.create")!;
-        await expect(create.execute({ principal: { userId: "user", branchId: branch.id, globalRole: "admin", branchRole: "admin" },
+        const execution = create.execute({ principal: { userId: "user", branchId: branch.id, globalRole: "admin", branchRole: "admin" },
             sessionId: "session", traceId: "trace", locale: "ko", actionId: "action" }, {
             name: "새 사람", phone: original.phone, workArea: ["서울"], grade: "스탠다드", onDeletedPhoneMatch: "restore",
-        })).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+        });
+        await expect(execution).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+        await expect(execution).rejects.toThrow("A deleted employee holds this phone number. The operator must choose whether to restore them or register a new employee in the app.");
         expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual(before);
     });
 

@@ -1661,7 +1661,8 @@ function parseProblemDetailsInternal(
             const id = readOwn(deletedEmployee, "id").value;
             const name = readOwn(deletedEmployee, "name").value;
             if (typeof id === "number" && Number.isSafeInteger(id) && id > 0
-                && typeof name === "string" && name.length <= MAX_DELETED_EMPLOYEE_NAME_LENGTH) {
+                && typeof name === "string" && name.length > 0 && name.length <= MAX_DELETED_EMPLOYEE_NAME_LENGTH
+                && !CONTROL_CHARACTER_PATTERN.test(name)) {
                 parsed.deletedEmployee = { id, name };
             }
         }

@@ -163,6 +163,12 @@ export class EmployeeWriteAgentCapabilitiesProvider implements AgentCapabilityPr
                             return result;
                         });
                     } catch (error) {
+                        if (error instanceof ConflictException) {
+                            const response = error.getResponse();
+                            if (typeof response === "object" && "code" in response && response.code === "EMPLOYEE_PHONE_HELD_BY_DELETED") {
+                                throw new AgentActionCertainFailureError("A deleted employee holds this phone number. The operator must choose whether to restore them or register a new employee in the app.");
+                            }
+                        }
                         if (isEmployeeBranchPhoneUniqueViolation(error)) {
                             throw new AgentActionCertainFailureError("An employee with this phone already exists in this branch");
                         }

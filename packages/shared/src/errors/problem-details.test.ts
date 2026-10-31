@@ -27,6 +27,7 @@ describe("problem details public contract", () => {
     it.each([
         { id: 0, name: "name" }, { id: -1, name: "name" }, { id: 1.5, name: "name" },
         { id: "1", name: "name" }, { id: 1, name: "x".repeat(101) }, { id: 1, name: 1 },
+        ...["", "name\u0000", "name\t", "name\n", "name\r", "name\u001f", "name\u007f"].map((name) => ({ id: 1, name })),
         null, {},
     ])("drops invalid deleted employee extension %j", (deletedEmployee) => {
         const problem = createProblemDetails({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", requestId: REQUEST_ID });
