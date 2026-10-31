@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EmployeeService } from "application/services/employee.service";
 import {
     ChangeEmployeeOpenStatusDto,
@@ -81,8 +82,10 @@ export class EmployeeController {
     }
 
     @Get("id")
-    findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
-        return this.employeeService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
+    async findById(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
+        const employee = await this.employeeService.findById(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
+        if (!employee) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return employee;
     }
 
     @Get(":id/active-clients")

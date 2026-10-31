@@ -43,6 +43,8 @@ export interface IEmployeeRepository {
     ): Promise<EmployeeEntity | null>;
     findByPhone(branchid: string, normalizedPhone: string): Promise<EmployeeEntity | null>;
     create(branchid: string, employee: EmployeeEntity, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity>;
+    /** Restore a branch phone tombstone under a row lock, or create a new employee. */
+    createOrRestore(branchid: string, employee: EmployeeEntity, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }>;
     update(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     /**
      * Compare the exact approval target while holding the row lock, then
@@ -60,6 +62,7 @@ export interface IEmployeeRepository {
             grade: string;
             openToNextWork: boolean;
             birthday: string;
+            smsAutomationEnabled: boolean;
         }>,
         transaction?: Prisma.TransactionClient,
     ): Promise<EmployeeEntity | null>;

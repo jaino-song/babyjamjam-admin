@@ -21,7 +21,7 @@ export class CreateEmployeeUsecase {
         birthday?: string,
         transaction?: Prisma.TransactionClient,
         smsAutomationEnabled?: boolean,
-    ): Promise<EmployeeEntity> {
+    ): Promise<EmployeeEntity & { restored: boolean }> {
         const employee = EmployeeEntity.create(
             name,
             workArea,
@@ -32,6 +32,6 @@ export class CreateEmployeeUsecase {
             birthday,
             smsAutomationEnabled,
         );
-        return this.employeeRepository.create(branchid, employee, transaction);
+        return this.employeeRepository.createOrRestore(branchid, employee, transaction);
     }
 }

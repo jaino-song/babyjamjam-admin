@@ -9,7 +9,7 @@ import { isoDateInKorea } from "domain/utils/business-days";
 import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
 
 import { createBranch, createClient, createEmployee } from "../helpers/factories";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import {
     assertThrowawayTarget,
     closeIntegrityPrisma,
@@ -84,7 +84,7 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
         if (handle) await closeIntegrityPrisma(handle);
     });
 
-    knownDefect(
+    invariant(
         "SI-EMP-01",
         "delete guard judges by the KST business date (assignment ended before KST today is inactive in a UTC+5 process)",
         async () => {
@@ -147,7 +147,6 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
                 Date.prototype.setHours = originalSetHours;
             }
         },
-        /Received: true/,
     );
 
     describe("SI-EMP-02 soft-deleted employee visibility", () => {
@@ -162,7 +161,7 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
             await repository.delete(branchId, deletedEmployeeId);
         });
 
-        knownDefect(
+        invariant(
             "SI-EMP-02",
             "GET by id does not return a soft-deleted employee",
             async () => {
@@ -170,10 +169,9 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
                 const returnedDeletedRow = employee !== null && employee.deletedAt !== undefined;
                 expect(returnedDeletedRow).toBe(false);
             },
-            /Received: true/,
         );
 
-        knownDefect(
+        invariant(
             "SI-EMP-02",
             "PATCH employee on a soft-deleted employee is a 404-class domain error, not a bare 500",
             async () => {
@@ -181,10 +179,9 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
                     updateEmployeeUsecase.execute(branchId, deletedEmployeeId, { name: "삭제된 관리사" }),
                 ).rejects.toThrow(NotFoundException);
             },
-            /Employee not found for branch/,
         );
 
-        knownDefect(
+        invariant(
             "SI-EMP-02",
             "open-status change on a soft-deleted employee is a 404-class domain error, not a bare 500",
             async () => {
@@ -192,7 +189,6 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
                     changeEmployeeOpenStatusUsecase.execute(branchId, deletedEmployeeId, false),
                 ).rejects.toThrow(NotFoundException);
             },
-            /Employee not found for branch/,
         );
     });
 
@@ -218,7 +214,7 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
         expect(approved.smsAutomationEnabled).toBe(false);
     });
 
-    knownDefect(
+    invariant(
         "SI-EMP-03",
         "approved target-version update persists smsAutomationEnabled instead of silently dropping it",
         async () => {
@@ -243,6 +239,5 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
             const persisted = await handle.raw.employee.findUnique({ where: { id: employeeRow.id } });
             expect(persisted?.smsAutomationEnabled).toBe(false);
         },
-        /Received: true/,
     );
 });

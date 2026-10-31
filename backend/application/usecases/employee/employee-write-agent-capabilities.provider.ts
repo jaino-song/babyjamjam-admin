@@ -59,11 +59,12 @@ async function ensureEmployeePhoneAvailable(
     branchId: string,
     normalizedPhone: string | undefined,
     currentEmployeeId?: number,
+    allowRestore = false,
 ): Promise<void> {
     if (normalizedPhone === undefined) return;
 
     const existing = await employeeRepository.findByPhone(branchId, normalizedPhone);
-    if (existing && existing.id !== currentEmployeeId) {
+    if (existing && existing.id !== currentEmployeeId && !(allowRestore && existing.deletedAt)) {
         throw new AgentActionCertainFailureError("An employee with this phone already exists in this branch");
     }
 }
@@ -150,10 +151,10 @@ export class EmployeeWriteAgentCapabilitiesProvider implements AgentCapabilityPr
                     const input = CreateEmployeeSchema.parse(rawInput);
                     const normalizedPhone = normalizeEmployeePhone(input.phone);
                     try {
-                        await ensureEmployeePhoneAvailable(this.employeeRepository, context.principal.branchId, normalizedPhone);
+                        await ensureEmployeePhoneAvailable(this.employeeRepository, context.principal.branchId, normalizedPhone, undefined, true);
                         return await this.prisma.$transaction(async (transaction) => {
                             const employee = await this.createEmployee.execute(context.principal.branchId, input.name, input.workArea, normalizedPhone, input.grade, input.openToNextWork, undefined, input.birthday, transaction);
-                            const result = { id: employee.id, name: employee.name, status: "created" };
+                            const result = { id: employee.id, name: employee.name, status: employee.restored ? "restored" : "created" };
                             await recordAgentActionEffect(transaction, context, "employees.create", "employee", employee.id, result);
                             return result;
                         });

@@ -66,8 +66,8 @@ export interface EmployeeAssignmentScheduleSource {
     primaryEmployeeId: number;
     secondaryEmployeeId: number | null;
     client: { id: number; name: string };
-    primaryEmployee: { id: number; name: string; phone: string } | null;
-    secondaryEmployee: { id: number; name: string; phone: string } | null;
+    primaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
+    secondaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
 }
 
 type EmployeeAssignmentScheduleFingerprintSource = Pick<
@@ -168,7 +168,7 @@ export function buildEmployeeAssignmentMessageRecipe(
         rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
             ? schedule.primaryEmployee
             : schedule.secondaryEmployee;
-    if (!employee?.phone) return null;
+    if (!employee?.phone || employee.deletedAt) return null;
 
     const scheduledFor = new Date(now);
     const memberId = `employee:${employee.id}`;

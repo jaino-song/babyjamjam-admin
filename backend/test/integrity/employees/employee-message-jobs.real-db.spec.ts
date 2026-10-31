@@ -51,7 +51,7 @@ import {
     createEmployeeSchedule,
     createMessageTriggerRule,
 } from "../helpers/factories";
-import { invariant, knownDefect } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import {
     assertThrowawayTarget,
     closeIntegrityPrisma,
@@ -270,7 +270,7 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         if (pending !== null && pending.status === "pending") throw new Error(defectMessage);
     }
 
-    knownDefect(
+    invariant(
         "SI-EMP-04",
         "deleting an employee cancels or resyncs pending assignment SMS jobs addressed to that employee",
         async () => {
@@ -298,7 +298,6 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
                 "SI-EMP-04 defect: the pending assignment SMS job addressed to the deleted employee was not canceled or resynced by the delete path",
             );
         },
-        /the pending assignment SMS job addressed to the deleted employee was not canceled or resynced by the delete path/,
     );
 
     invariant(
@@ -316,7 +315,8 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
             expect(pending?.status).toBe("pending");
             if (!pending) throw new Error("assignment fixture did not materialize a job");
 
-            await employeeService.delete(fixture.branchId, fixture.employeeId);
+            // Simulate a stale pending job independently of the service's delete-time resync.
+            await new SbEmployeeRepository(handle.service).delete(fixture.branchId, fixture.employeeId);
             expect(await pendingAssignmentJob(fixture.scheduleId, fixture.ruleId)).toEqual(pending);
             const { service: dispatchTrigger, sentJobs } = buildDispatchingTriggerService(handle);
             const dispatched = await dispatchTrigger.dispatchPendingJobNow(pending.id, {
@@ -426,7 +426,7 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         },
     );
 
-    knownDefect(
+    invariant(
         "SI-EMP-09",
         "assignment resync does not re-arm a pending SMS job for a soft-deleted employee",
         async () => {
@@ -452,12 +452,11 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
                 "SI-EMP-09 defect: the assignment resync re-armed a pending SMS job addressed to the soft-deleted employee",
             );
         },
-        /the assignment resync re-armed a pending SMS job addressed to the soft-deleted employee/,
     );
 
     invariant(
         "SI-EMP-10",
-        "BJJ-275: a deleted employee still reserves the phone; recreating returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED",
+        "re-adding a deleted employee's phone restores the same employee id and returns restored=true",
         async () => {
             const branch = await createBranch(handle.raw, tracker);
             const params = {
@@ -466,8 +465,22 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
             };
             const original = await employeeService.create(branch.id, params);
             tracker.track("employee", original.id);
+            expect(original).toMatchObject({ restored: false });
             await employeeService.delete(branch.id, original.id);
+            expect(await employeeService.checkPhoneExists(branch.id, params.phone)).toBe(false);
 
+            const restored = await employeeService.create(branch.id, { ...params, name: "복원 관리사", smsAutomationEnabled: false });
+            expect(restored).toMatchObject({ id: original.id, restored: true, name: "복원 관리사", smsAutomationEnabled: false });
+            expect(await handle.raw.employee.findUnique({ where: { id: original.id } })).toMatchObject({ deletedAt: null });
+            expect(await employeeService.checkPhoneExists(branch.id, params.phone)).toBe(true);
+        },
+    );
+
+    invariant("SI-EMP-10", "a live duplicate returns 409 EMPLOYEE_PHONE_ALREADY_REGISTERED", async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const params = { name: "중복 검사", workArea: [], phone: "01012345678", grade: DEFAULT_EMPLOYEE_GRADE, openToNextWork: true };
+            const original = await employeeService.create(branch.id, params);
+            tracker.track("employee", original.id);
             let rejected: unknown;
             try {
                 const recreated = await employeeService.create(branch.id, params);
