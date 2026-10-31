@@ -527,7 +527,13 @@ enabled.) The application's Valkey user must keep `INFO` (`@dangerous`)
 permitted: without it the continuity proof fails closed and every reconnect
 refetches.
 
-Lightsail is unused; if revived, the same fenced steps apply.
+The same fenced steps apply on Lightsail, the production primary again since
+2026-10-31. A Lightsail↔LightNode cutover copies **no** Valkey data: every key
+family is disposable or rebuildable (rate limits, short locks, the realtime
+stream, eFormsign list snapshots), and durable state lives in Postgres. Do not
+restore the other host's volume, which would only bring back stale locks. While
+both hosts serve during a DNS drain, realtime hints do not cross hosts, so a
+client on one host sees the other host's writes only after its next refetch.
 
 ## Related contracts
 

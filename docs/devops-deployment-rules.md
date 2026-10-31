@@ -165,7 +165,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 | DB | 프로덕션 DB만. 활성화 전 **Production DB identity hash 게이트**(`approved-production-db-ref.sha256`) 통과 필수 |
 | 비활성 기능 | 스케줄러, 자동완료, eformsign 문서 잡 intake/worker, unlocked reconcile, Aligo — Compose에서 하드 비활성화. 켜지 않는다 |
 | 전환 (수동 runbook) | AWS 장애 시: ① Vercel DNS `api`/`A`를 LightNode로 PATCH 후 재조회 ② Caddy가 인증서를 받을 때까지 대기(10분 기한) ③ `temporary-active`(또는 persistent active) 기동 후 `/health/lease`에서 LightNode가 lease를 쥐었는지 확인. 컨트롤러 자동 전환 경로(Sentry Uptime → 컨트롤러)는 코드에만 있고 설치하지 않는다 |
-| 복귀 (failback) | **자동 failback 없음.** ① 미리 `api` TTL을 60초로 ② Lightsail 배포·`curl --resolve`로 고정 IP 헬스+유효 인증서 확인 ③ DNS를 Lightsail로 PATCH·두 리졸버로 확인 ④ 이전 TTL+15분 동안 LightNode가 남은 클라이언트를 계속 서빙(lease·Aligo 유지), 접근 로그에 5분간 새 요청이 없으면 ⑤ LightNode `stop` → `deploy-standby`(같은 릴리스) → Lightsail이 lease를 쥐었는지 확인. 되돌릴 때는 Lightsail 스케줄러를 먼저 끄고 lease가 비었는지 확인한 뒤 LightNode를 활성화 |
+| 복귀 (failback) | **자동 failback 없음.** ① 미리 `api` TTL을 60초로 ② Lightsail 배포·`curl --resolve`로 고정 IP 헬스+유효 인증서 확인 ③ DNS를 Lightsail로 PATCH·두 리졸버로 확인 ④ 이전 TTL+15분 동안 LightNode가 남은 클라이언트를 계속 서빙(lease·Aligo 유지), 접근 로그에 5분간 새 요청이 없으면 ⑤ LightNode `stop` → `deploy-standby`(같은 릴리스) → Lightsail이 lease를 쥐었는지 확인. Valkey는 옮기지 않는다(전부 폐기·재생성 가능, 상태는 Postgres). 드레인 중에는 실시간 힌트가 호스트를 넘지 않아 다른 호스트의 변경은 다음 재조회 때 보인다. 되돌릴 때는 Lightsail 스케줄러를 먼저 끄고 lease가 비었는지 확인한 뒤 LightNode를 활성화 |
 | 사전 점검 | `lightnode-preflight.sh`, `NETWORK_PREFLIGHT.md`. 컨트롤러 arm/disarm은 `CONTROLLER_OPERATIONS.md` |
 | 현재 상태 | 2026-09-03부터 프로덕션 DNS가 Fallback을 가리켜 프로덕션 트래픽을 서빙 중(`runtime_mode=temporary-active`). **2026-10-31 결정: Lightsail로 되돌리고 LightNode는 passive standby로 전환 — 전환 완료 전까지는 이 줄이 현재 상태다.** 컨트롤러는 설치·arm하지 않는다. 바뀌면 README와 이 표를 같이 갱신 |
 
