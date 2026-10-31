@@ -1119,6 +1119,21 @@ export class UserService {
     ): Promise<UserApprovalSummary> {
         return this.prismaService.$transaction(async (tx) => {
             await this.assertCallerStillOwner(tx, params.approvedBy);
+            await this.lockRow(tx, "user", id);
+            const target = await tx.user.findUnique({
+                where: { id },
+                select: { id: true, role: true, approvalStatus: true },
+            });
+            if (!target) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            if (target.id === params.approvedBy || target.id === params.actor?.userId) {
+                throw new ForbiddenException(this.selfApprovalProblem());
+            }
+            if (target.role === "owner") {
+                throw new ForbiddenException(this.ownerApprovalProblem());
+            }
+
             const branch = await tx.branch.findUnique({
                 where: { id: params.branchId },
                 select: { id: true },
@@ -1231,7 +1246,7 @@ export class UserService {
                 branchId: params.ownerBranchId ?? params.branchId,
                 targetType: "user",
                 targetId: id,
-                before: { id, role: null, approvalStatus: "pending" },
+                before: { id, role: target.role, approvalStatus: target.approvalStatus },
                 after: {
                     id,
                     role: user.role,
@@ -1357,6 +1372,24 @@ export class UserService {
                 },
             });
             return user;
+        });
+    }
+
+    /** 403 body: an actor may not approve their own admission. */
+    private selfApprovalProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "본인 계정은 승인할 수 없어요.",
+        });
+    }
+
+    /** 403 body: a global owner's admission may not be changed through approval. */
+    private ownerApprovalProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "오너 계정은 이 경로로 승인/역할을 바꿀 수 없어요.",
         });
     }
 
