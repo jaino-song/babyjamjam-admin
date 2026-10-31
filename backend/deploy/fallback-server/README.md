@@ -296,8 +296,21 @@ then decides by git ancestry:
   `deploy-lightnode-standby` job of the commit the standby records to recover it.
 - Diverged history, an unknown tag, or malformed status → the job fails.
 
+Before that decision, the job asks the GitHub API (`ci/newer-primary-release.sh`,
+newest 100 `main` push runs) whether a strict descendant of this commit already has a
+successful "deploy Lightsail backend" job. If one does, a `deploy` becomes
+`superseded`; a `refuse` is never overridden. An API error, a run commit missing from
+the checkout, or a newer run whose Lightsail job is not listed yet fails the job red
+(re-run it).
+
 The standby therefore converges to the newest backend release that reached
-Lightsail, and an older queued run can never roll it back. While LightNode is
+Lightsail, and an older queued run can never roll it back.
+
+Accepted risk (2026-10-31): the lookup is a snapshot. If a newer release finishes on
+Lightsail after this job's lookup and that newer release's own standby job fails,
+this job can still deploy the older release. Standby is then one release behind,
+and the newer release's failed standby job is red; re-running it deploys forward,
+because the older release is its ancestor. Production is never affected. While LightNode is
 still temporary-active during a cutover drain (DNS already on Lightsail),
 `deploy-lightnode-standby` fails red, because the host is not passive. That is
 expected. Re-run the job after the drain.
