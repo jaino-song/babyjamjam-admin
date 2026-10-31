@@ -147,6 +147,29 @@ describe('NotificationBell', () => {
     expect(mockPush).toHaveBeenCalledTimes(1);
   });
 
+  it('should open the recovery dialog link of a failed document job', async () => {
+    mockNotifications = [
+      {
+        ...mockUnreadNotificationWithUrl,
+        data: { type: 'eformsign_document_job_failed', url: '/contracts?recoverJobId=j1' },
+      },
+    ];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    fireEvent.click(screen.getByTestId('notification-item-unread'));
+
+    expect(mockPush).toHaveBeenCalledWith('/contracts?recoverJobId=j1');
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockFilteredClientsDialog).not.toHaveBeenCalledWith(expect.objectContaining({ open: true }));
+  });
+
   it('should NOT call router.push when notification has no URL', async () => {
     mockNotifications = [mockNotificationWithoutUrl];
 

@@ -20,6 +20,9 @@ export type ClientWizardPrefill = Partial<{
   careCenter: boolean;
   voucherClient: boolean;
   breastPump: boolean;
+  allowSaturdayService: boolean;
+  allowSundayService: boolean;
+  allowHolidayService: boolean;
   serviceStatus: ServiceStatus;
   areaId: string | null;
 }>;

@@ -17,6 +17,13 @@ const mockCreateClientMutateAsync = jest.fn();
 const mockUpdateClientMutateAsync = jest.fn();
 const mockDeleteClientMutateAsync = jest.fn();
 const mockEnqueueMutateAsync = jest.fn();
+// Mirrors backend EformsignDocumentJobContractDataDto (backend/interface/dto/eformsign-document-job.dto.ts).
+const JOB_CONTRACT_DATA_FIELDS = [
+  "customerName", "customerContact", "customerDOB", "customerAddress", "caretaker1Name", "caretaker1Contact",
+  "type", "days", "area", "contractDuration", "startYear", "startMonth", "startDay", "startDate",
+  "endYear", "endMonth", "endDay", "endDate", "paymentYear", "paymentMonth", "paymentDay",
+  "fullPrice", "grant", "actualPrice", "issuerPhone",
+];
 const mockDispatchHeadless = jest.fn();
 
 jest.mock("@/hooks/useBusinessDayCalendar");
@@ -43,22 +50,12 @@ jest.mock("@/hooks/useEformsign", () => ({
 
 jest.mock("@/services/api", () => ({
   eformsignApi: {
+    enqueueDocumentCreation: (...args: unknown[]) => mockEnqueueMutateAsync(...args),
     dispatchHeadless: (...args: unknown[]) => mockDispatchHeadless(...args),
     generateDocument: jest.fn(),
     createDocRecord: jest.fn().mockResolvedValue({}),
     adoptDocument: jest.fn().mockResolvedValue({}),
   },
-}));
-
-jest.mock("@/lib/feature-flags", () => ({
-  isFeatureEnabled: (flag: string) => flag === "eformsignDocumentJobs",
-}));
-
-jest.mock("@/hooks/useEformsignDocumentJobs", () => ({
-  useEnqueueEformsignDocumentCreation: () => ({
-    mutateAsync: (...args: unknown[]) => mockEnqueueMutateAsync(...args),
-    isPending: false,
-  }),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -211,6 +208,9 @@ describe("ContractCreationForm — confirm before writing form edits back to the
         contractData: expect.objectContaining({ customerContact: "010-9999-8888" }),
       }),
     );
+    // The job API rejects any contractData field its DTO does not declare (400 UNEXPECTED_FIELD).
+    const sentFields = Object.keys(mockEnqueueMutateAsync.mock.calls[0][0].contractData);
+    expect(sentFields.filter((field) => !JOB_CONTRACT_DATA_FIELDS.includes(field))).toEqual([]);
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
   });
 

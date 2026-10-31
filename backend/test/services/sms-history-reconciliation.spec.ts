@@ -14,6 +14,7 @@ import { SystemSettingService } from "application/services/system-setting.servic
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { MessageRetrySchedulerService } from "application/services/message-retry-scheduler.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
+import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 
 const started = new Date("2026-10-12T01:00:00.000Z");
 function log(): MessageLogEntity {
@@ -311,6 +312,49 @@ describe("Aligo history service and eligibility", () => {
         const { service, repo } = setup(row); await service.reconcile();
         const options = repo.reconcileProviderAttempt.mock.calls[0][5];
         expect(options.variables).toEqual({}); expect(options.retry).toBe("none");
+    });
+    describe("realtime hint suppression", () => {
+        // Records, per repository write, whether it ran inside withoutEntityChangeHints.
+        function observed(row: MessageLogEntity) {
+            const fixture = setup(row);
+            const writes: Array<[string, boolean]> = [];
+            fixture.repo.claimAligoHistoryBookkeeping.mockImplementation(async (source: MessageLogEntity) => {
+                writes.push(["bookkeeping", isEntityChangeHintsSuppressed()]); return source;
+            });
+            fixture.repo.reconcileProviderAttempt.mockImplementation(async () => {
+                writes.push(["reconcile", isEntityChangeHintsSuppressed()]); return null;
+            });
+            return { ...fixture, writes };
+        }
+        const unreachable = { result_code: -1, message: "unavailable" };
+        it("announces the first claim because historyLookup becomes checking, then suppresses the unchanged result write", async () => {
+            const { service, api, writes } = observed(log()); api.listHistory.mockResolvedValue(unreachable);
+            await service.reconcile();
+            expect(writes).toEqual([["bookkeeping", false], ["bookkeeping", true]]);
+        });
+        it("suppresses both bookkeeping writes once the row already reads checking", async () => {
+            const row = log(); row.variables = { historyLookup: "checking", historyLookupAt: started.toISOString() };
+            const { service, api, writes } = observed(row); api.listHistory.mockResolvedValue(unreachable);
+            await service.reconcile();
+            expect(writes).toEqual([["bookkeeping", true], ["bookkeeping", true]]);
+        });
+        it("announces the write that exhausts the lookup because the screen shows 확인 필요", async () => {
+            const row = log(); row.variables = { historyLookup: "checking", historyLookupAt: started.toISOString(), historyLookupFailures: "2" };
+            const { service, api, writes } = observed(row); api.listHistory.mockResolvedValue(unreachable);
+            await service.reconcile();
+            expect(row.variables["historyLookup"]).toBe("exhausted");
+            expect(writes).toEqual([["bookkeeping", true], ["bookkeeping", false]]);
+        });
+        it("never suppresses a reconciliation that settles the log", async () => {
+            const row = log(); row.aligoMid = "ours"; row.variables = { historyLookup: "checking", historyLookupAt: started.toISOString() };
+            const { service, writes } = observed(row); await service.reconcile();
+            expect(writes).toEqual([["bookkeeping", true], ["reconcile", false]]);
+        });
+        it("announces the stale-started to uncertain transition", async () => {
+            const row = log(); row.providerAcceptanceState = "started";
+            const { service, writes } = observed(row); await service.reconcile();
+            expect(writes).toEqual([["bookkeeping", false]]);
+        });
     });
     it("scheduler invokes history even when there are no retries", async () => {
         const history = { reconcile: jest.fn().mockResolvedValue(undefined) };

@@ -708,6 +708,7 @@ describe("ServiceRecordEditRepository", () => {
         };
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([]),
+            $executeRaw: jest.fn().mockResolvedValue(0),
             service_record_edit_draft,
             service_record_case: {
                 update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
@@ -811,7 +812,7 @@ describe("ServiceRecordEditRepository", () => {
             }),
         });
         expect(service_record_day.updateMany).not.toHaveBeenCalled();
-        const documentStatements = tx.$queryRaw.mock.calls
+        const documentStatements = [...tx.$queryRaw.mock.calls, ...tx.$executeRaw.mock.calls]
             .map(([query]) => sqlTextWithValues(query))
             .filter((query) => query.includes('"eformsign_document_job"'));
         expect(documentStatements.some((query) => (
@@ -902,6 +903,298 @@ describe("ServiceRecordEditRepository", () => {
                 endDate: new Date("2026-09-20T00:00:00.000Z"),
             },
         });
+    });
+
+    describe("client service-day toggles", () => {
+        async function confirmWith(planOverrides: Partial<ServiceRecordEditConfirmPlan>) {
+            const source = futureSource();
+            const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+            const order: string[] = [];
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([]),
+                service_record_edit_draft: {
+                    findFirst: jest.fn().mockResolvedValue(activeDraft),
+                    updateMany: jest.fn().mockImplementation(async () => {
+                        order.push("draft");
+                        return { count: 1 };
+                    }),
+                },
+                service_record_case: {
+                    update: jest.fn().mockImplementation(async () => {
+                        order.push("case");
+                        return { version: source.caseVersion + 1 };
+                    }),
+                },
+                client: {
+                    updateMany: jest.fn().mockImplementation(async (args: { data: Record<string, unknown> }) => {
+                        order.push("allowSaturdayService" in args.data ? "flags" : "period");
+                        return { count: 1 };
+                    }),
+                },
+                service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+                service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+                service_record_assignment: { updateMany: jest.fn() },
+                employee_schedule: { updateMany: jest.fn() },
+            };
+            const prisma = transactionalPrisma(tx);
+            const repository = new ServiceRecordEditRepository(prisma as never);
+            const internals = repository as unknown as {
+                findDraftByIdWithClient: jest.Mock;
+                loadSourceWithClient: jest.Mock;
+            };
+            jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+            jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+            const plan: ServiceRecordEditConfirmPlan = {
+                status: "confirmed",
+                sourceFingerprint: "a".repeat(64),
+                caseId,
+                clientId: source.client.id,
+                formVersion: source.formVersion,
+                requiredSessionCount: source.requiredSessionCount,
+                startDate: source.startDate,
+                endDate: source.endDate,
+                header: source.header,
+                plannedSessions: source.plannedSessions,
+                sessions: [],
+                newSessions: [],
+                assignments: [],
+                revision: null,
+                dispatchContext: null,
+                documentStatus: "capability_unverified",
+                documentJob: null,
+                ...planOverrides,
+            };
+            const response = await repository.confirmDraft({
+                branchId,
+                draftId,
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: `srp_${"a".repeat(64)}`,
+                idempotencyKey: "66666666-6666-4666-8666-666666666666",
+                requestFingerprint: "b".repeat(64),
+                actorUserId: actorId,
+                prepare: () => plan,
+            });
+            return { tx, prisma, order, response, source };
+        }
+
+        const toggles = { saturday: true, sunday: false, holiday: true };
+        const flagWrite = (source: ServiceRecordEditSource) => ({
+            where: { id: source.client.id, branchId },
+            data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: true },
+        });
+
+        it("writes the three flags inside the confirm transaction together with the confirmed dates", async () => {
+            const { tx, prisma, order, source } = await confirmWith({ clientServiceDays: toggles });
+            expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith(flagWrite(source));
+            // The period write of the confirmed branch is untouched.
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { startDate: new Date("2026-09-01T00:00:00.000Z"), endDate: new Date("2026-09-02T00:00:00.000Z") },
+            });
+            expect(order.indexOf("flags")).toBeLessThan(order.indexOf("draft"));
+        });
+
+        it("writes the flags of a toggle-only change without any case, revision or period write", async () => {
+            const { tx, order, response, source } = await confirmWith({ status: "no_changes", clientServiceDays: toggles });
+            expect(response).toMatchObject({ status: "no_changes", revisionId: null, revisionNumber: null, documentStatus: "not_required" });
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith(flagWrite(source));
+            expect(tx.service_record_case.update).not.toHaveBeenCalled();
+            expect(order).toEqual(["flags", "draft"]);
+        });
+
+        it("leaves the client alone when the plan carries no toggles", async () => {
+            const noChanges = await confirmWith({ status: "no_changes" });
+            expect(noChanges.tx.client.updateMany).not.toHaveBeenCalled();
+            const confirmed = await confirmWith({});
+            expect(confirmed.tx.client.updateMany.mock.calls.map(([call]) => Object.keys(call.data))).toEqual([
+                ["startDate", "endDate"],
+            ]);
+        });
+    });
+
+    describe("legacy vector materialization", () => {
+        const vector = [
+            { sessionIndex: 1, serviceDate: "2026-09-01" },
+            { sessionIndex: 2, serviceDate: "2026-09-05" },
+        ];
+        const toggles = { saturday: true, sunday: false, holiday: false };
+
+        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }) {
+            const source = futureSource();
+            const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([]),
+                service_record_edit_draft: {
+                    findFirst: jest.fn().mockResolvedValue(activeDraft),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+                service_record_case: {
+                    update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
+                },
+                client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+                service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                service_record_assignment: { updateMany: jest.fn() },
+                employee_schedule: { updateMany: jest.fn() },
+                service_record_revision: { create: jest.fn() },
+                service_record_document_job: { create: jest.fn() },
+            };
+            const repository = new ServiceRecordEditRepository(transactionalPrisma(tx) as never);
+            const internals = repository as unknown as { findDraftByIdWithClient: jest.Mock; loadSourceWithClient: jest.Mock };
+            jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+            jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+            const plan: ServiceRecordEditConfirmPlan = {
+                status: "no_changes",
+                sourceFingerprint: "a".repeat(64),
+                caseId,
+                clientId: source.client.id,
+                formVersion: source.formVersion,
+                requiredSessionCount: source.requiredSessionCount,
+                startDate: source.startDate,
+                endDate: materialize.endDate,
+                header: source.header,
+                plannedSessions: materialize.plannedSessions as never,
+                sessions: [],
+                newSessions: [],
+                assignments: [],
+                revision: null,
+                dispatchContext: null,
+                documentStatus: "capability_unverified",
+                documentJob: null,
+                clientServiceDays: toggles,
+                materializedPlannedSessions: materialize as never,
+            };
+            const response = await repository.confirmDraft({
+                branchId,
+                draftId,
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: `srp_${"a".repeat(64)}`,
+                idempotencyKey: "77777777-7777-4777-8777-777777777777",
+                requestFingerprint: "b".repeat(64),
+                actorUserId: actorId,
+                prepare: () => plan,
+            });
+            return { tx, response, source };
+        }
+
+        it("stores the vector, the version bump and the new end date without a revision, document or start date", async () => {
+            const { tx, response, source } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-05" });
+            expect(response).toMatchObject({
+                status: "no_changes",
+                caseVersion: source.caseVersion + 1,
+                revisionId: null,
+                documentStatus: "not_required",
+            });
+            expect(tx.service_record_case.update).toHaveBeenCalledTimes(1);
+            expect(tx.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: caseId },
+                data: {
+                    plannedSessions: vector,
+                    endDate: new Date("2026-09-05T00:00:00.000Z"),
+                    version: { increment: 1 },
+                },
+                select: { version: true },
+            });
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(2);
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false },
+            });
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { endDate: new Date("2026-09-05T00:00:00.000Z") },
+            });
+            expect(tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                where: {
+                    branchId,
+                    serviceRecordCaseId: caseId,
+                    active: true,
+                    revokedAt: null,
+                    expiresAt: { not: expect.any(Date) },
+                },
+                data: { expiresAt: expect.any(Date) },
+            });
+            expect(tx.service_record_revision.create).not.toHaveBeenCalled();
+            expect(tx.service_record_document_job.create).not.toHaveBeenCalled();
+        });
+
+        it("leaves the end dates alone where they already match", async () => {
+            const { tx, source } = await confirmMaterialized({ plannedSessions: vector, endDate: futureSource().endDate });
+            expect(tx.service_record_case.update).toHaveBeenCalledWith({
+                where: { id: caseId },
+                data: { plannedSessions: vector, version: { increment: 1 } },
+                select: { version: true },
+            });
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: source.client.id, branchId },
+                data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false },
+            });
+        });
+    });
+
+    it("reads the client's service-day toggles into the source, defaulting a missing flag to false", async () => {
+        const clientRows = [
+            { allowSaturdayService: true, allowSundayService: null, allowHolidayService: true },
+            {},
+        ];
+        const sources: ServiceRecordEditSource[] = [];
+        const selects: Array<Record<string, unknown>> = [];
+        for (const flags of clientRows) {
+            const client = {
+                findFirst: jest.fn()
+                    .mockResolvedValueOnce({ id: 101 })
+                    .mockImplementationOnce(async (args: { select: Record<string, unknown> }) => {
+                        selects.push(args.select);
+                        return {
+                            id: 101,
+                            branchId,
+                            name: "산모",
+                            duration: 2,
+                            startDate: new Date("2026-09-01T00:00:00.000Z"),
+                            endDate: new Date("2026-09-02T00:00:00.000Z"),
+                            serviceStatus: "in_progress",
+                            ...flags,
+                        };
+                    }),
+            };
+            const service_record_case = {
+                findFirst: jest.fn().mockResolvedValue({
+                    id: caseId,
+                    clientId: 101,
+                    version: 4,
+                    formVersion: 3,
+                    status: "IN_PROGRESS",
+                    completedAt: null,
+                    finalizationDueAt: null,
+                    finalizationStartedAt: null,
+                    finalizedAt: null,
+                    documentsCompletedAt: null,
+                    requiredSessionCount: 2,
+                    startDate: new Date("2026-09-01T00:00:00.000Z"),
+                    endDate: new Date("2026-09-02T00:00:00.000Z"),
+                    momName: "산모",
+                    momBirth: "900101",
+                    babyName: "아기",
+                    babyBirth: "260901",
+                    deliveryType: "자연분만",
+                    babyWeight: "3.2",
+                    plannedSessions: null,
+                    days: [],
+                }),
+            };
+            const employee_schedule = { findMany: jest.fn().mockResolvedValue([]) };
+            const repository = new ServiceRecordEditRepository(
+                transactionalPrisma({ client, service_record_case, employee_schedule }) as never,
+            );
+            const snapshot = await repository.loadSource(branchId, { clientId: 101 });
+            sources.push(snapshot!);
+        }
+        expect(selects[0]).toMatchObject({ allowSaturdayService: true, allowSundayService: true, allowHolidayService: true });
+        expect(sources[0]!.client).toMatchObject({ allowSaturdayService: true, allowSundayService: false, allowHolidayService: true });
+        expect(sources[1]!.client).toMatchObject({ allowSaturdayService: false, allowSundayService: false, allowHolidayService: false });
     });
 
     it("allocates the next revision number under a case lock and never updates a prior revision", async () => {
@@ -997,6 +1290,74 @@ describe("ServiceRecordEditRepository", () => {
         expect(await repository.findRevisionForChanges(branchId, 42, id)).toBeNull();
     });
 
+    it("reads a caregiver edit scoped by branch AND client (never by id alone) and rejects malformed IDs before querying", async () => {
+        const editId = "66666666-6666-4666-8666-666666666666";
+        const row = {
+            id: editId,
+            editedAt: new Date("2026-10-28T01:02:03.000Z"),
+            employeeNameSnapshot: "김제공",
+            caseSessionIndex: 3,
+            before: { notes: "old" },
+            after: { notes: "new" },
+        };
+        const findFirst = jest.fn().mockResolvedValue(row);
+        const repository = new ServiceRecordEditRepository({ service_record_day_edit_log: { findFirst } } as never);
+        expect(await repository.findCaregiverEditForChanges(branchId, 42, editId)).toEqual(row);
+        expect(findFirst).toHaveBeenCalledTimes(1);
+        expect(findFirst).toHaveBeenCalledWith({
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId: 42 } },
+            select: { id: true, editedAt: true, employeeNameSnapshot: true, caseSessionIndex: true, before: true, after: true },
+        });
+        findFirst.mockClear();
+        for (const bad of ["not-a-uuid", "", "x".repeat(256)]) {
+            expect(await repository.findCaregiverEditForChanges(branchId, 42, bad)).toBeNull();
+        }
+        expect(findFirst).not.toHaveBeenCalled();
+        findFirst.mockResolvedValue(null);
+        expect(await repository.findCaregiverEditForChanges(branchId, 42, editId)).toBeNull();
+    });
+
+    it("lists caregiver edits newest first inside the history transaction, scoped to the case, without before/after", async () => {
+        const editRows = [
+            { id: "e2", editedAt: new Date("2026-10-28T02:00:00.000Z"), sessionIndex: 2, employeeName: "B" },
+            { id: "e1", editedAt: "2026-10-28T01:00:00.000Z", sessionIndex: 1, employeeName: "A" },
+        ];
+        const queries: string[] = [];
+        const values: unknown[][] = [];
+        const tx = {
+            $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+                const text = sql.strings.join("?");
+                queries.push(text);
+                values.push(sql.values);
+                if (text.includes('FROM "service_record_case"')) {
+                    return [{ caseId, caseVersion: 4, currentRevisionId: null, currentUsableRevisionId: null }];
+                }
+                if (text.includes('FROM "service_record_day_edit_log"')) return editRows;
+                return [];
+            }),
+        };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)) };
+        const repository = new ServiceRecordEditRepository(prisma as never);
+
+        const history = await repository.listRevisionHistory(branchId, 42);
+
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        const editIndex = queries.findIndex((text) => text.includes('FROM "service_record_day_edit_log"'));
+        expect(editIndex).toBeGreaterThanOrEqual(0);
+        const editQuery = queries[editIndex]!;
+        expect(editQuery).toMatch(/branch_id = \?::uuid/);
+        expect(editQuery).toMatch(/service_record_case_id = \?::uuid/);
+        expect(editQuery).toMatch(/ORDER BY edited_at DESC, id DESC/);
+        expect(values[editIndex]).toEqual([branchId, caseId]);
+        // The list never selects the payloads.
+        expect(editQuery).not.toMatch(/\bbefore\b|\bafter\b/i);
+        expect(history?.caregiverEdits).toEqual([
+            { id: "e2", editedAt: "2026-10-28T02:00:00.000Z", sessionIndex: 2, employeeName: "B" },
+            { id: "e1", editedAt: "2026-10-28T01:00:00.000Z", sessionIndex: 1, employeeName: "A" },
+        ]);
+        expect(history?.revisions).toEqual([]);
+    });
+
     it("allocates contiguous revision numbers without accepting caller overrides", async () => {
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
@@ -1044,6 +1405,61 @@ describe("ServiceRecordEditRepository", () => {
         expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
+    it("treats a job carrying dispatch_authorized as in flight, exactly like creating", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValueOnce([{ id: "document-job-1" }]),
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).rejects.toThrow(
+            "A service-record document dispatch is already irreversible",
+        );
+        const inFlight = tx.$queryRaw.mock.calls[0]?.[0] as { values: unknown[] };
+        expect(sqlText(inFlight)).toContain("job.progress_step IN ('creating', 'sent', ");
+        expect(sqlTextWithValues(inFlight)).toContain("job.progress_step IN ('creating', 'sent', dispatch_authorized)");
+        expect(sqlTextWithValues(inFlight)).toContain("job.status IN ('processing', 'reconciling')");
+        expect(inFlight.values).toContain("dispatch_authorized");
+    });
+
+    it("fallback supersession filters on dispatch_authorized as well as creating and sent", async () => {
+        const documentJobs = {
+            findMany: jest.fn().mockResolvedValueOnce([{
+                id: "authorized-in-flight",
+                status: "processing",
+                progressStep: "dispatch_authorized",
+                requestKey: "create:branch:101",
+                payload: null,
+            }]),
+        };
+        const tx = {
+            client: { findFirst: jest.fn().mockResolvedValue({ eDocId: "document-1" }) },
+            eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+            eformsign_document_job: documentJobs,
+            message_trigger_job: { findMany: jest.fn().mockResolvedValue([]) },
+        };
+        const repository = new ServiceRecordEditRepository({} as never);
+
+        await expect((repository as unknown as {
+            invalidateSupersededJobs: (
+                client: unknown,
+                branch: string,
+                serviceCase: string,
+                clientId: number,
+                scope: "all" | "revision_generation",
+            ) => Promise<void>;
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101, "all")).rejects.toThrow(
+            "A service-record document dispatch is already irreversible",
+        );
+        expect(documentJobs.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                status: { in: ["processing", "reconciling"] },
+                progressStep: { in: ["creating", "sent", "dispatch_authorized"] },
+            }),
+        }));
+    });
+
     it("does not cancel a message job after it enters dispatching", async () => {
         const tx = {
             $queryRaw: jest.fn()
@@ -1061,12 +1477,13 @@ describe("ServiceRecordEditRepository", () => {
     });
 
     it("fences legacy client-owned eform jobs without payload case metadata and clears message claims", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1074,21 +1491,23 @@ describe("ServiceRecordEditRepository", () => {
             invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
-        expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
-        const documentUpdate = sqlText(tx.$queryRaw.mock.calls[2]?.[0]);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+        const documentUpdate = sqlText(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
         expect(documentUpdate).not.toContain("payload->'context'");
-        const messageUpdate = sqlText(tx.$queryRaw.mock.calls[3]?.[0]);
+        const messageUpdate = sqlText(tx.$executeRaw.mock.calls[1]?.[0]);
         expect(messageUpdate).toContain("claim_token = NULL");
     });
 
     it("preserves revision generation payloads while superseding queued document jobs", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1096,19 +1515,20 @@ describe("ServiceRecordEditRepository", () => {
             invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("payload = CASE");
         expect(documentUpdate).toContain("job.payload->>'kind' = 'service_record_revision'");
         expect(documentUpdate).toContain("ELSE NULL");
     });
 
     it("content-only revisions scope supersession to service-record generation jobs", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1123,7 +1543,7 @@ describe("ServiceRecordEditRepository", () => {
         }).invalidateSupersededJobs(tx, branchId, caseId, 101, "revision_generation")).resolves.toBeUndefined();
 
         const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         for (const statement of [inFlight, documentUpdate]) {
             expect(statement).toContain("job.payload->>'kind' = 'service_record_revision'");
             expect(statement).toContain("COALESCE(job.request_key, '') LIKE 'service-record-revision:%'");
@@ -1223,12 +1643,13 @@ describe("ServiceRecordEditRepository", () => {
     });
 
     it("period-changing revisions retain broad document-job invalidation", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1242,19 +1663,20 @@ describe("ServiceRecordEditRepository", () => {
             ) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101, "all")).resolves.toBeUndefined();
 
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("AND TRUE");
         expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
         expect(documentUpdate).not.toContain("COALESCE(job.payload->>'kind' = 'service_record_revision', false)");
     });
 
     it("uses the same-branch canonical document owner for null-client eform jobs", async () => {
+        // The two in-flight probes are row-returning selects; the supersession updates have no
+        // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([])
                 .mockResolvedValueOnce([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
 
@@ -1263,7 +1685,7 @@ describe("ServiceRecordEditRepository", () => {
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
         const inFlight = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
-        const documentUpdate = sqlTextWithValues(tx.$queryRaw.mock.calls[2]?.[0]);
+        const documentUpdate = sqlTextWithValues(tx.$executeRaw.mock.calls[0]?.[0]);
         for (const statement of [inFlight, documentUpdate]) {
             expect(statement).toContain('job.client_id IS NULL');
             expect(statement).toContain('"eformsign_doc" AS owner_doc');

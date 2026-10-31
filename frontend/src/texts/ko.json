@@ -238,6 +238,11 @@
     "name-label": "산모님 성함",
     "name-placeholder": "홍길동"
   },
+  "contract-reminder-msg": {
+    "subtitle": "계약서 작성 요청 문자 메시지를 생성합니다",
+    "name-label": "산모님 성함",
+    "name-placeholder": "홍길동"
+  },
   "survey-msg": {
     "subtitle": "모니터링 설문 요청 문자 메시지를 생성합니다",
     "name-label": "산모님 성함",
@@ -395,7 +400,11 @@
       "care-center": "산후조리원",
       "breast-pump": "유축기 대여",
       "message-automation": "메시지 자동 전송",
-      "message-automation-helper": "끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요.",
+      "service-days": "주말·공휴일 서비스",
+      "service-days-helper": "서비스 제공일에 주말 및 공휴일을 포함할 수 있어요.",
+      "service-days-saturday": "토요일",
+      "service-days-sunday": "일요일",
+      "service-days-holiday": "공휴일",
       "error-name-required": "이름을 입력해 주세요.",
       "error-birthday-required": "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
       "error-due-date-required": "출산 예정일을 입력해 주세요.",
@@ -430,10 +439,76 @@
       "doc-deleted": "삭제됨",
       "doc-voided": "파기됨",
       "add-description": "새로운 고객을 등록하기 위해 양식을 작성하세요",
-      "edit-description": "고객 정보를 수정합니다"
+      "edit-description": "고객 정보를 수정합니다",
+      "error-manual-schedule-required": "제공기록지 일정 변경에서 날짜를 직접 지정해 주세요"
     },
     "detail": {
       "description": "고객 상세 정보를 확인합니다"
+    },
+    "service-record-schedule": {
+      "title": "제공기록지 일정 변경",
+      "subtitle": "{name} · 시작일 {startDate}",
+      "service-days-title": "주말·공휴일 서비스",
+      "service-days-description": "켠 요일도 서비스일로 고를 수 있어요.",
+      "saturday": "토요일",
+      "sunday": "일요일",
+      "holiday": "공휴일",
+      "service-days-switch": "{label} 서비스",
+      "calendar-title": "서비스 제공일",
+      "calendar-description": "현재 선택된 날짜를 해제하고 다른 날짜를 선택할 수 있어요.",
+      "session-count": "회차 수",
+      "revert": "되돌리기",
+      "prev-month": "이전 달",
+      "next-month": "다음 달",
+      "month-title": "{year}년 {month}월",
+      "holiday-label": "공휴일",
+      "legend-weekday": "평일",
+      "legend-extra": "주말·공휴일",
+      "legend-skipped": "빠진 날",
+      "legend-open": "선택 가능",
+      "legend-unavailable": "선택 불가",
+      "day-session": "{date} {order}회차",
+      "day-session-fixed": "{date} {order}회차, 바꿀 수 없음",
+      "day-session-removable": "{date} {order}회차, 누르면 뺍니다",
+      "day-open": "{date} 선택",
+      "loading": "일정을 불러오는 중…",
+      "retry": "다시 시도",
+      "saving": "저장 중…",
+      "close": "닫기",
+      "notice-full": "이미 {count}회차를 모두 골랐어요. 먼저 빼고 싶은 날짜를 눌러 주세요.",
+      "notice-written": "작성된 회차는 바꿀 수 없어요",
+      "notice-dropped": "{dates}은(는) 이제 고를 수 없어서 뺐어요.",
+      "success": "서비스 제공일정을 변경했어요.",
+      "reloaded": "일정이 바뀌어 다시 불러왔어요",
+      "errors": {
+        "load-failed": "일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+        "projection-blocked": "서비스 일정을 확인할 수 없어 변경할 수 없어요.",
+        "no-sessions": "변경할 회차가 없어요.",
+        "calendar-unavailable": "공휴일 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        "no-longer-complete": "선택한 날짜를 다시 확인해 주세요. 일정이 더 이상 완성되지 않았어요.",
+        "draft-in-use": "다른 화면에서 수정 중인 내용이 있어 저장하지 않았어요. 잠시 후 다시 시도해 주세요.",
+        "preview-mismatch": "저장할 일정을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        "conflict": "다른 화면에서 일정이 바뀌어 저장하지 못했어요. 창을 닫고 다시 열어 주세요.",
+        "generic": "일정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
+        "unauthenticated": "로그인이 필요해요.",
+        "forbidden": "일정을 바꿀 권한이 없어요.",
+        "blocking-operation": "이전 수정의 후속 작업이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요.",
+        "schedule": {
+          "SCHEDULE_COUNT_MISMATCH": "선택한 날짜 수가 회차 수와 달라요.",
+          "SCHEDULE_WITH_DATE_MOVE": "다른 날짜 변경과 함께 저장할 수 없어요. 창을 닫고 다시 열어 주세요.",
+          "UNSUPPORTED_HOLIDAY_YEAR": "공휴일 정보가 없는 연도의 날짜는 선택할 수 없어요.",
+          "INVALID_DATE": "올바르지 않은 날짜가 있어요.",
+          "DUPLICATE_SERVICE_DATE": "같은 날짜를 두 번 고를 수 없어요.",
+          "INVERTED_SERVICE_DATES": "회차 순서와 날짜 순서가 맞지 않아요.",
+          "NON_BUSINESS_DATE": "서비스일이 아닌 날짜가 있어요. 주말·공휴일 설정을 확인해 주세요."
+        },
+        "blocking": {
+          "NON_SERVICE_DAY": "서비스일이 아닌 날짜가 있어요. 주말·공휴일 설정을 확인해 주세요.",
+          "SCHEDULE_BEFORE_START": "서비스 시작일보다 이른 날짜가 있어요.",
+          "LOCKED_SESSION_DATE_CHANGED": "그사이 작성된 회차가 있어 날짜를 바꿀 수 없어요. 창을 닫고 다시 열어 주세요.",
+          "ASSIGNMENT_RANGE_OVERLAP": "제공인력 배정 기간이 겹쳐 일정을 바꿀 수 없어요."
+        }
+      }
     }
   },
   "employees": {

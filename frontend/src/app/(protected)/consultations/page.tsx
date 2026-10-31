@@ -202,7 +202,7 @@ export default function ConsultationsPage() {
     return (
         <PageSection name="consultations">
             <StatsBar
-                name="consultations"
+                name="consultations" showDocumentJobs="whenActive"
                 isLoading={isListLoading || isStatsLoading}
                 items={[
                     { icon: Headset, value: statsUnavailable ? "—" : stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },

@@ -1,4 +1,5 @@
 import type { ServiceRecordEditJsonValue } from "domain/repositories/service-record-edit.repository.interface";
+import type { ServiceRecordCaregiverEditChangesResponse } from "@babyjamjam/shared/types/service-record";
 import type {
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionChangeValue,
@@ -139,4 +140,43 @@ export function buildServiceRecordRevisionChanges(revision: {
         if (changes.length) response.sessions.push({ sessionIndex, kind, serviceDateBefore, serviceDateAfter, changes });
     }
     return response;
+}
+
+/**
+ * Before/after of one caregiver edit of a submitted day. Both sides hold
+ * { serviceDate, answers, etcService, notes, paymentConfirmed } and never a
+ * signature or employee, so only those fields are compared. The session is
+ * always returned; `changes` is empty when nothing differs.
+ */
+export function buildServiceRecordCaregiverEditChanges(edit: {
+    id: string;
+    editedAt: Date;
+    employeeNameSnapshot: string;
+    caseSessionIndex: number;
+    before: Json;
+    after: Json;
+}): ServiceRecordCaregiverEditChangesResponse {
+    const before = object(edit.before);
+    const after = object(edit.after);
+    const changes: ServiceRecordRevisionFieldChange[] = [];
+    const push = (path: string, left: Json | undefined, right: Json | undefined) => {
+        if (stable(left) !== stable(right)) changes.push({ path, before: changeValue(left), after: changeValue(right) });
+    };
+    const answersBefore = object(before["answers"]);
+    const answersAfter = object(after["answers"]);
+    for (const key of keys(answersBefore, answersAfter)) push(`session.answers.${key}`, answersBefore[key], answersAfter[key]);
+    for (const key of ["etcService", "notes", "paymentConfirmed"]) push(`session.${key}`, before[key], after[key]);
+    const serviceDate = date(before, undefined);
+    return {
+        editId: edit.id,
+        editedAt: edit.editedAt.toISOString(),
+        employeeName: edit.employeeNameSnapshot,
+        session: {
+            sessionIndex: edit.caseSessionIndex,
+            kind: "changed",
+            serviceDateBefore: serviceDate,
+            serviceDateAfter: serviceDate,
+            changes,
+        },
+    };
 }

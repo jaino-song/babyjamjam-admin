@@ -28,6 +28,7 @@ import { reminderMsgTemplate } from "@/components/app/messages/templates/message
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
 import { surveyMsgTemplate } from "@/components/app/messages/templates/messageTemplate/surveyMsg";
 import { thanksMsgTemplate } from "@/components/app/messages/templates/messageTemplate/thanksMsg";
+import { contractReminderMsgTemplate } from "@/components/app/messages/templates/messageTemplate/contractReminderMsg";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -165,6 +166,7 @@ const REMINDER_TEMPLATE_ID = "REMINDER";
 const SERVICE_INFO_TEMPLATE_ID = "SERVICE_INFO";
 const SURVEY_TEMPLATE_ID = "SURVEY";
 const THANKS_TEMPLATE_ID = "THANKS";
+const CONTRACT_REMINDER_TEMPLATE_ID = "CONTRACT_REMINDER";
 const SERVICE_END_NOTICE_TEMPLATE_ID = "SERVICE_END_NOTICE";
 const CUSTOM_TEMPLATE_ID = "__custom__";
 const RECEIPT_LINK_PRECHECK_REASONS = new Set([
@@ -924,6 +926,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const serviceInfoTemplateQuery = useSystemTemplate(SERVICE_INFO_TEMPLATE_ID);
   const surveyTemplateQuery = useSystemTemplate(SURVEY_TEMPLATE_ID);
   const thanksTemplateQuery = useSystemTemplate(THANKS_TEMPLATE_ID);
+  const contractReminderTemplateQuery = useSystemTemplate(CONTRACT_REMINDER_TEMPLATE_ID);
   const systemTemplatesQuery = useSystemTemplates();
   const greetingSystemTemplate = greetingTemplateQuery.data;
   const infoSystemTemplate = infoTemplateQuery.data;
@@ -932,6 +935,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const serviceInfoSystemTemplate = serviceInfoTemplateQuery.data;
   const surveySystemTemplate = surveyTemplateQuery.data;
   const thanksSystemTemplate = thanksTemplateQuery.data;
+  const contractReminderSystemTemplate = contractReminderTemplateQuery.data;
   const serviceEndNoticeSystemTemplate = systemTemplatesQuery.data?.find(
     (template) => template.templateKey === SERVICE_END_NOTICE_TEMPLATE_ID,
   );
@@ -1064,6 +1068,27 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         : thanksMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
       variables: thanksVariables,
     };
+    const contractReminderVariables = contractReminderSystemTemplate
+      ? getFallbackVariables(
+        contractReminderSystemTemplate.requiredVariables,
+        contractReminderSystemTemplate.customVariables,
+        contractReminderSystemTemplate.content,
+        NAME_FALLBACK_VARIABLES,
+      )
+      : NAME_FALLBACK_VARIABLES;
+    const contractReminderOption: TemplateOption = {
+      id: CONTRACT_REMINDER_TEMPLATE_ID,
+      name: contractReminderSystemTemplate?.name ?? "계약서 작성 요청",
+      body: contractReminderSystemTemplate?.content
+        ? renderTemplateWithValues(
+          contractReminderSystemTemplate.content,
+          contractReminderVariables,
+          templateVariableValues,
+          CONTRACT_REMINDER_TEMPLATE_ID,
+        )
+        : contractReminderMsgTemplate({ name: templateVariableValues.name?.trim() ?? "" }),
+      variables: contractReminderVariables,
+    };
     const surveyVariables = surveySystemTemplate
       ? getFallbackVariables(
         surveySystemTemplate.requiredVariables,
@@ -1126,6 +1151,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       priceInfoOption,
       reminderOption,
       thanksOption,
+      contractReminderOption,
       surveyOption,
       ...(serviceEndNoticeOption ? [serviceEndNoticeOption] : []),
       ...userOptions,
@@ -1138,6 +1164,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     reminderSystemTemplate,
     serviceInfoSystemTemplate,
     serviceEndNoticeSystemTemplate,
+    contractReminderSystemTemplate,
     surveySystemTemplate,
     templateVariableValues,
     thanksSystemTemplate,
@@ -1155,6 +1182,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     [SERVICE_INFO_TEMPLATE_ID]: serviceInfoTemplateQuery,
     [SURVEY_TEMPLATE_ID]: surveyTemplateQuery,
     [THANKS_TEMPLATE_ID]: thanksTemplateQuery,
+    [CONTRACT_REMINDER_TEMPLATE_ID]: contractReminderTemplateQuery,
     [SERVICE_END_NOTICE_TEMPLATE_ID]: {
       ...systemTemplatesQuery,
       data: serviceEndNoticeSystemTemplate,

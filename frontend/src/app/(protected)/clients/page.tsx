@@ -20,6 +20,7 @@ import {
     RotateCcw,
     Trash2,
     FileSignature,
+    CalendarCheck,
     Send,
 } from "lucide-react";
 import {
@@ -40,6 +41,7 @@ import { serviceRecordsApi } from "@/features/service-records/api/service-record
 import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
+import { serviceDayPolicyOfClient } from "@/lib/date/service-day-policy";
 import type { ClientListTab } from "@/features/clients/types";
 import {
     getClientBadgeAvatarClassName,
@@ -68,6 +70,7 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import { ServiceRecordScheduleDialog } from "@/components/app/service-record/ServiceRecordScheduleDialog";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
@@ -295,6 +298,7 @@ export default function ClientsPage() {
     const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
     const [isResettingLink, setIsResettingLink] = useState(false);
     const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
+    const [serviceRecordScheduleClient, setServiceRecordScheduleClient] = useState<Client | null>(null);
     const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
     const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
     const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
@@ -314,9 +318,8 @@ export default function ClientsPage() {
         tab: activeFilter,
         limit: 20,
     });
-    const listSummary = useClientListSummary({
-        search: debouncedSearchQuery || undefined,
-    });
+    // The stats bar describes the whole branch: searching the list must not change or reload it.
+    const listSummary = useClientListSummary();
     const deleteClient = useDeleteClient();
     const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
@@ -343,9 +346,7 @@ export default function ClientsPage() {
     const matchedTotal = isSearchSettled && directory.isBranchContextReady && directory.data !== undefined
         ? directory.matchedTotal
         : null;
-    const summary = isSearchSettled && listSummary.isBranchContextReady
-        ? listSummary.data
-        : undefined;
+    const summary = listSummary.isBranchContextReady ? listSummary.data : undefined;
     const selectedClientFromList = useMemo(
         () => {
             if (!selectedClient) return null;
@@ -383,11 +384,8 @@ export default function ClientsPage() {
     const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
 
-    const summaryScopeLabel = searchQuery.trim()
-        ? `현재 검색 범위: ${searchQuery.trim()}`
-        : "현재 지점 전체";
     const isDirectoryInitialLoading = !isSearchSettled || directory.isInitialLoading;
-    const isSummaryInitialLoading = !isSearchSettled || listSummary.isInitialLoading;
+    const isSummaryInitialLoading = listSummary.isInitialLoading;
     const stats = {
         thisMonthCount: summary?.dueDate.thisMonth ?? "—",
         nextMonthCount: summary?.dueDate.nextMonth ?? "—",
@@ -598,6 +596,11 @@ export default function ClientsPage() {
         } finally {
             setIsApplyingScheduleChange(false);
         }
+    };
+
+    const handleServiceRecordScheduleSaved = async () => {
+        // The client form reads the toggles and dates from the client query.
+        await queryClient.invalidateQueries({ queryKey: ["clients"] });
     };
 
     const handleCopyResetServiceRecordLink = async (serviceRecordUrl: string) => {
@@ -819,8 +822,9 @@ export default function ClientsPage() {
     const isDirectoryUnavailable = !directory.isBranchContextReady;
     const isDirectoryInitialError = isSearchSettled && directory.isInitialError;
     const isDirectoryRefreshError = isSearchSettled && directory.hasStaleData;
+    // The matched count only: "89명" for the whole branch, "검색 결과 8명" while a search is applied.
     const listScopeSubtitle = matchedTotal !== null && !isDirectoryInitialError
-        ? `${summaryScopeLabel} · 일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시`
+        ? debouncedSearchQuery ? `검색 결과 ${matchedTotal}명` : `${matchedTotal}명`
         : undefined;
     const listSubHeader = isDirectoryRefreshError ? (
         <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
@@ -844,11 +848,11 @@ export default function ClientsPage() {
 
     return (
         <PageSection name="clients">
-            {listSummary.isInitialError && isSearchSettled ? (
+            {listSummary.isInitialError ? (
                 <Alert variant="destructive" data-component="desktop_clients_summary_error">
                     <AlertTitle>고객 요약을 불러오지 못했어요</AlertTitle>
                     <AlertDescription>
-                        현재 범위의 출산 예정일과 서비스 종료 수치를 확인할 수 없어요.
+                        현재 지점의 출산 예정일과 서비스 종료 수치를 확인할 수 없어요.
                         <Button
                             type="button"
                             variant="outline"
@@ -862,11 +866,11 @@ export default function ClientsPage() {
                     </AlertDescription>
                 </Alert>
             ) : null}
-            {listSummary.isRefreshError && summary && isSearchSettled ? (
+            {listSummary.isRefreshError && summary ? (
                 <Alert variant="warning" data-component="desktop_clients_summary_stale">
                     <AlertTitle>고객 요약을 새로 불러오지 못했어요</AlertTitle>
                     <AlertDescription>
-                        최근에 확인된 {summaryScopeLabel} 수치를 표시하고 있어요.
+                        최근에 확인된 현재 지점 수치를 표시하고 있어요.
                         <Button
                             type="button"
                             variant="outline"
@@ -881,7 +885,7 @@ export default function ClientsPage() {
                 </Alert>
             ) : null}
             <StatsBar
-                name="clients" density="responsive-square"
+                name="clients" density="responsive-square" showDocumentJobs="whenActive"
                 isLoading={isSummaryInitialLoading}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번 달 출산 예정", counter: "명" },
@@ -1075,11 +1079,6 @@ export default function ClientsPage() {
                                 </AlertDescription>
                             </Alert>
                         ) : null}
-                        {directory.isEndOfList && clients.length > 0 ? (
-                            <span data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_end-of-list">
-                                모든 검색 결과를 불러왔어요.
-                            </span>
-                        ) : null}
 	                        </div>
 	                </ListPanel>
 
@@ -1197,6 +1196,16 @@ export default function ClientsPage() {
                                         )}
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
+                                                data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"
+                                                onClick={() => setServiceRecordScheduleClient(activeSelectedClient)}
+                                                className="gap-2"
+                                            >
+                                                <CalendarCheck className="w-4 h-4" />
+                                                제공기록지 일정 변경
+                                            </DropdownMenuItem>
+                                        )}
+                                        {canManageBranchFeatures && (
+                                            <DropdownMenuItem
                                                 data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_reset-service-record-link"
                                                 onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
                                                 className="gap-2"
@@ -1288,7 +1297,7 @@ export default function ClientsPage() {
                 }}
                 data-component="desktop_clients_modals_reset-service-record-link-approval"
                 title="제공기록지 링크를 재설정하시겠습니까?"
-                description="기존 링크는 만료되고 새 링크가 생성돼요. 메시지는 발송되지 않아요."
+                description="기존 링크가 만료 되었어요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
                 pendingLabel="재설정 중..."
@@ -1317,6 +1326,19 @@ export default function ClientsPage() {
                         setSelectedScheduleChangeDate("");
                     }}
                     onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
+                    serviceDays={serviceDayPolicyOfClient(scheduleChangeTarget.client)}
+                />
+            ) : null}
+
+            {serviceRecordScheduleClient ? (
+                <ServiceRecordScheduleDialog
+                    open
+                    onOpenChange={(open) => {
+                        if (!open) setServiceRecordScheduleClient(null);
+                    }}
+                    clientId={serviceRecordScheduleClient.id}
+                    clientName={serviceRecordScheduleClient.name}
+                    onSaved={handleServiceRecordScheduleSaved}
                 />
             ) : null}
 

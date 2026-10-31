@@ -18,11 +18,14 @@ import type {
 
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
+import { ToastAction } from "@/components/ui/toaster";
+import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
+import { isLockedByOtherCaregiver } from "@/components/app/service-record/screen/ReviewStep";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
 import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
-import { type KrBusinessDayCalendar } from "@/lib/date/business-days";
+import { type KrBusinessDayCalendar, type ServiceDayPolicy } from "@/lib/date/business-days";
 import {
     getServiceDateShiftBusinessDays,
     isServiceDateMismatch,
@@ -36,6 +39,7 @@ import {
 } from "@/lib/observability/capture-service-record-error";
 
 const MOM_APPROVAL_APPROVED = "approved";
+const AUTH_LOST_PHONE_NOTICE = "안전을 위해 휴대폰 번호를 다시 확인해 주세요.";
 const DRAFT_STORAGE_PREFIX = "daily-service-record-draft";
 const FINALIZED_RECORD_STATUSES = new Set([
     "FINALIZING",
@@ -111,6 +115,12 @@ function isRecordFinalizedStatus(recordStatus?: string | null): boolean {
     return Boolean(recordStatus && FINALIZED_RECORD_STATUSES.has(recordStatus));
 }
 
+/**
+ * The token context plus the client's service days. The backend adds `serviceDays` to the context
+ * after this UI package's shared type was written; it is optional, so an older context is unchanged.
+ */
+type TokenServiceRecordContext = ServiceRecordContext & { serviceDays?: ServiceDayPolicy };
+
 type Screen = "loading" | "invalid" | "phone" | "service" | "overview" | "day" | "done";
 type HistoryMode = "none" | "push" | "replace";
 
@@ -181,7 +191,8 @@ export default function ServiceRecordPage() {
     const [phone, setPhone] = useState("");
     const [phoneError, setPhoneError] = useState<string | null>(null);
     const [phoneFieldError, setPhoneFieldError] = useState<string | null>(null);
-    const [ctx, setCtx] = useState<ServiceRecordContext | null>(null);
+    const [phoneNotice, setPhoneNotice] = useState<string | null>(null);
+    const [ctx, setCtx] = useState<TokenServiceRecordContext | null>(null);
     const [header, setHeader] = useState<Record<string, string>>({ deliveryType: "자연분만" });
     const [day, setDay] = useState(1);
     const [pageIdx, setPageIdx] = useState(0);
@@ -201,6 +212,8 @@ export default function ServiceRecordPage() {
         options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
     ) => {
         setScreen(nextScreen);
+        // The submit dialog describes the day that was open when it was raised; any navigation retires it.
+        setSubmitModalOpen(false);
         if (options.day !== undefined) setDay(options.day);
         if (options.pageIdx !== undefined) setPageIdx(options.pageIdx);
         if (options.mode && options.mode !== "none") {
@@ -262,6 +275,13 @@ export default function ServiceRecordPage() {
         error: calendarError,
         retry: retryCalendar,
     } = useTokenBusinessDayCalendar({ enabled: ctx !== null, years: calendarYears, fetchYear: fetchHolidayYear });
+    // The client's per-client service days (토/일/공휴일), when the context carries them. Every default
+    // date and date-shift check runs on this calendar; a context without them behaves as before.
+    const serviceDays = ctx?.serviceDays;
+    const serviceCalendar = useMemo(
+        () => (serviceDays ? calendar.withServiceDays(serviceDays) : calendar),
+        [calendar, serviceDays],
+    );
     // Legacy contexts (no planned date vector) derive the default session dates
     // from the calendar, and those dates are submitted: wait for the branch calendar.
     const defaultsGated = ctx !== null && ctx.plannedSessionDates === undefined && !calendarReady;
@@ -272,7 +292,7 @@ export default function ServiceRecordPage() {
             navigateTo(res.status === 401 || res.status === 403 ? "phone" : "invalid", { mode: historyMode });
             return;
         }
-        const data: ServiceRecordContext = await res.json();
+        const data: TokenServiceRecordContext = await res.json();
         const stored = readStoredFormState(token);
         const serverHeader = (data.header as Record<string, string>) ?? {};
         const nextHeader = data.header
@@ -344,9 +364,13 @@ export default function ServiceRecordPage() {
             }
 
             const targetDay = Math.min(Math.max(target.day, 1), Math.max(ctx.totalSessions, 1));
-            const targetPageIdx = Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             const session = ctx.sessions.find((row) => row.sessionIndex === targetDay);
             const isLockedSession = Boolean(session?.locked);
+            // A day another caregiver submitted is read-only: land on its review page, never on an input page.
+            const isOtherCaregiverSession = isLockedByOtherCaregiver(session, ctx);
+            const targetPageIdx = isOtherCaregiverSession
+                ? DAY_PAGES.length - 1
+                : Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             setEditing(isLockedSession);
             setMomSignature(null);
             if (isLockedSession && session) {
@@ -364,7 +388,7 @@ export default function ServiceRecordPage() {
                     navigateTo("overview", { mode: "replace" });
                     return;
                 }
-                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay, calendar), ctx.plannedSessionDates !== undefined));
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay, serviceCalendar), ctx.plannedSessionDates !== undefined));
             }
             navigateTo("day", {
                 mode: "none",
@@ -375,7 +399,7 @@ export default function ServiceRecordPage() {
 
         window.addEventListener("popstate", handlePopState);
         return () => window.removeEventListener("popstate", handlePopState);
-    }, [calendar, ctx, defaultsGated, navigateTo, token]);
+    }, [serviceCalendar, ctx, defaultsGated, navigateTo, token]);
 
     const lockedDays = useMemo(() => new Set((ctx?.sessions ?? []).filter((s) => s.locked).map((s) => s.sessionIndex)), [ctx]);
     const nextOpenDay = useCallback(() => {
@@ -411,10 +435,26 @@ export default function ServiceRecordPage() {
                 if (!plannedDateVectorValid) return "";
                 return ctx.plannedSessionDates.find((session) => session.sessionIndex === d)?.serviceDate ?? "";
             }
-            return legacyDefaultServiceDate(ctx, d, calendar);
+            return legacyDefaultServiceDate(ctx, d, serviceCalendar);
         },
-        [calendar, ctx, plannedDateVectorValid],
+        [serviceCalendar, ctx, plannedDateVectorValid],
     );
+    /**
+     * A write refused for auth (401 / 403) means the caregiver's access is gone: send them back to phone verification.
+     * The stored form state and `ctx` are left alone, so a new day's draft survives the round trip.
+     * Returns true when the response was an auth refusal, so the caller stops without an error notification.
+     */
+    function handleAuthLost(res: Response): boolean {
+        if (res.status !== 401 && res.status !== 403) return false;
+        setScheduleChangeModalOpen(false);
+        setScheduleChangePreview(null);
+        setScheduleChangeBusy(false);
+        setPhoneError(null);
+        setPhoneFieldError(null);
+        setPhoneNotice(AUTH_LOST_PHONE_NOTICE);
+        navigateTo("phone", { mode: "replace" });
+        return true;
+    }
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
         setBusy(true); setPhoneError(null); setPhoneFieldError(null);
@@ -424,6 +464,7 @@ export default function ServiceRecordPage() {
             });
             const data = await res.json();
             if (data?.ok) {
+                setPhoneNotice(null);
                 await loadContext("push");
             } else {
                 // The mismatch belongs to the phone field, so it shows in that field's message slot.
@@ -458,6 +499,7 @@ export default function ServiceRecordPage() {
         try {
             const response = await api("/header", { method: "PUT", body: JSON.stringify(header) });
             if (!response.ok) {
+                if (handleAuthLost(response)) return;
                 const body: unknown = await response.json().catch(() => ({}));
                 setErrorNotificationMessage(problemMessage(response.status, body, "기본정보 저장에 실패했어요."));
                 return;
@@ -495,13 +537,21 @@ export default function ServiceRecordPage() {
             initialPageIdx = canRestoreDraft
                 ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d, calendar), ctx?.plannedSessionDates !== undefined));
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d, serviceCalendar), ctx?.plannedSessionDates !== undefined));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
 
     async function submitDay() {
         if (defaultsGated) return;
+        // Same rule as the review page: another caregiver's submitted day is never resubmitted from here.
+        if (isLockedByOtherCaregiver(ctx?.sessions.find((session) => session.sessionIndex === day), ctx)) {
+            setSubmitModalOpen(false);
+            return;
+        }
+        // Captured before any await: the toast fires after the context reloads.
+        const submittedDay = day;
+        const wasEditing = editing;
         const serviceDate = (draft["_date"] as string) ?? defaultDate(day);
         setBusy(true);
         try {
@@ -517,6 +567,7 @@ export default function ServiceRecordPage() {
             };
             const res = await api(`/sessions/${day}/submit`, { method: "POST", body: JSON.stringify(body) });
             if (!res.ok) {
+                if (handleAuthLost(res)) return;
                 const e: unknown = await res.json().catch(() => ({}));
                 const normalized = normalizeApiError(
                     { response: { status: res.status, data: e } },
@@ -526,6 +577,8 @@ export default function ServiceRecordPage() {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
                 } else if (problemCode(normalized, e) === "SERVICE_DATE_IMMUTABLE") {
                     setErrorNotificationMessage("제공일자는 변경할 수 없어요.");
+                } else if (problemCode(normalized, e) === "REQUEST_CONFLICT") {
+                    setErrorNotificationMessage("이미 처리되었거나 수정할 수 없는 상태예요.");
                 } else {
                     setErrorNotificationMessage(normalized.verified ? normalized.message : "제출에 실패했어요.");
                 }
@@ -536,6 +589,17 @@ export default function ServiceRecordPage() {
             setEditing(false);
             setMomSignature(null);
             await loadContext("push");
+            if (wasEditing) {
+                toast({
+                    variant: "success",
+                    title: `${submittedDay}회차 수정이 저장됐어요`,
+                    action: (
+                        <ToastAction onClick={() => openDayRef.current(submittedDay, true)}>
+                            기록 보기
+                        </ToastAction>
+                    ),
+                });
+            }
         } finally { setBusy(false); }
     }
 
@@ -545,6 +609,7 @@ export default function ServiceRecordPage() {
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change/preview");
+            if (handleAuthLost(res)) return;
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 setScheduleChangeModalOpen(false);
@@ -570,6 +635,7 @@ export default function ServiceRecordPage() {
         setScheduleChangeBusy(true);
         try {
             const res = await api("/schedule-change", { method: "POST" });
+            if (handleAuthLost(res)) return;
             const data = await res.json().catch(() => ({}));
             // Registered-code comparison only — the raw body text is never read.
             if (res.ok || (res.status === 409 && problemCode(normalizeApiError(
@@ -591,9 +657,9 @@ export default function ServiceRecordPage() {
     // from the loaded branch calendar (never the built-in list).
     const pendingShift = useMemo(
         () => (pendingServiceDate && calendarReady
-            ? getServiceDateShiftBusinessDays(defaultDate(day), pendingServiceDate.next, calendar)
+            ? getServiceDateShiftBusinessDays(defaultDate(day), pendingServiceDate.next, serviceCalendar)
             : null),
-        [calendar, calendarReady, day, defaultDate, pendingServiceDate],
+        [serviceCalendar, calendarReady, day, defaultDate, pendingServiceDate],
     );
 
     // A day opened while the calendar was loading runs once when it becomes ready.
@@ -621,7 +687,7 @@ export default function ServiceRecordPage() {
         }
         // While the branch calendar loads the change is held open with the
         // confirm action disabled; the shift is computed once it is ready.
-        if (calendarReady && getServiceDateShiftBusinessDays(expected, next, calendar) === null) {
+        if (calendarReady && getServiceDateShiftBusinessDays(expected, next, serviceCalendar) === null) {
             // An unsupported year (or invalid date) cannot be shifted: ignore the change.
             return;
         }
@@ -673,6 +739,7 @@ export default function ServiceRecordPage() {
             phone={phone}
             phoneError={phoneError}
             phoneFieldError={phoneFieldError}
+            phoneNotice={phoneNotice}
             context={ctx}
             header={header}
             day={day}
@@ -720,6 +787,7 @@ export default function ServiceRecordPage() {
                         description={editing
                             ? `확인하면 ${day}회차 기록이 수정 제출됩니다.`
                             : `확인하면 ${day}회차 기록이 제출됩니다.`}
+                        isDescriptionVisuallyHidden={false}
                         cancelLabel="취소"
                         approvalLabel="확인"
                         pendingLabel="제출 중…"
@@ -733,7 +801,7 @@ export default function ServiceRecordPage() {
                         open={scheduleChangeModalOpen}
                         title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정 변경"}
                         description={scheduleChangePreview
-                            ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${formatMonthDayKo(scheduleChangePreview.fromDate)}에서 ${formatMonthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 관리자 승인 후 일정이 조정됩니다.`
+                            ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${formatMonthDayKo(scheduleChangePreview.fromDate)}에서 ${formatMonthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 본사 승인 후 일정이 조정됩니다.`
                             : "변경 가능한 일정을 확인하고 있어요."}
                         isDescriptionVisuallyHidden={false}
                         cancelLabel="취소"

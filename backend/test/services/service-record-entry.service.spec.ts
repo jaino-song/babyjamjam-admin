@@ -50,6 +50,26 @@ function createRecord(overrides: Record<string, unknown> = {}) {
     };
 }
 
+/** The real lock/read method, so specs exercise the production locking path. */
+const realTokenService = new ServiceRecordTokenService({} as PrismaService);
+const lockAccessTokenForWrite = realTokenService.lockAccessTokenForWrite.bind(realTokenService);
+
+function createToken(overrides: Record<string, unknown> = {}) {
+    return {
+        id: context.tokenId,
+        branchId: BRANCH_ID,
+        scheduleId: context.scheduleId,
+        employeeId: context.employeeId,
+        active: true,
+        revokedAt: null,
+        verifiedAt: new Date("2026-06-01T00:00:00.000Z"),
+        lockedAt: null,
+        failedAttempts: 0,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        ...overrides,
+    };
+}
+
 function createDay(overrides: Record<string, unknown> = {}) {
     return {
         id: "day-1",
@@ -97,6 +117,8 @@ function createHarness(options: {
     holidayCalendar?: HolidayCalendarService;
     /** The client's open end_date_review_item, if any (what the auto-extend sees inside the tx). */
     openReviewItem?: { id: string; recalculatedEnd: Date } | null;
+    /** Overrides for the caregiver token row re-read inside the transaction. */
+    token?: Record<string, unknown> | null;
 } = {}) {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
@@ -108,6 +130,7 @@ function createHarness(options: {
             ...(existing ? args.update : args.create),
         });
     });
+    const editLogCreate = jest.fn().mockResolvedValue({});
     const updateMany = jest.fn(options.updateSignature ?? (() => Promise.resolve({
         count: existing?.clientSignature ? 0 : 1,
     })));
@@ -139,6 +162,11 @@ function createHarness(options: {
     });
     const transactionClient = {
         $queryRaw: jest.fn().mockResolvedValue([{ id: CASE_ID }]),
+        service_record_token: {
+            findUnique: jest.fn().mockResolvedValue(
+                options.token === null ? null : createToken(options.token),
+            ),
+        },
         service_record_case: {
             findUnique: caseFindUnique,
         },
@@ -159,6 +187,9 @@ function createHarness(options: {
             upsert,
             updateMany,
         },
+        service_record_day_edit_log: {
+            create: editLogCreate,
+        },
     };
     const prisma = {
         service_record_case: {
@@ -172,6 +203,7 @@ function createHarness(options: {
         ensureForClient,
     };
     const tokenService = {
+        lockAccessTokenForWrite,
         extendExpiryForCase: options.extendExpiryForCase ?? jest.fn().mockResolvedValue(undefined),
     };
     const service = new ServiceRecordEntryService(
@@ -186,6 +218,7 @@ function createHarness(options: {
         transactionClient,
         upsert,
         updateMany,
+        editLogCreate,
         lifecycle,
         tokenService,
         scheduleUpdate,
@@ -604,6 +637,89 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         ]);
     });
 
+    describe("current-provider re-check after the write-set lock", () => {
+        const currentSchedule = {
+            id: 10,
+            clientId: 100,
+            branchId: BRANCH_ID,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-31T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+        };
+
+        /** The pre-lock read sees the current schedule; the post-lock reread sees `afterLock`. */
+        function harnessWithPostLockSchedule(afterLock: Record<string, unknown>, existing?: ReturnType<typeof createDay>) {
+            const harness = createHarness({ schedule: currentSchedule, existing });
+            harness.transactionClient.employee_schedule.findUnique
+                .mockResolvedValueOnce(currentSchedule)
+                .mockResolvedValueOnce({ ...currentSchedule, ...afterLock });
+            return harness;
+        }
+
+        function expectNoWrites(h: ReturnType<typeof createHarness>) {
+            expect(h.upsert).not.toHaveBeenCalled();
+            expect(h.updateMany).not.toHaveBeenCalled();
+            expect(h.editLogCreate).not.toHaveBeenCalled();
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+            expect(h.scheduleUpdate).not.toHaveBeenCalled();
+            expect(h.clientUpdate).not.toHaveBeenCalled();
+        }
+
+        it.each([
+            ["replaced schedule", { replaced: true }],
+            ["different primary employee", { primaryEmployeeId: 21 }],
+        ])("refuses a first submit when the post-lock reread shows a %s", async (_name, afterLock) => {
+            const h = harnessWithPostLockSchedule(afterLock);
+
+            await expect(h.service.upsertSession(context, 1, createDto(), true)).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            expectNoWrites(h);
+        });
+
+        it.each([
+            ["replaced schedule", { replaced: true }],
+            ["different primary employee", { primaryEmployeeId: 21 }],
+        ])("refuses a locked-session edit when the post-lock reread shows a %s", async (_name, afterLock) => {
+            const h = harnessWithPostLockSchedule(afterLock, createDay());
+
+            await expect(h.service.upsertSession(context, 1, createDto({ notes: "수정됨" }), true)).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            expectNoWrites(h);
+        });
+
+        it("refuses a draft save when the post-lock reread shows a replaced schedule", async () => {
+            const h = harnessWithPostLockSchedule({ replaced: true });
+
+            await expect(h.service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
+                response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            expectNoWrites(h);
+        });
+
+        it("still accepts a first submit when the schedule and provider are unchanged", async () => {
+            const h = harnessWithPostLockSchedule({});
+
+            await expect(h.service.upsertSession(context, 1, createDto(), true)).resolves.toEqual(
+                expect.objectContaining({ sessionIndex: 1, locked: true }),
+            );
+            expect(h.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it("still accepts a locked-session edit when the schedule and provider are unchanged", async () => {
+            const h = harnessWithPostLockSchedule({}, createDay());
+
+            await h.service.upsertSession(context, 1, createDto({ notes: "수정됨" }), true);
+
+            expect(h.upsert).toHaveBeenCalledTimes(1);
+            expect(h.editLogCreate).toHaveBeenCalledTimes(1);
+        });
+    });
+
     it("returns the four stored provider sessions for a transferred case with a 15-day voucher", async () => {
         const record = createRecord({
             requiredSessionCount: 4, days: [],
@@ -707,26 +823,414 @@ describe("ServiceRecordEntryService.upsertSession", () => {
     });
 
     it.each([
-        ["draft save", false, SERVICE_RECORD_CASE_STATUS.IN_PROGRESS],
-        ["submit", true, SERVICE_RECORD_CASE_STATUS.IN_PROGRESS],
-        ["draft save", false, SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE],
-        ["submit", true, SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE],
-    ])("rejects a locked session during %s while the case is %s", async (_operation, lock, status) => {
+        SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+        SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+    ])("rejects a draft save (PUT) on a locked session while the case is %s", async (status) => {
         const existing = createDay();
-        const { service, prisma, upsert, updateMany, lifecycle } = createHarness({
+        const { service, prisma, upsert, updateMany, editLogCreate, lifecycle } = createHarness({
             existing,
             transactionRecord: createRecord({ status }),
         });
 
         await expectException(
-            service.upsertSession(context, 1, createDto({ notes: "변조" }), lock),
+            service.upsertSession(context, 1, createDto({ notes: "변조" }), false),
             ConflictException,
             "REQUEST_CONFLICT",
         );
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
         expect(upsert).not.toHaveBeenCalled();
         expect(updateMany).not.toHaveBeenCalled();
+        expect(editLogCreate).not.toHaveBeenCalled();
         expect(lifecycle.recompute).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        SERVICE_RECORD_CASE_STATUS.FINALIZING,
+        SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+        SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+        SERVICE_RECORD_CASE_STATUS.COMPLETED,
+    ])("refuses a caregiver edit of a locked session once the case is %s", async (status) => {
+        const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({
+            existing: createDay(),
+            transactionRecord: createRecord({ status }),
+        });
+
+        await expectException(
+            service.upsertSession(context, 1, createDto({ notes: "변조" }), true),
+            ConflictException,
+            "REQUEST_CONFLICT",
+        );
+        expect(upsert).not.toHaveBeenCalled();
+        expect(updateMany).not.toHaveBeenCalled();
+        expect(editLogCreate).not.toHaveBeenCalled();
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
+    });
+
+    describe("caregiver edit of a submitted (locked) session", () => {
+        const ORIGINAL_SUBMITTED_AT = new Date("2026-07-01T01:00:00.000Z");
+
+        it("writes the changed fields, keeps stored facts, ignores the request signature and logs one edit", async () => {
+            jest.useFakeTimers({ now: new Date("2026-07-02T09:00:00.000Z") });
+            const existing = createDay({
+                answers: { sleep: "잘 잠" },
+                notes: "처음",
+                etcService: "기존",
+                momApproval: "approved",
+            });
+            const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({ existing });
+
+            const result = await service.upsertSession(context, 1, createDto({
+                answers: { sleep: "잘 못 잠" },
+                notes: "수정됨",
+                etcService: "기존",
+                clientSignature: "data:image/png;base64,bmV3",
+            }), true);
+
+            expect(upsert).toHaveBeenCalledTimes(1);
+            const args = upsert.mock.calls[0][0];
+            for (const data of [args.create, args.update]) {
+                expect(data).toEqual(expect.objectContaining({
+                    answers: { sleep: "잘 못 잠" },
+                    notes: "수정됨",
+                    etcService: "기존",
+                    paymentConfirmed: true,
+                    locked: true,
+                    momApproval: "approved",
+                    submittedAt: ORIGINAL_SUBMITTED_AT,
+                    employeeId: 20,
+                    employeeNameSnapshot: "제공자",
+                    scheduleId: 10,
+                    formVersion: 1,
+                    serviceDate: SERVICE_DATE,
+                }));
+                expect(data).not.toHaveProperty("clientSignature");
+                expect(data).not.toHaveProperty("clientSignedAt");
+            }
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(result).toEqual(expect.objectContaining({
+                sessionIndex: 1,
+                notes: "수정됨",
+                submittedAt: ORIGINAL_SUBMITTED_AT,
+                clientSignature: SIGNATURE,
+            }));
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+            expect(editLogCreate).toHaveBeenCalledWith({
+                data: {
+                    branchId: BRANCH_ID,
+                    serviceRecordCaseId: CASE_ID,
+                    caseSessionIndex: 1,
+                    serviceRecordDayId: "day-1",
+                    employeeId: 20,
+                    employeeNameSnapshot: "제공자",
+                    before: {
+                        serviceDate: "2026-07-01",
+                        answers: { sleep: "잘 잠" },
+                        etcService: "기존",
+                        notes: "처음",
+                        paymentConfirmed: true,
+                    },
+                    after: {
+                        serviceDate: "2026-07-01",
+                        answers: { sleep: "잘 못 잠" },
+                        etcService: "기존",
+                        notes: "수정됨",
+                        paymentConfirmed: true,
+                    },
+                },
+            });
+            expect(JSON.stringify(editLogCreate.mock.calls[0][0])).not.toContain("data:image");
+            expect(lifecycle.recompute).toHaveBeenCalledTimes(1);
+            expect(editLogCreate.mock.invocationCallOrder[0])
+                .toBeLessThan(lifecycle.recompute.mock.invocationCallOrder[0] as number);
+        });
+
+        it("does not write or log when the resent draft equals the stored values after normalization", async () => {
+            const existing = createDay({
+                answers: { sleep: "잘 잠", stool: "정상변" },
+                notes: null,
+                etcService: null,
+            });
+            const { service, upsert, updateMany, editLogCreate, lifecycle, scheduleUpdate, clientUpdate } = createHarness({ existing });
+
+            const result = await service.upsertSession(context, 1, createDto({
+                // different key order, blank strings that normalize to null
+                answers: { stool: "정상변", sleep: "잘 잠" },
+                notes: "   ",
+                etcService: "",
+            }), true);
+
+            expect(result).toEqual(expect.objectContaining({ sessionIndex: 1, notes: null, locked: true }));
+            expect(upsert).not.toHaveBeenCalled();
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(editLogCreate).not.toHaveBeenCalled();
+            expect(lifecycle.recompute).not.toHaveBeenCalled();
+            expect(scheduleUpdate).not.toHaveBeenCalled();
+            expect(clientUpdate).not.toHaveBeenCalled();
+        });
+
+        it("treats the default locked+signed fixture resubmitted with the default dto as a no-change edit", async () => {
+            const { service, upsert, editLogCreate } = createHarness({ existing: createDay() });
+
+            await expect(service.upsertSession(context, 1, createDto(), true)).resolves.toEqual(
+                expect.objectContaining({ locked: true, submittedAt: ORIGINAL_SUBMITTED_AT }),
+            );
+            expect(upsert).not.toHaveBeenCalled();
+            expect(editLogCreate).not.toHaveBeenCalled();
+        });
+
+        it("logs a change of payment confirmation alone", async () => {
+            const { service, upsert, editLogCreate } = createHarness({ existing: createDay() });
+
+            await service.upsertSession(context, 1, createDto({ paymentConfirmed: false }), true);
+
+            expect(upsert).toHaveBeenCalledTimes(1);
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+            expect(editLogCreate.mock.calls[0][0].data).toEqual(expect.objectContaining({
+                before: expect.objectContaining({ paymentConfirmed: true }),
+                after: expect.objectContaining({ paymentConfirmed: false }),
+            }));
+        });
+
+        it("still requires the mom approval on an edit", async () => {
+            const { service, upsert, editLogCreate } = createHarness({ existing: createDay() });
+
+            await expectException(service.upsertSession(
+                context,
+                1,
+                createDto({ notes: "수정", momApproval: "rejected" }),
+                true,
+            ), BadRequestException, "VALIDATION_FAILED");
+            expect(upsert).not.toHaveBeenCalled();
+            expect(editLogCreate).not.toHaveBeenCalled();
+        });
+
+        it("rejects a draft save (PUT) on a locked session with no writes", async () => {
+            const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({ existing: createDay() });
+
+            await expectException(
+                service.upsertSession(context, 1, createDto({ notes: "수정" }), false),
+                ConflictException,
+                "REQUEST_CONFLICT",
+            );
+            expect(upsert).not.toHaveBeenCalled();
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(editLogCreate).not.toHaveBeenCalled();
+            expect(lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("rejects a different service date on a locked session with no writes", async () => {
+            const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({ existing: createDay() });
+
+            await expectException(service.upsertSession(
+                context,
+                1,
+                createDto({ serviceDate: "2026-07-02T00:00:00.000Z", notes: "수정" }),
+                true,
+            ), ConflictException, "REQUEST_CONFLICT");
+            expect(upsert).not.toHaveBeenCalled();
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(editLogCreate).not.toHaveBeenCalled();
+            expect(lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("allows the same calendar date sent with a non-midnight time of day and keeps the stored date", async () => {
+            const { service, upsert, editLogCreate } = createHarness({ existing: createDay() });
+
+            await service.upsertSession(context, 1, createDto({
+                serviceDate: "2026-07-01T09:30:00.000Z",
+                notes: "수정",
+            }), true);
+
+            expect(upsert).toHaveBeenCalledTimes(1);
+            expect(upsert.mock.calls[0][0].update.serviceDate).toEqual(SERVICE_DATE);
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it("allows a non-midnight time on the case end date without tripping the end-date check", async () => {
+            const endDate = new Date("2027-12-31T00:00:00.000Z");
+            const { service, upsert, editLogCreate } = createHarness({
+                existing: createDay({ serviceDate: endDate }),
+                transactionRecord: createRecord({
+                    requiredSessionCount: 1,
+                    startDate: new Date("2027-12-01T00:00:00.000Z"),
+                    endDate,
+                }),
+            });
+
+            await service.upsertSession(context, 1, createDto({
+                serviceDate: "2027-12-31T09:00:00.000Z",
+                notes: "수정",
+            }), true);
+
+            expect(upsert).toHaveBeenCalledTimes(1);
+            expect(upsert.mock.calls[0][0].update.serviceDate).toEqual(endDate);
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it("still rejects an unlocked non-midnight date past the end date (unlocked behaviour unchanged)", async () => {
+            const { service, upsert } = createHarness({
+                existing: null,
+                transactionRecord: createRecord({
+                    requiredSessionCount: 1,
+                    startDate: new Date("2027-12-01T00:00:00.000Z"),
+                    endDate: new Date("2027-12-31T00:00:00.000Z"),
+                }),
+            });
+
+            await expectException(service.upsertSession(
+                context,
+                1,
+                createDto({ serviceDate: "2027-12-31T09:00:00.000Z" }),
+                true,
+            ), BadRequestException, "VALIDATION_FAILED");
+            expect(upsert).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["changed", { notes: "수정" }],
+            ["unchanged", {}],
+        ])("runs no extension calendar arithmetic for a %s edit (a holiday added at the supported-year boundary must not break it)", async (_label, fields) => {
+            // Session 1 of 2 on 2027-12-30, end date 2027-12-31. Once the branch
+            // adds 2027-12-31 as a holiday, the required end date would fall in
+            // the unsupported year 2028 and the calendar throws. The extension
+            // already ran at the first submit, so an edit must never ask.
+            const serviceDate = new Date("2027-12-30T00:00:00.000Z");
+            const calendarStub = branchHolidayCalendar("2027-12-31");
+            const { service, upsert, scheduleUpdate, clientUpdate, editLogCreate } = createHarness({
+                existing: createDay({ serviceDate }),
+                transactionRecord: createRecord({
+                    requiredSessionCount: 2,
+                    startDate: new Date("2027-12-01T00:00:00.000Z"),
+                    endDate: new Date("2027-12-31T00:00:00.000Z"),
+                }),
+                holidayCalendar: calendarStub,
+            });
+            const calendar = await calendarStub.forBranch(BRANCH_ID);
+            expect(() => calendar.addBusinessDays("2027-12-30", 1)).toThrow();
+
+            await expect(service.upsertSession(context, 1, createDto({
+                serviceDate: serviceDate.toISOString(),
+                ...fields,
+            }), true)).resolves.toEqual(expect.objectContaining({ locked: true }));
+
+            expect(scheduleUpdate).not.toHaveBeenCalled();
+            expect(clientUpdate).not.toHaveBeenCalled();
+            expect(upsert).toHaveBeenCalledTimes(Object.keys(fields).length ? 1 : 0);
+            expect(editLogCreate).toHaveBeenCalledTimes(Object.keys(fields).length ? 1 : 0);
+        });
+
+        it("keeps the stored signature when the request carries a different one", async () => {
+            const { service, upsert, updateMany } = createHarness({ existing: createDay() });
+
+            const result = await service.upsertSession(context, 1, createDto({
+                notes: "수정",
+                clientSignature: "data:image/png;base64,b3RoZXI=",
+            }), true);
+
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(upsert.mock.calls[0][0].update).not.toHaveProperty("clientSignature");
+            expect(result).toEqual(expect.objectContaining({ clientSignature: SIGNATURE }));
+        });
+
+        it("refuses an edit by a caregiver other than the one who submitted the day", async () => {
+            const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({
+                existing: createDay({ employeeId: 99 }),
+            });
+
+            await expectException(
+                service.upsertSession(context, 1, createDto({ notes: "수정" }), true),
+                ConflictException,
+                "REQUEST_CONFLICT",
+            );
+            expect(upsert).not.toHaveBeenCalled();
+            expect(updateMany).not.toHaveBeenCalled();
+            expect(editLogCreate).not.toHaveBeenCalled();
+            expect(lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("allows the edit when the same caregiver submits (ownership both directions)", async () => {
+            const { service, upsert, editLogCreate } = createHarness({
+                existing: createDay({ employeeId: context.employeeId }),
+            });
+
+            await service.upsertSession(context, 1, createDto({ notes: "수정" }), true);
+
+            expect(upsert).toHaveBeenCalledTimes(1);
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not extend the end date, schedule, client or token on an edit, changed or not", async () => {
+            // Five sessions starting 2026-07-01 need business days through
+            // 2026-07-07, but the stored end date is 2026-07-03: a first submit
+            // of session 1 would extend. An edit must not.
+            const transactionRecord = createRecord({
+                requiredSessionCount: 5,
+                endDate: new Date("2026-07-03T00:00:00.000Z"),
+                startDate: new Date("2026-07-01T00:00:00.000Z"),
+            });
+            const schedule = {
+                id: 10,
+                clientId: 100,
+                primaryEmployeeId: 20,
+                secondaryEmployeeId: null,
+                startDate: new Date("2026-07-01T00:00:00.000Z"),
+                endDate: new Date("2026-07-03T00:00:00.000Z"),
+                replaced: false,
+                primaryEmployee: { name: "제공자" },
+            };
+            for (const notes of ["수정", null]) {
+                const extendExpiryForCase = jest.fn();
+                const harness = createHarness({
+                    existing: createDay({ notes: null }),
+                    transactionRecord,
+                    schedule,
+                    extendExpiryForCase,
+                    openReviewItem: { id: "review-1", recalculatedEnd: new Date("2026-07-01T00:00:00.000Z") },
+                });
+                await harness.service.upsertSession(context, 1, createDto({ notes: notes ?? undefined }), true);
+
+                expect(harness.scheduleUpdate).not.toHaveBeenCalled();
+                expect(harness.clientUpdate).not.toHaveBeenCalled();
+                expect(harness.reviewItemFindFirst).not.toHaveBeenCalled();
+                expect(harness.reviewItemUpdateMany).not.toHaveBeenCalled();
+                expect(harness.lifecycle.ensureForClient).not.toHaveBeenCalled();
+                expect(extendExpiryForCase).not.toHaveBeenCalled();
+            }
+        });
+
+        it("a first submit with the same calendar still extends (control for the no-extension edit test)", async () => {
+            const transactionRecord = createRecord({
+                requiredSessionCount: 5,
+                endDate: new Date("2026-07-03T00:00:00.000Z"),
+                startDate: new Date("2026-07-01T00:00:00.000Z"),
+            });
+            const schedule = {
+                id: 10,
+                clientId: 100,
+                primaryEmployeeId: 20,
+                secondaryEmployeeId: null,
+                startDate: new Date("2026-07-01T00:00:00.000Z"),
+                endDate: new Date("2026-07-03T00:00:00.000Z"),
+                replaced: false,
+                primaryEmployee: { name: "제공자" },
+            };
+            const extendExpiryForCase = jest.fn();
+            const harness = createHarness({ existing: null, transactionRecord, schedule, extendExpiryForCase });
+
+            await harness.service.upsertSession(context, 1, createDto(), true);
+
+            expect(harness.scheduleUpdate).toHaveBeenCalledTimes(1);
+            expect(harness.clientUpdate).toHaveBeenCalledTimes(1);
+            expect(extendExpiryForCase).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not write an edit log for a first submit", async () => {
+            const { service, editLogCreate } = createHarness({ existing: null });
+
+            await service.upsertSession(context, 1, createDto(), true);
+
+            expect(editLogCreate).not.toHaveBeenCalled();
+        });
     });
 
     it("accepts 기타서비스 40자와 특이사항 80자를 정확히 입력할 수 있다", async () => {
@@ -882,18 +1386,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         }), true);
 
         expect(persistedSignedAt).toEqual(new Date("2026-07-01T02:00:00.000Z"));
-    });
-
-    it("rejects changing any field when resubmitting a locked session", async () => {
-        const { service, upsert } = createHarness({ existing: createDay() });
-
-        await expectException(service.upsertSession(
-            context,
-            1,
-            createDto({ serviceDate: "2026-07-02T00:00:00.000Z" }),
-            true,
-        ), ConflictException, "REQUEST_CONFLICT");
-        expect(upsert).not.toHaveBeenCalled();
     });
 
     it("does not grandfather a locked legacy session with no signature", async () => {
@@ -1151,6 +1643,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         };
         const { service, transactionClient, upsert, scheduleUpdate } = createHarness({
             schedule: handoverSchedule,
+            token: { scheduleId: 702, employeeId: 32 },
             transactionRecord: createRecord({
                 startDate: new Date("2026-10-01T00:00:00.000Z"),
                 endDate: new Date("2026-10-23T00:00:00.000Z"),
@@ -1741,5 +2234,311 @@ describe("ServiceRecordEntryService branch calendar", () => {
         await expect(harness.service.upsertSession(context, 1, createDto(), false))
             .resolves.toEqual(expect.objectContaining({ sessionIndex: 1 }));
         expect(harness.upsert).toHaveBeenCalled();
+    });
+});
+
+describe("ServiceRecordEntryService client service days", () => {
+    const saturdayOnly = { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false };
+    const weekdayOnly = { allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
+
+    function contextServiceFor(record: ReturnType<typeof createRecord>, clientFlags: Record<string, unknown>) {
+        const prisma = createContextPrisma(record);
+        prisma.employee_schedule.findUnique.mockResolvedValue({
+            client: { id: 100, name: "고객", ...clientFlags },
+            primaryEmployee: { id: 20, name: "제공자" },
+        });
+        return new ServiceRecordEntryService(
+            prisma as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+            createHolidayCalendarStub(),
+        );
+    }
+
+    // A legacy case with no stored N and no planned vector: 2026-12-14..2026-12-24
+    // holds nine weekdays, ten when Saturday 12-19 is a service day.
+    const legacyRecord = () => createRecord({
+        requiredSessionCount: null,
+        startDate: new Date("2026-12-14T00:00:00.000Z"),
+        endDate: new Date("2026-12-24T00:00:00.000Z"),
+        plannedSessions: null,
+    });
+
+    it("getContext derives a legacy N on a Saturday-enabled client's service days and reports serviceDays", async () => {
+        const result = await contextServiceFor(legacyRecord(), saturdayOnly).getContext(context);
+
+        expect(result.totalSessions).toBe(10);
+        expect(result.serviceDays).toEqual({ saturday: true, sunday: false, holiday: false });
+    });
+
+    it("getContext derives the same legacy N on weekdays only for a default client", async () => {
+        const result = await contextServiceFor(legacyRecord(), weekdayOnly).getContext(context);
+
+        expect(result.totalSessions).toBe(9);
+        expect(result.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
+    });
+
+    it("getContext reports false for service-day flags the client row does not carry", async () => {
+        const result = await contextServiceFor(legacyRecord(), { allowSundayService: null }).getContext(context);
+
+        expect(result.totalSessions).toBe(9);
+        expect(result.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
+    });
+
+    // Session 1 of 2 on Fri 2026-12-18, case ending that day: the last session is the
+    // next service day, Sat 12-19 for a Saturday-enabled client and Mon 12-21 otherwise.
+    it.each([
+        ["a Saturday-enabled client", saturdayOnly, "2026-12-19"],
+        ["a default client", weekdayOnly, "2026-12-21"],
+    ])("upsertSession auto-extend lands on %s's next service day", async (_label, flags, expectedEnd) => {
+        const record = createRecord({
+            requiredSessionCount: 2,
+            startDate: new Date("2026-12-14T00:00:00.000Z"),
+            endDate: new Date("2026-12-18T00:00:00.000Z"),
+        });
+        const schedule = {
+            id: 10,
+            clientId: 100,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-12-14T00:00:00.000Z"),
+            endDate: new Date("2026-12-18T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+            client: flags,
+        };
+        const harness = createHarness({ existing: null, transactionRecord: record, schedule });
+
+        await harness.service.upsertSession(
+            context,
+            1,
+            createDto({ serviceDate: "2026-12-18T00:00:00.000Z" }),
+            false,
+        );
+
+        expect(harness.scheduleUpdate).toHaveBeenCalledWith({
+            where: { id: 10, branchId: BRANCH_ID },
+            data: { endDate: new Date(`${expectedEnd}T00:00:00.000Z`) },
+        });
+        // The calendar handed to the lifecycle carries the client's policy.
+        const handedOn = harness.lifecycle.ensureForClient.mock.calls[0]![2] as {
+            isBusinessDay(iso: string): boolean;
+        };
+        expect(handedOn.isBusinessDay("2026-12-19")).toBe(expectedEnd === "2026-12-19");
+    });
+});
+
+describe("caregiver access token re-check inside the write transaction", () => {
+    const ownedSchedule = {
+        id: 10,
+        clientId: 100,
+        branchId: BRANCH_ID,
+        primaryEmployeeId: 20,
+        secondaryEmployeeId: null,
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        endDate: new Date("2026-07-31T00:00:00.000Z"),
+        replaced: false,
+        primaryEmployee: { name: "제공자" },
+    };
+    const headerDto = {
+        momName: "산모",
+        momBirth: "900101",
+        babyName: "아기",
+        babyBirth: "260701",
+        deliveryType: "자연분만",
+        babyWeight: "3.2",
+    };
+    const unusableTokens: Array<[string, Record<string, unknown> | null]> = [
+        ["revoked", { revokedAt: new Date("2026-06-02T00:00:00.000Z") }],
+        ["inactive (replaced)", { active: false }],
+        ["expired", { expiresAt: new Date(Date.now() - 1000) }],
+        ["locked", { lockedAt: new Date("2026-06-02T00:00:00.000Z") }],
+        ["unverified", { verifiedAt: null }],
+        ["over the failed-attempt limit", { failedAttempts: 5 }],
+        ["reassigned to another schedule", { scheduleId: 11 }],
+        ["reassigned to another employee", { employeeId: 21 }],
+        ["deleted", null],
+    ];
+
+    function expectGuardRefusal(promise: Promise<unknown>) {
+        return expect(promise).rejects.toMatchObject({
+            status: 401,
+            response: { code: "AUTH_REQUIRED" },
+        });
+    }
+
+    function expectNoUpsertWrites(h: ReturnType<typeof createHarness>) {
+        expect(h.upsert).not.toHaveBeenCalled();
+        expect(h.updateMany).not.toHaveBeenCalled();
+        expect(h.editLogCreate).not.toHaveBeenCalled();
+        expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        expect(h.scheduleUpdate).not.toHaveBeenCalled();
+        expect(h.clientUpdate).not.toHaveBeenCalled();
+    }
+
+    describe("upsertSession", () => {
+        it.each(unusableTokens)("refuses a submit with a %s token and writes nothing", async (_name, token) => {
+            const h = createHarness({ schedule: ownedSchedule, token: token === null ? null : token });
+
+            await expectGuardRefusal(h.service.upsertSession(context, 1, createDto(), true));
+            expectNoUpsertWrites(h);
+        });
+
+        it("refuses a draft save with a revoked token and writes nothing", async () => {
+            const h = createHarness({ schedule: ownedSchedule, token: { revokedAt: new Date() } });
+
+            await expectGuardRefusal(h.service.upsertSession(context, 1, createDto(), false));
+            expectNoUpsertWrites(h);
+        });
+
+        it("refuses an edit of a locked session with a revoked token and writes nothing", async () => {
+            const h = createHarness({
+                schedule: ownedSchedule,
+                existing: createDay(),
+                token: { revokedAt: new Date() },
+            });
+
+            await expectGuardRefusal(h.service.upsertSession(context, 1, createDto({ notes: "수정됨" }), true));
+            expectNoUpsertWrites(h);
+        });
+
+        it("locks the token row FOR UPDATE after the write-set locks and before any write", async () => {
+            const h = createHarness({ schedule: ownedSchedule });
+
+            await h.service.upsertSession(context, 1, createDto(), true);
+
+            const forUpdateTables = h.transactionClient.$queryRaw.mock.calls
+                .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
+                .filter((query) => query.includes("for update"))
+                .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+            expect(forUpdateTables[forUpdateTables.length - 1]).toBe("service_record_token");
+            expect(forUpdateTables.indexOf("service_record_token")).toBeGreaterThan(
+                forUpdateTables.indexOf("service_record_day"),
+            );
+            expect(forUpdateTables.filter((table) => table === "service_record_token")).toHaveLength(1);
+
+            const tokenLockIndex = h.transactionClient.$queryRaw.mock.calls.findIndex(([query]) =>
+                ((query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "").includes("service_record_token"));
+            const tokenLockOrder = h.transactionClient.$queryRaw.mock.invocationCallOrder[tokenLockIndex] ?? 0;
+            const tokenLockValues = (h.transactionClient.$queryRaw.mock.calls[tokenLockIndex][0] as { values?: unknown[] }).values;
+            expect(tokenLockValues).toEqual([context.tokenId]);
+            expect(h.transactionClient.service_record_token.findUnique.mock.invocationCallOrder[0] ?? 0)
+                .toBeGreaterThan(tokenLockOrder);
+            expect(h.upsert.mock.invocationCallOrder[0] ?? 0).toBeGreaterThan(tokenLockOrder);
+        });
+
+        it("still accepts a submit with a valid token", async () => {
+            const h = createHarness({ schedule: ownedSchedule });
+
+            await expect(h.service.upsertSession(context, 1, createDto(), true)).resolves.toEqual(
+                expect.objectContaining({ sessionIndex: 1, locked: true }),
+            );
+            expect(h.transactionClient.service_record_token.findUnique).toHaveBeenCalledWith({
+                where: { id: context.tokenId },
+            });
+        });
+    });
+
+    describe("saveHeader", () => {
+        function createHeaderHarness(token: Record<string, unknown> | null) {
+            const aggregate = createRecord();
+            const lockOrder: string[] = [];
+            const transaction = {
+                $queryRaw: jest.fn(async (query: { strings?: string[] }) => {
+                    const sql = query.strings?.join(" ").toLowerCase() ?? "";
+                    lockOrder.push(sql.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
+                    return [{ id: CASE_ID }];
+                }),
+                service_record_token: {
+                    findUnique: jest.fn().mockResolvedValue(token === null ? null : createToken(token)),
+                },
+                employee_schedule: {
+                    findUnique: jest.fn().mockResolvedValue(null),
+                },
+                service_record_case: {
+                    findUnique: jest.fn().mockResolvedValue(aggregate),
+                    update: jest.fn().mockResolvedValue(aggregate),
+                },
+                service_record_day: {
+                    count: jest.fn().mockResolvedValue(0),
+                },
+                service_record: {
+                    upsert: jest.fn().mockResolvedValue({ ...aggregate, scheduleId: context.scheduleId }),
+                },
+            };
+            const prisma = {
+                service_record_case: { findFirst: jest.fn().mockResolvedValue(aggregate) },
+                service_record_day: { count: jest.fn().mockResolvedValue(0) },
+                $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+            };
+            const lifecycle = { recompute: jest.fn().mockResolvedValue(aggregate) };
+            const service = new ServiceRecordEntryService(
+                prisma as unknown as PrismaService,
+                { lockAccessTokenForWrite } as unknown as ServiceRecordTokenService,
+                lifecycle as unknown as ServiceRecordLifecycleService,
+                createHolidayCalendarStub(),
+            );
+            return { service, transaction, lifecycle, lockOrder };
+        }
+
+        it.each(unusableTokens)("refuses a header save with a %s token and writes nothing", async (_name, token) => {
+            const h = createHeaderHarness(token);
+
+            await expectGuardRefusal(h.service.saveHeader(context, headerDto));
+            expect(h.transaction.service_record_case.update).not.toHaveBeenCalled();
+            expect(h.transaction.service_record.upsert).not.toHaveBeenCalled();
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("locks the token after the case lock and still saves with a valid token", async () => {
+            const h = createHeaderHarness({});
+
+            await h.service.saveHeader(context, headerDto);
+
+            expect(h.lockOrder).toEqual(["service_record_case", "service_record_token"]);
+            expect(h.transaction.service_record.upsert).toHaveBeenCalled();
+        });
+    });
+
+    describe("finalize", () => {
+        function createFinalizeHarness(token: Record<string, unknown> | null) {
+            const aggregate = createRecord();
+            const transaction = {
+                $queryRaw: jest.fn().mockResolvedValue([{ id: context.tokenId }]),
+                service_record_token: {
+                    findUnique: jest.fn().mockResolvedValue(token === null ? null : createToken(token)),
+                },
+            };
+            const prisma = {
+                service_record_case: { findFirst: jest.fn().mockResolvedValue(aggregate) },
+                eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+                $transaction: jest.fn((callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+            };
+            const lifecycle = { recompute: jest.fn().mockResolvedValue(aggregate) };
+            const service = new ServiceRecordEntryService(
+                prisma as unknown as PrismaService,
+                { lockAccessTokenForWrite } as unknown as ServiceRecordTokenService,
+                lifecycle as unknown as ServiceRecordLifecycleService,
+                createHolidayCalendarStub(),
+            );
+            return { service, transaction, lifecycle };
+        }
+
+        it.each(unusableTokens)("refuses finalize with a %s token before recompute", async (_name, token) => {
+            const h = createFinalizeHarness(token);
+
+            await expectGuardRefusal(h.service.finalize(context));
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        });
+
+        it("locks the token row and still finalizes with a valid token", async () => {
+            const h = createFinalizeHarness({});
+
+            await expect(h.service.finalize(context)).resolves.toEqual(
+                expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS, chunkCount: 0 }),
+            );
+            expect(h.transaction.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(h.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID);
+        });
     });
 });

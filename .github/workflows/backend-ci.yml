@@ -114,6 +114,9 @@ jobs:
 
       # Fail fast on the cheapest, most deterministic gate first.
       - name: Type check
+        # tsc on the backend peaks near Node's default ~2 GB heap and has OOM'd on CI (run 41173922396).
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm --filter ./backend run type-check
 
       - name: Build

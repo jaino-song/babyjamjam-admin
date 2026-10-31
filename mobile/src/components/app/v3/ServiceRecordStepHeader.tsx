@@ -12,8 +12,14 @@ export interface ServiceRecordStepHeaderProps {
   meta?: ReactNode;
   /** Right of the row under the title, e.g. `<><b>3회차</b> · 산모 (1/4)</>`. */
   crumbs?: ReactNode;
-  /** 0..1; values outside the range are clamped. */
+  /** 0..1; values outside the range are clamped. Ignored while `indeterminate`. */
   progress: number;
+  /**
+   * The amount of work is not known yet (the screen is still loading): the fill
+   * slides across the track instead of showing a percentage, and the progress bar
+   * reports no `aria-valuenow`.
+   */
+  indeterminate?: boolean;
   /** Accessible name of the progress bar. */
   progressLabel?: string;
   /** Layout-only (never visual). */
@@ -32,6 +38,7 @@ export function ServiceRecordStepHeader({
   meta,
   crumbs,
   progress,
+  indeterminate = false,
   progressLabel = "진행률",
   className,
 }: ServiceRecordStepHeaderProps) {
@@ -71,13 +78,20 @@ export function ServiceRecordStepHeader({
         aria-label={progressLabel}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={percent}
+        aria-valuenow={indeterminate ? undefined : percent}
+        aria-busy={indeterminate || undefined}
         className="mt-2.5 h-[5px] overflow-hidden rounded-full bg-white/30"
       >
         <div
           data-component={`${dataComponent}_progress_fill`}
-          className="h-full rounded-full bg-white transition-[width] duration-300"
-          style={{ width: `${percent}%` }}
+          data-indeterminate={indeterminate || undefined}
+          className={cn(
+            "h-full rounded-full bg-white",
+            indeterminate
+              ? "w-2/5 animate-indeterminate-bar motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-60"
+              : "transition-[width] duration-300",
+          )}
+          style={indeterminate ? undefined : { width: `${percent}%` }}
         />
       </div>
     </div>

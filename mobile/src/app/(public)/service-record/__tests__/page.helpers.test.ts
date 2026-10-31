@@ -130,6 +130,33 @@ describe("legacyDefaultServiceDate", () => {
     it("returns an empty string instead of throwing when the chain leaves the covered years", () => {
         expect(legacyDefaultServiceDate({ startDate: "2027-03-02", sessions: [] }, 1, branchCalendar, "2026-08-26")).toBe("");
     });
+
+    describe("with the client's service days", () => {
+        // 2026-12-14 is a Monday.
+        const weekCtx = { startDate: "2026-12-14", sessions: [] };
+        const saturdayOn = KR_BUILTIN_CALENDAR.withServiceDays({ saturday: true, sunday: false, holiday: false });
+
+        it("is unchanged by an all-off policy", () => {
+            const allOff = KR_BUILTIN_CALENDAR.withServiceDays({ saturday: false, sunday: false, holiday: false });
+            for (const day of [1, 5, 6, 7, 10]) {
+                expect(legacyDefaultServiceDate(weekCtx, day, allOff, "2026-12-14"))
+                    .toBe(legacyDefaultServiceDate(weekCtx, day, KR_BUILTIN_CALENDAR, "2026-12-14"));
+            }
+            expect(legacyDefaultServiceDate(weekCtx, 6, KR_BUILTIN_CALENDAR, "2026-12-14")).toBe("2026-12-21");
+        });
+
+        it("lands a later session on a Saturday when Saturday service is on", () => {
+            expect(legacyDefaultServiceDate(weekCtx, 5, saturdayOn, "2026-12-14")).toBe("2026-12-18");
+            expect(legacyDefaultServiceDate(weekCtx, 6, saturdayOn, "2026-12-14")).toBe("2026-12-19");
+            expect(legacyDefaultServiceDate(weekCtx, 7, saturdayOn, "2026-12-14")).toBe("2026-12-21");
+        });
+
+        it("starts on a Saturday start date only when Saturday service is on", () => {
+            const satStart = { startDate: "2026-12-19", sessions: [] };
+            expect(legacyDefaultServiceDate(satStart, 1, KR_BUILTIN_CALENDAR, "2026-12-14")).toBe("2026-12-21");
+            expect(legacyDefaultServiceDate(satStart, 1, saturdayOn, "2026-12-14")).toBe("2026-12-19");
+        });
+    });
 });
 
 describe("serviceRecordCalendarYears", () => {

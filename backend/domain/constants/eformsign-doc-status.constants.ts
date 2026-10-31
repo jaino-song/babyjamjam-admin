@@ -12,6 +12,18 @@ export const EFORMSIGN_COMPLETED_STATUS_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * A contract is finally completed once eformsign reports a completed status other than
+ * 062. 062 (participant accepted) is in the completed set because a service-record
+ * snapshot completes there, but a contract at 062 can still be awaiting the 제공기관
+ * confirmation step, so claiming terminal completion from it would block the later
+ * legitimate 070 from updating the summary.
+ */
+export function isFinalContractCompletionStatus(rawStatusType: string | number | null | undefined): boolean {
+    const statusType = normalizeEformsignStatusCode(rawStatusType);
+    return statusType !== "062" && EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType);
+}
+
+/**
  * Completed values that may already exist in storage from legacy/raw vendor writes.
  * New writes are normalized, but publication queries must also fence old aliases and
  * unpadded numeric forms until a normal sync rewrites them canonically.

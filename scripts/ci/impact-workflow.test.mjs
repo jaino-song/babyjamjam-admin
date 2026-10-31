@@ -16,6 +16,28 @@ const old = name => execFileSync('git',['show',`${base}:.github/workflows/${name
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
 const apps=['backend','frontend','mobile'];
+// e3929e6b3 made backend `start` run `node dist/main` (no compile), so every job that
+// starts the backend must build it first. Same command as backend-ci.yml and Dockerfile.lightsail.
+const backendBuildStep = {name:'Build backend',run:'pnpm --filter ./backend run build'};
+// Asserts the build step sits immediately before 'Start backend' and returns the job's
+// steps without it, so the caller can still compare every remaining step exactly.
+function stepsWithoutBackendBuild(job,label) {
+  const start=job.steps.findIndex(s=>s.name==='Start backend');
+  assert.ok(start>0,`${label}: Start backend step exists`);
+  assert.deepEqual(job.steps[start-1],backendBuildStep,`${label}: backend is built immediately before it starts`);
+  assert.equal(job.steps.filter(s=>s.name===backendBuildStep.name).length,1,`${label}: exactly one backend build step`);
+  return job.steps.filter((_,index)=>index!==start-1);
+}
+// The backend tsc peaks near Node's default ~2 GB heap (OOM in run 41173922396), so the
+// backend 'Type check' step raises it. Asserts that exact env and returns the steps without
+// it, so the caller can still compare every step exactly against the pinned base.
+const typeCheckHeapEnv = {NODE_OPTIONS:'--max-old-space-size=4096'};
+function stepsWithoutTypeCheckHeap(steps,label) {
+  const index=steps.findIndex(s=>s.name==='Type check');
+  assert.ok(index>=0,`${label}: Type check step exists`);
+  assert.deepEqual(steps[index].env,typeCheckHeapEnv,`${label}: Type check raises the Node heap`);
+  const copy=structuredClone(steps);delete copy[index].env;return copy;
+}
 const reusable = parse(read('ci-impact.yml'));
 const loader = reusable.jobs.classify.steps.find(s=>s.id==='impact').run;
 const expectedNames={backend:'backend · type-check · lint · test',frontend:'frontend · type-check · lint · test · build',mobile:'type-check · lint · test · build'};
@@ -42,7 +64,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
-  assert.deepEqual(appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(appSteps,file):appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
   if(app==='backend') {assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -67,7 +89,11 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
 });
 test('mobile advisory keeps every step/service and full suite; only relevance and direct dependency change',()=>{
   const a=parse(old('mobile-ci.yml')).jobs.e2e,b=parse(read('mobile-ci.yml')).jobs.e2e;
-  assert.deepEqual(needs(b),['verify','impact']);assert.deepEqual({...b,needs:a.needs,if:a.if},a);
+  assert.deepEqual(needs(b),['verify','impact']);
+  const {steps:_bSteps,...bRest}=b,{steps:aSteps,...aRest}=a;
+  assert.deepEqual({...bRest,needs:a.needs,if:a.if,'runs-on':a['runs-on']},aRest);
+  assert.deepEqual(stepsWithoutBackendBuild(b,'mobile e2e'),aSteps,'every other step is unchanged');
+  assert.equal(b['runs-on'],'ubuntu-24.04','mobile advisory e2e is pinned to ubuntu-24.04');
   assert.equal(b['continue-on-error'],undefined);assert.ok(b.steps.some(s=>s.run==='pnpm --filter ./mobile run test:e2e'));
 });
 test('reusable classification and completion are self-contained protected-base authority with full bootstrap',()=>{
@@ -100,7 +126,7 @@ test('backend installs declared compiler before executing CI impact contracts; o
   assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
-  assert.deepEqual(steps.filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
+  assert.deepEqual(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
@@ -121,7 +147,10 @@ test('Playwright conditions the full service job, preserves the full lane and ev
   assert.deepEqual(needs(w.jobs.test), ['impact']);
   assert.match(w.jobs.test.if, /!cancelled\(\)/);
   const {needs: _needs, if: _if, ...heavy} = w.jobs.test;
-  assert.deepEqual(heavy, before.jobs.test, 'services, fixtures, commands, artifacts and timeout remain unchanged');
+  assert.equal(heavy['runs-on'], 'ubuntu-24.04', 'frontend auth lifecycle job is pinned to ubuntu-24.04');
+  const {steps: _heavySteps, ...heavyRest} = heavy, {steps: beforeSteps, ...beforeRest} = before.jobs.test;
+  assert.deepEqual({...heavyRest, 'runs-on': before.jobs.test['runs-on']}, beforeRest, 'services, fixtures, artifacts and timeout remain unchanged');
+  assert.deepEqual(stepsWithoutBackendBuild(heavy, 'frontend auth lifecycle'), beforeSteps, 'every other step and command remains unchanged');
   const visited = new Set(), active = new Set();
   function visit(id) {
     assert.ok(w.jobs[id], `missing job ${id}`);assert.equal(active.has(id), false, `cycle at ${id}`);

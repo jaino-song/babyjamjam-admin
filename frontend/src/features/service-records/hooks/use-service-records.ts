@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { serviceRecordsApi } from "../api/service-records.api";
 import type {
     RetryServiceRecordDocumentInput,
+    ServiceRecordCaregiverEditChangesResponse,
     ServiceRecordRevisionChangesResponse,
     ServiceRecordRevisionHistoryResponse,
     ServiceRecordOverview,
@@ -61,6 +62,24 @@ export function useClientServiceRecordRevisionChanges(
             return serviceRecordsApi.getClientRevisionChanges(clientId, revisionId).then((response) => response.data);
         },
         enabled: clientId !== null && revisionId !== null && (options?.enabled ?? true),
+    });
+}
+
+/** One caregiver edit's before -> after changes. Disabled until an edit is selected. */
+export function useClientServiceRecordCaregiverEditChanges(
+    clientId: number | null,
+    editId: string | null,
+    options?: { enabled?: boolean },
+) {
+    return useQuery<ServiceRecordCaregiverEditChangesResponse>({
+        queryKey: serviceRecordKeys.caregiverEditChanges(clientId, editId),
+        queryFn: () => {
+            if (clientId === null || editId === null) {
+                throw new Error("clientId and editId are required");
+            }
+            return serviceRecordsApi.getClientCaregiverEditChanges(clientId, editId).then((response) => response.data);
+        },
+        enabled: clientId !== null && editId !== null && (options?.enabled ?? true),
     });
 }
 

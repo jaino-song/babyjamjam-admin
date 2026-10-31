@@ -16,7 +16,7 @@ const repoRoot = path.resolve(
 const manifest = readRepositoryManifest(repoRoot);
 const sources = readRepositorySources(repoRoot);
 
-test("accepts the registered mobile root Toaster and its single mount", () => {
+test("accepts the registered mobile root Toaster and its shell and service-record mounts", () => {
   assert.deepEqual(
     validateRootComponentRequirements({ manifest, sources }),
     [],
@@ -74,6 +74,31 @@ test("rejects an additional production Toaster mount", () => {
     sources: sourcesWithDuplicate,
   });
 
+  assert.ok(
+    errors.some((error) =>
+      error.includes("Mobile production sources must render root Toaster exactly once"),
+    ),
+  );
+});
+
+test("rejects a missing service-record Toaster mount", () => {
+  const layoutPath = "mobile/src/app/(public)/service-record/[token]/layout.tsx";
+  const sourcesWithoutMount = new Map(sources);
+  sourcesWithoutMount.set(
+    layoutPath,
+    sources.get(layoutPath).replace(/<Toaster\s*\/>/, ""),
+  );
+
+  const errors = validateRootComponentRequirements({
+    manifest,
+    sources: sourcesWithoutMount,
+  });
+
+  assert.ok(
+    errors.some((error) =>
+      error.includes("service-record/[token]/layout.tsx must render Toaster exactly once"),
+    ),
+  );
   assert.ok(
     errors.some((error) =>
       error.includes("Mobile production sources must render root Toaster exactly once"),

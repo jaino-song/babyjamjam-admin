@@ -35,9 +35,11 @@ jest.mock("use-debounce", () => ({
   useDebounce: <T,>(value: T) => [value],
 }));
 
+let mockAuthUser: { role: string; branchRole: string | null } = { role: "owner", branchRole: null };
+
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "owner", branchRole: null },
+    data: mockAuthUser,
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -196,6 +198,21 @@ jest.mock("@/components/app/clients/ServiceRecordLinkResetResultModal", () => ({
   ServiceRecordLinkResetResultModal: () => null,
 }));
 
+jest.mock("@/components/app/service-record/ServiceRecordScheduleDialog", () => ({
+  ServiceRecordScheduleDialog: ({ clientId, clientName, onOpenChange, onSaved }: {
+    clientId: number;
+    clientName: string;
+    onOpenChange: (open: boolean) => void;
+    onSaved: () => void | Promise<void>;
+  }) => (
+    <div data-testid="service-record-schedule-dialog" data-client-id={clientId}>
+      {clientName}
+      <button onClick={() => onOpenChange(false)}>일정 창 닫기</button>
+      <button onClick={() => void onSaved()}>일정 저장 완료</button>
+    </div>
+  ),
+}));
+
 jest.mock("@/components/app/clients/ServiceScheduleChangeModal", () => ({
   ServiceScheduleChangeModal: ({ onSubmit }: { onSubmit: (allow: boolean) => void }) => (
     <button onClick={() => onSubmit(false)}>일정 변경 적용</button>
@@ -261,10 +278,11 @@ jest.mock("@/components/app/v3", () => ({
   HeaderActionButton: ({ label, onClick }: { label: ReactNode; onClick: () => void }) => <button type="button" onClick={onClick}>{label}</button>,
   InfoCard: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ListEmptyState: ({ message }: { message: ReactNode }) => <div>{message}</div>,
-  ListPanel: ({ children, emptyState, headerActions, subHeader, subtitle, title }: { children: ReactNode; emptyState?: ReactNode; headerActions?: ReactNode; subHeader?: ReactNode; subtitle?: ReactNode; title: ReactNode }) => (
+  ListPanel: ({ children, emptyState, headerActions, onSearchChange, searchValue, subHeader, subtitle, title }: { children: ReactNode; emptyState?: ReactNode; headerActions?: ReactNode; onSearchChange?: (value: string) => void; searchValue?: string; subHeader?: ReactNode; subtitle?: ReactNode; title: ReactNode }) => (
     <section>
       <h2>{title}</h2>
       {subtitle ? <div data-testid="clients-list-subtitle">{subtitle}</div> : null}
+      <input aria-label="고객 검색" value={searchValue ?? ""} onChange={(event) => onSearchChange?.(event.target.value)} />
       {headerActions}
       {subHeader}
       {emptyState}
@@ -302,6 +320,7 @@ jest.mock("@/services/api", () => ({
 }));
 
 afterEach(() => {
+  mockAuthUser = { role: "owner", branchRole: null };
   mockActiveBranchId = "branch-a";
   mockClientFromParam = undefined;
   mockClientQueryState = IDLE_MOCK_CLIENT_QUERY;
@@ -378,6 +397,22 @@ describe("ClientsPage visual conventions", () => {
     expect(menuItem).toContain('rel="noopener noreferrer"');
     expect(menuItem).toContain("encodeURIComponent");
   });
+
+  it("offers the service-record schedule change right under the viewer, behind the same branch-management gate", () => {
+    const viewMarker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
+    const scheduleMarker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"');
+    expect(viewMarker).toBeGreaterThan(-1);
+    expect(scheduleMarker).toBeGreaterThan(viewMarker);
+    // No other item sits between the viewer and the schedule item (only the schedule item's own opening tag does).
+    const between = source.slice(viewMarker, scheduleMarker);
+    expect(between.match(/<DropdownMenuItem/g)).toHaveLength(1);
+
+    const gateStart = source.lastIndexOf("{canManageBranchFeatures && (", scheduleMarker);
+    const scheduleItem = source.slice(source.lastIndexOf("<DropdownMenuItem", scheduleMarker), source.indexOf("</DropdownMenuItem>", scheduleMarker));
+    expect(source.slice(gateStart, scheduleMarker)).not.toContain("</DropdownMenuItem>");
+    expect(scheduleItem).toContain("제공기록지 일정 변경");
+    expect(scheduleItem).toContain("setServiceRecordScheduleClient(activeSelectedClient)");
+  });
 });
 
 describe("ClientsPage directory and summary contracts", () => {
@@ -387,6 +422,9 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("limit: 20");
     expect(source).toContain("tab: activeFilter");
     expect(source).toContain("search: debouncedSearchQuery || undefined");
+    // The summary is branch-wide: it takes no search and is not gated on the search debounce.
+    expect(source).toContain("useClientListSummary()");
+    expect(source).toContain("const isSummaryInitialLoading = listSummary.isInitialLoading;");
     expect(source).not.toContain("useClients(1, 50)");
     expect(source).not.toContain("matchesSearchQuery");
     expect(source).not.toContain("const filteredClients");
@@ -394,7 +432,8 @@ describe("ClientsPage directory and summary contracts", () => {
 
   it("keeps the matched total separate from loaded rows and reaches the final page", () => {
     expect(source).toContain("matchedTotal");
-    expect(source).toContain("일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시");
+    expect(source).toContain("`검색 결과 ${matchedTotal}명`");
+    expect(source).not.toContain("명 표시");
     expect(source).toContain("const listScopeSubtitle");
     expect(source).toContain("subtitle={listScopeSubtitle}");
     expect(source).not.toContain('data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope_count"');
@@ -402,16 +441,18 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("onLoadMore={() => void directory.fetchNextPage()}");
     expect(source).toContain("isFetchingMore={directory.isFetchingNextPage}");
     expect(source).toContain("directory.isNextPageError");
-    expect(source).toContain("directory.isEndOfList");
+    // The end of the list is not announced: the scope subtitle already says how many are shown.
+    expect(source).not.toContain("모든 검색 결과를 불러왔어요");
   });
 
-  it("labels summary scope and dueDate months", () => {
+  it("labels dueDate months and keeps the summary unscoped by search", () => {
     expect(source).toContain("이번 달 출산 예정");
     expect(source).toContain("다음 달 출산 예정");
     expect(source).toContain("서비스 종료 예정");
     expect(source).not.toContain("이번달 dueDate");
     expect(source).not.toContain("다음달 dueDate");
-    expect(source).toContain("summaryScopeLabel");
+    expect(source).not.toContain("summaryScopeLabel");
+    expect(source).not.toContain("현재 검색 범위");
     expect(source).not.toContain('data-component="desktop_clients_summary_scope"');
     expect(source).toContain('thisMonthCount: summary?.dueDate.thisMonth ?? "—"');
   });
@@ -533,9 +574,7 @@ describe("ClientsPage directory subtitle behavior", () => {
       isSuccessfulEmpty: true,
     });
 
-    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
-      "현재 지점 전체 · 일치 0명 · 현재 0명 표시",
-    );
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^0명$/);
 
     mockDirectoryState = {
       ...mockDirectoryState,
@@ -546,9 +585,32 @@ describe("ClientsPage directory subtitle behavior", () => {
     };
     rerender(<ClientsPage />);
 
-    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
-      "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
-    );
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^4명$/);
+  });
+
+  it("prefixes the count with 검색 결과 while a search is applied and leaves the stats untouched", () => {
+    mockListSummary.mockReturnValue({
+      data: { dueDate: { thisMonth: 3, nextMonth: 5 }, byTab: { active: 7, waiting: 2 }, serviceEnd: { count: 1 }, total: 89 },
+      isBranchContextReady: true,
+      isInitialError: false,
+      isInitialLoading: false,
+      isRefreshError: false,
+    });
+    renderClientsPage({
+      clients: [{ id: 1, name: "김예지" }],
+      data: { pages: [{ data: [{ id: 1, name: "김예지" }], total: 89 }] },
+      matchedTotal: 89,
+    });
+    const statsBefore = screen.getByTestId("clients-stats").textContent;
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^89명$/);
+
+    mockDirectoryState = { ...mockDirectoryState, matchedTotal: 8 };
+    fireEvent.change(screen.getByLabelText("고객 검색"), { target: { value: "김예지" } });
+
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^검색 결과 8명$/);
+    expect(mockListSummary).toHaveBeenCalled();
+    expect(screen.getByTestId("clients-stats")).toHaveAttribute("data-loading", "false");
+    expect(screen.getByTestId("clients-stats").textContent).toBe(statsBefore);
   });
 
   it("keeps the cached match count visible when a same-scope refresh fails", () => {
@@ -561,9 +623,7 @@ describe("ClientsPage directory subtitle behavior", () => {
       matchedTotal: 4,
     });
 
-    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
-      "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
-    );
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^4명$/);
     expect(screen.getByRole("alert")).toHaveTextContent("최근에 확인된 목록을 표시하고 있어요");
   });
 
@@ -594,6 +654,58 @@ describe("ClientsPage directory subtitle behavior", () => {
     });
 
     expect(screen.getByTestId("client-detail")).toHaveTextContent("지점 A 고객 2");
+  });
+
+  describe("service-record schedule menu item", () => {
+    const selectClient = () => {
+      mockSearchParams = new URLSearchParams("id=8");
+      mockClientFromParam = { id: 8, name: "지점 A 고객 2" };
+      renderClientsPage({ clients: [], data: { pages: [{ data: [], total: 0 }] } });
+    };
+
+    it("sits right below 제공기록지 보기 for a branch manager and opens the dialog for the selected client", () => {
+      selectClient();
+
+      const view = screen.getByText("제공기록지 보기");
+      const item = screen.getByRole("button", { name: "제공기록지 일정 변경" });
+      expect(view.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+
+      fireEvent.click(item);
+
+      const dialog = screen.getByTestId("service-record-schedule-dialog");
+      expect(dialog).toHaveAttribute("data-client-id", "8");
+      expect(dialog).toHaveTextContent("지점 A 고객 2");
+    });
+
+    it("closes the dialog when it asks to, and refreshes the client data after a save", async () => {
+      mockQueryClient.invalidateQueries.mockClear();
+      selectClient();
+      fireEvent.click(screen.getByRole("button", { name: "제공기록지 일정 변경" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "일정 저장 완료" }));
+      await waitFor(() => expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients"] }));
+
+      fireEvent.click(screen.getByRole("button", { name: "일정 창 닫기" }));
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+    });
+
+    it("works for a branch admin or manager too", () => {
+      mockAuthUser = { role: "staff", branchRole: "manager" };
+      selectClient();
+
+      expect(screen.getByRole("button", { name: "제공기록지 일정 변경" })).toBeInTheDocument();
+    });
+
+    it("is absent for a user who cannot manage the branch", () => {
+      mockAuthUser = { role: "staff", branchRole: "employee" };
+      selectClient();
+
+      expect(screen.getByTestId("client-detail")).toBeInTheDocument();
+      expect(screen.queryByText("제공기록지 보기")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "제공기록지 일정 변경" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+    });
   });
 });
 

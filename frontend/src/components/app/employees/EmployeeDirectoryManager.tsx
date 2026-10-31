@@ -372,7 +372,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     return (
         <div data-component={dataComponent} className="flex min-h-0 flex-1 flex-col gap-4">
             <StatsBar
-                name="employees"
+                name="employees" showDocumentJobs="whenActive"
                 isLoading={isLoading}
                 items={[
                     { icon: Users, value: stats.total, label: filterItems[0].label, counter: "명" },

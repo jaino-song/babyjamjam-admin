@@ -6,6 +6,7 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
 import { eformsignApi } from "@/services/api";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 
@@ -148,21 +149,16 @@ describe("ContractsPage contract stats states", () => {
   });
 });
 
-describe("ContractsPage headless finalization fallback", () => {
-  it("does not reopen the reviewer iframe when the backend verdict is unknown", () => {
-    expect(source).toContain("let transportOutcomeUnknown = false");
-    expect(source).toContain("transportOutcomeUnknown = true");
-    expect(source).toContain("if (manualCheckRequired || transportOutcomeUnknown)");
-    expect(source).not.toContain("headless finalize threw, falling back to iframe");
-  });
-
-  // BJJ-319 5-4c: the additive envelope `outcome` is the primary
-  // classification — an UNKNOWN verdict must reach the manual-check recovery
-  // (확인 필요 copy, no reviewer iframe) even if fallbackHint would say
-  // otherwise. Envelopes without the field keep the fallbackHint decision.
-  it("treats an UNKNOWN envelope outcome as a manual check, never the reviewer iframe", () => {
-    expect(source).toContain("const structuredOutcome = readHeadlessOutcome(headless.outcome);");
-    expect(source).toContain('manualCheckRequired = headless.fallbackHint === "manual_check"\n            || structuredOutcome === "UNKNOWN";');
+describe("ContractsPage finalization", () => {
+  // Staff finalization always runs through the job queue; the browser iframe and the
+  // synchronous headless route it used to fall back to are retired 410 tombstones.
+  it("has no iframe or synchronous headless finalization path left", () => {
+    expect(source).not.toContain("StaffCompletionIframeModal");
+    expect(source).not.toContain("finalizeHeadless");
+    expect(source).not.toContain("generateStaffDocument");
+    expect(source).not.toContain("startFinalizeFlow");
+    expect(source).not.toContain('path: "direct"');
+    expect(source).toContain("enqueueFinalizationMutation.mutateAsync");
   });
 });
 
@@ -297,7 +293,7 @@ async function renderContractDetailAndOpenPreview() {
     '[data-component="desktop_contracts_detail_dialogs_document-preview_footer_file-actions_receipt-send"]',
   ) as HTMLButtonElement | null;
   expect(sendButton).not.toBeNull();
-  return { sendButton: sendButton as HTMLButtonElement };
+  return { sendButton: sendButton as HTMLButtonElement, queryClient };
 }
 
 describe("ContractDetail manual receipt-send interaction", () => {
@@ -463,6 +459,31 @@ describe("ContractDetail manual receipt-send interaction", () => {
     expect(sendReceiptLink).toHaveBeenCalledWith("doc-1");
     // Let the mutation's onSuccess (closes the confirm dialog, fires a toast) settle
     // inside act() before the test ends, or React logs an act() warning.
+    await waitFor(() =>
+      expect(screen.queryByText("서비스 종료 안내 문자를 보낼까요?")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("refreshes the upcoming and client-history message lists after the send succeeds", async () => {
+    jest.spyOn(eformsignApi, "sendReceiptLink").mockResolvedValue({
+      jobId: "job-1",
+      scheduledFor: "2026-09-03T00:00:00.000Z",
+      clientName: "김산모",
+    } as never);
+
+    const { sendButton, queryClient } = await renderContractDetailAndOpenPreview();
+    const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+    fireEvent.click(sendButton);
+    await screen.findByText("서비스 종료 안내 문자를 보낼까요?");
+
+    fireEvent.click(screen.getByRole("button", { name: "발송하기" }));
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...messageTriggerKeys.all, "client-history"],
+    });
     await waitFor(() =>
       expect(screen.queryByText("서비스 종료 안내 문자를 보낼까요?")).not.toBeInTheDocument(),
     );

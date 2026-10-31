@@ -45,6 +45,7 @@ import {
     type ServiceRecordEditTransactionContext,
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
@@ -629,6 +630,7 @@ function sameSortedNumbers(left: number[], right: number[]): boolean {
 
 type OptionalQueryTransaction = Prisma.TransactionClient & {
     $queryRaw?: <T = unknown>(query: Prisma.Sql) => Promise<T>;
+    $executeRaw?: (query: Prisma.Sql) => Promise<number>;
 };
 
 type RevisionDocumentStateRow = {
@@ -816,9 +818,13 @@ type RevisionSnapshotRetryJobRow = {
     progressStep: string | null;
 };
 
+// Terminal re-queue guard: `dispatch_authorized` is blocked too. It is not send
+// evidence, but a crash mid-click can leave it on a row that reached
+// requires_attention through stale recovery, so re-queueing stays conservative.
 const REVISION_SNAPSHOT_RETRY_BLOCKED_PROGRESS_STEPS = [
     "creating",
     "sent",
+    DISPATCH_AUTHORIZED_PROGRESS_STEP,
     "reconciling",
     "unknown",
 ] as const;
@@ -922,6 +928,25 @@ async function rawStateQuery<T>(
         throw new ServiceRecordEditConflictError("Revision document state storage is unavailable");
     }
     return queryClient.$queryRaw<T>(query);
+}
+
+/**
+ * Raw write whose rows nobody reads. It must go through `$executeRaw` rather than `$queryRaw`:
+ * the entity-change extension decides "did this write change anything" from the affected count,
+ * and a `$queryRaw` without `RETURNING` always yields `[]`, which it treats as a no-op and so
+ * never emits the realtime hint.
+ */
+async function rawStateExecute(
+    client: Prisma.TransactionClient | PrismaService,
+    query: Prisma.Sql,
+): Promise<number> {
+    const executeClient = client as unknown as {
+        $executeRaw?: (statement: Prisma.Sql) => Promise<number>;
+    };
+    if (typeof executeClient.$executeRaw !== "function") {
+        throw new ServiceRecordEditConflictError("Revision document state storage is unavailable");
+    }
+    return executeClient.$executeRaw(query);
 }
 
 const revisionDocumentStateColumns = Prisma.sql`
@@ -1280,7 +1305,7 @@ async function persistRevisionJobDocumentVersion(
         }
         const nextPayload = { ...payload, documentVersion };
         const nextFingerprint = jsonFingerprint(nextPayload);
-        await rawStateQuery(tx, Prisma.sql`
+        await rawStateExecute(tx, Prisma.sql`
             UPDATE "eformsign_document_job"
             SET payload = ${jsonSql(nextPayload as unknown as ServiceRecordEditJsonValue)},
                 payload_fingerprint = ${nextFingerprint},
@@ -2029,6 +2054,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 endDate: true,
                 serviceStatus: true,
                 eDocId: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
             },
         });
         if (!client) return null;
@@ -2152,6 +2180,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 startDate: dateOnly(client.startDate),
                 endDate: dateOnly(client.endDate),
                 serviceStatus: client.serviceStatus,
+                allowSaturdayService: client.allowSaturdayService ?? false,
+                allowSundayService: client.allowSundayService ?? false,
+                allowHolidayService: client.allowHolidayService ?? false,
             },
         };
     }
@@ -2312,6 +2343,29 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         } : null;
     }
 
+    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        // Same 404 contract as revisions: a malformed id never reaches the uuid cast.
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editId)) return null;
+        const edit = await this.prisma.service_record_day_edit_log.findFirst({
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId } },
+            select: {
+                id: true,
+                editedAt: true,
+                employeeNameSnapshot: true,
+                caseSessionIndex: true,
+                before: true,
+                after: true,
+            },
+        });
+        return edit ? {
+            ...edit,
+            before: toDomainJson(edit.before),
+            after: toDomainJson(edit.after),
+        } : null;
+    }
+
     async listRevisionHistory(
         branchId: string,
         clientId: number,
@@ -2362,6 +2416,24 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
               AND service_record_case_id = ${ownerCase.caseId}::uuid
             ORDER BY revision_number DESC, id DESC
         `);
+        // Caregiver edits of submitted days (not revisions). Identity only: the
+        // before/after payloads are fetched per edit through the changes route.
+        const caregiverEdits = await rawStateQuery<Array<{
+            id: string;
+            editedAt: Date | string;
+            sessionIndex: number;
+            employeeName: string;
+        }>>(tx, Prisma.sql`
+            SELECT
+                id,
+                edited_at AS "editedAt",
+                case_session_index AS "sessionIndex",
+                employee_name_snapshot AS "employeeName"
+            FROM "service_record_day_edit_log"
+            WHERE branch_id = ${branchId}::uuid
+              AND service_record_case_id = ${ownerCase.caseId}::uuid
+            ORDER BY edited_at DESC, id DESC
+        `);
         const states = await selectRevisionDocumentState(tx, {
             branchId,
             clientId,
@@ -2396,6 +2468,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         canRetry: canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
                     })),
+            })),
+            caregiverEdits: caregiverEdits.map((edit) => ({
+                id: edit.id,
+                editedAt: stateDate(edit.editedAt) ?? "",
+                sessionIndex: edit.sessionIndex,
+                employeeName: edit.employeeName,
             })),
         };
     }
@@ -2808,7 +2886,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                   AND request_key = ${snapshotRetryJob.scope.requestKey}
                   AND document_id IS NULL
                   AND status IN ('failed', 'requires_attention')
-                  AND COALESCE(progress_step, '') NOT IN ('creating', 'sent', 'reconciling', 'unknown')
+                  AND COALESCE(progress_step, '') NOT IN (
+                      'creating', 'sent', ${DISPATCH_AUTHORIZED_PROGRESS_STEP}, 'reconciling', 'unknown'
+                  )
                 RETURNING id
             `);
             if (requeued.length !== 1) {
@@ -3218,6 +3298,57 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         let revision: ServiceRecordRevision | null = null;
         let caseVersion = source.caseVersion;
         const documentStatus = plan.status === "no_changes" ? "not_required" : plan.documentStatus;
+        if (plan.clientServiceDays) {
+            // The toggles are a client setting, not part of the service record: a
+            // toggle-only save has no revision or document, so this write sits
+            // outside the confirmed branch (still inside this transaction).
+            await tx.client.updateMany({
+                where: { id: source.client.id, branchId: input.branchId },
+                data: {
+                    allowSaturdayService: plan.clientServiceDays.saturday,
+                    allowSundayService: plan.clientServiceDays.sunday,
+                    allowHolidayService: plan.clientServiceDays.holiday,
+                },
+            });
+            if (plan.materializedPlannedSessions && plan.status === "no_changes") {
+                // A legacy case derives its dates on read, so the new toggles would re-project
+                // the dates the admin kept. Store that vector, and move the stored end dates to
+                // its last date where they differ. No revision, document or start-date change.
+                const materialized = plan.materializedPlannedSessions;
+                const materializedEnd = dateValue(materialized.endDate);
+                const materializedCase = await tx.service_record_case.update({
+                    where: { id: source.caseId },
+                    data: {
+                        plannedSessions: toPrismaJson(materialized.plannedSessions),
+                        ...(materializedEnd && materialized.endDate !== source.endDate
+                            ? { endDate: materializedEnd }
+                            : {}),
+                        version: { increment: 1 },
+                    },
+                    select: { version: true },
+                });
+                caseVersion = materializedCase.version;
+                if (materializedEnd) {
+                    if (materialized.endDate !== source.client.endDate) {
+                        await tx.client.updateMany({
+                            where: { id: source.client.id, branchId: input.branchId },
+                            data: { endDate: materializedEnd },
+                        });
+                    }
+                    const expiresAt = getServiceRecordTokenExpiresAt(materializedEnd);
+                    await tx.service_record_token.updateMany({
+                        where: {
+                            branchId: input.branchId,
+                            serviceRecordCaseId: source.caseId,
+                            active: true,
+                            revokedAt: null,
+                            expiresAt: { not: expiresAt },
+                        },
+                        data: { expiresAt },
+                    });
+                }
+            }
+        }
         if (plan.status === "confirmed") {
             if (plan.revision) {
                 revision = await this.appendRevisionWithClient(tx, plan.revision);
@@ -3645,7 +3776,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, clientId)}
                   AND job.job_type IN ('create_document', 'finalize_document')
                   AND job.status IN ('processing', 'reconciling')
-                  AND job.progress_step IN ('creating', 'sent')
+                  AND job.progress_step IN ('creating', 'sent', ${DISPATCH_AUTHORIZED_PROGRESS_STEP})
                   AND ${documentJobSupersessionPredicate(scope)}
                 FOR UPDATE OF job
             `);
@@ -3667,7 +3798,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     "A service-record message dispatch is already irreversible",
                 );
             }
-            await transaction.$queryRaw(Prisma.sql`
+            await rawStateExecute(transaction, Prisma.sql`
                 UPDATE "eformsign_document_job" AS job
                 SET status = 'failed',
                     last_error_code = 'SERVICE_RECORD_REVISION_SUPERSEDED',
@@ -3689,7 +3820,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                   AND job.status IN ('queued', 'processing', 'reconciling')
                   AND ${documentJobSupersessionPredicate(scope)}
             `);
-            await transaction.$queryRaw(Prisma.sql`
+            await rawStateExecute(transaction, Prisma.sql`
                 UPDATE "message_trigger_job"
                 SET status = 'canceled',
                     canceled_at = now(),
@@ -3731,7 +3862,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 OR: ownedDocumentPredicate,
                 jobType: { in: ["create_document", "finalize_document"] },
                 status: { in: ["processing", "reconciling"] },
-                progressStep: { in: ["creating", "sent"] },
+                progressStep: { in: ["creating", "sent", DISPATCH_AUTHORIZED_PROGRESS_STEP] },
             },
             select: { id: true, status: true, progressStep: true, requestKey: true, payload: true },
         }) ?? [];
@@ -3983,7 +4114,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 );
             }
             if (existing[0].status === "failed" || existing[0].status === "requires_attention") {
-                await transaction.$queryRaw(Prisma.sql`
+                await rawStateExecute(transaction, Prisma.sql`
                     UPDATE "eformsign_document_job"
                     SET status = 'queued',
                         active_key = ${activeKey},

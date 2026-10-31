@@ -5,6 +5,10 @@ import { hasServiceRecordHeaderValues, isServiceRecordHeaderComplete } from "../
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
 import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
 
+// The first-visit 작성 가이드 opens over a record with no saved header and is
+// covered by its own tests; stub it so this file exercises the form beneath.
+jest.mock("@/components/app/service-record/guide", () => ({ ServiceRecordGuide: () => null }));
+
 type Tone = "error" | "hint" | undefined;
 /** The same behaviour test runs on both; they differ only in how a message slot exposes its tone (class vs `data-tone`). */
 interface WizardRow {
