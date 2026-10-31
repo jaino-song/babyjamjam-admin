@@ -409,6 +409,45 @@ describe("SystemAdminService", () => {
             isActive: true,
         };
 
+        describe.each(["createBranch", "updateBranch"] as const)("%s transaction retries", (method) => {
+            const conflicts = [
+                ["P2034", { code: "P2034" }],
+                ["raw deadlock message", new Error('Raw query failed. Code: `40P01`. Message: deadlock detected')],
+                ["raw serialization message", new Error('Raw query failed. Code: `40001`.')],
+                ["deadlock code", { code: "40P01" }],
+                ["serialization code", { code: "40001" }],
+                ["Prisma raw-query metadata", new Prisma.PrismaClientKnownRequestError("raw query failed", {
+                    code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+                })],
+            ] as const;
+
+            const mutate = () => method === "createBranch"
+                ? service.createBranch(branchInput)
+                : service.updateBranch("branch-1", { ownerId: "owner-1" });
+
+            it.each(conflicts)("restarts the whole transaction after %s on attempt one", async (_label, error) => {
+                // Fail after the first lock, not before the callback: a retry must
+                // repeat the reads and locks rather than just the failed query.
+                queryRaw.mockRejectedValueOnce(error);
+                await expect(mutate()).resolves.toMatchObject({ id: "branch-1" });
+                expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+                expect(queryRaw.mock.calls.filter(([query]) => query.values[0] === "owner-1")).toHaveLength(2);
+                expect(userModel.findFirst).toHaveBeenCalledTimes(method === "createBranch" ? 2 : 1);
+                if (method === "updateBranch") expect(branchModel.findUnique).toHaveBeenCalledTimes(4);
+            });
+
+            it.each(conflicts)("returns a clean 409 after three attempts of %s", async (_label, error) => {
+                queryRaw.mockRejectedValue(error);
+                await expect(mutate()).rejects.toMatchObject({
+                    status: 409,
+                    response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+                });
+                expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+                expect(branchModel.create).not.toHaveBeenCalled();
+                expect(branchModel.update).not.toHaveBeenCalled();
+            });
+        });
+
         it("creates a branch and promotes an approved existing account to branch manager", async () => {
             const result = await service.createBranch(branchInput);
 

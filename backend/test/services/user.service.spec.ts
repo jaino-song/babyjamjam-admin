@@ -479,8 +479,11 @@ describe("UserService", () => {
                 expect.any(Function),
                 { isolationLevel: "Serializable" },
             );
-            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
-            const [lockQuery] = prismaService.$queryRaw.mock.calls[0] ?? [];
+            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(2);
+            const [userLock] = prismaService.$queryRaw.mock.calls[0] ?? [];
+            expect(userLock.strings.join(" ")).toContain('SELECT "id" FROM "user"');
+            expect(userLock.values).toEqual(["u1"]);
+            const [lockQuery] = prismaService.$queryRaw.mock.calls[1] ?? [];
             expect(lockQuery.strings.join(" ")).toContain('SELECT "id" FROM "branch"');
             expect(lockQuery.strings.join(" ")).toMatch(/WHERE "id" =\s*::uuid FOR UPDATE/);
             expect(lockQuery.values).toEqual([branchIds[0]]);

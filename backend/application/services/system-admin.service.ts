@@ -13,6 +13,8 @@ import { AdminAuditActor, AdminAuditEventWriter } from "application/services/adm
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
+const MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS = 3;
+
 @Injectable()
 export class SystemAdminService {
     constructor(
@@ -116,7 +118,7 @@ export class SystemAdminService {
             await this.getEligibleBranchManager(this.prisma, dto.ownerId);
         }
         try {
-            const branch = await this.prisma.$transaction(async (tx) => {
+            const branch = await this.runBranchMutationTransaction(async (tx) => {
                 // Match approval/account mutations: user locks precede branch writes.
                 if (dto.ownerId) await this.lockRow(tx, "user", dto.ownerId);
                 const manager = dto.ownerId
@@ -169,7 +171,7 @@ export class SystemAdminService {
     ): Promise<SystemAdminBranchRequestDto> {
         actor = actor ?? currentAdminAuditActor();
         try {
-            await this.prisma.$transaction(async (tx) => {
+            await this.runBranchMutationTransaction(async (tx) => {
                 // Discover the lock set without holding a branch lock. All involved
                 // users are locked in one order before the branch, including the old
                 // owner whose final-branch read/demotion must serialize across branches.
@@ -293,6 +295,22 @@ export class SystemAdminService {
         } catch (error) {
             this.rethrowBranchMutationError(error);
         }
+    }
+
+    private async runBranchMutationTransaction<T>(
+        callback: (tx: Prisma.TransactionClient) => Promise<T>,
+    ): Promise<T> {
+        for (let attempt = 1; attempt <= MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS; attempt += 1) {
+            try {
+                return await this.prisma.$transaction(callback);
+            } catch (error) {
+                if (!isBranchTransactionConflict(error)) throw error;
+                if (attempt === MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+            }
+        }
+        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
     }
 
     private async getEligibleBranchManager(
@@ -485,6 +503,17 @@ export class SystemAdminService {
 
         throw error;
     }
+}
+
+function isBranchTransactionConflict(error: unknown): boolean {
+    if (typeof error !== "object" || error === null) return false;
+    const code = "code" in error ? error.code : undefined;
+    if (code === "P2034" || code === "40P01" || code === "40001") return true;
+    if ("message" in error && typeof error.message === "string" && /\b(?:40P01|40001)\b/.test(error.message)) {
+        return true;
+    }
+    // Prisma P2010 raw-query failures also carry the PostgreSQL SQLSTATE in meta.
+    return "meta" in error && isBranchTransactionConflict(error.meta);
 }
 
 function normalizeOptionalText(value: string | undefined): string | null {

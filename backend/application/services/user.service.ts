@@ -226,6 +226,7 @@ export class UserService {
         const callerId = (params.actor ?? currentAdminAuditActor())?.userId;
         const runTransaction = () => this.prismaService.$transaction(async (tx) => {
             await this.assertCallerStillOwner(tx, callerId);
+            await this.lockRow(tx, "user", id);
             const target = await tx.user.findUnique({
                 where: { id },
                 select: {
