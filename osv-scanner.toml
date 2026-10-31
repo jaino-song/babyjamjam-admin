@@ -38,3 +38,60 @@ ignoreUntil = 2027-01-31T00:00:00Z
 # deepmerge ships a fix (then bump and drop this entry), or when the expiry above
 # lapses.
 reason = "No patched deepmerge release exists; only reachable via Nest CLI build tooling and jest config, which merge developer-authored config, not production runtime or untrusted input."
+
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2027-01-31T00:00:00Z
+# glob 9.0.0-14.0.1 AbortSignal cancellation bypass: an aborted async walk keeps
+# reading directories in the background (published 2026-10-30, CVE-2026-118773). No in-major fix
+# exists: glob 10.5.0 and 13.0.6 are the newest 10.x and 13.x releases, and the
+# first fixed release is 14.0.2. A cross-major override is not safe for callers.
+# Exposure review (2026-10-31): no application code imports glob. Versions in the
+# lockfile and how they arrive (`pnpm why glob -r`, `--prod`):
+#   - glob 10.5.0: jest 30 (@jest/reporters, jest-config, jest-runtime) and
+#     ts-jest, backend and @babyjamjam/shared devDependencies only (test runner).
+#   - glob 13.0.6 via @nestjs/cli: backend devDependency (nest build tooling).
+#   - glob 13.0.6 via @sentry/nextjs -> @sentry/bundler-plugins (frontend and
+#     mobile dependencies). This is the only chain that shows under --prod. The
+#     plugin is loaded only by @sentry/nextjs's withSentryConfig/next.config build
+#     hooks (runAfterProductionCompile, webpack plugin, component annotation
+#     loader), and its glob patterns come from developer-authored sourcemap
+#     config. After `next build` of the frontend, no `.next/**/*.nft.json` runtime
+#     trace contains bundler-plugins, glob or minimatch, so the deployed
+#     artefact does not load them. The latest @sentry/bundler-plugins (11.10.0)
+#     still pins glob ^13.0.6, so there is no upstream fix to adopt yet.
+#   - glob 7.2.3 (jest 29) is outside the affected range (introduced 9.0.0).
+# No untrusted input reaches a glob walk or an AbortSignal timeout. OSV ignores
+# by id, so this one entry covers every glob version above; each passed the review.
+# Revisit when glob >=14.0.2 is reachable through jest/nest/sentry (then bump and
+# drop this entry), or when the expiry above lapses.
+reason = "No in-major glob fix exists; only reachable via jest/nest build tooling and @sentry/nextjs build hooks with developer-authored patterns, not production runtime or untrusted input."
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-01-31T00:00:00Z
+# minimatch <11.0.1 globparts amplification DoS via attacker-controlled patterns
+# at optimizationLevel >= 2 (published 2026-10-30, CVE-2026-118764). No in-major fix exists: the
+# newest 3.x, 9.x and 10.x releases (3.1.5, 9.0.9, 10.2.6) are all affected, and
+# the first fixed release is 11.0.1. A cross-major override breaks the API for
+# callers (for example 3 -> 11).
+# Exposure review (2026-10-31): no application code imports minimatch. Versions in
+# the lockfile and how they arrive (`pnpm why minimatch -r`, `--prod`):
+#   - minimatch 3.1.5: eslint 9 (@eslint/config-array, @eslint/eslintrc),
+#     eslint-plugin-import/react/jsx-a11y, fork-ts-checker-webpack-plugin
+#     (@nestjs/cli) and glob 7 (jest 29 test-exclude); all lint, build and test
+#     tooling, with patterns from eslint config and jest config.
+#   - minimatch 9.0.9: glob 10.5.0 <- jest 30 (backend and @babyjamjam/shared
+#     test tooling).
+#   - minimatch 10.2.4: @typescript-eslint/typescript-estree (lint tooling),
+#     glob 13.0.6 <- @nestjs/cli (backend devDependency) and
+#     @sentry/nextjs -> @sentry/bundler-plugins (frontend and mobile
+#     dependencies, the only chain under --prod). That plugin is loaded only by
+#     the withSentryConfig/next.config build hooks with developer-authored
+#     sourcemap patterns, and no `.next/**/*.nft.json` runtime trace of the
+#     frontend build contains bundler-plugins, glob or minimatch.
+# No untrusted input reaches minimatch pattern compilation. OSV ignores by id, so
+# this one entry covers every minimatch version above; each passed the review.
+# Revisit when minimatch >=11.0.1 is reachable through eslint/jest/nest/sentry
+# (then bump and drop this entry), or when the expiry above lapses.
+reason = "No in-major minimatch fix exists; only reachable via eslint/jest/nest build tooling and @sentry/nextjs build hooks with developer-authored patterns, not production runtime or untrusted input."
