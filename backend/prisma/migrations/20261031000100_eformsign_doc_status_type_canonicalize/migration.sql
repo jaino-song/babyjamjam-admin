@@ -2,14 +2,13 @@
 -- Run this read-only preflight SELECT before merging to preview/main
 -- (operator only; do not execute as part of this patch):
 -- SELECT status_type, count(*) FROM eformsign_doc WHERE status_type !~ '^[0-9]{3}$' GROUP BY 1;
+-- Save the preflight query output before running: this backfill is irreversible.
 -- Operator decision 2026-10-31: unknown provider status names must remain writable.
 -- Rollback: retain canonicalized data and the application normalization/fence fixes;
 -- do not restore the CHECK, which would block new provider statuses.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-
-ALTER TABLE eformsign_doc DROP CONSTRAINT IF EXISTS eformsign_doc_status_type_check;
 
 -- Keep this name mapping in sync with domain/utils/eformsign-status-code.ts.
 WITH aliases(name, code) AS (

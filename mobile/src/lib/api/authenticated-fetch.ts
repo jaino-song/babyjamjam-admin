@@ -8,6 +8,15 @@ function requiresApplicationSessionRefresh(response: Response): boolean {
     return response.status === 401;
 }
 
+function isAuthorityRequest(input: FetchInput): boolean {
+    const url = typeof Request !== "undefined" && input instanceof Request
+        ? input.url
+        : String(input);
+    // Match client.ts: authority refetches must not invalidate themselves on refusal.
+    const path = url.split(/[?#]/)[0].replace(/\/$/, "");
+    return path.endsWith("/auth/me");
+}
+
 function requestSignal(input: FetchInput, init?: FetchInit): AbortSignal | undefined {
     if (init?.signal) return init.signal;
     if (typeof Request !== "undefined" && input instanceof Request) return input.signal;
@@ -30,7 +39,7 @@ export async function authenticatedFetch(
     const response = await fetch(input, init);
 
     if (response.status === 403) {
-        await invalidateAuthUser();
+        if (!isAuthorityRequest(input)) await invalidateAuthUser();
         return response;
     }
 
@@ -40,7 +49,7 @@ export async function authenticatedFetch(
     await refreshApplicationSession();
     throwIfAborted(signal);
     const retriedResponse = await fetch(retryInput, init);
-    if (retriedResponse.status === 403) await invalidateAuthUser();
+    if (retriedResponse.status === 403 && !isAuthorityRequest(input)) await invalidateAuthUser();
     return retriedResponse;
 }
 
