@@ -110,6 +110,10 @@ describe("EmployeeService", () => {
     // checkPhoneExists
     // ============================================
     describe("checkPhoneExists", () => {
+        it("treats a deleted phone as available for restoration", async () => {
+            employeeRepository.findByPhone.mockResolvedValue(EmployeeFactory.create({ deletedAt: new Date() }));
+            await expect(service.checkPhoneExists(branchId, "010-9876-5432")).resolves.toBe(false);
+        });
         it("should check duplicate phones through the employee repository only", async () => {
             const employee = EmployeeFactory.create({ id: 1, phone: "010-1234-5678" });
             employeeRepository.findByPhone.mockResolvedValue(employee);
@@ -159,7 +163,7 @@ describe("EmployeeService", () => {
         });
 
         it.each([undefined, false, true])("forwards smsAutomationEnabled=%s to the create usecase", async (flag) => {
-            createUsecase.execute.mockResolvedValue(EmployeeFactory.create());
+            createUsecase.execute.mockResolvedValue(Object.assign(EmployeeFactory.create(), { restored: false }));
 
             await service.create(branchId, {
                 name: "직원",
@@ -234,7 +238,7 @@ describe("EmployeeService", () => {
                 openToNextWork: true,
             };
             const mockEmployee = EmployeeFactory.create({ id: 1, ...params });
-            createUsecase.execute.mockResolvedValue(mockEmployee);
+            createUsecase.execute.mockResolvedValue(Object.assign(mockEmployee, { restored: false }));
 
             // Act
             const result = await service.create(branchId, params);
@@ -266,7 +270,7 @@ describe("EmployeeService", () => {
                 registeredDate: "2024-06-15",
             };
             const mockEmployee = EmployeeFactory.create({ id: 1 });
-            createUsecase.execute.mockResolvedValue(mockEmployee);
+            createUsecase.execute.mockResolvedValue(Object.assign(mockEmployee, { restored: false }));
 
             // Act
             await service.create(branchId, params);
@@ -296,7 +300,7 @@ describe("EmployeeService", () => {
                 openToNextWork: false,
             };
             const mockEmployee = EmployeeFactory.create({ id: 1 });
-            createUsecase.execute.mockResolvedValue(mockEmployee);
+            createUsecase.execute.mockResolvedValue(Object.assign(mockEmployee, { restored: false }));
 
             // Act
             await service.create(branchId, params);
@@ -571,6 +575,23 @@ describe("EmployeeService", () => {
 
             // Assert
             expect(deleteUsecase.execute).toHaveBeenCalledWith(branchId, 10);
+            expect(triggerService.syncEmployeeAssignmentRulesForEmployee).toHaveBeenCalledWith(branchId, 10);
+            expect(triggerService.syncEmployeeAssignmentRulesForEmployee.mock.invocationCallOrder[0]).toBeGreaterThan(
+                deleteUsecase.execute.mock.invocationCallOrder[0]!,
+            );
+        });
+
+        it("queues a refresh retry when delete-time assignment resync is unavailable", async () => {
+            deleteUsecase.execute.mockResolvedValue(undefined);
+            triggerService.syncEmployeeAssignmentRulesForEmployee.mockResolvedValue(false);
+            await service.delete(branchId, 10);
+            expect(messageAutomationIntentService.enqueueEmployeeProfileRefreshIntent).toHaveBeenCalledWith({ branchId, employeeId: 10 });
+        });
+
+        it("does not resync jobs when deletion is rejected", async () => {
+            deleteUsecase.execute.mockRejectedValue(new Error("active assignment"));
+            await expect(service.delete(branchId, 10)).rejects.toThrow("active assignment");
+            expect(triggerService.syncEmployeeAssignmentRulesForEmployee).not.toHaveBeenCalled();
         });
     });
 

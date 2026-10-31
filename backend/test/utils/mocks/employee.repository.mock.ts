@@ -1,7 +1,8 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
-import { IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { EmployeeRestoreProfile, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import type { Prisma } from "@prisma/client";
 import { employeeAgentTargetVersion } from "domain/entities/employee-agent-target";
+import { ConflictException } from "@nestjs/common";
 
 /**
  * 테스트용 Mock Employee Repository
@@ -40,7 +41,8 @@ export class MockEmployeeRepository implements IEmployeeRepository {
     }
 
     async findById(_branchid: string, id: number): Promise<EmployeeEntity | null> {
-        return this.employees.get(id) ?? null;
+        const employee = this.employees.get(id);
+        return employee && !employee.deletedAt ? employee : null;
     }
 
     async findByIdForUpdate(_branchid: string, id: number, _transaction: Prisma.TransactionClient): Promise<EmployeeEntity | null> {
@@ -85,17 +87,33 @@ export class MockEmployeeRepository implements IEmployeeRepository {
         return employee;
     }
 
+    async createOrRestore(branchid: string, employee: EmployeeEntity, suppliedProfile: EmployeeRestoreProfile, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> {
+        void transaction;
+        const existing = await this.findByPhone(branchid, employee.phoneNormalized ?? "");
+        if (existing && !existing.deletedAt) throw new ConflictException("EMPLOYEE_PHONE_ALREADY_REGISTERED");
+        if (!existing) return Object.assign(await this.create(branchid, employee), { restored: false });
+        const profile = suppliedProfile;
+        const saved = await this.create(branchid, EmployeeEntity.reconstitute(
+            existing.id, profile.name, profile.workArea ?? existing.workArea, profile.phone,
+            profile.grade ?? existing.grade, profile.openToNextWork ?? existing.openToNextWork,
+            profile.registeredDate === undefined ? existing.registeredDate : profile.registeredDate,
+            profile.birthday ?? existing.birthday, undefined, employee.phoneNormalized,
+            profile.smsAutomationEnabled ?? existing.smsAutomationEnabled,
+        ));
+        return Object.assign(saved, { restored: true });
+    }
+
     async updateIfTargetVersion(
         _branchid: string,
         id: number,
         expectedTargetVersion: string,
-        updates: Partial<Pick<EmployeeEntity, "name" | "workArea" | "phone" | "grade" | "openToNextWork" | "birthday">>,
+        updates: Partial<Pick<EmployeeEntity, "name" | "workArea" | "phone" | "grade" | "openToNextWork" | "birthday" | "smsAutomationEnabled">>,
         _transaction?: Prisma.TransactionClient,
     ): Promise<EmployeeEntity | null> {
         void _transaction;
         const employee = this.employees.get(id);
         if (!employee || employee.deletedAt || employeeAgentTargetVersion(employee) !== expectedTargetVersion) return null;
-        employee.updateProfile(updates.name, updates.workArea, updates.phone, updates.grade, updates.openToNextWork, updates.birthday);
+        employee.updateProfile(updates.name, updates.workArea, updates.phone, updates.grade, updates.openToNextWork, updates.birthday, updates.smsAutomationEnabled);
         this.employees.set(id, employee);
         return employee;
     }
@@ -177,6 +195,7 @@ export class MockEmployeeRepository implements IEmployeeRepository {
     }
 
     async findByIdForDate(_branchid: string, id: number, _date: Date): Promise<EmployeeEntity | null> {
+        void _date;
         // The mock does not compute a date-scoped working/available status; callers
         // that need that assign `.status` on the entity themselves, as the real
         // repository's row does after computing it for the given date.

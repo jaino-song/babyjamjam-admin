@@ -1,5 +1,5 @@
 import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
-import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
@@ -33,6 +33,11 @@ const EmployeeBirthdaySchema = z.string()
 const EMPLOYEE_BRANCH_PHONE_UNIQUE_CONSTRAINT = "employee_branch_id_phone_normalized_key";
 
 function isEmployeeBranchPhoneUniqueViolation(error: unknown): boolean {
+    if (error instanceof ConflictException) {
+        const response = error.getResponse();
+        return typeof response === "object" && "code" in response
+            && response.code === "EMPLOYEE_PHONE_ALREADY_REGISTERED";
+    }
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
 
     const target = error.meta?.["target"];
@@ -59,11 +64,12 @@ async function ensureEmployeePhoneAvailable(
     branchId: string,
     normalizedPhone: string | undefined,
     currentEmployeeId?: number,
+    allowRestore = false,
 ): Promise<void> {
     if (normalizedPhone === undefined) return;
 
     const existing = await employeeRepository.findByPhone(branchId, normalizedPhone);
-    if (existing && existing.id !== currentEmployeeId) {
+    if (existing && existing.id !== currentEmployeeId && !(allowRestore && existing.deletedAt)) {
         throw new AgentActionCertainFailureError("An employee with this phone already exists in this branch");
     }
 }
@@ -76,7 +82,7 @@ const CreateEmployeeSchema = z.object({
     ),
     phone: z.string().trim().min(1).max(40),
     grade: EmployeeGradeSchema,
-    openToNextWork: z.boolean().default(false),
+    openToNextWork: z.boolean().optional(),
     birthday: EmployeeBirthdaySchema,
 });
 const EMPLOYEE_MUTABLE_FIELD_KEYS = Object.keys(CreateEmployeeSchema.shape);
@@ -86,8 +92,7 @@ const UpdateEmployeeSchema = z.object({
     workArea: CreateEmployeeSchema.shape.workArea.optional(),
     phone: CreateEmployeeSchema.shape.phone.optional(),
     grade: CreateEmployeeSchema.shape.grade.optional(),
-    // CreateEmployeeSchema defaults this field for new employees. An update
-    // must retain the distinction between an omitted field and false.
+    // Both create/restore and update must distinguish omission from false.
     openToNextWork: z.boolean().optional(),
     birthday: CreateEmployeeSchema.shape.birthday.optional(),
 }).superRefine((value, context) => {
@@ -150,10 +155,10 @@ export class EmployeeWriteAgentCapabilitiesProvider implements AgentCapabilityPr
                     const input = CreateEmployeeSchema.parse(rawInput);
                     const normalizedPhone = normalizeEmployeePhone(input.phone);
                     try {
-                        await ensureEmployeePhoneAvailable(this.employeeRepository, context.principal.branchId, normalizedPhone);
+                        await ensureEmployeePhoneAvailable(this.employeeRepository, context.principal.branchId, normalizedPhone, undefined, true);
                         return await this.prisma.$transaction(async (transaction) => {
                             const employee = await this.createEmployee.execute(context.principal.branchId, input.name, input.workArea, normalizedPhone, input.grade, input.openToNextWork, undefined, input.birthday, transaction);
-                            const result = { id: employee.id, name: employee.name, status: "created" };
+                            const result = { id: employee.id, name: employee.name, status: employee.restored ? "restored" : "created" };
                             await recordAgentActionEffect(transaction, context, "employees.create", "employee", employee.id, result);
                             return result;
                         });

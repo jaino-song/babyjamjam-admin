@@ -1,9 +1,11 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { deriveEmployeeStatus, EmployeeEntity } from "domain/entities/employee.entity";
 import { isoDateInKorea } from "domain/utils/business-days";
 import {
     ActiveClientByEmployee,
     EmployeeWorkHistoryByEmployee,
+    EmployeeRestoreProfile,
     IEmployeeRepository,
     PaginatedEmployeeWorkHistory,
 } from "domain/repositories/employee.repository.interface";
@@ -18,7 +20,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findById(branchid: string, id: number): Promise<EmployeeEntity | null> {
         const employee = await this.prismaService.employee.findFirst({
-            where: { id, branchId: branchid },
+            where: { id, branchId: branchid, deletedAt: null },
         });
         return employee ? EmployeeMapper.toDomain(employee) : null;
     }
@@ -55,19 +57,66 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         return EmployeeMapper.toDomain(created);
     }
 
+    async createOrRestore(
+        branchid: string,
+        employee: EmployeeEntity,
+        suppliedProfile: EmployeeRestoreProfile,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<EmployeeEntity & { restored: boolean }> {
+        const apply = async (tx: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> => {
+            // Lock by identity, not deletedAt: a waiter must re-read the winner's live row.
+            await tx.$queryRaw`
+                SELECT "id" FROM "employee"
+                WHERE "branch_id" = ${branchid}::uuid AND "phone_normalized" = ${employee.phoneNormalized}
+                FOR UPDATE
+            `;
+            const existing = await tx.employee.findFirst({
+                where: { branchId: branchid, phoneNormalized: employee.phoneNormalized },
+            });
+            if (existing && !existing.deletedAt) {
+                throw new ConflictException(problemBody("EMPLOYEE_PHONE_ALREADY_REGISTERED", {
+                    pointer: "/phone",
+                    code: "INVALID_VALUE",
+                    detail: "같은 전화번호의 관리사가 이미 등록되어 있습니다.",
+                    location: "body",
+                }));
+            }
+            if (!existing) return Object.assign(await this.create(branchid, employee, tx), { restored: false });
+
+            const restored = await tx.employee.update({
+                where: { id: existing.id, branchId: branchid, deletedAt: { not: null } },
+                // 복원에는 생성 기본값이 아닌 요청에서 제출한 필드만 적용한다.
+                data: {
+                    name: suppliedProfile.name,
+                    phone: suppliedProfile.phone,
+                    phoneNormalized: employee.phoneNormalized,
+                    workArea: suppliedProfile.workArea,
+                    grade: suppliedProfile.grade === undefined ? undefined : employee.grade,
+                    openToNextWork: suppliedProfile.openToNextWork,
+                    companyRegisteredDate: suppliedProfile.registeredDate,
+                    birthday: suppliedProfile.birthday,
+                    smsAutomationEnabled: suppliedProfile.smsAutomationEnabled,
+                    deletedAt: null,
+                },
+            });
+            return Object.assign(EmployeeMapper.toDomain(restored), { restored: true });
+        };
+        return transaction ? apply(transaction) : this.prismaService.$transaction(apply);
+    }
+
     async update(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity> {
         const result = await this.prismaService.employee.updateMany({
             where: { id: employee.id, branchId: branchid, deletedAt: null },
             data: EmployeeMapper.toPrismaUpdate(employee),
         });
         if (result.count === 0) {
-            throw new Error("Employee not found for branch");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         const updated = await this.prismaService.employee.findFirst({
             where: { id: employee.id, branchId: branchid, deletedAt: null },
         });
         if (!updated) {
-            throw new Error("Employee not found after update");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return EmployeeMapper.toDomain(updated);
     }
@@ -92,6 +141,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                 updates.grade,
                 updates.openToNextWork,
                 updates.birthday,
+                updates.smsAutomationEnabled,
             );
             const updated = await tx.employee.updateMany({
                 where: { id, branchId: branchid, deletedAt: null },
@@ -114,13 +164,12 @@ export class SbEmployeeRepository implements IEmployeeRepository {
             data: { deletedAt: new Date() },
         });
         if (result.count === 0) {
-            throw new Error("Employee not found for branch");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
     async hasActiveAssignments(branchid: string, id: number): Promise<boolean> {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = new Date(`${isoDateInKorea()}T00:00:00.000Z`);
         const count = await this.prismaService.employee_schedule.count({
             where: {
                 branchId: branchid,
@@ -321,7 +370,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
     async findByIdForDate(branchid: string, id: number, date: Date): Promise<EmployeeEntity | null> {
         const employee = await this.prismaService.employee.findFirst({
-            where: { id, branchId: branchid },
+            where: { id, branchId: branchid, deletedAt: null },
             include: {
                 primaryEmployeeSchedules: {
                     where: {
@@ -433,7 +482,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
             data: { openToNextWork: openToNextWork },
         });
         if (result.count === 0) {
-            throw new Error("Employee not found for branch");
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
     }
 
