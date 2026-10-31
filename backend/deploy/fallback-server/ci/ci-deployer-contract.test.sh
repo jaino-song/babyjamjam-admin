@@ -76,6 +76,40 @@ assert_contains "$DISPATCHER" 'sha256:\[0-9a-f\]\{64\}' \
 assert_not_contains "$DISPATCHER" '(eval|bash -c|sh -c)' \
     "dispatcher must not evaluate the original SSH command"
 
+assert_contains "$DEPLOYER" '^require_aws_route\(\)' \
+    "deployer must guard the passive standby path with an AWS-route check"
+assert_contains "$DEPLOYER" '^    current_hash="\$\(canonical_public_route_hash\)"$' \
+    "the AWS-route guard must assign the resolved route on its own line so an unresolvable route aborts"
+assert_not_contains "$DEPLOYER" '\[\[ *"\$\(canonical_public_route_hash\)"' \
+    "the route resolver must never be inlined into a comparison"
+assert_contains "$DEPLOYER" '"\$OPERATOR" deploy "\$commit_sha" "\$image_digest" >&2' \
+    "standby deployment must reuse the operator passive deploy and keep its summary on stderr"
+assert_contains "$DEPLOYER" '^        standby-status\)' "deployer must route standby-status"
+assert_contains "$DEPLOYER" '^        deploy-standby\)' "deployer must route deploy-standby"
+assert_contains "$DEPLOYER" 'status_value runtime_mode "\$output"\)" == "passive"' \
+    "standby paths must require the passive runtime"
+assert_contains "$DEPLOYER" 'status_value schedulers_enabled "\$output"\)" == "false"' \
+    "standby paths must require schedulers off"
+[[ "$(tail -n 1 "$DEPLOYER")" == 'main "$@"' ]] || fail "main must remain the last line of the deployer"
+assert_contains "$DEPLOYER" '^readonly VALKEY_RESTORE_MARKER=' \
+    "the restore-fence marker line form must stay stable for the fence test"
+
+assert_contains "$DISPATCHER" '^    standby-status\)' \
+    "dispatcher must allow the bare standby-status command"
+assert_contains "$DISPATCHER" '\^deploy-standby' \
+    "dispatcher must strictly parse deploy-standby"
+
+# The sudoers rule lists exactly four commands, no more.
+sudoers_entries="$(grep -c 'NOPASSWD: \$DESTINATION' "$INSTALLER" || true)"
+[[ "$sudoers_entries" -eq 4 ]] || fail "the sudoers rule must list exactly four commands (found $sudoers_entries)"
+assert_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION status"' "sudoers must allow status"
+assert_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION replace \*"' "sudoers must allow replace"
+assert_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION standby-status"' "sudoers must allow standby-status"
+assert_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION deploy-standby \*"' "sudoers must allow deploy-standby"
+assert_not_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION (replace-temporary-active|temporary-active|stop|rollback|deploy )' \
+    "sudoers must not expose destructive or non-CI operator commands"
+assert_not_contains "$INSTALLER" 'NOPASSWD: ALL' "sudoers must not grant unrestricted commands"
+
 bash -n "$DEPLOYER" "$INSTALLER" "$DISPATCHER"
 if [[ "$EUID" -ne 0 ]]; then
     if "$DEPLOYER" status >/dev/null 2>&1; then

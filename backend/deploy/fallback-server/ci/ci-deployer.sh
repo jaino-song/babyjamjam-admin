@@ -84,6 +84,19 @@ require_fallback_route() {
         || die "The public API route is not the approved Fallback target."
 }
 
+# Passive standby paths run only while the public API route is NOT LightNode
+# (Lightsail is primary). The route must resolve; an unresolvable route is a
+# failure, never "not LightNode". The resolver result is assigned on its own line
+# so `set -e` aborts when it dies inside the command substitution.
+require_aws_route() {
+    local approved_hash current_hash
+    validate_protected_file "$APPROVED_PUBLIC_ROUTING_FILE" 400
+    approved_hash="$(read_single_line "$APPROVED_PUBLIC_ROUTING_FILE" "$HASH_PATTERN")"
+    current_hash="$(canonical_public_route_hash)"
+    [[ "$current_hash" != "$approved_hash" ]] \
+        || die "LightNode is the public route; use replace, not the standby path."
+}
+
 require_automation_authority() {
     local authority
     validate_protected_file "$AUTOMATION_AUTHORITY_FILE" 400
@@ -128,6 +141,32 @@ emit_status() {
     output="$(validated_status)"
     printf '%s\n' "$output" | awk -F= '$1 != "public_routing" { print }'
     printf '%s\n' "public_routing=fallback"
+}
+
+# A standby host is a passive Fallback Server: environment/identity verified,
+# schedulers off. Anything else (including temporary-active) is refused.
+require_passive_status() {
+    local output="$1"
+    [[ "$(status_value environment "$output")" == "fallback-server" \
+        && "$(status_value production_db_identity "$output")" == "ok" \
+        && "$(status_value runtime_mode "$output")" == "passive" \
+        && "$(status_value schedulers_enabled "$output")" == "false" ]] \
+        || die "The LightNode standby runtime is not a passive Fallback release."
+}
+
+emit_standby_status() {
+    local output
+    require_aws_route
+    validate_protected_file "$OPERATOR" 750
+    # On a never-deployed or stopped host the operator status exits non-zero;
+    # that is "no standby release", not an error.
+    if ! output="$("$OPERATOR" status)"; then
+        printf '%s\n' "environment=fallback-server" "standby_release=none" "public_routing=aws"
+        return 0
+    fi
+    require_passive_status "$output"
+    printf '%s\n' "$output" | awk -F= '$1 != "public_routing" { print }'
+    printf '%s\n' "standby_release=present" "public_routing=aws"
 }
 
 write_automatic_approval() {
@@ -205,6 +244,46 @@ replace_release() {
     printf '%s\n' "public_routing=fallback" "deployment_changed=true"
 }
 
+deploy_standby_release() {
+    local commit_sha="$1"
+    local image_digest="$2"
+    local before_status after_status
+    [[ "$commit_sha" =~ $SHA_PATTERN && "$image_digest" =~ $DIGEST_PATTERN ]] \
+        || die "The requested Fallback release identity is invalid."
+    require_no_valkey_restore_fence
+    require_automation_authority
+    require_aws_route
+    validate_protected_file "$OPERATOR" 750
+    # A readable status must be a passive one. An unreadable status (never
+    # deployed, stopped) goes straight to the operator, whose own guards protect
+    # a host whose state cannot be read.
+    if before_status="$("$OPERATOR" status)"; then
+        require_passive_status "$before_status"
+        if [[ "$(status_value current_tag "$before_status")" == "$commit_sha" \
+            && "$(status_value current_digest "$before_status")" == "$image_digest" ]]; then
+            printf '%s\n' "$before_status" | awk -F= '$1 != "public_routing" { print }'
+            printf '%s\n' "public_routing=aws" "deployment_changed=false"
+            return 0
+        fi
+    fi
+
+    # The operator prints its own status summary; keep it on stderr so stdout
+    # carries exactly one status block with unique keys. It rolls back to the
+    # previous image itself when activation fails.
+    "$OPERATOR" deploy "$commit_sha" "$image_digest" >&2 \
+        || die "The LightNode standby deployment failed; the operator restored the previous release where one existed."
+    after_status="$("$OPERATOR" status)" \
+        || die "The LightNode standby status could not be read after deployment."
+    require_passive_status "$after_status"
+    [[ "$(status_value current_tag "$after_status")" == "$commit_sha" \
+        && "$(status_value current_digest "$after_status")" == "$image_digest" \
+        && "$(status_value container_health "$after_status")" == "healthy" \
+        && "$(status_value restart_count "$after_status")" == "0" ]] \
+        || die "The LightNode standby deployment did not publish the requested healthy immutable release."
+    printf '%s\n' "$after_status" | awk -F= '$1 != "public_routing" { print }'
+    printf '%s\n' "public_routing=aws" "deployment_changed=true"
+}
+
 main() {
     require_root_and_caller
     case "${1:-}" in
@@ -216,8 +295,16 @@ main() {
             [[ "$#" -eq 3 ]] || die "Usage: babyjamjam-fallback-ci-deployer replace <commit-sha> <image-digest>"
             replace_release "$2" "$3"
             ;;
+        standby-status)
+            [[ "$#" -eq 1 ]] || die "Usage: babyjamjam-fallback-ci-deployer standby-status"
+            emit_standby_status
+            ;;
+        deploy-standby)
+            [[ "$#" -eq 3 ]] || die "Usage: babyjamjam-fallback-ci-deployer deploy-standby <commit-sha> <image-digest>"
+            deploy_standby_release "$2" "$3"
+            ;;
         *)
-            die "Usage: babyjamjam-fallback-ci-deployer status|replace"
+            die "Usage: babyjamjam-fallback-ci-deployer status|replace|standby-status|deploy-standby"
             ;;
     esac
 }

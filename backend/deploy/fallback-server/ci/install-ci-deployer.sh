@@ -43,6 +43,8 @@ trap cleanup EXIT
 printf '%s\n' \
     "$DEPLOY_USER ALL=(root) NOPASSWD: $DESTINATION status" \
     "$DEPLOY_USER ALL=(root) NOPASSWD: $DESTINATION replace *" \
+    "$DEPLOY_USER ALL=(root) NOPASSWD: $DESTINATION standby-status" \
+    "$DEPLOY_USER ALL=(root) NOPASSWD: $DESTINATION deploy-standby *" \
     >"$temporary_sudoers"
 chmod 440 "$temporary_sudoers"
 visudo -cf "$temporary_sudoers" >/dev/null
