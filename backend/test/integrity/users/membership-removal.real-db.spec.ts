@@ -1,4 +1,4 @@
-import { UnauthorizedException } from "@nestjs/common";
+import { ConflictException, UnauthorizedException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import { closeIntegrityPrisma, createIntegrityPrisma, describeReal } from "../helpers/real-db";
@@ -227,25 +227,13 @@ describeReal("membership removal and the concurrent last-owner guard (real Postg
                 "SECOND_DELETE_BLOCKED_ON_OWNER_LOCK",
             ]);
 
-            // After the winner commits (its target row ownerA is gone), the loser
-            // resumes: it is blocked on its FOR UPDATE of that same (sorted-first)
-            // owner row, which the winner just deleted. The loser's rejection is
-            // therefore the documented serialization abort (SQLSTATE 40001 "could
-            // not serialize access"), NOT a silent second owner deletion. The
-            // explicit last-owner 409 (REQUEST_CONFLICT) guard itself is proven by
-            // the serial-pair test below.
-            const loserMessage = secondOutcome.error instanceof Error
-                ? secondOutcome.error.message
-                : String(secondOutcome.error);
-            const loserReason = /could not serialize access|40001/.test(loserMessage)
-                ? "serialization-abort"
-                : (/REQUEST_CONFLICT/.test(loserMessage) ? "last-owner-guard" : "unexpected");
-            if (loserReason === "unexpected") {
-                throw new Error(
-                    `SI-USER-06 wrong-reason failure: the losing owner delete failed as neither the documented ` +
-                        `serialization abort nor the last-owner guard: ${loserMessage}`,
-                );
+            // The loser retries its serialization abort, then the real last-owner
+            // guard refuses the deletion. A raw SQLSTATE must never escape retries.
+            expect(secondOutcome.error).toBeInstanceOf(ConflictException);
+            if (!(secondOutcome.error instanceof ConflictException)) {
+                throw new Error("SI-USER-06 wrong-reason failure: the losing owner delete did not return a conflict");
             }
+            expect(secondOutcome.error.getResponse()).toMatchObject({ code: "REQUEST_CONFLICT" });
 
             // The core invariant holds for the WHOLE world, not just for this race's
             // two rows: exactly one owner survives, and it is the owner whose delete
