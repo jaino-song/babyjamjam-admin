@@ -14,9 +14,9 @@
 > are deleted. The preview paths below and in these scripts are inert and are
 > kept until they are removed separately.
 
-The Seoul Lightsail host runs production and preview as separate logical
-environments on one VM. This mirrors Railway's environment model without
-creating a second billable Lightsail instance.
+The Seoul Lightsail host runs production only. Preview moved to Google Cloud Run
+(BJJ-341, 2026-09-23), so the host's preview environment described below is
+historical and is not used.
 
 The environments have separate API containers, Valkey containers, persistent
 Valkey volumes, Compose project names, runtime environment files, deployment
