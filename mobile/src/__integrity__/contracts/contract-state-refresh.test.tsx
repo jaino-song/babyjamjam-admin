@@ -1,6 +1,4 @@
-import { QueryClient, QueryClientProvider, type QueryKey } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { QueryClient, type QueryKey } from "@tanstack/react-query";
 
 import { queryRootsForKinds } from "@/lib/realtime/entity-query-keys";
 import { clientKeys } from "@/features/clients/hooks/keys";
@@ -30,25 +28,8 @@ function invariant(id: string, title: string, body: IntegrityTestBody): void {
   it(qualified(id, title), body);
 }
 
-/** Mobile twin of the backend `knownDefect` wrapper (it.failing + expectedFailure). */
-function knownDefect(id: string, title: string, body: IntegrityTestBody, expectedFailure: RegExp | string): void {
-  it.failing(qualified(id, title), async () => {
-    try {
-      await body();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const matches =
-        typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
-      if (matches) {
-        throw error;
-      }
-      return;
-    }
-  });
-}
-
 describe("SI-CONTRACT-08 contract state → client view refresh (mobile)", () => {
-  knownDefect(
+  invariant(
     "SI-CONTRACT-08",
     "a `document` entity-changed event refreshes the mobile client list that renders contract state",
     async () => {
@@ -72,7 +53,6 @@ describe("SI-CONTRACT-08 contract state → client view refresh (mobile)", () =>
         );
       }
     },
-    /NOT invalidated by a `document` entity-changed event/,
   );
 
   invariant(

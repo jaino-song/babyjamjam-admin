@@ -37,32 +37,6 @@ function invariant(id: string, title: string, body: () => Promise<void>): void {
     it(`${id} ${title}`, body);
 }
 
-/**
- * Local knownDefect semantics (same contract as the backend harness helper):
- * `it.failing` expects the test to fail; an `expectedFailure` pattern closes the
- * any-error-green hole — a failure matching the pattern is rethrown (stays
- * green), a failure for ANY other reason (or an unexpected pass) returns
- * normally so `it.failing` reports RED.
- */
-function knownDefect(
-    id: string,
-    title: string,
-    body: () => Promise<void>,
-    expectedFailure: RegExp,
-): void {
-    it.failing(`${id} ${title}`, async () => {
-        try {
-            await body();
-            return; // passed while the defect exists → unexpected → RED
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (expectedFailure.test(message)) throw error; // the tracked failure → green
-            console.error(`[knownDefect] ${id} ${title}: expected failure ${String(expectedFailure)} but failed for another reason: ${message}`);
-            return; // different reason → RED
-        }
-    });
-}
-
 const client = (id: number): Client => ({
   id,
   name: `고객 ${id}`,
@@ -91,7 +65,7 @@ describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
   beforeEach(() => {
     for (const mock of Object.values(apiMock)) mock.mockReset();
   });
-  knownDefect(
+  invariant(
     "SI-CLIENT-08",
     "mobile useUpdateClient refreshes message-trigger upcoming and service-record client overview caches (secondary desktop parity)",
     async () => {
@@ -132,7 +106,6 @@ describe("SI-CLIENT-08 mobile client mutation cache invalidation", () => {
         queryClient.clear();
       }
     },
-    /SI-CLIENT-08: mobile useUpdateClient left the (message-trigger upcoming|service-record client overview) cache stale/,
   );
 
   invariant(

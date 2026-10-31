@@ -136,12 +136,9 @@ describe("useResendMessageTriggerJob", () => {
     expect(messageTriggersApi.resendJob).toHaveBeenCalledTimes(1);
     expect(messageTriggersApi.resendJob).toHaveBeenCalledWith(JOB_UUID);
     expect(returned).toEqual(response);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.history() });
-    expect(invalidate).toHaveBeenCalledTimes(clientId === undefined ? 2 : 3);
-    if (clientId !== undefined) {
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["messages", "logs", "client", clientId] });
-    }
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["messages", "logs"] });
+    expect(invalidate).toHaveBeenCalledTimes(2);
   });
 
   it("does not refetch when the request is rejected", async () => {

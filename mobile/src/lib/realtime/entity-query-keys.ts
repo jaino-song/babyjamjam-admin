@@ -29,6 +29,7 @@ export const ENTITY_QUERY_ROOTS: Record<RealtimeEntityKind, readonly QueryKey[]>
   client: [["clients"], ["dashboard"]],
   employee: [["employees"]],
   document: [
+    ["clients"],
     ["eformsign-documents"],
     ["eformsign-docs"],
     ["eformsign-doc-client-names"],
@@ -39,7 +40,7 @@ export const ENTITY_QUERY_ROOTS: Record<RealtimeEntityKind, readonly QueryKey[]>
     ["dashboard"],
   ],
   message: [["message-triggers"], ["messages"], ["message-templates"]],
-  "service-record": [["service-records"]],
+  "service-record": [["service-records"], ["employees"]],
   inquiry: [["consultation-inquiries"]],
   call: [["call-inbox"]],
   // The file library (`document` + `document_category`), not the eformsign `document` kind.

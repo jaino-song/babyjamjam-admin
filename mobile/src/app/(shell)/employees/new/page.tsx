@@ -9,6 +9,7 @@ import { Check, ChevronLeft, X } from "lucide-react";
 
 import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employees/employee-form.constants";
 import { useCreateEmployee } from "@/hooks/useEmployees";
+import { EmployeeSmsAutomationField } from "@/components/app/employees/EmployeeSmsAutomationField";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { api } from "@/lib/api/client";
 import { t } from "@/lib/i18n/translations";
@@ -314,7 +315,6 @@ export default function NewEmployeePage() {
     }
 
     setError(null);
-
     try {
       const newEmployee = await createEmployee.mutateAsync({
         name: store.name.trim(),
@@ -322,6 +322,7 @@ export default function NewEmployeePage() {
         phone: normalizeKoreanPhoneDigits(store.phone),
         grade: store.grade,
         openToNextWork: store.openToNextWork,
+        smsAutomationEnabled: store.smsAutomationEnabled,
       });
 
       reset();
@@ -344,7 +345,6 @@ export default function NewEmployeePage() {
       setError(getUserErrorMessage(err, t(locale, "employees.form.error-create-failed")));
     }
   };
-
   const handleExit = () => {
     if (isBusy) return;
     reset();
@@ -637,14 +637,14 @@ export default function NewEmployeePage() {
               })}
             </div>
           </div>
-
+          <EmployeeSmsAutomationField data-component="mobile_employees-new_screen_root_wizard_work-step_sms-automation"
+            checked={store.smsAutomationEnabled} onCheckedChange={(checked) => setField("smsAutomationEnabled", checked)} disabled={isBusy} />
           {error && activeStep === 1 && (
             <div className={styles.errorBox} data-component="mobile_employees-new_screen_root_wizard_work-step_error">
               {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
-
         <div className={styles.actions} data-component="mobile_employees-new_screen_root_wizard_actions">
           <button
             className={cn(styles.actionButton, styles.secondary)}

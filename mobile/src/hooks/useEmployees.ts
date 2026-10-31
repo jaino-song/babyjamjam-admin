@@ -2,6 +2,9 @@
 
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { useToast } from "@/hooks/use-toast";
+import { useLocale } from "@/providers/LocaleProvider";
+import { employeeMessages } from "@/features/employees/messages";
 import {
     removeById,
     restoreQueries,
@@ -20,6 +23,7 @@ export interface Employee {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    smsAutomationEnabled?: boolean;
     registeredDate: string | null;
     status: EmployeeStatus;
     birthday?: string;
@@ -31,6 +35,7 @@ export interface CreateEmployeeDto {
     phone: string;
     grade: string;
     openToNextWork: boolean;
+    smsAutomationEnabled?: boolean;
     birthday?: string;
 }
 
@@ -40,6 +45,7 @@ export interface UpdateEmployeeDto {
     phone?: string;
     grade?: string;
     openToNextWork?: boolean;
+    smsAutomationEnabled?: boolean;
     birthday?: string;
 }
 
@@ -147,22 +153,21 @@ export function useEmployeeWorkHistory(employeeId: number, limit = 20) {
 }
 
 // Create employee
+export type CreateEmployeeResponse = Employee & { restored?: boolean };
+
 export function useCreateEmployee() {
     const queryClient = useQueryClient();
+    const { toast } = useToast();
+    const locale = useLocale();
 
-    return useMutation<Employee, Error, CreateEmployeeDto>({
+    return useMutation<CreateEmployeeResponse, Error, CreateEmployeeDto>({
         mutationFn: async (dto: CreateEmployeeDto) => {
-            console.log("[useCreateEmployee] Creating employee with dto:", dto);
-            const { data } = await api.post<Employee>("/employees", dto);
-            console.log("[useCreateEmployee] Created employee response:", data);
+            const { data } = await api.post<CreateEmployeeResponse>("/employees", dto);
             return data;
         },
         onSuccess: (data) => {
-            console.log("[useCreateEmployee] onSuccess called with:", data);
             queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
-        },
-        onError: (error) => {
-            console.error("[useCreateEmployee] onError called:", error);
+            if (data.restored === true) toast({ variant: "success", title: employeeMessages[locale].restored });
         },
     });
 }

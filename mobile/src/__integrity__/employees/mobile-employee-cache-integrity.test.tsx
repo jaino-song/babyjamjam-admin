@@ -20,36 +20,9 @@ jest.mock("@/lib/api/authenticated-fetch", () => ({
     },
 }));
 
-/**
- * Local equivalent of the backend knownDefect wrapper (the backend helpers are
- * not importable from mobile suites). It inverts the expectation
- * (`it.failing`) but rethrows failures whose message does NOT match
- * `expectedFailure`, so a fixture or infra error turns RED instead of becoming
- * a green false-CONFIRMED. While the defect exists the knownDefect reports
- * green-as-expected-failure; after a fix lands it turns RED and the fixing unit
- * flips it to `invariant`.
- */
-
 type IntegrityBody = () => Promise<void> | void;
-type ExpectedFailure = RegExp | string;
-
-async function assertDefectFailure(body: IntegrityBody, expectedFailure: ExpectedFailure): Promise<void> {
-    let thrown: unknown;
-    try {
-        await body();
-    } catch (error) {
-        thrown = error;
-    }
-    if (thrown === undefined) return;
-    const message = thrown instanceof Error ? thrown.message : String(thrown);
-    const matches =
-        typeof expectedFailure === "string" ? message.includes(expectedFailure) : expectedFailure.test(message);
-    if (matches) throw thrown;
-    console.error(`[knownDefect] expected failure ${expectedFailure} but failed differently: ${message}`);
-}
-
-function knownDefect(id: string, title: string, body: IntegrityBody, expectedFailure: ExpectedFailure): void {
-    it.failing(`${id} ${title}`, () => assertDefectFailure(body, expectedFailure));
+function invariant(id: string, title: string, body: IntegrityBody): void {
+    it(`${id} ${title}`, async () => { await body(); });
 }
 
 /** jsdom has no EventSource — a controllable fake, mirroring the app's own stream-test harness. */
@@ -111,7 +84,7 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)",
         delete (global as unknown as { EventSource?: unknown }).EventSource;
     });
 
-    knownDefect(
+    invariant(
         "SI-EMP-08",
         "realtime: an assignment change announced as service-record kind invalidates employee queries",
         async () => {
@@ -166,10 +139,9 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)",
 
             unmount();
         },
-        /employee queries were not invalidated by the service-record entity-changed event/,
     );
 
-    knownDefect(
+    invariant(
         "SI-EMP-08",
         "DTO parity: the mobile employee and write DTOs carry smsAutomationEnabled",
         async () => {
@@ -191,6 +163,5 @@ describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)",
                 throw new Error(`SI-EMP-08 mobile parity defect: smsAutomationEnabled missing from ${missing.join(", ")}`);
             }
         },
-        /SI-EMP-08 mobile parity defect: smsAutomationEnabled missing from Employee, CreateEmployeeDto, UpdateEmployeeDto/,
     );
 });
