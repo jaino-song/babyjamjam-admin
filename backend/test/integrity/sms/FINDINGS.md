@@ -1,5 +1,60 @@
 # FINDINGS — Unit p2-sms (SMS integrity audit)
 
+## Status after fix phase (2026-10-31)
+
+Current at `06dd98d9c`; calibrated severities retained. The audit evidence and
+old failure/run records below are historical, not current failures or reruns.
+
+| id | final status | severity | fix / disposition |
+|---|---|---|---|
+| SI-SMS-01 | FIXED | low | `37805a301` (`29126df3c` merge) guards terminal entity transitions and token-less persistence, including stale pending snapshots, without removing the intended late-success exception. |
+| SI-SMS-02 | FIXED | medium | `37805a301` soft-deletes custom rules and retains sent/canceled job history; `6e45d887e` preserves reserved agent rules; `9250c76d9` refuses deletion of default rules (deactivate only). `7947e61d9` strengthens unchanged-job proof. |
+| SI-SMS-03 | REFUTED | — | Claim CAS and started-attempt refusal hold within the tested boundaries below. |
+| SI-SMS-04 | REFUTED | — | Reclaim reconciliation and uncertain-source retry refusal hold. |
+| SI-SMS-05 | REFUTED | — | Concurrent retries produce one provider call and a 409 loser. |
+| SI-SMS-06 | FIXED | low | `37805a301` adds CHECKs for job/log status and carrier-result state, with rollback on legacy violations and an idempotent patch rerun. |
+| SI-SMS-07 | REFUTED | — | Dispatch re-reads rule, job-staleness and recipient eligibility. |
+| SI-SMS-08 | FIXED | low | `bf9031bc6` (`06dd98d9c` merge) refreshes mobile message-log/history views on retry, resend, cancel and manual send. |
+| SI-SMS-09 | INTENDED (operator decision 2026-10-31) | — | A late provider success may win over reclaim's failed/uncertain result using the retained claim token; `37805a301` preserves and names this exception. |
+
+Default rules cannot be deleted, only deactivated. See
+[default-rule delete regression/mutation proofs](DEFAULT_RULE_DELETE_PROOFS.md)
+for all five delete entry points and both default templates. Its acceptance
+results are historical; for rollout, still run `pnpm install` after pulling to
+refresh the vendored shared package as required by the top-level README.
+
+### Current regression references
+
+Confirmed by grepping HEAD: these are `invariant` calls (titles verbatim;
+`${path}`, `${templateKey}` and `${table}.${column}` denote test parameters).
+
+- `sms-job-state-fences.real-db.spec.ts`:
+  - SI-SMS-01: `a claimToken-less entity cannot rewrite a terminal (sent) job`
+  - SI-SMS-01: `a claimToken-less entity cannot cancel-then-resurrect a sent job over a canceled row`
+  - SI-SMS-06: `an out-of-set message_trigger_job.status is rejected by the database`
+  - SI-SMS-06: `an out-of-set message_log.status is rejected by the database`
+  - SI-SMS-06: `an out-of-set message_log.carrier_result_state is rejected by the database`
+- SI-SMS-02, `sms-rule-delete-cascade.real-db.spec.ts`:
+  - `deleting a rule through MessageTriggerService.deleteRule keeps sent-job history`
+  - `deleting a rule through MessageTriggerService.deleteRule keeps its canceled-job audit trail`
+  - `the approved rule-delete path cancels and retains pending jobs and soft-deletes the rule when nothing was sent`
+  - `${path} refuses deleting a default ${templateKey} without changing its rule or jobs`
+  - `deactivate then list keeps default ${templateKey} inactive without creating rows or jobs`
+- SI-SMS-06, `sms-migration.real-db.spec.ts`:
+  `the patch rolls back all DDL on legacy ${table}.${column} violations and succeeds after cleanup`.
+- SI-SMS-08, `mobile/src/__integrity__/sms/message-trigger-invalidation.integrity.test.tsx`:
+  `retry refreshes the mobile all-logs view`;
+  `resend refreshes the mobile all-logs view`;
+  `cancel refreshes the mobile all-logs view`;
+  `after a successful manual SMS send the mobile message views are refreshed`.
+- SI-SMS-09, `sms-dispatching-reconciliation.real-db.spec.ts`:
+  `a late worker rewriting a reconciled failed job to sent is intended (operator decision 2026-10-31)`.
+
+## Historical audit context and evidence
+
+Original dispositions/proposals below are superseded by the final table.
+The former product question about SI-SMS-09 is resolved, not still pending.
+
 Audit only: real PostgreSQL and real SMS services/repositories, with local
 provider doubles (no network sends). Paths are repository-relative. Correction
 base: `d7682f75f`; application code, schema, migrations and shared helpers are
@@ -7,17 +62,17 @@ unchanged. Backend: 5 suites / 24 tests. Mobile: 1 suite / 7 tests.
 
 ## Verdict table
 
-| id | layer | verdict | severity proposal | one-line defect / bounded result | evidence file:line | test file::test name | observed failure message (CONFIRMED only) |
+| id | layer | final verdict | calibrated severity | historical defect / bounded result | original evidence file:line | test reference (current invariant titles above) | original observed failure |
 |---|---|---|---|---|---|---|---|
-| SI-SMS-01 | backend | CONFIRMED | low | Latent, no production caller: unguarded entity transitions plus token-less repository update allow sent→failed and canceled→sent; live dispatch writes carry a claim token | `backend/domain/entities/message-trigger-job.entity.ts:210-239`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:268-298`; production callers `backend/application/services/message-trigger.service.ts:3439,3564,4601` | `backend/test/integrity/sms/sms-job-state-fences.real-db.spec.ts::SI-SMS-01 a claimToken-less entity cannot rewrite a terminal (sent) job` and `…cannot cancel-then-resurrect a sent job over a canceled row` | `terminal job was rewritten: sent job is now status=failed cancelReason=late failure overwrite`; `canceled job was rewritten: status=sent sentAt=2026-10-30T…Z` |
-| SI-SMS-02 | backend | CONFIRMED | medium | Rule hard-delete cascades sent/canceled JOB history, but `message_log` survives through SetNull; rule-scoped dedupe does not create a resend | `backend/application/services/message-trigger.service.ts:1690-1695`; `backend/infrastructure/database/repositories/sb.message-trigger-rule.repository.ts:404-408,471-484`; `backend/prisma/schema.prisma:1085,1164` | `backend/test/integrity/sms/sms-rule-delete-cascade.real-db.spec.ts::SI-SMS-02 deleting a rule through MessageTriggerService.deleteRule keeps sent-job history` and `…keeps its canceled-job audit trail` | `sent job history was erased by rule deletion: sentJob=GONE, remaining jobs for rule=0`; `canceled job history was erased by rule deletion: canceledJob=GONE` |
+| SI-SMS-01 | backend | FIXED | low | `37805a301` guards entity transitions/token-less persistence; formerly latent sent→failed and canceled→sent rewrites, with no production caller | `backend/domain/entities/message-trigger-job.entity.ts:210-239`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:268-298`; production callers `backend/application/services/message-trigger.service.ts:3439,3564,4601` | `backend/test/integrity/sms/sms-job-state-fences.real-db.spec.ts::SI-SMS-01 a claimToken-less entity cannot rewrite a terminal (sent) job` and `…cannot cancel-then-resurrect a sent job over a canceled row` (now invariants) | `terminal job was rewritten: sent job is now status=failed cancelReason=late failure overwrite`; `canceled job was rewritten: status=sent sentAt=2026-10-30T…Z` |
+| SI-SMS-02 | backend | FIXED | medium | `37805a301` retains job history by soft deletion; `9250c76d9` blocks default deletion (deactivate only). Historically sent/canceled jobs cascaded away, but logs survived and no resend was shown | `backend/application/services/message-trigger.service.ts:1690-1695`; `backend/infrastructure/database/repositories/sb.message-trigger-rule.repository.ts:404-408,471-484`; `backend/prisma/schema.prisma:1085,1164` | `backend/test/integrity/sms/sms-rule-delete-cascade.real-db.spec.ts::SI-SMS-02 deleting a rule through MessageTriggerService.deleteRule keeps sent-job history` and `…keeps its canceled-job audit trail` (now invariants) | `sent job history was erased by rule deletion: sentJob=GONE, remaining jobs for rule=0`; `canceled job history was erased by rule deletion: canceledJob=GONE` |
 | SI-SMS-03 | backend | REFUTED | — | Claim CAS serializes contenders and yields one token; a second delivery arriving after the first log is started is refused by read-side acceptance checks. Prepared→started CAS and P2002 create convergence are NOT exercised | `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:394-423`; `backend/application/services/sms-trigger-delivery.service.ts:612-633`; `backend/infrastructure/database/repositories/sb.message-log.repository.ts:103-168` | `backend/test/integrity/sms/sms-dispatch-claim-race.real-db.spec.ts::SI-SMS-03 *` (3 invariants; row-lock/pg_stat_activity interleaving, then paused provider call) | — |
 | SI-SMS-04 | backend | REFUTED | — | Reclaim reconciles sent/accepted logs to sent and started logs to failed/uncertain. Retry first refuses the pending source via `status !== "failed"`; the locked family re-read is a backup refusal, not merely `isProviderOutcomeUncertain()` | `backend/application/services/message-trigger.service.ts:4564-4601`; `backend/application/services/sms-retry.service.ts:110-118`; `backend/infrastructure/database/repositories/sb.message-log.repository.ts:335-342` | `backend/test/integrity/sms/sms-dispatching-reconciliation.real-db.spec.ts::SI-SMS-04 *` (2 invariants) | — |
 | SI-SMS-05 | backend | REFUTED | — | Forced concurrent retries produce one attempt and one provider call; loser must be `ConflictException` with HTTP 409, not an arbitrary error / P2002 | `backend/infrastructure/database/repositories/sb.message-log.repository.ts:302-416`; `backend/application/services/sms-retry.service.ts:139-157,697-747` | `backend/test/integrity/sms/sms-retry-family-race.real-db.spec.ts::SI-SMS-05 two concurrent manual retries of one failed log produce exactly one send` | — |
-| SI-SMS-06 | backend | CONFIRMED | low | Raw SQL accepts bogus job/log statuses and carrier state (DB defense-in-depth gap); no production TypeScript writer of these bogus values was found | `backend/prisma/schema.prisma:1059,1079,1145`; existing CHECKs only processing-claim-token and provider-acceptance-state | `backend/test/integrity/sms/sms-job-state-fences.real-db.spec.ts::SI-SMS-06 an out-of-set {message_trigger_job.status / message_log.status / message_log.carrier_result_state} is rejected by the database` | `message_trigger_job accepted out-of-set status 'bogus'`; `message_log accepted out-of-set status 'bogus'`; `message_log accepted out-of-set carrier_result_state 'bogus'` |
+| SI-SMS-06 | backend | FIXED | low | `37805a301` adds status/carrier CHECKs and fail-closed migration preflight; historical raw-SQL defense gap only, no bogus production TypeScript writer found | `backend/prisma/schema.prisma:1059,1079,1145`; original CHECKs only processing-claim-token and provider-acceptance-state | `backend/test/integrity/sms/sms-job-state-fences.real-db.spec.ts::SI-SMS-06 an out-of-set {message_trigger_job.status / message_log.status / message_log.carrier_result_state} is rejected by the database` (three current invariants quoted above) | `message_trigger_job accepted out-of-set status 'bogus'`; `message_log accepted out-of-set status 'bogus'`; `message_log accepted out-of-set carrier_result_state 'bogus'` |
 | SI-SMS-07 | backend | REFUTED | — | Current eligibility is re-read: deactivating a rule AFTER job creation cancels it; jobsStale prevents claiming; opting a client out BETWEEN claim and dispatch authorization cancels with recipient safeguard reason. Each has zero provider calls | `backend/application/services/message-trigger.service.ts:3162-3197,3635-3640`; `backend/application/services/sms-automation-safeguard.service.ts:159-176,187-198`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:353-418` | `backend/test/integrity/sms/sms-dispatching-reconciliation.real-db.spec.ts::SI-SMS-07 *` (5 invariants, including 3 new live-dispatch probes) | — |
-| SI-SMS-08 | mobile | CONFIRMED | low | Self-healing cache via realtime/refetch: retry/resend/cancel miss `messages/logs/all` (30-minute default freshness); cancel adds a terminal-job history row that changes rule counts; manual-send invalidates neither all-logs nor trigger history. Per-client optional invalidation is desktop parity, not a mobile defect; that view has staleTime 0 | `mobile/src/features/message-triggers/hooks/use-message-triggers.ts:325-338,412-440`; `mobile/src/components/app/mobile-redesign/MessageTriggerList.tsx:173,189-201`; `backend/interface/controllers/message-trigger.controller.ts:136-146`; `backend/application/services/message-trigger.service.ts:800-812,882-902`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:554-568`; `mobile/src/lib/queryClient.ts:40`; `mobile/src/hooks/useClientMessageHistory.ts:19`; `mobile/src/app/(shell)/messages/new/page.tsx:1541-1560`; desktop `frontend/src/features/message-triggers/hooks/use-message-triggers.ts:292-294,329-331` | `mobile/src/__integrity__/sms/message-trigger-invalidation.integrity.test.tsx::SI-SMS-08 *` (3 invariants + 4 knownDefects) | `the all-logs view was not invalidated after the change: retry`; `…: resend`; `the all-logs view was not invalidated after the change: cancel`; `the manual send did not invalidate the message views (allLogs=false history=false)` |
-| SI-SMS-09 | backend | NEEDS-PRODUCT-DECISION | — | A slow original worker can overwrite reclaimed failed/uncertain→sent with the SAME retained claim token. double-send REFUTED: one provider call; final state matches the provider outcome; not re-sendable while failed/uncertain. Decide terminal immutability versus accepting a late provider success | `backend/application/services/message-trigger.service.ts:3385-3386,4063-4089,4564-4611`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:268-275` | `backend/test/integrity/sms/sms-dispatching-reconciliation.real-db.spec.ts::SI-SMS-09 a late worker rewriting a reconciled failed job to sent is reachable today` (invariant pins current reachability) | — |
+| SI-SMS-08 | mobile | FIXED | low | `bf9031bc6` refreshes all-logs/history after retry, resend, cancel and manual send. Historically self-healing cache only; per-client optional invalidation was parity, not a defect | `mobile/src/features/message-triggers/hooks/use-message-triggers.ts:325-338,412-440`; `mobile/src/components/app/mobile-redesign/MessageTriggerList.tsx:173,189-201`; `backend/interface/controllers/message-trigger.controller.ts:136-146`; `backend/application/services/message-trigger.service.ts:800-812,882-902`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:554-568`; `mobile/src/lib/queryClient.ts:40`; `mobile/src/hooks/useClientMessageHistory.ts:19`; `mobile/src/app/(shell)/messages/new/page.tsx:1541-1560`; desktop `frontend/src/features/message-triggers/hooks/use-message-triggers.ts:292-294,329-331` | `mobile/src/__integrity__/sms/message-trigger-invalidation.integrity.test.tsx::SI-SMS-08 *` (all seven now invariants; exact converted titles above) | `the all-logs view was not invalidated after the change: retry`; `…: resend`; `the all-logs view was not invalidated after the change: cancel`; `the manual send did not invalidate the message views (allLogs=false history=false)` |
+| SI-SMS-09 | backend | INTENDED (operator decision 2026-10-31) | — | A late provider success may overwrite reclaimed failed/uncertain→sent with the retained token; `37805a301` keeps this exception. Double-send refuted: one provider call and no retry while uncertain | `backend/application/services/message-trigger.service.ts:3385-3386,4063-4089,4564-4611`; `backend/infrastructure/database/repositories/sb.message-trigger-job.repository.ts:268-275` | `backend/test/integrity/sms/sms-dispatching-reconciliation.real-db.spec.ts::SI-SMS-09 a late worker rewriting a reconciled failed job to sent is intended (operator decision 2026-10-31)` (invariant) | — |
 
 ## Coverage boundaries
 
@@ -61,7 +116,7 @@ unchanged. Backend: 5 suites / 24 tests. Mobile: 1 suite / 7 tests.
   A pause on those reads (or transaction-client hook) would be needed to force
   that separate interleaving. No result is inferred from SI-SMS-09 about it.
 
-## Fix notes
+## Historical fix proposals (final dispositions above)
 
 - **SI-SMS-01 (low, latent)** — Guard terminal entity transitions and restrict
   token-less repository writes to non-terminal source rows. No production
@@ -120,7 +175,7 @@ SI-SMS-08 knownDefect bodies were also run as plain `it` against unmutated
 production to capture the actual matching failures in the verdict table; then
 the expected-failure wrappers were restored. No application mutation remains.
 
-## Verification
+## Verification (historical audit correction)
 
 - **Correction round 3 / order independence:** reproduced the isolated
   SI-SMS-03 duplicate-dispatch failure (`Argument rule is missing`) before the
