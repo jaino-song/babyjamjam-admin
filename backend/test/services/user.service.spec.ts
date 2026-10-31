@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { UserService } from "../../application/services/user.service";
 import {
     CreateUserUsecase,
@@ -83,6 +84,70 @@ describe("UserService", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    describe("serializable transaction retries for membership updates", () => {
+        const conflicts = [
+            ["P2034", { code: "P2034" }],
+            ["raw deadlock code", { code: "40P01" }],
+            ["raw serialization code", { code: "40001" }],
+            ["unknown-request deadlock message", new Prisma.PrismaClientUnknownRequestError(
+                'Raw query failed. Code: `40P01`. Message: deadlock detected', { clientVersion: "test" },
+            )],
+            ["unknown-request serialization message", new Prisma.PrismaClientUnknownRequestError(
+                'Raw query failed. Code: `40001`.', { clientVersion: "test" },
+            )],
+            ["raw-query deadlock metadata", new Prisma.PrismaClientKnownRequestError("raw query failed", {
+                code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+            })],
+            ["raw-query serialization metadata", new Prisma.PrismaClientKnownRequestError("raw query failed", {
+                code: "P2010", clientVersion: "test", meta: { code: "40001" },
+            })],
+        ] as const;
+        const updateMembership = () => service.update("u1", {
+            branchId: "branch-1", branchRole: "admin", actor: ownerActor,
+        });
+
+        beforeEach(() => {
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "u1" });
+            prismaService.user.findUnique.mockResolvedValue({ id: "u1", role: "owner" });
+        });
+
+        it.each(conflicts)("retries the whole transaction after %s", async (_label, error) => {
+            prismaService.$queryRaw.mockRejectedValueOnce(error);
+
+            await expect(updateMembership()).resolves.toMatchObject({ id: "u1" });
+
+            expect(prismaService.$transaction).toHaveBeenCalledTimes(2);
+            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(2);
+            expect(prismaService.$transaction).toHaveBeenLastCalledWith(expect.any(Function), {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            });
+            expect(auditAppend).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(conflicts)("maps exhausted %s to a clean 409 after three attempts", async (_label, error) => {
+            prismaService.$queryRaw.mockRejectedValue(error);
+
+            await expect(updateMembership()).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+            });
+
+            expect(prismaService.$transaction).toHaveBeenCalledTimes(3);
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it("rethrows a non-conflict error unchanged without retrying", async () => {
+            const error = Object.assign(new Error("database unavailable"), { code: "P1001" });
+            prismaService.$queryRaw.mockRejectedValue(error);
+
+            await expect(updateMembership()).rejects.toBe(error);
+
+            expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
     });
 
     // ============================================

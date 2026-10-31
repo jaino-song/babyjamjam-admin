@@ -12,6 +12,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
 
 const MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS = 3;
 
@@ -304,7 +305,7 @@ export class SystemAdminService {
             try {
                 return await this.prisma.$transaction(callback);
             } catch (error) {
-                if (!isBranchTransactionConflict(error)) throw error;
+                if (!isTransactionConflict(error)) throw error;
                 if (attempt === MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS) {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
@@ -503,17 +504,6 @@ export class SystemAdminService {
 
         throw error;
     }
-}
-
-function isBranchTransactionConflict(error: unknown): boolean {
-    if (typeof error !== "object" || error === null) return false;
-    const code = "code" in error ? error.code : undefined;
-    if (code === "P2034" || code === "40P01" || code === "40001") return true;
-    if ("message" in error && typeof error.message === "string" && /\b(?:40P01|40001)\b/.test(error.message)) {
-        return true;
-    }
-    // Prisma P2010 raw-query failures also carry the PostgreSQL SQLSTATE in meta.
-    return "meta" in error && isBranchTransactionConflict(error.meta);
 }
 
 function normalizeOptionalText(value: string | undefined): string | null {
