@@ -179,7 +179,7 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         for (const path of ["service", "approvedService", "delete", "deleteIfTargetMatches", "deleteIfTargetMatchesAndFenceJobs"] as const) {
             invariant("SI-SMS-02", `${path} refuses deleting a default ${templateKey} without changing its rule or jobs`, async () => {
                 const { ruleId } = await seedBranchWithRule();
-                const before = await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { templateKey, isDefault: true, jobsStale: true } });
+                const before = await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { templateKey, isDefault: true, jobsStale: false } });
                 const jobId = await createJob(ruleId, "pending", `${ruleId}:default`);
                 const jobBefore = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: jobId } });
                 const { service, ruleRepository } = wireMessageTriggerService(handle, branchId);
@@ -200,7 +200,9 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
                     expect(await ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expected, "Rule deleted")).toBe(false);
                 }
                 expect(await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: ruleId } })).toEqual(before);
-                expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: jobId } })).toEqual(jobBefore);
+                const jobAfter = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: jobId } });
+                expect(jobAfter.status).toBe("pending");
+                expect(jobAfter).toEqual(jobBefore);
             });
         }
 
