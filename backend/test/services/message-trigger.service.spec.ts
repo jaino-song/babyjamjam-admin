@@ -1817,6 +1817,16 @@ describe("MessageTriggerService", () => {
         expect(waiting.status).toBe("canceled");
     });
 
+    it.each(["agent-sms:branch-1", "system:service_record_link", "system:service_end_notice", "system:message_automation_intent"])("refuses reserved carrier deletion with RESOURCE_NOT_FOUND before canceling jobs (%s)", async (id) => {
+        const { service, ruleRepository, jobRepository } = createService();
+        const refusal = { status: 404, response: { code: "RESOURCE_NOT_FOUND" } };
+        await expect(service.deleteRule(branchId, id)).rejects.toMatchObject(refusal);
+        await expect(service.deleteRuleApprovedTarget(branchId, id, "ignored", undefined)).rejects.toMatchObject(refusal);
+        expect(ruleRepository.delete).not.toHaveBeenCalled();
+        expect(ruleRepository.deleteIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+    });
+
     it("uses branch-scoped CAS hooks for approved automation updates and deletes", async () => {
         const { service, ruleRepository, jobRepository } = createService();
         const existingRule = createRule({ id: "rule-approved-target" });

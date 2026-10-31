@@ -3,13 +3,30 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
-ALTER TABLE "message_trigger_rule"
-    ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMPTZ(6);
+-- Catalog-only checks keep already-applied patches free of relation locks.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'message_trigger_rule'::regclass
+          AND attname = 'deleted_at' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE "message_trigger_rule"
+            ADD COLUMN "deleted_at" TIMESTAMPTZ(6);
+    END IF;
 
-DROP INDEX IF EXISTS "uniq_message_trigger_rule_default";
-CREATE UNIQUE INDEX "uniq_message_trigger_rule_default"
-    ON "message_trigger_rule" ("branch_id", "template_key")
-    WHERE "is_default" = true AND "deleted_at" IS NULL;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND indexname = 'uniq_message_trigger_rule_default'
+          AND indexdef = format('CREATE UNIQUE INDEX uniq_message_trigger_rule_default ON %I.message_trigger_rule USING btree (branch_id, template_key) WHERE ((is_default = true) AND (deleted_at IS NULL))', current_schema())
+    ) THEN
+        DROP INDEX IF EXISTS "uniq_message_trigger_rule_default";
+        CREATE UNIQUE INDEX "uniq_message_trigger_rule_default"
+            ON "message_trigger_rule" ("branch_id", "template_key")
+            WHERE "is_default" = true AND "deleted_at" IS NULL;
+    END IF;
+END $$;
 
 -- Application writers: MessageTriggerJobStatus; MessageLogEntity / mapper,
 -- SMS delivery/retry and message-delivery controller; CarrierResultState.
@@ -29,6 +46,15 @@ BEGIN
          'carrier_result_state IS NULL OR carrier_result_state IN (''delivered'', ''failed'', ''unconfirmed'', ''lookup_error'')')
     ) AS checks(table_name, constraint_name, column_name, predicate)
     LOOP
+        IF EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = to_regclass(format('%I', entry.table_name))
+              AND conname = entry.constraint_name
+              AND convalidated
+        ) THEN
+            CONTINUE;
+        END IF;
+
         IF NOT EXISTS (
             SELECT 1 FROM pg_constraint
             WHERE conrelid = to_regclass(format('%I', entry.table_name))

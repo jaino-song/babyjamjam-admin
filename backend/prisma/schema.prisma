@@ -1095,8 +1095,8 @@ model message_log {
 }
 
 /// Database note: partial unique index `uniq_message_trigger_rule_default` on
-/// (branch_id, template_key) WHERE is_default = true exists in the database but
-/// cannot be expressed in Prisma (created via migration/patch SQL).
+/// (branch_id, template_key) WHERE is_default = true AND deleted_at IS NULL.
+/// It exists in the database but cannot be expressed in Prisma (migration/patch SQL).
 model message_trigger_rule {
   id            String                @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId      String?               @map("branch_id") @db.Uuid

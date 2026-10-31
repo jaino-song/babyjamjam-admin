@@ -410,6 +410,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
     }
 
     async delete(branchId: string, id: string): Promise<void> {
+        if (MessageTriggerRuleEntity.isReservedId(id)) return;
         await this.prisma.message_trigger_rule.updateMany({
             where: { id, branchId, deletedAt: null },
             data: { deletedAt: new Date(), isActive: false, jobsStale: false },
@@ -420,6 +421,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         branchId: string,
         expected: MessageTriggerRuleEntity,
     ): Promise<boolean> {
+        if (MessageTriggerRuleEntity.isReservedId(expected.id)) return false;
         const result = await this.prisma.message_trigger_rule.updateMany({
             where: {
                 id: expected.id,
@@ -450,6 +452,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         reason: string,
         fenceStartedAt?: Date,
     ): Promise<boolean> {
+        if (MessageTriggerRuleEntity.isReservedId(expected.id)) return false;
         return this.prisma.$transaction(async (transaction) => {
             const rows = await transaction.$queryRaw<MessageTriggerRuleRawRow[]>(Prisma.sql`
                 SELECT

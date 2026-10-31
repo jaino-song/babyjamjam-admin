@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Prisma } from "@prisma/client";
 
@@ -33,6 +34,30 @@ describeReal("SMS patch fail-closed validation (real PostgreSQL)", () => {
             timeout: 30_000,
         });
     }
+
+    invariant("SI-SMS-06", "an up-to-date patch rerun performs no table or index work or locks", async () => {
+        for (let run = 0; run < 2; run++) {
+            const result = executeMigration();
+            expect(result.error).toBeUndefined();
+            expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: expect.any(String) });
+        }
+        // Inspect before COMMIT: PostgreSQL retains relation locks until then.
+        // Even a redundant violation COUNT would leave an AccessShareLock here.
+        const sql = readFileSync(resolve(__dirname, "../../..", migration), "utf8").replace("COMMIT;", `
+            SELECT c.relname, l.mode FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+            WHERE l.pid = pg_backend_pid() AND c.relname IN (
+                'message_trigger_rule', 'message_trigger_job', 'message_log', 'uniq_message_trigger_rule_default'
+            );
+            COMMIT;`);
+        const url = process.env["DIRECT_URL"];
+        if (!url) throw new Error("DIRECT_URL is required by the throwaway guard");
+        const result = spawnSync("psql", [url, "-X", "-qAt", "-v", "ON_ERROR_STOP=1"], {
+            input: sql, encoding: "utf8", timeout: 30_000,
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(0);
+        expect(result.stdout.trim()).toBe("");
+    });
 
     for (const [table, column, constraint] of [
         ["message_trigger_job", "status", constraints[0]],

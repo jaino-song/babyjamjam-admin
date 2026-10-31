@@ -1,4 +1,5 @@
 import {
+    AGENT_SMS_RULE_ID_PREFIX,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -6,6 +7,8 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
+import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 
@@ -91,6 +94,26 @@ describe("SbMessageTriggerRuleRepository", () => {
         repository = new SbMessageTriggerRuleRepository({
             ...prisma,
         } as unknown as PrismaService);
+    });
+
+    it.each([
+        `${AGENT_SMS_RULE_ID_PREFIX}branch-1`,
+        SERVICE_END_NOTICE_RULE_ID,
+        SERVICE_RECORD_LINK_RULE_ID,
+        MESSAGE_AUTOMATION_INTENT_RULE_ID,
+    ])("refuses every delete path for reserved carrier %s before any write", async (id) => {
+        const expected = MessageTriggerRuleEntity.reconstitute(
+            id, "branch-1", "Reserved carrier", false,
+            MessageTriggerEventType.CLIENT_CREATED, MessageTriggerOffsetType.IMMEDIATE, 0,
+            MessageTriggerRecipientType.CLIENT, MessageTriggerTemplateKey.INFO,
+            new Date(), new Date(),
+        );
+        await repository.delete("branch-1", id);
+        await expect(repository.deleteIfTargetMatches("branch-1", expected)).resolves.toBe(false);
+        await expect(repository.deleteIfTargetMatchesAndFenceJobs("branch-1", expected, "Rule deleted")).resolves.toBe(false);
+        expect(messageTriggerRuleModel.updateMany).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$queryRaw).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$executeRaw).not.toHaveBeenCalled();
     });
 
     afterEach(() => {

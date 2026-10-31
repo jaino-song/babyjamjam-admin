@@ -1,4 +1,5 @@
 import {
+    AGENT_SMS_RULE_ID_PREFIX,
     DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
     DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
     MessageTriggerEventType,
@@ -9,6 +10,11 @@ import {
 } from "domain/constants/message-trigger-catalog";
 
 export class MessageTriggerRuleEntity {
+    /** Upserted carrier rows must survive user-facing rule deletion. */
+    static isReservedId(id: string): boolean {
+        return id.startsWith(AGENT_SMS_RULE_ID_PREFIX) || id.startsWith("system:");
+    }
+
     constructor(
         public readonly id: string,
         public branchId: string | null,

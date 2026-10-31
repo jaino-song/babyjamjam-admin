@@ -485,7 +485,6 @@ export class MessageAutomationActivationService {
             FROM "message_trigger_job" j
             JOIN "message_trigger_rule" r ON r.id = j.rule_id
             WHERE j.branch_id = ${branchId}::uuid
-              AND r.deleted_at IS NULL
               AND NOT ${manualJob}
               AND (
                     j.status IN ('pending', 'processing')

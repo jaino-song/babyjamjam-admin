@@ -4,6 +4,7 @@ import { MessageAutomationActivationService } from "application/services/message
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import {
+    AGENT_SMS_RULE_ID_PREFIX,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
@@ -29,6 +30,7 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;
     let tracker: RowTracker;
     let branchId: string;
+    const branchIds = new Set<string>();
 
     beforeAll(async () => {
         assertThrowawayTarget();
@@ -38,7 +40,7 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
 
     afterAll(async () => {
         if (tracker) {
-            if (branchId) await deleteAreaRowsByBranch(handle.raw, [branchId]);
+            await deleteAreaRowsByBranch(handle.raw, [...branchIds]);
             await tracker.cleanup(handle.raw);
         }
         if (handle) await closeIntegrityPrisma(handle);
@@ -47,17 +49,18 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
     async function seedBranchWithRule(): Promise<{ ruleId: string }> {
         const branchRow = await createBranch(handle.raw, tracker);
         branchId = branchRow.id;
+        branchIds.add(branchId);
         const ruleRow = await createMessageTriggerRule(handle.raw, tracker, { branchId });
         return { ruleId: ruleRow.id };
     }
 
-    async function createJob(ruleId: string, status: string, dedupeKey: string, sentAt?: Date): Promise<MessageTriggerJobEntity["id"]> {
+    async function createJob(ruleId: string, status: string, dedupeKey: string, sentAt?: Date, templateKey: MessageTriggerTemplateKey = MessageTriggerTemplateKey.SERVICE_START_REMINDER): Promise<MessageTriggerJobEntity["id"]> {
         const job = await createMessageTriggerJob(handle.raw, tracker, { ruleId }, {
             branchId,
             status: status as "pending",
             ...(status === "sent" ? { sentAt: sentAt ?? new Date() } : {}),
             recipientType: MessageTriggerRecipientType.CLIENT,
-            templateKey: MessageTriggerTemplateKey.SERVICE_START_REMINDER,
+            templateKey,
             dedupeKey,
         });
         return job.id;
@@ -211,5 +214,45 @@ describeReal("SMS rule deletion vs job history (real PostgreSQL)", () => {
         expect(await jobRepository.claimPendingWithRuleFence(jobId, branchId)).toBeNull();
         await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { jobsStale: true } });
         expect((await ruleRepository.findStaleRules()).map(({ id }) => id)).not.toContain(ruleId);
+    });
+
+    for (const path of ["service", "approvedService", "delete", "deleteIfTargetMatches", "deleteIfTargetMatchesAndFenceJobs"] as const) {
+        invariant("SI-SMS-02", `${path} refuses the reserved agent rule and a new agent SMS remains claimable`, async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            branchId = branch.id;
+            branchIds.add(branchId);
+            const ruleId = `${AGENT_SMS_RULE_ID_PREFIX}${branchId}`;
+            const rule = await createMessageTriggerRule(handle.raw, tracker, { branchId, id: ruleId, isActive: false, templateKey: MessageTriggerTemplateKey.INFO });
+            const { service, ruleRepository, jobRepository } = wireMessageTriggerService(handle, branchId);
+            const existingJob = await createJob(ruleId, "pending", `${ruleId}:existing`, undefined, MessageTriggerTemplateKey.INFO);
+            if (path === "service") {
+                await expect(service.deleteRule(branchId, ruleId)).rejects.toBeInstanceOf(NotFoundException);
+            } else if (path === "approvedService") {
+                await expect(service.deleteRuleApprovedTarget(branchId, ruleId, "ignored", undefined)).rejects.toBeInstanceOf(NotFoundException);
+            } else if (path === "delete") {
+                await ruleRepository.delete(branchId, ruleId);
+            } else if (path === "deleteIfTargetMatches") {
+                expect(await ruleRepository.deleteIfTargetMatches(branchId, expectedRuleFor(rule))).toBe(false);
+            } else {
+                expect(await ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expectedRuleFor(rule), "Rule deleted")).toBe(false);
+            }
+            expect(await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: ruleId } })).toMatchObject({ deletedAt: null, isActive: false, jobsStale: false });
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: existingJob } })).toMatchObject({ status: "pending" });
+            const newJob = await createJob(ruleId, "pending", `${ruleId}:new`, undefined, MessageTriggerTemplateKey.INFO);
+            expect(await jobRepository.claimPendingWithRuleFence(newJob, branchId)).not.toBeNull();
+        });
+    }
+
+    invariant("SI-SMS-02", "disabling branch automation also cancels pending and processing jobs of soft-deleted rules", async () => {
+        const { ruleId } = await seedBranchWithRule();
+        const pendingId = await createJob(ruleId, "pending", `${ruleId}:deleted-pending`);
+        const processingId = await createJob(ruleId, "pending", `${ruleId}:deleted-processing`);
+        await handle.raw.message_trigger_job.update({ where: { id: processingId }, data: { status: "processing", claimToken: "deleted-rule-claim" } });
+        await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { deletedAt: new Date(), isActive: false } });
+        const activation = new MessageAutomationActivationService(handle.service, new MessageAutomationBranchLockService(handle.service), new AdminAuditEventWriter(handle.service));
+        await activation.setTriggerDispatchEnabled(branchId, false, { userId: "10000000-0000-4000-8000-000000009161", globalRole: "owner" });
+        for (const id of [pendingId, processingId]) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "canceled", claimToken: null });
+        }
     });
 });

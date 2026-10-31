@@ -1688,6 +1688,9 @@ export class MessageTriggerService {
     }
 
     async deleteRule(branchId: string, id: string): Promise<void> {
+        if (MessageTriggerRuleEntity.isReservedId(id)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
         await this.ensureTriggerSchemaReady();
         const rule = await this.getRule(branchId, id);
         await this.cancelPendingJobsForRule(branchId, rule, "Rule deleted", false);
@@ -1701,6 +1704,9 @@ export class MessageTriggerService {
         expectedTargetVersion: string,
         targetSnapshot: Record<string, unknown> | undefined,
     ): Promise<void> {
+        if (MessageTriggerRuleEntity.isReservedId(id)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
         const mutationStartedAt = new Date();
         await this.ensureTriggerSchemaReady();
         await this.messageSenderApprovalService.ensureApproved(branchId);
