@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
     EFORMSIGN_DOC_REPOSITORY,
     EformsignDocStepWriteOptions,
@@ -65,7 +66,7 @@ export class UpdateEformsignDocStatusUsecase {
         // or rejected/expired), never let a stale/out-of-order webhook downgrade
         // it back to a non-terminal status. Terminal -> terminal transitions
         // (e.g. completed -> rejected) remain allowed.
-        if (TERMINAL_STATUS_CODES.has(existing.statusType) && !TERMINAL_STATUS_CODES.has(params.statusType)) {
+        if (TERMINAL_STATUS_CODES.has(normalizeEformsignStatusCode(existing.statusType)) && !TERMINAL_STATUS_CODES.has(params.statusType)) {
             this.logger.log(`ignoring stale downgrade ${params.statusType} for ${params.documentId}`);
             return { document: existing, applied: false };
         }
