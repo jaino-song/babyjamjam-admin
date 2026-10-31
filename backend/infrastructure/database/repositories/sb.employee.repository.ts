@@ -4,6 +4,8 @@ import { deriveEmployeeStatus, EmployeeEntity } from "domain/entities/employee.e
 import { isoDateInKorea } from "domain/utils/business-days";
 import {
     ActiveClientByEmployee,
+    areEmployeeNamesEqual,
+    DeletedEmployeePhoneMatchAction,
     EmployeeWorkHistoryByEmployee,
     EmployeeRestoreProfile,
     IEmployeeRepository,
@@ -62,6 +64,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         employee: EmployeeEntity,
         suppliedProfile: EmployeeRestoreProfile,
         transaction?: Prisma.TransactionClient,
+        onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction,
     ): Promise<EmployeeEntity & { restored: boolean }> {
         const apply = async (tx: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }> => {
             // Lock by identity, not deletedAt: a waiter must re-read the winner's live row.
@@ -82,6 +85,20 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                 }));
             }
             if (!existing) return Object.assign(await this.create(branchid, employee, tx), { restored: false });
+
+            if (onDeletedPhoneMatch === "register_new") {
+                await tx.employee.update({
+                    where: { id: existing.id },
+                    data: { phoneNormalized: null },
+                });
+                return Object.assign(await this.create(branchid, employee, tx), { restored: false });
+            }
+            if (onDeletedPhoneMatch !== "restore" && !areEmployeeNamesEqual(existing.name, suppliedProfile.name)) {
+                throw new ConflictException({
+                    ...codeOnlyProblemBody("EMPLOYEE_PHONE_HELD_BY_DELETED"),
+                    deletedEmployee: { id: existing.id, name: existing.name },
+                });
+            }
 
             const restored = await tx.employee.update({
                 where: { id: existing.id, branchId: branchid, deletedAt: { not: null } },

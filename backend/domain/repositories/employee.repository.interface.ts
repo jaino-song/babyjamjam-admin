@@ -1,6 +1,14 @@
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import type { Prisma } from "@prisma/client";
 
+/** 전화번호만으로 다른 사람의 이력을 복원하지 않도록 이름을 비교한다. */
+export function areEmployeeNamesEqual(left: string, right: string): boolean {
+    const normalize = (name: string): string => name.normalize("NFC").trim().replace(/\s+/gu, " ").toLowerCase();
+    return normalize(left) === normalize(right);
+}
+
+export type DeletedEmployeePhoneMatchAction = "restore" | "register_new";
+
 export interface ActiveClientByEmployee {
     clientId: number;
     clientName: string;
@@ -50,7 +58,7 @@ export interface IEmployeeRepository {
     findByPhone(branchid: string, normalizedPhone: string): Promise<EmployeeEntity | null>;
     create(branchid: string, employee: EmployeeEntity, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity>;
     /** Restore a branch phone tombstone under a row lock, or create a new employee. */
-    createOrRestore(branchid: string, employee: EmployeeEntity, suppliedProfile: EmployeeRestoreProfile, transaction?: Prisma.TransactionClient): Promise<EmployeeEntity & { restored: boolean }>;
+    createOrRestore(branchid: string, employee: EmployeeEntity, suppliedProfile: EmployeeRestoreProfile, transaction?: Prisma.TransactionClient, onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction): Promise<EmployeeEntity & { restored: boolean }>;
     update(branchid: string, employee: EmployeeEntity): Promise<EmployeeEntity>;
     /**
      * Compare the exact approval target while holding the row lock, then

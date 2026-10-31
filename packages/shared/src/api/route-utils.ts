@@ -559,6 +559,8 @@ export function sanitizeUpstreamClientError(
     operation: "read" | "mutation" = "mutation",
 ): ({ error: string; code?: string; field?: string; hasKakaoAccount?: boolean } & Partial<Omit<ProblemDetails, "code">>) {
     const problem = parseProblemDetails(upstreamData, status);
+    // parseProblemDetails whitelists the bounded deletedEmployee extension for
+    // EMPLOYEE_PHONE_HELD_BY_DELETED only; never spread the raw upstream body.
     if (problem) return { ...problem, error: problem.detail };
     if (upstreamData && typeof upstreamData === "object" && ("type" in upstreamData || "requestId" in upstreamData)) {
         return { error: normalizeApiError({ response: { status, data: upstreamData } }, { operation }).message };

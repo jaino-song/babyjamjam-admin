@@ -43,6 +43,7 @@ export type ProblemCode =
     | "CLIENT_RETENTION_BLOCKED"
     | "CLIENT_PHONE_ALREADY_REGISTERED"
     | "EMPLOYEE_PHONE_ALREADY_REGISTERED"
+    | "EMPLOYEE_PHONE_HELD_BY_DELETED"
     | "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED"
     // Registered assignment codes (EM-CAT-01; SERVICE_RECORD_WRITE_TARGET_CHANGED keeps its shipped identifier per EM-CAT-03). BJJ-319 phase 4b.
     | "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE"
@@ -163,6 +164,8 @@ export interface ProblemDetails {
     outcome?: ProblemOutcome;
     operationId?: string;
     recovery?: ProblemRecovery;
+    /** Plain text only: consumers must never render this name as HTML. */
+    deletedEmployee?: { id: number; name: string };
 }
 
 export interface ProblemCatalogEntry {
@@ -226,6 +229,7 @@ const DEFAULT_LOCALE: ErrorLocale = "ko-KR";
 const MAX_IDENTIFIER_LENGTH = 128;
 const MAX_POINTER_LENGTH = 512;
 const MAX_ORIGINAL_TEXT_LENGTH = 512;
+const MAX_DELETED_EMPLOYEE_NAME_LENGTH = 100;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const RFC6901_POINTER_PATTERN = /^(?:\/(?:[^~/]|~[01])*)*$/;
@@ -264,6 +268,7 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "CLIENT_RETENTION_BLOCKED",
     "CLIENT_PHONE_ALREADY_REGISTERED",
     "EMPLOYEE_PHONE_ALREADY_REGISTERED",
+    "EMPLOYEE_PHONE_HELD_BY_DELETED",
     "EMPLOYEE_ACTIVE_ASSIGNMENT_BLOCKED",
     // Registered assignment codes (EM-CAT-01; SERVICE_RECORD_WRITE_TARGET_CHANGED keeps its shipped identifier per EM-CAT-03). BJJ-319 phase 4b.
     "EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE",
@@ -755,6 +760,17 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "같은 전화번호의 관리사가 이미 등록되어 있어요.",
             "en-US": "An employee with the same phone number is already registered.",
+        },
+    },
+    EMPLOYEE_PHONE_HELD_BY_DELETED: {
+        status: 409,
+        title: {
+            "ko-KR": "삭제된 관리사의 연락처예요",
+            "en-US": "Phone number held by a deleted employee",
+        },
+        detail: {
+            "ko-KR": "삭제된 관리사가 이 전화번호를 사용했어요. 그분을 복원하거나 새 관리사로 등록해 주세요.",
+            "en-US": "A deleted employee used this phone number. Restore them or register a new employee.",
         },
     },
     EMPLOYEE_ASSIGNMENT_UNAVAILABLE: {
@@ -1637,6 +1653,19 @@ function parseProblemDetailsInternal(
 
     if (parsed.outcome === "UNKNOWN") {
         parsed.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
+    }
+    // This is the sole data-bearing extension allowed through the BFF.
+    if (parsed.code === "EMPLOYEE_PHONE_HELD_BY_DELETED") {
+        const deletedEmployee = readOwn(value, "deletedEmployee").value;
+        if (isRecord(deletedEmployee)) {
+            const id = readOwn(deletedEmployee, "id").value;
+            const name = readOwn(deletedEmployee, "name").value;
+            if (typeof id === "number" && Number.isSafeInteger(id) && id > 0
+                && typeof name === "string" && name.length > 0 && name.length <= MAX_DELETED_EMPLOYEE_NAME_LENGTH
+                && !CONTROL_CHARACTER_PATTERN.test(name)) {
+                parsed.deletedEmployee = { id, name };
+            }
+        }
     }
     return parsed;
 }

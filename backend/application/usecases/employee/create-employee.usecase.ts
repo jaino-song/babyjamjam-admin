@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { DEFAULT_EMPLOYEE_GRADE } from "domain/constants/employee-grade.constants";
-import { EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
+import { DeletedEmployeePhoneMatchAction, EMPLOYEE_REPOSITORY, IEmployeeRepository } from "domain/repositories/employee.repository.interface";
 import type { Prisma } from "@prisma/client";
 
 @Injectable()
@@ -22,6 +22,7 @@ export class CreateEmployeeUsecase {
         birthday?: string,
         transaction?: Prisma.TransactionClient,
         smsAutomationEnabled?: boolean,
+        onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction,
     ): Promise<EmployeeEntity & { restored: boolean }> {
         const employee = EmployeeEntity.create(
             name,
@@ -35,6 +36,6 @@ export class CreateEmployeeUsecase {
         );
         return this.employeeRepository.createOrRestore(branchid, employee, {
             name, workArea, phone, grade, openToNextWork, registeredDate, birthday, smsAutomationEnabled,
-        }, transaction);
+        }, transaction, onDeletedPhoneMatch);
     }
 }
