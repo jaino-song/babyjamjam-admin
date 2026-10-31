@@ -171,6 +171,13 @@ describeReal("employee state integrity (real PostgreSQL)", () => {
             },
         );
 
+        invariant("SI-EMP-02", "history name lookup still resolves soft-deleted employees", async () => {
+            const row = await handle.raw.employee.findUniqueOrThrow({ where: { id: deletedEmployeeId } });
+            await expect(repository.findNamesByIds(branchId, [deletedEmployeeId])).resolves.toEqual([
+                { id: deletedEmployeeId, name: row.name },
+            ]);
+        });
+
         invariant(
             "SI-EMP-02",
             "PATCH employee on a soft-deleted employee is a 404-class domain error, not a bare 500",

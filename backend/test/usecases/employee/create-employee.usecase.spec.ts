@@ -17,6 +17,12 @@ describe("CreateEmployeeUsecase", () => {
     });
 
     describe("execute", () => {
+        it("restores a deleted employee with the same id and submitted profile", async () => {
+            mockRepository.setData([EmployeeEntity.reconstitute(9, "삭제 직원", ["부산"], "01012345678", "베스트", false, new Date(), undefined, new Date())]);
+            const restored = await usecase.execute(branchId, "복원 직원", ["서울"], "010-1234-5678", "프리미엄", true, undefined, "1990-01-02", undefined, false);
+            expect(restored).toMatchObject({ id: 9, restored: true, name: "복원 직원", workArea: ["서울"], openToNextWork: true, birthday: "1990-01-02", smsAutomationEnabled: false });
+            expect(restored.deletedAt).toBeUndefined();
+        });
         it("should create a new employee with all fields", async () => {
             // Arrange
             const name = "테스트 직원";
@@ -40,6 +46,7 @@ describe("CreateEmployeeUsecase", () => {
             // Assert
             expect(result).toBeDefined();
             expect(result.id).toBe(1);
+            expect(result.restored).toBe(false);
             expect(result.name).toBe("테스트 직원");
             expect(result.workArea).toEqual(["인천 연수구", "인천 남동구"]);
             expect(result.phone).toBe("010-1234-5678");
@@ -143,7 +150,7 @@ describe("CreateEmployeeUsecase", () => {
 
         it("forwards the transaction used by an action receipt to the repository", async () => {
             const transaction = {} as never;
-            const createSpy = jest.spyOn(mockRepository, "create");
+            const createSpy = jest.spyOn(mockRepository, "createOrRestore");
 
             await usecase.execute(
                 branchId,

@@ -1,5 +1,5 @@
 import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
-import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
@@ -33,6 +33,11 @@ const EmployeeBirthdaySchema = z.string()
 const EMPLOYEE_BRANCH_PHONE_UNIQUE_CONSTRAINT = "employee_branch_id_phone_normalized_key";
 
 function isEmployeeBranchPhoneUniqueViolation(error: unknown): boolean {
+    if (error instanceof ConflictException) {
+        const response = error.getResponse();
+        return typeof response === "object" && "code" in response
+            && response.code === "EMPLOYEE_PHONE_ALREADY_REGISTERED";
+    }
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
 
     const target = error.meta?.["target"];

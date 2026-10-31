@@ -62,8 +62,8 @@ describe("MessageTriggerService", () => {
         primaryEmployeeId: number;
         secondaryEmployeeId: number | null;
         client: { id: number; name: string };
-        primaryEmployee: { id: number; name: string; phone: string } | null;
-        secondaryEmployee: { id: number; name: string; phone: string } | null;
+        primaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
+        secondaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
     };
 
     type ServiceInternals = {
@@ -3606,7 +3606,7 @@ describe("MessageTriggerService", () => {
                 const schedule: EmployeeAssignmentScheduleSource = { id: 10, branchId, clientId: 1,
                     workAddress: "주소", startDate: new Date("2026-10-01"), endDate: new Date("2026-10-20"),
                     replaced: false, terminatedAt: null, primaryEmployeeId: 30, secondaryEmployeeId: null,
-                    client: { id: 1, name: "현재 산모" }, primaryEmployee: { id: 30, name: "현재 직원", phone: "010-9999-8888" }, secondaryEmployee: null };
+                    client: { id: 1, name: "현재 산모" }, primaryEmployee: { id: 30, name: "현재 직원", phone: "010-9999-8888", deletedAt: null }, secondaryEmployee: null };
                 fx.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(rule);
                 jest.mocked(fx.service.readClientAutomationSchedules).mockResolvedValue([{ ...schedule, incarnationId: "schedule-generation" }]);
                 const recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, fx.job.scheduledFor)!;
@@ -4314,7 +4314,7 @@ describe("MessageTriggerService", () => {
         ["termination", { terminatedAt: new Date("2026-07-20T00:00:00.000Z") }],
         ["employee assignment", {
             primaryEmployeeId: 31,
-            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333" },
+            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333", deletedAt: null },
         }],
         ["branch ownership", { branchId: "branch-2" }],
     ] as const)("refuses a claimed assignment when the schedule %s changed", async (_label, change) => {
@@ -5788,7 +5788,7 @@ describe("MessageTriggerService", () => {
         primaryEmployeeId: 30,
         secondaryEmployeeId: null,
         client: { id: 1, name: "김산모" },
-        primaryEmployee: { id: 30, name: "홍제공", phone: "010-1111-2222" },
+        primaryEmployee: { id: 30, name: "홍제공", phone: "010-1111-2222", deletedAt: null },
         secondaryEmployee: null,
         ...overrides,
     });
@@ -5998,7 +5998,7 @@ describe("MessageTriggerService", () => {
             await sync.service.syncEmployeeAssignmentRulesForClient(branchId, schedule.clientId);
             schedule = createEmployeeSchedule({
                 client: { id: 1, name: "새 고객 이름" },
-                primaryEmployee: { id: 30, name: "새 직원 이름", phone: "010-9999-0000" },
+                primaryEmployee: { id: 30, name: "새 직원 이름", phone: "010-9999-0000", deletedAt: null },
             });
             await sync.service.syncEmployeeAssignmentRulesForClient(branchId, schedule.clientId);
 
@@ -6958,7 +6958,7 @@ describe("MessageTriggerService", () => {
         });
         const sync = createEmployeeSyncService({
             primaryEmployeeId: 31,
-            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333" },
+            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333", deletedAt: null },
         });
         sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
         sync.jobRepository.findSentByRuleIdAndEmployeeScheduleId.mockResolvedValue([sentOldEmployeeJob]);

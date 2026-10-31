@@ -22,6 +22,15 @@ const schedule: EmployeeAssignmentScheduleSource = {
 };
 
 describe("shared message recipes for preview and materialization", () => {
+    it.each([Recipient.PRIMARY_EMPLOYEE, Recipient.SECONDARY_EMPLOYEE])("skips deleted assignment recipient %s without suppressing the live recipient", (recipient) => {
+        const deletedSchedule = {
+            ...schedule,
+            primaryEmployee: { id: 31, name: "삭제 담당1", phone: "01000000031", deletedAt: now },
+            secondaryEmployee: { id: 32, name: "삭제 담당2", phone: "01000000032", deletedAt: now },
+        };
+        expect(buildEmployeeAssignmentMessageRecipe(rule(Template.EMPLOYEE_ASSIGNED, recipient), deletedSchedule, now)).toBeNull();
+        expect(buildEmployeeAssignmentMessageRecipe(rule(Template.EMPLOYEE_ASSIGNED, recipient), schedule, now)).not.toBeNull();
+    });
     it("uses the existing Korea calendar offset and carries only relevant client variables", () => {
         const source = rule();
         source.sendTime = "09:30";

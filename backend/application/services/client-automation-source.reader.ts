@@ -135,8 +135,8 @@ export class ClientAutomationSourceReader {
                 startDate: true, endDate: true, replaced: true, terminatedAt: true,
                 primaryEmployeeId: true, secondaryEmployeeId: true,
                 client: { select: { id: true, name: true } },
-                primaryEmployee: { select: { id: true, name: true, phone: true } },
-                secondaryEmployee: { select: { id: true, name: true, phone: true } },
+                primaryEmployee: { select: { id: true, name: true, phone: true, deletedAt: true } },
+                secondaryEmployee: { select: { id: true, name: true, phone: true, deletedAt: true } },
             }, orderBy: { id: "asc" }, take: 501,
         });
     }

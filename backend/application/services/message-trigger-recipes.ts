@@ -81,10 +81,14 @@ type EmployeeAssignmentScheduleFingerprintSource = Pick<
     | "replaced"
     | "primaryEmployeeId"
     | "secondaryEmployeeId"
-> & Partial<Pick<EmployeeAssignmentScheduleSource, "client" | "primaryEmployee" | "secondaryEmployee">>;
+> & Partial<Pick<EmployeeAssignmentScheduleSource, "client">> & {
+    // Deletion gates materialization, not the persisted source fingerprint.
+    primaryEmployee?: { id: number; name: string; phone: string } | null;
+    secondaryEmployee?: { id: number; name: string; phone: string } | null;
+};
 
 function employeeAssignmentEmployeeFingerprint(
-    employee: EmployeeAssignmentScheduleSource["primaryEmployee"] | undefined,
+    employee: EmployeeAssignmentScheduleFingerprintSource["primaryEmployee"],
 ): { id: number; name: string; phone: string } | null {
     if (!employee) return null;
     return { id: employee.id, name: employee.name, phone: employee.phone };

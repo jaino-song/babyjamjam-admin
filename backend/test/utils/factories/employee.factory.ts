@@ -11,6 +11,9 @@ export interface CreateEmployeeFactoryParams {
     grade?: string;
     openToNextWork?: boolean;
     registeredDate?: Date | null;
+    birthday?: string;
+    deletedAt?: Date;
+    smsAutomationEnabled?: boolean;
 }
 
 export class EmployeeFactory {
@@ -26,6 +29,10 @@ export class EmployeeFactory {
             params.grade ?? "프리미엄",
             params.openToNextWork ?? true,
             params.registeredDate === undefined ? new Date("2023-01-15") : params.registeredDate,
+            params.birthday,
+            params.deletedAt,
+            undefined,
+            params.smsAutomationEnabled,
         );
     }
 
