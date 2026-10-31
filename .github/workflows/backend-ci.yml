@@ -151,6 +151,8 @@ jobs:
           bash backend/deploy/fallback-server/controller/test-all.sh
           backend/deploy/fallback-server/ci/workflow-contract.test.sh
           backend/deploy/fallback-server/ci/ci-deployer-contract.test.sh
+          bash backend/deploy/fallback-server/ci/ci-deployer.behavior.test.sh
+          bash backend/deploy/fallback-server/ci/standby-decision.test.sh
           backend/deploy/ci/wait-database-patches.test.sh
           node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
 
@@ -1153,3 +1155,142 @@ jobs:
             "public_routing=fallback" \
             "schedulers_enabled=true" \
             "lease_mode=required"
+
+  # Warm standby: after Lightsail (the primary) has deployed a `main` backend
+  # release, the LightNode Fallback Server is brought to the same immutable
+  # release in passive mode (schedulers and document jobs off, Aligo blanked).
+  # Nothing depends on this job, so a failure here never affects Lightsail.
+  deploy-lightnode-standby:
+    name: deploy LightNode standby backend
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref_name == 'main' &&
+      needs.build-lightsail-image.result == 'success' &&
+      needs.resolve-backend-deploy-target.result == 'success' &&
+      needs.deploy-lightsail.result == 'success' &&
+      needs.resolve-backend-deploy-target.outputs.target == 'lightsail'
+    needs: [build-lightsail-image, resolve-backend-deploy-target, deploy-lightsail]
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: lightnode-standby-main
+      cancel-in-progress: false
+    env:
+      IMAGE_DIGEST: ${{ needs.build-lightsail-image.outputs.digest }}
+      LIGHTNODE_CI_HOST: ${{ secrets.LIGHTNODE_CI_HOST }}
+      LIGHTNODE_CI_SSH_PRIVATE_KEY: ${{ secrets.LIGHTNODE_CI_SSH_PRIVATE_KEY }}
+      LIGHTNODE_CI_KNOWN_HOSTS: ${{ secrets.LIGHTNODE_CI_KNOWN_HOSTS }}
+
+    steps:
+      # Full history: the standby's recorded release is compared with this
+      # commit by ancestry, and `main` commits that never built the backend
+      # leave gaps, so the comparison cannot be against the head of `main`.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Connect an ephemeral deployment node to the tailnet
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          hostname: babyjamjam-backend-standby-ci
+
+      - name: Configure restricted LightNode SSH
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$LIGHTNODE_CI_HOST" =~ ^[A-Za-z0-9.-]{1,253}$ ]]
+          [[ -n "$LIGHTNODE_CI_SSH_PRIVATE_KEY" && -n "$LIGHTNODE_CI_KNOWN_HOSTS" ]]
+          umask 077
+          install -d "$RUNNER_TEMP/lightnode-ssh"
+          printf '%s\n' "$LIGHTNODE_CI_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/lightnode-ssh/id"
+          printf '%s\n' "$LIGHTNODE_CI_KNOWN_HOSTS" > "$RUNNER_TEMP/lightnode-ssh/known_hosts"
+          ssh-keygen -y -f "$RUNNER_TEMP/lightnode-ssh/id" >/dev/null
+          ssh-keygen -F "$LIGHTNODE_CI_HOST" -f "$RUNNER_TEMP/lightnode-ssh/known_hosts" >/dev/null
+
+      - name: Converge the passive LightNode standby release
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$RUNNER_TEMP/lightnode-ssh/known_hosts"
+            -o ConnectTimeout=10
+            -i "$RUNNER_TEMP/lightnode-ssh/id"
+            "babyjamjam-ci-deployer@$LIGHTNODE_CI_HOST"
+          )
+          # Each status key must appear exactly once; a missing or duplicated
+          # key is a contract violation and must fail with a visible reason.
+          read_status_value() {
+            local wanted_key="$1"
+            awk -F= -v wanted_key="$wanted_key" '
+              $1 == wanted_key { count += 1; value = substr($0, length($1) + 2) }
+              END { if (count == 1 && value != "") print value; else exit 1 }' \
+              <<<"$status_output"
+          }
+          expect_status() {
+            local wanted_key="$1" expected="$2" actual
+            if ! actual="$(read_status_value "$wanted_key")"; then
+              echo "::error::LightNode standby status key '$wanted_key' is missing or duplicated"
+              printf '%s\n' "$status_output"
+              exit 1
+            fi
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::LightNode standby status '$wanted_key' is '$actual' (expected '$expected')"
+              exit 1
+            fi
+          }
+
+          status_output="$("${ssh_base[@]}" 'standby-status')"
+          printf '%s\n' "$status_output"
+
+          # The standby ends on the newest backend release that deployed to
+          # Lightsail. A release this run did not build, or an older run
+          # finishing late, must never move the standby backwards, whether or
+          # not the standby is currently healthy. The decision lives in a tested
+          # script; this step only acts on it.
+          if ! decision_output="$(printf '%s\n' "$status_output" \
+              | bash backend/deploy/fallback-server/ci/standby-decision.sh)"; then
+            echo "::error::LightNode standby convergence refused"
+            printf '%s\n' "$decision_output"
+            exit 1
+          fi
+          printf '%s\n' "$decision_output"
+          decision="$(awk -F= '$1 == "decision" { print $2 }' <<<"$decision_output")"
+          case "$decision" in
+            deploy) ;;
+            superseded)
+              echo "superseded: LightNode standby is already at or past $GITHUB_SHA"
+              exit 0
+              ;;
+            *)
+              echo "::error::LightNode standby decision is '$decision' (expected 'deploy' or 'superseded')"
+              exit 1
+              ;;
+          esac
+
+          status_output="$("${ssh_base[@]}" "deploy-standby $GITHUB_SHA $IMAGE_DIGEST")"
+          expect_status environment fallback-server
+          expect_status current_tag "$GITHUB_SHA"
+          expect_status current_digest "$IMAGE_DIGEST"
+          expect_status container_health healthy
+          expect_status restart_count 0
+          expect_status runtime_mode passive
+          expect_status schedulers_enabled false
+          expect_status production_db_identity ok
+          expect_status public_routing aws
+          deployment_changed="$(read_status_value deployment_changed)" || {
+            echo "::error::LightNode standby status key 'deployment_changed' is missing or duplicated"
+            exit 1
+          }
+          printf '%s\n' \
+            "LightNode standby now runs $GITHUB_SHA (deployment_changed=$deployment_changed)"

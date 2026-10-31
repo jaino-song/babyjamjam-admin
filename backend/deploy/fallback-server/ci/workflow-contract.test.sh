@@ -190,4 +190,113 @@ fi
 rm -f "$cloudrun_mutation"
 trap - EXIT
 
+# The LightNode passive-standby job: after Lightsail (primary) deploys a `main`
+# release, the standby converges to it by ancestry. Takes the workflow path so
+# the mutation self-checks below re-run the exact same assertions on a mutated
+# copy.
+assert_deploy_standby_contract() {
+    local workflow_file="$1"
+    local standby_job standby_if standby_if_joined
+    standby_job="$(extract_job '^  deploy-lightnode-standby:' "$workflow_file")"
+    [[ -n "$standby_job" ]] || fail "backend CI must define the LightNode standby deploy job"
+
+    standby_if="$(awk '/^    if:/{f=1} f{print} /^    needs:/{exit}' <<<"$standby_job")"
+    standby_if_joined="$(tr '\n' ' ' <<<"$standby_if")"
+    assert_text_contains "$standby_if_joined" \
+        "always\(\) &&[[:space:]]+github\.event_name == 'push' &&[[:space:]]+github\.ref_name == 'main' &&[[:space:]]+needs\.build-lightsail-image\.result == 'success' &&[[:space:]]+needs\.resolve-backend-deploy-target\.result == 'success' &&[[:space:]]+needs\.deploy-lightsail\.result == 'success' &&[[:space:]]+needs\.resolve-backend-deploy-target\.outputs\.target == 'lightsail'" \
+        "the standby job must run only on a main push after build, target resolution and the Lightsail deploy all succeeded, every clause AND-ed"
+    assert_text_contains "$standby_job" \
+        'needs:[[:space:]]*\[build-lightsail-image,[[:space:]]*resolve-backend-deploy-target,[[:space:]]*deploy-lightsail\]' \
+        "the standby job must depend on the build, target resolution and the Lightsail deploy"
+    assert_text_contains "$standby_job" 'group:[[:space:]]*lightnode-standby-main' \
+        "the standby job must use its own concurrency group"
+    assert_text_contains "$standby_job" 'cancel-in-progress:[[:space:]]*false' \
+        "the standby job must not cancel an active deployment"
+    assert_text_contains "$standby_job" 'fetch-depth:[[:space:]]*0' \
+        "the standby job needs full history for the ancestry comparison"
+    assert_text_contains "$standby_job" 'persist-credentials:[[:space:]]*false' \
+        "the standby job must not persist checkout credentials"
+    assert_text_contains "$standby_job" 'timeout-minutes:[[:space:]]*40' \
+        "the standby job must carry the deployment timeout"
+    local standby_permissions
+    standby_permissions="$(awk '/^    permissions:/{f=1; next} f && /^      /{print; next} f{exit}' <<<"$standby_job")"
+    [[ "$(grep -c . <<<"$standby_permissions")" -eq 1 ]] \
+        || fail "the standby job must declare exactly one permission entry"
+    assert_text_contains "$standby_permissions" '^      contents:[[:space:]]*read$' \
+        "the standby job must grant only read on contents"
+    assert_text_contains "$standby_job" "'standby-status'" \
+        "the standby job must read the standby with the forced standby-status command"
+    assert_text_contains "$standby_job" '"deploy-standby \$GITHUB_SHA \$IMAGE_DIGEST"' \
+        "the standby job must deploy only through the forced deploy-standby command"
+    assert_text_contains "$standby_job" 'StrictHostKeyChecking=yes' \
+        "the standby SSH must fail closed on host-key mismatch"
+    assert_text_contains "$standby_job" 'count == 1 && value != ""' \
+        "the standby status reader must reject missing or duplicated status keys"
+    # The ancestry decision is executed by tests (standby-decision.test.sh); the
+    # job may only call it and act on its decision, never re-implement it.
+    assert_text_contains "$standby_job" 'bash backend/deploy/fallback-server/ci/standby-decision\.sh' \
+        "the standby job must take its convergence decision from standby-decision.sh"
+    assert_text_contains "$standby_job" '\| bash backend/deploy/fallback-server/ci/standby-decision\.sh\)"; then' \
+        "the standby job must stop when standby-decision.sh refuses"
+    assert_text_contains "$standby_job" '^            deploy\) ;;$' \
+        "the standby job must deploy only on a deploy decision"
+    assert_text_contains "$standby_job" '^            superseded\)$' \
+        "the standby job must report a superseded run and stop"
+    assert_text_contains "$standby_job" "decision is '[$]decision' [(]expected 'deploy' or 'superseded'[)]" \
+        "the standby job must fail on any other decision"
+    if grep -Eq 'git (merge-base|cat-file)' <<<"$standby_job"; then
+        fail "the standby job must not re-implement the ancestry decision inline"
+    fi
+    assert_contains "$workflow_file" '^          bash backend/deploy/fallback-server/ci/standby-decision\.test\.sh$' \
+        "backend CI must run the standby decision tests"
+    assert_text_contains "$standby_job" 'expect_status runtime_mode passive' \
+        "the standby job must assert the passive runtime"
+    assert_text_contains "$standby_job" 'expect_status schedulers_enabled false' \
+        "the standby job must assert schedulers are off"
+    assert_text_contains "$standby_job" 'expect_status public_routing aws' \
+        "the standby job must assert the public route stays on AWS"
+    assert_text_contains "$standby_job" 'expect_status restart_count 0' \
+        "the standby job must assert no restarts"
+    # The Lightsail OIDC contract slices from deploy-lightsail to the end of the
+    # file, so this job must never carry a GitHub environment key.
+    if grep -Eq 'environment:' <<<"$standby_job"; then
+        fail "the standby job must not contain a GitHub environment key"
+    fi
+    if grep -Eq 'api\.babyjamjam\.com' <<<"$standby_job"; then
+        fail "the standby job must not probe the public API host (that host is Lightsail)"
+    fi
+    if grep -Eq 'replace-temporary-active|temporary-active|"replace |rollback' <<<"$standby_job"; then
+        fail "the standby job must not use the active-fallback commands"
+    fi
+}
+
+assert_deploy_standby_contract "$WORKFLOW"
+
+# Self-checks: the standby contract must bite. Each mutation removes one
+# load-bearing clause from a temp copy and the same assertions must FAIL on it.
+standby_mutation="$(mktemp)"
+trap 'rm -f "$standby_mutation"' EXIT
+standby_mutations=(
+    "/needs\.deploy-lightsail\.result == 'success'/d"
+    's/fetch-depth: 0/fetch-depth: 1/'
+    's|^              \| bash backend/deploy/fallback-server/ci/standby-decision.sh)"; then|              \| cat)"; then|'
+    's/^            deploy) ;;$/            deploy) exit 0 ;;/'
+    's/^            superseded)$/            superseded-never)/'
+    '/standby-decision.test.sh$/d'
+    's/group: lightnode-standby-main/group: lightsail-deploy-main/'
+    's/expect_status runtime_mode passive/expect_status runtime_mode active/'
+    's/^      # Full history:/      # environment: Full history:/'
+)
+for mutation in "${standby_mutations[@]}"; do
+    sed "$mutation" "$WORKFLOW" > "$standby_mutation"
+    if cmp -s "$WORKFLOW" "$standby_mutation"; then
+        fail "standby contract self-check mutation did not change the workflow: $mutation"
+    fi
+    if ( assert_deploy_standby_contract "$standby_mutation" ) >/dev/null 2>&1; then
+        fail "the deploy-lightnode-standby contract self-check must fail for mutation: $mutation"
+    fi
+done
+rm -f "$standby_mutation"
+trap - EXIT
+
 echo "Fallback deployment workflow contract tests passed"
