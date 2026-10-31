@@ -28,6 +28,16 @@ function stepsWithoutBackendBuild(job,label) {
   assert.equal(job.steps.filter(s=>s.name===backendBuildStep.name).length,1,`${label}: exactly one backend build step`);
   return job.steps.filter((_,index)=>index!==start-1);
 }
+// The backend tsc peaks near Node's default ~2 GB heap (OOM in run 41173922396), so the
+// backend 'Type check' step raises it. Asserts that exact env and returns the steps without
+// it, so the caller can still compare every step exactly against the pinned base.
+const typeCheckHeapEnv = {NODE_OPTIONS:'--max-old-space-size=4096'};
+function stepsWithoutTypeCheckHeap(steps,label) {
+  const index=steps.findIndex(s=>s.name==='Type check');
+  assert.ok(index>=0,`${label}: Type check step exists`);
+  assert.deepEqual(steps[index].env,typeCheckHeapEnv,`${label}: Type check raises the Node heap`);
+  const copy=structuredClone(steps);delete copy[index].env;return copy;
+}
 const reusable = parse(read('ci-impact.yml'));
 const loader = reusable.jobs.classify.steps.find(s=>s.id==='impact').run;
 const expectedNames={backend:'backend · type-check · lint · test',frontend:'frontend · type-check · lint · test · build',mobile:'type-check · lint · test · build'};
@@ -54,7 +64,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
-  assert.deepEqual(appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(appSteps,file):appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
   if(app==='backend') {assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -116,7 +126,7 @@ test('backend installs declared compiler before executing CI impact contracts; o
   assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
-  assert.deepEqual(steps.filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
+  assert.deepEqual(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
