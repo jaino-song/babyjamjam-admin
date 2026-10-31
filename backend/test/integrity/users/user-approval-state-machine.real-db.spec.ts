@@ -1,11 +1,15 @@
+import { Prisma } from "@prisma/client";
+
 import { closeIntegrityPrisma, createIntegrityPrisma, describeReal } from "../helpers/real-db";
 import { createAuthSession, createBranch, createUser } from "../helpers/factories";
-import { knownDefect, invariant } from "../helpers/known-defect";
+import { invariant } from "../helpers/known-defect";
 import { RowTracker } from "../helpers/tracker";
 
 import {
     makeUserService,
     ownerActor,
+    waitUntilBlocked,
+    withDeadline,
 } from "./users-local.helpers";
 
 import type { IntegrityPrisma } from "../helpers/real-db";
@@ -17,7 +21,7 @@ import type { AdminAuditActor } from "application/services/admin-audit-event.ser
  * service + real AdminAuditEventWriter (the five unused CRUD usecases are inert
  * stubs exactly as in test/services/user.service.spec.ts).
  *
- * - SI-USER-01 (NEEDS-PRODUCT-DECISION): `reject` has no precondition on the
+ * - SI-USER-01 (intended, operator decision 2026-10-31): `reject` has no precondition on the
  *   target's current `approvalStatus` — rejecting an APPROVED user succeeds and
  *   strips memberships/ownership/sessions in one call. Review evidence says the
  *   reject-from-approved path is intended (commit c31ed52f2 added
@@ -25,18 +29,12 @@ import type { AdminAuditActor } from "application/services/admin-audit-event.ser
  *   status; user.service.spec.ts:1753+ rejects an approved owner-of-branch
  *   manager on purpose), so the test PINS today's reachable behaviour as an
  *   invariant instead of claiming a defect.
- * - SI-USER-02 (NEEDS-PRODUCT-DECISION): `approve` has no check that the target
+ * - SI-USER-02 (intended, operator decision 2026-10-31): `approve` has no check that the target
  *   is pending — approving a REJECTED user resurrects the account and re-grants
  *   the role. Same reasoning: pinned as a reachable-today invariant.
- * - SI-USER-09 (CONFIRMED, high — no UI caller): `approve` never
- *   reads the target before writing and enforces none of the guards `reject`
- *   enforces — approve of an OWNER target demotes them, approve of the CALLER'S
- *   OWN account self-demotes; combined, the owner count reaches 0, which
- *   bypasses the `deleteGlobalUser` last-owner guard (권한-02). knownDefect.
- * - SI-USER-10 (CONFIRMED): the approval audit's `before` payload hardcodes
- *   `{ role: null, approvalStatus: "pending" }` (user.service.ts) even when the
- *   real prior state was different, so the audit trail misdescribes the
- *   transition it records. knownDefect.
+ * - SI-USER-09: `approve` locks and reads the target before writing, refusing
+ *   owner/self targets so approval cannot bypass the last-owner invariant.
+ * - SI-USER-10: the approval audit records the target's real prior role/status.
  */
 describeReal("user approval state machine (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;
@@ -70,7 +68,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
 
     invariant(
         "SI-USER-01",
-        "rejecting an already-APPROVED account strips memberships and sessions — is reachable today (NEEDS-PRODUCT-DECISION)",
+        "rejecting an already-APPROVED account strips memberships and sessions — intended (operator decision 2026-10-31)",
         async () => {
             const branch = await createBranch(handle.raw, tracker);
             const owner = await createUser(handle.raw, tracker, { role: "owner" });
@@ -88,12 +86,8 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
                 { selectedBranchId: branch.id },
             );
 
-            // Today's reachable behaviour, pinned as an invariant: reject has no
-            // precondition on the source approvalStatus, so this succeeds and its
-            // destructive writes run (memberships deleted, sessions revoked). The
-            // product decision is whether the state machine gains a precondition
-            // (`reject` only from `pending`) or a separate explicit deactivate
-            // path; whichever is decided changes this invariant, not a defect id.
+            // Intended offboarding transition (operator decision 2026-10-31):
+            // approved accounts may be rejected, removing memberships/sessions.
             await expect(service.reject(approved.id, actor)).resolves.toMatchObject({
                 approvalStatus: "rejected",
             });
@@ -110,7 +104,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
 
     invariant(
         "SI-USER-02",
-        "approving a REJECTED account resurrects it and re-grants the role — is reachable today (NEEDS-PRODUCT-DECISION)",
+        "approving a REJECTED account resurrects it and re-grants the role — intended (operator decision 2026-10-31)",
         async () => {
             const branch = await createBranch(handle.raw, tracker);
             const owner = await createUser(handle.raw, tracker, { role: "owner" });
@@ -122,13 +116,8 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
                 requestedRole: "manager",
             });
 
-            // Today's reachable behaviour, pinned as an invariant: approve never
-            // checks the target's approvalStatus, so the rejected account is
-            // resurrected exactly as a pending sign-up would be. The product
-            // decision is whether approve-from-rejected stays reachable; evidence
-            // for the currently intended shape lives in commit c31ed52f2, the
-            // audit event prior-status payload and user.service.spec.ts:1753+,
-            // but the UI only offers approve for pending users.
+            // Intended restoration transition (operator decision 2026-10-31):
+            // rejected accounts remain eligible for approval.
             await expect(service.approve(rejected.id, {
                 role: "manager",
                 approvedBy: owner.id,
@@ -147,7 +136,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
         },
     );
 
-    knownDefect(
+    invariant(
         "SI-USER-09",
         "approve refuses an owner target and the caller's own account, and the owner count never reaches zero",
         async () => {
@@ -157,7 +146,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
             expect(await handle.raw.user.count({ where: { role: "owner" } })).toBe(2);
 
             // Both calls must refuse with ACCESS_DENIED, without changing either
-            // owner. Collect successful writes so the knownDefect fails only for
+            // owner. Collect successful writes so the invariant fails only for
             // the demonstrated authorization gap, never for a setup/DB error.
             const violations: string[] = [];
             try {
@@ -175,8 +164,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
             if (ownerBAfter.role !== "owner") violations.push(`ownerB role became '${ownerBAfter.role}'`);
 
             // Part 2: the caller approves THEIR OWN account, re-granting a role on
-            // the caller's own row — no self guard exists in approve (reject has
-            // one). Global owners drop to 0, bypassing the deleteGlobalUser
+            // the caller's own row. This must not bypass the deleteGlobalUser
             // last-owner guard (권한-02: at least one owner must survive).
             try {
                 await service.approve(ownerA.id, {
@@ -198,10 +186,64 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
                 throw new Error(`SI-USER-09: approval authorization invariant violated: ${violations.join("; ")}`);
             }
         },
-        "SI-USER-09: approval authorization invariant violated:",
     );
 
-    knownDefect(
+    invariant(
+        "SI-USER-09",
+        "approve waits for the user-row lock and refuses a target concurrently promoted to owner",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const owner = await createUser(handle.raw, tracker, { role: "owner" });
+            const target = await createUser(handle.raw, tracker, { role: "user" });
+            let approval: Promise<{ error?: unknown }> | undefined;
+            let outcome: { error?: unknown } | undefined;
+
+            try {
+                await handle.raw.$transaction(async (tx) => {
+                    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "user" WHERE "id" = ${target.id}::uuid FOR UPDATE`);
+                    await tx.user.update({ where: { id: target.id }, data: { role: "owner" } });
+                    approval = service.approve(target.id, {
+                        role: "user", approvedBy: owner.id, actor: ownerActor(owner.id), branchId: branch.id,
+                    }).then(() => ({}), (error: unknown) => ({ error }));
+
+                    // An UPDATE waiter is not enough: approval must lock BEFORE reading.
+                    await waitUntilBlocked(handle.raw, /FROM\s+"user"[\s\S]*FOR\s+UPDATE/);
+                }, { timeout: 15_000 });
+            } finally {
+                // Also drain the contender after a failed lock assertion/rollback.
+                if (approval) outcome = await withDeadline(approval, 10_000, "approval contender did not settle");
+            }
+
+            expect(outcome).toMatchObject({ error: { status: 403, response: { code: "ACCESS_DENIED" } } });
+            expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id } }))
+                .toMatchObject({ role: "owner", tokenVersion: target.tokenVersion });
+            expect(await handle.raw.user_branch.count({ where: { userId: target.id } })).toBe(0);
+        },
+    );
+
+    invariant(
+        "SI-USER-09",
+        "approve refuses an actor's own non-owner target even when approvedBy is a different owner",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const owner = await createUser(handle.raw, tracker, { role: "owner" });
+            const target = await createUser(handle.raw, tracker, { role: "user" });
+
+            await expect(service.approve(target.id, {
+                role: "manager",
+                approvedBy: owner.id,
+                actor: { userId: target.id, globalRole: "user" },
+                branchId: branch.id,
+            })).rejects.toMatchObject({ status: 403, response: { code: "ACCESS_DENIED" } });
+
+            expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id } }))
+                .toMatchObject({ role: target.role, approvalStatus: target.approvalStatus, tokenVersion: target.tokenVersion });
+            expect(await handle.raw.user_branch.count({ where: { userId: target.id } })).toBe(0);
+            expect(await handle.raw.admin_audit_event.count({ where: { targetId: target.id } })).toBe(0);
+        },
+    );
+
+    invariant(
         "SI-USER-10",
         "the approval audit's before.approvalStatus records the real prior status of the target",
         async () => {
@@ -241,11 +283,12 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
                 throw new Error("SI-USER-10 wrong-reason failure: no user.approved audit event was written");
             }
             const beforePayload = auditEvent.beforePayload as { approvalStatus?: string; role?: unknown } | null | undefined;
+            expect(beforePayload?.role).toBe(rejected.role);
 
             // The correct invariant: the audit `before` must equal the target's real
             // pre-transition state ({ role: null, approvalStatus: "rejected" }).
             if (beforePayload?.approvalStatus === "rejected") {
-                return; // invariant holds (fix landed): flip this knownDefect to invariant().
+                return;
             }
 
             throw new Error(
@@ -256,7 +299,26 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
                     "misdescribes non-pending approval transitions",
             );
         },
-        "SI-USER-10: the user.approved audit event's before.approvalStatus is 'pending'",
+    );
+
+    invariant(
+        "SI-USER-10",
+        "the approval audit records a non-null prior role when re-approving an approved account",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const owner = await createUser(handle.raw, tracker, { role: "owner" });
+            const target = await createUser(handle.raw, tracker, { role: "manager", approvalStatus: "approved" });
+
+            await service.approve(target.id, {
+                role: "user", approvedBy: owner.id, actor: ownerActor(owner.id), branchId: branch.id,
+            });
+
+            const event = await handle.raw.admin_audit_event.findFirstOrThrow({
+                where: { action: "user.approved", targetId: target.id },
+            });
+            expect(event.beforePayload).toEqual({ id: target.id, role: "manager", approvalStatus: "approved" });
+            expect(event.afterPayload).toMatchObject({ id: target.id, role: "user", approvalStatus: "approved" });
+        },
     );
 
     invariant(
