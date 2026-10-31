@@ -51,12 +51,12 @@ export class UserController {
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
 
-        // Owners are scoped to their selected branch too, but they must still see
-        // branch-less (pending) sign-ups: a user gets no branch membership until an
-        // owner/admin approves them and assigns one, so hiding branch-less users here
-        // would make the approval flow unreachable for owners with a branch selected.
+        // Owners manage every account from the system-admin console, so their directory
+        // is never scoped to the branch they happen to have selected: an account that
+        // lives in another branch would otherwise be invisible to them while still
+        // blocking its phone number at sign-up (/auth/check-phone is global).
         return this.userService.findDirectory({
-            branchId: req.user.branchId,
+            branchId: req.user.role === "owner" ? undefined : req.user.branchId,
             includeUnassigned: req.user.role === "owner",
             callerRole: req.user.role,
             status,
