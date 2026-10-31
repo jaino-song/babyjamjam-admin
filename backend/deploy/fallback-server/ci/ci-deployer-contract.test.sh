@@ -6,6 +6,7 @@ readonly SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly DEPLOYER="$SCRIPT_ROOT/ci-deployer.sh"
 readonly INSTALLER="$SCRIPT_ROOT/install-ci-deployer.sh"
 readonly DISPATCHER="$SCRIPT_ROOT/ssh-dispatch.sh"
+readonly DECISION="$SCRIPT_ROOT/standby-decision.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -23,6 +24,7 @@ assert_not_contains() {
 [[ -r "$DEPLOYER" ]] || fail "missing restricted LightNode CI deployer"
 [[ -r "$INSTALLER" ]] || fail "missing restricted LightNode CI deployer installer"
 [[ -r "$DISPATCHER" ]] || fail "missing forced-command SSH dispatcher"
+[[ -r "$DECISION" ]] || fail "missing standby convergence decision script"
 
 assert_contains "$DEPLOYER" 'SUDO_USER' \
     "deployer must bind authority to the dedicated SSH user"
@@ -90,6 +92,16 @@ assert_contains "$DEPLOYER" 'status_value runtime_mode "\$output"\)" == "passive
     "standby paths must require the passive runtime"
 assert_contains "$DEPLOYER" 'status_value schedulers_enabled "\$output"\)" == "false"' \
     "standby paths must require schedulers off"
+assert_contains "$DEPLOYER" '^read_recorded_release\(\)' \
+    "standby-status must read the recorded release identity separately from runtime health"
+assert_contains "$DEPLOYER" 'STATE_DIRECTORY/current-image-tag' \
+    "the recorded release tag must come from the operator state directory"
+assert_contains "$DEPLOYER" 'STATE_DIRECTORY/current-image-digest' \
+    "the recorded release digest must come from the operator state directory"
+assert_contains "$DEPLOYER" 'standby_release=recorded-unhealthy' \
+    "standby-status must report a recorded but unhealthy release"
+assert_not_contains "$DEPLOYER" 'ancestor' \
+    "the root deployer must not decide ancestry; the host has no git history"
 [[ "$(tail -n 1 "$DEPLOYER")" == 'main "$@"' ]] || fail "main must remain the last line of the deployer"
 assert_contains "$DEPLOYER" '^readonly VALKEY_RESTORE_MARKER=' \
     "the restore-fence marker line form must stay stable for the fence test"
@@ -110,7 +122,7 @@ assert_not_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION (replace-temporary-act
     "sudoers must not expose destructive or non-CI operator commands"
 assert_not_contains "$INSTALLER" 'NOPASSWD: ALL' "sudoers must not grant unrestricted commands"
 
-bash -n "$DEPLOYER" "$INSTALLER" "$DISPATCHER"
+bash -n "$DEPLOYER" "$INSTALLER" "$DISPATCHER" "$DECISION"
 if [[ "$EUID" -ne 0 ]]; then
     if "$DEPLOYER" status >/dev/null 2>&1; then
         fail "deployer must reject direct non-root execution"

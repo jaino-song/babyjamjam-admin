@@ -232,16 +232,23 @@ assert_deploy_standby_contract() {
         "the standby SSH must fail closed on host-key mismatch"
     assert_text_contains "$standby_job" 'count == 1 && value != ""' \
         "the standby status reader must reject missing or duplicated status keys"
-    assert_text_contains "$standby_job" 'git merge-base --is-ancestor "\$GITHUB_SHA" "\$current_tag"' \
-        "the standby job must treat a standby already containing this commit as superseded"
-    assert_text_contains "$standby_job" 'git merge-base --is-ancestor "\$current_tag" "\$GITHUB_SHA"' \
-        "the standby job must deploy only when the standby release is an ancestor of this commit"
-    assert_text_contains "$standby_job" 'has diverged from' \
-        "the standby job must fail visibly when the standby release has diverged"
-    assert_text_contains "$standby_job" 'git cat-file -e' \
-        "the standby job must fail visibly when the standby release is not in history"
-    assert_text_contains "$standby_job" 'superseded' \
-        "the standby job must report a superseded run"
+    # The ancestry decision is executed by tests (standby-decision.test.sh); the
+    # job may only call it and act on its decision, never re-implement it.
+    assert_text_contains "$standby_job" 'bash backend/deploy/fallback-server/ci/standby-decision\.sh' \
+        "the standby job must take its convergence decision from standby-decision.sh"
+    assert_text_contains "$standby_job" '\| bash backend/deploy/fallback-server/ci/standby-decision\.sh\)"; then' \
+        "the standby job must stop when standby-decision.sh refuses"
+    assert_text_contains "$standby_job" '^            deploy\) ;;$' \
+        "the standby job must deploy only on a deploy decision"
+    assert_text_contains "$standby_job" '^            superseded\)$' \
+        "the standby job must report a superseded run and stop"
+    assert_text_contains "$standby_job" "decision is '[$]decision' [(]expected 'deploy' or 'superseded'[)]" \
+        "the standby job must fail on any other decision"
+    if grep -Eq 'git (merge-base|cat-file)' <<<"$standby_job"; then
+        fail "the standby job must not re-implement the ancestry decision inline"
+    fi
+    assert_contains "$workflow_file" '^          bash backend/deploy/fallback-server/ci/standby-decision\.test\.sh$' \
+        "backend CI must run the standby decision tests"
     assert_text_contains "$standby_job" 'expect_status runtime_mode passive' \
         "the standby job must assert the passive runtime"
     assert_text_contains "$standby_job" 'expect_status schedulers_enabled false' \
@@ -272,8 +279,10 @@ trap 'rm -f "$standby_mutation"' EXIT
 standby_mutations=(
     "/needs\.deploy-lightsail\.result == 'success'/d"
     's/fetch-depth: 0/fetch-depth: 1/'
-    '/git merge-base --is-ancestor "\$current_tag" "\$GITHUB_SHA"/d'
-    '/git merge-base --is-ancestor "\$GITHUB_SHA" "\$current_tag"/d'
+    's|^              \| bash backend/deploy/fallback-server/ci/standby-decision.sh)"; then|              \| cat)"; then|'
+    's/^            deploy) ;;$/            deploy) exit 0 ;;/'
+    's/^            superseded)$/            superseded-never)/'
+    '/standby-decision.test.sh$/d'
     's/group: lightnode-standby-main/group: lightsail-deploy-main/'
     's/expect_status runtime_mode passive/expect_status runtime_mode active/'
     's/^      # Full history:/      # environment: Full history:/'

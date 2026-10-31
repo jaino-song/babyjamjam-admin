@@ -154,19 +154,63 @@ require_passive_status() {
         || die "The LightNode standby runtime is not a passive Fallback release."
 }
 
+# The operator records the release it activated in its state directory
+# (`current-image-tag`, `current-image-digest`), independent of whether the
+# container is up. That recorded identity is what keeps an older queued run from
+# rolling a stopped or restarting standby backwards. Sets RECORDED_TAG and
+# RECORDED_DIGEST and returns 0 when a release is recorded; returns 1 only when
+# NEITHER file exists. A partial, unsafe or malformed record dies: "cannot be
+# read" is never "absent".
+read_recorded_release() {
+    local tag_file="$STATE_DIRECTORY/current-image-tag"
+    local digest_file="$STATE_DIRECTORY/current-image-digest"
+    local have_tag=0 have_digest=0
+    RECORDED_TAG=""
+    RECORDED_DIGEST=""
+    if [[ -e "$STATE_DIRECTORY" || -L "$STATE_DIRECTORY" ]]; then
+        [[ -d "$STATE_DIRECTORY" && ! -L "$STATE_DIRECTORY" ]] \
+            || die "The Fallback state directory is unsafe."
+    fi
+    if [[ -e "$tag_file" || -L "$tag_file" ]]; then have_tag=1; fi
+    if [[ -e "$digest_file" || -L "$digest_file" ]]; then have_digest=1; fi
+    if [[ "$have_tag" -eq 0 && "$have_digest" -eq 0 ]]; then
+        return 1
+    fi
+    [[ "$have_tag" -eq 1 && "$have_digest" -eq 1 ]] \
+        || die "The recorded Fallback release identity is incomplete."
+    validate_protected_file "$tag_file" 600
+    validate_protected_file "$digest_file" 600
+    # This function runs as an `if` condition, where `set -e` is suspended, so
+    # each failure must abort explicitly.
+    RECORDED_TAG="$(read_single_line "$tag_file" "$SHA_PATTERN")" \
+        || die "The recorded Fallback release identity is malformed."
+    RECORDED_DIGEST="$(read_single_line "$digest_file" "$DIGEST_PATTERN")" \
+        || die "The recorded Fallback release identity is malformed."
+}
+
 emit_standby_status() {
     local output
     require_aws_route
     validate_protected_file "$OPERATOR" 750
-    # On a never-deployed or stopped host the operator status exits non-zero;
-    # that is "no standby release", not an error.
-    if ! output="$("$OPERATOR" status)"; then
-        printf '%s\n' "environment=fallback-server" "standby_release=none" "public_routing=aws"
+    # A readable status must be a passive one. When the operator cannot report
+    # (stopped, restarting, never deployed) the recorded release identity still
+    # decides: a recorded release is reported as recorded-unhealthy so callers
+    # keep their ancestry guard, and only a host with no record at all is "none".
+    if output="$("$OPERATOR" status)"; then
+        require_passive_status "$output"
+        printf '%s\n' "$output" | awk -F= '$1 != "public_routing" { print }'
+        printf '%s\n' "standby_release=present" "public_routing=aws"
         return 0
     fi
-    require_passive_status "$output"
-    printf '%s\n' "$output" | awk -F= '$1 != "public_routing" { print }'
-    printf '%s\n' "standby_release=present" "public_routing=aws"
+    if read_recorded_release; then
+        printf '%s\n' "environment=fallback-server" \
+            "standby_release=recorded-unhealthy" \
+            "current_tag=$RECORDED_TAG" \
+            "current_digest=$RECORDED_DIGEST" \
+            "public_routing=aws"
+        return 0
+    fi
+    printf '%s\n' "environment=fallback-server" "standby_release=none" "public_routing=aws"
 }
 
 write_automatic_approval() {

@@ -152,6 +152,7 @@ jobs:
           backend/deploy/fallback-server/ci/workflow-contract.test.sh
           backend/deploy/fallback-server/ci/ci-deployer-contract.test.sh
           bash backend/deploy/fallback-server/ci/ci-deployer.behavior.test.sh
+          bash backend/deploy/fallback-server/ci/standby-decision.test.sh
           backend/deploy/ci/wait-database-patches.test.sh
           node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
 
@@ -1250,50 +1251,29 @@ jobs:
           }
 
           status_output="$("${ssh_base[@]}" 'standby-status')"
-          expect_status environment fallback-server
-          expect_status public_routing aws
-          standby_release="$(read_status_value standby_release)" || {
-            echo "::error::LightNode standby status key 'standby_release' is missing or duplicated"
-            printf '%s\n' "$status_output"
-            exit 1
-          }
+          printf '%s\n' "$status_output"
 
           # The standby ends on the newest backend release that deployed to
           # Lightsail. A release this run did not build, or an older run
-          # finishing late, must never move the standby backwards.
-          case "$standby_release" in
-            none)
-              echo "LightNode standby has no release recorded; deploying $GITHUB_SHA"
-              ;;
-            present)
-              expect_status runtime_mode passive
-              expect_status schedulers_enabled false
-              expect_status production_db_identity ok
-              current_tag="$(read_status_value current_tag)" || {
-                echo "::error::LightNode standby status key 'current_tag' is missing or duplicated"
-                exit 1
-              }
-              [[ "$current_tag" =~ ^[0-9a-f]{40}$ ]] || {
-                echo "::error::LightNode standby current_tag is not a commit SHA"
-                exit 1
-              }
-              if ! git cat-file -e "${current_tag}^{commit}" 2>/dev/null; then
-                echo "::error::LightNode standby release $current_tag is not in this repository's history"
-                exit 1
-              fi
-              if [[ "$current_tag" == "$GITHUB_SHA" ]] \
-                || git merge-base --is-ancestor "$GITHUB_SHA" "$current_tag"; then
-                echo "superseded: LightNode standby already runs $current_tag, which contains $GITHUB_SHA"
-                exit 0
-              fi
-              if ! git merge-base --is-ancestor "$current_tag" "$GITHUB_SHA"; then
-                echo "::error::LightNode standby release $current_tag has diverged from $GITHUB_SHA"
-                exit 1
-              fi
-              echo "LightNode standby runs $current_tag, an ancestor of $GITHUB_SHA; deploying"
+          # finishing late, must never move the standby backwards, whether or
+          # not the standby is currently healthy. The decision lives in a tested
+          # script; this step only acts on it.
+          if ! decision_output="$(printf '%s\n' "$status_output" \
+              | bash backend/deploy/fallback-server/ci/standby-decision.sh)"; then
+            echo "::error::LightNode standby convergence refused"
+            printf '%s\n' "$decision_output"
+            exit 1
+          fi
+          printf '%s\n' "$decision_output"
+          decision="$(awk -F= '$1 == "decision" { print $2 }' <<<"$decision_output")"
+          case "$decision" in
+            deploy) ;;
+            superseded)
+              echo "superseded: LightNode standby is already at or past $GITHUB_SHA"
+              exit 0
               ;;
             *)
-              echo "::error::LightNode standby_release is '$standby_release' (expected 'none' or 'present')"
+              echo "::error::LightNode standby decision is '$decision' (expected 'deploy' or 'superseded')"
               exit 1
               ;;
           esac

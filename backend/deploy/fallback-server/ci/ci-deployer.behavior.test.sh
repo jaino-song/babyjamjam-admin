@@ -364,6 +364,107 @@ run_main standby-status
 expect_refused "standby-status accepted a foreign environment"
 echo "ok - standby-status"
 
+# ===== 9b. standby-status keeps the recorded release identity when the operator cannot report health.
+# A stopped or restarted standby must not look release-less: an older queued run
+# would then skip its ancestry check and roll the host back.
+record_release() { # tag digest
+    printf '%s\n' "$1" >"$W/root/state/current-image-tag"
+    printf '%s\n' "$2" >"$W/root/state/current-image-digest"
+}
+expect_status_block() { # description release
+    expect_ok "$1"
+    expect_out_line "$1" "environment=fallback-server"
+    expect_out_line "$1" "standby_release=$2"
+    expect_out_line "$1" "public_routing=aws"
+}
+
+# stopped: the operator dies with "container is not running"
+world_reset; record_release "$SHA_B" "$DIG_B"
+echo 1 >"$W/status.rc"
+run_main standby-status
+expect_status_block "standby-status on a stopped host with a recorded release" recorded-unhealthy
+expect_out_line "stopped" "current_tag=$SHA_B"
+expect_out_line "stopped" "current_digest=$DIG_B"
+expect_no_out_line "stopped" "standby_release=none"
+expect_unique_key "stopped" public_routing
+expect_unique_key "stopped" standby_release
+[[ "$(cat "$W/out")" == "$(printf '%s\n' environment=fallback-server standby_release=recorded-unhealthy "current_tag=$SHA_B" "current_digest=$DIG_B" public_routing=aws)" ]] \
+    || fail "recorded-unhealthy printed: $(cat "$W/out")"
+
+# restarted: the operator prints a partial, unhealthy status and exits non-zero;
+# nothing of that output may reach the caller, and the record still wins.
+world_reset; record_release "$SHA_A" "$DIG_A"
+status_block "$SHA_B" "$DIG_B" passive false unhealthy 3 >"$W/status.out"
+echo 1 >"$W/status.rc"
+run_main standby-status
+expect_status_block "standby-status on a restarting host with a recorded release" recorded-unhealthy
+expect_out_line "restarted" "current_tag=$SHA_A"
+expect_out_line "restarted" "current_digest=$DIG_A"
+expect_no_out_line "restarted" "current_tag=$SHA_B"
+expect_no_out_line "restarted" "restart_count=3"
+
+# no record at all: the only "none"
+world_reset; echo 1 >"$W/status.rc"
+run_main standby-status
+expect_status_block "standby-status with no state files" none
+expect_no_out_line "none" "current_tag=$SHA_A"
+world_reset; rm -rf "$W/root/state"; echo 1 >"$W/status.rc"
+run_main standby-status
+expect_status_block "standby-status with no state directory" none
+
+# an incomplete or malformed record is a refusal, never "none"
+world_reset; echo 1 >"$W/status.rc"
+printf '%s\n' "$SHA_B" >"$W/root/state/current-image-tag"
+run_main standby-status
+expect_refused "standby-status treated a tag without a digest as none"; expect_err "tag only" "incomplete"
+world_reset; echo 1 >"$W/status.rc"
+printf '%s\n' "$DIG_B" >"$W/root/state/current-image-digest"
+run_main standby-status
+expect_refused "standby-status treated a digest without a tag as none"; expect_err "digest only" "incomplete"
+for bad in "zz" "${SHA_A:1}" "${SHA_A}0" "$(printf 'A%.0s' {1..40})" ""; do
+    world_reset; echo 1 >"$W/status.rc"
+    record_release "$bad" "$DIG_B"
+    run_main standby-status
+    expect_refused "standby-status accepted malformed tag '$bad'"; expect_err "malformed tag" "malformed"
+    expect_no_out_line "malformed tag" "standby_release=none"
+done
+for bad in "sha256:zz" "$SHA_A" "sha256:${DIG_A#sha256:}0" ""; do
+    world_reset; echo 1 >"$W/status.rc"
+    record_release "$SHA_B" "$bad"
+    run_main standby-status
+    expect_refused "standby-status accepted malformed digest '$bad'"; expect_err "malformed digest" "malformed"
+done
+world_reset; echo 1 >"$W/status.rc"
+printf '%s\n%s\n' "$SHA_B" "$SHA_A" >"$W/root/state/current-image-tag"
+printf '%s\n' "$DIG_B" >"$W/root/state/current-image-digest"
+run_main standby-status
+expect_refused "standby-status accepted a two-line tag record"
+world_reset; echo 1 >"$W/status.rc"
+ln -s /nonexistent "$W/root/state/current-image-tag"
+printf '%s\n' "$DIG_B" >"$W/root/state/current-image-digest"
+run_main standby-status
+expect_refused "standby-status accepted a symlinked tag record"
+world_reset; echo 1 >"$W/status.rc"
+rm -rf "$W/root/state"; ln -s /nonexistent "$W/root/state"
+run_main standby-status
+expect_refused "standby-status accepted a symlinked state directory"
+expect_no_out_line "symlinked state directory" "standby_release=none"
+
+# a readable passive status is reported as present; the record is not consulted
+world_reset; record_release "$SHA_A" "$DIG_A"
+status_block "$SHA_B" "$DIG_B" passive false >"$W/status.out"
+run_main standby-status
+expect_status_block "standby-status on a healthy host" present
+expect_out_line "healthy" "current_tag=$SHA_B"
+expect_no_out_line "healthy" "current_tag=$SHA_A"
+
+# a readable but non-passive status is still refused, whatever the record says
+world_reset; record_release "$SHA_A" "$DIG_A"
+status_block "$SHA_B" "$DIG_B" temporary-active true >"$W/status.out"
+run_main standby-status
+expect_refused "standby-status hid a temporary-active host behind its record"
+echo "ok - standby-status keeps the recorded release when health cannot be read"
+
 # ===== 10. existing commands are unchanged: status keeps requiring the fallback route
 world_reset   # route is AWS, the approved identity is the fallback hash
 status_block "$SHA_A" "$DIG_A" passive false >"$W/status.out"
