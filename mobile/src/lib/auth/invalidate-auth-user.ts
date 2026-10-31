@@ -1,9 +1,9 @@
 /** Refresh authority without clearing drafts, logging out, or awaiting the refused query itself. */
 export async function invalidateAuthUser(): Promise<void> {
-    // Lazy imports avoid the API client -> auth hook -> API client cycle at load time.
+    // Keep transport imports hook-free for Server Components and route handlers.
     const [{ getQueryClient }, { AUTH_USER_QUERY_KEY }] = await Promise.all([
         import("@/lib/queryClient"),
-        import("@/hooks/useGetAuthUser"),
+        import("@/lib/auth/query-keys"),
     ]);
     void getQueryClient().invalidateQueries(
         { queryKey: AUTH_USER_QUERY_KEY, exact: true },
