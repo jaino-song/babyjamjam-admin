@@ -1,5 +1,14 @@
 # LightNode temporary Fallback host
 
+> **2026-10-31: LightNode is now a permanent standby, not a temporary host.** It
+> stays running after failback and is **not** released. Failback ends with the
+> operator `stop` followed by a passive `deploy-standby` of the current release,
+> and every later `main` release reaches it passively. The failback paragraph
+> below (revoke egress, disable Caddy, revoke Tailscale, scrub, Release) is
+> **historical**. Use the ordered runbook in `docs/devops-deployment-rules.md`
+> §4.1 instead, and keep Caddy, Tailscale and the Aligo allow-list on the standby.
+> The purchase, provisioning, egress and approval rules still apply to a rebuilt host.
+
 This is a manual 24–48 hour operation, not automatic Sentry/controller failover. Select **Korea VPS Agency**, Linux x86_64, shared 2 vCPU/4 GB/50 GB NVMe. Do not select Start; do not select dedicated VDS without separate approval. Confirm the console hourly/all-in quote before purchase.
 
 Create fresh Ubuntu with SSH keys only, restrictive cloud firewall/security group, Docker/Compose, Node, systemd and Tailscale. Never place production secrets in images, cloud-init, CLI arguments, console logs, or shell history. Run `lightnode-preflight.sh fresh`, then use a separately approved root-only provisioning channel to install the protected bundle. Run `lightnode-preflight.sh installed` only while that bundle is staged: before any environment file, approval, evidence, passive deployment, or active runtime. After deployment use the Fallback operator `status`, not preflight. The operator validates and consumes root-owned artifacts; it never receives their values in arguments or stdout.
@@ -24,13 +33,14 @@ Conditional `main` CI replacement is a separate opt-in authority. It may be
 installed only after the dedicated non-Docker SSH user, root-owned automation
 authority, protected LightNode routing hash, Tailscale ACL, and GitHub secrets
 have been approved. CI must resolve one exclusive production target: when the
-route hash is LightNode it may call only the restricted CI wrapper; when the
-route hash is Lightsail it may call only the existing SSM deployment; an unknown
-or mixed hash deploys nowhere. The wrapper must preserve the bounded approval,
+route hash is LightNode it may call only the restricted CI wrapper's `replace`;
+when the route hash is Lightsail it calls the existing SSM deployment and then the
+wrapper's passive `standby-status`/`deploy-standby`; an unknown or mixed hash
+deploys nowhere. The wrapper must preserve the bounded approval,
 singleton scheduler/document-worker ownership, preload-before-recreate order,
 and automatic rollback contract of `replace-temporary-active`.
 
-For failback, verify AWS health and reconciliation, restore the protected `api.babyjamjam.com` DNS value, and confirm public HTTPS on AWS before stopping Fallback. Then revoke the LightNode Aligo egress, disable Caddy, revoke Tailscale device/auth material, stop and confirm API absence, scrub, **Release** (not Stop), and confirm billing ended. Never image a host after runtime secrets or a production container existed: Docker Config.Env/deleted-block history can retain them. Golden images are allowed only before secret injection; otherwise Release without imaging. A recreated instance/public IP requires new Aligo registration and approval hash.
+*(Historical — superseded on 2026-10-31; see the banner above.)* For failback, verify AWS health and reconciliation, restore the protected `api.babyjamjam.com` DNS value, and confirm public HTTPS on AWS before stopping Fallback. Then revoke the LightNode Aligo egress, disable Caddy, revoke Tailscale device/auth material, stop and confirm API absence, scrub, **Release** (not Stop), and confirm billing ended. Never image a host after runtime secrets or a production container existed: Docker Config.Env/deleted-block history can retain them. Golden images are allowed only before secret injection; otherwise Release without imaging. A recreated instance/public IP requires new Aligo registration and approval hash.
 
 ## Explicit no-automatic-shutdown operation
 
@@ -51,8 +61,9 @@ lease, protected original approval/evidence and approved egress, then restores
 state from those existing artifacts without restarting the API. It cannot start
 a stopped service or invent approval/evidence values.
 
-Status reports `automatic_shutdown=disabled`. The restricted CI interface stays
-`status`/`replace`; each replacement still requires automation authority, public
+Status reports `automatic_shutdown=disabled`. The restricted CI interface for the
+active host stays `status`/`replace` (the passive standby uses `standby-status`/
+`deploy-standby`, see README); each replacement still requires automation authority, public
 routing identity, a fresh release-bound transaction approval, immutable image
 verification, readiness and automatic image rollback. Historical approval expiry
 does not stop the persistent runtime. Missing policy retains the original

@@ -9,9 +9,9 @@
 | 주제 | 파일 |
 |---|---|
 | 릴리스 흐름 개요 | `README.md` → "Deployment and release flow" |
-| 백엔드 CI·이미지 빌드·배포 잡 (Lightsail 잡은 미사용) | `.github/workflows/backend-ci.yml` |
-| Lightsail 운영 계약 (OIDC, SSM, 롤백) — **미사용(2026-10-19), 역사** | `backend/deploy/lightsail/CI_AUTOMATION.md`, `backend/deploy/lightsail/README.md` |
-| 수동 Lightsail 운영 — **미사용** | `.github/workflows/lightsail-operations.yml`, `backend/deploy/lightsail/lightsail-cli.sh` |
+| 백엔드 CI·이미지 빌드·배포 잡 | `.github/workflows/backend-ci.yml` |
+| Lightsail 운영 계약 (OIDC, SSM, 롤백) — 프로덕션 주 호스트(2026-10-31 복귀 결정) | `backend/deploy/lightsail/CI_AUTOMATION.md`, `backend/deploy/lightsail/README.md` |
+| 수동 Lightsail 운영 | `.github/workflows/lightsail-operations.yml`, `backend/deploy/lightsail/lightsail-cli.sh` |
 | DB 패치 | `.github/workflows/database-patches.yml`, `backend/prisma/migrations/`, `backend/prisma/scripts/` |
 | 테넌트 격리 롤아웃 | `backend/README.md` → "TENANT_ISOLATION_MODE" |
 | 런치 체크리스트 예시 | `docs/plans/2026-09-01-call-inbox-launch-checklist.md` |
@@ -31,7 +31,7 @@
 |---|---|---|---|---|
 | `dev` | 통합 대상. 모든 feature/fix PR의 목적지 | 빌드 안 함 (2026-08-06부터, [외부] Ignored Build Step) | 배포 없음. 로컬 `localhost:3001`로 테스트 | `apply-dev` (prisma 경로 push 시) |
 | `preview` | 릴리스 후보 검증 | preview 빌드 | Google Cloud Run `babyjamjam-api-preview` (`*.run.app`, asia-northeast3, min 0 / max 1), push 시 `deploy-cloudrun` 잡이 자동(`apply-production` 뒤, BJJ-341부터). runbook: `docs/plans/2026-09-23-preview-cloud-run.md` | `apply-production` (운영 DB, BJJ-484) |
-| `main` | 프로덕션 | production 빌드 (`admin.babyjamjam.com`, `m.admin.babyjamjam.com`) | **LightNode VPS Fallback Server** (`api.babyjamjam.com` DNS가 가리키는 대상), push 시 자동(같은 커밋의 `apply-production` 패치 성공 뒤). AWS Lightsail은 더 이상 쓰지 않는다(2026-10-19 사용자 확인) | `apply-production` |
+| `main` | 프로덕션 | production 빌드 (`admin.babyjamjam.com`, `m.admin.babyjamjam.com`) | **AWS Lightsail**(주 호스트로 2026-10-31 결정, 전환 전까지는 LightNode가 실서빙) + **LightNode Fallback**(전환 후 상시 standby). `api.babyjamjam.com` DNS가 가리키는 쪽이 주 배포 대상이며, push 시 자동(같은 커밋의 `apply-production` 패치 성공 뒤). DNS가 Lightsail이면 LightNode에도 passive로 같은 릴리스가 배포된다(§4.1). 전환 진행 상황은 §4.1 "현재 상태" | `apply-production` |
 
 규칙:
 
@@ -39,7 +39,7 @@
 2. **preview/main 룰셋은 linear history + Vercel deploy 체크 필수** [외부]. squash 승격은 다음 승격에서 대량 add/add 충돌을 만든다 (2026-07 실측, 79건). 승격 PR은 merge commit으로.
 3. **dev 호스팅은 없다.** dev Railway는 2026-07-16 삭제, dev Vercel 빌드는 2026-08-06 제거. `*-dev.up.railway.app`, `dev.m.admin.*` 같은 URL을 전제로 한 설정·안내는 전부 오류다.
 4. **preview 백엔드는 프로덕션과 같은 Supabase DB를 본다** (2026-07-17 Railway env 실측: NODE_ENV 외 53개 값 동일). preview 승격 = prod 데이터에 적용이라고 전제한다. 진짜 격리가 필요하면 preview 전용 DB 분리가 선행 과제다.
-5. **업데이트(2026-10-19 사용자 확인): AWS Lightsail은 더 이상 쓰지 않는다.** main 배포 대상은 `resolve-backend-deploy-target`(`backend/deploy/fallback-server/ci/resolve-deploy-target.mjs`)이 `api.babyjamjam.com` DNS로 고르며, 현재는 LightNode(`deploy-lightnode`)다. 아래는 2026-09-02 당시 기록이다. **(당시) 프로덕션 백엔드 = AWS Lightsail.** Railway는 더 이상 프로덕션 런타임이 아니다. 백업은 **LightNode VPS의 Fallback Server**(`backend/deploy/fallback-server/`): API-only warm standby로, 프로덕션 DB만 바라보며 스케줄러·자동완료·eformsign 잡·Aligo가 Compose에서 하드 비활성화돼 있다. 트래픽 전환은 Sentry Uptime 알림 → 컨트롤러 → Vercel DNS `api`/`A` 레코드 한 건의 **AWS → Fallback 일방향** 변경이며, 자동 failback은 없다. 상태와 절차는 `backend/deploy/fallback-server/README.md`, `CONTROLLER_OPERATIONS.md`, `LIGHTNODE_TEMPORARY_FALLBACK.md`, `VERCEL_DNS_FAILOVER.md`가 기준이다. **어떤 시점에도 `SCHEDULERS_ENABLED=true`인 런타임은 하나여야 한다** (중복 발송 위험, §5 참고).
+5. **업데이트(2026-10-31 사용자 결정): 프로덕션 주 호스트는 다시 AWS Lightsail, LightNode는 상시 warm standby.** (2026-10-19의 "Lightsail 미사용" 결정을 대체한다.) main 배포 대상은 `resolve-backend-deploy-target`(`backend/deploy/fallback-server/ci/resolve-deploy-target.mjs`)이 `api.babyjamjam.com` DNS로 고른다: Lightsail이면 `deploy-lightsail` 뒤에 `deploy-lightnode-standby`가 LightNode에 같은 릴리스를 passive(스케줄러·문서 잡·Aligo 꺼짐)로 배포하고, LightNode면(장애 중) 기존 `deploy-lightnode`가 temporary-active 릴리스를 교체한다. LightNode는 장애 후 Release하지 않고 계속 켜 둔다(정지해도 요금이 나간다). preview는 Cloud Run 그대로다. 장애 전환은 수동 runbook(§4.1)이며 Sentry/컨트롤러 자동 전환은 설치하지 않는다. 상태와 절차는 `backend/deploy/fallback-server/README.md`, `LIGHTNODE_TEMPORARY_FALLBACK.md`, `VERCEL_DNS_FAILOVER.md`가 기준이다. **어떤 시점에도 스케줄러 lease를 쥔 런타임은 하나여야 한다** (DB lease, ADR-010; 중복 발송 위험, §5 참고).
 
 ---
 
@@ -61,7 +61,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 1. **로컬 최소 검증은 README의 목록 그대로.** `pnpm lint`, `pnpm lint:ui-architecture`, 앱별 `type-check`, `pnpm test`, `pnpm build`. CI가 잡아줄 것을 기다리지 않는다.
 2. **`lint:ui-architecture` baseline은 늘어날 수 없다.** 새 위반은 실패. 파일을 정리했으면 `docs/design-system/ui-debt-baseline.json`에서 제거한다.
-3. **preview push의 `deploy Lightsail backend` 잡이 빨간 것은 코드 문제가 아닐 수 있다.** 2026-08-30부터 AWS OIDC trust policy 오류(`Not authorized to perform sts:AssumeRoleWithWebIdentity`, PreviewDeployRole)로 실패 중. `gh run list --workflow=backend-ci.yml --branch=preview`로 `pull_request` 런과 `push` 런을 나눠 보고, `pull_request`가 green이면 PR은 정상이다. 수리는 IAM 쪽 별도 작업. **업데이트(BJJ-341, 2026-09-23): preview는 더 이상 Lightsail에 배포하지 않는다(Cloud Run `deploy-cloudrun`으로 전환).** GCP 부트스트랩(`docs/plans/2026-09-23-preview-cloud-run.md` §3)이 끝난 뒤부터 이 OIDC 실패는 preview에 적용되지 않는다 — Lightsail은 2026-10-19부로 미사용이라 main에도 해당 없다.
+3. **preview push의 `deploy Lightsail backend` 잡이 빨간 것은 코드 문제가 아닐 수 있다.** 2026-08-30부터 AWS OIDC trust policy 오류(`Not authorized to perform sts:AssumeRoleWithWebIdentity`, PreviewDeployRole)로 실패 중. `gh run list --workflow=backend-ci.yml --branch=preview`로 `pull_request` 런과 `push` 런을 나눠 보고, `pull_request`가 green이면 PR은 정상이다. 수리는 IAM 쪽 별도 작업. **업데이트(BJJ-341, 2026-09-23): preview는 더 이상 Lightsail에 배포하지 않는다(Cloud Run `deploy-cloudrun`으로 전환).** GCP 부트스트랩(`docs/plans/2026-09-23-preview-cloud-run.md` §3)이 끝난 뒤부터 이 OIDC 실패는 preview에 적용되지 않는다 — main의 production OIDC 역할은 Lightsail 복귀 시 `lightsail-operations.yml` `status`로 따로 확인한다.
 4. **CI 상태 조회에 `gh run list --commit <sha>`를 쓰지 않는다.** 실행이 있어도 빈 결과를 돌려준다 (2026-08-06 오보 사고). 다음을 쓴다:
    ```
    gh run list --branch <branch> --limit 6 --json headSha,name,status,conclusion \
@@ -123,7 +123,7 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 - 사고: `eformsign_doc` 컬럼(PR #407, 2026-07-28). 앱은 배포됐는데 프로덕션 DB에 컬럼이 없던 하루 동안 호환 SELECT가 `templateId`를 null로 채워 **10분 중복 발송 가드가 조용히 무력화**됐다. 2026-07-29 11:52 수동 dispatch로 복구.
 - 같은 유형: PR #616(2026-09-03). `backend-ci`가 `database-patches.yml`의 production 승인 대기와 무관하게 ~20분 만에 배포를 끝냈고, 새 코드가 아직 없던 `employee_schedule.terminated_at`/`scheduler_lease`를 조회해 데스크톱 목록이 500으로 빈 상태가 됐다.
 - 승격 후 확인: `git show origin/main:.github/workflows/database-patches.yml | grep -c '<패치 이름>'`.
-- **이 사고 이후 `backend-ci`는 `preview`/`main` push에서 같은 커밋의 `Database Patches` 런이 성공할 때까지 기다린다** (잡 `wait for database patches`, `backend/deploy/ci/wait-database-patches.sh`). `resolve-backend-deploy-target`(따라서 그 뒤의 배포 잡도 — preview는 BJJ-341부터 `deploy-cloudrun`, main은 DNS가 가리키는 대상 — 현재 `deploy-lightnode`, Lightsail은 미사용)이 이 잡 뒤에 걸린다. 2026-09-03 오너 결정으로 GitHub `Production` environment의 필수 리뷰어를 제거해 **production 패치도 preview와 같이 main push에서 자동 적용**된다. 따라서 정상 경로는 push → 패치 자동 적용 → (수 분 뒤) 배포 자동 이어짐이고, 패치가 실패하면 배포는 실행되지 않는다. 이 대기 잡은 `backend-deploy-wait-<ref>` concurrency 그룹(`cancel-in-progress: true`)으로 묶여 있어, 같은 브랜치에 더 새로운 커밋이 push되면 이전 커밋의 대기 잡이 취소되고(따라서 그 커밋의 배포도 실행되지 않고) 최신 커밋만 배포로 이어진다 — 오래된 커밋이 나중에 도착해 최신 커밋의 배포를 덮어쓰는 경합을 막는다. 패치 런 출현 대기는 최대 10분, 완료 대기는 최대 120분이며 초과 시 스크립트가 `::error::`로 실패한다(잡 자체의 `timeout-minutes: 150`은 상한일 뿐, 정상적으로 도달하는 종료 경로가 아니다). 실패 시 Database Patches 런을 고치거나 승인한 뒤 **먼저 Database Patches push 런의 실패한 잡을 재실행**하고, **그다음 Backend CI의 실패한 잡을 재실행**한다 — `workflow_dispatch`로 별도 실행한 복구 런은 게이트를 통과시키지 못한다(스크립트는 이 커밋의 push 트리거 런만 본다). 이 자동화의 전제는 §3.1의 멱등 SQL 원칙과 dev → preview → main 승격 열차에서 같은 패치가 먼저 두 번 실행된다는 점이다. `backend/prisma/**` 변경이 없는 push는 지연 없이 통과한다(패치 런이 없어도 됨을 diff로 판별).
+- **이 사고 이후 `backend-ci`는 `preview`/`main` push에서 같은 커밋의 `Database Patches` 런이 성공할 때까지 기다린다** (잡 `wait for database patches`, `backend/deploy/ci/wait-database-patches.sh`). `resolve-backend-deploy-target`(따라서 그 뒤의 배포 잡도 — preview는 BJJ-341부터 `deploy-cloudrun`, main은 DNS가 가리키는 대상 — `deploy-lightsail`(+ `deploy-lightnode-standby`) 또는 장애 중 `deploy-lightnode`)이 이 잡 뒤에 걸린다. 2026-09-03 오너 결정으로 GitHub `Production` environment의 필수 리뷰어를 제거해 **production 패치도 preview와 같이 main push에서 자동 적용**된다. 따라서 정상 경로는 push → 패치 자동 적용 → (수 분 뒤) 배포 자동 이어짐이고, 패치가 실패하면 배포는 실행되지 않는다. 이 대기 잡은 `backend-deploy-wait-<ref>` concurrency 그룹(`cancel-in-progress: true`)으로 묶여 있어, 같은 브랜치에 더 새로운 커밋이 push되면 이전 커밋의 대기 잡이 취소되고(따라서 그 커밋의 배포도 실행되지 않고) 최신 커밋만 배포로 이어진다 — 오래된 커밋이 나중에 도착해 최신 커밋의 배포를 덮어쓰는 경합을 막는다. 패치 런 출현 대기는 최대 10분, 완료 대기는 최대 120분이며 초과 시 스크립트가 `::error::`로 실패한다(잡 자체의 `timeout-minutes: 150`은 상한일 뿐, 정상적으로 도달하는 종료 경로가 아니다). 실패 시 Database Patches 런을 고치거나 승인한 뒤 **먼저 Database Patches push 런의 실패한 잡을 재실행**하고, **그다음 Backend CI의 실패한 잡을 재실행**한다 — `workflow_dispatch`로 별도 실행한 복구 런은 게이트를 통과시키지 못한다(스크립트는 이 커밋의 push 트리거 런만 본다). 이 자동화의 전제는 §3.1의 멱등 SQL 원칙과 dev → preview → main 승격 열차에서 같은 패치가 먼저 두 번 실행된다는 점이다. `backend/prisma/**` 변경이 없는 push는 지연 없이 통과한다(패치 런이 없어도 됨을 diff로 판별).
 
 ### 3.4 프로덕션 수동 적용 함정 (2026-07-16 실측)
 
@@ -138,9 +138,9 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 ---
 
-## 4. 백엔드 배포 (이미지 빌드 · Lightsail은 미사용)
+## 4. 백엔드 배포 (이미지 빌드 · Lightsail)
 
-> **2026-10-19: Lightsail은 더 이상 쓰지 않는다.** 이미지 빌드(`build-lightsail-image` 잡, `backend/Dockerfile.lightsail` — 이름만 남음)는 Cloud Run preview와 LightNode main 배포가 계속 쓴다. 아래 표의 OIDC·SSM·`lightsail-operations.yml` 규칙은 역사다. main 운영·롤백은 §4.1 LightNode를 따른다.
+> **2026-10-31 결정: Lightsail을 다시 프로덕션 주 호스트로 쓴다** (production 전용 — preview는 Cloud Run). **전환(§4.1 "복귀") 완료 전까지는 LightNode가 계속 실서빙 호스트다** — §4.1 "현재 상태" 참고. 이미지 빌드(`build-lightsail-image` 잡, `backend/Dockerfile.lightsail`)는 Lightsail, LightNode, Cloud Run이 같이 쓴다. Lightsail 호스트의 preview Compose 스택은 쓰지 않는다.
 
 `preview`/`main` push → `backend-ci.yml`이 `backend/Dockerfile.lightsail`로 **불변 커밋 이미지**(`ghcr.io/jaino-song/babyjamjam-admin-backend:<sha>`)를 빌드 → OIDC로 브랜치 스코프 역할을 얻어 **고정 SSM 문서**로 호스트에 그 이미지를 활성화. 호스트는 이미지를 빌드하지 않는다.
 **preview는 BJJ-341(2026-09-23)부터 이 경로를 벗어난다:** 같은 GHCR 이미지를 `deploy-cloudrun` 잡이 Artifact Registry로 복사해 Cloud Run `babyjamjam-api-preview`에 배포하며, preview env는 호스트 `backend.env`가 아니라 **Secret Manager + 매니페스트**(`backend/deploy/cloudrun/service.preview.yaml`)에 산다. runbook: `docs/plans/2026-09-23-preview-cloud-run.md`. 아래 표의 Lightsail 규칙은 main에 적용된다.
@@ -160,14 +160,14 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 
 | 항목 | 규칙 |
 |---|---|
-| 역할 | API-only warm standby. 프론트 배포 아님. 호스트명 `api.babyjamjam.com`은 그대로 두고 DNS 소유권만 바뀐다 |
+| 역할 | 상시 API-only warm standby(장애 후 Release하지 않음). 프론트 배포 아님. 호스트명 `api.babyjamjam.com`은 그대로 두고 DNS 소유권만 바뀐다. DNS가 Lightsail이면 main push마다 `deploy-lightnode-standby`가 restricted `deploy-standby`로 passive 릴리스를 갱신한다 — Lightsail에 성공한 최신 백엔드 릴리스로 수렴한다. 상태는 restricted `standby-status`로 읽는다 (`present`=정상 passive, `recorded-unhealthy`=릴리스 기록은 있으나 컨테이너 중지·재시작 중, `none`=기록 없음). 판정(`ci/standby-decision.sh`): `none` → 배포 · 기록 태그가 이 커밋의 조상 → 배포 · 같은 태그+`present` → superseded · 같은 태그+`recorded-unhealthy` → 같은 릴리스 재배포(복구) · 기록 태그가 더 새 커밋 → 상태와 무관하게 superseded(그 standby가 비정상이면 기록된 커밋의 잡을 재실행해 복구) · 갈라진 히스토리·모르는 태그·잘못된 상태 → 실패. 그 전에 GitHub API(`ci/newer-primary-release.sh`)로 이 커밋의 후손 커밋 중 "deploy Lightsail backend"가 성공한 런이 있으면 배포를 superseded로 바꾼다(실패 판정은 덮지 않음; API 오류·목록에 아직 없는 잡은 빨간 실패 → 재실행). 수용한 위험: 조회 시점 이후 더 새 릴리스가 Lightsail에 성공하고 그 standby 잡이 실패하면 standby가 한 릴리스 뒤처질 수 있다 — 그 실패한 잡을 재실행하면 따라잡는다. 프로덕션에는 영향 없음. 전환 드레인 중(DNS는 Lightsail, LightNode는 아직 temporary-active)의 main push는 host가 passive가 아니어서 `deploy-lightnode-standby`가 빨갛게 실패한다 — 예상된 동작이며 드레인 뒤 재실행한다 |
 | 바인딩 | Fallback API `127.0.0.1:3101`, 컨트롤러 `127.0.0.1:3102` (`POST /sentry/uptime-alert`, `GET /health`만) |
 | DB | 프로덕션 DB만. 활성화 전 **Production DB identity hash 게이트**(`approved-production-db-ref.sha256`) 통과 필수 |
-| 비활성 기능 | 스케줄러, 자동완료, eformsign 문서 잡 intake/worker, unlocked reconcile, Aligo — Compose에서 하드 비활성화. 켜지 않는다 |
-| 전환 | Sentry Uptime → Internal Integration webhook → 컨트롤러가 `VERIFYING` → `DNS_COMMITTING` 단계로 Vercel DNS `api`/`A` 레코드 1건을 AWS → Fallback 일방향 PATCH. 모호한 응답은 수동 reconcile |
-| 복귀 | **자동 failback 없음.** AWS 복구 후 DNS 되돌리기는 수동 절차 (`VERCEL_DNS_FAILOVER.md`) |
+| 비활성 기능 | 스케줄러, 자동완료, eformsign 문서 잡 intake/worker, unlocked reconcile, Aligo — standby(passive)에서는 Compose에서 하드 비활성화. 켜지 않는다. 예외: 장애 runbook("전환" ③)의 `temporary-active`만 lease 게이트 아래 켠다 |
+| 전환 (수동 runbook) | AWS 장애 시: ① Vercel DNS `api`/`A`를 LightNode로 PATCH 후 재조회 ② Caddy가 인증서를 받을 때까지 대기(10분 기한) ③ 기록된 passive 릴리스와 일치하는 **새 기한부 temporary-active 승인 아티팩트**를 준비(operator `validate_temporary_active_approval`가 검사)하고 `temporary-active`(또는 persistent active) 기동 후 `/health/lease`에서 LightNode가 lease를 쥐었는지 확인. 컨트롤러 자동 전환 경로(Sentry Uptime → 컨트롤러)는 코드에만 있고 설치하지 않는다 |
+| 복귀 (failback) | **자동 failback 없음.** ① 미리 `api` TTL을 60초로 ② Lightsail 배포·`curl --resolve api.babyjamjam.com:443:<고정 IP>`로 헬스+유효 인증서 확인(Caddy 인증서가 만료돼 DNS 전까지 갱신 불가면, 10분 기한을 선언하고 ③ 뒤 기한 안에 인증서가 안 나오면 아래 순서로 되돌린다) ③ DNS를 Lightsail로 PATCH·두 리졸버로 확인 ④ 이전 TTL+15분 동안 LightNode가 남은 클라이언트를 계속 서빙(lease·Aligo 유지), 접근 로그에 5분간 새 요청이 없으면 ⑤ LightNode `stop` → `deploy-standby`(같은 릴리스) → Lightsail이 lease를 쥐었는지 확인. Valkey는 옮기지 않는다(전부 폐기·재생성 가능, 상태는 Postgres). 드레인 중에는 실시간 힌트가 호스트를 넘지 않아 다른 호스트의 변경은 다음 재조회 때 보인다. 되돌리기(rollback): (1) Lightsail 스케줄러를 끈다 — `SCHEDULERS_ENABLED=false`로 재배포하거나 API를 멈춤 (2) `scheduler_lease`가 비었는지 확인 (3) 기록된 passive 릴리스와 일치하는 새 기한부 temporary-active 승인 아티팩트로 LightNode를 temporary-active 재기동하고 lease를 쥐었는지 확인 (4) DNS를 LightNode로 되돌리고 같은 방식으로 드레인 |
 | 사전 점검 | `lightnode-preflight.sh`, `NETWORK_PREFLIGHT.md`. 컨트롤러 arm/disarm은 `CONTROLLER_OPERATIONS.md` |
-| 현재 상태 | **2026-09-03부터 프로덕션 DNS가 Fallback을 가리켜 프로덕션 트래픽을 서빙한다**(`public_routing=fallback`, `runtime_mode=temporary-active`, 스케줄러·문서 잡도 Fallback에서 활성). Lightsail은 2026-10-19 미사용 확인. 컨트롤러 설치·arm 여부는 README 기준. 바뀌면 README와 이 표를 같이 갱신 |
+| 현재 상태 | 2026-09-03부터 프로덕션 DNS가 Fallback을 가리켜 프로덕션 트래픽을 서빙 중(`runtime_mode=temporary-active`). **2026-10-31 결정: Lightsail로 되돌리고 LightNode는 passive standby로 전환 — 전환 완료 전까지는 이 줄이 현재 상태다.** 컨트롤러는 설치·arm하지 않는다. 바뀌면 README와 이 표를 같이 갱신 |
 
 Railway 관련 (역사·잔존 — 프로덕션 런타임 아님):
 
@@ -195,7 +195,7 @@ Railway 관련 (역사·잔존 — 프로덕션 런타임 아님):
 
 **앱의 Valkey 사용자는 `INFO`(`@dangerous`) 권한을 유지해야 한다.** 막으면 연속성 증명이 fail-closed로 떨어져 모든 재연결이 전체 새로고침을 한다.
 
-Lightsail은 미사용이다. 되살리면 같은 펜스 절차를 적용한다 (Lightsail is unused; if revived, the same fenced steps apply). 절차 상세와 테스트: `backend/deploy/fallback-server/README.md` → "Fenced Valkey restore", `operator.valkey-restore.behavior.test.sh`.
+Lightsail(2026-10-31 복귀)에도 같은 펜스 절차를 적용한다 (the same fenced steps apply on Lightsail). Valkey는 호스트마다 따로라 Lightsail↔LightNode 전환 때 자동으로 옮겨지지 않는다 — 전환 전 키 분류(폐기·재생성·이전 필요)를 먼저 한다. 절차 상세와 테스트: `backend/deploy/fallback-server/README.md` → "Fenced Valkey restore", `operator.valkey-restore.behavior.test.sh`.
 
 ---
 
@@ -205,7 +205,7 @@ Lightsail은 미사용이다. 되살리면 같은 펜스 절차를 적용한다 
 
 | 플래그 | 위치 | 규칙 |
 |---|---|---|
-| `SCHEDULERS_ENABLED` | LightNode 호스트 env (main, Lightsail 미사용) · Cloud Run preview 매니페스트 하드코딩 (BJJ-341부터) | production 런타임 **하나**만 true. preview는 항상 false (백엔드 기본값 true — 매니페스트 누락 금지) |
+| `SCHEDULERS_ENABLED` | Lightsail 호스트 env (main 주 호스트) · LightNode 호스트 env (활성일 때만 true, standby는 Compose가 false 고정) · Cloud Run preview 매니페스트 하드코딩 (BJJ-341부터) | production 런타임 **하나**만 true. preview는 항상 false (백엔드 기본값 true — 매니페스트 누락 금지) |
 | `CONTRACT_AUTO_FINALIZE_ENABLED`, `CONTRACT_AUTO_FINALIZE_SINCE` | 백엔드 env | 계약서 자동 검토완료 스케줄러(매일 17:00 KST). SINCE(YYYY-MM-DD)는 배포일 = 백로그 울타리, 없으면 에러 로그 후 no-op. 켜기 전 `eformsign_doc` 자동완료 컬럼 3개 패치(20260808000000) 선적용. 브랜치별 세부 설정은 DB(`system_setting`, `branch:<id>:contract_automation:auto_finalize`)이며 UI 계약서 → 자동화에서 편집 |
 | `EFORMSIGN_DOCUMENT_JOBS_ACCEPTING_ENABLED` | 백엔드 env | 문서 잡 큐 수락. 위 스케줄러의 전제 |
 | `SERVICE_RECORD_AUTO_FINALIZE_ENABLED` | 백엔드 env | 제공기록지 자동 완료. 로컬 실기기 테스트에도 필요 |
@@ -251,9 +251,9 @@ Lightsail은 미사용이다. 되살리면 같은 펜스 절차를 적용한다 
 1. `dev` CI 전부 green (`enforce` leg 포함). 조회는 §2-4 방식으로.
 2. 신규 migrations ↔ `database-patches.yml` 세 잡 배선 대조 (§3.2-2).
 3. 마이그레이션이 있으면 **먼저** `gh workflow run database-patches.yml --ref dev -f target=<preview|production>` 실행·성공 확인 (§3.3).
-4. 새 env 키가 있으면 `env.tpl` 갱신 + 원격 환경(LightNode 호스트 env, preview Cloud Run Secret Manager, Vercel env)에 값 추가. 플래그는 아직 OFF.
+4. 새 env 키가 있으면 `env.tpl` 갱신 + 원격 환경(Lightsail·LightNode 호스트 env 둘 다, preview Cloud Run Secret Manager, Vercel env)에 값 추가. 플래그는 아직 OFF.
 5. 승격 PR은 merge commit (linear history 룰셋).
-6. 배포 완료 확인: 백엔드 `/health/ready` 200 + `deploy LightNode fallback backend` 잡의 tag/digest 일치(실패 표시라도 `current_tag`/`container_health`를 확인), 프론트 production 배포 sha.
+6. 배포 완료 확인: 백엔드 `/health/ready` 200 + `deploy Lightsail backend` 잡(장애 중이면 `deploy LightNode fallback backend`)의 tag/digest 일치, `deploy LightNode standby backend`가 같은 tag이거나 superseded(실패 표시라도 `current_tag`/`container_health`를 확인), 프론트 production 배포 sha.
 7. 플래그 ON → 첫 실행 로그 확인 (§5).
 8. Sentry release/source map 확인 (프로덕션 아티팩트가 바뀐 경우). 백엔드 Sentry는 **service-records 이벤트만** 통과시키므로 다른 도메인 오류는 로그로 본다.
 9. 런치 체크리스트가 있는 기능은 그 문서(예: `docs/plans/2026-09-01-call-inbox-launch-checklist.md`)의 §0~§5를 닫는다.
@@ -283,8 +283,8 @@ Lightsail은 미사용이다. 되살리면 같은 펜스 절차를 적용한다 
 8. `gh run list --commit`으로 "CI 대기중"이라고 보고.
 9. preview push의 OIDC 배포 실패를 코드 문제로 재조사.
 10. 플래그를 컬럼 패치 전에 ON.
-11. 두 런타임(LightNode Fallback과 다른 런타임 — 잔존 Lightsail·Railway 포함)에 동시에 스케줄러 활성화.
-14. Fallback Server에서 스케줄러·잡 워커·Aligo를 켬, 또는 DB identity 게이트를 우회.
+11. 두 런타임(Lightsail과 LightNode, 잔존 Railway 포함)에 동시에 스케줄러 활성화 — 전환 중에는 lease를 쥔 쪽을 먼저 내린다.
+14. standby인 Fallback Server에서 스케줄러·잡 워커·Aligo를 켬, 또는 DB identity 게이트를 우회 (장애 runbook의 temporary-active만 예외).
 15. Fallback 전환 후 자동으로 돌아올 것이라 가정 (failback은 수동).
 12. env 키를 추가하고 `env.tpl`·`env-check`를 빠뜨림.
 13. 저장소의 `rollback.sh`를 직접 실행 (retired, 거부됨).

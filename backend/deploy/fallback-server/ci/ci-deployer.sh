@@ -66,22 +66,69 @@ status_value() {
         END { if (count == 1 && value != "") print value; else exit 1 }' <<<"$status_output"
 }
 
-canonical_public_route_hash() {
+# One resolver call per guard: prints the sorted unique IPv4 records of the
+# public API host, one per line, and dies when none resolve or the resolver
+# fails. Callers assign the result on its own line so `set -e` aborts when it
+# dies in the substitution. errexit is NOT inherited inside `$(...)`, so every
+# step here (and in hash_route_lines) fails explicitly with `|| die`: a getent
+# that prints records but exits non-zero must never look like a good answer.
+resolve_public_route_records() {
     local records
     records="$(getent ahostsv4 "$PUBLIC_API_HOST" \
         | awk '$2 == "STREAM" && $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $1 }' \
-        | sort -u)"
+        | sort -u)" || die "The public API route could not be resolved."
     [[ -n "$records" ]] || die "The public API route could not be resolved."
-    printf '%s\n' "$records" | sha256sum | awk '{ print $1 }'
+    printf '%s\n' "$records"
+}
+
+# sha256 of newline-terminated route text: the whole record set, or one record.
+hash_route_lines() {
+    local digest
+    digest="$(printf '%s\n' "$1" | sha256sum | awk '{ print $1 }')" \
+        || die "The public API route could not be hashed."
+    [[ "$digest" =~ $HASH_PATTERN ]] || die "The public API route could not be hashed."
+    printf '%s\n' "$digest"
 }
 
 require_fallback_route() {
-    local approved_hash current_hash
+    local approved_hash records current_hash
     validate_protected_file "$APPROVED_PUBLIC_ROUTING_FILE" 400
     approved_hash="$(read_single_line "$APPROVED_PUBLIC_ROUTING_FILE" "$HASH_PATTERN")"
-    current_hash="$(canonical_public_route_hash)"
+    records="$(resolve_public_route_records)"
+    current_hash="$(hash_route_lines "$records")" || die "The public API route could not be hashed."
     [[ "$current_hash" == "$approved_hash" ]] \
         || die "The public API route is not the approved Fallback target."
+}
+
+# Passive standby paths run only while LightNode receives NO public API traffic
+# (Lightsail is primary). The route must resolve; an unresolvable route is a
+# failure, never "not LightNode". The resolver result is assigned on its own line
+# so `set -e` aborts when it dies inside the command substitution.
+#
+# The approved hash is the hash of LightNode's single IP, so the per-record check
+# is only meaningful for that single-IP approved fallback. A mixed answer
+# (Lightsail plus LightNode) hashes differently from the whole set, so every
+# record is hashed on its own and any match refuses. If the approved hash ever
+# covered several IPs no single record would match; the whole-set comparison
+# still refuses then, so the guard fails closed.
+#
+# Deliberately a LightNode denylist, not a positive "approved primary" allowlist:
+# that would need a new protected root-owned file and installer change, and the
+# safety criterion is only "never replace standby while LightNode is a public
+# route". An unknown non-LightNode IP does not route traffic to LightNode.
+require_aws_route() {
+    local approved_hash records current_hash record record_hash
+    validate_protected_file "$APPROVED_PUBLIC_ROUTING_FILE" 400
+    approved_hash="$(read_single_line "$APPROVED_PUBLIC_ROUTING_FILE" "$HASH_PATTERN")"
+    records="$(resolve_public_route_records)"
+    current_hash="$(hash_route_lines "$records")" || die "The public API route could not be hashed."
+    [[ "$current_hash" != "$approved_hash" ]] \
+        || die "LightNode is the public route; use replace, not the standby path."
+    while IFS= read -r record; do
+        record_hash="$(hash_route_lines "$record")" || die "The public API route could not be hashed."
+        [[ "$record_hash" != "$approved_hash" ]] \
+            || die "A mixed or LightNode public route was refused; LightNode still receives public traffic, so use replace, not the standby path."
+    done <<<"$records"
 }
 
 require_automation_authority() {
@@ -128,6 +175,76 @@ emit_status() {
     output="$(validated_status)"
     printf '%s\n' "$output" | awk -F= '$1 != "public_routing" { print }'
     printf '%s\n' "public_routing=fallback"
+}
+
+# A standby host is a passive Fallback Server: environment/identity verified,
+# schedulers off. Anything else (including temporary-active) is refused.
+require_passive_status() {
+    local output="$1"
+    [[ "$(status_value environment "$output")" == "fallback-server" \
+        && "$(status_value production_db_identity "$output")" == "ok" \
+        && "$(status_value runtime_mode "$output")" == "passive" \
+        && "$(status_value schedulers_enabled "$output")" == "false" ]] \
+        || die "The LightNode standby runtime is not a passive Fallback release."
+}
+
+# The operator records the release it activated in its state directory
+# (`current-image-tag`, `current-image-digest`), independent of whether the
+# container is up. That recorded identity is what keeps an older queued run from
+# rolling a stopped or restarting standby backwards. Sets RECORDED_TAG and
+# RECORDED_DIGEST and returns 0 when a release is recorded; returns 1 only when
+# NEITHER file exists. A partial, unsafe or malformed record dies: "cannot be
+# read" is never "absent".
+read_recorded_release() {
+    local tag_file="$STATE_DIRECTORY/current-image-tag"
+    local digest_file="$STATE_DIRECTORY/current-image-digest"
+    local have_tag=0 have_digest=0
+    RECORDED_TAG=""
+    RECORDED_DIGEST=""
+    if [[ -e "$STATE_DIRECTORY" || -L "$STATE_DIRECTORY" ]]; then
+        [[ -d "$STATE_DIRECTORY" && ! -L "$STATE_DIRECTORY" ]] \
+            || die "The Fallback state directory is unsafe."
+    fi
+    if [[ -e "$tag_file" || -L "$tag_file" ]]; then have_tag=1; fi
+    if [[ -e "$digest_file" || -L "$digest_file" ]]; then have_digest=1; fi
+    if [[ "$have_tag" -eq 0 && "$have_digest" -eq 0 ]]; then
+        return 1
+    fi
+    [[ "$have_tag" -eq 1 && "$have_digest" -eq 1 ]] \
+        || die "The recorded Fallback release identity is incomplete."
+    validate_protected_file "$tag_file" 600
+    validate_protected_file "$digest_file" 600
+    # This function runs as an `if` condition, where `set -e` is suspended, so
+    # each failure must abort explicitly.
+    RECORDED_TAG="$(read_single_line "$tag_file" "$SHA_PATTERN")" \
+        || die "The recorded Fallback release identity is malformed."
+    RECORDED_DIGEST="$(read_single_line "$digest_file" "$DIGEST_PATTERN")" \
+        || die "The recorded Fallback release identity is malformed."
+}
+
+emit_standby_status() {
+    local output
+    require_aws_route
+    validate_protected_file "$OPERATOR" 750
+    # A readable status must be a passive one. When the operator cannot report
+    # (stopped, restarting, never deployed) the recorded release identity still
+    # decides: a recorded release is reported as recorded-unhealthy so callers
+    # keep their ancestry guard, and only a host with no record at all is "none".
+    if output="$("$OPERATOR" status)"; then
+        require_passive_status "$output"
+        printf '%s\n' "$output" | awk -F= '$1 != "public_routing" { print }'
+        printf '%s\n' "standby_release=present" "public_routing=aws"
+        return 0
+    fi
+    if read_recorded_release; then
+        printf '%s\n' "environment=fallback-server" \
+            "standby_release=recorded-unhealthy" \
+            "current_tag=$RECORDED_TAG" \
+            "current_digest=$RECORDED_DIGEST" \
+            "public_routing=aws"
+        return 0
+    fi
+    printf '%s\n' "environment=fallback-server" "standby_release=none" "public_routing=aws"
 }
 
 write_automatic_approval() {
@@ -205,6 +322,46 @@ replace_release() {
     printf '%s\n' "public_routing=fallback" "deployment_changed=true"
 }
 
+deploy_standby_release() {
+    local commit_sha="$1"
+    local image_digest="$2"
+    local before_status after_status
+    [[ "$commit_sha" =~ $SHA_PATTERN && "$image_digest" =~ $DIGEST_PATTERN ]] \
+        || die "The requested Fallback release identity is invalid."
+    require_no_valkey_restore_fence
+    require_automation_authority
+    require_aws_route
+    validate_protected_file "$OPERATOR" 750
+    # A readable status must be a passive one. An unreadable status (never
+    # deployed, stopped) goes straight to the operator, whose own guards protect
+    # a host whose state cannot be read.
+    if before_status="$("$OPERATOR" status)"; then
+        require_passive_status "$before_status"
+        if [[ "$(status_value current_tag "$before_status")" == "$commit_sha" \
+            && "$(status_value current_digest "$before_status")" == "$image_digest" ]]; then
+            printf '%s\n' "$before_status" | awk -F= '$1 != "public_routing" { print }'
+            printf '%s\n' "public_routing=aws" "deployment_changed=false"
+            return 0
+        fi
+    fi
+
+    # The operator prints its own status summary; keep it on stderr so stdout
+    # carries exactly one status block with unique keys. It rolls back to the
+    # previous image itself when activation fails.
+    "$OPERATOR" deploy "$commit_sha" "$image_digest" >&2 \
+        || die "The LightNode standby deployment failed; the operator restored the previous release where one existed."
+    after_status="$("$OPERATOR" status)" \
+        || die "The LightNode standby status could not be read after deployment."
+    require_passive_status "$after_status"
+    [[ "$(status_value current_tag "$after_status")" == "$commit_sha" \
+        && "$(status_value current_digest "$after_status")" == "$image_digest" \
+        && "$(status_value container_health "$after_status")" == "healthy" \
+        && "$(status_value restart_count "$after_status")" == "0" ]] \
+        || die "The LightNode standby deployment did not publish the requested healthy immutable release."
+    printf '%s\n' "$after_status" | awk -F= '$1 != "public_routing" { print }'
+    printf '%s\n' "public_routing=aws" "deployment_changed=true"
+}
+
 main() {
     require_root_and_caller
     case "${1:-}" in
@@ -216,8 +373,16 @@ main() {
             [[ "$#" -eq 3 ]] || die "Usage: babyjamjam-fallback-ci-deployer replace <commit-sha> <image-digest>"
             replace_release "$2" "$3"
             ;;
+        standby-status)
+            [[ "$#" -eq 1 ]] || die "Usage: babyjamjam-fallback-ci-deployer standby-status"
+            emit_standby_status
+            ;;
+        deploy-standby)
+            [[ "$#" -eq 3 ]] || die "Usage: babyjamjam-fallback-ci-deployer deploy-standby <commit-sha> <image-digest>"
+            deploy_standby_release "$2" "$3"
+            ;;
         *)
-            die "Usage: babyjamjam-fallback-ci-deployer status|replace"
+            die "Usage: babyjamjam-fallback-ci-deployer status|replace|standby-status|deploy-standby"
             ;;
     esac
 }
