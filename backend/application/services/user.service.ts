@@ -1134,6 +1134,15 @@ export class UserService {
                 throw new ForbiddenException(this.ownerApprovalProblem());
             }
 
+            // 지점 소유권은 먼저 명시적으로 이전해야 해요. 승인으로 지점장을 강등하지 않아요.
+            // admin is the only owner-capable role accepted by ApproveUserDto.
+            if (params.role !== "admin") {
+                const ownedBranch = await tx.branch.findFirst({ where: { ownerId: id }, select: { id: true } });
+                if (ownedBranch) {
+                    throw new ConflictException(this.branchOwnershipProblem());
+                }
+            }
+
             const branch = await tx.branch.findUnique({
                 where: { id: params.branchId },
                 select: { id: true },
