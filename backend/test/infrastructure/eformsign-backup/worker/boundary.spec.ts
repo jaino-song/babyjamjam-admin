@@ -152,7 +152,8 @@ const DYNAMIC_CODE_NAMES = new Set(["eval", "arguments", "Function"]);
  *    `createRequire`, every use of `require` other than `require("literal")` (alias, argument,
  *    `.call`), every `module` read as a value (`module.require`, `module["require"]`), and every
  *    call of a property named `require` on any receiver, and every `eval` / `arguments` / `Function`
- *    read as a value, in `violations`.
+ *    read as a value, and every property access named `constructor` (`(() => {}).constructor("...")` is
+ *    `Function`), in `violations`.
  */
 function analyzeLoads(source: string): { specifiers: string[]; violations: string[] } {
     const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -179,6 +180,9 @@ function analyzeLoads(source: string): { specifiers: string[]; violations: strin
                 || (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression) && callee.argumentExpression.text === "require")) {
                 violations.push(`.require( called on a receiver: ${callee.getText(sf).slice(0, 24)}`);
             }
+        } else if ((ts.isPropertyAccessExpression(node) && node.name.text === "constructor")
+            || (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && node.argumentExpression.text === "constructor")) {
+            violations.push(`.constructor read on a receiver: ${node.getText(sf).slice(0, 24)}`);
         } else if (ts.isIdentifier(node)) {
             if (node.text === "createRequire") violations.push("createRequire");
             else if (node.text === "require" && !isPropertyName(node) && !isLiteralRequireCallee(node)) {
@@ -397,6 +401,11 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "run(arguments)",
             "const q = { eval };",
             "class D extends Function {}",
+            '(() => {}).constructor("return process")()',
+            'Object.getPrototypeOf(async function(){}).constructor("return process")()',
+            'x["constructor"]("return process")()',
+            'x?.constructor("return process")()',
+            "const C = x.constructor;",
         ]) expect(loaderViolations(bad)).not.toEqual([]);
         for (const good of [
             "foo.eval",
@@ -406,6 +415,10 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "function f(args: string[]) { return args; }",
             "class C { eval() { return 1; } arguments = 2; }",
             "const { x: eval_ } = y;",
+            "class K { constructor(private readonly a: string) {} }",
+            "class L extends K { constructor() { super(\"a\"); } }",
+            "const o = { constructor: 1 };",
+            "interface I { constructor: string }",
         ]) expect(loaderViolations(good)).toEqual([]);
     });
 
