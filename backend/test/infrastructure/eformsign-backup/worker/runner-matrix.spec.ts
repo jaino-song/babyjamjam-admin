@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { WorkerError } from "domain/eformsign-backup/worker";
 import { FS_TYPE_EXT4, type FsProbe } from "infrastructure/eformsign-backup/worker/fs-probe";
 
 import {
@@ -103,6 +104,73 @@ describe("T-WRK-10: failure matrix (V08)", () => {
         expect(await archivePdfs(h.archive)).toHaveLength(0);
         const second = await runOnce(h);
         expect(second.counts).toMatchObject({ verified: 4 });
+    });
+
+    it("should stop publishing for the rest of the run once one publish is refused for archive space, even if room comes back", async () => {
+        h = await createHarness({ docs: docs() });
+        await initArchive(h);
+        // The archive volume has no room only between the first and the second artifact's transfer start.
+        let low = false;
+        const roomy = probeWith(h, 4 * 1024 * MIB);
+        const probe: FsProbe = {
+            readProcLocks: roomy.readProcLocks,
+            statfs: async (target) => {
+                const stat = await roomy.statfs(target);
+                return !target.startsWith(h.control) && low ? { ...stat, bavail: 0 } : stat;
+            },
+        };
+        let transfers = 0;
+        const summary = await runOnce(h, {
+            probe,
+            runnerFault: (point) => {
+                if (point !== "after-transferring") return;
+                transfers += 1;
+                if (transfers === 1) low = true;
+                if (transfers === 2) low = false;
+            },
+        });
+
+        expect(transfers).toBeGreaterThanOrEqual(2);
+        expect(await archivePdfs(h.archive)).toEqual([]);
+        const records = await readLedgerRecords(h.control);
+        expect(records.filter((record) => record.type === "manifest_published" || record.type === "completion_published")).toEqual([]);
+        expect(await listFiles(h.archive).then((files) => files.filter((file) => /\/(manifests|completions)\//.test(file)))).toEqual([]);
+        const transitions = records.filter((record) => record.type === "destination_transition");
+        const first = transitions.find((record) => record.body["to"] === "transferring")!.body["artifactIdentity"] as string;
+        const firstBlocked = transitions.filter((record) => record.body["artifactIdentity"] === first && record.body["to"] === "blocked");
+        expect(firstBlocked).toHaveLength(1);
+        expect(firstBlocked[0]!.body["reasonCode"]).toBe("archive-unavailable");
+        expect(transitions.some((record) => record.body["to"] === "verified")).toBe(false);
+        expect(summary.snapshotStatus).toBe("blocked");
+        expect(summary.reasonCodes).toContain("archive-unavailable");
+    });
+
+    it("should block an interrupted entry instead of verifying it when the marker is gone but the archive root is the same directory", async () => {
+        h = await createHarness({ docs: docs() });
+        await initArchive(h);
+        // Run 1 crashes after the first publish: one file is in the archive, its entry is still transferring.
+        await expect(tryRun(h, {
+            runnerFault: (point) => { if (point === "after-publish-before-verifying") throw new Error("crash"); },
+        })).rejects.toThrow("crash");
+        expect(await archivePdfs(h.archive)).toHaveLength(1);
+        const interrupted = (await readLedgerRecords(h.control)).filter((record) => record.type === "destination_transition")
+            .find((record) => record.body["to"] === "transferring")!.body["artifactIdentity"] as string;
+        const rootInode = (await fs.lstat(h.archive)).ino;
+        await fs.rename(path.join(h.archive, ".bjj-backup"), path.join(h.base, "marker.away"));
+        expect((await fs.lstat(h.archive)).ino).toBe(rootInode);
+        const before = (await readLedgerRecords(h.control)).length;
+
+        const second = await tryRun(h);
+
+        expect(second).not.toBeInstanceOf(WorkerError);
+        const run2 = (await readLedgerRecords(h.control)).slice(before)
+            .filter((record) => record.type === "destination_transition" || record.type === "recovered_verified");
+        const mine = run2.filter((record) => record.body["artifactIdentity"] === interrupted).map((record) => record.type === "recovered_verified" ? "recovered_verified" : record.body["to"]);
+        expect(mine).toEqual(["blocked"]);
+        const blocked = run2.find((record) => record.body["artifactIdentity"] === interrupted && record.body["to"] === "blocked")!;
+        expect(blocked.body["reasonCode"]).toBe("archive-unavailable");
+        expect(run2.some((record) => record.type === "recovered_verified" || record.body["to"] === "verifying" || record.body["to"] === "verified")).toBe(false);
+        expect(await archivePdfs(h.archive)).toHaveLength(1);
     });
 
     it("should replace the archive in the middle of a run: blocked, staging kept, nothing written to the new directory", async () => {
