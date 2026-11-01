@@ -2183,7 +2183,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
         });
         prisma.user.findFirst.mockResolvedValue({
-            ownedBranches: [],
+            adminBranches: [],
             userBranches: [],
         });
         transaction.client.findMany.mockResolvedValue([]);
@@ -2224,7 +2224,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         const { prisma, transaction, usecase } = setup(document);
         prisma.user.findFirst.mockResolvedValue({
-            ownedBranches: [],
+            adminBranches: [],
             userBranches: [{ branch: { id: "branch-2" } }],
         });
         prisma.branch.findMany.mockResolvedValue([
@@ -2255,11 +2255,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         ];
         prisma.user.findFirst.mockImplementation(({ select }) =>
             Promise.resolve({
-                ownedBranches: candidates
+                adminBranches: candidates
                     .filter(
                         (branch) =>
                             branch.isActive
-                            === select.ownedBranches.where.isActive,
+                            === select.adminBranches.where.isActive,
                     )
                     .map(({ id }) => ({ id })),
                 userBranches: candidates
@@ -2283,7 +2283,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 },
             },
             select: {
-                ownedBranches: {
+                adminBranches: {
                     where: { isActive: true },
                     select: { id: true },
                 },
@@ -2312,7 +2312,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         const { prisma, transaction, usecase } = setup(document);
         prisma.user.findFirst.mockResolvedValue({
-            ownedBranches: [],
+            adminBranches: [],
             userBranches: [],
         });
         prisma.branch.findMany.mockResolvedValue([{ id: "branch-1" }]);

@@ -986,7 +986,7 @@ describe("UserController (Integration)", () => {
                     .send({
                         role: "admin",
                         branchId: "22222222-2222-4222-8222-222222222222",
-                        ownerBranchId: "33333333-3333-4333-8333-333333333333",
+                        adminBranchId: "33333333-3333-4333-8333-333333333333",
                     });
 
                 // Assert
@@ -994,8 +994,93 @@ describe("UserController (Integration)", () => {
                 expect(userService.approve).toHaveBeenCalledWith("pending-user-1", {
                     role: "admin",
                     branchId: "22222222-2222-4222-8222-222222222222",
-                    ownerBranchId: "33333333-3333-4333-8333-333333333333",
+                    adminBranchId: "33333333-3333-4333-8333-333333333333",
                     approvedBy: "owner-user-id",
+                });
+            });
+
+            describe("Release-1 ownerBranchId alias (deprecated)", () => {
+                const BRANCH_ID = "22222222-2222-4222-8222-222222222222";
+                const ADMIN_BRANCH_ID = "33333333-3333-4333-8333-333333333333";
+                const OTHER_BRANCH_ID = "44444444-4444-4444-8444-444444444444";
+                const summary = {
+                    id: "pending-user-1",
+                    name: "Pending User",
+                    email: "pending@example.com",
+                    role: "admin",
+                    approvalStatus: "approved",
+                    approvedAt: new Date("2026-07-13"),
+                    approvedBy: "owner-user-id",
+                    requestedRole: "admin",
+                    tokenVersion: 1,
+                };
+
+                it("accepts the old ownerBranchId name and hands the service only adminBranchId", async () => {
+                    userService.approve.mockResolvedValue(summary);
+
+                    const response = await request(app.getHttpServer())
+                        .post("/users/pending-user-1/approve")
+                        .send({ role: "admin", branchId: BRANCH_ID, ownerBranchId: ADMIN_BRANCH_ID });
+
+                    expect(response.status).toBe(201);
+                    expect(userService.approve).toHaveBeenCalledWith("pending-user-1", {
+                        role: "admin",
+                        branchId: BRANCH_ID,
+                        adminBranchId: ADMIN_BRANCH_ID,
+                        approvedBy: "owner-user-id",
+                    });
+                });
+
+                it("accepts both names when they carry the same branch", async () => {
+                    userService.approve.mockResolvedValue(summary);
+
+                    const response = await request(app.getHttpServer())
+                        .post("/users/pending-user-1/approve")
+                        .send({
+                            role: "admin",
+                            branchId: BRANCH_ID,
+                            adminBranchId: ADMIN_BRANCH_ID,
+                            ownerBranchId: ADMIN_BRANCH_ID,
+                        });
+
+                    expect(response.status).toBe(201);
+                    expect(userService.approve).toHaveBeenCalledWith("pending-user-1", {
+                        role: "admin",
+                        branchId: BRANCH_ID,
+                        adminBranchId: ADMIN_BRANCH_ID,
+                        approvedBy: "owner-user-id",
+                    });
+                });
+
+                it("answers 400 pointing at /adminBranchId when both names carry different branches", async () => {
+                    const response = await request(app.getHttpServer())
+                        .post("/users/pending-user-1/approve")
+                        .send({
+                            role: "admin",
+                            branchId: BRANCH_ID,
+                            adminBranchId: ADMIN_BRANCH_ID,
+                            ownerBranchId: OTHER_BRANCH_ID,
+                        });
+
+                    expect(response.status).toBe(400);
+                    expect(response.body.errors).toEqual([
+                        expect.objectContaining({ pointer: "/adminBranchId" }),
+                    ]);
+                    expect(userService.approve).not.toHaveBeenCalled();
+                });
+
+                it("still validates a malformed ownerBranchId sent next to a valid adminBranchId", async () => {
+                    const response = await request(app.getHttpServer())
+                        .post("/users/pending-user-1/approve")
+                        .send({
+                            role: "admin",
+                            branchId: BRANCH_ID,
+                            adminBranchId: ADMIN_BRANCH_ID,
+                            ownerBranchId: "not-a-uuid",
+                        });
+
+                    expect(response.status).toBe(400);
+                    expect(userService.approve).not.toHaveBeenCalled();
                 });
             });
 
@@ -1110,7 +1195,7 @@ describe("UserController (Integration)", () => {
                 expect(userService.approve).not.toHaveBeenCalled();
             });
 
-            it("should require ownerBranchId when approving role 'admin' (지점장 임명 지점 필수)", async () => {
+            it("should require adminBranchId when approving role 'admin' (지점장 임명 지점 필수)", async () => {
                 // Act
                 const response = await request(app.getHttpServer())
                     .post("/users/pending-user-1/approve")

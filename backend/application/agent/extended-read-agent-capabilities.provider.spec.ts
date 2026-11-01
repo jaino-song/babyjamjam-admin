@@ -430,7 +430,7 @@ describe("ExtendedReadAgentCapabilitiesProvider", () => {
 
         expect(systemAdmin.createBranch).toHaveBeenCalledWith(
             {
-                name: "서초점", slug: "seocho", region: "서울", ownerId: context.principal.userId, isActive: true,
+                name: "서초점", slug: "seocho", region: "서울", adminId: context.principal.userId, isActive: true,
             },
             expect.any(Function),
         );
