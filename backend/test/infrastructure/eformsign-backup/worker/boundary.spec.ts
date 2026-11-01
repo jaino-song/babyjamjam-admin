@@ -101,14 +101,38 @@ function consoleViolations(source: string): string[] {
     return [...source.matchAll(/(?<![\w$])console(?![\w$])/g)].map(() => "console");
 }
 
+/** True where an identifier only names a property or a declaration, not a value read from scope. */
+function isPropertyName(node: ts.Identifier): boolean {
+    const parent = node.parent;
+    return (ts.isPropertyAccessExpression(parent) && parent.name === node)
+        || ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isPropertyDeclaration(parent)
+            || ts.isMethodDeclaration(parent) || ts.isMethodSignature(parent) || ts.isGetAccessorDeclaration(parent)
+            || ts.isSetAccessorDeclaration(parent) || ts.isEnumMember(parent)) && parent.name === node);
+}
+
+/** True where an identifier declares a local binding (variable, parameter, destructuring element, function, class, namespace). */
+function isDeclarationName(node: ts.Identifier): boolean {
+    const parent = node.parent;
+    return (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)
+        || ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isModuleDeclaration(parent)) && parent.name === node;
+}
+
+/** The only shape in which `require` may appear: `require("literal")` or ``require(`literal`)``. */
+function isLiteralRequireCallee(node: ts.Identifier): boolean {
+    const call = node.parent;
+    return ts.isCallExpression(call) && call.expression === node && call.arguments.length === 1 && ts.isStringLiteralLike(call.arguments[0]!);
+}
+
 /**
  * What a source file loads, read from the TypeScript syntax tree, not from text. A regex or the
  * comment stripper above can be fooled by `from/**\/"node:module"`, `require/**\/(name)` or a regex
  * literal that looks like a comment; the parser sees tokens, so comments and regex literals between
  * them change nothing. Collected:
  *  - every import / export-from / import-equals / `import("x")` type specifier, in `specifiers`;
- *  - every `import(...)` / `require(...)` call whose argument is not one plain string literal,
- *    and every identifier named `createRequire`, in `violations`.
+ *  - every `import(...)` call whose argument is not one plain string literal, every identifier named
+ *    `createRequire`, every use of `require` other than `require("literal")` (alias, argument,
+ *    `.call`), every `module` read as a value (`module.require`, `module["require"]`), and every
+ *    call of a property named `require` on any receiver, in `violations`.
  */
 function analyzeLoads(source: string): { specifiers: string[]; violations: string[] } {
     const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -123,14 +147,25 @@ function analyzeLoads(source: string): { specifiers: string[]; violations: strin
             else violations.push(`import = require( with a non-literal argument: ${ref.getText(sf).slice(0, 24)}`);
         } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) {
             specs.push(node.argument.literal.text);
-        } else if (ts.isCallExpression(node)
-            && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
-            const callee = node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require";
+        } else if (ts.isCallExpression(node)) {
+            const callee = node.expression;
             const [argument] = node.arguments;
-            if (node.arguments.length === 1 && argument && ts.isStringLiteralLike(argument)) specs.push(argument.text);
-            else violations.push(`${callee}( with a non-literal argument: ${node.arguments.map((a) => a.getText(sf)).join(", ").slice(0, 24)}`);
-        } else if (ts.isIdentifier(node) && node.text === "createRequire") {
-            violations.push("createRequire");
+            if (callee.kind === ts.SyntaxKind.ImportKeyword) {
+                if (node.arguments.length === 1 && argument && ts.isStringLiteralLike(argument)) specs.push(argument.text);
+                else violations.push(`import( with a non-literal argument: ${node.arguments.map((a) => a.getText(sf)).join(", ").slice(0, 24)}`);
+            } else if (ts.isIdentifier(callee) && callee.text === "require" && node.arguments.length === 1 && argument && ts.isStringLiteralLike(argument)) {
+                specs.push(argument.text);
+            } else if ((ts.isPropertyAccessExpression(callee) && callee.name.text === "require")
+                || (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression) && callee.argumentExpression.text === "require")) {
+                violations.push(`.require( called on a receiver: ${callee.getText(sf).slice(0, 24)}`);
+            }
+        } else if (ts.isIdentifier(node)) {
+            if (node.text === "createRequire") violations.push("createRequire");
+            else if (node.text === "require" && !isPropertyName(node) && !isLiteralRequireCallee(node)) {
+                violations.push(`require used other than as require("literal"): ${node.parent.getText(sf).slice(0, 24)}`);
+            } else if (node.text === "module" && !isPropertyName(node) && !isDeclarationName(node)) {
+                violations.push(`module used as a value: ${node.parent.getText(sf).slice(0, 24)}`);
+            }
         }
         ts.forEachChild(node, visit);
     };
@@ -288,6 +323,31 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "import type { X } from './x';",
             "const importer = 1; const required = importer;",
         ]) expect(loaderViolations(good)).toEqual([]);
+    });
+
+    it("should refuse module.require, a require alias and require.call, and accept plain literal requires (the check itself can fail)", () => {
+        for (const bad of [
+            'module.require("node:module")',
+            "module.require(name)",
+            'module["require"]("x")',
+            "const r = require; r(name)",
+            'require.call(null, "x")',
+            'const loader = foo.require; loader(name); bar["require"]("x")',
+            "foo.require(name)",
+            "run(require)",
+            "module.constructor._load(name)",
+            "const { require: r } = module;",
+        ]) expect(loaderViolations(bad)).not.toEqual([]);
+        for (const bad of ['foo.require("x")', 'bar["require"]("x")']) expect(loaderViolations(bad)).not.toEqual([]);
+        for (const good of [
+            'require("zod")',
+            "require(`zod`)",
+            "const x = foo.module;",
+            "const o = { module: 1, require: 2 };",
+            "interface I { module: string }",
+            "foo.module.bar()",
+        ]) expect(loaderViolations(good)).toEqual([]);
+        expect(specifiers('require("zod")')).toEqual(["zod"]);
     });
 
     it("should load no module through createRequire or a computed import()/require() in any runtime file", () => {
