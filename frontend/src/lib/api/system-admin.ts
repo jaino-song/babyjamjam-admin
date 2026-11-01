@@ -18,7 +18,7 @@ export type {
 export interface SystemAdminBranchInput {
   name: string;
   slug: string;
-  ownerId: string | null;
+  adminId: string | null;
   region?: string;
   district?: string;
   address?: string;

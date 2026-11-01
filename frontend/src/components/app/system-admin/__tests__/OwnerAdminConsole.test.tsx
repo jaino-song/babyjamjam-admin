@@ -157,7 +157,7 @@ beforeEach(() => {
             isActive: true,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: {
+            admin: {
               id: "owner-1",
               name: "김오너",
               email: "owner@example.com",
@@ -189,7 +189,7 @@ beforeEach(() => {
             isActive: true,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: {
+            admin: {
               id: "approved-admin",
               name: "기존 지점장 계정",
               email: "admin@example.com",
@@ -204,7 +204,7 @@ beforeEach(() => {
             },
           },
           {
-            id: "branch-songdo-ownerless",
+            id: "branch-songdo-adminless",
             name: "송도점",
             slug: "songdo",
             region: "인천",
@@ -215,7 +215,7 @@ beforeEach(() => {
             isActive: true,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: null,
+            admin: null,
             messageSenderApproval: {
               approvalStatus: "not_requested",
               requestedAt: null,
@@ -235,7 +235,7 @@ beforeEach(() => {
             isActive: false,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: {
+            admin: {
               id: "approved-admin",
               name: "기존 지점장 계정",
               email: "admin@example.com",
@@ -392,7 +392,7 @@ describe("OwnerAdminConsole", () => {
     expect(screen.getByRole("button", { name: "승인" })).toBeDisabled();
     fireEvent.change(
       screen.getByRole("combobox", { name: "가입 대기 계정 임명 지점 선택" }),
-      { target: { value: "branch-songdo-ownerless" } },
+      { target: { value: "branch-songdo-adminless" } },
     );
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
@@ -400,7 +400,7 @@ describe("OwnerAdminConsole", () => {
       id: "pending-user",
       role: "admin",
       branchId: "branch-real-gangnam",
-      ownerBranchId: "branch-songdo-ownerless",
+      adminBranchId: "branch-songdo-adminless",
       smsAutomationEnabled: true,
     });
     expect(screen.getByRole("button", { name: "거절" })).toBeInTheDocument();
@@ -515,7 +515,7 @@ describe("OwnerAdminConsole", () => {
     );
   });
 
-  it("limits the 임명 지점 select to ownerless active branches when 지점장 is selected", () => {
+  it("limits the 임명 지점 select to adminless active branches when 지점장 is selected", () => {
     render(<OwnerAdminConsole />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
@@ -527,10 +527,10 @@ describe("OwnerAdminConsole", () => {
       { target: { value: "admin" } },
     );
 
-    const ownerBranchSelect = screen.getByRole("combobox", {
+    const adminBranchSelect = screen.getByRole("combobox", {
       name: "가입 대기 계정 임명 지점 선택",
     });
-    const optionLabels = within(ownerBranchSelect)
+    const optionLabels = within(adminBranchSelect)
       .getAllByRole("option")
       .map((option) => option.textContent);
 
@@ -585,7 +585,7 @@ describe("OwnerAdminConsole", () => {
       expect(approveMutate).toHaveBeenCalledWith({
         id: "approved-user",
         role: "user",
-        branchIds: ["branch-songdo-ownerless"],
+        branchIds: ["branch-songdo-adminless"],
         expectedRole: "manager",
         expectedBranchIds: ["branch-real-gangnam"],
       }),
@@ -709,7 +709,7 @@ describe("OwnerAdminConsole", () => {
         role: "admin",
         branchIds: [
           "branch-admin-owned",
-          "branch-songdo-ownerless",
+          "branch-songdo-adminless",
           "branch-admin-inactive",
         ],
         expectedRole: "admin",

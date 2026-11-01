@@ -42,7 +42,7 @@ describe("SystemAdminAccountEditDialog", () => {
           { id: "branch-gangnam", name: "강남점", isActive: true },
           { id: "branch-songdo", name: "송도점", isActive: true },
         ]}
-        ownedBranchIds={[]}
+        adminBranchIds={[]}
         isPending
         errorMessage="서버에서 계정 수정을 거절했어요."
         onOpenChange={onOpenChange}
@@ -72,7 +72,7 @@ describe("SystemAdminAccountEditDialog", () => {
           { id: "branch-inactive", name: "서대문점", isActive: false },
           { id: "branch-active", name: "송도점", isActive: true },
         ]}
-        ownedBranchIds={["branch-inactive"]}
+        adminBranchIds={["branch-inactive"]}
         isPending={false}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -116,7 +116,7 @@ describe("SystemAdminAccountEditDialog", () => {
         open
         account={{ ...account, role: null }}
         branches={[{ id: "branch-gangnam", name: "강남점", isActive: true }]}
-        ownedBranchIds={[]}
+        adminBranchIds={[]}
         isPending={false}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -160,7 +160,7 @@ describe("SystemAdminAccountEditDialog", () => {
           { id: "branch-active", name: "마포점", isActive: true },
           { id: "branch-inactive", name: "서대문점", isActive: false },
         ]}
-        ownedBranchIds={["branch-active", "branch-inactive"]}
+        adminBranchIds={["branch-active", "branch-inactive"]}
         isPending={false}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}

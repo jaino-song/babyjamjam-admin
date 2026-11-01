@@ -108,7 +108,7 @@ interface AdminRecord {
   category: string;
   statusLabel: string;
   statusVariant: StatusVariant;
-  owner: string;
+  assignee: string;
   summary: string;
   tags: readonly string[];
   detailRows: readonly AdminDetailRow[];
@@ -231,7 +231,7 @@ const OWNER_ADMIN_SECTIONS = [
         category: "notifications",
         statusLabel: "실행 가능",
         statusVariant: "info",
-        owner: "시스템",
+        assignee: "시스템",
         summary: "현재 구독된 모든 디바이스에 테스트 알림을 전송합니다.",
         tags: ["Push", "브로드캐스트"],
         detailRows: [
@@ -341,7 +341,7 @@ function getListPillItems(sectionId: AdminSectionId, record: AdminRecord): Admin
 
 function getApplicantLabel(record: AdminRecord): string | null {
   const applicantName =
-    record.applicantRows?.find((row) => row.label === "신청자")?.value ?? record.owner;
+    record.applicantRows?.find((row) => row.label === "신청자")?.value ?? record.assignee;
   return applicantName ? `지점장: ${applicantName}` : null;
 }
 
@@ -486,7 +486,7 @@ function buildAccountRecords(users: readonly SystemAdminUser[]): AdminRecord[] {
       category: isPendingApproval ? "pending" : getAccountCategory(user.role),
       statusLabel: isPendingApproval ? "가입 대기" : accountStatus.label,
       statusVariant: isPendingApproval ? "warning" : accountStatus.variant,
-      owner: authProviderLabel,
+      assignee: authProviderLabel,
       summary: isPendingApproval ? "가입 승인 검토가 필요한 계정입니다." : `${authProviderLabel} 로그인`,
       tags: [],
       detailRows: [
@@ -590,7 +590,7 @@ function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): Admi
       { label: "대표 전화", value: branch.phone ?? "-" },
       { label: "이메일", value: branch.email ?? "-" },
       { label: "운영 상태", value: branch.isActive ? "운영 중" : "비활성" },
-      { label: "지점장", value: branch.owner?.name ?? branch.owner?.email ?? "-" },
+      { label: "지점장", value: branch.admin?.name ?? branch.admin?.email ?? "-" },
       { label: "수정일", value: formatOptionalDate(branch.updatedAt) },
     ];
     const pendingRequest: AdminRequest | null =
@@ -616,7 +616,7 @@ function buildBranchRecords(branches: readonly SystemAdminBranchRequest[]): Admi
       category: messageStatus.category,
       statusLabel: messageStatus.statusLabel,
       statusVariant: messageStatus.statusVariant,
-      owner: branch.owner?.name ?? branch.owner?.email ?? "-",
+      assignee: branch.admin?.name ?? branch.admin?.email ?? "-",
       summary:
         branch.messageSenderApproval.approvalStatus === "pending"
           ? "메시지 발신번호 승인 신청이 접수되었습니다."
@@ -678,7 +678,7 @@ function filterSectionRecords(section: AdminSection, tab: string, query: string)
     return matchesSearchQuery(query, [
       record.title,
       record.summary,
-      record.owner,
+      record.assignee,
       record.listSubtitle ?? "",
       ...record.tags,
       ...record.detailRows.map((row) => row.value),
@@ -796,7 +796,7 @@ export function OwnerAdminConsole({
   });
   const [pendingRoleSelections, setPendingRoleSelections] = useState<Record<string, string>>({});
   const [pendingBranchSelections, setPendingBranchSelections] = useState<Record<string, string>>({});
-  const [pendingOwnerBranchSelections, setPendingOwnerBranchSelections] = useState<
+  const [pendingAdminBranchSelections, setPendingAdminBranchSelections] = useState<
     Record<string, string>
   >({});
   const [pendingSmsAutomationSelections, setPendingSmsAutomationSelections] = useState<
@@ -808,15 +808,15 @@ export function OwnerAdminConsole({
       id,
       role,
       branchId,
-      ownerBranchId,
+      adminBranchId,
       smsAutomationEnabled,
     }: {
       id: string;
       role: string;
       branchId: string;
-      ownerBranchId?: string;
+      adminBranchId?: string;
       smsAutomationEnabled?: boolean;
-    }) => approveUser(id, role, branchId, ownerBranchId, smsAutomationEnabled),
+    }) => approveUser(id, role, branchId, adminBranchId, smsAutomationEnabled),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["systemAdminUsers"] });
     },
@@ -1383,8 +1383,8 @@ export function OwnerAdminConsole({
                           pendingAccountApproval.branchId ??
                           "")
                         : "";
-                      const selectedPendingOwnerBranchId = pendingAccountApproval
-                        ? (pendingOwnerBranchSelections[pendingAccountApproval.userId] ?? "")
+                      const selectedPendingAdminBranchId = pendingAccountApproval
+                        ? (pendingAdminBranchSelections[pendingAccountApproval.userId] ?? "")
                         : "";
                       const isPendingRoleAdmin = selectedPendingRole === ROLES.admin;
                       const selectedPendingSmsAutomation = pendingAccountApproval
@@ -1513,19 +1513,19 @@ export function OwnerAdminConsole({
                                 {isPendingRoleAdmin ? (
                                   <FormNativeSelect
                                     aria-label={`${selectedRecord.listTitle} 임명 지점 선택`}
-                                    data-component="desktop_system-admin_sections_pending-approval_owner-branch-field"
-                                    selectDataComponent="desktop_system-admin_sections_pending-approval_owner-branch-field_select"
-                                    value={selectedPendingOwnerBranchId}
+                                    data-component="desktop_system-admin_sections_pending-approval_admin-branch-field"
+                                    selectDataComponent="desktop_system-admin_sections_pending-approval_admin-branch-field_select"
+                                    value={selectedPendingAdminBranchId}
                                     placeholder="임명 지점 선택"
                                     options={systemAdminBranchRequests
-                                      .filter((branch) => branch.isActive && !branch.owner)
+                                      .filter((branch) => branch.isActive && !branch.admin)
                                       .map((branch) => ({
                                         value: branch.id,
                                         label: branch.name,
                                       }))}
                                     disabled={isPendingApprovalActionRunning}
                                     onValueChange={(value) =>
-                                      setPendingOwnerBranchSelections((previousSelections) => ({
+                                      setPendingAdminBranchSelections((previousSelections) => ({
                                         ...previousSelections,
                                         [pendingAccountApproval.userId]: value,
                                       }))
@@ -1555,7 +1555,7 @@ export function OwnerAdminConsole({
                                   disabled={
                                     isPendingApprovalActionRunning ||
                                     !selectedPendingBranchId ||
-                                    (isPendingRoleAdmin && !selectedPendingOwnerBranchId)
+                                    (isPendingRoleAdmin && !selectedPendingAdminBranchId)
                                   }
                                   onClick={() =>
                                     approveUserMutation.mutate({
@@ -1564,7 +1564,7 @@ export function OwnerAdminConsole({
                                       branchId: selectedPendingBranchId,
                                       smsAutomationEnabled: selectedPendingSmsAutomation,
                                       ...(isPendingRoleAdmin
-                                        ? { ownerBranchId: selectedPendingOwnerBranchId }
+                                        ? { adminBranchId: selectedPendingAdminBranchId }
                                         : {}),
                                     })
                                   }
@@ -1674,15 +1674,15 @@ export function OwnerAdminConsole({
           account={accountEditUser}
           branches={systemAdminBranchRequests
             .filter(
-              (branch) => branch.isActive || branch.owner?.id === accountEditUser.id,
+              (branch) => branch.isActive || branch.admin?.id === accountEditUser.id,
             )
             .map((branch) => ({
               id: branch.id,
               name: branch.name,
               isActive: branch.isActive,
             }))}
-          ownedBranchIds={systemAdminBranchRequests
-            .filter((branch) => branch.owner?.id === accountEditUser.id)
+          adminBranchIds={systemAdminBranchRequests
+            .filter((branch) => branch.admin?.id === accountEditUser.id)
             .map((branch) => branch.id)}
           isPending={updateSystemAdminUserAccountMutation.isPending}
           errorMessage={accountEditErrorMessage ?? undefined}
