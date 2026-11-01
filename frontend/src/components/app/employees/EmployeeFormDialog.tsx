@@ -1239,6 +1239,7 @@ function EmployeeFormContent({
                 data-component={`${choiceBase}_body_register-new`}
                 type="button"
                 variant="outline"
+                width="lg"
                 disabled={isLoading}
                 onClick={() => void handleSubmit("register_new")}
             >

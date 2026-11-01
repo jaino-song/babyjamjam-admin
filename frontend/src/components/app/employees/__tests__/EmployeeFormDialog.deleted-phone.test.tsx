@@ -53,6 +53,8 @@ describe("employee deleted phone choice (real mutation)", () => {
     await submit(conflict());
     expect(await screen.findByRole("button", { name: "이전관리님 복원" })).toBeVisible();
     expect(screen.getByRole("button", { name: "새 관리사로 등록" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "새 관리사로 등록" })).toHaveAttribute("data-width", "lg");
+    expect(screen.getByRole("button", { name: "새 관리사로 등록" })).toHaveClass("w-full");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
   });

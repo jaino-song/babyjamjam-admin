@@ -538,7 +538,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 }}
                 dataComponent={`${dataComponent}_delete-approval`}
                 title="직원을 삭제하시겠습니까?"
-                description="삭제한 직원 정보는 복구할 수 없어요."
+                description="삭제한 직원은 목록에서 사라져요. 같은 전화번호로 다시 등록하면 복원할 수 있어요."
                 approvalLabel="삭제"
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"

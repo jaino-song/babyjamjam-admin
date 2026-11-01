@@ -359,6 +359,28 @@ describe('EmployeesTable', () => {
     });
   });
 
+  describe('Delete confirmation', () => {
+    it.each([
+      ['ko', '이 제공인력을 삭제할까요? 같은 전화번호로 다시 등록하면 복원할 수 있어요.'],
+      ['en', 'Delete this provider? You can restore them later by registering the same phone number again.'],
+    ] as const)('explains same-phone restoration in %s', async (locale, message) => {
+      mockUseLocale.mockReturnValue(locale);
+      mockUseEmployees.mockReturnValue({
+        data: mockEmployees,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useEmployees>);
+      const user = userEvent.setup();
+      render(<EmployeesTable />);
+
+      await user.click(screen.getByText('김철수').closest('tr')!);
+      await user.click(await screen.findByRole('button', { name: '삭제 요청' }));
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(mockDeleteMutation.mutateAsync).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Delete failure', () => {
     beforeEach(() => {
       mockUseEmployees.mockReturnValue({

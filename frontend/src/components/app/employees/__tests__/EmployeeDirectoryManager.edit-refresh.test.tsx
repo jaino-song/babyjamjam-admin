@@ -4,6 +4,7 @@ import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 import { EmployeeDirectoryManager } from "@/components/app/employees/EmployeeDirectoryManager";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import type { Employee } from "@/hooks/useEmployees";
+import { t } from "@/lib/i18n/translations";
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
@@ -38,9 +39,11 @@ jest.mock("@/components/app/employees/EmployeeDetailPanel", () => ({
   EmployeeDetailPanel: ({
     employee,
     onEdit,
+    onDelete,
   }: {
     employee: Employee;
     onEdit: (employee: Employee) => void;
+    onDelete: (id: number) => void;
   }) => (
     <section data-testid="employee-detail">
       <h2>{employee.name}</h2>
@@ -50,6 +53,9 @@ jest.mock("@/components/app/employees/EmployeeDetailPanel", () => ({
       </p>
       <button type="button" onClick={() => onEdit(employee)}>
         직원 수정
+      </button>
+      <button type="button" onClick={() => onDelete(employee.id)}>
+        직원 삭제
       </button>
     </section>
   ),
@@ -141,18 +147,21 @@ jest.mock("@/components/app/ui/TwoButtonModal", () => ({
   TwoButtonModal: ({
     open,
     title,
+    description,
     approvalLabel,
     onApprove,
     onOpenChange,
   }: {
     open: boolean;
     title: string;
+    description: string;
     approvalLabel: string;
     onApprove: () => void;
     onOpenChange: (open: boolean) => void;
   }) => open ? (
     <div role="dialog">
       <h2>{title}</h2>
+      <p>{description}</p>
       <button type="button" onClick={() => onOpenChange(false)}>취소</button>
       <button type="button" onClick={onApprove}>{approvalLabel}</button>
     </div>
@@ -298,6 +307,26 @@ describe("EmployeeDirectoryManager edit refresh", () => {
   beforeEach(() => {
     mockedUseInfiniteEmployees.mockReset();
     mockedUseInfiniteEmployees.mockReturnValue(makeQueryResult());
+  });
+
+  it("explains same-phone restoration in the employee delete confirmation", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+    fireEvent.click(screen.getByRole("button", { name: "직원 삭제" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "삭제한 직원은 목록에서 사라져요. 같은 전화번호로 다시 등록하면 복원할 수 있어요.",
+    );
+  });
+
+  it.each([
+    ["ko", "이 제공인력을 삭제할까요? 같은 전화번호로 다시 등록하면 복원할 수 있어요."],
+    ["en", "Delete this provider? You can restore them later by registering the same phone number again."],
+  ] as const)("keeps the %s employee delete message restorable", (locale, message) => {
+    expect(t(locale, "employees.delete-confirm.message")).toBe(message);
   });
 
   it("updates the selected detail after an edit without reselecting or reloading", () => {
