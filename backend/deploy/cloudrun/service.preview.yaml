@@ -20,10 +20,12 @@ spec:
         autoscaling.knative.dev/maxScale: "1"
         run.googleapis.com/startup-cpu-boost: "true"
     spec:
-      # 80, not 8: each open admin tab holds long-lived realtime/SSE requests, so 8 slots on the
+      # 16, not 8: each open admin tab holds long-lived realtime/SSE requests, so 8 slots on the
       # single instance let two tabs starve every other request (all calls timed out, QA 2026-11-01).
-      # The Prisma pool is per instance, so this does not raise production-database connections.
-      containerConcurrency: 80
+      # Not higher: uploads buffer up to 25 MiB each in memory; 80 concurrent uploads OOM'd a 2 GiB
+      # container in review, 16 peaked near 710 MiB. The Prisma pool is per instance, so this does
+      # not raise production-database connections.
+      containerConcurrency: 16
       timeoutSeconds: 300
       serviceAccountName: babyjamjam-preview-runtime@${PROJECT_ID}.iam.gserviceaccount.com
       containers:

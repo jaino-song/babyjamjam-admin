@@ -49,16 +49,16 @@ function stepsWithoutTypeCheckHeap(steps,label) {
   assert.deepEqual(steps[index].env,typeCheckHeapEnv,`${label}: Type check raises the Node heap`);
   const copy=structuredClone(steps);delete copy[index].env;return copy;
 }
-// Preview Cloud Run concurrency was raised from 8 to 80: two admin tabs' long-lived realtime
+// Preview Cloud Run concurrency was raised from 8 to 16: two admin tabs' long-lived realtime
 // requests filled 8 slots on the single instance and starved every other request (QA
 // 2026-11-01). Asserts the exact new verify check once, then maps it back to the pinned base
 // text so every other byte of the deploy job is still compared exactly.
 const previewConcurrencyCheck = {
-  after: '[[ "$container_concurrency" == "80" ]] \\\n            || fail_check "containerConcurrency must be 80"',
+  after: '[[ "$container_concurrency" == "16" ]] \\\n            || fail_check "containerConcurrency must be 16"',
   before: '[[ "$container_concurrency" == "8" ]] \\\n            || fail_check "containerConcurrency must be 8"',
 };
 function withPreviewConcurrencyAtBase(text,label) {
-  assert.equal(text.split(previewConcurrencyCheck.after).length-1,1,`${label}: preview containerConcurrency must be verified as exactly 80, once`);
+  assert.equal(text.split(previewConcurrencyCheck.after).length-1,1,`${label}: preview containerConcurrency must be verified as exactly 16, once`);
   assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
   return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
 }

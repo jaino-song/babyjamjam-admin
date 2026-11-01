@@ -406,7 +406,7 @@ test("safety invariants of the preview service manifest", () => {
     assert.equal(annotations["autoscaling.knative.dev/maxScale"], "1");
 
     const tplSpec = manifest.spec.template.spec;
-    assert.equal(tplSpec.containerConcurrency, "80");
+    assert.equal(tplSpec.containerConcurrency, "16");
     assert.equal(tplSpec.timeoutSeconds, "300");
 
     const container = tplSpec.containers[0];
