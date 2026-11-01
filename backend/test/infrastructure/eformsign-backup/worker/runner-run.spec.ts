@@ -10,6 +10,18 @@ import {
     tryRun, type Harness,
 } from "./helpers/runner-support";
 
+/** Same pattern as runner-matrix.spec.ts: the archive directory is replaced by an empty one, the real one is kept aside. */
+async function swapArchive(h: Harness): Promise<string> {
+    const away = `${h.archive}.away`;
+    await fs.rename(h.archive, away);
+    await fs.mkdir(h.archive, { mode: 0o700 });
+    return away;
+}
+async function swapBack(h: Harness, away: string): Promise<void> {
+    await fs.rename(h.archive, `${h.archive}.new`);
+    await fs.rename(away, h.archive);
+}
+
 const mix = (): FixtureDoc[] => [
     pairDoc("D001"), pairDoc("D002"), singleDoc("D004"),
     { documentId: "D005", classification: "unknown_template", documentKind: null },
@@ -495,6 +507,97 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             const summary = await runOnce(h);
             expect(summary.reasonCodes).toContain("invalid-path-segment");
             expect(await archivePdfs(h.archive)).toHaveLength(2);
+        });
+    });
+
+    describe("carry-over of non-terminal entries whose document left the snapshot (BJJ-455 P2 3.4-d)", () => {
+        const stagedBins = async (): Promise<string[]> =>
+            (await fs.readdir(path.join(h.control, "staging"))).filter((name) => name.endsWith(".bin"));
+        const destinationTransitions = async (id: string) =>
+            (await readLedgerRecords(h.control)).filter((record) => record.type === "destination_transition" && record.body["artifactIdentity"] === id);
+
+        it("should block a retry_wait entry with no staged bytes as exact-bytes-unavailable once its document leaves the snapshot, count it and list the gap", async () => {
+            const x = singleDoc("D001");
+            const keep = pairDoc("D002");
+            h = await createHarness({ docs: [x, keep] });
+            h.api.addFault({ route: "artifact", times: 1, fault: { kind: "status", status: 429, code: "RATE_LIMITED", retryable: true, retryAfterSeconds: 120 } });
+            await initArchive(h);
+            const id = identityFor(h, x, "document");
+
+            const first = await runOnce(h);
+            expect(first.counts).toMatchObject({ retryWait: 1, verified: 0, terminalUnavailable: 0 });
+            expect(await transitionPath(h.control, id)).toEqual(["pending", "transferring", "retry_wait"]);
+            expect(await stagedBins()).toEqual([]);
+
+            // Not due yet (retryAfter 120 s, clock unchanged): an unstaged entry has nothing to wait for either way.
+            h.api.docs = [keep];
+            const second = await runOnce(h);
+
+            expect(await transitionPath(h.control, id)).toEqual(["pending", "transferring", "retry_wait", "blocked"]);
+            const settle = (await destinationTransitions(id)).pop()!;
+            expect(settle.body).toMatchObject({ from: "retry_wait", to: "blocked", reasonCode: "exact-bytes-unavailable" });
+            expect(second.counts).toMatchObject({ retryWait: 0, blocked: 0, terminalUnavailable: 1 });
+            expect(second.historicalCoverage).toBe("known_gap");
+            const last = (await readCompletions(h.archive)).pop()!;
+            expect(last.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "exact-bytes-unavailable" }]);
+            // Only the document that is still in the snapshot was fetched again.
+            expect(h.api.artifactRequests().filter((url) => url.includes(id))).toHaveLength(1);
+
+            // Idempotent: the same snapshot again appends nothing for X and keeps the gap.
+            const before = (await destinationTransitions(id)).length;
+            const third = await runOnce(h);
+            expect((await destinationTransitions(id)).length).toBe(before);
+            expect(third.counts).toMatchObject({ terminalUnavailable: 1 });
+            expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "exact-bytes-unavailable" }]);
+        });
+
+        it("should publish a staged, non-terminally blocked entry from staging once its document leaves the snapshot, without asking the source again", async () => {
+            const x = singleDoc("D001");
+            h = await createHarness({ docs: [x] });
+            await initArchive(h);
+            const away = await swapArchive(h);
+            const id = identityFor(h, x, "document");
+
+            const first = await runOnce(h);
+            expect(first.counts).toMatchObject({ blocked: 1, verified: 0 });
+            expect(await transitionPath(h.control, id)).toEqual(["pending", "transferring", "blocked"]);
+            expect((await destinationTransitions(id)).pop()!.body["reasonCode"]).toBe("archive-unavailable");
+            expect(await stagedBins()).toEqual([`${id}.bin`]);
+            expect(h.api.artifactRequests()).toHaveLength(1);
+
+            await swapBack(h, away);
+            h.api.docs = [pairDoc("D002")];
+            const second = await runOnce(h);
+
+            expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+            expect(second.counts).toMatchObject({ blocked: 0, terminalUnavailable: 0 });
+            expect(h.api.artifactRequests().filter((url) => url.includes(id))).toHaveLength(1);
+            expect(await archivePdfs(h.archive)).toHaveLength(3);
+            expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([]);
+
+            // Idempotent: a verified entry outside the snapshot is left alone.
+            const before = (await destinationTransitions(id)).length;
+            await runOnce(h);
+            expect((await destinationTransitions(id)).length).toBe(before);
+        });
+
+        it("should leave blocked entries with a terminal or integrity-repeated reason untouched when they are outside the snapshot", async () => {
+            const gone = pairDoc("D001");
+            h = await createHarness({ docs: [gone, pairDoc("D002")] });
+            h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 410, code: "SOURCE_REMOVED" } });
+            await initArchive(h);
+            const id = identityFor(h, gone, "audit_trail");
+            await runOnce(h);
+            expect((await destinationTransitions(id)).pop()!.body["reasonCode"]).toBe("source-removed");
+
+            h.api.docs = [pairDoc("D002")];
+            await runOnce(h);
+            const before = (await destinationTransitions(id)).length;
+            await runOnce(h);
+
+            expect((await destinationTransitions(id)).length).toBe(before);
+            expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual(
+                expect.arrayContaining([{ documentId: "D001", reasonCode: "source-removed" }]));
         });
     });
 

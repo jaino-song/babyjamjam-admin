@@ -48,6 +48,20 @@ function sortedUnique(codes: Iterable<WorkerReasonCode>): WorkerReasonCode[] {
     return [...new Set(codes)].sort();
 }
 
+/** An entry that still has work to do: not verified, not in flight, and not blocked for good (terminal or integrity-repeated). */
+function carryable(entry: DestinationEntry): boolean {
+    switch (entry.state) {
+        case "integrity_error":
+        case "retry_wait":
+        case "pending":
+            return true;
+        case "blocked":
+            return !isTerminalReason(entry.reasonCode) && entry.reasonCode !== "integrity-repeated";
+        default:
+            return false;
+    }
+}
+
 /**
  * One `run` (contract section 3, steps 1-11). The class holds only the facts of this run; everything durable goes through
  * the ledger first. A failure of the control side (ledger, staging) is thrown and stops everything: the run stays open
@@ -338,12 +352,16 @@ class RunExecution {
         await this.carryOver();
     }
 
-    /** Entries that failed their integrity check and are not in this snapshot: re-publish from staging or record the gap (V10). */
+    /**
+     * Non-terminal entries (integrity_error, retry_wait, pending, blocked for a reason that is neither terminal nor
+     * integrity-repeated) whose artifact is not in this snapshot: re-publish from staging or record the gap (V10).
+     * A staged retry_wait that is not yet due is left as it is: processArtifact returns on it and it is picked up once due.
+     */
     private async carryOver(): Promise<void> {
         const inSnapshot = new Set(this.work.flatMap((candidate) => candidate.artifacts.map((job) => job.artifactIdentity)));
         for (const entry of [...this.state.destinations.values()]) {
             if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
-            if (entry.state !== "integrity_error" || inSnapshot.has(entry.artifactIdentity)) continue;
+            if (!carryable(entry) || inSnapshot.has(entry.artifactIdentity)) continue;
             const info = this.state.artifacts.get(entry.artifactIdentity);
             if (info === undefined || info.byteLength === null) {
                 await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
@@ -360,7 +378,7 @@ class RunExecution {
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
                 artifactIdentity: entry.artifactIdentity, sha256: info.sha256, byteLength: info.byteLength, relativeKey,
             };
-            if (integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
+            if (entry.state === "integrity_error" && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "integrity-repeated", relativeKey });
             } else if (await this.stagedUsable(job)) {
                 await this.processArtifact(job, "carry");
