@@ -1874,7 +1874,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                     },
                 },
                 select: {
-                    ownedBranches: {
+                    adminBranches: {
                         where: {
                             isActive: true,
                         },
@@ -1896,7 +1896,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             });
             if (creator) {
                 const creatorBranchIds = [
-                    ...creator.ownedBranches.map((branch) => branch.id),
+                    ...creator.adminBranches.map((branch) => branch.id),
                     ...creator.userBranches.map(({ branch }) => branch.id),
                 ];
                 // A known creator establishes the tenant candidate set, including
@@ -1943,7 +1943,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 },
             },
             select: {
-                ownedBranches: {
+                adminBranches: {
                     where: { isActive: true },
                     select: { id: true },
                 },
@@ -1963,7 +1963,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         });
         if (!creator) return null;
         const branchIds = [
-            ...creator.ownedBranches.map((branch) => branch.id),
+            ...creator.adminBranches.map((branch) => branch.id),
             ...creator.userBranches.map(({ branch }) => branch.id),
         ];
         const uniqueBranchIds = [...new Set(branchIds)];

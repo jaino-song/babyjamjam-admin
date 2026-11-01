@@ -12,7 +12,7 @@ async function migrate() {
     console.log(`[Migration] First user: ${firstUser?.kakaoId || 'none'}`);
 
     if (!firstUser) {
-      console.error('[Migration] No users found in database. Cannot create branch without owner.');
+      console.error('[Migration] No users found in database. Cannot create branch without admin.');
       process.exit(1);
     }
 
@@ -31,7 +31,7 @@ async function migrate() {
           phone: '',
           address: '',
           isActive: true,
-          ownerId: firstUser.id
+          adminId: firstUser.id
         },
       });
       console.log(`[Migration] Created branch: ${org.name} (ID: ${org.id})`);

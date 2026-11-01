@@ -76,7 +76,18 @@ export class ApproveUserDto {
     @IsUUID("4")
     branchId!: string;
 
-    @ValidateIf((dto: ApproveUserDto) => dto.role === "admin")
+    // A role "admin" approval needs the branch to appoint, named by EITHER adminBranchId or the
+    // deprecated ownerBranchId alias. Each field is validated only when it can be the one that
+    // supplies the value, so sending just one of them is enough.
+    @ValidateIf(
+        (dto: ApproveUserDto, value: unknown) =>
+            dto.role === "admin" && (value !== undefined || dto.ownerBranchId === undefined),
+    )
+    @IsUUID("4")
+    adminBranchId?: string;
+
+    /** @deprecated use adminBranchId — removed in Release 2 */
+    @ValidateIf((dto: ApproveUserDto, value: unknown) => dto.role === "admin" && value !== undefined)
     @IsUUID("4")
     ownerBranchId?: string;
 

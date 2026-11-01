@@ -114,7 +114,7 @@ describe("UpdateUserUsecase", () => {
 
             const persisted = await mockRepository.findById("user_1");
             expect(persisted?.role).toBe("admin");
-            expect(mockRepository.clearBranchOwnershipsCalls).toEqual([]);
+            expect(mockRepository.clearBranchAdminAssignmentsCalls).toEqual([]);
         });
 
         it.each(["admin", "manager", "user"])(
@@ -137,25 +137,25 @@ describe("UpdateUserUsecase", () => {
                 usecase.execute("user_1", { role: "manager", callerRole: "owner" }),
             ).rejects.toThrow(ForbiddenException);
 
-            expect(mockRepository.clearBranchOwnershipsCalls).toEqual([]);
+            expect(mockRepository.clearBranchAdminAssignmentsCalls).toEqual([]);
         });
 
         it.each(["manager", "user"])(
-            "should clear branch ownerships when an owner changes role to '%s'",
+            "should clear branch admin assignments when an owner changes role to '%s'",
             async (role) => {
                 const existingUser = UserFactory.create({ id: "user_1", role: "admin" });
                 mockRepository.setData([existingUser]);
 
                 await usecase.execute("user_1", { role, callerRole: "owner" });
 
-                expect(mockRepository.clearBranchOwnershipsCalls).toEqual([{
+                expect(mockRepository.clearBranchAdminAssignmentsCalls).toEqual([{
                     userId: "user_1",
                     membershipRole: role,
                 }]);
             },
         );
 
-        it("should NOT call clearBranchOwnerships for non-role updates", async () => {
+        it("should NOT call clearBranchAdminAssignments for non-role updates", async () => {
             const existingUser = UserFactory.create({ id: "user_1", role: "admin" });
             mockRepository.setData([existingUser]);
 
@@ -164,7 +164,7 @@ describe("UpdateUserUsecase", () => {
                 callerRole: "owner",
             });
 
-            expect(mockRepository.clearBranchOwnershipsCalls).toEqual([]);
+            expect(mockRepository.clearBranchAdminAssignmentsCalls).toEqual([]);
         });
     });
 });
