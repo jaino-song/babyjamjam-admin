@@ -9,7 +9,8 @@
  * --out must be a new or empty directory outside the archive. The result is always reported as unverified:
  * the archive proves its own bytes, not that it holds every document.
  * stdout: one JSON line. stderr: a reason code only. Exit: 0 ok, 64 usage or bad --out, 65 conflict or damaged
- * data (nothing written), 66 nothing to restore, 69 archive unavailable, 70 internal.
+ * data (a failure found by the preflight writes nothing; one found while copying may leave partial output in
+ * --out), 66 nothing to restore, 69 archive unavailable, 70 internal.
  */
 import { runRestoreCli } from "../infrastructure/eformsign-backup/worker/cli-restore";
 
