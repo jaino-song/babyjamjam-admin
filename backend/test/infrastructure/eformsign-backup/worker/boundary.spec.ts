@@ -143,10 +143,23 @@ function isStaticRequireCallee(node: ts.Identifier, staticString: (node: ts.Node
 const DYNAMIC_CODE_NAMES = new Set(["eval", "arguments", "Function"]);
 
 /**
- * Names that must never be reached by a statically known key (`x["con" + "structor"]`, `const { env } = x`):
+ * Names that must never appear as a statically known string (`f["con" + "structor"]`, `const k = "pro" + "cess"`):
  * `constructor` is `Function`, the rest are the loaders and globals the other rules ban by name.
  */
 const BANNED_KEYS = new Set(["constructor", "process", "env", "globalThis", "global", "require", "module", "eval", "Function", "arguments"]);
+
+/**
+ * Production strings that spell a banned name as plain DATA, not as a member to read. Each entry matches the
+ * exact source text of an expression that encloses the string, in that file only; `analyzeLoads` counts how often
+ * an entry is used, and a test requires exactly one use, so a stale or over-broad entry fails.
+ */
+const DATA_ALLOWLIST: Array<{ file: string; text: string; reason: string }> = [
+    {
+        file: "domain/eformsign-backup/source-evidence.ts",
+        text: '["__proto__", "constructor", "prototype"].includes(key)',
+        reason: "prototype-pollution guard: the strings are keys the canonicaliser rejects, never used to read a member",
+    },
+];
 
 /** `Reflect` is allowed only as the receiver of a direct `Reflect.ownKeys(...)` / `Reflect.has(...)` call, which name keys and reach nothing. */
 const SAFE_REFLECT_MEMBERS = new Set(["ownKeys", "has"]);
@@ -166,11 +179,35 @@ function declaresName(node: ts.Identifier): boolean {
 }
 
 /**
+ * True inside a type position (annotation, interface, type alias, type literal), which names a type and runs
+ * nothing. A class `extends` clause is an expression, though TypeScript models it as a type node.
+ */
+function inTypePosition(node: ts.Node): boolean {
+    for (let current: ts.Node | undefined = node; current; current = current.parent) {
+        if (ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) return true;
+        if (ts.isTypeNode(current) && !ts.isExpressionWithTypeArguments(current)) return true;
+        if (ts.isStatement(current) || ts.isSourceFile(current)) return false;
+    }
+    return false;
+}
+
+/** The string literal that names a module in an import / export-from / import-equals / import type: the allowlist checks it as a specifier. */
+function isModuleSpecifierLiteral(node: ts.Node): boolean {
+    const parent = node.parent;
+    if (!parent) return false;
+    return ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node)
+        || (ts.isExternalModuleReference(parent) && parent.expression === node)
+        || (ts.isLiteralTypeNode(parent) && ts.isImportTypeNode(parent.parent) && parent.parent.argument === parent);
+}
+
+/**
  * Resolves an expression to the one string it always evaluates to, or undefined: string and
- * no-substitution template literals, template literals whose spans are all static, `+` of static parts,
- * parentheses and type assertions, and an identifier bound by a `const` with a static initializer
- * (a `const` cannot be reassigned). An identifier declared more than once anywhere in the file (a
- * shadowing parameter, a second `const`) is not resolved: this is a scanner, not a scope analyser.
+ * no-substitution template literals, template literals whose spans are all static, `+` chains of any
+ * length, parentheses and type assertions, and an identifier bound by a `const` with a static initializer
+ * (a `const` cannot be reassigned). Resolution follows the declarations it has already entered, so a
+ * cycle (`const a = b; const b = a`) resolves to undefined instead of looping; there is no depth cap.
+ * An identifier declared more than once anywhere in the file (a shadowing parameter, a second `const`)
+ * is not resolved: this is a scanner, not a scope analyser.
  */
 function makeStaticString(sf: ts.SourceFile): (node: ts.Node) => string | undefined {
     const declarations = new Map<string, number>();
@@ -184,37 +221,35 @@ function makeStaticString(sf: ts.SourceFile): (node: ts.Node) => string | undefi
         ts.forEachChild(node, collect);
     };
     collect(sf);
-    const resolve = (node: ts.Node, depth: number): string | undefined => {
-        if (depth > 8) return undefined;
+    const resolve = (node: ts.Node, entered: ReadonlySet<string>): string | undefined => {
         if (ts.isStringLiteralLike(node)) return node.text;
         if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)
-            || ts.isTypeAssertionExpression(node) || ts.isSatisfiesExpression(node)) return resolve(node.expression, depth + 1);
+            || ts.isTypeAssertionExpression(node) || ts.isSatisfiesExpression(node)) return resolve(node.expression, entered);
         if (ts.isTemplateExpression(node)) {
             let out = node.head.text;
             for (const span of node.templateSpans) {
-                const part = resolve(span.expression, depth + 1);
+                const part = resolve(span.expression, entered);
                 if (part === undefined) return undefined;
                 out += part + span.literal.text;
             }
             return out;
         }
         if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-            const left = resolve(node.left, depth + 1);
-            const right = left === undefined ? undefined : resolve(node.right, depth + 1);
+            const left = resolve(node.left, entered);
+            const right = left === undefined ? undefined : resolve(node.right, entered);
             return left === undefined || right === undefined ? undefined : left + right;
         }
-        if (ts.isIdentifier(node) && declarations.get(node.text) === 1 && constants.has(node.text)) return resolve(constants.get(node.text)!, depth + 1);
+        if (ts.isIdentifier(node) && declarations.get(node.text) === 1 && constants.has(node.text) && !entered.has(node.text)) {
+            return resolve(constants.get(node.text)!, new Set(entered).add(node.text));
+        }
         return undefined;
     };
-    return (node) => resolve(node, 0);
+    return (node) => resolve(node, new Set());
 }
 
-/** The key a destructuring or assignment-pattern property names, when it is statically known. */
-function patternKey(name: ts.PropertyName | ts.BindingName, staticString: (node: ts.Node) => string | undefined): string | undefined {
-    if (ts.isIdentifier(name)) return name.text;
-    if (ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) return name.text;
-    if (ts.isComputedPropertyName(name)) return staticString(name.expression);
-    return undefined;
+/** The expressions whose value is a string; a maximal one is resolved once and its parts are not visited again. */
+function isStringExpressionCandidate(node: ts.Node): boolean {
+    return ts.isStringLiteralLike(node) || ts.isTemplateExpression(node) || (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken);
 }
 
 /**
@@ -223,36 +258,61 @@ function patternKey(name: ts.PropertyName | ts.BindingName, staticString: (node:
  * literal that looks like a comment; the parser sees tokens, so comments and regex literals between
  * them change nothing. Collected:
  *  - every import / export-from / import-equals / `import("x")` type specifier, in `specifiers`;
- *  - every `import(...)` call whose argument is not one plain string literal, every identifier named
- *    `createRequire`, every use of `require` other than `require("literal")` (alias, argument,
+ *  - every `import(...)` call whose argument is not statically one string, every identifier named
+ *    `createRequire`, every use of `require` other than `require(<static string>)` (alias, argument,
  *    `.call`), every `module` read as a value (`module.require`, `module["require"]`), and every
  *    call of a property named `require` on any receiver, and every `eval` / `arguments` / `Function`
- *    read as a value, every property access named `constructor` (`(() => {}).constructor("...")` is
- *    `Function`), every element access or destructured key whose name is STATICALLY KNOWN to be one of
- *    `BANNED_KEYS`, and every use of `Reflect` other than a direct `Reflect.ownKeys(...)` / `Reflect.has(...)`
- *    call, in `violations`. A `import(x)` / `require(x)` whose argument is statically known is resolved
- *    and checked against the allowlist as if it were a literal.
+ *    read as a value, and every use of `Reflect` other than a direct `Reflect.ownKeys(...)` /
+ *    `Reflect.has(...)` call, in `violations`;
+ *  - an `import(x)` / `require(x)` whose argument is statically known is resolved and checked against
+ *    the allowlist as if it were a literal.
  *
- * The bounded criterion: a name is "statically known" when `makeStaticString` resolves it from the source
- * alone (literals, template parts, `+`, a single-declaration `const`). Names computed at RUN TIME (from
- * input, I/O, a function result, a `let`, a parameter) are out of scope by design: this test guards the
- * worker against accidental coupling to Nest, Prisma and the environment, not against hostile code.
+ * The criterion is keyed on the VALUE, not on the access shape (dot, element, destructuring, assignment
+ * pattern, for-of target... always leave another shape open): no statically known banned name appears in
+ * value code, in any syntactic position. Two rules carry it:
+ *  - the name `constructor` (`(() => {}).constructor` is `Function`) as an identifier or property name
+ *    anywhere outside a type position; a class `constructor(...)` declaration is not such a name;
+ *  - any expression that statically resolves to a string in `BANNED_KEYS` (see `makeStaticString`), except a
+ *    module specifier or `import()` / `require()` argument (the allowlist checks those) and the explicit
+ *    `DATA_ALLOWLIST` entries.
+ * Names computed at RUN TIME (from input, I/O, a function result, a `let`, a parameter) are out of scope by
+ * design: this test guards the worker against accidental coupling to Nest, Prisma and the environment, not
+ * against hostile code. Pass `file` to apply that file's `DATA_ALLOWLIST` entries; `allowanceUses` counts them.
  */
-function analyzeLoads(source: string): { specifiers: string[]; violations: string[] } {
+function analyzeLoads(source: string, file?: string): { specifiers: string[]; violations: string[]; allowanceUses: Map<string, number> } {
     const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const specs: string[] = [];
     const violations: string[] = [];
     const staticString = makeStaticString(sf);
-    const checkAssignmentTarget = (target: ts.ObjectLiteralExpression): void => {
-        for (const property of target.properties) {
-            if (ts.isShorthandPropertyAssignment(property) || ts.isPropertyAssignment(property)) {
-                const key = patternKey(property.name, staticString);
-                if (key !== undefined && BANNED_KEYS.has(key)) violations.push(`destructuring reads ${key}: ${property.getText(sf).slice(0, 24)}`);
-                if (ts.isPropertyAssignment(property) && ts.isObjectLiteralExpression(property.initializer)) checkAssignmentTarget(property.initializer);
+    const allowances = DATA_ALLOWLIST.filter((entry) => entry.file === file);
+    const allowanceUses = new Map<string, number>();
+    /** Reports a banned name unless an enclosing expression is an allowlisted data expression. */
+    const reportName = (node: ts.Node, message: string): void => {
+        if (inTypePosition(node)) return;
+        for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+            if (ts.isSourceFile(current)) break;
+            const entry = allowances.find((candidate) => candidate.text === current!.getText(sf));
+            if (entry) {
+                allowanceUses.set(entry.text, (allowanceUses.get(entry.text) ?? 0) + 1);
+                return;
             }
         }
+        violations.push(message);
+    };
+    const isLoadArgument = (node: ts.Node): boolean => {
+        const call = node.parent;
+        return call !== undefined && ts.isCallExpression(call) && call.arguments.length === 1 && call.arguments[0] === node
+            && (call.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(call.expression) && call.expression.text === "require"));
     };
     const visit = (node: ts.Node): void => {
+        if (isModuleSpecifierLiteral(node) || (isLoadArgument(node) && staticString(node) !== undefined)) return;
+        if (isStringExpressionCandidate(node)) {
+            const value = staticString(node);
+            if (value !== undefined) {
+                if (BANNED_KEYS.has(value)) reportName(node, `statically known name ${value}: ${node.getText(sf).slice(0, 24)}`);
+                return;
+            }
+        }
         if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
             specs.push(node.moduleSpecifier.text);
         } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
@@ -274,17 +334,9 @@ function analyzeLoads(source: string): { specifiers: string[]; violations: strin
                 || (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression) && callee.argumentExpression.text === "require")) {
                 violations.push(`.require( called on a receiver: ${callee.getText(sf).slice(0, 24)}`);
             }
-        } else if (ts.isPropertyAccessExpression(node) && node.name.text === "constructor") {
-            violations.push(`.constructor read on a receiver: ${node.getText(sf).slice(0, 24)}`);
-        } else if (ts.isElementAccessExpression(node) && staticString(node.argumentExpression) !== undefined && BANNED_KEYS.has(staticString(node.argumentExpression)!)) {
-            violations.push(`[${staticString(node.argumentExpression)}] read on a receiver: ${node.getText(sf).slice(0, 24)}`);
-        } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent) && !node.dotDotDotToken) {
-            const key = patternKey(node.propertyName ?? node.name, staticString);
-            if (key !== undefined && BANNED_KEYS.has(key)) violations.push(`destructuring reads ${key}: ${node.getText(sf).slice(0, 24)}`);
-        } else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isObjectLiteralExpression(node.left)) {
-            checkAssignmentTarget(node.left);
         } else if (ts.isIdentifier(node)) {
-            if (node.text === "createRequire") violations.push("createRequire");
+            if (node.text === "constructor") reportName(node, `the name constructor: ${node.parent.getText(sf).slice(0, 24)}`);
+            else if (node.text === "createRequire") violations.push("createRequire");
             else if (node.text === "require" && !isPropertyName(node) && !isStaticRequireCallee(node, staticString)) {
                 violations.push(`require used other than as require("literal"): ${node.parent.getText(sf).slice(0, 24)}`);
             } else if (node.text === "module" && !isPropertyName(node) && !isDeclarationName(node)) {
@@ -298,7 +350,7 @@ function analyzeLoads(source: string): { specifiers: string[]; violations: strin
         ts.forEachChild(node, visit);
     };
     visit(sf);
-    return { specifiers: specs, violations };
+    return { specifiers: specs, violations, allowanceUses };
 }
 
 function specifiers(source: string): string[] {
@@ -306,8 +358,8 @@ function specifiers(source: string): string[] {
 }
 
 /** `createRequire` and a dynamic `import(x)` / `require(x)` with a computed argument load code the specifier scan never sees. */
-function loaderViolations(source: string): string[] {
-    return analyzeLoads(source).violations;
+function loaderViolations(source: string, file?: string): string[] {
+    return analyzeLoads(source, file).violations;
 }
 
 function insideRuntime(file: string, specifier: string): boolean {
@@ -333,6 +385,13 @@ function allowed(file: string, specifier: string): boolean {
     if (FORBIDDEN_BARE.has(specifier) || hasPathTraversal(specifier)) return false;
     return ALLOWED_BARE.some((rule) => (typeof rule === "string" ? rule === specifier : rule.test(specifier)));
 }
+
+/** `"c" + "o" + ... + "r"`: spells `constructor` in 11 parts, more than any fixed resolution depth. */
+const LONG_CONCAT = [..."constructor"].map((char) => JSON.stringify(char)).join(" + ");
+/** 30 parts that still spell `constructor`: empty strings padded between the letters. */
+const SPLIT_OVER_30_PARTS = [..."constructor"].flatMap((char, index) => (index < 8 ? [JSON.stringify(char), '""', '""'] : [JSON.stringify(char)])).join(" + ");
+/** Eleven chained `const` aliases, each cast, whose last link spells `constructor`. */
+const ALIAS_CHAIN = ['const a0 = "c" as string', ...[..."onstructor"].map((char, index) => `const a${index + 1} = (a${index} as string) + ${JSON.stringify(char)}`)].join("; ");
 
 describe("T-WRK-14: worker runtime boundary (static scan)", () => {
     let files: string[] = [];
@@ -502,6 +561,7 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "const F = Function; F(x);",
             "run(arguments)",
             "const q = { eval };",
+            "const o = { constructor: 1 };",
             "class D extends Function {}",
             '(() => {}).constructor("return process")()',
             'Object.getPrototypeOf(async function(){}).constructor("return process")()',
@@ -519,8 +579,9 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "const { x: eval_ } = y;",
             "class K { constructor(private readonly a: string) {} }",
             "class L extends K { constructor() { super(\"a\"); } }",
-            "const o = { constructor: 1 };",
             "interface I { constructor: string }",
+            "type T = { constructor: string };",
+            "let x: { constructor: string };",
         ]) expect(loaderViolations(good)).toEqual([]);
     });
 
@@ -538,9 +599,6 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             'const a = "con", b = "structor"; f[a + b]',
             'const { "constructor": C } = f',
             "({ constructor: C } = f)",
-            "({ a: { process: P } } = f)",
-            "const { env } = cfg",
-            "function h({ module: m }: any) { return m; }",
             'x["env"]',
             'Reflect.apply(f, null, [])',
             'Reflect.construct(F, [])',
@@ -553,16 +611,44 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "const { get } = Reflect",
             "Reflect.ownKeys.call(null, x)",
             "const own = Reflect.ownKeys; own(x)",
+            // F2: rules keyed on the value, whatever the syntactic position.
+            `f[${LONG_CONCAT}]`,
+            `const k = ${SPLIT_OVER_30_PARTS}; f[k]`,
+            `${ALIAS_CHAIN}; f[a11 + ""]`,
+            "[{ constructor: C }] = [f]",
+            "for ({ constructor: D } of [f]) {}",
+            "for (const { constructor: E } of [f]) {}",
+            "const { a: [{ constructor: G }] } = f",
+            "const o = { constructor: 1 }",
+            "const o = { constructor() { return 1; } }",
+            "const { constructor } = f",
+            'const o = { "constructor": 1 }',
+            'const k = "pro" + "cess"',
+            "const t = `en${\"v\"}`",
+            'const e = "e" + "v" + "al"; e',
+            "run(x ?? 'constructor')",
+            'const bad = "constructor" as string; run(bad)',
+            "class D { static m() { return this.constructor; } }",
+            "class D extends x.constructor {}",
+            "const a = x + 'constructor'",
         ]) expect(loaderViolations(bad)).not.toEqual([]);
         for (const good of [
             "function pick(obj: Record<string, number>, key: string) { return obj[key]; }",
             'const k = "id"; obj[k]',
             'const rows = ["a"]; rows[0]; obj[rows[0]!]',
             "class K { constructor(private readonly a: string) {} }",
-            "const o = { constructor: 1, process: 2 }; o.process",
+            "const o = { process: 2 }; o.process",
             "const { id, ...rest } = row;",
             "const { id: renamed } = row;",
             'const k = "id"; const { [k]: v } = row;',
+            "class K2 { constructor(public readonly a: string, private b = 1) { run(a, b); } }",
+            "interface Shape { constructor: Function; process: string }",
+            "type Mixed = { env: string; constructor: unknown };",
+            "function fn(obj: Record<string, number>, key: string) { return obj[key] ?? obj[key + 'x']; }",
+            'require("zod")',
+            // A cycle of consts resolves to nothing and terminates.
+            "const a1 = b1; const b1 = a1; run(a1);",
+            'const self = self + "x"; run(self);',
             "Reflect.ownKeys(x)",
             'Reflect.has(x, "a")',
             "if (Reflect.ownKeys(x).length > 0) run();",
@@ -583,6 +669,24 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         for (const bad of ['require("./" + name)', "const m = name + 1; import(m)", "let m = './runner'; import(m)"]) expect(loaderViolations(bad)).not.toEqual([]);
     });
 
+    it("should allow banned-name data strings only through exact, still-matching DATA_ALLOWLIST entries (the check itself can fail)", () => {
+        for (const entry of DATA_ALLOWLIST) {
+            const source = scanned.get(entry.file)!;
+            expect(entry.reason.length).toBeGreaterThan(10);
+            // The entry's text occurs exactly once in its file, and the scan uses it exactly once.
+            expect(source.split(entry.text).length - 1).toBe(1);
+            const { violations, allowanceUses } = analyzeLoads(source, entry.file);
+            expect(violations).toEqual([]);
+            expect(allowanceUses.get(entry.text)).toBe(1);
+            // Without the entry, the same expression is a violation: it is load-bearing, not dead.
+            expect(loaderViolations(entry.text)).not.toEqual([]);
+            expect(loaderViolations(entry.text, "domain/eformsign-backup/worker/other.ts")).not.toEqual([]);
+            expect(loaderViolations(entry.text, entry.file)).toEqual([]);
+            // A different expression with the same strings in the same file is not covered.
+            expect(loaderViolations(`run(["constructor"].includes(key))`, entry.file)).not.toEqual([]);
+        }
+    });
+
     it("should scan the allowed non-worker modules the worker imports, not only the worker directories", () => {
         for (const expected of [
             "infrastructure/eformsign-backup/local-artifact-archive.ts", "domain/eformsign-backup/source-evidence.ts",
@@ -595,7 +699,7 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
 
     it("should load no module through createRequire or a computed import()/require() in any runtime file", () => {
         const offenders: string[] = [];
-        for (const [file, source] of scanned) for (const hit of loaderViolations(source)) offenders.push(`${file}: ${hit}`);
+        for (const [file, source] of scanned) for (const hit of loaderViolations(source, file)) offenders.push(`${file}: ${hit}`);
         expect(offenders).toEqual([]);
     });
 
