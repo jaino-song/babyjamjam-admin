@@ -6,6 +6,13 @@ import ts from "typescript";
 const BACKEND = path.resolve(__dirname, "../../../..");
 const RUNTIME_DIRS = ["domain/eformsign-backup/worker", "infrastructure/eformsign-backup/worker"];
 const RUNTIME_SCRIPTS = ["scripts/eformsign-backup-worker.ts", "scripts/eformsign-backup-restore.ts"];
+/** The non-worker modules the worker may import (see ALLOWED_BARE); they run inside it, so they obey the same rules. */
+const ALLOWED_MODULE_FILES = [
+    "infrastructure/eformsign-backup/local-artifact-archive.ts",
+    "domain/eformsign-backup/source-evidence.ts",
+    "domain/eformsign-backup/export/constants.ts",
+    "domain/eformsign-backup/export/cursor.ts",
+];
 
 /** Contract W1: the exact import allowlist of a worker runtime file. */
 const ALLOWED_BARE: Array<string | RegExp> = [
@@ -117,11 +124,23 @@ function isDeclarationName(node: ts.Identifier): boolean {
         || ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isModuleDeclaration(parent)) && parent.name === node;
 }
 
+/** True where an identifier is a type annotation (`x: Function`), which names a type and executes nothing. */
+function isTypeReferenceName(node: ts.Identifier): boolean {
+    return ts.isTypeReferenceNode(node.parent) && node.parent.typeName === node;
+}
+
 /** The only shape in which `require` may appear: `require("literal")` or ``require(`literal`)``. */
 function isLiteralRequireCallee(node: ts.Identifier): boolean {
     const call = node.parent;
     return ts.isCallExpression(call) && call.expression === node && call.arguments.length === 1 && ts.isStringLiteralLike(call.arguments[0]!);
 }
+
+/**
+ * `eval` and `Function` build code from a string, so `eval("req" + "uire")` or `Function("return this")()`
+ * reaches `require` and `process` with no name the scans above can see; `arguments[1]` is `require` inside
+ * a CommonJS wrapper. No worker file needs any of them, so any use as a value is a violation.
+ */
+const DYNAMIC_CODE_NAMES = new Set(["eval", "arguments", "Function"]);
 
 /**
  * What a source file loads, read from the TypeScript syntax tree, not from text. A regex or the
@@ -132,7 +151,8 @@ function isLiteralRequireCallee(node: ts.Identifier): boolean {
  *  - every `import(...)` call whose argument is not one plain string literal, every identifier named
  *    `createRequire`, every use of `require` other than `require("literal")` (alias, argument,
  *    `.call`), every `module` read as a value (`module.require`, `module["require"]`), and every
- *    call of a property named `require` on any receiver, in `violations`.
+ *    call of a property named `require` on any receiver, and every `eval` / `arguments` / `Function`
+ *    read as a value, in `violations`.
  */
 function analyzeLoads(source: string): { specifiers: string[]; violations: string[] } {
     const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -165,6 +185,8 @@ function analyzeLoads(source: string): { specifiers: string[]; violations: strin
                 violations.push(`require used other than as require("literal"): ${node.parent.getText(sf).slice(0, 24)}`);
             } else if (node.text === "module" && !isPropertyName(node) && !isDeclarationName(node)) {
                 violations.push(`module used as a value: ${node.parent.getText(sf).slice(0, 24)}`);
+            } else if (DYNAMIC_CODE_NAMES.has(node.text) && !isPropertyName(node) && !isDeclarationName(node) && !isTypeReferenceName(node)) {
+                violations.push(`${node.text} used as a value: ${node.parent.getText(sf).slice(0, 24)}`);
             }
         }
         ts.forEachChild(node, visit);
@@ -184,7 +206,8 @@ function loaderViolations(source: string): string[] {
 
 function insideRuntime(file: string, specifier: string): boolean {
     const resolved = path.normalize(path.join(path.dirname(file), specifier));
-    return RUNTIME_DIRS.some((dir) => resolved === dir || resolved.startsWith(`${dir}/`));
+    return RUNTIME_DIRS.some((dir) => resolved === dir || resolved.startsWith(`${dir}/`))
+        || ALLOWED_MODULE_FILES.some((module) => module.replace(/\.ts$/, "") === resolved);
 }
 
 /** A bare specifier is matched on its text, so a `.` or `..` segment could walk out of an allowed prefix. */
@@ -207,10 +230,17 @@ function allowed(file: string, specifier: string): boolean {
 
 describe("T-WRK-14: worker runtime boundary (static scan)", () => {
     let files: string[] = [];
+    /** The worker's own files: every rule applies. */
     const sources = new Map<string, string>();
+    /** `sources` plus the allowed non-worker modules: the import, loader and process/global rules apply (they may legitimately unlink, for one). */
+    const scanned = new Map<string, string>();
     beforeAll(async () => {
-        files = [...(await Promise.all(RUNTIME_DIRS.map((dir) => listSources(dir)))).flat(), ...RUNTIME_SCRIPTS];
-        for (const file of files) sources.set(file, await fs.readFile(path.join(BACKEND, file), "utf8"));
+        files = [...(await Promise.all(RUNTIME_DIRS.map((dir) => listSources(dir)))).flat(), ...RUNTIME_SCRIPTS, ...ALLOWED_MODULE_FILES];
+        for (const file of files) {
+            const text = await fs.readFile(path.join(BACKEND, file), "utf8");
+            scanned.set(file, text);
+            if (!ALLOWED_MODULE_FILES.includes(file)) sources.set(file, text);
+        }
     });
 
     it("should scan the files it is meant to scan (the scan itself is not empty)", () => {
@@ -225,7 +255,7 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
 
     it("should import nothing outside the allowlist", () => {
         const offenders: string[] = [];
-        for (const [file, source] of sources) {
+        for (const [file, source] of scanned) {
             for (const specifier of specifiers(source)) if (!allowed(file, specifier)) offenders.push(`${file}: ${specifier}`);
         }
         expect(offenders).toEqual([]);
@@ -255,6 +285,11 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "domain/eformsign-backup/worker/ledger-state")).toBe(true);
         expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "node:fs/promises")).toBe(true);
         expect(allowed("scripts/eformsign-backup-worker.ts", "../infrastructure/eformsign-backup/worker/cli")).toBe(true);
+        // The allowed non-worker modules may reach each other, and nothing else, by relative path.
+        expect(allowed("domain/eformsign-backup/export/cursor.ts", "./constants")).toBe(true);
+        for (const bad of ["./evidence", "./index", "../../x", "@prisma/client", "@nestjs/common"]) {
+            expect(allowed("domain/eformsign-backup/export/cursor.ts", bad)).toBe(false);
+        }
     });
 
     it("should refuse node:module and module, which hand out createRequire (the check itself can fail)", () => {
@@ -350,15 +385,49 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         expect(specifiers('require("zod")')).toEqual(["zod"]);
     });
 
+    it("should refuse eval, arguments and Function used as values, and accept them as names (the check itself can fail)", () => {
+        for (const bad of [
+            'export function loadA(name: string) { return eval("req" + "uire")(name); }',
+            "const load = arguments[1]; exports.m = (n) => load(n);",
+            'const g = Function("return this")(); g["pro" + "cess"]["e" + "nv"]["HOME"];',
+            'new Function("return process")()',
+            '(0, eval)("require")',
+            "const e = eval; e(x);",
+            "const F = Function; F(x);",
+            "run(arguments)",
+            "const q = { eval };",
+            "class D extends Function {}",
+        ]) expect(loaderViolations(bad)).not.toEqual([]);
+        for (const good of [
+            "foo.eval",
+            "foo.eval(x)",
+            "const o = { arguments: 1 };",
+            "interface Callback { Function: string }",
+            "function f(args: string[]) { return args; }",
+            "class C { eval() { return 1; } arguments = 2; }",
+            "const { x: eval_ } = y;",
+        ]) expect(loaderViolations(good)).toEqual([]);
+    });
+
+    it("should scan the allowed non-worker modules the worker imports, not only the worker directories", () => {
+        for (const expected of [
+            "infrastructure/eformsign-backup/local-artifact-archive.ts", "domain/eformsign-backup/source-evidence.ts",
+            "domain/eformsign-backup/export/constants.ts", "domain/eformsign-backup/export/cursor.ts",
+        ]) {
+            expect(files).toContain(expected);
+            expect(scanned.has(expected)).toBe(true);
+        }
+    });
+
     it("should load no module through createRequire or a computed import()/require() in any runtime file", () => {
         const offenders: string[] = [];
-        for (const [file, source] of sources) for (const hit of loaderViolations(source)) offenders.push(`${file}: ${hit}`);
+        for (const [file, source] of scanned) for (const hit of loaderViolations(source)) offenders.push(`${file}: ${hit}`);
         expect(offenders).toEqual([]);
     });
 
     it("should touch no process member outside the allowlist, and never read process.env", () => {
         const offenders: string[] = [];
-        for (const [file, source] of sources) for (const hit of processViolations(source)) offenders.push(`${file}: ${hit}`);
+        for (const [file, source] of scanned) for (const hit of processViolations(source)) offenders.push(`${file}: ${hit}`);
         expect(offenders).toEqual([]);
         expect(ALLOWED_PROCESS_MEMBERS).not.toContain("env");
     });
