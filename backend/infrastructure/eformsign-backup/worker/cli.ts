@@ -88,6 +88,8 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
 
     const openLedger = (): Promise<LedgerStore> => LedgerStore.open(controlPath, {
         readOnly: command === "inspect",
+        // recover repairs a torn tail itself, after its read-only refusal checks; every other command repairs on open.
+        ...(command === "recover" ? { deferTornTailRepair: true } : {}),
         ...(environment.ledgerFault === undefined ? {} : { fault: environment.ledgerFault }),
         now: () => clock.now().toISOString(),
         writeMarker: controlMarkerWriter,
