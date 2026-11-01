@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     Body,
     Controller,
     Delete,
@@ -26,7 +27,7 @@ import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { OwnerOnlyGuard } from "infrastructure/auth/owner-only.guard";
 import { runWithAdminAuditActor } from "application/services/admin-audit-context";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { toPublicUser } from "interface/dto/public-user.mapper";
 
 type AuthenticatedRequest = { user: { userId: string; role: string; branchId?: string; branchRole?: string } };
@@ -185,6 +186,14 @@ export class UserController {
         @Param("id") id: string,
         @Body() approveUserDto: ApproveUserDto,
     ) {
+        const adminBranch = resolveAdminBranchIdAlias(approveUserDto);
+        if ("conflict" in adminBranch) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/adminBranchId",
+                code: "INVALID_VALUE",
+                detail: "adminBranchId와 ownerBranchId가 서로 달라요. adminBranchId만 보내 주세요.",
+            }));
+        }
         return runWithAdminAuditActor({
             userId: req.user.userId,
             globalRole: req.user.role,
@@ -193,7 +202,7 @@ export class UserController {
             role: approveUserDto.role,
             branchId: approveUserDto.branchId,
             approvedBy: req.user.userId,
-            ...(approveUserDto.ownerBranchId ? { ownerBranchId: approveUserDto.ownerBranchId } : {}),
+            ...(adminBranch.value ? { adminBranchId: adminBranch.value } : {}),
             ...(approveUserDto.smsAutomationEnabled !== undefined
                 ? { smsAutomationEnabled: approveUserDto.smsAutomationEnabled }
                 : {}),
@@ -223,4 +232,22 @@ export class UserController {
             branchRole: req.user.branchRole,
         }, () => this.userService.reject(id));
     }
+}
+
+/**
+ * Release-1 alias handling: `ownerBranchId` is the deprecated spelling of `adminBranchId`.
+ * Returns the single effective value, or `{ conflict: true }` when both are sent and differ
+ * (the caller turns that into a 400). Pure so it never throws on its own.
+ */
+export function resolveAdminBranchIdAlias(
+    dto: Pick<ApproveUserDto, "adminBranchId" | "ownerBranchId">,
+): { value: string | undefined } | { conflict: true } {
+    if (
+        dto.adminBranchId !== undefined
+        && dto.ownerBranchId !== undefined
+        && dto.adminBranchId !== dto.ownerBranchId
+    ) {
+        return { conflict: true };
+    }
+    return { value: dto.adminBranchId ?? dto.ownerBranchId };
 }

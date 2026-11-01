@@ -17,7 +17,7 @@ export interface IUserRepository {
     ): Promise<UserEntity | null>;
     delete(id: string): Promise<void>;
     deleteMembership(id: string, branchId: string): Promise<boolean>;
-    clearBranchOwnerships(
+    clearBranchAdminAssignments(
         userId: string,
         membershipRole: "admin" | "manager" | "user",
     ): Promise<void>;

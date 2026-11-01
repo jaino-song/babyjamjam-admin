@@ -98,14 +98,14 @@ describeE2E("System-admin account assignment E2E", () => {
                     id: BRANCH_A_ID,
                     name: "Account Assignment A",
                     slug: "account-assignment-a",
-                    ownerId: OWNER_USER_ID,
+                    adminId: OWNER_USER_ID,
                     isActive: true,
                 },
                 {
                     id: BRANCH_B_ID,
                     name: "Account Assignment B",
                     slug: "account-assignment-b",
-                    ownerId: OWNER_USER_ID,
+                    adminId: OWNER_USER_ID,
                     isActive: true,
                 },
             ],
@@ -118,7 +118,7 @@ describeE2E("System-admin account assignment E2E", () => {
         await prisma.user_branch.deleteMany({ where: { userId: TARGET_USER_ID } });
         await prisma.branch.updateMany({
             where: { id: { in: [BRANCH_A_ID, BRANCH_B_ID] } },
-            data: { ownerId: OWNER_USER_ID },
+            data: { adminId: OWNER_USER_ID },
         });
         await prisma.user.update({
             where: { id: TARGET_USER_ID },
@@ -226,7 +226,7 @@ describeE2E("System-admin account assignment E2E", () => {
         });
         await prisma.branch.update({
             where: { id: BRANCH_A_ID },
-            data: { ownerId: TARGET_USER_ID },
+            data: { adminId: TARGET_USER_ID },
         });
         const before = await readTargetState(prisma);
 
@@ -312,7 +312,7 @@ async function readTargetState(prisma: PrismaService) {
         prisma.branch.findMany({
             where: { id: { in: [BRANCH_A_ID, BRANCH_B_ID] } },
             orderBy: { id: "asc" },
-            select: { id: true, ownerId: true },
+            select: { id: true, adminId: true },
         }),
     ]);
 
