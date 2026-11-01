@@ -87,7 +87,7 @@ describe('AI Chat Evaluation Suite', () => {
     describe('Tool Selection Validation', () => {
         const mockResponses: Record<string, ChatResponse> = {
             'term-001': {
-                text: '현재 총 4명의 직원이 등록되어 있습니다.',
+                text: '현재 총 4명의 제공인력이 등록되어 있습니다.',
                 toolCalls: [{ name: 'getdashboardstats', args: {} }],
             },
             'term-004': {
@@ -121,6 +121,7 @@ describe('AI Chat Evaluation Suite', () => {
 
             expect(result.details.toolMatch).toBe(true);
             expect(result.scores.toolSelection).toBe(1.0);
+            expect(result.details.responseRuleViolations).toEqual([]);
         });
 
         it('should correctly evaluate 산모 count request', () => {

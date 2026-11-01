@@ -67,7 +67,7 @@ export class ClientAgentCapabilitiesProvider implements AgentCapabilityProviderC
                 meta: {
                     ...common,
                     name: "clients.search",
-                    description: "Search for one client (산모) in the current branch by name, phone number, or address, and return a single match or a short list to pick from. Use for: 산모 찾기, 고객 조회, 산모님 성함으로 검색. Input: query text is matched partially, case-insensitively, against the client's name, address, and phone number. Returns: id, name, serviceStatus, startDate, endDate, voucherClient. Requires a specific name, phone number or address; never pass a generic word such as 산모, 고객, 관리사 or 직원 as the query — ask the user instead.",
+                    description: "Search for one client (산모) in the current branch by name, phone number, or address, and return a single match or a short list to pick from. Use for: 산모 찾기, 고객 조회, 산모님 성함으로 검색. Input: query text is matched partially, case-insensitively, against the client's name, address, and phone number. Returns: id, name, serviceStatus, startDate, endDate, voucherClient. Requires a specific name, phone number or address; never pass a generic word such as 산모, 고객, 관리사 or 제공인력 as the query — ask the user instead.",
                     renderer: "entity-choice",
                     flagKey: "agent.capability.clients.search",
                 },
