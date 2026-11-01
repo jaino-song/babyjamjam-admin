@@ -342,7 +342,7 @@ function BranchForm({
       <div data-component="mobile_system-admin_branch-form_admin-field" className="flex flex-col gap-1.5">
         <Label htmlFor="system-admin-branch-admin" className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">지점장</Label>
         <Select value={form.adminId ?? "none"} onValueChange={(value) => update("adminId", value === "none" ? null : value)}>
-          <SelectTrigger id="system-admin-branch-admin" data-component="mobile_system-admin_branch-form_admin-select" className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]">
+          <SelectTrigger id="system-admin-branch-admin" data-component="mobile_system-admin_branch-form_admin-field_select" className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]">
             <SelectValue placeholder="지점장 선택" />
           </SelectTrigger>
           <SelectContent>
