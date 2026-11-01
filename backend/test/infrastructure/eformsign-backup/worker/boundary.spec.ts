@@ -180,12 +180,15 @@ function declaresName(node: ts.Identifier): boolean {
 
 /**
  * True inside a type position (annotation, interface, type alias, type literal), which names a type and runs
- * nothing. A class `extends` clause is an expression, though TypeScript models it as a type node.
+ * nothing. TypeScript models heritage clauses as type nodes, but only `implements` is erased (interface
+ * `extends` sits inside the interface); a class `extends` is an expression evaluated at run time.
  */
 function inTypePosition(node: ts.Node): boolean {
     for (let current: ts.Node | undefined = node; current; current = current.parent) {
         if (ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) return true;
-        if (ts.isTypeNode(current) && !ts.isExpressionWithTypeArguments(current)) return true;
+        if (ts.isExpressionWithTypeArguments(current)) {
+            if (ts.isHeritageClause(current.parent) && current.parent.token === ts.SyntaxKind.ImplementsKeyword) return true;
+        } else if (ts.isTypeNode(current)) return true;
         if (ts.isStatement(current) || ts.isSourceFile(current)) return false;
     }
     return false;
@@ -389,7 +392,7 @@ function allowed(file: string, specifier: string): boolean {
 /** `"c" + "o" + ... + "r"`: spells `constructor` in 11 parts, more than any fixed resolution depth. */
 const LONG_CONCAT = [..."constructor"].map((char) => JSON.stringify(char)).join(" + ");
 /** 30 parts that still spell `constructor`: empty strings padded between the letters. */
-const SPLIT_OVER_30_PARTS = [..."constructor"].flatMap((char, index) => (index < 8 ? [JSON.stringify(char), '""', '""'] : [JSON.stringify(char)])).join(" + ");
+const SPLIT_OVER_30_PARTS = [..."constructor"].flatMap((char, index) => [JSON.stringify(char), ...Array<string>(index < 9 ? 2 : index === 9 ? 1 : 0).fill('""')]).join(" + ");
 /** Eleven chained `const` aliases, each cast, whose last link spells `constructor`. */
 const ALIAS_CHAIN = ['const a0 = "c" as string', ...[..."onstructor"].map((char, index) => `const a${index + 1} = (a${index} as string) + ${JSON.stringify(char)}`)].join("; ");
 
@@ -614,7 +617,7 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             // F2: rules keyed on the value, whatever the syntactic position.
             `f[${LONG_CONCAT}]`,
             `const k = ${SPLIT_OVER_30_PARTS}; f[k]`,
-            `${ALIAS_CHAIN}; f[a11 + ""]`,
+            `${ALIAS_CHAIN}; f[a10 + ""]`,
             "[{ constructor: C }] = [f]",
             "for ({ constructor: D } of [f]) {}",
             "for (const { constructor: E } of [f]) {}",
@@ -631,7 +634,13 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             "class D { static m() { return this.constructor; } }",
             "class D extends x.constructor {}",
             "const a = x + 'constructor'",
+            // `extends` is evaluated at run time; only `implements` and interface `extends` are erased.
+            "class C extends constructor {}",
+            'class D extends ("con" + "structor" as any) {}',
         ]) expect(loaderViolations(bad)).not.toEqual([]);
+        // The two long fixtures have exactly the part counts they are named for.
+        expect(SPLIT_OVER_30_PARTS.split(" + ")).toHaveLength(30);
+        expect(ALIAS_CHAIN.split("; ")).toHaveLength(11);
         for (const good of [
             "function pick(obj: Record<string, number>, key: string) { return obj[key]; }",
             'const k = "id"; obj[k]',
@@ -643,6 +652,9 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             'const k = "id"; const { [k]: v } = row;',
             "class K2 { constructor(public readonly a: string, private b = 1) { run(a, b); } }",
             "interface Shape { constructor: Function; process: string }",
+            "class C implements constructor {}",
+            "interface A extends constructor {}",
+            "class K3 extends Base implements constructor, process { run() { return 1; } }",
             "type Mixed = { env: string; constructor: unknown };",
             "function fn(obj: Record<string, number>, key: string) { return obj[key] ?? obj[key + 'x']; }",
             'require("zod")',
