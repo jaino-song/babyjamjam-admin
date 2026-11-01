@@ -27,3 +27,7 @@ E2E_DEV_BRANCH_NAME=
 E2E_PREVIEW_EMAIL=
 E2E_PREVIEW_PASSWORD=
 E2E_PREVIEW_BRANCH_NAME=
+
+# QA post-merge contact runs: the developer's own email/phone (secret, keep blank here)
+QA_DEVELOPER_EMAIL=
+QA_DEVELOPER_PHONE=
