@@ -18,7 +18,7 @@ describe("branch edit submission", () => {
         address: null,
         phone: null,
         email: null,
-        owner: null,
+        admin: null,
         isActive: false,
       } as SystemAdminBranchRequest;
 
@@ -41,7 +41,7 @@ describe("branch edit submission", () => {
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
         region: "QA 검수 전용",
         district: district ?? undefined,
-        ownerId: null,
+        adminId: null,
         isActive: false,
       }));
     },
