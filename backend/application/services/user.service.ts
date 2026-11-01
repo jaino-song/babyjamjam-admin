@@ -1119,7 +1119,7 @@ export class UserService {
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
-        return this.prismaService.$transaction(async (tx) => {
+        return runTransactionWithConflictRetry(this.prismaService, async (tx) => {
             await this.assertCallerStillOwner(tx, params.approvedBy);
             await this.lockRow(tx, "user", id);
             const target = await tx.user.findUnique({
@@ -1299,7 +1299,7 @@ export class UserService {
     }
 
     reject(id: string, actor?: AdminAuditActor): Promise<UserApprovalSummary> {
-        return this.prismaService.$transaction(async (tx) => {
+        return runTransactionWithConflictRetry(this.prismaService, async (tx) => {
             const effectiveActor = actor ?? currentAdminAuditActor();
             await this.assertCallerStillOwner(tx, effectiveActor?.userId);
             if (effectiveActor?.userId && effectiveActor.userId === id) {
@@ -1427,11 +1427,18 @@ async function runSerializableTransaction<T>(
     prisma: PrismaService,
     callback: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
+    return runTransactionWithConflictRetry(prisma, callback, Prisma.TransactionIsolationLevel.Serializable);
+}
+
+/** Retry only rolled-back database conflicts; admission keeps the database's default isolation. */
+async function runTransactionWithConflictRetry<T>(
+    prisma: PrismaService,
+    callback: (tx: Prisma.TransactionClient) => Promise<T>,
+    isolationLevel?: Prisma.TransactionIsolationLevel,
+): Promise<T> {
     for (let attempt = 1; attempt <= MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS; attempt += 1) {
         try {
-            return await prisma.$transaction(callback, {
-                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            });
+            return await prisma.$transaction(callback, isolationLevel ? { isolationLevel } : undefined);
         } catch (error) {
             if (!isTransactionConflict(error)) throw error;
         }

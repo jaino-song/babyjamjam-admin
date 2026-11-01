@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { EmployeeEntity } from "domain/entities/employee.entity";
 
 // Same opt-in and target guard as the other test/prisma real-DB specs: nothing
 // connects unless both URLs identify the same loopback throwaway database.
@@ -62,16 +65,20 @@ describe("canonical phone identity migration file (static)", () => {
 
 describeReal("canonical phone identity migration vs client tombstones (real PostgreSQL)", () => {
     let prisma: PrismaClient;
+    let service: PrismaService;
     let branchIds: string[] = [];
 
     beforeAll(async () => {
         assertThrowawayTarget();
         prisma = new PrismaClient();
         await prisma.$connect();
+        service = new PrismaService();
+        await service.$connect();
     });
 
     afterAll(async () => {
         await prisma?.$disconnect();
+        await service?.$disconnect();
     });
 
     // CI shares one throwaway DB between specs, so each case owns a unique branch.
@@ -113,6 +120,64 @@ describeReal("canonical phone identity migration vs client tombstones (real Post
         }
         await ensureIndex();
     });
+
+    it("replays every dev workflow patch twice after real register_new and client phone reuse", async () => {
+        const branchId = await newBranch();
+        const repository = new SbEmployeeRepository(service);
+        const original = await repository.create(branchId, EmployeeEntity.create("old person", [], "01033334444", "스탠다드", true));
+        await repository.delete(branchId, original.id);
+        const replacement = await repository.createOrRestore(
+            branchId, original, { name: "new person", phone: original.phone }, undefined, "register_new",
+        );
+        expect(replacement.id).not.toBe(original.id);
+        const tomb = await prisma.employee.findUniqueOrThrow({ where: { id: original.id } });
+        expect(tomb).toMatchObject({ phone: original.phone, phoneNormalized: null, deletedAt: expect.any(Date) });
+        const clientTomb = await insertClient(branchId, original.phone, null, new Date());
+        const clientLive = await insertClient(branchId, original.phone, "01033334444", null);
+        const before = await snapshot([clientTomb, clientLive]);
+        const workflow = readFileSync(resolve(BACKEND_DIR, "../.github/workflows/database-patches.yml"), "utf8");
+        const dev = workflow.slice(workflow.indexOf("  apply-dev:"), workflow.indexOf("  apply-preview:"));
+        const patches = [...dev.matchAll(/--file (prisma\/migrations\/[^\s]+\/migration.sql)/g)]
+            .flatMap((match) => match[1] ? [match[1]] : []);
+        expect(patches.length).toBeGreaterThan(70);
+        for (const attempt of [1, 2]) {
+            for (const file of patches) {
+                const run = runPatch(file);
+                if (run.status !== 0) throw new Error(`dev patch ${file}, attempt ${attempt}: ${run.output}`);
+            }
+        }
+        expect(await prisma.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual(tomb);
+        expect(await snapshot([clientTomb, clientLive])).toEqual(before);
+        expect(await prisma.$queryRaw`SELECT indexname FROM pg_indexes WHERE schemaname = 'public'
+            AND indexname IN ('employee_branch_id_phone_key', 'client_branch_phone_key')`).toEqual([]);
+    }, 300_000);
+
+    it("0717 still rejects all-row display duplicates and creates its original index before canonical supersession", async () => {
+        const branchId = await newBranch();
+        const legacy = "prisma/migrations/20260717000000_employee_client_hardening/migration.sql";
+        await prisma.$executeRaw`DROP INDEX "public"."employee_branch_id_phone_normalized_key"`;
+        try {
+            const first = await prisma.employee.create({ data: {
+                branchId, name: "deleted duplicate", phone: "01033334444", phoneNormalized: null,
+                deletedAt: new Date(), workArea: [], grade: "스탠다드",
+            } });
+            await prisma.employee.create({ data: {
+                branchId, name: "live duplicate", phone: first.phone, phoneNormalized: null, workArea: [], grade: "스탠다드",
+            } });
+            const duplicate = runPatch(legacy);
+            expect(duplicate.status).not.toBe(0);
+            expect(duplicate.output).toContain("employee has duplicate (branch_id, phone) groups");
+            await prisma.employee.delete({ where: { id: first.id } });
+            const clean = runPatch(legacy);
+            if (clean.status !== 0) throw new Error(clean.output);
+            expect(await prisma.$queryRaw`SELECT indexname FROM pg_indexes WHERE schemaname = 'public'
+                AND indexname = 'employee_branch_id_phone_key'`).toHaveLength(1);
+        } finally {
+            await prisma.employee.deleteMany({ where: { branchId } });
+            const restore = runPatch(MIGRATION);
+            if (restore.status !== 0) throw new Error(restore.output);
+        }
+    }, 120_000);
 
     it("(i) replays over tombstones with NULL keys plus a live row: succeeds twice, tombstones stay NULL, live row unchanged", async () => {
         const branchId = await newBranch();

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
 import { randomUUID } from "node:crypto";
 
 import { createBranch, createUser, createUserBranchMembership } from "../helpers/factories";
@@ -17,11 +18,13 @@ function signal() {
     return { promise, resolve };
 }
 
-// Keep real SQL and transaction boundaries; hooks only pause after real queries.
+// Keep real SQL and transaction boundaries; hooks control real-query interleaving
+// and transaction-local PostgreSQL settings, never replace database outcomes.
 function withHooks(prisma: PrismaService, hooks: {
     afterLock?: (query: Prisma.Sql) => Promise<void>;
     afterOwnershipRead?: () => Promise<void>;
     onTransactionError?: (error: unknown) => void;
+    beforeTransaction?: (tx: Prisma.TransactionClient) => Promise<void>;
 }): PrismaService {
     return new Proxy(prisma, {
         get(target, key) {
@@ -30,34 +33,37 @@ function withHooks(prisma: PrismaService, hooks: {
                     isolationLevel?: Prisma.TransactionIsolationLevel;
                 }) => {
                     try {
-                        return await target.$transaction((tx) => callback(new Proxy(tx, {
-                        get(client, property) {
-                            if (property === "$queryRaw") {
-                                return async (query: Prisma.Sql) => {
-                                    const result = await tx.$queryRaw(query);
-                                    await hooks.afterLock?.(query);
-                                    return result;
-                                };
-                            }
-                            if (property === "branch") {
-                                return new Proxy(tx.branch, {
-                                    get(model, method) {
-                                        if (method === "findFirst") {
-                                            return async (args: Prisma.branchFindFirstArgs) => {
-                                                const result = await model.findFirst(args);
-                                                await hooks.afterOwnershipRead?.();
-                                                return result;
-                                            };
-                                        }
-                                        const value = Reflect.get(model, method, model);
-                                        return typeof value === "function" ? value.bind(model) : value;
-                                    },
-                                });
-                            }
-                            const value = Reflect.get(client, property, client);
-                            return typeof value === "function" ? value.bind(client) : value;
-                        },
-                        })), { ...options, timeout: 15_000 });
+                        return await target.$transaction(async (tx) => {
+                            await hooks.beforeTransaction?.(tx);
+                            return callback(new Proxy(tx, {
+                                get(client, property) {
+                                    if (property === "$queryRaw") {
+                                        return async (query: Prisma.Sql) => {
+                                            const result = await tx.$queryRaw(query);
+                                            await hooks.afterLock?.(query);
+                                            return result;
+                                        };
+                                    }
+                                    if (property === "branch") {
+                                        return new Proxy(tx.branch, {
+                                            get(model, method) {
+                                                if (method === "findFirst") {
+                                                    return async (args: Prisma.branchFindFirstArgs) => {
+                                                        const result = await model.findFirst(args);
+                                                        await hooks.afterOwnershipRead?.();
+                                                        return result;
+                                                    };
+                                                }
+                                                const value = Reflect.get(model, method, model);
+                                                return typeof value === "function" ? value.bind(model) : value;
+                                            },
+                                        });
+                                    }
+                                    const value = Reflect.get(client, property, client);
+                                    return typeof value === "function" ? value.bind(client) : value;
+                                },
+                            }));
+                        }, { ...options, timeout: 15_000 });
                     } catch (error) {
                         hooks.onTransactionError?.(error);
                         throw error;
@@ -121,6 +127,123 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
             }
         }
     }
+
+    for (const action of ["reject", "approve"] as const) {
+        invariant("SI-USER-13", `${action} retries a real deadlock against legacy membership repair without duplicate audit writes`, async () => {
+            const old = await user("1");
+            const branch = await createBranch(handle.raw, tracker, { ownerId: old.id });
+            const unowned = await createBranch(handle.raw, tracker);
+            const approver = await user("9", "owner");
+            const actor = ownerActor(approver.id);
+            const paused = signal();
+            const release = signal();
+            const errors: unknown[] = [];
+            let firstLock = true;
+            const repair = makeUserService(withHooks(handle.service, {
+                // Make the admission waiter detect the cycle first, so its retry
+                // (not repair's existing retry) is the behavior under test.
+                beforeTransaction: async (tx) => { await tx.$executeRaw`SET LOCAL deadlock_timeout = '10s'`; },
+                afterLock: async () => {
+                    if (firstLock) { firstLock = false; paused.resolve(); await release.promise; }
+                },
+            })).update(old.id, { branchId: branch.id, branchRole: "admin", actor });
+            const outcomes: Promise<unknown>[] = [repair];
+            void repair.catch(() => {});
+            try {
+                await withDeadline(paused.promise, 5_000, "repair did not lock the branch");
+                const service = makeUserService(withHooks(handle.service, {
+                    beforeTransaction: async (tx) => { await tx.$executeRaw`SET LOCAL deadlock_timeout = '50ms'`; },
+                    onTransactionError: (error) => { errors.push(error); },
+                }));
+                const mutation = action === "reject" ? service.reject(old.id, actor) : service.approve(old.id, {
+                    role: "admin", approvedBy: approver.id, branchId: branch.id, ownerBranchId: unowned.id, actor,
+                });
+                outcomes.push(mutation);
+                void mutation.catch(() => {});
+                // The admission transaction holds user FOR UPDATE and waits for
+                // repair's branch. Repair's FK check then closes the lock cycle.
+                await waitUntilBlocked(handle.raw, action === "reject" ? /UPDATE "public"\."branch"/ : /INSERT INTO "public"\."user_branch"/);
+            } finally {
+                release.resolve();
+                await Promise.allSettled(outcomes);
+            }
+            expect(errors.some(isTransactionConflict)).toBe(true);
+            expectSuccessOrConflict(await Promise.allSettled(outcomes));
+            const admission = (await Promise.allSettled(outcomes))[1];
+            const audits = await handle.raw.admin_audit_event.count({ where: {
+                targetId: old.id, action: action === "reject" ? "user.rejected" : "branch.owner_assigned",
+            } });
+            expect(audits).toBe(admission?.status === "fulfilled" ? 1 : 0);
+        });
+    }
+
+    for (const action of ["reject", "approve"] as const) {
+        invariant("SI-USER-13", `${action}: real raw-query meta 40P01 conflicts exhaust three attempts as a clean 409`, async () => {
+            const target = await user("1");
+            const approver = await user("9", "owner");
+            const actor = ownerActor(approver.id);
+            const errors: unknown[] = [];
+            const service = makeUserService(withHooks(handle.service, {
+                beforeTransaction: async (tx) => {
+                    // PostgreSQL, not a mocked Prisma error, supplies P2010.meta.code.
+                    await tx.$executeRaw`DO $$ BEGIN RAISE EXCEPTION 'forced conflict' USING ERRCODE = '40P01'; END $$`;
+                },
+                onTransactionError: (error) => {
+                    expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+                    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                        // Keep PostgreSQL's actual Prisma metadata, but simulate a
+                        // generic wrapper message so the message regex cannot pass
+                        // this test in place of metadata traversal.
+                        error.message = "Raw query failed; SQLSTATE is available only in metadata";
+                    }
+                    errors.push(error);
+                },
+            }));
+            const operation = action === "reject" ? service.reject(target.id, actor) : service.approve(target.id, {
+                role: "user", approvedBy: approver.id, branchId: randomUUID(), actor,
+            });
+            await expect(operation).rejects.toMatchObject({
+                status: 409, response: { code: "REQUEST_CONFLICT" },
+            });
+            expect(errors).toHaveLength(3);
+            expect(errors[0]).toMatchObject({ code: "P2010", meta: { code: "40P01" } });
+            expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id }, select: { approvalStatus: true } }))
+                .toEqual({ approvalStatus: "approved" });
+        });
+    }
+
+    invariant("SI-USER-13", "system-admin refuses an owner changed while waiting with 409 and no audit", async () => {
+        const old = await user("1");
+        const next = await user("2");
+        const branch = await ownedBranch(old.id);
+        const actor = ownerActor((await user("9", "owner")).id);
+        const locked = signal();
+        const release = signal();
+        const writer = handle.raw.$transaction(async (tx) => {
+            await tx.branch.update({ where: { id: branch.id }, data: { ownerId: next.id } });
+            locked.resolve();
+            await release.promise;
+        }, { timeout: 15_000 });
+        const outcomes: Promise<unknown>[] = [writer];
+        void writer.catch(() => {});
+        try {
+            await withDeadline(locked.promise, 5_000, "owner writer did not lock branch");
+            const challenger = makeSystemAdminService(handle.service).updateBranch(branch.id, { name: "must not apply" }, actor);
+            outcomes.push(challenger);
+            void challenger.catch(() => {});
+            await waitUntilBlocked(handle.raw, /FROM\s+"branch"[\s\S]*FOR\s+UPDATE/);
+        } finally {
+            release.resolve();
+            await Promise.allSettled(outcomes);
+        }
+        expect(await Promise.allSettled(outcomes)).toEqual([
+            expect.objectContaining({ status: "fulfilled" }),
+            expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ status: 409, response: expect.objectContaining({ code: "REQUEST_CONFLICT" }) }) }),
+        ]);
+        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id }, select: { name: true, ownerId: true } }))
+            .toEqual({ name: branch.name, ownerId: next.id });
+        expect(await handle.raw.admin_audit_event.count({ where: { targetId: branch.id } })).toBe(0);
+    });
 
     invariant("SI-USER-12", "account assignment locks the old owner before branches when racing an owner transfer", async () => {
         const old = await user("1");
