@@ -3,11 +3,14 @@
  */
 import { NextRequest } from "next/server";
 
-import { getCurrentUser } from "@/lib/auth/cookies";
+import { AuthServiceUnavailableError, getCurrentUser } from "@/lib/auth/cookies";
 import { getStatsView } from "@/lib/observability/stats-server";
 import { GET } from "../[view]/route";
 
-jest.mock("@/lib/auth/cookies", () => ({ getCurrentUser: jest.fn() }));
+jest.mock("@/lib/auth/cookies", () => ({
+  getCurrentUser: jest.fn(),
+  AuthServiceUnavailableError: class AuthServiceUnavailableError extends Error {},
+}));
 jest.mock("@/lib/observability/stats-server", () => ({
   ...jest.requireActual("@/lib/observability/stats-server"),
   getStatsView: jest.fn(),
@@ -30,6 +33,14 @@ describe("mobile stats authorization", () => {
     mockCurrentUser.mockResolvedValue(null);
     const response = await GET(request("/api/stats/inquiries"), { params: Promise.resolve({ view: "inquiries" }) });
     expect(response.status).toBe(401);
+    expect(mockGetStatsView).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 (not 401/500) when the auth backend is unavailable", async () => {
+    mockCurrentUser.mockRejectedValue(new AuthServiceUnavailableError("down"));
+    const response = await GET(request("/api/stats/inquiries"), { params: Promise.resolve({ view: "inquiries" }) });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "Authentication service unavailable" });
     expect(mockGetStatsView).not.toHaveBeenCalled();
   });
 

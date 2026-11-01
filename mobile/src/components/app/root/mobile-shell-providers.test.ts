@@ -7,6 +7,7 @@ import { useEffect } from "react";
 
 import type { AuthUser } from "@/hooks/useGetAuthUser";
 import { MobileShellProviders } from "@/components/app/root/mobile-shell-providers";
+import { AuthServiceUnavailableError } from "@/lib/auth/cookies";
 import { useInitialUser } from "@/providers/UserProvider";
 
 // The probe stands in for the real subscription: it reads the same two
@@ -37,7 +38,10 @@ jest.mock("@/components/app/v3/V3MobileHeader", () => ({ V3MobileHeader: () => n
 jest.mock("@/components/app/v3/V3Sidebar", () => ({ V3Sidebar: () => null }));
 jest.mock("@/components/ui/toaster", () => ({ Toaster: () => null }));
 jest.mock("@/components/app/ui/OfflineNotice", () => ({ OfflineNotice: () => null }));
-jest.mock("@/lib/auth/cookies", () => ({ getCurrentUser: jest.fn() }));
+jest.mock("@/lib/auth/cookies", () => ({
+  getCurrentUser: jest.fn(),
+  AuthServiceUnavailableError: class AuthServiceUnavailableError extends Error {},
+}));
 
 const mobileRoot = process.cwd();
 const repositoryRoot = path.resolve(mobileRoot, "..");
@@ -138,6 +142,31 @@ describe("mobile shell realtime subscription", () => {
       expect(observed.queryClient).toBeDefined();
       expect(observed.user).toBe(user);
     }
+  });
+
+  it("renders the shell as signed out when the auth backend is unavailable", async () => {
+    const shell = await MobileShellProviders({
+      children: null,
+      locale: "ko",
+      userPromise: Promise.reject(new AuthServiceUnavailableError("down")),
+    });
+
+    render(shell);
+
+    expect(mockMounts).toHaveBeenCalledTimes(1);
+    for (const [observed] of mockProbe.mock.calls) {
+      expect(observed.user).toBeNull();
+    }
+  });
+
+  it("does not swallow unexpected errors from the user lookup", async () => {
+    await expect(
+      MobileShellProviders({
+        children: null,
+        locale: "ko",
+        userPromise: Promise.reject(new Error("boom")),
+      }),
+    ).rejects.toThrow("boom");
   });
 
   it("references the subscription exactly once in the shell source", () => {
