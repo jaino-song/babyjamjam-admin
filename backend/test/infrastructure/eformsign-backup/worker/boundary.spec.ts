@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 
 const BACKEND = path.resolve(__dirname, "../../../..");
 const RUNTIME_DIRS = ["domain/eformsign-backup/worker", "infrastructure/eformsign-backup/worker"];
@@ -100,17 +101,85 @@ function consoleViolations(source: string): string[] {
     return [...source.matchAll(/(?<![\w$])console(?![\w$])/g)].map(() => "console");
 }
 
+/** True where an identifier only names a property or a declaration, not a value read from scope. */
+function isPropertyName(node: ts.Identifier): boolean {
+    const parent = node.parent;
+    return (ts.isPropertyAccessExpression(parent) && parent.name === node)
+        || ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isPropertyDeclaration(parent)
+            || ts.isMethodDeclaration(parent) || ts.isMethodSignature(parent) || ts.isGetAccessorDeclaration(parent)
+            || ts.isSetAccessorDeclaration(parent) || ts.isEnumMember(parent)) && parent.name === node);
+}
+
+/** True where an identifier declares a local binding (variable, parameter, destructuring element, function, class, namespace). */
+function isDeclarationName(node: ts.Identifier): boolean {
+    const parent = node.parent;
+    return (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)
+        || ts.isFunctionDeclaration(parent) || ts.isClassDeclaration(parent) || ts.isModuleDeclaration(parent)) && parent.name === node;
+}
+
+/** The only shape in which `require` may appear: `require("literal")` or ``require(`literal`)``. */
+function isLiteralRequireCallee(node: ts.Identifier): boolean {
+    const call = node.parent;
+    return ts.isCallExpression(call) && call.expression === node && call.arguments.length === 1 && ts.isStringLiteralLike(call.arguments[0]!);
+}
+
+/**
+ * What a source file loads, read from the TypeScript syntax tree, not from text. A regex or the
+ * comment stripper above can be fooled by `from/**\/"node:module"`, `require/**\/(name)` or a regex
+ * literal that looks like a comment; the parser sees tokens, so comments and regex literals between
+ * them change nothing. Collected:
+ *  - every import / export-from / import-equals / `import("x")` type specifier, in `specifiers`;
+ *  - every `import(...)` call whose argument is not one plain string literal, every identifier named
+ *    `createRequire`, every use of `require` other than `require("literal")` (alias, argument,
+ *    `.call`), every `module` read as a value (`module.require`, `module["require"]`), and every
+ *    call of a property named `require` on any receiver, in `violations`.
+ */
+function analyzeLoads(source: string): { specifiers: string[]; violations: string[] } {
+    const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const specs: string[] = [];
+    const violations: string[] = [];
+    const visit = (node: ts.Node): void => {
+        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+            specs.push(node.moduleSpecifier.text);
+        } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+            const ref = node.moduleReference.expression;
+            if (ts.isStringLiteralLike(ref)) specs.push(ref.text);
+            else violations.push(`import = require( with a non-literal argument: ${ref.getText(sf).slice(0, 24)}`);
+        } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) {
+            specs.push(node.argument.literal.text);
+        } else if (ts.isCallExpression(node)) {
+            const callee = node.expression;
+            const [argument] = node.arguments;
+            if (callee.kind === ts.SyntaxKind.ImportKeyword) {
+                if (node.arguments.length === 1 && argument && ts.isStringLiteralLike(argument)) specs.push(argument.text);
+                else violations.push(`import( with a non-literal argument: ${node.arguments.map((a) => a.getText(sf)).join(", ").slice(0, 24)}`);
+            } else if (ts.isIdentifier(callee) && callee.text === "require" && node.arguments.length === 1 && argument && ts.isStringLiteralLike(argument)) {
+                specs.push(argument.text);
+            } else if ((ts.isPropertyAccessExpression(callee) && callee.name.text === "require")
+                || (ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression) && callee.argumentExpression.text === "require")) {
+                violations.push(`.require( called on a receiver: ${callee.getText(sf).slice(0, 24)}`);
+            }
+        } else if (ts.isIdentifier(node)) {
+            if (node.text === "createRequire") violations.push("createRequire");
+            else if (node.text === "require" && !isPropertyName(node) && !isLiteralRequireCallee(node)) {
+                violations.push(`require used other than as require("literal"): ${node.parent.getText(sf).slice(0, 24)}`);
+            } else if (node.text === "module" && !isPropertyName(node) && !isDeclarationName(node)) {
+                violations.push(`module used as a value: ${node.parent.getText(sf).slice(0, 24)}`);
+            }
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return { specifiers: specs, violations };
+}
+
 function specifiers(source: string): string[] {
-    const out: string[] = [];
-    const patterns = [
-        /\bfrom\s*["']([^"']+)["']/g,
-        /\bimport\s*["']([^"']+)["']/g,
-        /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-        /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-        /\bexport\s+\*\s+from\s*["']([^"']+)["']/g,
-    ];
-    for (const pattern of patterns) for (const match of source.matchAll(pattern)) out.push(match[1]!);
-    return out;
+    return analyzeLoads(source).specifiers;
+}
+
+/** `createRequire` and a dynamic `import(x)` / `require(x)` with a computed argument load code the specifier scan never sees. */
+function loaderViolations(source: string): string[] {
+    return analyzeLoads(source).violations;
 }
 
 function insideRuntime(file: string, specifier: string): boolean {
@@ -124,8 +193,11 @@ function hasPathTraversal(specifier: string): boolean {
         || path.posix.normalize(specifier) !== specifier;
 }
 
-/** `node:process` hands out `env` as a named import, which no `process.<member>` check would see. */
-const FORBIDDEN_BARE = new Set(["node:process", "process"]);
+/**
+ * `node:process` hands out `env` as a named import, which no `process.<member>` check would see.
+ * `node:module` / `module` hand out `createRequire`, which loads any module without a visible specifier.
+ */
+const FORBIDDEN_BARE = new Set(["node:process", "process", "node:module", "module"]);
 
 function allowed(file: string, specifier: string): boolean {
     if (specifier.startsWith(".")) return insideRuntime(file, specifier);
@@ -183,6 +255,105 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "domain/eformsign-backup/worker/ledger-state")).toBe(true);
         expect(allowed("infrastructure/eformsign-backup/worker/x.ts", "node:fs/promises")).toBe(true);
         expect(allowed("scripts/eformsign-backup-worker.ts", "../infrastructure/eformsign-backup/worker/cli")).toBe(true);
+    });
+
+    it("should refuse node:module and module, which hand out createRequire (the check itself can fail)", () => {
+        const file = "infrastructure/eformsign-backup/worker/x.ts";
+        for (const bad of ["node:module", "module"]) expect(allowed(file, bad)).toBe(false);
+        for (const source of ['import { createRequire } from "node:module";', 'import Module from "module";', 'require("module")', "require('node:module')"]) {
+            const found = specifiers(source);
+            expect(found).not.toEqual([]);
+            expect(found.some((specifier) => !allowed(file, specifier))).toBe(true);
+        }
+        expect(allowed(file, "node:fs")).toBe(true);
+    });
+
+    it("should see through comments and regex literals between tokens (the check itself can fail)", () => {
+        const file = "infrastructure/eformsign-backup/worker/x.ts";
+        // F1: a regex literal fools the comment stripper, and `/**/` splits `require` from its `(`.
+        for (const bad of [
+            "const urlPattern = /^https?:\\/\\//; return require/**/(name);",
+            "require /* x */ ( name )",
+            "import(/* c */ name)",
+            "require(/* c */ `./${name}`)",
+        ]) expect(loaderViolations(bad)).not.toEqual([]);
+        // F2: comments between the keyword and the specifier leave the module name in place.
+        for (const bad of ['import * as Module from/**/"node:module";', 'export * from/**/"module"', 'import/**/"node:module";']) {
+            const found = specifiers(bad);
+            expect(found).not.toEqual([]);
+            expect(found.some((specifier) => !allowed(file, specifier))).toBe(true);
+        }
+        for (const [source, expected] of [
+            ['import /* a */ { x } /* b */ from /* c */ "./runner";', ["./runner"]],
+            ["import x = require/**/('node:fs');", ["node:fs"]],
+            ["const m = import/**/('./literal');", ["./literal"]],
+            ['// import("node:module")\nconst s = "require(name)";', []],
+        ] as Array<[string, string[]]>) {
+            expect(specifiers(source)).toEqual(expected);
+            expect(loaderViolations(source)).toEqual([]);
+        }
+    });
+
+    it("should refuse createRequire and any import()/require() whose argument is not one string literal (the check itself can fail)", () => {
+        for (const bad of [
+            'import { createRequire } from "node:module"',
+            'createRequire(__filename)("../../app.module")',
+            "const r = createRequire(import.meta.url);",
+            "import(name)",
+            "const m = await import(name);",
+            "require(name)",
+            'require("../" + name)',
+            'import("./" + name)',
+            "await import(`./adapters/${name}`)",
+            "require(`./${name}`)",
+            "import(\n  name\n)",
+            "const m = require (name);",
+            "import()",
+            "/^a\\//; const m = require(name);",
+        ]) expect(loaderViolations(bad)).not.toEqual([]);
+        for (const good of [
+            'import("./literal")',
+            "import('./literal')",
+            'await import("node:fs/promises")',
+            'const z = require("zod");',
+            'import { promises as fs } from "node:fs";',
+            'import path from "node:path";',
+            'import { x } from "./runner";',
+            'export * from "./runner";',
+            "import type { X } from './x';",
+            "const importer = 1; const required = importer;",
+        ]) expect(loaderViolations(good)).toEqual([]);
+    });
+
+    it("should refuse module.require, a require alias and require.call, and accept plain literal requires (the check itself can fail)", () => {
+        for (const bad of [
+            'module.require("node:module")',
+            "module.require(name)",
+            'module["require"]("x")',
+            "const r = require; r(name)",
+            'require.call(null, "x")',
+            'const loader = foo.require; loader(name); bar["require"]("x")',
+            "foo.require(name)",
+            "run(require)",
+            "module.constructor._load(name)",
+            "const { require: r } = module;",
+        ]) expect(loaderViolations(bad)).not.toEqual([]);
+        for (const bad of ['foo.require("x")', 'bar["require"]("x")']) expect(loaderViolations(bad)).not.toEqual([]);
+        for (const good of [
+            'require("zod")',
+            "require(`zod`)",
+            "const x = foo.module;",
+            "const o = { module: 1, require: 2 };",
+            "interface I { module: string }",
+            "foo.module.bar()",
+        ]) expect(loaderViolations(good)).toEqual([]);
+        expect(specifiers('require("zod")')).toEqual(["zod"]);
+    });
+
+    it("should load no module through createRequire or a computed import()/require() in any runtime file", () => {
+        const offenders: string[] = [];
+        for (const [file, source] of sources) for (const hit of loaderViolations(source)) offenders.push(`${file}: ${hit}`);
+        expect(offenders).toEqual([]);
     });
 
     it("should touch no process member outside the allowlist, and never read process.env", () => {
