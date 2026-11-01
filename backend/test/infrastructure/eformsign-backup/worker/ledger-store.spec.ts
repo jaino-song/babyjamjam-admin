@@ -1,4 +1,4 @@
-import { promises as fsp, statSync } from "node:fs";
+import { constants, promises as fsp, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -1023,6 +1023,66 @@ describe("beforeWrite guard on composite operations", () => {
         expect(await store.compactIfNeeded(3)).toBe(true);
         expect(calls).toBe(1);
         expect(afterGuard(events)[0]).toMatch(/^open:checkpoint-5\.tmp$/);
+        await store.close();
+    });
+
+    /** A control directory whose checkpoint is published (lastSeq 5) but whose next journal does not exist yet. */
+    async function checkpointedWithoutJournal(): Promise<{ control: string; next: string }> {
+        const control = await seeded(5);
+        const store = await openWritable(control);
+        expect(await store.compactIfNeeded(3)).toBe(true);
+        await store.close();
+        const next = journalPath(control, 6);
+        await fsp.rm(next);
+        return { control, next };
+    }
+    const exists = (file: string): Promise<boolean> => fsp.access(file).then(() => true, () => false);
+
+    it("a stale writer refused at the guard creates no journal, so the legitimate writer's first-use create still succeeds", async () => {
+        const { control, next } = await checkpointedWithoutJournal();
+        let reachedEnoent: () => void = () => undefined;
+        const paused = new Promise<void>((resolve) => { reachedEnoent = resolve; });
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const legitimate = await openWritable(control, {
+            fs: {
+                ...REAL_LEDGER_FS,
+                open: async (file, flags, mode) => {
+                    try {
+                        return await REAL_LEDGER_FS.open(file, flags, mode);
+                    } catch (error) {
+                        if (file === next && (flags & constants.O_CREAT) === 0) { reachedEnoent(); await gate; } // B saw ENOENT, then stalls
+                        throw error;
+                    }
+                },
+            },
+            beforeWrite: () => undefined,
+        });
+        const legitimateAppend = legitimate.append("run_started", runStartedBody(6), fixedAt(6));
+        await paused;
+
+        const stale = await openWritable(control, { beforeWrite: refuse });
+        await expect(stale.append("run_started", runStartedBody(6), fixedAt(6))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await exists(next)).toBe(false);
+
+        release();
+        const record = await legitimateAppend;
+        expect(record.seq).toBe(6);
+        await legitimate.close();
+        await stale.close();
+        const replayed = await LedgerStore.open(control, { readOnly: true });
+        expect(replayed.status).toBe("ok");
+        expect(replayed.lastSeq).toBe(6);
+    });
+
+    it("on the ENOENT path a guarded append checks the guard strictly before it creates the journal", async () => {
+        const { control, next } = await checkpointedWithoutJournal();
+        const events: string[] = [];
+        const store = await openWritable(control, { fs: tracingFs(events), beforeWrite: () => { events.push("guard"); } });
+        events.length = 0;
+        await store.append("run_started", runStartedBody(6), fixedAt(6));
+        const name = `open:${path.basename(next)}`;
+        expect(events).toEqual([name, "guard", name, "open:ledger", "sync", "write", "sync"]);
         await store.close();
     });
 

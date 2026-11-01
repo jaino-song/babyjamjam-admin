@@ -282,7 +282,8 @@ export class LedgerStore {
 
     /**
      * The caller's pre-write guard. Its failure is the caller's to handle: nothing was written, so the store is not poisoned.
-     * Call it once per operation, with only the destructive syscall after it: no later await of ours sits between the two,
+     * Call it once per operation, with only the destructive or creating syscall after it (an append that has to create the
+     * missing journal guards before the create, not after): no later await of ours sits between the two,
      * and a composite operation passes its own flag so its inner steps do not check again and cannot be cut in half.
      * Residual window: no check made in user space is atomic with the syscall that follows it, so a lock file replaced in
      * the instant between them is still missed; the window is the guard's own I/O resolving plus that one call.
@@ -303,14 +304,16 @@ export class LedgerStore {
         const next = applyLedgerRecord(this._state, record);
         const bytes = Buffer.from(line, "utf8");
         const { fault } = this.options;
-        let handle: LedgerFileHandle;
+        // Opening an existing journal changes nothing; creating the missing one is a write, so it comes after the guard.
+        let existing: LedgerFileHandle | null;
         try {
-            handle = await this.journalHandle();
+            existing = await this.openExistingJournal();
         } catch {
             throw await this.poison();
         }
         if (guard) await this.guardWrite();
         try {
+            const handle = existing ?? await this.createJournal(this.journalBase);
             fault?.("before-write");
             if (fault === undefined) {
                 await writeAll(handle, bytes);
@@ -331,6 +334,12 @@ export class LedgerStore {
     }
 
     private async journalHandle(): Promise<LedgerFileHandle> {
+        // The journal after a checkpoint is created on first use.
+        return (await this.openExistingJournal()) ?? this.createJournal(this.journalBase);
+    }
+
+    /** Opens the live journal for append without creating it: `null` when it does not exist yet. */
+    private async openExistingJournal(): Promise<LedgerFileHandle | null> {
         if (this.handle !== null) return this.handle;
         const file = path.join(this.ledgerDir, journalName(this.journalBase));
         let handle: LedgerFileHandle;
@@ -338,8 +347,7 @@ export class LedgerStore {
             handle = await this.fs.open(file, FLAGS.appendExisting);
         } catch (error) {
             if (errorCode(error) !== "ENOENT") throw error;
-            // The journal after a checkpoint is created on first use.
-            return this.createJournal(this.journalBase);
+            return null;
         }
         const stat = await handle.stat();
         if (!stat.isFile() || !isPrivate(stat)) {
