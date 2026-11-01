@@ -1097,6 +1097,99 @@ describe("beforeWrite guard on composite operations", () => {
     });
 });
 
+describe("deferred torn-tail repair and the external-write guard (BJJ-455 P2 FU-11)", () => {
+    const refuse = (): never => { throw new WorkerError("lock-not-held"); };
+    const TORN = '{"v":1,"seq":4,"ty';
+    const bytesOf = async (control: string): Promise<Record<string, string>> => {
+        const found: Record<string, string> = {};
+        for (const name of await fsp.readdir(path.join(control, "ledger"))) found[name] = (await fsp.readFile(path.join(control, "ledger", name))).toString("base64");
+        return found;
+    };
+
+    it("opens a torn tail without repairing it: the ledger directory stays byte for byte, no guard runs, no reason is reported", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        const before = await bytesOf(control);
+        let calls = 0;
+        const store = await openWritable(control, { deferTornTailRepair: true, beforeWrite: () => { calls += 1; } });
+        expect(store.status).toBe("ok");
+        expect(store.reasons).toEqual([]);
+        expect(store.lastSeq).toBe(3);
+        expect(calls).toBe(0);
+        await store.close();
+        expect(await bytesOf(control)).toEqual(before);
+    });
+
+    it("refuses every other write while a torn tail is still pending, so nothing is appended behind torn bytes", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        const before = await bytesOf(control);
+        const store = await openWritable(control, { deferTornTailRepair: true });
+        await expect(store.append("run_started", runStartedBody(4), fixedAt(4))).rejects.toMatchObject({ reasonCode: "internal" });
+        await expect(store.compactIfNeeded(0)).rejects.toMatchObject({ reasonCode: "internal" });
+        await store.close();
+        expect(await bytesOf(control)).toEqual(before);
+    });
+
+    it("repairPendingTail repairs exactly like an eager open (quarantine copy, tail_discarded, one guard) and then allows appends", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        let calls = 0;
+        const store = await openWritable(control, { deferTornTailRepair: true, beforeWrite: () => { calls += 1; } });
+        await store.repairPendingTail();
+        expect(calls).toBe(1);
+        expect(store.reasons).toEqual(["torn-tail-repaired"]);
+        expect(store.lastSeq).toBe(4);
+        expect(await listLedger(control)).toContain("tail-4.quarantine");
+        await store.repairPendingTail();
+        expect(calls).toBe(1);
+        await store.append("run_started", runStartedBody(5), fixedAt(5));
+        await store.close();
+        const reopened = await LedgerStore.open(control, { readOnly: true });
+        expect(reopened.status).toBe("ok");
+        expect(reopened.reasons).toEqual([]);
+    });
+
+    it("repairPendingTail is a no-op for a clean ledger and, with a refusing guard, leaves the journal untouched", async () => {
+        const clean = await seeded(2);
+        const cleanStore = await openWritable(clean, { deferTornTailRepair: true, beforeWrite: refuse });
+        await cleanStore.repairPendingTail();
+        await cleanStore.close();
+
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        const before = await fsp.readFile(journalPath(control));
+        const store = await openWritable(control, { deferTornTailRepair: true, beforeWrite: refuse });
+        await expect(store.repairPendingTail()).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readFile(journalPath(control))).toEqual(before);
+    });
+
+    it("guardExternalWrite runs the caller's guard once and lets its refusal through without poisoning the store", async () => {
+        const control = await seeded(2);
+        let allow = true;
+        let calls = 0;
+        const store = await openWritable(control, { beforeWrite: () => { calls += 1; if (!allow) refuse(); } });
+        await store.guardExternalWrite();
+        expect(calls).toBe(1);
+        allow = false;
+        await expect(store.guardExternalWrite()).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        allow = true;
+        await store.append("run_started", runStartedBody(3), fixedAt(3));
+        expect(store.lastSeq).toBe(3);
+        await store.close();
+    });
+
+    it("guardExternalWrite maps a non-WorkerError guard failure to control-unavailable and is a no-op without a guard", async () => {
+        const control = await seeded(2);
+        const plain = await openWritable(control);
+        await plain.guardExternalWrite();
+        await plain.close();
+        const store = await openWritable(control, { beforeWrite: async () => { throw new Error("EACCES /proc/locks"); } });
+        await expect(store.guardExternalWrite()).rejects.toMatchObject({ reasonCode: "control-unavailable" });
+        await store.close();
+    });
+});
+
 describe("worker runtime file rules", () => {
     const dir = path.resolve(__dirname, "../../../../infrastructure/eformsign-backup/worker");
     it("ledger files import only what contract W1 allows and avoid the forbidden constructs", async () => {

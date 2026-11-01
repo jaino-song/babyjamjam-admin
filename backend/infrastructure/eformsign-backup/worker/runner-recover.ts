@@ -297,12 +297,19 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
         if (control === null) throw new WorkerError("recovery-required");
         if (control.installationId !== marker.installationId || control.archiveId !== marker.archiveId) throw new WorkerError("archive-identity-mismatch");
     } else {
+        // The same ownership guard the ledger runs before its own writes: a worker whose lock file was replaced must not restore it.
+        await deps.ledger.guardExternalWrite();
         await controlMarkerWriter(config.control.path, MARKER_NAME, encodeMarker(marker));
         if (deps.reopenLedger === undefined) throw new WorkerError("internal");
         await deps.ledger.close();
         deps.ledger = await deps.reopenLedger();
-        if (deps.ledger.status === "ok") return { outcome: "finished", recovered: 0, unverified: 0, sequenceFloor: deps.ledger.state.lastSeq, knownGaps: 0 };
+        if (deps.ledger.status === "ok") {
+            await deps.ledger.repairPendingTail();
+            return { outcome: "finished", recovered: 0, unverified: 0, sequenceFloor: deps.ledger.state.lastSeq, knownGaps: 0 };
+        }
     }
+    // Every refusal check has passed: only now may a torn tail of the ledger be repaired.
+    await deps.ledger.repairPendingTail();
     if (!resuming && deps.ledger.status !== "recovery_required") throw new WorkerError("ledger-inconsistent");
 
     const facts = await readCompletionFacts(archive, config.companyId);

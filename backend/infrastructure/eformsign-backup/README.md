@@ -151,10 +151,11 @@ disabled worker (`"enabled": false`) still has its file validated first.
 | `archive.reserveBytes` | integer | 64 MiB (67108864) to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.requireMountPoint` | boolean | `true`: the archive root must be a mount point (its device differs from its parent's) | `true` |
-| `requestTimeoutMs` | integer | 1 to 600000 | `120000`; a deadline for the response headers, and an idle timeout for each body read. There is no total deadline for a download (see below) |
+| `requestTimeoutMs` | integer | 1 to 600000 | `120000`; for the JSON requests (snapshot, candidates) a total deadline for the whole request; for an artifact download a deadline for the response headers plus an idle timeout for each body read, with no total deadline (see below) |
 
-`requestTimeoutMs` is not a limit on how long a run takes. It bounds the wait for
-the response headers of an artifact download, and each single read of the body (the
+`requestTimeoutMs` is not a limit on how long a run takes. Each JSON request (snapshot,
+candidates) must finish within it. For an artifact download it bounds only the wait for
+the response headers, and each single read of the body (the
 timer restarts after every chunk). The worker sets no total deadline for the body, so a
 server that keeps sending a few bytes inside each idle window can hold one download,
 and so the run and its `flock`, for a long time. While it does, every later scheduled
@@ -215,7 +216,7 @@ Every refusal below is a reason code only; the path is never printed.
 - **Control directory**: must already exist, be a real directory (not a symlink),
   owned by the user running the worker and not writable by group or others, else
   `control-unavailable` (exit 74). The exception is a control directory that is
-  missing altogether: `run`, `verify` and `recover` check the lock first, and a
+  missing altogether: `init`, `run`, `verify` and `recover` check the lock first, and a
   missing `<control>/worker.lock` is `lock-not-held` (exit 78), not
   `control-unavailable`. Only `inspect`, which skips the lock check, reports a
   missing control directory as `control-unavailable` (exit 74). Its ledger files are created 0600 and its
