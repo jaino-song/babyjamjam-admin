@@ -147,11 +147,11 @@ export function SystemAdminAccountEditDialog({
   const hiddenInitialBranchIds = initialBranchIds.filter(
     (branchId) => !availableBranchIds.has(branchId),
   );
-  const availableOwnedBranchIds = new Set(
+  const availableAdminBranchIds = new Set(
     adminBranchIds.filter((branchId) => availableBranchIds.has(branchId)),
   );
   const initialSelectedBranchIds = [
-    ...new Set([...initialBranchIds, ...availableOwnedBranchIds]),
+    ...new Set([...initialBranchIds, ...availableAdminBranchIds]),
   ];
   const formSchema = useMemo(
     () =>
@@ -208,7 +208,7 @@ export function SystemAdminAccountEditDialog({
     const branch = branches.find((branchOption) => branchOption.id === branchId);
     if (
       !branch?.isActive ||
-      (isPreservingAdminRole && availableOwnedBranchIds.has(branchId))
+      (isPreservingAdminRole && availableAdminBranchIds.has(branchId))
     ) {
       return;
     }
@@ -224,7 +224,7 @@ export function SystemAdminAccountEditDialog({
   const submitAccountEdit = (values: AccountEditFormOutput) => {
     const selectedBranchIdSet = new Set([
       ...values.branchIds,
-      ...(values.role === "admin" ? availableOwnedBranchIds : []),
+      ...(values.role === "admin" ? availableAdminBranchIds : []),
       ...hiddenInitialBranchIds,
     ]);
     onSubmit({
@@ -304,7 +304,7 @@ export function SystemAdminAccountEditDialog({
                       branchIdsField.onChange([
                         ...new Set([
                           ...selectedBranchIds,
-                          ...availableOwnedBranchIds,
+                          ...availableAdminBranchIds,
                           ...hiddenInitialBranchIds,
                         ]),
                       ]);
@@ -351,8 +351,8 @@ export function SystemAdminAccountEditDialog({
                   </legend>
                   {branches.map((branch) => {
                     const isSelected = selectedBranchIds.includes(branch.id);
-                    const isOwnedBranchLocked =
-                      isPreservingAdminRole && availableOwnedBranchIds.has(branch.id);
+                    const isAdminBranchLocked =
+                      isPreservingAdminRole && availableAdminBranchIds.has(branch.id);
                     const isInactiveBranchDisabled = !branch.isActive;
                     const branchLabel = `${branch.name}${branch.isActive ? "" : " (비활성)"}`;
                     return (
@@ -361,11 +361,11 @@ export function SystemAdminAccountEditDialog({
                         data-component={`${dataComponent}_form_account-section_fields_branches-field_options_${branch.id}-chip`}
                         selected={isSelected}
                         disabled={
-                          isPending || isOwnedBranchLocked || isInactiveBranchDisabled
+                          isPending || isAdminBranchLocked || isInactiveBranchDisabled
                         }
                         className="inline-flex items-center gap-1.5"
                         aria-label={
-                          isOwnedBranchLocked
+                          isAdminBranchLocked
                             ? `${branchLabel} 지점: 지점장 임명으로 선택 고정`
                             : isInactiveBranchDisabled
                               ? `${branchLabel} 지점: 비활성으로 선택 불가`

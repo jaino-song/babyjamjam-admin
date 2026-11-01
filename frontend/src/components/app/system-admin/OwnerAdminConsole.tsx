@@ -1476,8 +1476,8 @@ export function OwnerAdminConsole({
                               >
                                 <FormNativeSelect
                                   aria-label={`${selectedRecord.listTitle} 승인 지점 선택`}
-                                  data-component="desktop_system-admin_sections_pending-approval_branch-field"
-                                  selectDataComponent="desktop_system-admin_sections_pending-approval_branch-field_select"
+                                  data-component="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_branch-field"
+                                  selectDataComponent="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_branch-field_select"
                                   value={selectedPendingBranchId}
                                   placeholder="지점 선택"
                                   options={systemAdminBranchRequests
@@ -1497,8 +1497,8 @@ export function OwnerAdminConsole({
 
                                 <FormNativeSelect
                                   aria-label={`${selectedRecord.listTitle} 승인 권한 선택`}
-                                  data-component="desktop_system-admin_sections_pending-approval_role-field"
-                                  selectDataComponent="desktop_system-admin_sections_pending-approval_role-field_select"
+                                  data-component="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_role-field"
+                                  selectDataComponent="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_role-field_select"
                                   value={selectedPendingRole}
                                   options={REGISTERABLE_ROLE_OPTIONS}
                                   disabled={isPendingApprovalActionRunning}
@@ -1513,8 +1513,8 @@ export function OwnerAdminConsole({
                                 {isPendingRoleAdmin ? (
                                   <FormNativeSelect
                                     aria-label={`${selectedRecord.listTitle} 임명 지점 선택`}
-                                    data-component="desktop_system-admin_sections_pending-approval_admin-branch-field"
-                                    selectDataComponent="desktop_system-admin_sections_pending-approval_admin-branch-field_select"
+                                    data-component="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_admin-branch-field"
+                                    selectDataComponent="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_admin-branch-field_select"
                                     value={selectedPendingAdminBranchId}
                                     placeholder="임명 지점 선택"
                                     options={systemAdminBranchRequests
@@ -1534,7 +1534,7 @@ export function OwnerAdminConsole({
                                 ) : null}
 
                                 <FormSwitchRow
-                                  data-component="desktop_system-admin_sections_pending-approval_sms-automation-field"
+                                  data-component="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section_pending-approval-actions_sms-automation-field"
                                   title="메시지 자동 전송"
                                   description={SMS_AUTOMATION_HELPER}
                                   checked={selectedPendingSmsAutomation}
