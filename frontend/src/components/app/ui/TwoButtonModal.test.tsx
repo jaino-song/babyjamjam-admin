@@ -11,8 +11,8 @@ describe("TwoButtonModal", () => {
       <TwoButtonModal
         open
         onOpenChange={handleOpenChange}
-        title="직원을 삭제하시겠습니까?"
-        description="삭제한 직원은 목록에서 사라져요. 같은 전화번호로 다시 등록하면 복원할 수 있어요."
+        title="제공인력을 삭제하시겠어요?"
+        description="삭제한 제공인력은 목록에서 사라져요."
         approvalLabel="삭제"
         approvalVariant="destructive"
         onApprove={handleApprove}
@@ -22,8 +22,8 @@ describe("TwoButtonModal", () => {
 
     const dialog = screen.getByRole("dialog");
     const header = dialog.querySelector('[data-slot="dialog-header"]');
-    const title = screen.getByText("직원을 삭제하시겠습니까?");
-    const description = screen.getByText("삭제한 직원은 목록에서 사라져요. 같은 전화번호로 다시 등록하면 복원할 수 있어요.");
+    const title = screen.getByText("제공인력을 삭제하시겠어요?");
+    const description = screen.getByText("삭제한 제공인력은 목록에서 사라져요.");
     const cancelButton = screen.getByRole("button", { name: "취소" });
     const approvalButton = screen.getByRole("button", { name: "삭제" });
 
@@ -44,6 +44,8 @@ describe("TwoButtonModal", () => {
       "leading-[calc(20px*var(--v3-ui-scale,1))]",
     );
     expect(description).toHaveClass("mt-0");
+    expect(title).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
+    expect(description).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(description).not.toHaveClass("mt-[calc(6px*var(--glint-ui-scale,1))]");
     expect(cancelButton).toHaveClass("w-1/2");
     expect(cancelButton).toHaveAttribute("data-variant", "neutral");

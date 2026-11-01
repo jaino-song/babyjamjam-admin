@@ -33,7 +33,7 @@ const EVENT_OPTIONS: Array<{ value: TriggerEventType; label: string }> = [
   { value: "CLIENT_CREATED", label: "고객 등록" },
   { value: "SERVICE_START", label: "서비스 시작" },
   { value: "SERVICE_END", label: "서비스 종료" },
-  { value: "EMPLOYEE_ASSIGNED", label: "직원 배정" },
+  { value: "EMPLOYEE_ASSIGNED", label: "제공인력 배정" },
 ];
 
 const OFFSET_OPTIONS: Record<TriggerEventType, Array<{ value: TriggerOffsetType; label: string }>> = {
@@ -56,8 +56,8 @@ const OFFSET_OPTIONS: Record<TriggerEventType, Array<{ value: TriggerOffsetType;
 
 const RECIPIENT_OPTIONS: Array<{ value: TriggerRecipientType; label: string }> = [
   { value: "CLIENT", label: "고객" },
-  { value: "PRIMARY_EMPLOYEE", label: "주 담당 직원" },
-  { value: "SECONDARY_EMPLOYEE", label: "보조 직원" },
+  { value: "PRIMARY_EMPLOYEE", label: "주 담당 제공인력" },
+  { value: "SECONDARY_EMPLOYEE", label: "보조 제공인력" },
 ];
 
 type RuleForm = Required<CreateMessageTriggerRuleDto>;

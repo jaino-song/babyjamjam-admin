@@ -19,7 +19,7 @@ class MockEventSource {
   }
 }
 
-const userIn = (branchId: string | null, id = "user-1") => ({ id, name: "직원", branchId });
+const userIn = (branchId: string | null, id = "user-1") => ({ id, name: "제공인력", branchId });
 
 describe("RealtimeInvalidation", () => {
   const queryClient = new QueryClient();

@@ -137,13 +137,13 @@ describe("SendNotificationSection", () => {
     renderSection();
 
     expect(
-      await screen.findByText("이 지점에는 알림을 받을 직원이 없습니다."),
+      await screen.findByText("이 지점에는 알림을 받을 제공인력이 없습니다."),
     ).toBeInTheDocument();
   });
 
   describe("unknown load states (rule S5)", () => {
     const SKELETON = '[data-component="desktop_settings_sections_send-notification_skeleton"]';
-    const EMPTY_TEXT = "이 지점에는 알림을 받을 직원이 없습니다.";
+    const EMPTY_TEXT = "이 지점에는 알림을 받을 제공인력이 없습니다.";
 
     it("failed with no data: titled failure with retry, no empty text, no form; retry calls the API again", async () => {
       mockedListRecipients.mockRejectedValueOnce(new Error("network error"));
@@ -300,7 +300,7 @@ describe("SendNotificationSection", () => {
       renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       await fillTitleAndBody("제목", "내용");
 
       expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
@@ -332,7 +332,7 @@ describe("SendNotificationSection", () => {
       renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("제목", "내용");
 
@@ -388,7 +388,7 @@ describe("SendNotificationSection", () => {
       renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("  제목  ", "  내용  ");
       submitForm();
@@ -406,7 +406,7 @@ describe("SendNotificationSection", () => {
       renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("제목", "내용");
       submitForm();
@@ -493,7 +493,7 @@ describe("SendNotificationSection", () => {
       renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("제목", "내용");
       submitForm();
@@ -516,7 +516,7 @@ describe("SendNotificationSection", () => {
       const { queryClient } = renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("제목", "내용");
       submitForm();
@@ -544,7 +544,7 @@ describe("SendNotificationSection", () => {
       const { queryClient } = renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("제목", "내용");
       submitForm();
@@ -614,7 +614,7 @@ describe("SendNotificationSection", () => {
         expect(mockToast).toHaveBeenCalledWith({
           variant: "destructive",
           description:
-            "전송 결과를 확인하지 못했어요. 직원 알림함에서 확인한 뒤 필요할 때만 다시 보내 주세요",
+            "전송 결과를 확인하지 못했어요. 제공인력 알림함에서 확인한 뒤 필요할 때만 다시 보내 주세요",
         });
       });
       expect(screen.getByLabelText("제목")).toHaveValue("공지");
@@ -642,7 +642,7 @@ describe("SendNotificationSection", () => {
       renderSection();
       await screen.findByLabelText("제목");
 
-      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(screen.getByRole("radio", { name: /제공인력 1명/ }));
       fireEvent.click(await screen.findByText("박서연"));
       await fillTitleAndBody("제목", "내용");
       submitForm();

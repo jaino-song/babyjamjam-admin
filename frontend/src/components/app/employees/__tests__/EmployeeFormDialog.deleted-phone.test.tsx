@@ -10,7 +10,7 @@ jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }) }
 jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
 jest.mock("@/lib/api/client", () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 
-const detail = "삭제된 관리사가 이 전화번호를 사용했어요. 그분을 복원하거나 새 관리사로 등록해 주세요.";
+const detail = "이전에 삭제된 제공인력이 이 전화번호를 사용했어요. 복원하거나 새 관리사로 등록할 수 있어요.";
 const conflict = (deletedEmployee: unknown = { id: 42, name: "이전관리" }) => ({
   response: { status: 409, data: { code: "EMPLOYEE_PHONE_HELD_BY_DELETED", detail, deletedEmployee } },
 });
@@ -52,6 +52,7 @@ describe("employee deleted phone choice (real mutation)", () => {
   it("opens a choice with the deleted name from the HTTP body, not a plain error", async () => {
     await submit(conflict());
     expect(await screen.findByRole("button", { name: "이전관리님 복원" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "예전에 삭제된 기록을 복원할까요?" })).toHaveTextContent(detail);
     expect(screen.getByRole("button", { name: "새 관리사로 등록" })).toBeVisible();
     expect(screen.getByRole("button", { name: "새 관리사로 등록" })).toHaveAttribute("data-width", "lg");
     expect(screen.getByRole("button", { name: "새 관리사로 등록" })).toHaveClass("w-full");

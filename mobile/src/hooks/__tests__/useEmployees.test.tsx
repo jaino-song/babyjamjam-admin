@@ -111,7 +111,7 @@ describe("useEmployees", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
 
-    expect(result.current.error?.message).toBe("직원 목록 응답을 확인할 수 없습니다.");
+    expect(result.current.error?.message).toBe("제공인력 목록 응답을 확인할 수 없습니다.");
   });
 
   it("rejects a non-object payload with the safe Korean message", async () => {
@@ -121,7 +121,7 @@ describe("useEmployees", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
 
-    expect(result.current.error?.message).toBe("직원 목록 응답을 확인할 수 없습니다.");
+    expect(result.current.error?.message).toBe("제공인력 목록 응답을 확인할 수 없습니다.");
   });
 
   it("uses the dedicated open-status endpoint with only the availability field", async () => {

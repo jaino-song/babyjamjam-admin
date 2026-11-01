@@ -387,18 +387,18 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 onBack={handleCompactBack}
             >
                 <ListPanel data-component={`${dataComponent}_split-layout_list-panel`}
-                    title="직원 목록"
+                    title="제공인력 목록"
                     tabs={filterItems}
                     activeTab={filter}
                     onTabChange={handleFilterChange}
                     searchValue={search}
                     onSearchChange={setSearch}
                     searchPlaceholder="이름, 연락처, 지역으로 검색..."
-                    isLoading={isLoading} subHeader={!isLoading && isError && employees.length > 0 ? <Alert variant="warning" data-component={`${dataComponent}_split-layout_list-panel_cached-data-error`}><AlertTitle>직원 목록을 불러오지 못했습니다</AlertTitle><AlertDescription>현재 저장된 직원 목록을 표시하고 있습니다. 잠시 후 다시 시도해 주세요.<Button type="button" variant="outline" size="sm" data-component={`${dataComponent}_split-layout_list-panel_cached-data-error_retry`} className="mt-3" aria-label="직원 목록 다시 시도" onClick={() => void refetch()}>다시 시도</Button></AlertDescription></Alert> : undefined}
+                    isLoading={isLoading} subHeader={!isLoading && isError && employees.length > 0 ? <Alert variant="warning" data-component={`${dataComponent}_split-layout_list-panel_cached-data-error`}><AlertTitle>제공인력 목록을 불러오지 못했습니다</AlertTitle><AlertDescription>현재 저장된 제공인력 목록을 표시하고 있습니다. 잠시 후 다시 시도해 주세요.<Button type="button" variant="outline" size="sm" data-component={`${dataComponent}_split-layout_list-panel_cached-data-error_retry`} className="mt-3" aria-label="제공인력 목록 다시 시도" onClick={() => void refetch()}>다시 시도</Button></AlertDescription></Alert> : undefined}
                     headerActions={
                         <HeaderActionButton
                             icon={Plus}
-                            label="직원 추가"
+                            label="제공인력 추가"
                             onClick={handleAddNew}
                             data-component={`${dataComponent}_split-layout_list-panel_employees-header-add`}
                             className="text-[calc(12px*var(--glint-ui-scale,1))]"
@@ -406,7 +406,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     }
                     emptyState={!isLoading && !isError && employees.length === 0 ? (
                         <ListEmptyState
-                            message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 직원이 없습니다"}
+                            message={search || filter !== "all" ? "검색 결과가 없습니다" : "등록된 제공인력이 없습니다"}
                         />
                     ) : undefined}
                 >
@@ -416,7 +416,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                             data-component={`${dataComponent}_split-layout_list-panel_error`}
                             className="m-6"
                         >
-                            <AlertTitle>직원 목록을 불러오지 못했습니다</AlertTitle>
+                            <AlertTitle>제공인력 목록을 불러오지 못했습니다</AlertTitle>
                             <AlertDescription>
                                 잠시 후 다시 시도해 주세요.
                                 <Button
@@ -425,7 +425,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                                     size="sm"
                                     data-component={`${dataComponent}_split-layout_list-panel_error_retry`}
                                     className="mt-3"
-                                    aria-label="직원 목록 다시 시도"
+                                    aria-label="제공인력 목록 다시 시도"
                                     onClick={() => void refetch()}
                                 >
                                     다시 시도
@@ -495,8 +495,8 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                         onDirtyChange={handleCreateFormDirtyChange}
                         renderLayout={({ content, footer }) => (
                             <DetailPanel data-component={`${dataComponent}_split-layout_detail-panel_create`}
-                                compactBackLabel="직원 목록으로 돌아가기"
-                                title="직원 추가"
+                                compactBackLabel="제공인력 목록으로 돌아가기"
+                                title="제공인력 추가"
                                 subtitle="이름, 연락처, 등급과 근무 가능 지역을 입력합니다."
                                 avatar={
                                     <div
@@ -520,7 +520,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                         onDelete={handleDeleteRequest}
                     />
                 ) : (
-                    <EmptyState icon={Users} message="직원을 선택하면 상세 정보가 표시됩니다" />
+                    <EmptyState icon={Users} message="제공인력을 선택하면 상세 정보가 표시됩니다" />
                 )}
             </SplitLayout>
 
@@ -537,8 +537,8 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     if (!open) setDeleteTargetEmployeeId(null);
                 }}
                 dataComponent={`${dataComponent}_delete-approval`}
-                title="직원을 삭제하시겠습니까?"
-                description="삭제한 직원은 목록에서 사라져요. 같은 전화번호로 다시 등록하면 복원할 수 있어요."
+                title="제공인력을 삭제하시겠어요?"
+                description="삭제한 제공인력은 목록에서 사라져요."
                 approvalLabel="삭제"
                 pendingLabel="삭제 중..."
                 approvalVariant="destructive"
@@ -551,7 +551,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     if (!open) setPendingCreateDiscard(null);
                 }}
                 dataComponent={`${dataComponent}_create-discard-approval`}
-                title="작성 중인 직원 정보를 버리시겠습니까?"
+                title="작성 중인 제공인력 정보를 버리시겠습니까?"
                 description="입력한 내용은 저장되지 않습니다."
                 approvalLabel="버리기"
                 onApprove={handleDiscardCreateDraft}
@@ -562,7 +562,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     if (!open) setDeleteErrorMessage(null);
                 }}
                 dataComponent={`${dataComponent}_delete-error-notification`}
-                title="직원을 삭제하지 못했습니다."
+                title="제공인력을 삭제하지 못했습니다."
                 description={deleteErrorMessage ?? ""}
                 isDescriptionVisuallyHidden={false}
                 onAcknowledge={() => setDeleteErrorMessage(null)}

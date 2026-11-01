@@ -55,7 +55,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "상담", href: "/consultations", icon: Headset },
       { label: "고객", href: "/clients", icon: Users },
-      { label: "직원", href: "/employees", icon: UserCheck },
+      { label: "제공인력", href: "/employees", icon: UserCheck },
       // { label: "통계", href: "/analytics", icon: BarChart3 },
     ],
   },

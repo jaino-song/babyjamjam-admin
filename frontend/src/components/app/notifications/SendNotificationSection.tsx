@@ -132,7 +132,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
         toast({
           variant: "destructive",
           description:
-            "전송 결과를 확인하지 못했어요. 직원 알림함에서 확인한 뒤 필요할 때만 다시 보내 주세요",
+            "전송 결과를 확인하지 못했어요. 제공인력 알림함에서 확인한 뒤 필요할 때만 다시 보내 주세요",
         });
         return;
       }
@@ -162,7 +162,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
     sendMutation.mutate({
       mode,
       recipientId,
-      recipientName: selectedRecipient?.name ?? "직원",
+      recipientName: selectedRecipient?.name ?? "제공인력",
       title: title.trim(),
       body: body.trim(),
     });
@@ -197,7 +197,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
           <div data-component={`${DATA_COMPONENT}_header_title-group`} className="flex-1 min-w-0">
             <h2 className="text-lg font-bold text-foreground">알림 보내기</h2>
             <p className="text-sm text-muted-foreground">
-              지점 직원에게 앱 알림을 보냅니다. 알림함, 푸시, 이메일(설정한 직원)로 전달됩니다.
+              지점 제공인력에게 앱 알림을 보냅니다. 알림함, 푸시, 이메일(설정한 제공인력)로 전달됩니다.
             </p>
           </div>
         </div>
@@ -233,7 +233,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
             className="flex flex-col items-center justify-center py-12 text-muted-foreground"
           >
             <Users size={40} className="mb-3 opacity-30" />
-            <p className="text-sm">이 지점에는 알림을 받을 직원이 없습니다.</p>
+            <p className="text-sm">이 지점에는 알림을 받을 제공인력이 없습니다.</p>
           </div>
         ) : (
           <form
@@ -261,7 +261,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
                 <div className="flex items-center gap-2">
                   <RadioGroupItem id="send-notification-mode-one" value="one" />
                   <Label htmlFor="send-notification-mode-one" className="font-normal">
-                    직원 1명
+                    제공인력 1명
                   </Label>
                 </div>
               </RadioGroup>
@@ -270,9 +270,9 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
                   <SelectTrigger
                     data-component={`${DATA_COMPONENT}_form_recipient_select`}
                     className="max-w-sm"
-                    aria-label="받는 직원"
+                    aria-label="받는 제공인력"
                   >
-                    <SelectValue placeholder="직원을 선택하세요" />
+                    <SelectValue placeholder="제공인력을 선택하세요" />
                   </SelectTrigger>
                   <SelectContent>
                     {recipients.map((recipient) => (
@@ -314,7 +314,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
                 value={body}
                 rows={5}
                 maxLength={NOTIFICATION_BODY_MAX_LENGTH}
-                placeholder="직원에게 전달할 내용을 입력하세요"
+                placeholder="제공인력에게 전달할 내용을 입력하세요"
                 aria-describedby="send-notification-body-counter"
                 onChange={(event) => setBody(event.target.value)}
               />

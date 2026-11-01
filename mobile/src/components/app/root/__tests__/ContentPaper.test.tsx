@@ -71,10 +71,10 @@ describe('ContentPaper', () => {
 
     it('renders title with special characters correctly', () => {
       render(
-        <ContentPaper title="직원 목록 & 'Quotes'">Content</ContentPaper>
+        <ContentPaper title="제공인력 목록 & 'Quotes'">Content</ContentPaper>
       );
 
-      expect(screen.getByText("직원 목록 & 'Quotes'")).toBeInTheDocument();
+      expect(screen.getByText("제공인력 목록 & 'Quotes'")).toBeInTheDocument();
     });
   });
 

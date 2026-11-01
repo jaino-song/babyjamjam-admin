@@ -528,8 +528,8 @@
       "description": "View provider information details"
     },
     "delete-confirm": {
-      "title": "Delete Provider",
-      "message": "Delete this provider? You can restore them later by registering the same phone number again.",
+      "title": "Delete this provider?",
+      "message": "Deleted providers are removed from the list.",
       "error": "제공인력 삭제에 실패했어요. 다시 시도해 주세요."
     }
   },

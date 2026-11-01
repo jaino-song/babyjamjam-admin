@@ -2158,7 +2158,7 @@ export const ContractCreationForm = ({
           {startDate && (
             <span className={COMPLETED_PILL}>
               <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
-              {startDate} ~ {endDate || "(직원 입력 예정)"}
+              {startDate} ~ {endDate || "(제공인력 입력 예정)"}
             </span>
           )}
           {paymentDate && (

@@ -45,7 +45,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "관리",
     items: [
       { label: "고객", href: "/clients", icon: Users },
-      { label: "직원", href: "/employees", icon: UserCheck },
+      { label: "제공인력", href: "/employees", icon: UserCheck },
       { label: "일정", href: "/employees/schedule", icon: Calendar },
     ],
   },

@@ -143,7 +143,7 @@ describe("agent contracts", () => {
     it("preserves safe optional form input metadata through form parsing", () => {
         const parsed = AgentFormPartSchema.parse({
             formId: "employee-create",
-            title: "직원 등록",
+            title: "제공인력 등록",
             schemaVersion: "1.0.0",
             fields: [{
                 name: "birthday",

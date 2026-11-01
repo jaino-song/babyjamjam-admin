@@ -54,7 +54,7 @@ test.describe('EmployeeAutocomplete', () => {
     });
 
     test('opens the employee registration dialog with the typed name prefilled', async ({ page }) => {
-        const testName = '테스트직원';
+        const testName = '테스트제공인력';
         await page.getByRole('combobox', { name: '주 담당 인력', exact: true }).click();
         await page.getByRole('combobox', { name: '주 담당 인력 검색' }).fill(testName);
 

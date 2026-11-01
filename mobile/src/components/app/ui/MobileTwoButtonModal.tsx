@@ -86,13 +86,13 @@ export function MobileTwoButtonModal({
           >
             <DialogPrimitive.Title
               data-component={sub("title")}
-              className="text-center text-base font-bold text-v3-dark"
+              className="break-keep [overflow-wrap:anywhere] text-center text-base font-bold text-v3-dark"
             >
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description
               data-component={sub("description")}
-              className="text-sm leading-5 text-v3-text-muted"
+              className="break-keep [overflow-wrap:anywhere] text-sm leading-5 text-v3-text-muted"
             >
               {description}
             </DialogPrimitive.Description>

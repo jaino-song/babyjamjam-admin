@@ -1224,7 +1224,7 @@ function EmployeeFormContent({
             data-component={choiceBase}
             open={open && deletedPhoneMatch !== null}
             onOpenChange={(nextOpen) => { if (!nextOpen && !isLoading) setDeletedPhoneMatch(null); }}
-            title={locale === "en" ? "Restore or register a new caregiver?" : "삭제된 관리사를 복원할까요?"}
+            title={locale === "en" ? "Restore a previously deleted record?" : "예전에 삭제된 기록을 복원할까요?"}
             description={deletedPhoneMatch?.detail}
             isDescriptionVisuallyHidden={false}
             size="detail"

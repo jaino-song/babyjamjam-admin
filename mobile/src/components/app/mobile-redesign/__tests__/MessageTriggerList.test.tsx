@@ -170,7 +170,7 @@ describe("MessageTriggerList", () => {
       isError: false, isLoading: false,
     });
     renderPage();
-    expect(screen.getByText(/서비스 시작 1일 전 12:00 \(한국 시간\) · 늦게 등록되면 즉시 발송 · 주 담당 직원 · SMS/)).toBeInTheDocument();
+    expect(screen.getByText(/서비스 시작 1일 전 12:00 \(한국 시간\) · 늦게 등록되면 즉시 발송 · 주 담당 제공인력 · SMS/)).toBeInTheDocument();
     expect(screen.getByText(/서비스 시작 당일 15:00 \(한국 시간\) · 고객 · SMS/)).toBeInTheDocument();
   });
 

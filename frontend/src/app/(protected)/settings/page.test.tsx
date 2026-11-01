@@ -117,8 +117,8 @@ describe("SettingsPage profile query states", () => {
   });
 
   it.each([{}, { isError: true, status: "error" }, { isPaused: true, fetchStatus: "paused" }])("keeps loaded profile without a notice: %j", (state) => {
-    renderProfile({ data: { name: "직원", email: "staff@example.test", phone: "010-0000-0000", branchName: "지점", role: "user" }, ...state });
-    expect(screen.getByText("직원", { selector: "p" })).toBeInTheDocument();
+    renderProfile({ data: { name: "제공인력", email: "staff@example.test", phone: "010-0000-0000", branchName: "지점", role: "user" }, ...state });
+    expect(screen.getByText("제공인력", { selector: "p" })).toBeInTheDocument();
     expect(screen.getByText("staff@example.test")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -137,7 +137,7 @@ describe("SettingsPage profile query states", () => {
 
   it("keeps flag-off email disabled without a load-failure alert", async () => {
     jest.mocked(settingsApi.getNotificationPreferences).mockRejectedValueOnce(new Error("load failed"));
-    const { client } = renderProfile({ data: { name: "직원", role: "user" } });
+    const { client } = renderProfile({ data: { name: "제공인력", role: "user" } });
     fireEvent.click(screen.getAllByRole("button", { name: "알림" })[0]);
     await waitFor(() => expect(screen.getByRole("switch", { name: "이메일 알림" })).toBeDisabled());
     // Wait for the query to settle, not merely the build-time disabled switch.
@@ -258,7 +258,7 @@ describe("SettingsPage holidays section", () => {
   });
 
   it("hides 공휴일 from a plain branch member", () => {
-    renderPage({ role: "user", branchRole: "member", name: "직원", branchId: "branch-1", branchName: "인천 남동지점" });
+    renderPage({ role: "user", branchRole: "member", name: "제공인력", branchId: "branch-1", branchName: "인천 남동지점" });
 
     expect(screen.queryByRole("button", { name: "공휴일" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "통화 수집 토큰" })).not.toBeInTheDocument();

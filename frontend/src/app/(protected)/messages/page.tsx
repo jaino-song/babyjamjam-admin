@@ -211,7 +211,7 @@ interface PlaceholderPreviewItem {
   detailDescription: string;
   checklist: string[];
   recipientName?: string;
-  recipientType?: "고객" | "직원";
+  recipientType?: "고객" | "제공인력";
   recipientPhone?: string;
   templateTitle?: string;
   scheduledAt?: string;
@@ -464,7 +464,7 @@ const BUILTIN_TEMPLATE_PREVIEW_META: Record<
 
 const SCHEDULED_VARIABLE_LABELS: Record<string, string> = {
   clientName: "고객명",
-  employeeName: "직원명",
+  employeeName: "제공인력명",
   registrationDate: "등록일",
   recipientName: "수신자명",
   serviceEndDate: "서비스 종료일",

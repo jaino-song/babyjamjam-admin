@@ -7,7 +7,7 @@ import { EmployeeDirectoryManager } from "@/components/app/employees/EmployeeDir
 import { EmployeeScheduleManager } from "@/components/app/employees/EmployeeScheduleManager";
 
 const EMPLOYEE_SECTIONS = [
-    { id: "list", label: "직원 관리", icon: Users },
+    { id: "list", label: "제공인력 관리", icon: Users },
     { id: "schedule", label: "서비스 일정", icon: CalendarDays },
 ] as const;
 
@@ -28,7 +28,7 @@ export default function EmployeesPage() {
                     items={EMPLOYEE_SECTIONS}
                     activeId={activeSection}
                     onSelect={selectSection}
-                    ariaLabel="직원 페이지 섹션"
+                    ariaLabel="제공인력 페이지 섹션"
                 />
                 <div data-component="desktop_employees_sections_section-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
                     {activeSection === "list" ? (

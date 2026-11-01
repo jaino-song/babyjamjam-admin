@@ -101,7 +101,7 @@ describe("system template catalog", () => {
       template({ templateKey: "CLIENT_WELCOME", name: "고객 등록 안내", content: "등록 스냅샷" }),
       template({ templateKey: "SERVICE_START_REMINDER", name: "서비스 시작 알림", content: "시작 스냅샷" }),
       template({ templateKey: "SERVICE_END_REMINDER", name: "서비스 종료 알림", content: "종료 스냅샷" }),
-      template({ templateKey: "EMPLOYEE_ASSIGNED", name: "직원 배정 알림", content: "배정 스냅샷" }),
+      template({ templateKey: "EMPLOYEE_ASSIGNED", name: "제공인력 배정 알림", content: "배정 스냅샷" }),
       template({ templateKey: "SERVICE_END_NOTICE" }),
       template({ templateKey: "FUTURE_TEMPLATE" }),
     ]);
