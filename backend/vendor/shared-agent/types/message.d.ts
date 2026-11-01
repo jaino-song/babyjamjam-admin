@@ -673,6 +673,8 @@ export interface SystemAdminBranchRequest {
     isActive: boolean;
     createdAt: string | null;
     updatedAt: string | null;
-    owner: SystemAdminBranchUser | null;
+    admin: SystemAdminBranchUser | null;
+    /** @deprecated Release-1 alias of `admin`; removed in Release 2. Do not read. */
+    owner?: SystemAdminBranchUser | null;
     messageSenderApproval: SystemAdminBranchMessageSenderApproval;
 }
