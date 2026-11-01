@@ -40,9 +40,10 @@ export interface LedgerOpenOptions {
     /** Required by `initialize` only. */
     writeMarker?: LedgerMarkerWriter;
     /**
-     * Runs before every write the store makes (append, initialize, compaction, quarantine, torn-tail repair), before its first
-     * byte. A throw aborts that write untouched and does not poison the store; a non-`WorkerError` becomes `control-unavailable`.
-     * The worker wires its lock re-check here so a lock file replaced under a running writer stops it.
+     * Runs once per write operation (append, initialize, compaction, quarantine, torn-tail repair), immediately before its first
+     * destructive call; the steps a composite operation takes after that do not run it again. A throw aborts the operation
+     * untouched and does not poison the store; a non-`WorkerError` becomes `control-unavailable`. The worker wires its lock
+     * re-check here so a lock file replaced under a running writer stops it.
      */
     beforeWrite?: () => void | Promise<void>;
 }
@@ -136,7 +137,7 @@ export class LedgerStore {
         return this.serialize(async () => {
             this.requireWritable("ok");
             const record = { v: 1, seq: this._state.lastSeq + 1, type, at, body } as LedgerRecord;
-            await this.commit(record);
+            await this.commit(record, true);
             return record as LedgerRecordOf<T>;
         });
     }
@@ -145,7 +146,6 @@ export class LedgerStore {
     initialize(params: LedgerInitializeParams): Promise<void> {
         return this.serialize(async () => {
             this.requireWritable("not_initialized");
-            await this.guardWrite();
             const writeMarker = this.options.writeMarker;
             if (writeMarker === undefined) throw new WorkerError("internal");
             const { installedBody } = params;
@@ -163,6 +163,9 @@ export class LedgerStore {
             const marker: InstallationMarker = {
                 schemaVersion: 1, installationId: params.installationId, archiveId: params.archiveId, createdAt: params.createdAt,
             };
+            // One guard for the whole operation, with nothing between it and the marker write. The first append below
+            // belongs to it and does not check again, so a refusal can never leave a marker with an empty journal.
+            await this.guardWrite();
             try {
                 await writeMarker(this.controlPath, MARKER_NAME, encodeMarker(marker));
                 await this.ensureLedgerDirectory();
@@ -172,7 +175,7 @@ export class LedgerStore {
             }
             this.journalBase = 1;
             this.journalRecords = 0;
-            await this.commit(record);
+            await this.commit(record, false);
             this._status = "ok";
             this._reasons = [];
         });
@@ -215,14 +218,23 @@ export class LedgerStore {
         return this.serialize(async () => {
             this.requireWritable("recovery_required");
             if (!UUID_V4_PATTERN.test(runId)) throw new WorkerError("invalid-path-segment");
-            await this.guardWrite();
+            // Every read comes first; the guard then sits right before the first rename or write.
+            let moveTo: string | null = null;
             try {
                 await this.closeHandle();
                 const existing = await lstatOrNull(this.fs, this.ledgerDir);
                 if (existing !== null && !(await this.isFreshLedger())) {
                     const target = path.join(this.controlPath, `ledger.quarantine-${runId}`);
                     if ((await lstatOrNull(this.fs, target)) !== null) throw unavailable();
-                    await this.fs.rename(this.ledgerDir, target);
+                    moveTo = target;
+                }
+            } catch {
+                throw await this.poison();
+            }
+            await this.guardWrite();
+            try {
+                if (moveTo !== null) {
+                    await this.fs.rename(this.ledgerDir, moveTo);
                     await syncDirectory(this.fs, this.controlPath);
                 }
                 await this.ensureLedgerDirectory();
@@ -268,7 +280,13 @@ export class LedgerStore {
         return unavailable();
     }
 
-    /** The caller's pre-write guard. Its failure is the caller's to handle: nothing was written, so the store is not poisoned. */
+    /**
+     * The caller's pre-write guard. Its failure is the caller's to handle: nothing was written, so the store is not poisoned.
+     * Call it once per operation, with only the destructive syscall after it: no later await of ours sits between the two,
+     * and a composite operation passes its own flag so its inner steps do not check again and cannot be cut in half.
+     * Residual window: no check made in user space is atomic with the syscall that follows it, so a lock file replaced in
+     * the instant between them is still missed; the window is the guard's own I/O resolving plus that one call.
+     */
     private async guardWrite(): Promise<void> {
         const guard = this.options.beforeWrite;
         if (guard === undefined) return;
@@ -280,14 +298,19 @@ export class LedgerStore {
     }
 
     /** Validate and reduce in memory, then write and fsync. Only a durable record advances the in-memory state. */
-    private async commit(record: LedgerRecord): Promise<void> {
+    private async commit(record: LedgerRecord, guard: boolean): Promise<void> {
         const line = encodeLedgerLine(record);
         const next = applyLedgerRecord(this._state, record);
         const bytes = Buffer.from(line, "utf8");
         const { fault } = this.options;
-        await this.guardWrite();
+        let handle: LedgerFileHandle;
         try {
-            const handle = await this.journalHandle();
+            handle = await this.journalHandle();
+        } catch {
+            throw await this.poison();
+        }
+        if (guard) await this.guardWrite();
+        try {
             fault?.("before-write");
             if (fault === undefined) {
                 await writeAll(handle, bytes);
@@ -412,12 +435,14 @@ export class LedgerStore {
             };
             encodeLedgerLine(probe);
             applyLedgerRecord(this._state, probe);
-            await this.guardWrite();
+            // The copy aside creates a new file and destroys nothing, so it runs before the guard; only the truncate that
+            // follows is destructive. After it passes, the cut and `tail_discarded` are one operation and do not check again.
             const quarantineName = await this.quarantineTail(seq, tail);
             const handle = await this.journalHandle();
+            await this.guardWrite();
             await handle.truncate(validLength);
             await handle.sync();
-            await this.commit({ ...probe, body: { byteLength: tail.length, quarantineName } });
+            await this.commit({ ...probe, body: { byteLength: tail.length, quarantineName } }, false);
         } catch (error) {
             const poisoned = await this.poison();
             throw error instanceof WorkerError ? error : poisoned;
