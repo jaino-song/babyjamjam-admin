@@ -21,12 +21,23 @@ interface Observed { source: ManifestSource; signature: string; lastSeq: number;
  * still on disk, so nothing new has to be persisted. Read-only; used for lookup only, never as proof that a file exists.
  */
 export class ManifestHistory {
-    private constructor(private readonly byIdentity: Map<string, Observed> | null) {}
+    private constructor(
+        private readonly byIdentity: Map<string, Observed> | null,
+        private readonly byRevision: Map<string, Observed> | null,
+    ) {}
 
-    static readonly unavailable = new ManifestHistory(null);
+    static readonly unavailable = new ManifestHistory(null, null);
 
-    static of(byIdentity: Map<string, Observed>): ManifestHistory {
-        return new ManifestHistory(byIdentity);
+    static of(byIdentity: Map<string, Observed>, byRevision: Map<string, Observed>): ManifestHistory {
+        return new ManifestHistory(byIdentity, byRevision);
+    }
+
+    /** What the history says about one document revision (by document and revision, never by "latest"). */
+    forRevision(documentId: string, metadataRevision: string): RevisionLookup {
+        if (this.byRevision === null) return "unavailable";
+        const observed = this.byRevision.get(`${documentId}\u0000${metadataRevision}`);
+        if (observed === undefined) return null;
+        return observed.conflict ? "conflict" : observed.source;
     }
 
     /**
@@ -40,6 +51,9 @@ export class ManifestHistory {
         return observed.conflict ? "invalid" : observed.source;
     }
 }
+
+/** A revision's source; `null` when never observed, `"unavailable"` when the history cannot be used, `"conflict"` when observations disagree. */
+export type RevisionLookup = ManifestSource | "unavailable" | "conflict" | null;
 
 function signatureOf(source: ManifestSource): string {
     return JSON.stringify([...source.artifacts]
@@ -114,7 +128,7 @@ export async function readManifestHistory(
         for (const observed of [...seen.values()].sort((a, b) => a.lastSeq - b.lastSeq)) {
             for (const artifact of observed.source.artifacts) byIdentity.set(artifact.artifactIdentity, observed);
         }
-        return ManifestHistory.of(byIdentity);
+        return ManifestHistory.of(byIdentity, seen);
     } catch {
         return ManifestHistory.unavailable;
     }

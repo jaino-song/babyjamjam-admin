@@ -601,6 +601,39 @@ export class LocalDestination {
         return this.readFileNoFollow(`${directory}/${name}`);
     }
 
+    /**
+     * Read-only. The size of a stored artifact (`null` when it is not there), without reading its contents. Same root and
+     * directory checks as every read; a symlink or anything but a regular file is refused.
+     */
+    async artifactSize(relativeKey: string): Promise<number | null> {
+        const parsed = parseArtifactKey(relativeKey);
+        if (!parsed) throw new WorkerError("invalid-path-segment");
+        const segments = relativeKey.split("/");
+        const name = segments.pop()!;
+        const directory = await this.walkExisting(segments);
+        if (directory === null) return null;
+        const target = `${directory}/${name}`;
+        let entry;
+        try {
+            entry = await fs.lstat(target);
+        } catch (error) {
+            if (hasCode(error, "ENOENT")) return null;
+            throw new WorkerError("archive-unavailable");
+        }
+        if (!entry.isFile()) throw new WorkerError("archive-unsafe-path");
+        let file: FileHandle | undefined;
+        try {
+            file = await fs.open(target, READ_FLAGS);
+            const stat = await file.stat();
+            if (!stat.isFile() || stat.dev !== entry.dev || stat.ino !== entry.ino) throw new WorkerError("archive-unsafe-path");
+            return stat.size;
+        } catch (error) {
+            throw error instanceof WorkerError ? error : new WorkerError("archive-unavailable");
+        } finally {
+            try { await file?.close(); } catch { /* read-only handle */ }
+        }
+    }
+
     private async readFileNoFollow(target: string): Promise<Buffer | null> {
         let entry;
         try {

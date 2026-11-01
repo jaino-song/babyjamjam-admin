@@ -718,6 +718,23 @@ describe("LocalDestination", () => {
                 await expect(destination.readArchiveFile(key)).rejects.toMatchObject({ reasonCode: "invalid-path-segment" });
             }
         });
+        it("should report an artifact's size without reading it, null when absent, and refuse a symlink, a bad key or a swapped root", async () => {
+            const destination = makeDestination(fixture);
+            const input = publishInput(pdf);
+            const published = await destination.publishArtifact(input, streamOf(pdf));
+            if (!published.ok) throw new Error("fixture");
+            const key = published.relativeKey;
+            expect(await destination.artifactSize(key)).toBe(pdf.length);
+            const absent = key.replace(/[0-9a-f]{64}\.pdf$/, `${"0".repeat(64)}.pdf`);
+            expect(await destination.artifactSize(absent)).toBeNull();
+            await expect(destination.artifactSize("eformsign/C001/D001/manifests/x.json")).rejects.toMatchObject({ reasonCode: "invalid-path-segment" });
+            await expect(destination.artifactSize("../x.pdf")).rejects.toMatchObject({ reasonCode: "invalid-path-segment" });
+            await fs.writeFile(path.join(base, "elsewhere.pdf"), pdf);
+            await fs.symlink(path.join(base, "elsewhere.pdf"), path.join(fixture.root, absent));
+            await expect(destination.artifactSize(absent)).rejects.toMatchObject({ reasonCode: "archive-unsafe-path" });
+            await swapRoot(true);
+            await expect(makeDestination(fixture).artifactSize(key)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+        });
         it("should read without the archive marker or a supported filesystem (restore of a copied archive)", async () => {
             const destination = makeDestination(fixture);
             await destination.publishJson(completionOne, Buffer.from('{"a":1}'));
