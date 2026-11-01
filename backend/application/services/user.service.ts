@@ -309,7 +309,7 @@ export class UserService {
                 );
             }
 
-            const inactiveOwnedBranchIds = params.role === "admin"
+            const inactiveAdminBranchIds = params.role === "admin"
                 ? target.adminBranches
                     .filter((adminBranch) => adminBranch.isActive !== true)
                     .map((adminBranch) => adminBranch.id)
@@ -318,7 +318,7 @@ export class UserService {
                 .filter((membership) => membership.branch.isActive !== true)
                 .map((membership) => membership.branchId);
             const allowedInactiveBranchIdSet = new Set([
-                ...inactiveOwnedBranchIds,
+                ...inactiveAdminBranchIds,
                 ...inactiveExistingMembershipIds,
             ]);
             if (
@@ -336,7 +336,7 @@ export class UserService {
             const effectiveBranchIds = params.role === "admin"
                 ? [
                     ...params.branchIds,
-                    ...inactiveOwnedBranchIds.filter(
+                    ...inactiveAdminBranchIds.filter(
                         (branchId) => !params.branchIds.includes(branchId),
                     ),
                 ]
