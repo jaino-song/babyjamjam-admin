@@ -581,23 +581,70 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             expect((await destinationTransitions(id)).length).toBe(before);
         });
 
-        it("should leave blocked entries with a terminal or integrity-repeated reason untouched when they are outside the snapshot", async () => {
-            const gone = pairDoc("D001");
-            h = await createHarness({ docs: [gone, pairDoc("D002")] });
-            h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 410, code: "SOURCE_REMOVED" } });
+        it("should settle a pending entry made by crash recovery as exact-bytes-unavailable once its document leaves the snapshot", async () => {
+            const x = singleDoc("D001");
+            h = await createHarness({ docs: [x, pairDoc("D002")] });
             await initArchive(h);
-            const id = identityFor(h, gone, "audit_trail");
-            await runOnce(h);
-            expect((await destinationTransitions(id)).pop()!.body["reasonCode"]).toBe("source-removed");
+            const id = identityFor(h, x, "document");
+            // Run 1 dies right after the transferring record: nothing is staged and the entry is left in flight.
+            await expect(runOnce(h, { runnerFault: async (point) => {
+                if (point === "after-transferring") throw new Error("simulated-crash");
+            } })).rejects.toThrow("simulated-crash");
+            expect(await transitionPath(h.control, id)).toEqual(["pending", "transferring"]);
+            expect(await stagedBins()).toEqual([]);
 
+            // Run 2: crash recovery requeues it (transferring -> retry_wait -> pending); X is no longer in the snapshot.
             h.api.docs = [pairDoc("D002")];
-            await runOnce(h);
-            const before = (await destinationTransitions(id)).length;
-            await runOnce(h);
+            const second = await runOnce(h);
 
-            expect((await destinationTransitions(id)).length).toBe(before);
-            expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual(
-                expect.arrayContaining([{ documentId: "D001", reasonCode: "source-removed" }]));
+            expect(await transitionPath(h.control, id)).toEqual(["pending", "transferring", "retry_wait", "pending", "blocked"]);
+            expect((await destinationTransitions(id)).pop()!.body).toMatchObject({ from: "pending", to: "blocked", reasonCode: "exact-bytes-unavailable" });
+            expect(second.counts).toMatchObject({ retryWait: 0, blocked: 0, terminalUnavailable: 1 });
+            expect(second.historicalCoverage).toBe("known_gap");
+            expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "exact-bytes-unavailable" }]);
+        });
+
+        describe("blocked entries that must not be carried over", () => {
+            const untouched = async (id: string, reasonCode: string, expectedGaps: unknown[], terminalUnavailable: number, omit: () => void): Promise<void> => {
+                expect((await destinationTransitions(id)).pop()!.body["reasonCode"]).toBe(reasonCode);
+                // Baseline BEFORE the document leaves the snapshot, so a transition made by that very run is seen.
+                const before = await destinationTransitions(id);
+                const gapsBefore = (await readCompletions(h.archive)).pop()!.value["gaps"];
+                omit();
+
+                for (let run = 0; run < 2; run++) {
+                    const result = await runOnce(h);
+                    expect(await destinationTransitions(id)).toEqual(before);
+                    expect(result.counts).toMatchObject({ terminalUnavailable });
+                    expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual(expectedGaps);
+                }
+                expect(gapsBefore).toEqual(expectedGaps);
+            };
+
+            it("should leave a source-removed entry untouched on the first run that omits it and on the next", async () => {
+                const gone = pairDoc("D001");
+                h = await createHarness({ docs: [gone, pairDoc("D002")] });
+                h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 410, code: "SOURCE_REMOVED" } });
+                await initArchive(h);
+                const id = identityFor(h, gone, "audit_trail");
+                await runOnce(h);
+
+                await untouched(id, "source-removed", [{ documentId: "D001", reasonCode: "source-removed" }], 1, () => { h.api.docs = [pairDoc("D002")]; });
+            });
+
+            it("should leave an integrity-repeated entry untouched on the first run that omits it and on the next", async () => {
+                const gone = singleDoc("D001");
+                h = await createHarness({ docs: [gone, pairDoc("D002")] });
+                const bad = Buffer.from(gone.artifacts![0]!.bytes);
+                bad[10] = bad[10]! ^ 0xff;
+                h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001", fault: { kind: "bytes", bytes: bad } });
+                await initArchive(h);
+                const id = identityFor(h, gone, "document");
+                // Three integrity errors, then the fourth run blocks it for good.
+                for (let run = 0; run < 4; run++) await runOnce(h);
+
+                await untouched(id, "integrity-repeated", [], 0, () => { h.api.docs = [pairDoc("D002")]; });
+            });
         });
     });
 
