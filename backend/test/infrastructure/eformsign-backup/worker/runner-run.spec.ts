@@ -4,6 +4,7 @@ import path from "node:path";
 import { WorkerError } from "domain/eformsign-backup/worker";
 
 import type { FixtureDoc } from "./helpers/fake-export-api";
+import { spawnUnderFlock } from "./helpers/runner-flock-support";
 import {
     COMPANY, TOKEN, archivePdfs, createHarness, destinationStates, destroyHarness, identityFor, initArchive, listFiles,
     pairDoc, readCompletions, readJsonFile, readLedgerRecords, recordTypes, runOnce, singleDoc, transitionPath, treeContains,
@@ -581,21 +582,34 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             expect((await destinationTransitions(id)).length).toBe(before);
         });
 
-        describe("a carried publication stays recoverable (BJJ-455 P2 FU-10: 3.4-d x 3.4-f)", () => {
+        describe("a carried publication stays recoverable (BJJ-455 P2 FU-10, FU-10-F1: 3.4-d x 3.4-f)", () => {
             const manifestsOf = async (doc: string): Promise<string[]> =>
                 (await listFiles(h.archive)).filter((file) => file.includes(`/${doc}/manifests/`));
             const manifestRecords = async () =>
                 (await readLedgerRecords(h.control)).filter((record) => record.type === "manifest_published");
+            const ledgerDir = (): string => path.join(h.control, "ledger");
+            const journals = async (): Promise<string[]> => (await fs.readdir(ledgerDir())).filter((name) => name.startsWith("journal-")).sort();
+            const loseLedgerAndRecover = async () => {
+                const installationId = (await readJsonFile(path.join(h.archive, ".bjj-backup", "installation.json")))["installationId"];
+                await fs.rm(ledgerDir(), { recursive: true });
+                return withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+            };
+            const verifyAll = () => withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }));
+            /** Stages D001 while the archive is gone. Returns how to put the archive back. */
+            async function stagedWhileArchiveIsGone(doc: FixtureDoc = singleDoc("D001")): Promise<{ restore: () => Promise<void> }> {
+                h = await createHarness({ docs: [doc] });
+                await initArchive(h);
+                const away = await swapArchive(h);
+                await runOnce(h);
+                return { restore: () => swapBack(h, away) };
+            }
             /** Run 1 stages D001 while the archive is gone; run 2 finds the archive again and no longer lists D001. */
             async function carried(): Promise<{ id: string; second: Awaited<ReturnType<typeof runOnce>> }> {
                 const x = singleDoc("D001");
-                h = await createHarness({ docs: [x] });
-                await initArchive(h);
-                const away = await swapArchive(h);
+                const { restore } = await stagedWhileArchiveIsGone(x);
                 const id = identityFor(h, x, "document");
-                await runOnce(h);
                 expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["blocked"]);
-                await swapBack(h, away);
+                await restore();
                 h.api.docs = [pairDoc("D002")];
                 const second = await runOnce(h);
                 expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
@@ -612,18 +626,11 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 expect(completion.value["gaps"]).toEqual([]);
                 expect(second.counts).toMatchObject({ blocked: 0, terminalUnavailable: 0 });
 
-                const journal = path.join(h.control, "ledger", "journal-000000000001.jsonl");
-                const bytes = await fs.readFile(journal);
-                bytes[bytes.indexOf(0x0a) + 30] = bytes[bytes.indexOf(0x0a) + 30]! ^ 0xff;
-                await fs.writeFile(journal, bytes);
-                const installationId = (await readJsonFile(path.join(h.archive, ".bjj-backup", "installation.json")))["installationId"];
-
-                const recovered = await withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+                const recovered = await loseLedgerAndRecover();
 
                 expect(recovered).toMatchObject({ recovered: 3, unverified: 0, knownGaps: 0 });
                 expect((await destinationStates(h.control))[id]).toBe("verified");
-                const verified = await withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }));
-                expect(verified).toMatchObject({ checked: 3, integrityErrors: 0 });
+                expect(await verifyAll()).toMatchObject({ checked: 3, integrityErrors: 0 });
             });
 
             it("should publish the manifest once: a later run that still omits the document writes nothing new for it", async () => {
@@ -641,6 +648,211 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 expect((await destinationTransitions(id)).length).toBe(transitions);
                 expect(third.counts).toMatchObject({ blocked: 0, terminalUnavailable: 0 });
                 expect(await archivePdfs(h.archive)).toHaveLength(3);
+            });
+
+            it("should still index the artifact after the archive stayed gone across several bindings and the ledger was compacted", async () => {
+                const x = singleDoc("D001");
+                const { restore } = await stagedWhileArchiveIsGone(x);
+                const id = identityFor(h, x, "document");
+                // Two more snapshots without D001 while the archive is still unavailable: the ledger state forgets its observation.
+                h.api.docs = [];
+                await runOnce(h);
+                await runOnce(h);
+                await restore();
+                h.api.docs = [pairDoc("D002")];
+
+                const compacted = await runOnce(h, { compactionThreshold: 1 });
+
+                expect(await fs.stat(path.join(ledgerDir(), "checkpoint.json")).then(() => true, () => false)).toBe(true);
+                expect((await journals()).length).toBeGreaterThanOrEqual(2);
+                expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+                expect(h.api.artifactRequests().filter((url) => url.includes(id))).toHaveLength(1);
+                expect(await manifestsOf("D001")).toHaveLength(1);
+                expect(compacted.counts).toMatchObject({ blocked: 0, terminalUnavailable: 0 });
+                expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 3, unverified: 0 });
+                expect(await verifyAll()).toMatchObject({ checked: 3 });
+            });
+
+            describe("real SIGKILL at the boundaries of a carried publication", () => {
+                const POINTS = ["after-manifest-first-before-record", "after-publish-before-verifying", "after-verified"] as const;
+                // Before the manifest-first step a kill at the first point leaves a manifest and no PDF: visible as unverified, never silent.
+                const afterKill: Record<typeof POINTS[number], { recovered: number; unverified: number; pdfs: number }> = {
+                    "after-manifest-first-before-record": { recovered: 0, unverified: 1, pdfs: 0 },
+                    "after-publish-before-verifying": { recovered: 1, unverified: 0, pdfs: 1 },
+                    "after-verified": { recovered: 1, unverified: 0, pdfs: 1 },
+                };
+                const killedRun = async (point: typeof POINTS[number]): Promise<string> => {
+                    const x = singleDoc("D001");
+                    const { restore } = await stagedWhileArchiveIsGone(x);
+                    await restore();
+                    h.api.docs = [];
+                    const child = spawnUnderFlock(h, ["run", "--config", h.configPath, "--kill-at", point]);
+                    expect(await child.exited).toEqual({ code: null, signal: "SIGKILL" });
+                    h.clock.set(new Date(Date.now() + 60_000).toISOString());
+                    return identityFor(h, x, "document");
+                };
+
+                it.each(POINTS)("should leave recovery able to see the artifact when the ledger is lost right after a kill at %s", async (point) => {
+                    await killedRun(point);
+
+                    const recovered = await loseLedgerAndRecover();
+
+                    const expected = afterKill[point];
+                    expect(recovered).toMatchObject({ recovered: expected.recovered, unverified: expected.unverified });
+                    expect(await archivePdfs(h.archive)).toHaveLength(expected.pdfs);
+                    expect(await manifestsOf("D001")).toHaveLength(1);
+                    expect(await verifyAll()).toMatchObject({ checked: expected.recovered, integrityErrors: 0 });
+                }, 180_000);
+
+                it.each(POINTS)("should converge through later bindings after a kill at %s, then survive losing the ledger", async (point) => {
+                    const id = await killedRun(point);
+
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await runOnce(h);
+
+                    expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+                    expect(await archivePdfs(h.archive)).toHaveLength(1);
+                    expect(await manifestsOf("D001")).toHaveLength(1);
+                    expect(new Set((await manifestRecords()).map((record) => record.body["relativeKey"])).size).toBe((await manifestRecords()).length);
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 1, unverified: 0 });
+                    expect(await verifyAll()).toMatchObject({ checked: 1 });
+                }, 180_000);
+            });
+
+            it.each(["after-publish-before-verifying", "after-verified"] as const)(
+                "should keep the available half of a pair recoverable after a real kill at %s, with its sibling still unfetched", async (point) => {
+                    const pair = pairDoc("D001");
+                    h = await createHarness({ docs: [pair] });
+                    h.api.addFault({ route: "artifact", times: 99, match: (info) => info.fileType === "audit_trail", fault: { kind: "status", status: 429, code: "RATE_LIMITED", retryable: true, retryAfterSeconds: 120 } });
+                    await initArchive(h);
+                    const away = await swapArchive(h);
+                    await runOnce(h);
+                    await swapBack(h, away);
+                    h.api.docs = [];
+                    const child = spawnUnderFlock(h, ["run", "--config", h.configPath, "--kill-at", point]);
+                    expect(await child.exited).toEqual({ code: null, signal: "SIGKILL" });
+
+                    // The manifest was written before the sibling was settled, so the published PDF is not orphaned.
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 1, unverified: 1 });
+                    expect(await verifyAll()).toMatchObject({ checked: 1 });
+                }, 180_000);
+
+            it("should keep the available half of a pair recoverable and report the missing half, not lose both", async () => {
+                const pair = pairDoc("D001");
+                h = await createHarness({ docs: [pair, pairDoc("D002")] });
+                // Only D001's audit trail is refused by the source; its document is staged while the archive is gone.
+                h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 429, code: "RATE_LIMITED", retryable: true, retryAfterSeconds: 120 } });
+                await initArchive(h);
+                const away = await swapArchive(h);
+                await runOnce(h);
+                await swapBack(h, away);
+                const documentId = identityFor(h, pair, "document");
+                h.api.docs = [pairDoc("D002")];
+
+                const second = await runOnce(h);
+
+                expect((await transitionPath(h.control, documentId)).slice(-1)).toEqual(["verified"]);
+                const manifest = await readJsonFile(path.join(h.archive, (await manifestsOf("D001"))[0]!));
+                expect(manifest["artifacts"].map((artifact: { artifactType: string }) => artifact.artifactType)).toEqual(["audit-trail", "document"]);
+                expect(second.counts).toMatchObject({ terminalUnavailable: 1 });
+                expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "exact-bytes-unavailable" }]);
+
+                const recovered = await loseLedgerAndRecover();
+
+                expect(recovered).toMatchObject({ recovered: 3, unverified: 1, knownGaps: 1 });
+                expect(await verifyAll()).toMatchObject({ checked: 3 });
+            });
+
+            it("should write the missing manifest of an already-verified artifact whose document left the snapshot, without a destination transition", async () => {
+                // The audit trail is gone at the source for good, so the document's own PDF is verified but its revision never got a manifest.
+                const gone = pairDoc("D001");
+                h = await createHarness({ docs: [gone, pairDoc("D002")] });
+                h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 410, code: "SOURCE_REMOVED" } });
+                await initArchive(h);
+                const id = identityFor(h, gone, "document");
+                await runOnce(h);
+                expect(await manifestsOf("D001")).toEqual([]);
+                const transitions = (await destinationTransitions(id)).length;
+                h.api.docs = [pairDoc("D002")];
+
+                await runOnce(h);
+
+                expect(await manifestsOf("D001")).toHaveLength(1);
+                expect((await destinationTransitions(id)).length).toBe(transitions);
+                expect((await readCompletions(h.archive)).pop()!.value["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D002"]);
+                const records = (await manifestRecords()).length;
+                await runOnce(h);
+                expect(await manifestsOf("D001")).toHaveLength(1);
+                expect((await manifestRecords()).length).toBe(records);
+                expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 3, unverified: 1 });
+            });
+
+            describe("evidence that cannot authorize a publication", () => {
+                const d1 = singleDoc("D001");
+                /** D001 is staged and blocked; the ledger has been compacted twice so its observation lives only in the oldest journals. */
+                async function stagedWithHistoryOnDisk(): Promise<{ id: string }> {
+                    const { restore } = await stagedWhileArchiveIsGone(d1);
+                    h.api.docs = [];
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await restore();
+                    const id = identityFor(h, d1, "document");
+                    // Staged and blocked for the archive, not for missing bytes; the refusal below must leave it that way.
+                    expect((await destinationTransitions(id)).pop()!.body["reasonCode"]).toBe("archive-unavailable");
+                    return { id };
+                }
+                const refused = async (id: string): Promise<void> => {
+                    await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "ledger-inconsistent" });
+                    expect(await archivePdfs(h.archive)).toEqual([]);
+                    expect(await manifestsOf("D001")).toEqual([]);
+                    expect(await fs.stat(path.join(h.control, "staging", `${id}.bin`)).then((stat) => stat.isFile())).toBe(true);
+                };
+
+                it("should refuse, publishing nothing, when a retained journal has been damaged", async () => {
+                    const { id } = await stagedWithHistoryOnDisk();
+                    const oldest = path.join(ledgerDir(), (await journals())[0]!);
+                    const text = (await fs.readFile(oldest, "utf8")).split("\n");
+                    const index = text.findIndex((line) => line.includes('"candidate_observed"'));
+                    text[index] = text[index]!.replace('"documentId":"D001"', '"documentId":"D009"');
+                    await fs.writeFile(oldest, text.join("\n"));
+
+                    await refused(id);
+                });
+
+                it("should refuse, publishing nothing, when an old journal is missing", async () => {
+                    const { id } = await stagedWithHistoryOnDisk();
+                    await fs.rm(path.join(ledgerDir(), (await journals())[0]!));
+
+                    await refused(id);
+                });
+
+                it("should refuse, publishing nothing, when an old journal is a symlink", async () => {
+                    const { id } = await stagedWithHistoryOnDisk();
+                    const oldest = path.join(ledgerDir(), (await journals())[0]!);
+                    const copy = path.join(h.base, "journal-copy");
+                    await fs.copyFile(oldest, copy);
+                    await fs.rm(oldest);
+                    await fs.symlink(copy, oldest);
+
+                    await refused(id);
+                });
+
+                it("should block the artifact as archive-conflict, publishing no PDF, when another manifest already sits at the key", async () => {
+                    const { restore } = await stagedWhileArchiveIsGone(d1);
+                    const id = identityFor(h, d1, "document");
+                    const observed = (await readLedgerRecords(h.control)).find((record) => record.type === "candidate_observed")!;
+                    await restore();
+                    await fs.mkdir(path.join(h.archive, "eformsign", COMPANY, "D001", "manifests"), { recursive: true, mode: 0o700 });
+                    await fs.writeFile(path.join(h.archive, "eformsign", COMPANY, "D001", "manifests", `${observed.body["metadataRevision"]}.json`), "{\"other\":true}\n", { mode: 0o600 });
+                    h.api.docs = [];
+
+                    const run = await runOnce(h);
+
+                    expect(run.reasonCodes).toContain("archive-conflict");
+                    expect(await archivePdfs(h.archive)).toEqual([]);
+                    expect((await destinationTransitions(id)).pop()!.body).toMatchObject({ to: "blocked", reasonCode: "archive-conflict" });
+                    expect(await fs.stat(path.join(h.control, "staging", `${id}.bin`)).then((stat) => stat.isFile())).toBe(true);
+                });
             });
         });
 
