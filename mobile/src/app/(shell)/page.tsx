@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { t } from "@/lib/i18n/translations";
 import { getLocale } from "@/app/actions/locale";
-import { getCurrentUser } from "@/lib/auth/cookies";
+import { getOptionalCurrentUser } from "@/lib/auth/cookies";
 import { Button } from "@/components/ui/button";
 import { PwaDashboardRedirect } from "@/components/app/root/pwa-dashboard-redirect";
 
 export default async function Home() {
-    const token = await getCurrentUser();
+    // "Already signed in?" check: an unavailable backend counts as signed out.
+    const token = await getOptionalCurrentUser();
 
     // Auto redirect to dashboard if authenticated
     if (token) {

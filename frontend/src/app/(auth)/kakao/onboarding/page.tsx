@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth/cookies";
+import { getOptionalCurrentUser } from "@/lib/auth/cookies";
 import { appendSafeReturnPath, getSafeServiceRecordAdminReturnPath } from "@/lib/auth/safe-return-path";
 import { serverAPIClient } from "@/lib/api/server";
 import { OnboardingForm } from "./OnboardingForm";
@@ -22,7 +22,8 @@ export default async function KakaoOnboardingPage({ searchParams }: KakaoOnboard
     const params = await searchParams;
     const rawReturnPath = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
     const returnPath = getSafeServiceRecordAdminReturnPath(rawReturnPath);
-    const currentUser = await getCurrentUser();
+    // "Already signed in?" check: an unavailable backend counts as signed out.
+    const currentUser = await getOptionalCurrentUser();
     if (currentUser) {
         redirect(returnPath || "/dashboard");
     }

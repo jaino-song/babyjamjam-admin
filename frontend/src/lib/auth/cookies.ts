@@ -40,8 +40,26 @@ function isServerE2ETestMode(): boolean {
   return process.env["NEXT_PUBLIC_E2E_TEST"] === "true" && process.env["NODE_ENV"] !== "production";
 }
 
+/**
+ * `/auth/me` could not give a definite answer (timeout, network failure, 5xx,
+ * unreadable body). The session is NOT known to be invalid, so callers must not
+ * treat this as "signed out": no redirect to /login and no cookie clearing.
+ * `getCurrentUser` returns null only when the user is really not authenticated.
+ */
+export class AuthServiceUnavailableError extends Error {
+  constructor(message = "Authentication service is unavailable", options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "AuthServiceUnavailableError";
+  }
+}
+
 // React cache()를 사용하여 같은 request cycle 내에서 중복 호출 방지
 // native fetch를 사용하지만 인증 정보는 request cycle 안에서만 재사용한다.
+//
+// 반환/예외 계약:
+// - null: 로그인되지 않음 (auth_token 쿠키 없음, /auth/me 401·403)
+// - AuthServiceUnavailableError: 백엔드 응답 불가 (timeout, 네트워크 오류, 5xx, 200 이외 상태, 본문 이상)
+// - 그 외 예외는 그대로 전파 (null로 바꾸지 않음)
 export const getCurrentUser = cache(async () => {
   try {
     const cookieStore = await cookies();
@@ -63,35 +81,73 @@ export const getCurrentUser = cache(async () => {
       return E2E_AUTH_USER;
     }
 
-    const res = await fetch(createServerApiUrl("/auth/me"), {
-      headers: {
-        Authorization: `Bearer ${authToken.value}`,
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(AUTH_ME_TIMEOUT_MS),
-    });
+    let res: Response;
+    try {
+      res = await fetch(createServerApiUrl("/auth/me"), {
+        headers: {
+          Authorization: `Bearer ${authToken.value}`,
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(AUTH_ME_TIMEOUT_MS),
+      });
+    } catch (error: unknown) {
+      throw new AuthServiceUnavailableError("Failed to reach /auth/me", { cause: error });
+    }
 
-    if (!res.ok) {
-      console.error("[getCurrentUser] Failed to fetch user: non-200 response", res.status);
+    if (res.status === 401 || res.status === 403) {
       return null;
     }
 
-    const user = (await res.json()) as CurrentUserResponse;
+    if (res.status !== 200) {
+      throw new AuthServiceUnavailableError(`Unexpected /auth/me status ${res.status}`);
+    }
+
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch (error: unknown) {
+      throw new AuthServiceUnavailableError("Unreadable /auth/me response", { cause: error });
+    }
+
+    if (body === null || typeof body !== "object") {
+      throw new AuthServiceUnavailableError("Invalid /auth/me response");
+    }
+    const user = body as CurrentUserResponse;
+
     return {
       ...user,
       branchName: user.branchName ?? user.organizationName ?? null,
       branchSlug: user.branchSlug ?? null,
     };
   } catch (error: unknown) {
-    if (error instanceof Error) {
-      console.error("[getCurrentUser] Failed to fetch user:", error.message);
-    } else {
-      console.error("[getCurrentUser] Failed to fetch user:", String(error));
+    if (error instanceof AuthServiceUnavailableError) {
+      console.error("[getCurrentUser] Auth service unavailable:", error.message, {
+        cause: error.cause instanceof Error ? error.cause.message : undefined,
+      });
+      throw error;
     }
-    return null;
+    // Anything else (including Next dynamic-rendering signals thrown by
+    // cookies()) must propagate unchanged: it is not proof of a signed-out user.
+    throw error;
   }
 });
+
+/**
+ * For "is someone already signed in?" checks (login/onboarding entry points).
+ * An unavailable backend behaves like the signed-out branch instead of crashing
+ * the page, so a user can still reach the login screen while the API is down.
+ */
+export async function getOptionalCurrentUser() {
+  try {
+    return await getCurrentUser();
+  } catch (error: unknown) {
+    if (error instanceof AuthServiceUnavailableError) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 /**
  * Check if user has selected an branch
