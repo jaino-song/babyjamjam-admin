@@ -70,7 +70,7 @@ export class UpdateUserUsecase {
             const membershipRole = updates.role === "admin" || updates.role === "manager"
                 ? updates.role
                 : "user";
-            await this.userRepository.clearBranchOwnerships(user.id, membershipRole);
+            await this.userRepository.clearBranchAdminAssignments(user.id, membershipRole);
         }
 
         if (updates.branchId) {

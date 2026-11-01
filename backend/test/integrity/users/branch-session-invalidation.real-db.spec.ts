@@ -29,8 +29,8 @@ import type { IntegrityPrisma } from "../helpers/real-db";
  *   `tokenVersion`. The invariant that must still hold: after deactivation, the
  *   NEXT request carrying an existing access token for that branch is refused,
  *   and a refresh re-issues credentials WITHOUT the deactivated branch.
- * - SI-USER-04: transferring branch ownership demotes the old owner without
- *   session revocation. The invariant that must still hold: the demoted owner's
+ * - SI-USER-04: transferring the branch admin assignment demotes the old branch admin without
+ *   session revocation. The invariant that must still hold: the demoted branch admin's
  *   existing token is evaluated with the FRESH database roles on the very next
  *   request (jwt.strategy fresh global role; TenantGuard fresh branch role), so
  *   the stale token cannot exercise the old authority.
@@ -40,7 +40,7 @@ import type { IntegrityPrisma } from "../helpers/real-db";
  * (base64url JSON) so tests can assert exactly what a refresh would bake into a
  * new access token; the JWT secret for the strategy is a local test literal.
  */
-describeReal("branch deactivation and owner transfer against live sessions (real PostgreSQL)", () => {
+describeReal("branch deactivation and branch admin transfer against live sessions (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;
     let tracker: RowTracker;
 
@@ -128,23 +128,23 @@ describeReal("branch deactivation and owner transfer against live sessions (real
                 branchId: branch.id,
             })).rejects.toBeInstanceOf(UnauthorizedException);
 
-            // --- owner path: a global owner holding the branch is refused too ---
-            const ownerBranch = await createBranch(handle.raw, tracker, { isActive: true });
-            const branchOwner = await createUser(handle.raw, tracker, { role: "owner" });
+            // --- owner path: a global owner assigned as the branch admin is refused too ---
+            const adminBranch = await createBranch(handle.raw, tracker, { isActive: true });
+            const ownerAsBranchAdmin = await createUser(handle.raw, tracker, { role: "owner" });
             await handle.raw.branch.update({
-                where: { id: ownerBranch.id },
-                data: { ownerId: branchOwner.id },
+                where: { id: adminBranch.id },
+                data: { adminId: ownerAsBranchAdmin.id },
             });
             const { session: ownerSession } = await createAuthSession(
-                handle.raw, tracker, { userId: branchOwner.id }, { selectedBranchId: ownerBranch.id },
+                handle.raw, tracker, { userId: ownerAsBranchAdmin.id }, { selectedBranchId: adminBranch.id },
             );
             const ownerToken = {
-                sub: branchOwner.id,
+                sub: ownerAsBranchAdmin.id,
                 sid: ownerSession.id,
                 role: "owner",
-                tokenVersion: branchOwner.tokenVersion,
+                tokenVersion: ownerAsBranchAdmin.tokenVersion,
                 type: "access" as const,
-                branchId: ownerBranch.id,
+                branchId: adminBranch.id,
             };
 
             // Allowing control: BEFORE deactivation the same token's claims pass
@@ -154,24 +154,24 @@ describeReal("branch deactivation and owner transfer against live sessions (real
                 guard.canActivate(tenantRequestContext(await strategy.validate(ownerToken))),
             ).resolves.toBe(true);
 
-            await systemAdmin.updateBranch(ownerBranch.id, { isActive: false }, ownerActor(actor.id));
+            await systemAdmin.updateBranch(adminBranch.id, { isActive: false }, ownerActor(actor.id));
 
             await expect(
                 guard.canActivate(tenantRequestContext(await strategy.validate(ownerToken))),
             ).rejects.toBeInstanceOf(ForbiddenException);
 
-            // Cleanup order: clear ownership the tracker's fixed rank cannot express
-            // (branch is deleted before its owner user).
+            // Cleanup order: clear the branch admin assignment the tracker's fixed rank cannot express
+            // (branch is deleted before its admin user).
             await handle.raw.branch.updateMany({
-                where: { id: { in: [ownerBranch.id] } },
-                data: { ownerId: null },
+                where: { id: { in: [adminBranch.id] } },
+                data: { adminId: null },
             });
         },
     );
 
     invariant(
         "SI-USER-04",
-        "a demoted branch owner's existing token is evaluated with the fresh roles on the next request",
+        "a demoted branch admin's existing token is evaluated with the fresh roles on the next request",
         async () => {
             const systemAdmin = makeSystemAdminService(handle.service);
             const { guard, context } = makeTenantGuard(handle.service);
@@ -179,13 +179,13 @@ describeReal("branch deactivation and owner transfer against live sessions (real
             const actor = await createSystemAdminActor();
 
             const branch = await createBranch(handle.raw, tracker);
-            const oldOwner = await createUser(
+            const oldAdmin = await createUser(
                 handle.raw,
                 tracker,
                 { role: "admin", approvalStatus: "approved" },
                 { membership: { branchId: branch.id, role: "admin" } },
             );
-            const newOwner = await createUser(
+            const newAdmin = await createUser(
                 handle.raw,
                 tracker,
                 { role: "user", approvalStatus: "approved" },
@@ -193,21 +193,21 @@ describeReal("branch deactivation and owner transfer against live sessions (real
             );
             await handle.raw.branch.update({
                 where: { id: branch.id },
-                data: { ownerId: oldOwner.id },
+                data: { adminId: oldAdmin.id },
             });
             const { session } = await createAuthSession(
                 handle.raw,
                 tracker,
-                { userId: oldOwner.id },
+                { userId: oldAdmin.id },
                 { selectedBranchId: branch.id },
             );
 
-            // The token the old owner still holds, issued before the transfer.
+            // The token the old branch admin still holds, issued before the transfer.
             const oldTokenPayload = {
-                sub: oldOwner.id,
+                sub: oldAdmin.id,
                 sid: session.id,
                 role: "admin",
-                tokenVersion: oldOwner.tokenVersion,
+                tokenVersion: oldAdmin.tokenVersion,
                 type: "access",
                 branchId: branch.id,
                 branchRole: "admin",
@@ -216,31 +216,31 @@ describeReal("branch deactivation and owner transfer against live sessions (real
             // Demotion is conditional on owning no OTHER branch. Pin that
             // precondition by this user's id, never a suite/branch-wide count.
             expect(await handle.raw.branch.findMany({
-                where: { ownerId: oldOwner.id },
+                where: { adminId: oldAdmin.id },
                 select: { id: true },
             })).toEqual([{ id: branch.id }]);
             await expect(strategy.validate(oldTokenPayload)).resolves.toMatchObject({ role: "admin" });
 
-            await systemAdmin.updateBranch(branch.id, { ownerId: newOwner.id }, ownerActor(actor.id));
+            await systemAdmin.updateBranch(branch.id, { adminId: newAdmin.id }, ownerActor(actor.id));
 
             // updateBranch awaits the transaction commit. Check the independent
             // raw client BEFORE JwtStrategy so any recurrence distinguishes a
             // write/fixture failure from a stale strategy read, without sleeps/retries.
             expect(await handle.raw.branch.findUniqueOrThrow({
                 where: { id: branch.id },
-                select: { ownerId: true },
-            })).toEqual({ ownerId: newOwner.id });
+                select: { adminId: true },
+            })).toEqual({ adminId: newAdmin.id });
             expect(await handle.raw.branch.findMany({
-                where: { ownerId: oldOwner.id },
+                where: { adminId: oldAdmin.id },
                 select: { id: true },
             })).toEqual([]);
             expect(await handle.raw.user.findUniqueOrThrow({
-                where: { id: oldOwner.id },
+                where: { id: oldAdmin.id },
                 select: { role: true },
             })).toEqual({ role: "user" });
 
             // jwt.strategy re-reads the GLOBAL role from the database instead of
-            // trusting the token: the demoted owner's old token now validates as the
+            // trusting the token: the demoted branch admin's old token now validates as the
             // fresh (demoted) role.
             const principal = await strategy.validate(oldTokenPayload);
             expect(principal.role).toBe("user");
@@ -249,7 +249,7 @@ describeReal("branch deactivation and owner transfer against live sessions (real
             // fresh branch role "user", not the stale "admin" baked into the token.
             await expect(
                 guard.canActivate(tenantRequestContext({
-                    userId: oldOwner.id,
+                    userId: oldAdmin.id,
                     role: principal.role,
                     branchId: branch.id,
                 })),
@@ -257,20 +257,20 @@ describeReal("branch deactivation and owner transfer against live sessions (real
             expect(context.branchRole).toBe("user");
             expect(context.globalRole).toBe("user");
 
-            // And the owner-only branch mutation itself refuses the demoted owner's
+            // And the owner-only branch mutation itself refuses the demoted branch admin's
             // identity when re-read inside the write transaction (권한-04 caller
-            // re-read): the demoted owner's branch rank no longer outranks anyone.
+            // re-read): the demoted branch admin's branch rank no longer outranks anyone.
             const userService = makeUserService(handle.service);
             await expect(
-                userService.update(newOwner.id, {
+                userService.update(newAdmin.id, {
                     branchId: branch.id,
                     branchRole: "admin",
-                    actor: { userId: oldOwner.id, globalRole: principal.role },
+                    actor: { userId: oldAdmin.id, globalRole: principal.role },
                 }),
             ).rejects.toBeInstanceOf(ForbiddenException);
 
-            // Cleanup order: clear ownership before the ranked deletes.
-            await handle.raw.branch.update({ where: { id: branch.id }, data: { ownerId: null } });
+            // Cleanup order: clear the branch admin assignment before the ranked deletes.
+            await handle.raw.branch.update({ where: { id: branch.id }, data: { adminId: null } });
         },
     );
 });
