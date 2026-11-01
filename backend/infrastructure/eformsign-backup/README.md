@@ -239,7 +239,7 @@ Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no
 | --- | --- |
 | 0 | ok |
 | 64 | usage (unknown, repeated or valueless flag, missing or doubled `--latest` / `--snapshot`, a relative `--archive`, a bad `--company`), or `restore-output-invalid` (bad `--out`), `invalid-path-segment` |
-| 65 | data is wrong: `restore-conflict`, `artifact-integrity`, `pdf-shape`. Usually nothing is written, but see "Restore from the archive alone": a failure found while copying leaves partial output in `--out` |
+| 65 | data is wrong: `restore-conflict`, `artifact-integrity`, `pdf-shape`. Usually nothing is written, but see "Restore from the archive alone": a failure found while copying may leave partial output in `--out` |
 | 66 | nothing to restore: `not-initialized` |
 | 69 | archive: `archive-unavailable`, `archive-unsafe-path`, `archive-identity-mismatch`, `archive-marker-invalid` |
 | 70 | internal: any other reason code or an unexpected error |
@@ -294,8 +294,10 @@ manifest (`artifact-integrity`, exit 65) found by the up-front check stop the
 restore before anything is written. That check covers every artifact the restore
 will copy; a conflict or a bad manifest is found while planning, also before the
 first write. An artifact that changes or disappears after the check, while it is
-being copied, still ends with `artifact-integrity` (exit 65), but by then earlier
-documents are already in `--out` and nothing is rolled back. `--out` must be a new
+being copied, still fails the restore: an integrity failure ends with
+`artifact-integrity` (exit 65), and an artifact replaced by a symlink with
+`archive-unsafe-path` (exit 69). Documents copied before the failure, if any, stay
+in `--out`; nothing is rolled back. `--out` must be a new
 or empty real directory outside the archive; running restore again into a
 non-empty `--out` is refused with `restore-output-invalid` (exit 64). After a failed
 copy, check the archive, then restore into a fresh empty `--out` and discard (or keep
