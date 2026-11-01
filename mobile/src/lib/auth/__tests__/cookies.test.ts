@@ -120,6 +120,19 @@ describe("getCurrentUser", () => {
     await expect(getCurrentUser()).rejects.toBeInstanceOf(AuthServiceUnavailableError);
   });
 
+  it("throws AuthServiceUnavailableError when a 200 response body is null", async () => {
+    mockGet.mockResolvedValue({ status: 200, data: null });
+
+    await expect(getCurrentUser()).rejects.toBeInstanceOf(AuthServiceUnavailableError);
+  });
+
+  it("propagates an unexpected error thrown by cookies() instead of returning null", async () => {
+    const failure = new Error("cookies exploded");
+    mockCookies.mockRejectedValue(failure);
+
+    await expect(getCurrentUser()).rejects.toBe(failure);
+  });
+
   it("returns the user when /auth/me answers 200", async () => {
     mockGet.mockResolvedValue({ status: 200, data: { id: "user-1", name: "Kim" } });
 

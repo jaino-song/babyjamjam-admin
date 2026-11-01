@@ -58,7 +58,8 @@ export class AuthServiceUnavailableError extends Error {
 //
 // 반환/예외 계약:
 // - null: 로그인되지 않음 (auth_token 쿠키 없음, /auth/me 401·403)
-// - AuthServiceUnavailableError: 백엔드 응답 불가 (timeout, 네트워크 오류, 5xx 등)
+// - AuthServiceUnavailableError: 백엔드 응답 불가 (timeout, 네트워크 오류, 5xx, 200 이외 상태, 본문 이상)
+// - 그 외 예외는 그대로 전파 (null로 바꾸지 않음)
 export const getCurrentUser = cache(async () => {
   try {
     const cookieStore = await cookies();
@@ -98,16 +99,21 @@ export const getCurrentUser = cache(async () => {
       return null;
     }
 
-    if (!res.ok) {
+    if (res.status !== 200) {
       throw new AuthServiceUnavailableError(`Unexpected /auth/me status ${res.status}`);
     }
 
-    let user: CurrentUserResponse;
+    let body: unknown;
     try {
-      user = (await res.json()) as CurrentUserResponse;
+      body = await res.json();
     } catch (error: unknown) {
       throw new AuthServiceUnavailableError("Unreadable /auth/me response", { cause: error });
     }
+
+    if (body === null || typeof body !== "object") {
+      throw new AuthServiceUnavailableError("Invalid /auth/me response");
+    }
+    const user = body as CurrentUserResponse;
 
     return {
       ...user,
@@ -121,12 +127,9 @@ export const getCurrentUser = cache(async () => {
       });
       throw error;
     }
-    if (error instanceof Error) {
-      console.error("[getCurrentUser] Failed to fetch user:", error.message);
-    } else {
-      console.error("[getCurrentUser] Failed to fetch user:", String(error));
-    }
-    return null;
+    // Anything else (including Next dynamic-rendering signals thrown by
+    // cookies()) must propagate unchanged: it is not proof of a signed-out user.
+    throw error;
   }
 });
 
