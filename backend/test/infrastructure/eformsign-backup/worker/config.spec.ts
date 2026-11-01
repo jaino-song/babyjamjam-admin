@@ -113,6 +113,18 @@ describe("loadWorkerConfig", () => {
         await expect(loadWorkerConfig(await write(configJson(paths()), 0o400))).resolves.toBeDefined();
     });
 
+    it("should refuse a config file that is not owned by the worker user", async () => {
+        const file = await write(configJson(paths()));
+        const realUid = process.getuid!();
+        const spy = jest.spyOn(process, "getuid").mockReturnValue(realUid + 1);
+        try {
+            await expect(loadWorkerConfig(file)).rejects.toMatchObject(refused);
+        } finally {
+            spy.mockRestore();
+        }
+        await expect(loadWorkerConfig(file)).resolves.toBeDefined();
+    });
+
     it("should expose only the reason code, never the path or a JSON error", async () => {
         const file = await write("{not json");
         const error = await loadWorkerConfig(file).catch((caught: unknown) => caught);
