@@ -23,11 +23,11 @@ import type { AdminAuditActor } from "application/services/admin-audit-event.ser
  *
  * - SI-USER-01 (intended, operator decision 2026-10-31): `reject` has no precondition on the
  *   target's current `approvalStatus` — rejecting an APPROVED user succeeds and
- *   strips memberships/ownership/sessions in one call. Review evidence says the
+ *   strips memberships/branch admin assignments/sessions in one call. Review evidence says the
  *   reject-from-approved path is intended (commit c31ed52f2 added
- *   membership/ownership removal on reject; the audit event records the prior
- *   status; user.service.spec.ts:1753+ rejects an approved owner-of-branch
- *   manager on purpose), so the test PINS today's reachable behaviour as an
+ *   membership/branch-admin removal on reject; the audit event records the prior
+ *   status; user.service.spec.ts:1753+ rejects an approved manager who administers
+ *   a branch on purpose), so the test PINS today's reachable behaviour as an
  *   invariant instead of claiming a defect.
  * - SI-USER-02 (intended, operator decision 2026-10-31): `approve` has no check that the target
  *   is pending — approving a REJECTED user resurrects the account and re-grants
@@ -191,15 +191,15 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
     for (const role of ["user", "manager"]) {
         invariant(
             "SI-USER-11",
-            `re-approval as ${role} refuses while the admin owns any branch, without changing ownership or authority`,
+            `re-approval as ${role} refuses while the admin administers any branch, without changing the branch admin assignment or authority`,
             async () => {
                 const branch = await createBranch(handle.raw, tracker);
                 const owner = await createUser(handle.raw, tracker, { role: "owner" });
                 const target = await createUser(handle.raw, tracker, { role: "admin" }, {
                     membership: { branchId: branch.id, role: "admin" },
                 });
-                // An inactive OTHER branch still requires an explicit ownership transfer.
-                const ownedBranch = await createBranch(handle.raw, tracker, { ownerId: target.id, isActive: false });
+                // An inactive OTHER branch still requires an explicit branch admin transfer.
+                const adminBranch = await createBranch(handle.raw, tracker, { adminId: target.id, isActive: false });
                 const { session } = await createAuthSession(handle.raw, tracker, { userId: target.id }, { selectedBranchId: branch.id });
 
                 await expect(service.approve(target.id, {
@@ -210,7 +210,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
                 });
 
                 expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id } })).toEqual(target);
-                expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: ownedBranch.id } })).toEqual(ownedBranch);
+                expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: adminBranch.id } })).toEqual(adminBranch);
                 expect(await handle.raw.user_branch.findMany({ where: { userId: target.id }, select: { branchId: true, role: true } }))
                     .toEqual([{ branchId: branch.id, role: "admin" }]);
                 expect(await handle.raw.auth_session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(session);
@@ -221,26 +221,26 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
 
     invariant(
         "SI-USER-11",
-        "admin re-approval can assign a vacant branch while retaining existing ownership",
+        "admin re-approval can assign a vacant branch while retaining the existing branch admin assignment",
         async () => {
             const branch = await createBranch(handle.raw, tracker);
             const owner = await createUser(handle.raw, tracker, { role: "owner" });
             const target = await createUser(handle.raw, tracker, { role: "admin" });
-            const ownedBranch = await createBranch(handle.raw, tracker, { ownerId: target.id });
+            const adminBranch = await createBranch(handle.raw, tracker, { adminId: target.id });
 
             await expect(service.approve(target.id, {
                 role: "admin", approvedBy: owner.id, actor: ownerActor(owner.id),
-                branchId: branch.id, ownerBranchId: branch.id,
+                branchId: branch.id, adminBranchId: branch.id,
             })).resolves.toMatchObject({ role: "admin", approvalStatus: "approved" });
 
-            expect(await handle.raw.branch.findMany({ where: { ownerId: target.id }, select: { id: true } }))
-                .toEqual(expect.arrayContaining([{ id: branch.id }, { id: ownedBranch.id }]));
+            expect(await handle.raw.branch.findMany({ where: { adminId: target.id }, select: { id: true } }))
+                .toEqual(expect.arrayContaining([{ id: branch.id }, { id: adminBranch.id }]));
         },
     );
 
     invariant(
         "SI-USER-11",
-        "approve reads ownership after waiting for the target user-row lock",
+        "approve reads the branch admin assignment after waiting for the target user-row lock",
         async () => {
             const branch = await createBranch(handle.raw, tracker);
             const owner = await createUser(handle.raw, tracker, { role: "owner" });
@@ -251,7 +251,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
             try {
                 await handle.raw.$transaction(async (tx) => {
                     await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "user" WHERE "id" = ${target.id}::uuid FOR UPDATE`);
-                    await tx.branch.update({ where: { id: branch.id }, data: { ownerId: target.id } });
+                    await tx.branch.update({ where: { id: branch.id }, data: { adminId: target.id } });
                     approval = service.approve(target.id, {
                         role: "user", approvedBy: owner.id, actor: ownerActor(owner.id), branchId: branch.id,
                     }).then(() => ({}), (error: unknown) => ({ error }));
@@ -263,7 +263,7 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
 
             expect(outcome).toMatchObject({ error: { status: 409, response: { code: "REQUEST_CONFLICT" } } });
             expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id } })).toEqual(target);
-            expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id } })).toMatchObject({ ownerId: target.id });
+            expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id } })).toMatchObject({ adminId: target.id });
             expect(await handle.raw.user_branch.count({ where: { userId: target.id } })).toBe(0);
         },
     );

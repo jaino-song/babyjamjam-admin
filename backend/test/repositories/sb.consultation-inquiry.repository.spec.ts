@@ -110,7 +110,7 @@ describe("SbConsultationInquiryRepository.findNotificationRecipientUserIds", () 
     it("scopes the userBranches relation to approved-or-owner members (BJJ-357 follow-up)", async () => {
         const { prisma, repository } = setup();
         prisma.branch.findUnique.mockResolvedValue({
-            ownerId: "owner-1",
+            adminId: "admin-1",
             userBranches: [{ userId: "approved-user" }],
         });
 
@@ -119,7 +119,7 @@ describe("SbConsultationInquiryRepository.findNotificationRecipientUserIds", () 
         expect(prisma.branch.findUnique).toHaveBeenCalledWith({
             where: { id: "branch-1" },
             select: {
-                ownerId: true,
+                adminId: true,
                 userBranches: {
                     where: {
                         user: {
@@ -135,18 +135,18 @@ describe("SbConsultationInquiryRepository.findNotificationRecipientUserIds", () 
         });
     });
 
-    it("includes the branch owner plus approved members, excluding a rejected member the DB filter dropped", async () => {
+    it("includes the branch admin plus approved members, excluding a rejected member the DB filter dropped", async () => {
         const { prisma, repository } = setup();
         // Simulates Prisma's `where` on the userBranches relation already having
         // dropped a rejected non-owner member (e.g. "rejected-user") before this
         // method ever sees it.
         prisma.branch.findUnique.mockResolvedValue({
-            ownerId: "owner-1",
+            adminId: "admin-1",
             userBranches: [{ userId: "approved-user" }, { userId: "owner-as-member" }],
         });
 
         await expect(repository.findNotificationRecipientUserIds("branch-1")).resolves.toEqual(
-            expect.arrayContaining(["owner-1", "approved-user", "owner-as-member"]),
+            expect.arrayContaining(["admin-1", "approved-user", "owner-as-member"]),
         );
         const ids = await repository.findNotificationRecipientUserIds("branch-1");
         expect(ids).not.toContain("rejected-user");
