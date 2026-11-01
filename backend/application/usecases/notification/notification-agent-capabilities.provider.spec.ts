@@ -2,7 +2,7 @@ import { NotificationAgentCapabilitiesProvider } from "./notification-agent-capa
 
 /**
  * resolveNotificationTarget (BJJ-357 follow-up) now gates on
- * userRepository.findApprovedByIdInBranch before trusting a membership/owner
+ * userRepository.findApprovedByIdInBranch before trusting a membership/admin
  * match. Tests that exercise inspect/revalidate/executeApprovedTarget need a
  * fresh stub per test (never shared, to avoid cross-test mock leakage); tests
  * that never reach resolveNotificationTarget (classifyOutcome, reconcile)
@@ -33,9 +33,9 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         joinedAt: new Date("2026-08-04T00:00:00.000Z"),
         user: { name: "홍길동", phone: "010-1234-5678", email: "member@example.com" },
     };
-    const branchOwner = {
-        ownerId: "owner-1",
-        owner: { name: "김대표", phone: null, email: "owner@example.com" },
+    const branchAdmin = {
+        adminId: "admin-1",
+        admin: { name: "김대표", phone: null, email: "admin@example.com" },
     };
     it.each(["disabled", "no-subscriptions", "failed"])("classifies %s delivery as a failed action", (status) => {
         const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never, {} as never);
@@ -90,7 +90,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
     it("resolves a branch member into an ID-only contact snapshot and summary", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
         };
         const provider = new NotificationAgentCapabilitiesProvider(
             {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
@@ -108,10 +108,10 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         expect(serialized).not.toContain("member@example.com");
     });
 
-    it("resolves a branch owner without exposing email when no member row exists", async () => {
+    it("resolves a branch admin without exposing email when no member row exists", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
-            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchAdmin, adminId: targetUserId }) },
         };
         const provider = new NotificationAgentCapabilitiesProvider(
             {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
@@ -126,12 +126,12 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
     });
 
-    it("rejects a user who is neither a member nor the branch owner", async () => {
+    it("rejects a user who is neither a member nor the branch admin", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
         };
-        // Approved so the rejection below is attributable to the membership/owner
+        // Approved so the rejection below is attributable to the membership/admin
         // check, not the approval gate — that gate has its own tests further down.
         const provider = new NotificationAgentCapabilitiesProvider(
             {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
@@ -145,7 +145,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
     it("rejects a pending (non-owner) branch member, same error path as a non-member (BJJ-357 follow-up)", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
         };
         const userRepository = userRepositoryStub(null);
         const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never, userRepository as never);
@@ -159,7 +159,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
     it("rejects a rejected branch member, same error path as a non-member (BJJ-357 follow-up)", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
         };
         const provider = new NotificationAgentCapabilitiesProvider(
             {} as never, prisma as never, userRepositoryStub(null) as never,
@@ -170,10 +170,10 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             .rejects.toThrow("outside the current branch");
     });
 
-    it("resolves a pending-approval owner via the branch-owner fallback, matching the login rule (BJJ-357 follow-up)", async () => {
+    it("resolves a pending-approval branch admin via the branch-admin fallback, matching the login rule (BJJ-357 follow-up)", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
-            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchAdmin, adminId: targetUserId }) },
         };
         // Owners bypass approvalStatus per the login rule (auth.service.ts /
         // auth-session.service.ts assertUserApproved) — findApprovedByIdInBranch
@@ -197,7 +197,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         const findMember = jest.fn().mockResolvedValue(member);
         const prisma = {
             user_branch: { findFirst: findMember },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
         };
         const provider = new NotificationAgentCapabilitiesProvider(
             {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
@@ -215,7 +215,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             $transaction: jest.fn(),
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
             user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
@@ -238,7 +238,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             $transaction: jest.fn(),
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
             user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
@@ -267,7 +267,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             $queryRawUnsafe: jest.fn().mockResolvedValue(undefined),
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
             user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
@@ -302,7 +302,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             $transaction: jest.fn(),
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
             user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
@@ -327,7 +327,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             $transaction: jest.fn(),
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
-            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchAdmin, adminId: targetUserId }) },
             user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "pending", role: "owner" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
@@ -351,17 +351,17 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         const ownerContext = ownerPrincipalContext;
         const input = () => ({ userId: targetUserId, title: "테스트", body: "본문" });
 
-        const ownerViaBranchOwnership = () => ({
+        const adminViaBranchAssignment = () => ({
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
-            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchAdmin, adminId: targetUserId }) },
         });
         const ownerViaMembership = () => ({
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
-            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchAdmin) },
         });
 
         it.each([
-            ["branch owner", ownerViaBranchOwnership],
+            ["branch admin", adminViaBranchAssignment],
             ["plain member", ownerViaMembership],
         ])("rejects a global-owner target (%s) for an admin principal, same error as a non-member", async (_label, prismaFor) => {
             const provider = new NotificationAgentCapabilitiesProvider(
@@ -373,7 +373,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         });
 
         it.each([
-            ["branch owner", ownerViaBranchOwnership],
+            ["branch admin", adminViaBranchAssignment],
             ["plain member", ownerViaMembership],
         ])("still resolves a global-owner target (%s) for an owner principal", async (_label, prismaFor) => {
             const provider = new NotificationAgentCapabilitiesProvider(
@@ -388,7 +388,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
 
         it("fails closed when the principal carries no global role", async () => {
             const provider = new NotificationAgentCapabilitiesProvider(
-                {} as never, ownerViaBranchOwnership() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
+                {} as never, adminViaBranchAssignment() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
             );
             const capability = provider.getCapabilities()[0]!;
             const roleless = { ...context, principal: { ...context.principal, globalRole: undefined } };
@@ -409,7 +409,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
 
         it("revalidates an owner target as gone for an admin principal", async () => {
             const provider = new NotificationAgentCapabilitiesProvider(
-                {} as never, ownerViaBranchOwnership() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
+                {} as never, adminViaBranchAssignment() as never, userRepositoryStub({ id: targetUserId, role: "owner" }) as never,
             );
             const capability = provider.getCapabilities()[0]!;
 

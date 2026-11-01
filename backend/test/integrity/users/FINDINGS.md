@@ -7,10 +7,10 @@ evidence and run records below are historical, not reruns in this docs task.
 
 | id | final status | severity | fix / disposition |
 |---|---|---|---|
-| SI-USER-01 | INTENDED (operator decision 2026-10-31) | — | Rejecting an approved user, removing memberships/ownership and sessions, is intended; `63a7fb609` records the decision in the invariant. |
+| SI-USER-01 | INTENDED (operator decision 2026-10-31) | — | Rejecting an approved user, removing memberships/branch admin assignments and sessions, is intended; `63a7fb609` records the decision in the invariant. |
 | SI-USER-02 | INTENDED (operator decision 2026-10-31) | — | Re-approving a rejected user is intended, subject to owner/self authorization guards; `63a7fb609` records the decision. |
 | SI-USER-03 | REFUTED | — | Inactive-branch claims are refused and refresh drops branch authority. |
-| SI-USER-04 | OPEN | — | Flaked once; cause remains unknown. Fresh ownership/stored-role diagnostics are in place, but green reruns do not prove a fix. |
+| SI-USER-04 | OPEN | — | Flaked once; cause remains unknown. Fresh branch-admin/stored-role diagnostics are in place, but green reruns do not prove a fix. |
 | SI-USER-05 | REFUTED | — | Refresh rotation/replay invariants hold. |
 | SI-USER-06 | REFUTED | — | Membership revocation and last-owner protection hold within the documented failure-classification boundary. |
 | SI-USER-07 | REFUTED | — | Token consumption is single-winner; orphaned onboarding cannot grant access. |
@@ -30,7 +30,7 @@ Confirmed by grepping HEAD: these are `invariant` calls, titles verbatim.
   - SI-USER-10: `the approval audit's before.approvalStatus records the real prior status of the target`
   - SI-USER-10: `the approval audit records a non-null prior role when re-approving an approved account`
 - SI-USER-04, `branch-session-invalidation.real-db.spec.ts`:
-  `a demoted branch owner's existing token is evaluated with the fresh roles on the next request`.
+  `a demoted branch admin's existing token is evaluated with the fresh roles on the next request`.
   The diagnostic assertions are not a claimed flake fix.
 - SI-USER-08, `frontend/src/__integrity__/users/desktop-authority.client-integrity.test.ts`
   and `mobile/src/__integrity__/users/mobile-session.client-integrity.test.ts`:
@@ -53,7 +53,7 @@ No fixes were made; all CONFIRMED defects are left as failing invariants behind 
 
 Review-round-1 dispositions: SI-USER-01 and the rejected→approved half of SI-USER-02 are
 NEEDS-PRODUCT-DECISION (evidence that reject-from-approved is intended: commit `c31ed52f2` added
-membership/ownership removal on reject, which only matters for approved users; the audit event records
+membership/branch-admin removal on reject, which only matters for approved users; the audit event records
 the prior status; `test/services/user.service.spec.ts:1753+` rejects an approved owner-of-branch manager
 on purpose; the UI only offers reject/approve for pending users) — the tests are kept as `invariant`s
 pinning today's reachable behaviour and carry no severity. The audit-trail half of SI-USER-02 was split
@@ -72,7 +72,7 @@ CONFIRMED SI-USER-09.
 
 | id | layer | verdict | one-line statement | evidence file:line | test file::test name |
 |---|---|---|---|---|---|
-| SI-USER-01 | backend | INTENDED (operator decision 2026-10-31) | Rejecting an approved account intentionally removes memberships, branch ownership and sessions. Prior intent evidence: `c31ed52f2`, audit prior-state payload and user.service.spec.ts:1753+; decision recorded by `63a7fb609` | backend/application/services/user.service.ts:1275-1361 (original target read 1285-1291; writes 1325-1350) | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-01 rejecting an already-APPROVED account strips memberships and sessions — intended (operator decision 2026-10-31)` (invariant) |
+| SI-USER-01 | backend | INTENDED (operator decision 2026-10-31) | Rejecting an approved account intentionally removes memberships, branch admin assignments and sessions. Prior intent evidence: `c31ed52f2`, audit prior-state payload and user.service.spec.ts:1753+; decision recorded by `63a7fb609` | backend/application/services/user.service.ts:1275-1361 (original target read 1285-1291; writes 1325-1350) | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-01 rejecting an already-APPROVED account strips memberships and sessions — intended (operator decision 2026-10-31)` (invariant) |
 | SI-USER-02 | backend | INTENDED (operator decision 2026-10-31) | Re-approving rejected accounts is intended, not pending-only. `63a7fb609` retains it while fixing the separate owner/self authorization defect and audit before-state | backend/application/services/user.service.ts:1108-1245 (original write 1157); backend/interface/controllers/user.controller.ts:181-201 | backend/test/integrity/users/user-approval-state-machine.real-db.spec.ts :: `SI-USER-02 approving a REJECTED account resurrects it and re-grants the role — intended (operator decision 2026-10-31)` (invariant) |
 
 ## Hypotheses REFUTED (the guard exists today; kept as green `invariant` tests on the real DB)
@@ -80,7 +80,7 @@ CONFIRMED SI-USER-09.
 | id | layer | verdict | evidence file:line | test file::test name |
 |---|---|---|---|---|
 | SI-USER-03 | backend | REFUTED — the stated invariant holds | backend/application/services/system-admin.service.ts:163-274 (deactivation: no session revocation/tokenVersion bump — the residual is by design survivable); backend/infrastructure/tenant/tenant.guard.ts:34-51 (owner: inactive branch refused, with an ALLOWING control proving the same identity is accepted before deactivation), 62-92 (member: inactive-branch membership refused per request); backend/application/services/auth-session.service.ts:623-663 (`resolveFreshBranchPrincipal` drops the inactive branch on refresh: branch claims omitted, `selected_branch_id` nulled); backend/infrastructure/auth/jwt.strategy.ts:83-94 (`selected_branch_id` vs token `branchId` — a pre-deactivation branch token dies at the next request after refresh) | backend/test/integrity/users/branch-session-invalidation.real-db.spec.ts :: `SI-USER-03 after branch deactivation the next request with an existing token is refused and refresh drops the branch` |
-| SI-USER-04 | backend | OPEN — one unexplained flake; ownership/DB-role diagnostics in place, not a proven fix | backend/infrastructure/auth/jwt.strategy.ts:100-106 (fresh DB role, never the token role); backend/infrastructure/tenant/tenant.guard.ts:62-92 (fresh membership role onto the request principal); backend/application/services/system-admin.service.ts:217-246 (demotion writes); backend/application/services/user.service.ts:774-799 (transactional role read, rank 0 → 403) | backend/test/integrity/users/branch-session-invalidation.real-db.spec.ts :: `SI-USER-04 a demoted branch owner's existing token is evaluated with the fresh roles on the next request` (invariant retained; flake investigation below) |
+| SI-USER-04 | backend | OPEN — one unexplained flake; branch-admin/DB-role diagnostics in place, not a proven fix | backend/infrastructure/auth/jwt.strategy.ts:100-106 (fresh DB role, never the token role); backend/infrastructure/tenant/tenant.guard.ts:62-92 (fresh membership role onto the request principal); backend/application/services/system-admin.service.ts:217-246 (demotion writes); backend/application/services/user.service.ts:774-799 (transactional role read, rank 0 → 403) | backend/test/integrity/users/branch-session-invalidation.real-db.spec.ts :: `SI-USER-04 a demoted branch admin's existing token is evaluated with the fresh roles on the next request` (invariant retained; flake investigation below) |
 | SI-USER-05 | backend | REFUTED — the stated invariants hold | backend/prisma/schema.prisma:914 (`@@unique([sessionId, activeMarker])`); backend/application/services/auth-session.service.ts:698-709 (`lockSession` FOR UPDATE serializes rotations), 188-229 (single conditional consume via `updateMany usedAt/revokedAt null`), 665-680 (grace → `AUTH_REFRESH_REPLAY_CONCURRENT` without family revocation; past grace → family revocation `refresh_token_reuse`) | backend/test/integrity/users/refresh-rotation.real-db.spec.ts :: (1) `SI-USER-05 a session holds at most one active refresh token (session_active_key unique index)`; (2) `SI-USER-05 two rotations racing on the same token yield exactly one winner and no family revocation (forced interleaving)` — winner paused mid-transaction, loser proven queued on the session lock via `pg_stat_activity` (BOTH waiters counted), FIFO grant by a priming lock: one success + one `AUTH_REFRESH_REPLAY_CONCURRENT`, family intact; (3) `SI-USER-05 reuse after the concurrency grace revokes the whole session family` (`usedAt` backdated 10s, no real time passing) |
 | SI-USER-06 | backend | REFUTED — the stated invariants hold | backend/application/services/user.service.ts:940-1001 (`deleteBranchMembership` revokes ALL live sessions of the user with `membership_deleted` — stronger than need be), 878-938 (`deleteGlobalUser`: owner target requires an independent actor, locks EVERY owner row in sorted order — the serialization point the race proves — and refuses with the LAST-owner 409 in a serial one-owner world) | backend/test/integrity/users/membership-removal.real-db.spec.ts :: (1) `SI-USER-06 removing a branch membership revokes the sessions whose selected branch it was` (session row revoked, jwt.strategy 401, refresh `AUTH_SESSION_REVOKED`); (2) `SI-USER-06 concurrent deletion of both owners can never leave zero owners (forced interleaving, exactly two owners)` — world isolated to exactly 2 owners first, both deletes proven queued on the priming lock (waiter COUNT ≥2), winner paused holding both locks; the loser resumes on its FOR UPDATE of the just-deleted row and is rejected by the documented serialization abort (SQLSTATE 40001 "could not serialize access"), world owner count = 1 after; (3) `SI-USER-06 after one owner delete succeeds, deleting the now-last owner is refused with 409 REQUEST_CONFLICT (serial guard)` — the 409 guard itself, proven in a serial one-owner world |
 | SI-USER-07 | backend | REFUTED — the stated invariants hold | backend/infrastructure/database/repositories/sb.auth-token.repository.ts:50-67 (`consumeWithinTx`: single conditional `updateMany usedAt: null` → `count === 1`); backend/prisma/schema.prisma:1026-1042 (`auth_flow_state` has no FK on `user_id` — orphan possible, confirmed orphan row survives deletion); backend/application/services/auth.service.ts:593-635 (consumption atomic), 745-755 (`exchangeCodeForTokens` MINTS a further `pending_account_onboarding` state for a deleted user's id from an orphaned `*_exchange` state — graded NOT harmful, see below), 793-815 (`getPendingAccountOnboarding` re-reads the user and 401s when deleted) | backend/test/integrity/users/auth-token-consumption.real-db.spec.ts :: (1) `SI-USER-07 concurrent consumption of one auth_token yields exactly one winner (forced interleaving)` (priming lock + `pg_stat_activity` waiter count): winner consumes and wins, challenger loses per-request after the winner's commit; (2) `SI-USER-07 an unconsumed flow state of a deleted user cannot complete its login flow` (orphan state confirmed to survive, denied `AUTH_REQUIRED`, left unconsumed); (3) `SI-USER-07 an orphaned *_exchange code lets exchangeCodeForTokens mint an onboarding state for the deleted user, but its token cannot complete onboarding` (mint happens, `getPendingAccountOnboarding` refuses `AUTH_REQUIRED`, minted state left unconsumed) |
@@ -193,7 +193,7 @@ Code-path evidence (unchanged from combined QA candidate `c05d314dc`):
 
 Probes against the original SI-USER-04 body: full users suite randomized seed **104**, then
 the branch-session spec randomized seeds **1–10**: all green. The existing code gives no
-supported explanation for an isolated single-branch owner remaining `admin` after the awaited write.
+supported explanation for an isolated single-branch admin remaining `admin` after the awaited write.
 
 Changes to audit tests only:
 - Branch-session, membership-removal and approval-state suites now create a fresh `RowTracker`
@@ -206,7 +206,7 @@ Changes to audit tests only:
   SAME token validates as `admin` before transfer. After the service returns, an independent raw
   client asserts the branch belongs to the successor, the old owner owns no branch, and the stored
   user role is `user`, BEFORE checking the strategy result and owner-only refusal.
-  A future failure will therefore identify fixture/ownership/write state separately from JWT reads.
+  A future failure will therefore identify fixture/branch-admin/write state separately from JWT reads.
 
 Post-change verification on the own throwaway DB (without resetting it between runs):
 - **15 consecutive full users runs**, each **5 suites / 16 tests passed, 0 skipped**.
@@ -221,7 +221,7 @@ Post-change verification on the own throwaway DB (without resetting it between r
 
 Logs: machine-local `$TMPDIR/opencode/si/out/p2-users-fix2/` (`probe-*.log`, `repeat-1.log`
 through `repeat-15.log`, `random-*.log`, `utc.log`, acceptance logs).
-Reviewer focus: the original flake still needs failing-run evidence from the new ownership/DB-role
+Reviewer focus: the original flake still needs failing-run evidence from the new branch-admin/DB-role
 assertions; these changes remove cross-test fixture mutation but do not demonstrate its cause.
 
 ### Fix2 mutation proofs

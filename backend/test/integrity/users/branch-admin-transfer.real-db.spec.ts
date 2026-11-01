@@ -22,7 +22,7 @@ function signal() {
 // and transaction-local PostgreSQL settings, never replace database outcomes.
 function withHooks(prisma: PrismaService, hooks: {
     afterLock?: (query: Prisma.Sql) => Promise<void>;
-    afterOwnershipRead?: () => Promise<void>;
+    afterAdminAssignmentRead?: () => Promise<void>;
     onTransactionError?: (error: unknown) => void;
     beforeTransaction?: (tx: Prisma.TransactionClient) => Promise<void>;
 }): PrismaService {
@@ -50,7 +50,7 @@ function withHooks(prisma: PrismaService, hooks: {
                                                 if (method === "findFirst") {
                                                     return async (args: Prisma.branchFindFirstArgs) => {
                                                         const result = await model.findFirst(args);
-                                                        await hooks.afterOwnershipRead?.();
+                                                        await hooks.afterAdminAssignmentRead?.();
                                                         return result;
                                                     };
                                                 }
@@ -76,7 +76,7 @@ function withHooks(prisma: PrismaService, hooks: {
     });
 }
 
-describeReal("branch ownership transfer serialization (real PostgreSQL)", () => {
+describeReal("branch admin transfer serialization (real PostgreSQL)", () => {
     let handle: IntegrityPrisma;
     let tracker: RowTracker;
 
@@ -92,8 +92,8 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         });
     }
 
-    async function ownedBranch(userId: string) {
-        const branch = await createBranch(handle.raw, tracker, { ownerId: userId });
+    async function adminBranch(userId: string) {
+        const branch = await createBranch(handle.raw, tracker, { adminId: userId });
         await createUserBranchMembership(handle.raw, tracker, { userId, branchId: branch.id }, { role: "admin" });
         return branch;
     }
@@ -131,8 +131,8 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
     for (const action of ["reject", "approve"] as const) {
         invariant("SI-USER-13", `${action} retries a real deadlock against legacy membership repair without duplicate audit writes`, async () => {
             const old = await user("1");
-            const branch = await createBranch(handle.raw, tracker, { ownerId: old.id });
-            const unowned = await createBranch(handle.raw, tracker);
+            const branch = await createBranch(handle.raw, tracker, { adminId: old.id });
+            const vacant = await createBranch(handle.raw, tracker);
             const approver = await user("9", "owner");
             const actor = ownerActor(approver.id);
             const paused = signal();
@@ -156,7 +156,7 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
                     onTransactionError: (error) => { errors.push(error); },
                 }));
                 const mutation = action === "reject" ? service.reject(old.id, actor) : service.approve(old.id, {
-                    role: "admin", approvedBy: approver.id, branchId: branch.id, ownerBranchId: unowned.id, actor,
+                    role: "admin", approvedBy: approver.id, branchId: branch.id, adminBranchId: vacant.id, actor,
                 });
                 outcomes.push(mutation);
                 void mutation.catch(() => {});
@@ -212,22 +212,22 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         });
     }
 
-    invariant("SI-USER-13", "system-admin refuses an owner changed while waiting with 409 and no audit", async () => {
+    invariant("SI-USER-13", "system-admin refuses a branch admin changed while waiting with 409 and no audit", async () => {
         const old = await user("1");
         const next = await user("2");
-        const branch = await ownedBranch(old.id);
+        const branch = await adminBranch(old.id);
         const actor = ownerActor((await user("9", "owner")).id);
         const locked = signal();
         const release = signal();
         const writer = handle.raw.$transaction(async (tx) => {
-            await tx.branch.update({ where: { id: branch.id }, data: { ownerId: next.id } });
+            await tx.branch.update({ where: { id: branch.id }, data: { adminId: next.id } });
             locked.resolve();
             await release.promise;
         }, { timeout: 15_000 });
         const outcomes: Promise<unknown>[] = [writer];
         void writer.catch(() => {});
         try {
-            await withDeadline(locked.promise, 5_000, "owner writer did not lock branch");
+            await withDeadline(locked.promise, 5_000, "admin writer did not lock branch");
             const challenger = makeSystemAdminService(handle.service).updateBranch(branch.id, { name: "must not apply" }, actor);
             outcomes.push(challenger);
             void challenger.catch(() => {});
@@ -240,15 +240,15 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
             expect.objectContaining({ status: "fulfilled" }),
             expect.objectContaining({ status: "rejected", reason: expect.objectContaining({ status: 409, response: expect.objectContaining({ code: "REQUEST_CONFLICT" }) }) }),
         ]);
-        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id }, select: { name: true, ownerId: true } }))
-            .toEqual({ name: branch.name, ownerId: next.id });
+        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id }, select: { name: true, adminId: true } }))
+            .toEqual({ name: branch.name, adminId: next.id });
         expect(await handle.raw.admin_audit_event.count({ where: { targetId: branch.id } })).toBe(0);
     });
 
-    invariant("SI-USER-12", "account assignment locks the old owner before branches when racing an owner transfer", async () => {
+    invariant("SI-USER-12", "account assignment locks the old branch admin before branches when racing an admin transfer", async () => {
         const old = await user("1");
         const next = await user("2", "user");
-        const branch = await ownedBranch(old.id);
+        const branch = await adminBranch(old.id);
         const actor = ownerActor((await user("9", "owner")).id);
         const paused = signal();
         const release = signal();
@@ -266,7 +266,7 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         void assignment.catch(() => {});
         try {
             await withDeadline(paused.promise, 5_000, "assignment did not acquire its first lock");
-            const transfer = makeSystemAdminService(handle.service).updateBranch(branch.id, { ownerId: next.id }, actor);
+            const transfer = makeSystemAdminService(handle.service).updateBranch(branch.id, { adminId: next.id }, actor);
             outcomes.push(transfer);
             void transfer.catch(() => {});
             await waitUntilBlocked(handle.raw, /FROM\s+"(?:user|branch)"[\s\S]*FOR\s+UPDATE/);
@@ -279,15 +279,15 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         }
         expect(assignmentLocks.slice(0, 2)).toEqual([`user:${old.id}`, `branch:${branch.id}`]);
         const persisted = await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id } });
-        expect([null, next.id]).toContain(persisted.ownerId);
+        expect([null, next.id]).toContain(persisted.adminId);
         expect(await handle.raw.user.findUniqueOrThrow({ where: { id: old.id }, select: { role: true } }))
             .toEqual({ role: "manager" });
     });
 
-    invariant("SI-USER-12", "legacy owner membership repair versus branch update resolves the FK lock inversion without a raw deadlock", async () => {
+    invariant("SI-USER-12", "legacy admin membership repair versus branch update resolves the FK lock inversion without a raw deadlock", async () => {
         const old = await user("1");
         // Deliberately omit user_branch: the upsert CREATE must check the user FK.
-        const branch = await createBranch(handle.raw, tracker, { ownerId: old.id });
+        const branch = await createBranch(handle.raw, tracker, { adminId: old.id });
         const actor = ownerActor((await user("9", "owner")).id);
         const paused = signal();
         const release = signal();
@@ -309,7 +309,7 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
             await withDeadline(paused.promise, 5_000, "membership did not lock the branch");
             const update = makeSystemAdminService(withHooks(handle.service, {
                 onTransactionError: (error) => { transactionErrors.push(error); },
-            })).updateBranch(branch.id, { name: "legacy owner repair race" }, actor);
+            })).updateBranch(branch.id, { name: "legacy admin repair race" }, actor);
             outcomes.push(update);
             void update.catch(() => {});
             // updateBranch now holds the user's FOR UPDATE lock while waiting
@@ -322,8 +322,8 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         expectSuccessOrConflict(await Promise.allSettled(outcomes));
         // Settle the reviewer's question with a real PostgreSQL error, not timing.
         expect(transactionErrors.some((error) => /40P01|deadlock/i.test(String(error)))).toBe(true);
-        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id }, select: { ownerId: true } }))
-            .toEqual({ ownerId: old.id });
+        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id }, select: { adminId: true } }))
+            .toEqual({ adminId: old.id });
         expect(await handle.raw.user_branch.findUniqueOrThrow({
             where: { userId_branchId: { userId: old.id, branchId: branch.id } }, select: { role: true },
         })).toEqual({ role: "admin" });
@@ -333,24 +333,24 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         const old = await user("1");
         const nextA = await user("2", "user");
         const nextB = await user("3", "user");
-        const a = await ownedBranch(old.id);
-        const b = await ownedBranch(old.id);
+        const a = await adminBranch(old.id);
+        const b = await adminBranch(old.id);
         const actor = ownerActor((await user("9", "owner")).id);
         const paused = signal();
         const release = signal();
         let secondRead = false;
         const winner = makeSystemAdminService(withHooks(handle.service, {
-            afterOwnershipRead: async () => { paused.resolve(); await release.promise; },
-        })).updateBranch(a.id, { ownerId: nextA.id }, actor);
+            afterAdminAssignmentRead: async () => { paused.resolve(); await release.promise; },
+        })).updateBranch(a.id, { adminId: nextA.id }, actor);
         const outcomes = [winner];
         // Attach rejection handlers immediately; never leave a mutation's failed
         // transaction running into fixture cleanup.
         const settled = winner.catch((error: unknown) => error);
         try {
-            await withDeadline(paused.promise, 5_000, "first transfer did not reach ownership read");
+            await withDeadline(paused.promise, 5_000, "first transfer did not reach the admin assignment read");
             const challenger = makeSystemAdminService(withHooks(handle.service, {
-                afterOwnershipRead: async () => { secondRead = true; },
-            })).updateBranch(b.id, { ownerId: nextB.id }, actor);
+                afterAdminAssignmentRead: async () => { secondRead = true; },
+            })).updateBranch(b.id, { adminId: nextB.id }, actor);
             outcomes.push(challenger);
             void challenger.catch(() => {});
             await waitForChallenger(() => secondRead);
@@ -363,18 +363,18 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
             expect.objectContaining({ status: "fulfilled" }),
             expect.objectContaining({ status: "fulfilled" }),
         ]);
-        expect(await handle.raw.branch.count({ where: { ownerId: old.id } })).toBe(0);
+        expect(await handle.raw.branch.count({ where: { adminId: old.id } })).toBe(0);
         expect(await handle.raw.user_branch.findMany({ where: { userId: old.id }, select: { role: true } }))
             .toEqual([{ role: "user" }, { role: "user" }]);
         expect(await handle.raw.user.findUniqueOrThrow({ where: { id: old.id }, select: { role: true } }))
             .toEqual({ role: "user" });
     });
 
-    invariant("SI-USER-12", "crossed ownership swaps finish without a surfaced deadlock using sorted users before branches", async () => {
+    invariant("SI-USER-12", "crossed admin swaps finish without a surfaced deadlock using sorted users before branches", async () => {
         const u = await user("1");
         const v = await user("2");
-        const a = await ownedBranch(u.id);
-        const b = await ownedBranch(v.id);
+        const a = await adminBranch(u.id);
+        const b = await adminBranch(v.id);
         const actor = ownerActor((await user("9", "owner")).id);
         const paused = signal();
         const release = signal();
@@ -386,7 +386,7 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
                 firstLocks.push(`${query.text.includes('FROM "user"') ? "user" : "branch"}:${query.values[0]}`);
                 if (firstLocks.length === 1) { paused.resolve(); await release.promise; }
             },
-        })).updateBranch(a.id, { ownerId: v.id }, actor);
+        })).updateBranch(a.id, { adminId: v.id }, actor);
         const outcomes = [winner];
         void winner.catch(() => {});
         try {
@@ -397,7 +397,7 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
                     secondFirstLock = true;
                     if (secondLocks.length === 1) await release.promise;
                 },
-            })).updateBranch(b.id, { ownerId: u.id }, actor);
+            })).updateBranch(b.id, { adminId: u.id }, actor);
             outcomes.push(challenger);
             void challenger.catch(() => {});
             await waitForChallenger(() => secondFirstLock);
@@ -411,10 +411,10 @@ describeReal("branch ownership transfer serialization (real PostgreSQL)", () => 
         ]);
         expect(firstLocks).toEqual([`user:${u.id}`, `user:${v.id}`, `branch:${a.id}`]);
         expect(secondLocks).toEqual([`user:${u.id}`, `user:${v.id}`, `branch:${b.id}`]);
-        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: a.id }, select: { ownerId: true } }))
-            .toEqual({ ownerId: v.id });
-        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: b.id }, select: { ownerId: true } }))
-            .toEqual({ ownerId: u.id });
+        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: a.id }, select: { adminId: true } }))
+            .toEqual({ adminId: v.id });
+        expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: b.id }, select: { adminId: true } }))
+            .toEqual({ adminId: u.id });
         expect(await handle.raw.user.findMany({ where: { id: { in: [u.id, v.id] } }, select: { role: true } }))
             .toEqual([{ role: "admin" }, { role: "admin" }]);
     });
