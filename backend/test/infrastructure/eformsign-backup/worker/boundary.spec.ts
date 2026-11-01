@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 
 const BACKEND = path.resolve(__dirname, "../../../..");
 const RUNTIME_DIRS = ["domain/eformsign-backup/worker", "infrastructure/eformsign-backup/worker"];
@@ -100,39 +101,50 @@ function consoleViolations(source: string): string[] {
     return [...source.matchAll(/(?<![\w$])console(?![\w$])/g)].map(() => "console");
 }
 
-function specifiers(source: string): string[] {
-    const out: string[] = [];
-    const patterns = [
-        /\bfrom\s*["']([^"']+)["']/g,
-        /\bimport\s*["']([^"']+)["']/g,
-        /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-        /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-        /\bexport\s+\*\s+from\s*["']([^"']+)["']/g,
-    ];
-    for (const pattern of patterns) for (const match of source.matchAll(pattern)) out.push(match[1]!);
-    return out;
+/**
+ * What a source file loads, read from the TypeScript syntax tree, not from text. A regex or the
+ * comment stripper above can be fooled by `from/**\/"node:module"`, `require/**\/(name)` or a regex
+ * literal that looks like a comment; the parser sees tokens, so comments and regex literals between
+ * them change nothing. Collected:
+ *  - every import / export-from / import-equals / `import("x")` type specifier, in `specifiers`;
+ *  - every `import(...)` / `require(...)` call whose argument is not one plain string literal,
+ *    and every identifier named `createRequire`, in `violations`.
+ */
+function analyzeLoads(source: string): { specifiers: string[]; violations: string[] } {
+    const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const specs: string[] = [];
+    const violations: string[] = [];
+    const visit = (node: ts.Node): void => {
+        if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+            specs.push(node.moduleSpecifier.text);
+        } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+            const ref = node.moduleReference.expression;
+            if (ts.isStringLiteralLike(ref)) specs.push(ref.text);
+            else violations.push(`import = require( with a non-literal argument: ${ref.getText(sf).slice(0, 24)}`);
+        } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) {
+            specs.push(node.argument.literal.text);
+        } else if (ts.isCallExpression(node)
+            && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+            const callee = node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require";
+            const [argument] = node.arguments;
+            if (node.arguments.length === 1 && argument && ts.isStringLiteralLike(argument)) specs.push(argument.text);
+            else violations.push(`${callee}( with a non-literal argument: ${node.arguments.map((a) => a.getText(sf)).join(", ").slice(0, 24)}`);
+        } else if (ts.isIdentifier(node) && node.text === "createRequire") {
+            violations.push("createRequire");
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return { specifiers: specs, violations };
 }
 
-/** The only argument a dynamic `import(` / `require(` may take: one plain string literal, nothing else before `)`. */
-const SINGLE_STRING_LITERAL_ARGUMENT = /^\s*(?:"[^"\\\n]*"|'[^'\\\n]*')\s*\)/;
+function specifiers(source: string): string[] {
+    return analyzeLoads(source).specifiers;
+}
 
-/**
- * `createRequire` and a dynamic `import(x)` / `require(x)` with a computed argument load code the
- * specifier scan never sees (`createRequire(__filename)("../../app.module")`). Takes RAW source and
- * scans both the raw text and the comment-stripped text, so a regex literal that fools the stripper
- * cannot hide a load. Like the raw process patterns, the raw pass also reads comments, so a comment
- * that spells out `import(name)` is refused too.
- */
-function loaderViolations(raw: string): string[] {
-    const hits: string[] = [];
-    for (const text of [raw, stripComments(raw)]) {
-        for (const match of text.matchAll(/(?<![\w$])createRequire(?![\w$])/g)) hits.push(match[0]);
-        for (const match of text.matchAll(/(?<![\w$])(import|require)\s*\(/g)) {
-            const rest = text.slice(match.index! + match[0].length);
-            if (!SINGLE_STRING_LITERAL_ARGUMENT.test(rest)) hits.push(`${match[1]}( with a non-literal argument: ${rest.slice(0, 24).trim()}`);
-        }
-    }
-    return hits;
+/** `createRequire` and a dynamic `import(x)` / `require(x)` with a computed argument load code the specifier scan never sees. */
+function loaderViolations(source: string): string[] {
+    return analyzeLoads(source).violations;
 }
 
 function insideRuntime(file: string, specifier: string): boolean {
@@ -219,6 +231,32 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
             expect(found.some((specifier) => !allowed(file, specifier))).toBe(true);
         }
         expect(allowed(file, "node:fs")).toBe(true);
+    });
+
+    it("should see through comments and regex literals between tokens (the check itself can fail)", () => {
+        const file = "infrastructure/eformsign-backup/worker/x.ts";
+        // F1: a regex literal fools the comment stripper, and `/**/` splits `require` from its `(`.
+        for (const bad of [
+            "const urlPattern = /^https?:\\/\\//; return require/**/(name);",
+            "require /* x */ ( name )",
+            "import(/* c */ name)",
+            "require(/* c */ `./${name}`)",
+        ]) expect(loaderViolations(bad)).not.toEqual([]);
+        // F2: comments between the keyword and the specifier leave the module name in place.
+        for (const bad of ['import * as Module from/**/"node:module";', 'export * from/**/"module"', 'import/**/"node:module";']) {
+            const found = specifiers(bad);
+            expect(found).not.toEqual([]);
+            expect(found.some((specifier) => !allowed(file, specifier))).toBe(true);
+        }
+        for (const [source, expected] of [
+            ['import /* a */ { x } /* b */ from /* c */ "./runner";', ["./runner"]],
+            ["import x = require/**/('node:fs');", ["node:fs"]],
+            ["const m = import/**/('./literal');", ["./literal"]],
+            ['// import("node:module")\nconst s = "require(name)";', []],
+        ] as Array<[string, string[]]>) {
+            expect(specifiers(source)).toEqual(expected);
+            expect(loaderViolations(source)).toEqual([]);
+        }
     });
 
     it("should refuse createRequire and any import()/require() whose argument is not one string literal (the check itself can fail)", () => {
