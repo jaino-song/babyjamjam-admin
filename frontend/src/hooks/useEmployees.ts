@@ -34,6 +34,7 @@ export interface Employee {
 }
 
 export interface CreateEmployeeDto {
+    onDeletedPhoneMatch?: "restore" | "register_new";
     name: string;
     workArea: string[];
     phone: string;

@@ -23,6 +23,17 @@ function createJsonRequest(body: string): NextRequest {
     });
 }
 
+describe("deleted employee problem passthrough", () => {
+    it("forwards only the validated extension, preserving the name as plain text", () => {
+        const problem = createProblemDetails({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", requestId: "req-employee" });
+        const deletedEmployee = { id: 3, name: "<script>not HTML</script>" };
+        expect(sanitizeUpstreamClientError({ ...problem, deletedEmployee, arbitrary: "no" }, "fallback", 409))
+            .toEqual({ ...problem, deletedEmployee, error: problem.detail });
+        expect(sanitizeUpstreamClientError({ ...problem, deletedEmployee: { id: 0, name: "invalid" } }, "fallback", 409))
+            .not.toHaveProperty("deletedEmployee");
+    });
+});
+
 describe("logUpstreamError", () => {
     afterEach(() => {
         jest.restoreAllMocks();

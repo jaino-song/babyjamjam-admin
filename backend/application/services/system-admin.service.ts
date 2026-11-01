@@ -12,6 +12,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
+
+const MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS = 3;
 
 @Injectable()
 export class SystemAdminService {
@@ -116,7 +119,12 @@ export class SystemAdminService {
             await this.getEligibleBranchManager(this.prisma, dto.ownerId);
         }
         try {
-            const branch = await this.prisma.$transaction(async (tx) => {
+            const branch = await this.runBranchMutationTransaction(async (tx) => {
+                // Match approval/account mutations: user locks precede branch writes.
+                if (dto.ownerId) await this.lockRow(tx, "user", dto.ownerId);
+                const manager = dto.ownerId
+                    ? await this.getEligibleBranchManager(tx, dto.ownerId)
+                    : null;
                 const createdBranch = await tx.branch.create({
                     data: {
                         name: dto.name,
@@ -132,9 +140,6 @@ export class SystemAdminService {
                     select: { id: true },
                 });
 
-                const manager = dto.ownerId
-                    ? await this.getEligibleBranchManager(tx, dto.ownerId)
-                    : null;
                 if (manager) {
                     await this.assignBranchManager(tx, createdBranch.id, manager);
                 }
@@ -167,7 +172,22 @@ export class SystemAdminService {
     ): Promise<SystemAdminBranchRequestDto> {
         actor = actor ?? currentAdminAuditActor();
         try {
-            await this.prisma.$transaction(async (tx) => {
+            await this.runBranchMutationTransaction(async (tx) => {
+                // Discover the lock set without holding a branch lock. All involved
+                // users are locked in one order before the branch, including the old
+                // owner whose final-branch read/demotion must serialize across branches.
+                const snapshot = await tx.branch.findUnique({
+                    where: { id: branchId },
+                    select: { ownerId: true },
+                });
+                if (!snapshot) {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                const userIds = [...new Set([snapshot.ownerId, dto.ownerId]
+                    .filter((id): id is string => Boolean(id)))].sort();
+                for (const userId of userIds) {
+                    await this.lockRow(tx, "user", userId);
+                }
                 await this.lockRow(tx, "branch", branchId);
                 const existing = await tx.branch.findUnique({
                     where: { id: branchId },
@@ -175,6 +195,11 @@ export class SystemAdminService {
                 });
                 if (!existing) {
                     throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                // A concurrent writer may have changed the owner while we waited.
+                // Never acquire an extra user lock after the branch (lock inversion).
+                if (existing.ownerId !== snapshot.ownerId) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
 
                 const manager = dto.ownerId
@@ -271,6 +296,22 @@ export class SystemAdminService {
         } catch (error) {
             this.rethrowBranchMutationError(error);
         }
+    }
+
+    private async runBranchMutationTransaction<T>(
+        callback: (tx: Prisma.TransactionClient) => Promise<T>,
+    ): Promise<T> {
+        for (let attempt = 1; attempt <= MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS; attempt += 1) {
+            try {
+                return await this.prisma.$transaction(callback);
+            } catch (error) {
+                if (!isTransactionConflict(error)) throw error;
+                if (attempt === MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+            }
+        }
+        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
     }
 
     private async getEligibleBranchManager(

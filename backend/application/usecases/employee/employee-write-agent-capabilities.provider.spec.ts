@@ -34,7 +34,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
     }
 
     it("allows a deleted phone through to restore and reconciles its action-bound restored receipt", async () => {
-        const deleted = EmployeeEntity.reconstitute(7, "삭제 직원", ["서울"], "01012345678", "프리미엄", false, new Date(), undefined, new Date());
+        const deleted = EmployeeEntity.reconstitute(7, "복원 직원", ["서울"], "01012345678", "프리미엄", false, new Date(), undefined, new Date());
         const { createEmployee, employeeRepository, transaction, capabilities } = setup(null);
         employeeRepository.findByPhone.mockResolvedValue(deleted);
         createEmployee.execute.mockResolvedValue(Object.assign(
@@ -245,6 +245,7 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
 
     it.each([
         ["locked restore conflict", new ConflictException({ code: "EMPLOYEE_PHONE_ALREADY_REGISTERED" })],
+        ["different-person deleted phone", new ConflictException({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", deletedEmployee: { id: 7, name: "다른 사람" } })],
     ])("converts %s into a certain failure without an effect receipt", async (_label, conflict) => {
         const { createEmployee, transaction, capabilities } = setup(null);
         createEmployee.execute.mockRejectedValue(conflict);
@@ -253,6 +254,15 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
             name: "경합 직원", workArea: ["서울"], phone: "01012345678", grade: "프리미엄",
         })).rejects.toBeInstanceOf(AgentActionCertainFailureError);
         expect(transaction.agent_action.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("does not let the agent choose a deleted phone resolution", () => {
+        const { capabilities } = setup(null);
+        const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
+        expect(create.inputSchema.parse({
+            name: "직원", workArea: ["서울"], phone: "01012345678", grade: "프리미엄", onDeletedPhoneMatch: "restore",
+        })).not.toHaveProperty("onDeletedPhoneMatch");
+        expect(create.formFields?.map((field) => field.name)).not.toContain("onDeletedPhoneMatch");
     });
 
     it.each([

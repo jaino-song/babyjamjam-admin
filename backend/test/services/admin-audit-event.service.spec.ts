@@ -183,11 +183,17 @@ describe("admin authority invariants and audit ledger", () => {
             globalRole: "owner",
         });
 
-        expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
-        const [lockQuery] = prisma.$queryRaw.mock.calls[0] ?? [];
-        expect(lockQuery.strings.join(" ")).toContain('SELECT "id" FROM "branch"');
-        expect(lockQuery.strings.join(" ")).toMatch(/WHERE "id" =\s*::uuid FOR UPDATE/);
-        expect(lockQuery.values).toEqual(["branch-1"]);
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
+        for (const [index, [table, id]] of [
+            ["user", "owner-1"],
+            ["user", "owner-2"],
+            ["branch", "branch-1"],
+        ].entries()) {
+            const [lockQuery] = prisma.$queryRaw.mock.calls[index] ?? [];
+            expect(lockQuery.strings.join(" ")).toContain(`SELECT "id" FROM "${table}"`);
+            expect(lockQuery.strings.join(" ")).toMatch(/WHERE "id" =\s*::uuid FOR UPDATE/);
+            expect(lockQuery.values).toEqual([id]);
+        }
         expect(prisma.user_branch.upsert).toHaveBeenCalledWith(expect.objectContaining({
             where: { userId_branchId: { userId: "owner-2", branchId: "branch-1" } },
             update: { role: "admin" },

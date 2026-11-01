@@ -188,6 +188,86 @@ describeReal("user approval state machine (real PostgreSQL)", () => {
         },
     );
 
+    for (const role of ["user", "manager"]) {
+        invariant(
+            "SI-USER-11",
+            `re-approval as ${role} refuses while the admin owns any branch, without changing ownership or authority`,
+            async () => {
+                const branch = await createBranch(handle.raw, tracker);
+                const owner = await createUser(handle.raw, tracker, { role: "owner" });
+                const target = await createUser(handle.raw, tracker, { role: "admin" }, {
+                    membership: { branchId: branch.id, role: "admin" },
+                });
+                // An inactive OTHER branch still requires an explicit ownership transfer.
+                const ownedBranch = await createBranch(handle.raw, tracker, { ownerId: target.id, isActive: false });
+                const { session } = await createAuthSession(handle.raw, tracker, { userId: target.id }, { selectedBranchId: branch.id });
+
+                await expect(service.approve(target.id, {
+                    role, approvedBy: owner.id, actor: ownerActor(owner.id), branchId: branch.id,
+                })).rejects.toMatchObject({
+                    status: 409,
+                    response: { code: "REQUEST_CONFLICT", errors: [{ pointer: "/branchIds", code: "INVALID_VALUE" }] },
+                });
+
+                expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id } })).toEqual(target);
+                expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: ownedBranch.id } })).toEqual(ownedBranch);
+                expect(await handle.raw.user_branch.findMany({ where: { userId: target.id }, select: { branchId: true, role: true } }))
+                    .toEqual([{ branchId: branch.id, role: "admin" }]);
+                expect(await handle.raw.auth_session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(session);
+                expect(await handle.raw.admin_audit_event.count({ where: { targetId: target.id } })).toBe(0);
+            },
+        );
+    }
+
+    invariant(
+        "SI-USER-11",
+        "admin re-approval can assign a vacant branch while retaining existing ownership",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const owner = await createUser(handle.raw, tracker, { role: "owner" });
+            const target = await createUser(handle.raw, tracker, { role: "admin" });
+            const ownedBranch = await createBranch(handle.raw, tracker, { ownerId: target.id });
+
+            await expect(service.approve(target.id, {
+                role: "admin", approvedBy: owner.id, actor: ownerActor(owner.id),
+                branchId: branch.id, ownerBranchId: branch.id,
+            })).resolves.toMatchObject({ role: "admin", approvalStatus: "approved" });
+
+            expect(await handle.raw.branch.findMany({ where: { ownerId: target.id }, select: { id: true } }))
+                .toEqual(expect.arrayContaining([{ id: branch.id }, { id: ownedBranch.id }]));
+        },
+    );
+
+    invariant(
+        "SI-USER-11",
+        "approve reads ownership after waiting for the target user-row lock",
+        async () => {
+            const branch = await createBranch(handle.raw, tracker);
+            const owner = await createUser(handle.raw, tracker, { role: "owner" });
+            const target = await createUser(handle.raw, tracker, { role: "admin" });
+            let approval: Promise<{ error?: unknown }> | undefined;
+            let outcome: { error?: unknown } | undefined;
+
+            try {
+                await handle.raw.$transaction(async (tx) => {
+                    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "user" WHERE "id" = ${target.id}::uuid FOR UPDATE`);
+                    await tx.branch.update({ where: { id: branch.id }, data: { ownerId: target.id } });
+                    approval = service.approve(target.id, {
+                        role: "user", approvedBy: owner.id, actor: ownerActor(owner.id), branchId: branch.id,
+                    }).then(() => ({}), (error: unknown) => ({ error }));
+                    await waitUntilBlocked(handle.raw, /FROM\s+"user"[\s\S]*FOR\s+UPDATE/);
+                }, { timeout: 15_000 });
+            } finally {
+                if (approval) outcome = await withDeadline(approval, 10_000, "approval contender did not settle");
+            }
+
+            expect(outcome).toMatchObject({ error: { status: 409, response: { code: "REQUEST_CONFLICT" } } });
+            expect(await handle.raw.user.findUniqueOrThrow({ where: { id: target.id } })).toEqual(target);
+            expect(await handle.raw.branch.findUniqueOrThrow({ where: { id: branch.id } })).toMatchObject({ ownerId: target.id });
+            expect(await handle.raw.user_branch.count({ where: { userId: target.id } })).toBe(0);
+        },
+    );
+
     invariant(
         "SI-USER-09",
         "approve waits for the user-row lock and refuses a target concurrently promoted to owner",

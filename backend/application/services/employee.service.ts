@@ -20,6 +20,7 @@ import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constant
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import {
     ActiveClientByEmployee,
+    DeletedEmployeePhoneMatchAction,
     EMPLOYEE_REPOSITORY,
     IEmployeeRepository,
     PaginatedEmployeeWorkHistory,
@@ -84,7 +85,7 @@ export class EmployeeService {
 
     async create(
         branchid: string,
-        params: { name: string; workArea?: string[]; phone: string; grade?: string; openToNextWork?: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean }
+        params: { name: string; workArea?: string[]; phone: string; grade?: string; openToNextWork?: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean; onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction }
     ): Promise<EmployeeEntity & { restored: boolean }> {
         assertEmployeePhoneInput(params.phone);
         try {
@@ -99,6 +100,7 @@ export class EmployeeService {
                 params.birthday,
                 undefined,
                 params.smsAutomationEnabled,
+                params.onDeletedPhoneMatch,
             );
         } catch (error) {
             this.rethrowPhoneConflict(error);

@@ -60,6 +60,7 @@ describe("SystemAdminService", () => {
     let userBranchModel: MockUserBranchModel;
     let prisma: PrismaService;
     let service: SystemAdminService;
+    let queryRaw: jest.Mock;
 
     const ownerOf = (overrides: Partial<Record<string, unknown>> = {}) => ({
         id: "owner-1",
@@ -122,6 +123,7 @@ describe("SystemAdminService", () => {
             upsert: jest.fn(),
             updateMany: jest.fn(),
         };
+        queryRaw = jest.fn().mockResolvedValue([]);
         prisma = {
             branch: branchModel,
             user: userModel,
@@ -130,6 +132,7 @@ describe("SystemAdminService", () => {
                 branch: branchModel,
                 user: userModel,
                 user_branch: userBranchModel,
+                $queryRaw: queryRaw,
             })),
         } as unknown as PrismaService;
         service = new SystemAdminService(prisma);
@@ -406,6 +409,45 @@ describe("SystemAdminService", () => {
             isActive: true,
         };
 
+        describe.each(["createBranch", "updateBranch"] as const)("%s transaction retries", (method) => {
+            const conflicts = [
+                ["P2034", { code: "P2034" }],
+                ["raw deadlock message", new Error('Raw query failed. Code: `40P01`. Message: deadlock detected')],
+                ["raw serialization message", new Error('Raw query failed. Code: `40001`.')],
+                ["deadlock code", { code: "40P01" }],
+                ["serialization code", { code: "40001" }],
+                ["Prisma raw-query metadata", new Prisma.PrismaClientKnownRequestError("raw query failed", {
+                    code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+                })],
+            ] as const;
+
+            const mutate = () => method === "createBranch"
+                ? service.createBranch(branchInput)
+                : service.updateBranch("branch-1", { ownerId: "owner-1" });
+
+            it.each(conflicts)("restarts the whole transaction after %s on attempt one", async (_label, error) => {
+                // Fail after the first lock, not before the callback: a retry must
+                // repeat the reads and locks rather than just the failed query.
+                queryRaw.mockRejectedValueOnce(error);
+                await expect(mutate()).resolves.toMatchObject({ id: "branch-1" });
+                expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+                expect(queryRaw.mock.calls.filter(([query]) => query.values[0] === "owner-1")).toHaveLength(2);
+                expect(userModel.findFirst).toHaveBeenCalledTimes(method === "createBranch" ? 2 : 1);
+                if (method === "updateBranch") expect(branchModel.findUnique).toHaveBeenCalledTimes(4);
+            });
+
+            it.each(conflicts)("returns a clean 409 after three attempts of %s", async (_label, error) => {
+                queryRaw.mockRejectedValue(error);
+                await expect(mutate()).rejects.toMatchObject({
+                    status: 409,
+                    response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+                });
+                expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+                expect(branchModel.create).not.toHaveBeenCalled();
+                expect(branchModel.update).not.toHaveBeenCalled();
+            });
+        });
+
         it("creates a branch and promotes an approved existing account to branch manager", async () => {
             const result = await service.createBranch(branchInput);
 
@@ -451,6 +493,42 @@ describe("SystemAdminService", () => {
                 where: { id: "owner-1" },
                 data: { role: "owner" },
             });
+        });
+
+        it("locks the proposed owner before creating a branch and reading transaction-local eligibility", async () => {
+            await service.createBranch(branchInput);
+
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            expect(queryRaw.mock.calls[0][0]).toMatchObject({ values: ["owner-1"] });
+            expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(branchModel.create.mock.invocationCallOrder[0]!);
+            expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(userModel.findFirst.mock.invocationCallOrder[1]!);
+        });
+
+        it("locks distinct old and new users in sorted order before the branch", async () => {
+            branchModel.findUnique.mockResolvedValue({ ownerId: "z-old" });
+            await service.updateBranch("branch-1", { ownerId: "a-new" });
+
+            expect(queryRaw.mock.calls.map(([query]) => query.values)).toEqual([["a-new"], ["z-old"], ["branch-1"]]);
+            expect(queryRaw.mock.calls.map(([query]) => query.text.includes('FROM "user"'))).toEqual([true, true, false]);
+            expect(queryRaw.mock.invocationCallOrder[2]).toBeLessThan(branchModel.update.mock.invocationCallOrder[0]!);
+        });
+
+        it("locks a same-owner update only once before the branch", async () => {
+            branchModel.findUnique.mockResolvedValue({ ownerId: "owner-1" });
+            await service.updateBranch("branch-1", { ownerId: "owner-1" });
+            expect(queryRaw.mock.calls.map(([query]) => query.values)).toEqual([["owner-1"], ["branch-1"]]);
+        });
+
+        it("refuses a changed owner after taking the branch lock without mutating authority", async () => {
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "old" }).mockResolvedValueOnce({ ownerId: "concurrent" });
+            await expect(service.updateBranch("branch-1", { ownerId: "new" })).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+            });
+            expect(branchModel.update).not.toHaveBeenCalled();
+            expect(userModel.update).not.toHaveBeenCalled();
+            expect(userModel.updateMany).not.toHaveBeenCalled();
+            expect(userBranchModel.upsert).not.toHaveBeenCalled();
         });
 
         it("normalizes cleared optional fields to null when updating", async () => {
@@ -607,7 +685,7 @@ describe("SystemAdminService", () => {
         };
 
         it("demotes the previous owner (role admin, owns no other branch) to 'user' on 교체", async () => {
-            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" }).mockResolvedValueOnce({ ownerId: "prev-owner-1" });
             branchModel.findFirst.mockResolvedValueOnce(null);
             userModel.findFirst.mockResolvedValue({ id: "new-owner-1", role: "manager" });
 
@@ -635,7 +713,7 @@ describe("SystemAdminService", () => {
         });
 
         it("does NOT demote the previous owner when they still own another branch", async () => {
-            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" }).mockResolvedValueOnce({ ownerId: "prev-owner-1" });
             branchModel.findFirst.mockResolvedValueOnce({ id: "other-branch" });
             userModel.findFirst.mockResolvedValue({ id: "new-owner-1", role: "manager" });
 
@@ -656,7 +734,7 @@ describe("SystemAdminService", () => {
         });
 
         it("does NOT run the demotion query when dto.ownerId is not provided", async () => {
-            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" }).mockResolvedValueOnce({ ownerId: "prev-owner-1" });
 
             await service.updateBranch("branch-1", demotionInput);
 
@@ -666,7 +744,7 @@ describe("SystemAdminService", () => {
         });
 
         it("runs the demotion path on 해제 (ownerId explicitly set to null)", async () => {
-            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" });
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: "prev-owner-1" }).mockResolvedValueOnce({ ownerId: "prev-owner-1" });
             branchModel.findFirst.mockResolvedValueOnce(null);
 
             await service.updateBranch("branch-1", {
@@ -689,7 +767,7 @@ describe("SystemAdminService", () => {
         });
 
         it("does NOT demote when the branch previously had no owner", async () => {
-            branchModel.findUnique.mockResolvedValueOnce({ ownerId: null });
+            branchModel.findUnique.mockResolvedValueOnce({ ownerId: null }).mockResolvedValueOnce({ ownerId: null });
             userModel.findFirst.mockResolvedValue({ id: "new-owner-1", role: "manager" });
 
             await service.updateBranch("branch-1", {
