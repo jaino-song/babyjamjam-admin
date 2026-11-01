@@ -49,6 +49,19 @@ function stepsWithoutTypeCheckHeap(steps,label) {
   assert.deepEqual(steps[index].env,typeCheckHeapEnv,`${label}: Type check raises the Node heap`);
   const copy=structuredClone(steps);delete copy[index].env;return copy;
 }
+// Preview Cloud Run concurrency was raised from 8 to 16: two admin tabs' long-lived realtime
+// requests filled 8 slots on the single instance and starved every other request (QA
+// 2026-11-01). Asserts the exact new verify check once, then maps it back to the pinned base
+// text so every other byte of the deploy job is still compared exactly.
+const previewConcurrencyCheck = {
+  after: '[[ "$container_concurrency" == "16" ]] \\\n            || fail_check "containerConcurrency must be 16"',
+  before: '[[ "$container_concurrency" == "8" ]] \\\n            || fail_check "containerConcurrency must be 8"',
+};
+function withPreviewConcurrencyAtBase(text,label) {
+  assert.equal(text.split(previewConcurrencyCheck.after).length-1,1,`${label}: preview containerConcurrency must be verified as exactly 16, once`);
+  assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
+  return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
+}
 // The LightNode warm-standby change adds exactly these contract-test commands to the
 // 'Verify backend deployment automation contracts' step, right after the ci-deployer
 // contract line, plus one new job. Each is asserted here, then removed so the caller still
@@ -123,7 +136,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
   if(app==='backend') {assert.equal(enabled(j.impact,{backend:true},'workflow_dispatch','lightnode-status'),false);assert.equal(enabled(j.verify,{backend:true},'workflow_dispatch','lightnode-status'),false);}
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
-  const before=old('backend-ci.yml'),after=read('backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
+  const before=old('backend-ci.yml'),after=withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
   assertOnlyStandbyJobAdded(a,b,'backend-ci.yml',['impact','checks']);
   for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e'].includes(id))) {
     assert.equal(jobText(after,id),jobText(before,id),`${id} raw block changed`);assert.deepEqual(b[id],a[id]);
@@ -165,7 +178,7 @@ test('service-record-ui reaches all downstream path-filtered required and adviso
 const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
 const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
 test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
-  const text = read('backend-ci.yml'), workflow = parse(text);
+  const text = withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
   const steps = workflow.jobs.checks.steps;
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');

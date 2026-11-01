@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getCurrentUser } from "@/lib/auth/cookies";
+import { AuthServiceUnavailableError, getCurrentUser } from "@/lib/auth/cookies";
 import { getStatsView, isValidStatsBranchSlug, type StatsViewData } from "@/lib/observability/stats-server";
 import { parseStatsPeriodParam } from "@/lib/observability/stats-period";
 
@@ -12,7 +12,18 @@ interface RouteContext {
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
-  const user = await getCurrentUser();
+  let user: Awaited<ReturnType<typeof getCurrentUser>>;
+  try {
+    user = await getCurrentUser();
+  } catch (error) {
+    if (error instanceof AuthServiceUnavailableError) {
+      return NextResponse.json(
+        { error: "Authentication service unavailable" },
+        { status: 503, headers: { "Cache-Control": "private, no-store", "Retry-After": "5" } },
+      );
+    }
+    throw error;
+  }
   if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
 
   const { view: rawView } = await context.params;

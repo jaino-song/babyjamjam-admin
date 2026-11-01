@@ -1508,6 +1508,9 @@ describe("service records tab: a load that has not succeeded is never an empty r
 
 describe("제공기록지 일정 변경 menu item", () => {
   const menuLabels = () => screen.getAllByRole("menuitem").map((item) => item.textContent);
+  // The backend only creates the service-record case once the booking is confirmed, so the schedule change
+  // is offered for booking-confirmed clients only.
+  const confirmedClient: Client = { ...client, serviceStatus: "waiting", bookingConfirmedAt: "2026-10-13T00:00:00.000Z" };
 
   beforeEach(() => {
     mockMessageBranchRole = "manager";
@@ -1516,7 +1519,7 @@ describe("제공기록지 일정 변경 menu item", () => {
   afterEach(() => { mockMessageBranchRole = "manager"; mockMessageRole = "user"; });
 
   it("sits directly above 제공기록지 링크 재설정 for a branch manager", async () => {
-    renderDetail();
+    renderDetail(null, confirmedClient);
     await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
 
     const labels = menuLabels();
@@ -1537,7 +1540,7 @@ describe("제공기록지 일정 변경 menu item", () => {
   ])("also shows for %s", async (_name, branchRole, role) => {
     mockMessageBranchRole = branchRole;
     mockMessageRole = role;
-    renderDetail();
+    renderDetail(null, confirmedClient);
     await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
 
     expect(menuLabels()).toContain("제공기록지 일정 변경");
@@ -1545,7 +1548,7 @@ describe("제공기록지 일정 변경 menu item", () => {
 
   it("is hidden, like the link reset, for anyone who cannot manage the branch", async () => {
     mockMessageBranchRole = "member";
-    renderDetail();
+    renderDetail(null, confirmedClient);
     await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
 
     expect(menuLabels()).toContain("서비스 일정 변경");
@@ -1553,18 +1556,30 @@ describe("제공기록지 일정 변경 menu item", () => {
     expect(menuLabels()).not.toContain("제공기록지 링크 재설정");
   });
 
+  it.each([
+    ["pre_booking", { serviceStatus: "pre_booking" as const, bookingConfirmedAt: null }],
+    ["no status yet", { serviceStatus: null, bookingConfirmedAt: null }],
+  ])("is hidden for a 예약 전 client (%s) even for a branch manager", async (_name, overrides) => {
+    renderDetail(null, { ...client, ...overrides });
+    await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
+
+    expect(menuLabels()).toContain("서비스 일정 변경");
+    expect(menuLabels()).toContain("제공기록지 링크 재설정");
+    expect(menuLabels()).not.toContain("제공기록지 일정 변경");
+  });
+
   it("opens the sheet for this client and closes it again", async () => {
     const user = userEvent.setup();
-    renderDetail();
+    renderDetail(null, confirmedClient);
     expect(screen.queryByRole("dialog", { name: "제공기록지 일정 변경 시트" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "고객 옵션" }));
     await user.click(screen.getByRole("menuitem", { name: "제공기록지 일정 변경" }));
 
     const sheet = await screen.findByRole("dialog", { name: "제공기록지 일정 변경 시트" });
-    expect(sheet).toHaveAttribute("data-client-id", String(client.id));
+    expect(sheet).toHaveAttribute("data-client-id", String(confirmedClient.id));
     expect(sheet).toHaveAttribute("data-component", "mobile_clients_detail-sheet_stack_detail-page_content_service-record-schedule-sheet");
-    expect(within(sheet).getByText(client.name)).toBeInTheDocument();
+    expect(within(sheet).getByText(confirmedClient.name)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "시트 닫기" }));
     expect(screen.queryByRole("dialog", { name: "제공기록지 일정 변경 시트" })).not.toBeInTheDocument();
@@ -1572,14 +1587,14 @@ describe("제공기록지 일정 변경 menu item", () => {
 
   it("closes the sheet on save, confirms, and loads the stored client into the detail", async () => {
     const { fetchClient } = await import("@/hooks/useClients");
-    const fresh = { ...client, allowSaturdayService: true } as Client;
+    const fresh = { ...confirmedClient, allowSaturdayService: true } as Client;
     jest.mocked(fetchClient).mockResolvedValue(fresh);
     const onClientUpdated = jest.fn();
     const user = userEvent.setup();
     render(
       <ClientDetailContent
         data-component="mobile_clients_detail-sheet_stack_detail-page_content"
-        client={client}
+        client={confirmedClient}
         activeTab="basic"
         onTabChange={jest.fn()}
         onMessage={jest.fn()}
@@ -1595,7 +1610,7 @@ describe("제공기록지 일정 변경 menu item", () => {
     await user.click(await screen.findByRole("button", { name: "시트 저장됨" }));
 
     await waitFor(() => expect(onClientUpdated).toHaveBeenCalledWith(fresh));
-    expect(fetchClient).toHaveBeenCalledWith(client.id);
+    expect(fetchClient).toHaveBeenCalledWith(confirmedClient.id);
     expect(toast).toHaveBeenCalledWith({ variant: "success", description: "서비스 제공일정을 변경했어요." });
     expect(screen.queryByRole("dialog", { name: "제공기록지 일정 변경 시트" })).not.toBeInTheDocument();
   });
@@ -1608,7 +1623,7 @@ describe("제공기록지 일정 변경 menu item", () => {
     render(
       <ClientDetailContent
         data-component="mobile_clients_detail-sheet_stack_detail-page_content"
-        client={client}
+        client={confirmedClient}
         activeTab="basic"
         onTabChange={jest.fn()}
         onMessage={jest.fn()}

@@ -7,7 +7,7 @@ let mockSearchParams = new URLSearchParams();
 const mockDirectory = jest.fn();
 const mockListSummary = jest.fn();
 let mockActiveBranchId = "branch-a";
-let mockClientFromParam: { id: number; name: string } | undefined;
+let mockClientFromParam: { id: number; name: string; serviceStatus?: string | null; bookingConfirmedAt?: string | null } | undefined;
 const mockClientRefetch = jest.fn();
 const IDLE_MOCK_CLIENT_QUERY = { isError: false, isFetching: false, isPaused: false, isLoading: false };
 let mockClientQueryState: { isError: boolean; isFetching: boolean; isPaused: boolean; isLoading: boolean } = IDLE_MOCK_CLIENT_QUERY;
@@ -407,8 +407,11 @@ describe("ClientsPage visual conventions", () => {
     const between = source.slice(viewMarker, scheduleMarker);
     expect(between.match(/<DropdownMenuItem/g)).toHaveLength(1);
 
-    const gateStart = source.lastIndexOf("{canManageBranchFeatures && (", scheduleMarker);
+    // The gate directly in front of the item is the branch-management gate AND the booking-confirmed gate:
+    // a 예약 전 client has no service-record case yet, so the schedule change can never load for it.
+    const gateStart = source.lastIndexOf("{canManageBranchFeatures && canEditServiceRecordSchedule(activeSelectedClient) && (", scheduleMarker);
     const scheduleItem = source.slice(source.lastIndexOf("<DropdownMenuItem", scheduleMarker), source.indexOf("</DropdownMenuItem>", scheduleMarker));
+    expect(gateStart).toBeGreaterThan(viewMarker);
     expect(source.slice(gateStart, scheduleMarker)).not.toContain("</DropdownMenuItem>");
     expect(scheduleItem).toContain("제공기록지 일정 변경");
     expect(scheduleItem).toContain("setServiceRecordScheduleClient(activeSelectedClient)");
@@ -657,9 +660,16 @@ describe("ClientsPage directory subtitle behavior", () => {
   });
 
   describe("service-record schedule menu item", () => {
-    const selectClient = () => {
+    // Booking-confirmed client: the backend only creates the service-record case once the booking is confirmed.
+    const CONFIRMED_CLIENT = {
+      id: 8,
+      name: "지점 A 고객 2",
+      serviceStatus: "waiting",
+      bookingConfirmedAt: "2026-10-13T00:00:00.000Z",
+    };
+    const selectClient = (client: NonNullable<typeof mockClientFromParam> = CONFIRMED_CLIENT) => {
       mockSearchParams = new URLSearchParams("id=8");
-      mockClientFromParam = { id: 8, name: "지점 A 고객 2" };
+      mockClientFromParam = client;
       renderClientsPage({ clients: [], data: { pages: [{ data: [], total: 0 }] } });
     };
 
@@ -694,6 +704,29 @@ describe("ClientsPage directory subtitle behavior", () => {
       mockAuthUser = { role: "staff", branchRole: "manager" };
       selectClient();
 
+      expect(screen.getByRole("button", { name: "제공기록지 일정 변경" })).toBeInTheDocument();
+    });
+
+    it.each([
+      ["has the pre_booking status", { id: 8, name: "지점 A 고객 2", serviceStatus: "pre_booking", bookingConfirmedAt: null }],
+      ["has no status yet", { id: 8, name: "지점 A 고객 2", serviceStatus: null, bookingConfirmedAt: null }],
+      ["omits the status", { id: 8, name: "지점 A 고객 2" }],
+    ])("is hidden while the client %s (예약 전: no service-record case to load)", (_name, client) => {
+      selectClient(client);
+
+      expect(screen.getByTestId("client-detail")).toBeInTheDocument();
+      expect(screen.getByText("제공기록지 보기")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "제공기록지 일정 변경" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("service-record-schedule-dialog")).not.toBeInTheDocument();
+    });
+
+    it("appears without a reload once the booking is confirmed", () => {
+      selectClient({ id: 8, name: "지점 A 고객 2", serviceStatus: "pre_booking", bookingConfirmedAt: null });
+      expect(screen.queryByRole("button", { name: "제공기록지 일정 변경" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "확정 응답 적용" }));
+
+      expect(screen.getByTestId("client-detail")).toHaveAttribute("data-service-status", "waiting");
       expect(screen.getByRole("button", { name: "제공기록지 일정 변경" })).toBeInTheDocument();
     });
 
