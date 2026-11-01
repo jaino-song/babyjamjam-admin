@@ -144,21 +144,34 @@ disabled worker (`"enabled": false`) still has its file validated first.
 | `exportBaseUrl` | string | 1 to 2048 characters; `https:`, or `http:` only for host `127.0.0.1`, `localhost` or `[::1]`; no user name, password, query or fragment | required |
 | `tokenFile` | string | normal absolute path (see below); must not be inside `archive.path` | required |
 | `control.path` | string | normal absolute path | required |
-| `control.reserveBytes` | integer | at least 64 MiB (67108864) | required |
-| `control.reserveInodes` | integer | at least 1000 | required |
+| `control.reserveBytes` | integer | 64 MiB (67108864) to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
+| `control.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.path` | string | normal absolute path | required |
 | `archive.archiveId` | string | lowercase UUID (`8-4-4-4-12` hex digits) | required |
-| `archive.reserveBytes` | integer | at least 64 MiB (67108864) | required |
-| `archive.reserveInodes` | integer | at least 1000 | required |
+| `archive.reserveBytes` | integer | 64 MiB (67108864) to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
+| `archive.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.requireMountPoint` | boolean | `true`: the archive root must be a mount point (its device differs from its parent's) | `true` |
 | `requestTimeoutMs` | integer | 1 to 600000 | `120000` |
 
 A *normal absolute path* starts with `/`, is not `/` itself, is at most 4096
 characters, has no trailing slash and no empty, `.` or `..` segment, and contains no
 NUL. `control.path` and `archive.path` must not be equal or contain each other. The
-reserves are the free space and free inodes that must remain after a write; the
-ledger may use only a quarter of the control reserve, so a full staging area cannot
-stop it. Below the reserve the worker reports `archive-space` or `control-space`.
+reserves are checked against the filesystem's free space (blocks available to
+non-root users) and free inodes, before a write:
+
+- Archive check or write (the incoming byte count is 0 for a plain check): the free bytes must be
+  at least the incoming bytes plus `archive.reserveBytes`, and the free inodes must be
+  strictly more than `archive.reserveInodes`. Otherwise `archive-space`.
+- Control staging (room for a download): the same test with the artifact size and the
+  full `control.reserveBytes` and `control.reserveInodes`. Otherwise the artifact is
+  recorded as blocked with `control-space`.
+- Control ledger (checked before each run and before each transfer): the free bytes
+  must be at least a quarter of `control.reserveBytes` (rounded down), and the free
+  inodes strictly more than a quarter of `control.reserveInodes` (rounded down).
+  Otherwise `control-space`. So the ledger is still allowed to write when the
+  control filesystem is below the full reserve, as long as that quarter is free;
+  staging stops first. The full reserve is not guaranteed to remain free after every
+  write.
 
 Minimal example (placeholder values only):
 
@@ -226,7 +239,7 @@ Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no
 | --- | --- |
 | 0 | ok |
 | 64 | usage (unknown, repeated or valueless flag, missing or doubled `--latest` / `--snapshot`, a relative `--archive`, a bad `--company`), or `restore-output-invalid` (bad `--out`), `invalid-path-segment` |
-| 65 | data is wrong, nothing written: `restore-conflict`, `artifact-integrity`, `pdf-shape` |
+| 65 | data is wrong: `restore-conflict`, `artifact-integrity`, `pdf-shape`. Usually nothing is written, but see "Restore from the archive alone": a failure found while copying leaves partial output in `--out` |
 | 66 | nothing to restore: `not-initialized` |
 | 69 | archive: `archive-unavailable`, `archive-unsafe-path`, `archive-identity-mismatch`, `archive-marker-invalid` |
 | 70 | internal: any other reason code or an unexpected error |
@@ -276,9 +289,17 @@ suffix.
 Restore reads only the archive: not the control directory, not the ledger, not
 the database. The completion with the highest sequence in its file name is the
 latest one; `latest.json` and file times are ignored. Two completions that cannot
-both be right (`restore-conflict`, exit 65), a tampered or missing artifact or
-manifest (`artifact-integrity`, exit 65) stop the restore before anything is
-written. `--out` must be a new or empty real directory outside the archive. The
+both be right (`restore-conflict`, exit 65), and a tampered or missing artifact or
+manifest (`artifact-integrity`, exit 65) found by the up-front check stop the
+restore before anything is written. That check covers every artifact the restore
+will copy; a conflict or a bad manifest is found while planning, also before the
+first write. An artifact that changes or disappears after the check, while it is
+being copied, still ends with `artifact-integrity` (exit 65), but by then earlier
+documents are already in `--out` and nothing is rolled back. `--out` must be a new
+or empty real directory outside the archive; running restore again into a
+non-empty `--out` is refused with `restore-output-invalid` (exit 64). After a failed
+copy, check the archive, then restore into a fresh empty `--out` and discard (or keep
+aside) the partial one; do not use it as a restore. The
 report `restore-report.json` says `unverified-archive` (or `incomplete-archive`
 when restored from manifests with `--allow-incomplete`), lists the gaps recorded
 in the completion and the completions that were set aside; it never says the
