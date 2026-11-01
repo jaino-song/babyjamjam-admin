@@ -1250,11 +1250,14 @@ export class UserService {
                 },
             });
 
+            // adminBranchId is only validated for the admin role; for any other role it is
+            // ignored above, so it must not reach the audit row either.
+            const assignedAdminBranchId = params.role === "admin" ? params.adminBranchId : undefined;
             await this.appendAudit(tx, params.actor ?? currentAdminAuditActor(), {
-                action: params.role === "admin" && params.adminBranchId
+                action: assignedAdminBranchId
                     ? "branch.owner_assigned"
                     : "user.approved",
-                branchId: params.adminBranchId ?? params.branchId,
+                branchId: assignedAdminBranchId ?? params.branchId,
                 targetType: "user",
                 targetId: id,
                 before: { id, role: target.role, approvalStatus: target.approvalStatus },
@@ -1262,7 +1265,7 @@ export class UserService {
                     id,
                     role: user.role,
                     approvalStatus: user.approvalStatus,
-                    adminBranchId: params.adminBranchId ?? null,
+                    adminBranchId: assignedAdminBranchId ?? null,
                 },
             });
 

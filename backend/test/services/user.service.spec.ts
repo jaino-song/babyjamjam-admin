@@ -1618,6 +1618,26 @@ describe("UserService", () => {
             }));
         });
 
+        it("ignores an adminBranchId sent with a non-admin role, so it never reaches the audit row", async () => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: null, approvalStatus: "pending" });
+            prismaService.user.update.mockResolvedValue({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await service.approve("u1", {
+                role: "user",
+                approvedBy: "owner-1",
+                actor: ownerActor,
+                branchId: "branch-1",
+                adminBranchId: "unvalidated-branch",
+            });
+
+            expect(auditAppend).toHaveBeenCalledWith(prismaService, expect.objectContaining({
+                action: "user.approved",
+                branchId: "branch-1",
+                after: { id: "u1", role: "user", approvalStatus: "approved", adminBranchId: null },
+            }));
+        });
+
         it("should approve a user in a single transaction, assigning role, approval metadata, and bumping tokenVersion", async () => {
             prismaService.user.update.mockResolvedValue({
                 id: "u1",
