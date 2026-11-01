@@ -45,6 +45,10 @@ export default async function RootLayout({
 }>) {
   const locale = await getLocale();
   const userPromise = getCurrentUser();
+  // MobileShellProviders awaits this and treats "backend unavailable" as signed
+  // out for the shell itself (this layout wraps /login too). The no-op handler
+  // keeps a fast rejection from being reported as unhandled before it is awaited.
+  userPromise.catch(() => {});
 
   return (
     <html lang={locale}>

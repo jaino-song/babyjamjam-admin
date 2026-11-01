@@ -358,4 +358,90 @@ describe("admin gateway proxy", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost/login");
   });
+
+  describe("backend unavailable during session refresh", () => {
+    const expiredAccessToken = () => mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "admin",
+      branchId: "branch-1",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) - 60,
+    });
+
+    it.each([
+      ["a network failure", () => Promise.reject(new TypeError("fetch failed"))],
+      ["a timeout", () => Promise.reject(new DOMException("timeout", "TimeoutError"))],
+      ["a 502 answer", () => Promise.resolve(new Response("{}", { status: 502 }))],
+      ["a 503 answer", () => Promise.resolve(new Response("{}", { status: 503 }))],
+      ["an unreadable 2xx answer", () => Promise.resolve(new Response("<html>", { status: 201 }))],
+    ])("keeps the session and does not redirect to /login after %s", async (_name, answer) => {
+      expiredAccessToken();
+      const fetchMock = jest.spyOn(global, "fetch").mockImplementation(answer);
+
+      const response = await proxy(new NextRequest("http://localhost/dashboard", {
+        headers: {
+          cookie: "auth_token=expired; refresh_token=current; selected_branch_id=branch-1",
+        },
+      }));
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(response.headers.get("retry-after")).not.toBeNull();
+      await expect(response.text()).resolves.toContain("서버에 연결할 수 없어요");
+      fetchMock.mockRestore();
+    });
+
+    it("keeps the session when the access cookie is already gone and only the refresh cookie is left", async () => {
+      const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new TypeError("fetch failed"));
+
+      const response = await proxy(new NextRequest("http://localhost/dashboard", {
+        headers: { cookie: "refresh_token=current; selected_branch_id=branch-1" },
+      }));
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("set-cookie")).toBeNull();
+      fetchMock.mockRestore();
+    });
+
+    it.each([401, 403])(
+      "still signs the user out when the refresh endpoint rejects the token with %i",
+      async (status) => {
+        expiredAccessToken();
+        const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+          new Response(JSON.stringify({ code: "AUTH_REFRESH_INVALID" }), { status }),
+        );
+
+        const response = await proxy(new NextRequest("http://localhost/dashboard", {
+          headers: {
+            cookie: "auth_token=expired; refresh_token=current; selected_branch_id=branch-1",
+          },
+        }));
+
+        expect(response.status).toBe(307);
+        expect(response.headers.get("location")).toBe("http://localhost/login");
+        const setCookie = response.headers.get("set-cookie") ?? "";
+        expect(setCookie).toContain("auth_token=;");
+        expect(setCookie).toContain("refresh_token=;");
+        fetchMock.mockRestore();
+      },
+    );
+
+    it("keeps the session cookies when the login page cannot refresh because the backend is unavailable", async () => {
+      expiredAccessToken();
+      const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new TypeError("fetch failed"));
+
+      const response = await proxy(new NextRequest("http://localhost/login", {
+        method: "GET",
+        headers: { cookie: "auth_token=expired; refresh_token=current" },
+      }));
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("set-cookie")).toBeNull();
+      fetchMock.mockRestore();
+    });
+  });
 });
