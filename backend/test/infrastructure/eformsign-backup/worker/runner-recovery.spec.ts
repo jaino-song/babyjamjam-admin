@@ -477,6 +477,70 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
             expect(await treeSignature(h.control)).toBe(before);
         }, 120_000);
 
+        describe("a torn tail is repaired only after every refusal check has passed (BJJ-455 P2 FU-11 F2)", () => {
+            const TORN = '{"v":1,"seq":99,"ty';
+            async function killedMidRecoverWithTornTail(): Promise<string> {
+                const id = await killedMidRecover();
+                await fs.appendFile(path.join(h.control, "ledger", "journal-000000000001.jsonl"), TORN);
+                return id;
+            }
+            const expectUntouched = async (before: string): Promise<void> => {
+                expect(await treeSignature(h.control)).toBe(before);
+                const records = await readLedgerRecords(h.control);
+                expect(records.some((record) => record.type === "tail_discarded")).toBe(false);
+                expect((await fs.readdir(path.join(h.control, "ledger"))).some((name) => name.endsWith(".quarantine"))).toBe(false);
+            };
+
+            it("should refuse a wrong installation id with archive-identity-mismatch, exit 69, and leave the control directory byte for byte unchanged", async () => {
+                await killedMidRecoverWithTornTail();
+                const before = await treeSignature(h.control);
+
+                await expect(recover("other-installation")).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+                await expectUntouched(before);
+                const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", "other-installation"]);
+                expect(await child.exited).toEqual({ code: 69, signal: null });
+                await expectUntouched(before);
+            }, 120_000);
+
+            it("should refuse a swapped archive root and a missing archive marker the same way, writing nothing", async () => {
+                const id = await killedMidRecoverWithTornTail();
+                const before = await treeSignature(h.control);
+                await fs.rename(path.join(h.archive, ".bjj-backup"), path.join(h.base, "bjj-backup.away"));
+                await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-marker-invalid" });
+                await expectUntouched(before);
+                await fs.rename(path.join(h.base, "bjj-backup.away"), path.join(h.archive, ".bjj-backup"));
+
+                await swapArchive(h);
+                await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+                await expectUntouched(before);
+            }, 120_000);
+
+            it("should refuse a control marker that disagrees with the archive marker, writing nothing", async () => {
+                const id = await killedMidRecoverWithTornTail();
+                const marker = path.join(h.control, "installation.json");
+                const body = await readJsonFile(marker);
+                await fs.rm(marker);
+                await fs.writeFile(marker, `${JSON.stringify({ ...body, installationId: "other-installation" })}\n`, { mode: 0o600 });
+                const before = await treeSignature(h.control);
+
+                await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+                await expectUntouched(before);
+            }, 120_000);
+
+            it("should still repair the torn tail with the correct id and finish the interrupted recovery", async () => {
+                const id = await killedMidRecoverWithTornTail();
+
+                const result = await recover(id);
+
+                expect(result).toMatchObject({ outcome: "finished", recovered: 3, unverified: 0 });
+                const records = await readLedgerRecords(h.control);
+                expect(records.filter((record) => record.type === "tail_discarded")).toHaveLength(1);
+                expect(records.filter((record) => record.type === "recovered_verified")).toHaveLength(4);
+                expect(await fs.readFile(path.join(h.control, "ledger", `tail-${records.find((record) => record.type === "tail_discarded")!.seq}.quarantine`), "utf8")).toBe(TORN);
+                expect((await runOnce(h)).sequence).toBe(3);
+            }, 120_000);
+        });
+
         it("(d) should append nothing when recover runs again after a completed recovery", async () => {
             await history();
             const id = await installationOf();

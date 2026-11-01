@@ -31,6 +31,12 @@ export type LedgerMarkerWriter = (dir: string, name: string, bytes: Uint8Array) 
 export interface LedgerOpenOptions {
     /** Never writes, repairs or creates anything; a torn tail is ignored and reported in `reasons`. */
     readOnly?: boolean;
+    /**
+     * Opens a writable store without repairing a torn tail: the ledger directory is not touched, and every write is refused
+     * with `internal` until `repairPendingTail` has run. For a caller (`recover`) that must pass its read-only refusal checks
+     * before the first write of any kind.
+     */
+    deferTornTailRepair?: boolean;
     /** Test hook. An exception it throws is an I/O failure. */
     fault?: (point: LedgerFaultPoint) => void;
     /** Test seam for the filesystem calls the store makes. */
@@ -90,6 +96,7 @@ export class LedgerStore {
     private queue: Promise<void> = Promise.resolve();
     private journalBase: number;
     private journalRecords: number;
+    private pendingTail: { tail: Buffer; validLength: number } | null = null;
     private readonly ledgerDir: string;
 
     private constructor(
@@ -119,6 +126,8 @@ export class LedgerStore {
         if (replay.status === "ok" && replay.tail !== null) {
             if (options.readOnly === true) {
                 store._reasons.push("torn-tail-ignored");
+            } else if (options.deferTornTailRepair === true) {
+                store.pendingTail = { tail: replay.tail, validLength: replay.validLength };
             } else {
                 await store.repairTornTail(replay.tail, replay.validLength);
                 store._reasons.push("torn-tail-repaired");
@@ -131,6 +140,33 @@ export class LedgerStore {
     get state(): LedgerState { return this._state; }
     get lastSeq(): number { return this._state.lastSeq; }
     get reasons(): readonly string[] { return this._reasons; }
+
+    /**
+     * Repairs the torn tail a `deferTornTailRepair` open left alone, exactly as an eager open would (one guard, immediately
+     * before the cut). Does nothing when there is no pending tail. A refusal by the guard leaves the journal untouched.
+     */
+    repairPendingTail(): Promise<void> {
+        return this.serialize(async () => {
+            if (this.poisoned) throw unavailable();
+            const pending = this.pendingTail;
+            if (pending === null) return;
+            await this.repairTornTail(pending.tail, pending.validLength);
+            this.pendingTail = null;
+            this._reasons.push("torn-tail-repaired");
+        });
+    }
+
+    /**
+     * Runs the caller's pre-write guard for a write this store does not make itself (the worker's control-marker restore),
+     * so that write is held to the same ownership check as every ledger write. Nothing is written and the store is not poisoned
+     * when the guard refuses.
+     */
+    guardExternalWrite(): Promise<void> {
+        return this.serialize(async () => {
+            if (this.poisoned) throw unavailable();
+            await this.guardWrite();
+        });
+    }
 
     /** Assigns `seq = lastSeq + 1`, writes the record and fsyncs it. Resolves with the record that is now durable. */
     append<T extends LedgerRecordType>(type: T, body: LedgerBodies[T], at: string): Promise<LedgerRecordOf<T>> {
@@ -267,6 +303,8 @@ export class LedgerStore {
     private requireWritable(needed: LedgerStatus): void {
         if (this.poisoned) throw unavailable();
         if (this.options.readOnly === true) throw new WorkerError("internal");
+        // A torn tail not yet repaired: appending behind it would bury the torn bytes mid-journal.
+        if (this.pendingTail !== null) throw new WorkerError("internal");
         if (this._status === needed) return;
         if (this._status === "not_initialized") throw new WorkerError("not-initialized");
         if (this._status === "recovery_required") throw new WorkerError("recovery-required");
