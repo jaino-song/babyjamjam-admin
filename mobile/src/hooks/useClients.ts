@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { dashboardQueryKeys } from "@/hooks/useDashboardAnalytics";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import { serviceRecordQueryKeys } from "@/hooks/useServiceRecords";
 import {
     removeById,
     restoreQueries,
@@ -143,6 +144,8 @@ export function useUpdateClient() {
             return data as Client;
         },
         onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+            queryClient.invalidateQueries({ queryKey: serviceRecordQueryKeys.clientOverview(variables.id) });
             // Invalidate all client queries (lists + details) using prefix match
             queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
             // Also explicitly invalidate the specific detail query

@@ -13,6 +13,17 @@ function parse(text) {
 }
 const read = name => readFileSync(resolve(root,'.github/workflows',name),'utf8');
 const old = name => execFileSync('git',['show',`${base}:.github/workflows/${name}`],{cwd:root,encoding:'utf8'});
+function withStateIntegrityRealDatabaseStep(steps) {
+  const name = 'Real-database specs (holiday calendar and review)';
+  assert.equal(steps.filter(step => step.name === name).length, 1);
+  return steps.map(step => step.name !== name ? step : {
+    ...step,
+    run: "psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'\n" +
+      'pnpm --filter ./backend exec prisma migrate deploy\n' +
+      'pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/\n',
+    env: {...step.env, STATE_INTEGRITY_REAL_DB: '1'},
+  });
+}
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
 const apps=['backend','frontend','mobile'];
@@ -37,6 +48,19 @@ function stepsWithoutTypeCheckHeap(steps,label) {
   assert.ok(index>=0,`${label}: Type check step exists`);
   assert.deepEqual(steps[index].env,typeCheckHeapEnv,`${label}: Type check raises the Node heap`);
   const copy=structuredClone(steps);delete copy[index].env;return copy;
+}
+// Preview Cloud Run concurrency was raised from 8 to 16: two admin tabs' long-lived realtime
+// requests filled 8 slots on the single instance and starved every other request (QA
+// 2026-11-01). Asserts the exact new verify check once, then maps it back to the pinned base
+// text so every other byte of the deploy job is still compared exactly.
+const previewConcurrencyCheck = {
+  after: '[[ "$container_concurrency" == "16" ]] \\\n            || fail_check "containerConcurrency must be 16"',
+  before: '[[ "$container_concurrency" == "8" ]] \\\n            || fail_check "containerConcurrency must be 8"',
+};
+function withPreviewConcurrencyAtBase(text,label) {
+  assert.equal(text.split(previewConcurrencyCheck.after).length-1,1,`${label}: preview containerConcurrency must be verified as exactly 16, once`);
+  assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
+  return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
 }
 // The LightNode warm-standby change adds exactly these contract-test commands to the
 // 'Verify backend deployment automation contracts' step, right after the ci-deployer
@@ -97,7 +121,8 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
-  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
+  const previousSteps = parse(old(file)).jobs.verify.steps;
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
   if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -111,7 +136,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
   if(app==='backend') {assert.equal(enabled(j.impact,{backend:true},'workflow_dispatch','lightnode-status'),false);assert.equal(enabled(j.verify,{backend:true},'workflow_dispatch','lightnode-status'),false);}
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
-  const before=old('backend-ci.yml'),after=read('backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
+  const before=old('backend-ci.yml'),after=withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
   assertOnlyStandbyJobAdded(a,b,'backend-ci.yml',['impact','checks']);
   for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e'].includes(id))) {
     assert.equal(jobText(after,id),jobText(before,id),`${id} raw block changed`);assert.deepEqual(b[id],a[id]);
@@ -153,7 +178,7 @@ test('service-record-ui reaches all downstream path-filtered required and adviso
 const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
 const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
 test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
-  const text = read('backend-ci.yml'), workflow = parse(text);
+  const text = withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
   const steps = workflow.jobs.checks.steps;
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');
@@ -161,7 +186,7 @@ test('backend installs declared compiler before executing CI impact contracts; o
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
   assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }

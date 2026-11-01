@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 import { jwtDecode } from "jwt-decode";
 
 import { createServerApiUrl } from "@/lib/api/server-base-url";
+import { createAuthServiceUnavailableResponse } from "@/lib/auth/service-unavailable-response";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 import { getMobileGatewayRedirectUrl } from "@/lib/gateway/mobile-redirect";
 import {
@@ -36,7 +37,11 @@ type RefreshAttempt =
     refreshToken: string;
   }
   | { kind: "concurrent" }
-  | null;
+  // The backend answered 401/403: the refresh token is really invalid.
+  | { kind: "rejected" }
+  // Timeout, network failure, 5xx or an unreadable answer: the session is NOT
+  // known to be invalid, so it must never be cleared or redirected to /login.
+  | { kind: "unavailable" };
 
 // Routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -156,14 +161,18 @@ async function tryRefreshAuthSession(
           return { kind: "concurrent" };
         }
       }
-      return null;
+      return response.status === 401 || response.status === 403
+        ? { kind: "rejected" }
+        : { kind: "unavailable" };
     }
     const data = await response.json() as RefreshResponse;
     if (
       !data.accessToken
       || isAccessTokenExpiredOrInvalid(data.accessToken)
     ) {
-      return null;
+      // A 2xx without a usable token is the backend misbehaving, not a verdict
+      // on the session.
+      return { kind: "unavailable" };
     }
     return {
       kind: "success",
@@ -171,7 +180,7 @@ async function tryRefreshAuthSession(
       refreshToken: data.refreshToken || refreshToken,
     };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
 
@@ -253,6 +262,11 @@ export async function proxy(request: NextRequest) {
           response.headers.set("Retry-After", "1");
           return response;
         }
+        if (refreshAttempt?.kind === "unavailable") {
+          // Backend down: render the login page but keep the session cookies so
+          // the user is still signed in once it recovers.
+          return NextResponse.next();
+        }
       }
       const response = NextResponse.next();
       clearAuthCookies(response);
@@ -273,6 +287,14 @@ export async function proxy(request: NextRequest) {
       const response = NextResponse.redirect(request.nextUrl);
       response.headers.set("Retry-After", "1");
       return response;
+    }
+    if (refreshAttempt?.kind === "unavailable") {
+      // The session could not be verified because the backend is unavailable,
+      // which is not the same as it being invalid. The expired access cookie is
+      // usually already gone, so passing through would make the layout see "no
+      // token" and redirect to /login: answer 503 instead and leave every cookie
+      // untouched. The next request tries to refresh again.
+      return createAuthServiceUnavailableResponse();
     }
     if (refreshAttempt?.kind === "success") {
       refreshedSession = refreshAttempt;

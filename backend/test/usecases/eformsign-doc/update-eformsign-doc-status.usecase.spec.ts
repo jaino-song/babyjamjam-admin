@@ -74,6 +74,22 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
+    it.each(["50", "doc_complete", " DOC_COMPLETE ", "80", "doc_revoke", "doc_accept_reviewer"])("refuses a newer live-status downgrade of stored terminal alias %s", async (statusType) => {
+        const existing = createDocEntity(statusType);
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(existing);
+
+        const result = await usecase.executeWithOutcome(branchId, {
+            documentId,
+            statusType: "060",
+            statusDetail: "서명 요청됨",
+            sourceUpdatedDate: new Date("2026-05-03T00:00:00.000Z"),
+        });
+
+        expect(result).toEqual({ document: existing, applied: false });
+        expect(eformsignDocRepository.updateIfSourceNewer).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
+    });
+
     it("keeps the existing branch-owned 062 terminal guard unchanged", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("062"));
 

@@ -6584,7 +6584,7 @@ describe("ClientService", () => {
         it("completeReplacement loads the calendar before the transaction and passes it to the update and the lifecycle", async () => {
             const calendar = branchCalendar2026(["2026-08-26"]);
             (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
-            const mockClient = createClientEntity();
+            const mockClient = Object.assign(createClientEntity(), { serviceStatus: "replacement_requested" });
             findClientByIdUsecase.execute.mockResolvedValue(mockClient);
             updateClientUsecase.execute.mockResolvedValue(mockClient);
             clientRepository.findByIdForUpdate.mockResolvedValue(mockClient);
@@ -6962,6 +6962,25 @@ describe("ClientService", () => {
         };
 
         it.each([
+            ["active", true, "completed"],
+            ["terminated", true, "terminated"],
+            ["replacement_requested", true, "replacement_requested"],
+            ["pre_booking", false, "pre_booking"],
+        ])("a date-only edit recomputes %s with confirmation=%s to %s", async (stored, confirmed, expected) => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient({
+                serviceStatus: stored,
+                bookingConfirmedAt: confirmed ? confirmedAt : null,
+            }));
+
+            await service.update(branchId, 1, { endDate: "2026-11-04" });
+
+            expect(lastUpdateData()).toMatchObject({
+                endDate: new Date("2026-11-04T00:00:00.000Z"),
+                serviceStatus: expected,
+            });
+        });
+
+        it.each([
             ["row 5: unconfirmed -> waiting", () => unconfirmedClient(), "waiting", BODY_REFUSAL],
             ["row 5: unconfirmed -> active", () => unconfirmedClient(), "active", BODY_REFUSAL],
             ["row 5: unconfirmed -> completed", () => unconfirmedClient(), "completed", BODY_REFUSAL],
@@ -7049,7 +7068,7 @@ describe("ClientService", () => {
             await expect(service.update(branchId, 1, { startDate: null, endDate: null, serviceStatus: "pre_booking" }))
                 .resolves.toBeDefined();
             expect(lastUpdateData()).toMatchObject({ startDate: null, endDate: null });
-            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+            expect(lastUpdateData()["serviceStatus"]).toBe("pre_booking");
 
             prismaService.client.updateMany.mockClear();
             findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
@@ -7948,7 +7967,7 @@ describe("ClientService", () => {
         });
 
         describe("given client not in replacement_requested status", () => {
-            it("should still complete but log warning", async () => {
+            it("should refuse with a 409 problem and leave the client untouched", async () => {
                 // Arrange
                 const mockClient = new ClientEntity(
                     1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
@@ -7961,11 +7980,12 @@ describe("ClientService", () => {
                 clientRepository.findByIdForUpdate.mockResolvedValue(mockClient);
 
                 // Act
-                await service.completeReplacement(branchId, 1);
-
-                // Assert
-                // Should still update status
-                expect(updateClientUsecase.execute).toHaveBeenCalled();
+                await expect(service.completeReplacement(branchId, 1)).rejects.toMatchObject({
+                    status: 409,
+                    response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+                });
+                expect(updateClientUsecase.execute).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
             });
         });
 
@@ -7994,30 +8014,13 @@ describe("ClientService", () => {
 
             it("does not schedule a link merely because the stored status was 예약 전", async () => {
                 arrange("pre_booking");
-                let release!: () => void;
-                const held = new Promise<void>((resolve) => { release = resolve; });
-                let transactionBodyDone = false;
-                prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
-                    const result = await callback(prismaService);
-                    transactionBodyDone = true;
-                    await held;
-                    return result;
-                });
 
-                const running = service.completeReplacement(branchId, 1);
-                for (let turn = 0; turn < 50 && !transactionBodyDone; turn += 1) {
-                    await new Promise((resolve) => setImmediate(resolve));
-                }
-                await new Promise((resolve) => setImmediate(resolve));
-                expect(transactionBodyDone).toBe(true);
+                await expect(service.completeReplacement(branchId, 1)).rejects.toBeInstanceOf(ConflictException);
+
                 expect(prismaService.employee_schedule.findMany).not.toHaveBeenCalledWith(
                     expect.objectContaining({ where: expect.objectContaining({ terminatedAt: null }) }),
                 );
-                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-
-                release();
-                await running;
-
+                expect(updateClientUsecase.execute).not.toHaveBeenCalled();
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
 
@@ -8030,7 +8033,7 @@ describe("ClientService", () => {
             });
 
             it("still resolves without attempting a link for the already-confirmed dated client", async () => {
-                const { afterClient } = arrange("pre_booking");
+                const { afterClient } = arrange("replacement_requested");
                 serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
                 const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
                     .mockImplementation(() => undefined);
@@ -8038,6 +8041,17 @@ describe("ClientService", () => {
                 await expect(service.completeReplacement(branchId, 1)).resolves.toBe(afterClient);
 
                 expect(logError).not.toHaveBeenCalled();
+            });
+
+            it("refuses when the locked row has left replacement_requested after the preflight read", async () => {
+                arrange("replacement_requested");
+                clientRepository.findByIdForUpdate.mockResolvedValue(Object.assign(createClientEntity(), {
+                    serviceStatus: "terminated",
+                }));
+
+                await expect(service.completeReplacement(branchId, 1)).rejects.toBeInstanceOf(ConflictException);
+
+                expect(updateClientUsecase.execute).not.toHaveBeenCalled();
             });
         });
 

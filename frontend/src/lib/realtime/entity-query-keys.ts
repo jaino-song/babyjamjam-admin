@@ -31,6 +31,7 @@ export const ENTITY_QUERY_KEY_ROOTS: Readonly<Record<RealtimeEntityKind, readonl
     // `data-source`: dynamic-select option lists built from employee data.
     employee: [["employees"], ["data-source"]],
     document: [
+        ["clients"],
         ["eformsign-documents"],
         ["eformsign-docs"],
         ["eformsign-client-names"],
@@ -40,7 +41,7 @@ export const ENTITY_QUERY_KEY_ROOTS: Readonly<Record<RealtimeEntityKind, readonl
         ["eformsign-client-candidate"],
     ],
     message: [["message-triggers"], ["message-templates"], ["data-source"]],
-    "service-record": [["service-records"]],
+    "service-record": [["service-records"], ["employees"]],
     inquiry: [["consultation-inquiries"]],
     // The desktop app has no call inbox; the kind is announced for mobile only.
     call: [],

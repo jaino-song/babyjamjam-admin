@@ -62,8 +62,8 @@ describe("MessageTriggerService", () => {
         primaryEmployeeId: number;
         secondaryEmployeeId: number | null;
         client: { id: number; name: string };
-        primaryEmployee: { id: number; name: string; phone: string } | null;
-        secondaryEmployee: { id: number; name: string; phone: string } | null;
+        primaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
+        secondaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
     };
 
     type ServiceInternals = {
@@ -1815,6 +1815,31 @@ describe("MessageTriggerService", () => {
         });
         await (service as unknown as ServiceInternals).processStaleRuleRebuilds();
         expect(waiting.status).toBe("canceled");
+    });
+
+    it.each(["agent-sms:branch-1", "system:service_record_link", "system:service_end_notice", "system:message_automation_intent"])("refuses reserved carrier deletion with RESOURCE_NOT_FOUND before canceling jobs (%s)", async (id) => {
+        const { service, ruleRepository, jobRepository } = createService();
+        const refusal = { status: 404, response: { code: "RESOURCE_NOT_FOUND" } };
+        await expect(service.deleteRule(branchId, id)).rejects.toMatchObject(refusal);
+        await expect(service.deleteRuleApprovedTarget(branchId, id, "ignored", undefined)).rejects.toMatchObject(refusal);
+        expect(ruleRepository.delete).not.toHaveBeenCalled();
+        expect(ruleRepository.deleteIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+    });
+
+    it("refuses default rule deletion with a catalog conflict before canceling jobs", async () => {
+        const { service, ruleRepository, jobRepository } = createService();
+        const rule = createRule({ isDefault: true });
+        ruleRepository.findById.mockResolvedValue(rule);
+        const snapshot = { ...rule, createdAt: rule.createdAt.toISOString(), updatedAt: rule.updatedAt.toISOString() };
+        const version = (service as unknown as { ruleTargetVersion(rule: MessageTriggerRuleEntity): string }).ruleTargetVersion(rule);
+        const refusal = { status: 409, response: { code: "MESSAGE_DEFAULT_RULE_DELETE_BLOCKED", outcome: "NOT_APPLIED", message: "기본 문자 규칙은 삭제할 수 없어요. 대신 비활성화해 주세요." } };
+        await expect(service.deleteRule(branchId, rule.id)).rejects.toMatchObject(refusal);
+        await expect(service.deleteRuleApprovedTarget(branchId, rule.id, version, snapshot)).rejects.toMatchObject(refusal);
+        expect(ruleRepository.delete).not.toHaveBeenCalled();
+        expect(ruleRepository.deleteIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleId).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingForRuleGeneration).not.toHaveBeenCalled();
     });
 
     it("uses branch-scoped CAS hooks for approved automation updates and deletes", async () => {
@@ -3606,7 +3631,7 @@ describe("MessageTriggerService", () => {
                 const schedule: EmployeeAssignmentScheduleSource = { id: 10, branchId, clientId: 1,
                     workAddress: "주소", startDate: new Date("2026-10-01"), endDate: new Date("2026-10-20"),
                     replaced: false, terminatedAt: null, primaryEmployeeId: 30, secondaryEmployeeId: null,
-                    client: { id: 1, name: "현재 산모" }, primaryEmployee: { id: 30, name: "현재 직원", phone: "010-9999-8888" }, secondaryEmployee: null };
+                    client: { id: 1, name: "현재 산모" }, primaryEmployee: { id: 30, name: "현재 직원", phone: "010-9999-8888", deletedAt: null }, secondaryEmployee: null };
                 fx.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(rule);
                 jest.mocked(fx.service.readClientAutomationSchedules).mockResolvedValue([{ ...schedule, incarnationId: "schedule-generation" }]);
                 const recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, fx.job.scheduledFor)!;
@@ -4314,7 +4339,7 @@ describe("MessageTriggerService", () => {
         ["termination", { terminatedAt: new Date("2026-07-20T00:00:00.000Z") }],
         ["employee assignment", {
             primaryEmployeeId: 31,
-            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333" },
+            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333", deletedAt: null },
         }],
         ["branch ownership", { branchId: "branch-2" }],
     ] as const)("refuses a claimed assignment when the schedule %s changed", async (_label, change) => {
@@ -5788,7 +5813,7 @@ describe("MessageTriggerService", () => {
         primaryEmployeeId: 30,
         secondaryEmployeeId: null,
         client: { id: 1, name: "김산모" },
-        primaryEmployee: { id: 30, name: "홍제공", phone: "010-1111-2222" },
+        primaryEmployee: { id: 30, name: "홍제공", phone: "010-1111-2222", deletedAt: null },
         secondaryEmployee: null,
         ...overrides,
     });
@@ -5998,7 +6023,7 @@ describe("MessageTriggerService", () => {
             await sync.service.syncEmployeeAssignmentRulesForClient(branchId, schedule.clientId);
             schedule = createEmployeeSchedule({
                 client: { id: 1, name: "새 고객 이름" },
-                primaryEmployee: { id: 30, name: "새 직원 이름", phone: "010-9999-0000" },
+                primaryEmployee: { id: 30, name: "새 직원 이름", phone: "010-9999-0000", deletedAt: null },
             });
             await sync.service.syncEmployeeAssignmentRulesForClient(branchId, schedule.clientId);
 
@@ -6958,7 +6983,7 @@ describe("MessageTriggerService", () => {
         });
         const sync = createEmployeeSyncService({
             primaryEmployeeId: 31,
-            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333" },
+            primaryEmployee: { id: 31, name: "박신규", phone: "010-2222-3333", deletedAt: null },
         });
         sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
         sync.jobRepository.findSentByRuleIdAndEmployeeScheduleId.mockResolvedValue([sentOldEmployeeJob]);

@@ -11,6 +11,7 @@ import {
     type FinalizeEformsignDocumentJobRequest,
 } from "@/services/api";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 
 export type {
@@ -166,6 +167,7 @@ export function useEnqueueEformsignDocumentFinalization() {
         mutationFn: (params) => eformsignApi.enqueueDocumentFinalization(params),
         onSuccess: async (_response, params) => {
             await invalidateDocumentJobQueries(queryClient, params.documentId);
+            await queryClient.invalidateQueries({ queryKey: clientKeys.all });
         },
     });
 }

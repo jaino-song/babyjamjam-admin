@@ -901,15 +901,15 @@
     },
     "mobile/src/app/(shell)/employees/new/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "376:9-382:10|rawUiElement",
-        "388:9-394:10|rawUiElement",
-        "448:15-462:17|rawUiElement",
-        "480:15-497:17|rawUiElement",
-        "518:19-527:20|rawUiElement",
-        "571:19-585:20|rawUiElement",
-        "613:19-626:20|rawUiElement",
-        "649:11-654:12|rawUiElement",
-        "657:11-662:12|rawUiElement"
+        "386:9-392:10|rawUiElement",
+        "398:9-404:10|rawUiElement",
+        "458:15-472:17|rawUiElement",
+        "490:15-507:17|rawUiElement",
+        "528:19-537:20|rawUiElement",
+        "581:19-595:20|rawUiElement",
+        "623:19-636:20|rawUiElement",
+        "659:11-664:12|rawUiElement",
+        "667:11-672:12|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/logout/page.tsx": {
@@ -990,8 +990,8 @@
     },
     "mobile/src/app/(shell)/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "23:27-23:68|visualTailwindInPage",
-        "26:26-26:62|visualTailwindInPage"
+        "24:27-24:68|visualTailwindInPage",
+        "27:26-27:62|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/prices/page.tsx": {

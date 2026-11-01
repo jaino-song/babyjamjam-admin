@@ -9,6 +9,7 @@ import type { SlotMessage } from "@/lib/validations/field-message";
 import { cn } from "@/lib/utils";
 import { DEFAULT_EMPLOYEE_GRADE, EMPLOYEE_GRADES } from "@/features/employees/grade";
 import { Switch } from "@/components/ui/switch";
+import { EmployeeSmsAutomationField } from "./EmployeeSmsAutomationField";
 import { WORK_AREAS, formatWorkAreaLabel } from "./employee-form.constants";
 import styles from "./EmployeeFormCard.module.css";
 
@@ -27,6 +28,7 @@ export interface EmployeeFormCardData {
   phone: string;
   grade: string;
   openToNextWork: boolean;
+  smsAutomationEnabled: boolean;
   birthday: string;
 }
 
@@ -313,6 +315,12 @@ export function EmployeeFormCard({
             />
           </div>
         </div>
+        <EmployeeSmsAutomationField
+          data-component={sub("section-work_field-sms-automation")}
+          checked={formData.smsAutomationEnabled}
+          onCheckedChange={(checked) => setField("smsAutomationEnabled", checked)}
+          disabled={disabled}
+        />
       </section>
     </div>
   );

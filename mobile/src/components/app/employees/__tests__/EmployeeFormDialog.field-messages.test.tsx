@@ -6,6 +6,7 @@ import type { Employee } from "@/hooks/useEmployees";
 import { EmployeeFormDialog } from "../EmployeeFormDialog";
 
 const mockCreateEmployeeMutateAsync = jest.fn();
+const mockUpdateEmployeeMutateAsync = jest.fn();
 
 jest.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ refetchQueries: jest.fn() }),
@@ -14,7 +15,7 @@ jest.mock("@tanstack/react-query", () => ({
 jest.mock("@/hooks/useEmployees", () => ({
   employeeQueryKeys: { all: ["employees"] },
   useCreateEmployee: () => ({ isPending: false, mutateAsync: mockCreateEmployeeMutateAsync }),
-  useUpdateEmployee: () => ({ isPending: false, mutateAsync: jest.fn() }),
+  useUpdateEmployee: () => ({ isPending: false, mutateAsync: mockUpdateEmployeeMutateAsync }),
 }));
 
 jest.mock("@/stores/employee-dialog-store", () => {
@@ -78,6 +79,30 @@ describe("EmployeeFormDialog field messages", () => {
       expect(input).not.toHaveAttribute("aria-invalid", "true");
     });
     expect(screen.getByRole("button", { name: "등록" })).toBeEnabled();
+  });
+
+  it("defaults automatic SMS to enabled for a new employee", async () => {
+    await renderDialog();
+    expect(screen.getByRole("switch", { name: "문자 자동 발송" })).toBeChecked();
+  });
+
+  it("loads a disabled SMS setting and submits a toggle in edit mode", async () => {
+    const employee = {
+      id: 1, name: "김관리", phone: "01012345678", workArea: ["인천 부평구"],
+      grade: "스탠다드", openToNextWork: true, smsAutomationEnabled: false,
+      registeredDate: null, status: "available",
+    } satisfies Employee;
+    mockUpdateEmployeeMutateAsync.mockResolvedValue({ ...employee, smsAutomationEnabled: true });
+    await renderDialog(employee);
+    const smsSwitch = screen.getByRole("switch", { name: "문자 자동 발송" });
+    expect(smsSwitch).not.toBeChecked();
+    fireEvent.click(smsSwitch);
+    expect(smsSwitch).toBeChecked();
+    await waitFor(() => expect(slotOf(phoneInput())).not.toHaveTextContent("번호를 확인"));
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockUpdateEmployeeMutateAsync).toHaveBeenCalledWith({
+      id: 1, dto: expect.objectContaining({ smsAutomationEnabled: true }),
+    }));
   });
 
   it("reports a required field only after it held a value and was cleared", async () => {

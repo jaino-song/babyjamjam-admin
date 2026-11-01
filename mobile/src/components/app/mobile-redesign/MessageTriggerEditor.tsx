@@ -179,7 +179,7 @@ export function MessageTriggerEditor({
   };
 
   const handleDelete = async () => {
-    if (!rule) return;
+    if (!rule || rule.isDefault) return;
     setError(null);
     try {
       await deleteMutation.mutateAsync(rule.id);
@@ -350,7 +350,7 @@ export function MessageTriggerEditor({
         {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
 
         <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
-          {rule ? (
+          {rule && !rule.isDefault ? (
             <button
               type="button"
               className="btn btn-secondary min-h-11"

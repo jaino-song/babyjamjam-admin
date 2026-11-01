@@ -19,6 +19,7 @@ import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
+import { computeServiceStatus } from "domain/value-objects/service-status.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     previousBusinessDay,
@@ -655,7 +656,16 @@ export class ScheduleChangeService {
                 });
                 await tx.client.update({
                     where: { id: schedule.clientId },
-                    data: { ...(clientStartMoved ? { startDate: selectedDateValue } : {}), endDate: newEndDate },
+                    data: {
+                        ...(clientStartMoved ? { startDate: selectedDateValue } : {}),
+                        endDate: newEndDate,
+                        serviceStatus: computeServiceStatus(
+                            schedule.client.serviceStatus,
+                            clientStartMoved ? selectedDateValue : schedule.client.startDate,
+                            newEndDate,
+                            schedule.client.bookingConfirmedAt,
+                        ),
+                    },
                 });
 
                 const syncedRecord = await this.lifecycleService?.ensureForClient(

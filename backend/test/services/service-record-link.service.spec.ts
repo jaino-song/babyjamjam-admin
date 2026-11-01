@@ -763,7 +763,7 @@ describe("ServiceRecordLinkService", () => {
             select: { customVariables: true },
         });
         expect(prisma.message_trigger_rule.findUnique).toHaveBeenCalledWith({
-            where: { id: SERVICE_RECORD_LINK_RULE_ID },
+            where: { id: SERVICE_RECORD_LINK_RULE_ID, deletedAt: null },
             select: { id: true },
         });
         expect(prisma.message_trigger_rule.upsert).toHaveBeenCalledWith({

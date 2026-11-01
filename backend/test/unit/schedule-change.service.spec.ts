@@ -523,7 +523,7 @@ describe("ScheduleChangeService", () => {
             });
             expect(txPrismaService.client.update).toHaveBeenCalledWith({
                 where: { id: CLIENT_ID },
-                data: { endDate: toDbDate("2026-08-03") },
+                data: { endDate: toDbDate("2026-08-03"), serviceStatus: "pre_booking" },
             });
             expect(lifecycleService.ensureForClient).toHaveBeenCalledWith(
                 CLIENT_ID,
@@ -616,7 +616,7 @@ describe("ScheduleChangeService", () => {
             });
             expect(txPrismaService.client.update).toHaveBeenCalledWith({
                 where: { id: CLIENT_ID },
-                data: { endDate: toDbDate("2026-07-08") },
+                data: { endDate: toDbDate("2026-07-08"), serviceStatus: "pre_booking" },
             });
         });
 
@@ -704,9 +704,14 @@ describe("ScheduleChangeService", () => {
             });
         });
 
-        it("moves the first session earlier and pulls the service start date with it", async () => {
+        it.each(["pre_booking", "terminated", "replacement_requested"])(
+            "moves the first session earlier and pulls the service start date with it, preserving %s",
+            async (serviceStatus) => {
             txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
-                client: { id: CLIENT_ID, duration: 10, birthDate: toDbDate("2026-06-20") },
+                client: {
+                    id: CLIENT_ID, duration: 10, birthDate: toDbDate("2026-06-20"),
+                    serviceStatus, bookingConfirmedAt: null,
+                },
             }));
             txPrismaService.service_record_case.findFirst.mockResolvedValue({
                 id: "case-1",
@@ -739,7 +744,7 @@ describe("ScheduleChangeService", () => {
             });
             expect(txPrismaService.client.update).toHaveBeenCalledWith({
                 where: { id: CLIENT_ID },
-                data: { startDate: toDbDate("2026-06-29"), endDate: toDbDate("2026-07-10") },
+                data: { startDate: toDbDate("2026-06-29"), endDate: toDbDate("2026-07-10"), serviceStatus },
             });
         });
 
@@ -857,7 +862,7 @@ describe("ScheduleChangeService", () => {
                 // Ten sessions: 3 on Sunday, 4..10 on the seven business days from Monday 07-20.
                 expect(txPrismaService.client.update).toHaveBeenCalledWith({
                     where: { id: CLIENT_ID },
-                    data: { endDate: toDbDate("2026-07-28") },
+                    data: { endDate: toDbDate("2026-07-28"), serviceStatus: "pre_booking" },
                 });
             });
 

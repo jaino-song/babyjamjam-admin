@@ -3,6 +3,7 @@ import { parse } from "cookie";
 
 import { isPublicAuthPath } from "@/lib/auth/routes";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
+import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 import { captureApiError } from "@/lib/observability/capture-api-error";
 import { safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 
@@ -311,6 +312,21 @@ api.interceptors.response.use(
                 // query sees the error for the endpoint it actually requested.
                 return Promise.reject(err);
             }
+        }
+
+        const requestPath = getRequestPath(originalRequest);
+        if (
+            err.response?.status === 403
+            && originalRequest
+            && requestPath !== "/auth/me"
+            && requestPath !== "/api/auth/me"
+            && !isEformsignRequestPath(requestPath)
+            && !isEformsignRefreshPath(requestPath)
+        ) {
+            // Load lazily, as in resetAuthorityState: unrelated consumers can
+            // import the transport without constructing the shared QueryClient.
+            const { getQueryClient } = await import("@/lib/queryClient");
+            void getQueryClient().invalidateQueries({ queryKey: AUTH_USER_QUERY_KEY });
         }
 
         captureApiError(err);

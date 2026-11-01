@@ -125,6 +125,14 @@ describe("AgentAutomationRecordStoreService schedule-write successors", () => {
         });
 
         expect(tx.message_trigger_job.create).toHaveBeenCalledTimes(1);
+        expect(tx.message_trigger_rule.findMany).toHaveBeenCalledWith({
+            where: {
+                OR: [{ branchId }, { branchId: null }],
+                deletedAt: null,
+                eventType: "EMPLOYEE_ASSIGNED",
+            },
+            select: { id: true, branchId: true },
+        });
         const payload = tx.message_trigger_job.create.mock.calls[0]![0].data.payload;
         const terminal = payload[AGENT_AUTOMATION_RECORD_PAYLOAD_KEY];
         expect(terminal.commit).toEqual(expect.objectContaining({
@@ -228,7 +236,7 @@ describe("AgentAutomationRecordStoreService internal marker rule", () => {
         await ensure(tx);
 
         expect(tx.message_trigger_rule.findUnique).toHaveBeenCalledWith({
-            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+            where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID, deletedAt: null },
             select: { id: true },
         });
         expect(tx.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();

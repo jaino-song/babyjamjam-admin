@@ -62,11 +62,17 @@ WHERE target."id" = normalized."id";
 -- Backfill employees with the same deterministic rule. Employee.phone remains
 -- required for display compatibility, so an unparseable legacy value receives
 -- a NULL identity key and is surfaced for remediation instead of being guessed.
+-- Deleted employees (deleted_at IS NOT NULL) are skipped: register_new deliberately
+-- releases their phone_normalized key while retaining the display phone/history.
+-- This file is re-run on every push; backfilling a released key would collide with
+-- the new employee. Rollback warning: never remove this filter after register_new
+-- has released a key, or the next deploy RAISEs on the duplicate identity.
 WITH stripped AS (
     SELECT
         "id",
         regexp_replace("phone", '\D', '', 'g') AS "digits"
     FROM "public"."employee"
+    WHERE "deleted_at" IS NULL
 ), canonical AS (
     SELECT
         "id",

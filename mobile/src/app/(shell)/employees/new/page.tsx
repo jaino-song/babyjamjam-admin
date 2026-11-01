@@ -8,11 +8,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronLeft, X } from "lucide-react";
 
 import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employees/employee-form.constants";
-import { useCreateEmployee } from "@/hooks/useEmployees";
+import { useCreateEmployee, type CreateEmployeeDto } from "@/hooks/useEmployees";
+import { getDeletedPhoneMatch, type DeletedPhoneMatch } from "@/components/app/employees/deleted-phone-match";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { Button } from "@/components/ui/button";
+import { employeeMessages } from "@/features/employees/messages";
+import { EmployeeSmsAutomationField } from "@/components/app/employees/EmployeeSmsAutomationField";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { api } from "@/lib/api/client";
 import { t } from "@/lib/i18n/translations";
-import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useFieldMessages } from "@/hooks/use-field-messages";
@@ -120,6 +125,7 @@ export default function NewEmployeePage() {
   const { currentStep, setField, setCurrentStep, reset } = store;
 
   const [error, setError] = useState<string | null>(null);
+  const [deletedPhoneMatch, setDeletedPhoneMatch] = useState<(DeletedPhoneMatch & { dto: CreateEmployeeDto }) | null>(null);
   const [isCheckingPhoneDuplicate, setIsCheckingPhoneDuplicate] = useState(false);
   const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
@@ -308,22 +314,20 @@ export default function NewEmployeePage() {
     setCurrentStep(nextStep);
   };
 
-  const handleComplete = async () => {
+  const handleComplete = async (onDeletedPhoneMatch?: CreateEmployeeDto["onDeletedPhoneMatch"]) => {
+    if (isBusy) return;
     if (!validateStep(currentStep)) {
       return;
     }
 
     setError(null);
-
+    const dto: CreateEmployeeDto = onDeletedPhoneMatch && deletedPhoneMatch
+      ? { ...deletedPhoneMatch.dto, onDeletedPhoneMatch }
+      : store.getCreateDto();
     try {
-      const newEmployee = await createEmployee.mutateAsync({
-        name: store.name.trim(),
-        workArea: store.workArea,
-        phone: normalizeKoreanPhoneDigits(store.phone),
-        grade: store.grade,
-        openToNextWork: store.openToNextWork,
-      });
+      const newEmployee = await createEmployee.mutateAsync(dto);
 
+      setDeletedPhoneMatch(null);
       reset();
 
       if (returnTo) {
@@ -341,10 +345,15 @@ export default function NewEmployeePage() {
       startNavigation();
       router.push(`/employees?id=${newEmployee.id}`);
     } catch (err: unknown) {
+      const match = getDeletedPhoneMatch(err);
+      if (match) {
+        setDeletedPhoneMatch({ ...match, dto });
+        return;
+      }
+      setDeletedPhoneMatch(null);
       setError(getUserErrorMessage(err, t(locale, "employees.form.error-create-failed")));
     }
   };
-
   const handleExit = () => {
     if (isBusy) return;
     reset();
@@ -367,6 +376,7 @@ export default function NewEmployeePage() {
   };
 
   return (
+    <>
     <div
       className={styles.page}
       data-component="mobile_employees-new_screen_root"
@@ -637,14 +647,14 @@ export default function NewEmployeePage() {
               })}
             </div>
           </div>
-
+          <EmployeeSmsAutomationField data-component="mobile_employees-new_screen_root_wizard_work-step_sms-automation"
+            checked={store.smsAutomationEnabled} onCheckedChange={(checked) => setField("smsAutomationEnabled", checked)} disabled={isBusy} />
           {error && activeStep === 1 && (
             <div className={styles.errorBox} data-component="mobile_employees-new_screen_root_wizard_work-step_error">
               {error && getUserErrorMessage(error)}
             </div>
           )}
         </div>
-
         <div className={styles.actions} data-component="mobile_employees-new_screen_root_wizard_actions">
           <button
             className={cn(styles.actionButton, styles.secondary)}
@@ -665,5 +675,31 @@ export default function NewEmployeePage() {
         </div>
       </div>
     </div>
+    <MobileTwoButtonModal
+      data-component="mobile_employees-new_screen_root_deleted-phone-choice"
+      open={deletedPhoneMatch !== null}
+      title={employeeMessages[locale].deletedPhoneChoice}
+      description={deletedPhoneMatch?.detail}
+      cancelLabel={employeeMessages[locale].cancel}
+      confirmLabel={deletedPhoneMatch?.name !== undefined
+        ? locale === "en" ? `Restore ${deletedPhoneMatch.name}` : `${deletedPhoneMatch.name}님 복원`
+        : employeeMessages[locale].restoreDeleted}
+      confirmVariant="default"
+      loading={isBusy}
+      onOpenChange={(nextOpen) => { if (!nextOpen && !isBusy) setDeletedPhoneMatch(null); }}
+      onCancel={() => { if (!isBusy) setDeletedPhoneMatch(null); }}
+      onConfirm={() => handleComplete("restore")}
+    >
+      <Button
+        data-component="mobile_employees-new_screen_root_deleted-phone-choice_register-new"
+        type="button"
+        variant="outline"
+        disabled={isBusy}
+        onClick={() => void handleComplete("register_new")}
+      >
+        {employeeMessages[locale].registerNew}
+      </Button>
+    </MobileTwoButtonModal>
+    </>
   );
 }

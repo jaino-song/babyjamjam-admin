@@ -10,6 +10,18 @@ DO $$
 DECLARE
     _offending_rows jsonb;
 BEGIN
+    -- 20260829130000 replaces raw-phone uniqueness with canonical identity.
+    -- Only a valid unique replacement on this table proves supersession: absence
+    -- of the old index also occurs on first apply. Never inspect deleted_at here
+    -- (it does not exist yet on first apply). register_new keeps display phones.
+    IF EXISTS (
+        SELECT 1 FROM pg_index
+        WHERE indexrelid = to_regclass('public.employee_branch_id_phone_normalized_key')
+          AND indrelid = 'public.employee'::regclass AND indisunique AND indisvalid
+    ) THEN
+        RETURN;
+    END IF;
+
     SELECT jsonb_agg(to_jsonb(duplicate_group))
     INTO _offending_rows
     FROM (
@@ -109,8 +121,19 @@ ALTER TABLE "public"."employee"
     DROP CONSTRAINT IF EXISTS "employee_phone_key";
 DROP INDEX IF EXISTS "public"."employee_phone_key";
 
-CREATE UNIQUE INDEX IF NOT EXISTS "employee_branch_id_phone_key"
-    ON "public"."employee"("branch_id", "phone");
+DO $$
+BEGIN
+    -- Same supersession guard as the preflight: do not resurrect the raw-phone
+    -- index deliberately dropped by the canonical-phone migration.
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_index
+        WHERE indexrelid = to_regclass('public.employee_branch_id_phone_normalized_key')
+          AND indrelid = 'public.employee'::regclass AND indisunique AND indisvalid
+    ) THEN
+        CREATE UNIQUE INDEX IF NOT EXISTS "employee_branch_id_phone_key"
+            ON "public"."employee"("branch_id", "phone");
+    END IF;
+END $$;
 
 CREATE SEQUENCE IF NOT EXISTS "public"."employee_id_seq";
 ALTER SEQUENCE "public"."employee_id_seq"

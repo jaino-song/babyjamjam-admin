@@ -17,6 +17,6 @@ it("retries the log id and invalidates both global and customer histories", asyn
   await mutation.mutationFn(42);
   await mutation.onSuccess();
   expect(messageTriggersApi.retryHistory).toHaveBeenCalledWith(42);
-  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.history() });
-  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messages", "logs", "client", 7] });
+  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.all });
+  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messages", "logs"] });
 });

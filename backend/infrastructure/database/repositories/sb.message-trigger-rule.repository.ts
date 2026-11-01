@@ -41,7 +41,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         const rows = await (transaction ?? this.prisma).message_trigger_rule.findMany({
             // Fixed system automations are global so every branch can see the
             // routine that is able to create its scheduled jobs.
-            where: { OR: [{ branchId }, { branchId: null }] },
+            where: { deletedAt: null, OR: [{ branchId }, { branchId: null }] },
             orderBy: { createdAt: "desc" },
         });
         return rows.map((row) => this.toDomain(row));
@@ -53,7 +53,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerRuleEntity | null> {
         const row = await (transaction ?? this.prisma).message_trigger_rule.findFirst({
-            where: { id, branchId },
+            where: { id, branchId, deletedAt: null },
         });
         return row ? this.toDomain(row) : null;
     }
@@ -68,7 +68,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerRuleEntity | null> {
         const row = await (transaction ?? this.prisma).message_trigger_rule.findFirst({
-            where: { id, OR: [{ branchId }, { branchId: null }] },
+            where: { id, deletedAt: null, OR: [{ branchId }, { branchId: null }] },
         });
         return row ? this.toDomain(row) : null;
     }
@@ -81,6 +81,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             where: {
                 branchId,
                 isActive: true,
+                deletedAt: null,
                 eventType: { in: eventTypes },
             },
             orderBy: { createdAt: "desc" },
@@ -102,10 +103,12 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             : branchIdOrTransaction ?? transaction ?? this.prisma;
         const where = branchId === undefined
             ? {
+                deletedAt: null,
                 isActive: true,
                 templateKey: { in: templateKeys },
             }
             : {
+                deletedAt: null,
                 OR: [{ branchId }, { branchId: null }],
                 isActive: true,
                 templateKey: { in: templateKeys },
@@ -123,6 +126,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             where: {
                 isDefault: true,
                 isActive: false,
+                deletedAt: null,
             },
             orderBy: { updatedAt: "asc" },
             take: limit,
@@ -132,7 +136,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
 
     async findStaleRules(limit = 10): Promise<MessageTriggerRuleEntity[]> {
         const rows = await this.prisma.message_trigger_rule.findMany({
-            where: { jobsStale: true },
+            where: { jobsStale: true, deletedAt: null },
             orderBy: { updatedAt: "asc" },
             take: limit,
         });
@@ -170,7 +174,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerRuleEntity> {
         const row = await (transaction ?? this.prisma).message_trigger_rule.update({
-            where: { id: rule.id, branchId },
+            where: { id: rule.id, branchId, deletedAt: null },
             data: {
                 branchId,
                 name: rule.name,
@@ -199,6 +203,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             where: {
                 id: expected.id,
                 branchId,
+                deletedAt: null,
                 name: expected.name,
                 isActive: expected.isActive,
                 eventType: expected.eventType,
@@ -261,6 +266,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 FROM "message_trigger_rule"
                 WHERE id = ${expected.id}
                   AND branch_id = ${branchId}::uuid
+                  AND deleted_at IS NULL
                 FOR UPDATE
             `);
             const current = rows[0] ? this.rawToDomain(rows[0]) : null;
@@ -305,6 +311,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     updated_at = date_trunc('milliseconds', clock_timestamp())
                 WHERE id = ${expected.id}
                   AND branch_id = ${branchId}::uuid
+                  AND deleted_at IS NULL
                 RETURNING
                     id,
                     branch_id,
@@ -351,7 +358,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             // (`clearJobsStaleIfUnchanged`) still moves: every caller creates/updates the rule in the same
             // transaction just before (a Prisma write, which sets `@updatedAt`), so skipping this write
             // never leaves the fence behind.
-            where: { id: ruleId, branchId, jobsStale: false },
+            where: { id: ruleId, branchId, deletedAt: null, jobsStale: false },
             data: { jobsStale: true },
         });
     }
@@ -368,7 +375,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             // realtime hint). The first creation is an atomic `createMany({ skipDuplicates })`, i.e.
             // INSERT ... ON CONFLICT DO NOTHING: `upsert({ update: {} })` is a read then an insert in Prisma,
             // so concurrent first creators raise P2002 and abort a surrounding transaction (25P02).
-            const existing = await client.message_trigger_rule.findUnique({ where: { id: rule.id }, select: { id: true } });
+            const existing = await client.message_trigger_rule.findUnique({ where: { id: rule.id, deletedAt: null }, select: { id: true } });
             if (existing) return;
             await client.message_trigger_rule.createMany({
                 data: [{
@@ -400,6 +407,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         const result = await (transaction ?? this.prisma).message_trigger_rule.updateMany({
             where: {
                 id: ruleId,
+                deletedAt: null,
                 jobsStale: true,
                 updatedAt: updatedAtAtReadTime,
             },
@@ -413,8 +421,10 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
     }
 
     async delete(branchId: string, id: string): Promise<void> {
-        await this.prisma.message_trigger_rule.deleteMany({
-            where: { id, branchId },
+        if (MessageTriggerRuleEntity.isReservedId(id)) return;
+        await this.prisma.message_trigger_rule.updateMany({
+            where: { id, branchId, deletedAt: null, isDefault: false },
+            data: { deletedAt: new Date(), isActive: false, jobsStale: false },
         });
     }
 
@@ -422,10 +432,12 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         branchId: string,
         expected: MessageTriggerRuleEntity,
     ): Promise<boolean> {
-        const result = await this.prisma.message_trigger_rule.deleteMany({
+        if (MessageTriggerRuleEntity.isReservedId(expected.id) || expected.isDefault) return false;
+        const result = await this.prisma.message_trigger_rule.updateMany({
             where: {
                 id: expected.id,
                 branchId,
+                deletedAt: null,
                 name: expected.name,
                 isActive: expected.isActive,
                 eventType: expected.eventType,
@@ -440,6 +452,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 retryOnFailure: expected.retryOnFailure,
                 updatedAt: expected.updatedAt,
             },
+            data: { deletedAt: new Date(), isActive: false, jobsStale: false },
         });
         return result.count === 1;
     }
@@ -450,6 +463,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         reason: string,
         fenceStartedAt?: Date,
     ): Promise<boolean> {
+        if (MessageTriggerRuleEntity.isReservedId(expected.id) || expected.isDefault) return false;
         return this.prisma.$transaction(async (transaction) => {
             const rows = await transaction.$queryRaw<MessageTriggerRuleRawRow[]>(Prisma.sql`
                 SELECT
@@ -472,10 +486,11 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 FROM "message_trigger_rule"
                 WHERE id = ${expected.id}
                   AND branch_id = ${branchId}::uuid
+                  AND deleted_at IS NULL
                 FOR UPDATE
             `);
             const current = rows[0] ? this.rawToDomain(rows[0]) : null;
-            if (!current || !this.sameTarget(current, expected, branchId)) {
+            if (!current || current.isDefault || !this.sameTarget(current, expected, branchId)) {
                 return false;
             }
 
@@ -507,9 +522,11 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             `);
 
             const deletedRows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-                DELETE FROM "message_trigger_rule"
+                UPDATE "message_trigger_rule"
+                SET deleted_at = now(), is_active = false, jobs_stale = false, updated_at = now()
                 WHERE id = ${expected.id}
                   AND branch_id = ${branchId}::uuid
+                  AND deleted_at IS NULL
                 RETURNING id
             `);
             return deletedRows.length === 1;

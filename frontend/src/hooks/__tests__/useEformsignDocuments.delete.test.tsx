@@ -49,5 +49,6 @@ describe("useDeleteEformsignDocument", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: eformsignQueryKeys.documents(),
     });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["clients"] });
   });
 });

@@ -1,4 +1,5 @@
 import {
+    BadRequestException,
     Body,
     Controller,
     Get,
@@ -74,6 +75,7 @@ import {
 } from "application/services/eformsign-credential-boundary.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 type RecoveryRejection = Exclude<
     ClaimRecoveryResult | ResolveManuallyResult,
@@ -236,12 +238,16 @@ export class EformsignDocController {
      */
     @Post()
     async create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateEformsignDocLocalDto) {
+        const statusType = normalizeEformsignStatusCode(dto.statusType);
+        if (!/^[0-9]{3}$/.test(statusType)) {
+            throw new BadRequestException(codeOnlyProblemBody("VALIDATION_FAILED"));
+        }
         this.logger.log(`[POST /eformsign-docs] Received request to create doc record: documentId=${dto.documentId}, clientId=${dto.clientId}`);
         try {
             const result = await this.eformsignDocService.create(tenant.branchId ?? "", {
                 documentId: dto.documentId,
                 clientId: dto.clientId,
-                statusType: dto.statusType,
+                statusType,
                 statusDetail: dto.statusDetail,
                 stepType: dto.stepType,
                 stepIndex: dto.stepIndex,

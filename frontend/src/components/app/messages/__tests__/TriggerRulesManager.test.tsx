@@ -1227,6 +1227,23 @@ describe("TriggerRulesManager", () => {
     });
   });
 
+  it("hides default rule deletion while keeping its activation toggle available", async () => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [{ id: "default-rule", branchId: "branch-1", name: "기본 안내", isDefault: true, isActive: true,
+        eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 7,
+        recipientType: "CLIENT", templateKey: "SERVICE_INFO", targetClientStatus: "all", retryOnFailure: true,
+        createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:00:00.000Z" }],
+      isLoading: false, refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+    render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
+    expect(screen.getByRole("switch", { name: "기본 안내 활성화" })).toBeEnabled();
+    fireEvent.click(screen.getByText("기본 안내"));
+    expect(await screen.findByLabelText("규칙 이름")).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "삭제" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "저장" })).toBeInTheDocument();
+  });
+
   it("keeps global service-record content read-only while allowing branch activation", async () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerRules.mockReturnValue({

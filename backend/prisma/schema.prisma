@@ -1095,8 +1095,8 @@ model message_log {
 }
 
 /// Database note: partial unique index `uniq_message_trigger_rule_default` on
-/// (branch_id, template_key) WHERE is_default = true exists in the database but
-/// cannot be expressed in Prisma (created via migration/patch SQL).
+/// (branch_id, template_key) WHERE is_default = true AND deleted_at IS NULL.
+/// It exists in the database but cannot be expressed in Prisma (migration/patch SQL).
 model message_trigger_rule {
   id            String                @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId      String?               @map("branch_id") @db.Uuid
@@ -1110,6 +1110,7 @@ model message_trigger_rule {
   templateKey   String                @map("template_key")
   isDefault     Boolean               @default(false) @map("is_default")
   jobsStale     Boolean               @default(false) @map("jobs_stale")
+  deletedAt     DateTime?             @map("deleted_at") @db.Timestamptz(6)
   /// 대상 고객 상태 (규칙 메시지-04): all | pre_booking | waiting | active.
   targetClientStatus String           @default("all") @map("target_client_status") @db.VarChar(20)
   /// 실패 시 재전송 (규칙 메시지-04): false면 일시 실패를 자동으로 다시 보내지 않는다.

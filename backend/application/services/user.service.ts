@@ -19,6 +19,7 @@ import { AdminAuditActor, AdminAuditEventWriter } from "application/services/adm
 import { UserMapper } from "infrastructure/database/mapper/user.mapper";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
 
 const MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS = 3;
 
@@ -226,6 +227,7 @@ export class UserService {
         const callerId = (params.actor ?? currentAdminAuditActor())?.userId;
         const runTransaction = () => this.prismaService.$transaction(async (tx) => {
             await this.assertCallerStillOwner(tx, callerId);
+            await this.lockRow(tx, "user", id);
             const target = await tx.user.findUnique({
                 where: { id },
                 select: {
@@ -478,7 +480,7 @@ export class UserService {
             try {
                 return await runTransaction();
             } catch (error) {
-                if (!isPrismaTransactionWriteConflict(error)) {
+                if (!isTransactionConflict(error)) {
                     throw error;
                 }
                 if (attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
@@ -1117,8 +1119,32 @@ export class UserService {
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
-        return this.prismaService.$transaction(async (tx) => {
+        return runTransactionWithConflictRetry(this.prismaService, async (tx) => {
             await this.assertCallerStillOwner(tx, params.approvedBy);
+            await this.lockRow(tx, "user", id);
+            const target = await tx.user.findUnique({
+                where: { id },
+                select: { id: true, role: true, approvalStatus: true },
+            });
+            if (!target) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            if (target.id === params.approvedBy || target.id === params.actor?.userId) {
+                throw new ForbiddenException(this.selfApprovalProblem());
+            }
+            if (target.role === "owner") {
+                throw new ForbiddenException(this.ownerApprovalProblem());
+            }
+
+            // 지점 소유권은 먼저 명시적으로 이전해야 해요. 승인으로 지점장을 강등하지 않아요.
+            // admin is the only owner-capable role accepted by ApproveUserDto.
+            if (params.role !== "admin") {
+                const ownedBranch = await tx.branch.findFirst({ where: { ownerId: id }, select: { id: true } });
+                if (ownedBranch) {
+                    throw new ConflictException(this.branchOwnershipProblem());
+                }
+            }
+
             const branch = await tx.branch.findUnique({
                 where: { id: params.branchId },
                 select: { id: true },
@@ -1231,7 +1257,7 @@ export class UserService {
                 branchId: params.ownerBranchId ?? params.branchId,
                 targetType: "user",
                 targetId: id,
-                before: { id, role: null, approvalStatus: "pending" },
+                before: { id, role: target.role, approvalStatus: target.approvalStatus },
                 after: {
                     id,
                     role: user.role,
@@ -1273,7 +1299,7 @@ export class UserService {
     }
 
     reject(id: string, actor?: AdminAuditActor): Promise<UserApprovalSummary> {
-        return this.prismaService.$transaction(async (tx) => {
+        return runTransactionWithConflictRetry(this.prismaService, async (tx) => {
             const effectiveActor = actor ?? currentAdminAuditActor();
             await this.assertCallerStillOwner(tx, effectiveActor?.userId);
             if (effectiveActor?.userId && effectiveActor.userId === id) {
@@ -1360,6 +1386,24 @@ export class UserService {
         });
     }
 
+    /** 403 body: an actor may not approve their own admission. */
+    private selfApprovalProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "본인 계정은 승인할 수 없어요.",
+        });
+    }
+
+    /** 403 body: a global owner's admission may not be changed through approval. */
+    private ownerApprovalProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "오너 계정은 이 경로로 승인/역할을 바꿀 수 없어요.",
+        });
+    }
+
     /** 403 body: an actor may not reject their own admission. */
     private selfRejectionProblem() {
         return problemBody("ACCESS_DENIED", {
@@ -1379,26 +1423,24 @@ export class UserService {
     }
 }
 
-function isPrismaTransactionWriteConflict(error: unknown): boolean {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "P2034";
-}
-
 async function runSerializableTransaction<T>(
     prisma: PrismaService,
     callback: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
+    return runTransactionWithConflictRetry(prisma, callback, Prisma.TransactionIsolationLevel.Serializable);
+}
+
+/** Retry only rolled-back database conflicts; admission keeps the database's default isolation. */
+async function runTransactionWithConflictRetry<T>(
+    prisma: PrismaService,
+    callback: (tx: Prisma.TransactionClient) => Promise<T>,
+    isolationLevel?: Prisma.TransactionIsolationLevel,
+): Promise<T> {
     for (let attempt = 1; attempt <= MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS; attempt += 1) {
         try {
-            return await prisma.$transaction(callback, {
-                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            });
+            return await prisma.$transaction(callback, isolationLevel ? { isolationLevel } : undefined);
         } catch (error) {
-            if (!isPrismaTransactionWriteConflict(error) || attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
-                throw error;
-            }
+            if (!isTransactionConflict(error)) throw error;
         }
     }
     throw new ConflictException(problemBody("REQUEST_CONFLICT", {

@@ -1061,7 +1061,7 @@ describe("MessageAutomationIntentService", () => {
             await persist(service, transaction);
 
             expect(transaction.message_trigger_rule.findUnique).toHaveBeenCalledWith({
-                where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                where: { id: MESSAGE_AUTOMATION_INTENT_RULE_ID, deletedAt: null },
                 select: { id: true },
             });
             expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();

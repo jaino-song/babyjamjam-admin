@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
+import { employeeQueryKeys } from "@/hooks/useEmployees";
 import { clientQueryKeys, useCreateClient, useUpdateClient } from "../useClients";
 
 jest.mock("@tanstack/react-query", () => ({
@@ -37,12 +39,26 @@ describe("legacy client mutation message job invalidation", () => {
 
     it("invalidates upcoming jobs after updating a client", async () => {
         const mutation = useUpdateClient() as unknown as {
-            onSuccess: (client: { id: number }, variables: { id: number }) => Promise<void>;
+            onSuccess: (client: { id: number }, variables: { id: number; dto: object }) => Promise<void>;
         };
 
-        await mutation.onSuccess({ id: 42 }, { id: 42 });
+        await mutation.onSuccess({ id: 42 }, { id: 42, dto: {} });
 
         expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: clientQueryKeys.all });
         expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() });
+        expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: serviceRecordKeys.clientOverview(42) });
+        expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: employeeQueryKeys.all });
     });
+
+    it.each([{ primaryEmployeeId: 9 }, { primaryEmployeeId: null }, { secondaryEmployeeId: 9 }, { secondaryEmployeeId: null }])(
+        "invalidates employee views when assignment fields are supplied: %j", async (dto) => {
+            const mutation = useUpdateClient() as unknown as {
+                onSuccess: (client: { id: number }, variables: { id: number; dto: object }) => Promise<void>;
+            };
+
+            await mutation.onSuccess({ id: 42 }, { id: 42, dto });
+
+            expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: employeeQueryKeys.all });
+        },
+    );
 });

@@ -1,0 +1,167 @@
+import { act, renderHook } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
+
+import { useRealtimeInvalidation } from "@/hooks/useRealtimeInvalidation";
+
+// The mock factory cannot reference the `MockEventSource` class (imports and
+// the class body are hoisted relative to the jest.mock call), so it resolves
+// through a constructor that the class registers on globalThis at load time.
+jest.mock("@/lib/api/authenticated-fetch", () => ({
+    openAuthenticatedEventSource: (url: string) => {
+        const ctor = (
+            globalThis as { __siMockEventSourceCtor?: (new (url: string) => unknown) | undefined }
+        ).__siMockEventSourceCtor;
+        if (!ctor) throw new Error("SI-EMP-08 mock EventSource constructor not registered");
+        return Promise.resolve(new ctor(url));
+    },
+}));
+
+type IntegrityBody = () => Promise<void> | void;
+function invariant(id: string, title: string, body: IntegrityBody): void {
+    it(`${id} ${title}`, async () => { await body(); });
+}
+
+/** jsdom has no EventSource — a controllable fake, mirroring the app's own stream-test harness. */
+type SseListener = (event: { type: string; data?: string }) => void;
+
+class MockEventSource {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    static instances: MockEventSource[] = [];
+
+    readonly url: string;
+    readyState = MockEventSource.CONNECTING;
+    closed = false;
+    private readonly listeners = new Map<string, Set<SseListener>>();
+
+    constructor(url: string) {
+        this.url = url;
+        MockEventSource.instances.push(this);
+    }
+
+    addEventListener(type: string, cb: SseListener): void {
+        if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+        this.listeners.get(type)!.add(cb);
+    }
+
+    removeEventListener(type: string, cb: SseListener): void {
+        this.listeners.get(type)?.delete(cb);
+    }
+
+    close(): void {
+        this.closed = true;
+        this.readyState = MockEventSource.CLOSED;
+    }
+
+    emit(type: string, data?: unknown): void {
+        const event = { type, data: typeof data === "string" ? data : JSON.stringify(data ?? {}) };
+        this.listeners.get(type)?.forEach((cb) => cb(event));
+    }
+
+    fireOpen(): void {
+        this.readyState = MockEventSource.OPEN;
+        this.emit("open");
+    }
+}
+
+(globalThis as { __siMockEventSourceCtor?: unknown }).__siMockEventSourceCtor = MockEventSource;
+
+describe("SI-EMP-08 employee caches after assignment/schedule changes (mobile)", () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+        MockEventSource.instances = [];
+        (global as unknown as { EventSource: unknown }).EventSource = MockEventSource;
+    });
+
+    afterEach(() => {
+        jest.clearAllTimers();
+        jest.useRealTimers();
+        delete (global as unknown as { EventSource?: unknown }).EventSource;
+    });
+
+    invariant(
+        "SI-EMP-08",
+        "realtime: an assignment change announced as service-record kind invalidates employee queries",
+        async () => {
+            const queryClient = new QueryClient();
+            const targets: Array<unknown> = [];
+            // Record every invalidateQueries call (the base implementation is
+            // stubbed so the seeded queries never refetch); the defect
+            // assertion below keys on the recorded targets.
+            jest.spyOn(queryClient, "invalidateQueries").mockImplementation(((filters: unknown) => {
+                targets.push(filters);
+                return Promise.resolve();
+            }) as never);
+            const wrapper = ({ children }: { children: ReactNode }) => (
+                <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+            );
+            const { unmount } = renderHook(() => useRealtimeInvalidation("user-1:branch-a"), { wrapper });
+
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const source = MockEventSource.instances[0];
+            act(() => {
+                source.fireOpen();
+            });
+
+            // The backend announces `employee_schedule` writes with the
+            // `service-record` kind; a live assignment change is exactly this
+            // payload on the mobile stream.
+            act(() => {
+                source.emit("entity-changed", { entities: ["service-record"] });
+            });
+
+            const rootOf = (filters: unknown): unknown =>
+                filters && typeof filters === "object" && "queryKey" in (filters as Record<string, unknown>)
+                    ? (filters as { queryKey: unknown }).queryKey
+                    : null;
+            const invalidatedRoots = targets.map(rootOf);
+            // Sanity: the event was consumed and invalidated its own root.
+            expect(invalidatedRoots.some((root) => JSON.stringify(root) === JSON.stringify(["service-records"]))).toBe(
+                true,
+            );
+            // The correct behavior: mobile employee views must refresh too. The
+            // defect assertion throws with a defect-specific message — the only
+            // one `expectedFailure` matches — so an infra/fixture failure
+            // ("Expected: true"-shaped) turns RED instead of a green
+            // false-CONFIRMED.
+            if (!invalidatedRoots.some((root) => JSON.stringify(root) === JSON.stringify(["employees"]))) {
+                throw new Error(
+                    "SI-EMP-08 mobile defect: employee queries were not invalidated by the service-record entity-changed event",
+                );
+            }
+
+            unmount();
+        },
+    );
+
+    invariant(
+        "SI-EMP-08",
+        "DTO parity: the mobile employee and write DTOs carry smsAutomationEnabled",
+        async () => {
+            // Interfaces are erased at runtime. Inspect the actual exported
+            // contract, not a cast object that would retain arbitrary fields.
+            const path = join(process.cwd(), "src/hooks/useEmployees.ts");
+            const source = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+            const contracts = source.statements.filter(ts.isInterfaceDeclaration);
+            const missing: string[] = [];
+            for (const name of ["Employee", "CreateEmployeeDto", "UpdateEmployeeDto"]) {
+                const contract = contracts.find((node) => node.name.text === name);
+                expect(contract).toBeDefined();
+                expect(contract?.members.some((member) => member.name?.getText(source) === "openToNextWork")).toBe(true);
+                if (!contract?.members.some((member) => member.name?.getText(source) === "smsAutomationEnabled")) {
+                    missing.push(name);
+                }
+            }
+            if (missing.length) {
+                throw new Error(`SI-EMP-08 mobile parity defect: smsAutomationEnabled missing from ${missing.join(", ")}`);
+            }
+        },
+    );
+});

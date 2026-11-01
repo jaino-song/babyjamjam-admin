@@ -1,30 +1,39 @@
 import { Transform } from "class-transformer";
 import { IsArray, IsBoolean, IsDateString, IsIn, IsNotEmpty, IsOptional, IsString, ValidateIf } from "class-validator";
+
 import { EMPLOYEE_GRADES, normalizeEmployeeGrade } from "domain/constants/employee-grade.constants";
-import { IsCanonicalPhone } from "./canonical-phone.validator";
+import type { DeletedEmployeePhoneMatchAction } from "domain/repositories/employee.repository.interface";
 
 import { IsBirthdayDate } from "./birthday.validator";
+import { IsCanonicalPhone } from "./canonical-phone.validator";
 
 export class CreateEmployeeDto {
+    @ValidateIf((_, value) => value !== undefined)
+    @IsIn(["restore", "register_new"])
+    onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction;
+
     @IsString()
     name!: string;
 
+    @ValidateIf((_, value) => value !== undefined)
     @IsArray()
     @IsString({ each: true })
-    workArea!: string[];
+    workArea?: string[];
 
     @IsString()
     @IsNotEmpty()
     @IsCanonicalPhone()
     phone!: string;
 
+    @ValidateIf((_, value) => value !== undefined)
     @IsString()
     @Transform(({ value }) => typeof value === "string" ? normalizeEmployeeGrade(value) : value)
     @IsIn(EMPLOYEE_GRADES)
-    grade!: string;
+    grade?: string;
 
+    @ValidateIf((_, value) => value !== undefined)
     @IsBoolean()
-    openToNextWork!: boolean;
+    openToNextWork?: boolean;
 
     @IsOptional()
     @IsDateString()
