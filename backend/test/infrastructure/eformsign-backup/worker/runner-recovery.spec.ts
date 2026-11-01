@@ -9,7 +9,7 @@ import { controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runn
 import { probeFor } from "./helpers/destination-support";
 import { spawnUnderFlock } from "./helpers/runner-flock-support";
 import {
-    ARCHIVE_ID, COMPANY, archivePdfs, createHarness, destroyHarness, identityFor, initArchive, listFiles, pairDoc, readCompletions,
+    ARCHIVE_ID, COMPANY, archivePdfs, createHarness, destroyHarness, destinationStates, identityFor, initArchive, listFiles, pairDoc, readCompletions,
     readJsonFile, readLedgerRecords, runOnce, singleDoc, transitionPath, treeSignature, tryRun, withWorker, type Harness,
 } from "./helpers/runner-support";
 
@@ -392,6 +392,107 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
             await expect(recover("install-window-1")).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
             expect(await treeSignature(h.control)).toBe(before);
         });
+    });
+
+    describe("resumable recover (BJJ-455 P2 3.4-f)", () => {
+        const FIRST = "recover-after-first-recovered";
+        const recoveredIdentities = async (): Promise<string[]> =>
+            (await readLedgerRecords(h.control)).filter((record) => record.type === "recovered_verified").map((record) => record.body["artifactIdentity"] as string);
+        const expectedIdentities = (): string[] => ["D001", "D002"].flatMap((doc) => [
+            identityFor(h, pairDoc(doc), "document"), identityFor(h, pairDoc(doc), "audit_trail"),
+        ]).sort();
+
+        /** A recover killed right after its first `recovered_verified` record: the ledger is ok, origin recovery_started, one of four re-hashed. */
+        async function killedMidRecover(): Promise<string> {
+            await history();
+            const id = await installationOf();
+            await corruptLedger();
+            const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", id, "--kill-at", FIRST]);
+            expect(await child.exited).toEqual({ code: null, signal: "SIGKILL" });
+            expect((await readLedgerRecords(h.control)).map((record) => record.type)).toEqual(["recovery_started", "recovered_verified"]);
+            return id;
+        }
+
+        it("(a) should resume after a SIGKILL following the first recovered_verified: every archived artifact ends recovered_verified, no duplicates", async () => {
+            const id = await killedMidRecover();
+
+            const result = await recover(id);
+
+            expect(result).toMatchObject({ outcome: "finished", recovered: 3, unverified: 0, sequenceFloor: 2 });
+            const identities = await recoveredIdentities();
+            expect(identities).toHaveLength(4);
+            expect([...identities].sort()).toEqual(expectedIdentities());
+            expect(Object.values(await destinationStates(h.control))).toEqual(["verified", "verified", "verified", "verified"]);
+            expect((await readLedgerRecords(h.control)).filter((record) => record.type === "recovery_started")).toHaveLength(1);
+            expect((await fs.readdir(h.control)).filter((name) => name.startsWith("ledger.quarantine-"))).toHaveLength(1);
+            expect((await runOnce(h)).sequence).toBe(3);
+        }, 120_000);
+
+        it("(b) should refuse, exit 69, and write nothing when a run started after the recovery", async () => {
+            await history();
+            const id = await installationOf();
+            await corruptLedger();
+            await recover(id);
+            await runOnce(h);
+            expect((await readLedgerRecords(h.control)).some((record) => record.type === "run_started")).toBe(true);
+            const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+
+            await expect(recover(id)).rejects.toMatchObject({ reasonCode: "ledger-inconsistent" });
+            const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", id]);
+            expect(await child.exited).toEqual({ code: 69, signal: null });
+
+            expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+        }, 120_000);
+
+        it("(c1) should refuse a different installation id with archive-identity-mismatch, exit 69, and write nothing", async () => {
+            await killedMidRecover();
+            const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+
+            await expect(recover("other-installation")).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+            const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", "other-installation"]);
+            expect(await child.exited).toEqual({ code: 69, signal: null });
+
+            expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+        }, 120_000);
+
+        it("(c2) should refuse a swapped archive root with archive-identity-mismatch and write nothing", async () => {
+            const id = await killedMidRecover();
+            await swapArchive(h);
+            const before = [await treeSignature(h.control), await treeSignature(h.archive)];
+
+            await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
+
+            expect([await treeSignature(h.control), await treeSignature(h.archive)]).toEqual(before);
+        }, 120_000);
+
+        it("(c3) should refuse with archive-marker-invalid, exit 69, and leave the journal byte for byte unchanged when the archive marker is gone but the root inode is the same", async () => {
+            const id = await killedMidRecover();
+            await fs.rename(path.join(h.archive, ".bjj-backup"), path.join(h.base, "bjj-backup.away"));
+            const before = await treeSignature(h.control);
+
+            await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-marker-invalid" });
+            const child = spawnUnderFlock(h, ["recover", "--config", h.configPath, "--installation-id", id]);
+            expect(await child.exited).toEqual({ code: 69, signal: null });
+
+            expect(await treeSignature(h.control)).toBe(before);
+        }, 120_000);
+
+        it("(d) should append nothing when recover runs again after a completed recovery", async () => {
+            await history();
+            const id = await installationOf();
+            await corruptLedger();
+            await recover(id);
+            const records = (await readLedgerRecords(h.control)).length;
+            const before = await treeSignature(h.control);
+
+            for (let again = 0; again < 2; again += 1) {
+                expect(await recover(id)).toMatchObject({ outcome: "finished", recovered: 0, unverified: 0, sequenceFloor: 2 });
+            }
+
+            expect((await readLedgerRecords(h.control)).length).toBe(records);
+            expect(await treeSignature(h.control)).toBe(before);
+            expect(new Set(await recoveredIdentities()).size).toBe(4);
+        }, 120_000);
     });
 
     describe("a crash inside recover (quarantine window)", () => {
