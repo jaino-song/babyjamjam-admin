@@ -787,6 +787,93 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 3, unverified: 1 });
             });
 
+            describe("backfill proves the archive file and never skips silently (BJJ-455 P2 FU-10-F2)", () => {
+                it("should publish a carried manifest again when the ledger records it but the archive file is gone", async () => {
+                    const { id } = await carried();
+                    const manifest = (await manifestsOf("D001"))[0]!;
+                    const bytes = await fs.readFile(path.join(h.archive, manifest));
+                    await fs.rm(path.join(h.archive, manifest));
+                    const records = (await manifestRecords()).length;
+                    const transitions = (await destinationTransitions(id)).length;
+
+                    await runOnce(h);
+
+                    expect((await fs.readFile(path.join(h.archive, manifest))).equals(bytes)).toBe(true);
+                    expect((await manifestRecords()).length).toBe(records);
+                    expect((await destinationTransitions(id)).length).toBe(transitions);
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 3, unverified: 0, knownGaps: 0 });
+                    expect(await verifyAll()).toMatchObject({ checked: 3 });
+                });
+
+                it("should write nothing once every verified artifact outside the snapshot is listed by a manifest on the archive", async () => {
+                    await carried();
+                    const before = (await listFiles(h.archive)).sort();
+                    const records = (await manifestRecords()).length;
+
+                    await runOnce(h);
+                    await runOnce(h);
+
+                    expect((await listFiles(h.archive)).filter((file) => !file.includes("/runs/") && !file.includes("/completions/")).sort())
+                        .toEqual(before.filter((file) => !file.includes("/runs/") && !file.includes("/completions/")));
+                    expect((await manifestRecords()).length).toBe(records);
+                });
+
+                it("should not fail on missing old history while every verified artifact is already indexed", async () => {
+                    await carried();
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await fs.rm(path.join(ledgerDir(), (await journals())[0]!));
+
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect(await manifestsOf("D001")).toHaveLength(1);
+                });
+
+                /** A normal publication interrupted after `verified`, before any manifest: an orphan whose only evidence is the old journal. */
+                async function orphanWithHistoryOnDisk(): Promise<{ id: string; oldest: string; original: Buffer }> {
+                    const d1 = singleDoc("D001");
+                    h = await createHarness({ docs: [d1] });
+                    await initArchive(h);
+                    await expect(runOnce(h, { runnerFault: (point) => { if (point === "after-verified") throw new Error("old-order-orphan"); } })).rejects.toThrow("old-order-orphan");
+                    const id = identityFor(h, d1, "document");
+                    expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+                    const away = await swapArchive(h);
+                    h.api.docs = [];
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await swapBack(h, away);
+                    const oldest = path.join(ledgerDir(), (await journals())[0]!);
+                    return { id, oldest, original: await fs.readFile(oldest) };
+                }
+
+                it.each(["corrupt", "missing"] as const)("should finish its other work and then end in ledger-inconsistent when the old journal is %s, then backfill once it is back", async (damage) => {
+                    const { id, oldest, original } = await orphanWithHistoryOnDisk();
+                    if (damage === "missing") await fs.rm(oldest);
+                    else await fs.writeFile(oldest, original.toString("utf8").replace('"documentId":"D001"', '"documentId":"D009"'));
+                    const transitions = (await destinationTransitions(id).catch(() => [])).length;
+                    h.api.docs = [pairDoc("D002")];
+
+                    await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "ledger-inconsistent" });
+
+                    // The rest of the run was done and recorded; the verified entry was not touched.
+                    expect(await archivePdfs(h.archive)).toHaveLength(3);
+                    expect((await readCompletions(h.archive)).pop()!.value["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D002"]);
+                    // (A missing journal takes its records with it, so only the intact case can show the entry's history.)
+                    if (damage === "corrupt") {
+                        expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+                        expect((await destinationTransitions(id)).length).toBe(transitions);
+                    }
+                    const finished = (await readLedgerRecords(h.control)).filter((record) => record.type === "run_finished").pop()!;
+                    expect(finished.body["reasonCodes"]).toContain("ledger-inconsistent");
+                    expect(await manifestsOf("D001")).toEqual([]);
+
+                    await fs.writeFile(oldest, original, { mode: 0o600 });
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect(await manifestsOf("D001")).toHaveLength(1);
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 3, unverified: 0 });
+                    expect(await verifyAll()).toMatchObject({ checked: 3 });
+                });
+            });
+
             describe("evidence that cannot authorize a publication", () => {
                 const d1 = singleDoc("D001");
                 /** D001 is staged and blocked; the ledger has been compacted twice so its observation lives only in the oldest journals. */

@@ -9,6 +9,7 @@ import {
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
+import { listManifestFiles, readManifest, type ManifestFile } from "./restore";
 import { readManifestHistory, type ManifestHistory, type ManifestSource } from "./runner-manifest-sources";
 import {
     ExportFailure, type CandidatePageView, type CandidateView, type SnapshotView,
@@ -83,6 +84,8 @@ class RunExecution {
     private readonly work: WorkCandidate[] = [];
     /** Manifest sources rebuilt from the retained journals once per run, before anything of this run is written. */
     private history: ManifestHistory | null = null;
+    /** Verified artifacts that no manifest on the archive lists and that the history cannot rebuild a manifest for. */
+    private readonly unindexed = new Set<string>();
     private totalCandidates = 0;
     private includedCandidates = 0;
 
@@ -123,7 +126,10 @@ class RunExecution {
             if (!(error instanceof StageFailure)) throw error;
             this.snapshotFailure = error.reasonCode;
         }
-        return this.finish();
+        const summary = await this.finish();
+        // Everything else has been done and recorded; the operator must still see that recovery would lose these artifacts.
+        if (this.unindexed.size > 0) throw new WorkerError("ledger-inconsistent");
+        return summary;
     }
 
     // ---- step 4a: crash recovery ---------------------------------------------------------------------------------
@@ -746,22 +752,67 @@ class RunExecution {
         return true;
     }
 
+    /** Every artifact identity that a readable manifest of the given documents lists, read from the archive itself. `null`: the archive is lost. */
+    private async indexedArtifacts(documents: ReadonlySet<string>): Promise<Set<string> | null> {
+        const indexed = new Set<string>();
+        try {
+            const byDocument = new Map<string, ManifestFile[]>();
+            for (const file of await listManifestFiles(this.deps.config.archive.path, this.companyId)) {
+                if (documents.has(file.documentId)) byDocument.set(file.documentId, [...(byDocument.get(file.documentId) ?? []), file]);
+            }
+            for (const [documentId, files] of byDocument) {
+                for (const file of files) {
+                    try {
+                        const manifest = await readManifest(this.archive, file.key, { companyId: this.companyId, documentId, metadataRevision: file.metadataRevision });
+                        for (const artifact of manifest.artifacts) indexed.add(artifact.artifactIdentity);
+                    } catch (error) {
+                        // A manifest that cannot be read or does not hold up indexes nothing; a failing archive is another matter.
+                        if (!(error instanceof WorkerError) || isArchiveSide(error.reasonCode)) throw error;
+                    }
+                }
+            }
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.archiveLost();
+            return null;
+        }
+        return indexed;
+    }
+
     /**
-     * Verified artifacts that left the snapshot while their manifest was never written (published before manifests came
-     * first) get it now, from the same history. Destination entries are not touched. A revision the ledger already has a
-     * manifest for is left alone, so a later run writes nothing; history that cannot vouch for an artifact skips it.
+     * Every verified artifact outside this snapshot must be listed by a manifest that is really on the archive (its file
+     * is read, not the ledger's word for it). One that is not gets its manifest again, built from the history and
+     * published idempotently; the destination entry is not touched. If the history cannot rebuild it, the artifact is
+     * left out of recovery's inventory, so the run does everything else and then ends in `ledger-inconsistent`.
      */
     private async backfillManifests(): Promise<void> {
+        if (!this.archiveOk) return;
         const inSnapshot = new Set(this.work.flatMap((candidate) => candidate.artifacts.map((job) => job.artifactIdentity)));
-        const done = new Set<string>();
-        for (const entry of [...this.state.destinations.values()]) {
-            if (!this.archiveOk) break;
+        const outside: Array<{ id: string; documentId: string }> = [];
+        for (const entry of this.state.destinations.values()) {
             if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
             if (entry.state !== "verified" || inSnapshot.has(entry.artifactIdentity)) continue;
-            const source = this.history?.find(entry.artifactIdentity);
-            if (source === undefined || source === null || source === "invalid") continue;
+            const info = this.state.artifacts.get(entry.artifactIdentity);
+            if (info !== undefined) outside.push({ id: entry.artifactIdentity, documentId: info.documentId });
+        }
+        if (outside.length === 0) return;
+        const indexed = await this.indexedArtifacts(new Set(outside.map((artifact) => artifact.documentId)));
+        if (indexed === null) return;
+        const done = new Set<string>();
+        for (const artifact of outside) {
+            if (!this.archiveOk) break;
+            if (indexed.has(artifact.id)) continue;
+            let source: ManifestSource;
+            try {
+                source = this.manifestSourceFor(artifact.id);
+            } catch (error) {
+                if (!(error instanceof WorkerError)) throw error;
+                this.unindexed.add(artifact.id);
+                this.reasons.add("ledger-inconsistent");
+                continue;
+            }
             const key = manifestKey({ companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision });
-            if (done.has(key) || this.state.manifests.has(key)) continue;
+            if (done.has(key)) continue;
             done.add(key);
             const written = await this.writeManifest(source);
             if (!written.ok) {
