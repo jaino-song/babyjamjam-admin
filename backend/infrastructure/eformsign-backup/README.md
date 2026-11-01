@@ -151,7 +151,17 @@ disabled worker (`"enabled": false`) still has its file validated first.
 | `archive.reserveBytes` | integer | 64 MiB (67108864) to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.requireMountPoint` | boolean | `true`: the archive root must be a mount point (its device differs from its parent's) | `true` |
-| `requestTimeoutMs` | integer | 1 to 600000 | `120000` |
+| `requestTimeoutMs` | integer | 1 to 600000 | `120000`; a deadline for the response headers, and an idle timeout for each body read. There is no total deadline for a download (see below) |
+
+`requestTimeoutMs` is not a limit on how long a run takes. It bounds the wait for
+the response headers of an artifact download, and each single read of the body (the
+timer restarts after every chunk). The worker sets no total deadline for the body, so a
+server that keeps sending a few bytes inside each idle window can hold one download,
+and so the run and its `flock`, for a long time. While it does, every later scheduled
+run exits 75 (skipped, overlapping run). The worker does not bound the run itself.
+Recommendation for the BJJ-457 install: bound each run from outside, for example with
+a systemd service limit such as `RuntimeMaxSec=`. That is a recommendation for the
+installer, not something the worker enforces.
 
 A *normal absolute path* starts with `/`, is not `/` itself, is at most 4096
 characters, has no trailing slash and no empty, `.` or `..` segment, and contains no
@@ -204,7 +214,11 @@ Every refusal below is a reason code only; the path is never printed.
   one trailing newline. Otherwise `token-file-invalid` (exit 78).
 - **Control directory**: must already exist, be a real directory (not a symlink),
   owned by the user running the worker and not writable by group or others, else
-  `control-unavailable` (exit 74). Its ledger files are created 0600 and its
+  `control-unavailable` (exit 74). The exception is a control directory that is
+  missing altogether: `run`, `verify` and `recover` check the lock first, and a
+  missing `<control>/worker.lock` is `lock-not-held` (exit 78), not
+  `control-unavailable`. Only `inspect`, which skips the lock check, reports a
+  missing control directory as `control-unavailable` (exit 74). Its ledger files are created 0600 and its
   directories 0700; `<control>/staging` is created 0700 and must be owned by the worker user and not
   writable by group or others.
   `<control>/worker.lock` must be a regular file (not a symlink); a missing or
@@ -242,7 +256,7 @@ Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no
 | 65 | data is wrong: `restore-conflict`, `artifact-integrity`, `pdf-shape`. Usually nothing is written, but see "Restore from the archive alone": a failure found while copying may leave partial output in `--out` |
 | 66 | nothing to restore: `not-initialized` |
 | 69 | archive: `archive-unavailable`, `archive-unsafe-path`, `archive-identity-mismatch`, `archive-marker-invalid` |
-| 70 | internal: any other reason code or an unexpected error |
+| 70 | internal: any other reason code or an unexpected error, including `artifact-too-large` (an archive file that has grown past the 128 MiB read limit; when it happens while copying, partial output may be left in `--out`) |
 
 ## Never delete `worker.lock` while a run may be active
 
@@ -296,7 +310,9 @@ will copy; a conflict or a bad manifest is found while planning, also before the
 first write. An artifact that changes or disappears after the check, while it is
 being copied, still fails the restore: an integrity failure ends with
 `artifact-integrity` (exit 65), and an artifact replaced by a symlink with
-`archive-unsafe-path` (exit 69). Documents copied before the failure, if any, stay
+`archive-unsafe-path` (exit 69); one that grows past the 128 MiB read limit
+(`READ_MAX_BYTES`) between the check and the copy ends with `artifact-too-large`
+(exit 70). Documents copied before the failure, if any, stay
 in `--out`; nothing is rolled back. `--out` must be a new
 or empty real directory outside the archive; running restore again into a
 non-empty `--out` is refused with `restore-output-invalid` (exit 64). After a failed
