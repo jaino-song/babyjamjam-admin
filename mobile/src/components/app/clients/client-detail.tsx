@@ -28,6 +28,7 @@ import {
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, fetchClient, rejectScheduleChange } from "@/hooks/useClients";
 import { useConfirmBooking } from "@/features/clients";
+import { canEditServiceRecordSchedule } from "@/features/clients/types";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
@@ -1360,7 +1361,7 @@ export function ClientDetailContent({
                 <Send className="size-[15px]" strokeWidth={2} />
                 {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
               </DropdownMenuItem>
-              {canManageBranchFeatures ? (
+              {canManageBranchFeatures && canEditServiceRecordSchedule(client) ? (
                 <DropdownMenuItem
                   onClick={() => setRecordScheduleSheetOpen(true)}
                   className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
