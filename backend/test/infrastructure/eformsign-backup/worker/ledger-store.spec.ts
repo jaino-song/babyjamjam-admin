@@ -767,6 +767,114 @@ describe("quarantineAndReset", () => {
     });
 });
 
+describe("beforeWrite guard", () => {
+    const refuse = (): never => { throw new WorkerError("lock-not-held"); };
+    /** Every file under the control directory with its size, so "nothing was written" is one comparison. */
+    async function snapshot(control: string): Promise<Record<string, number>> {
+        const sizes: Record<string, number> = {};
+        const walk = async (dir: string): Promise<void> => {
+            for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) { sizes[`${path.relative(control, full)}/`] = 0; await walk(full); } else sizes[path.relative(control, full)] = (await fsp.stat(full)).size;
+            }
+        };
+        await walk(control);
+        return sizes;
+    }
+
+    it("runs before the first byte of every append and lets a failing guard abort it untouched, without poisoning the store", async () => {
+        const control = await seeded(3);
+        let allow = true;
+        let seenSize = -1;
+        const store = await openWritable(control, {
+            beforeWrite: () => { seenSize = statSync(journalPath(control)).size; if (!allow) refuse(); },
+        });
+        const before = await fsp.readFile(journalPath(control));
+        await store.append("run_started", runStartedBody(4), fixedAt(4));
+        expect(seenSize).toBe(before.length);
+
+        allow = false;
+        const afterOne = await fsp.readFile(journalPath(control));
+        await expect(store.append("run_started", runStartedBody(5), fixedAt(5))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readFile(journalPath(control))).toEqual(afterOne);
+        expect(store.lastSeq).toBe(4);
+
+        allow = true;
+        await store.append("run_started", runStartedBody(5), fixedAt(5));
+        expect(store.lastSeq).toBe(5);
+        await store.close();
+        const reopened = await LedgerStore.open(control, { readOnly: true });
+        expect(reopened.status).toBe("ok");
+        expect(reopened.lastSeq).toBe(5);
+    });
+
+    it("writes nothing when the guard refuses an append on a fresh store, not even the journal handle's bytes", async () => {
+        const control = await seeded(2);
+        const store = await openWritable(control, { beforeWrite: refuse });
+        const before = await snapshot(control);
+        await expect(store.append("run_started", runStartedBody(3), fixedAt(3))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+        await store.close();
+    });
+
+    it("refuses initialize before the marker, the ledger directory or the journal exist", async () => {
+        const control = await newControl();
+        const store = await openWritable(control, { beforeWrite: refuse });
+        await expect(store.initialize(INSTALL_PARAMS)).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readdir(control)).toEqual([]);
+        expect(store.status).toBe("not_initialized");
+    });
+
+    it("refuses compaction before the checkpoint temp file, but only when it would have compacted", async () => {
+        const control = await seeded(5);
+        const store = await openWritable(control, { beforeWrite: refuse });
+        const before = await snapshot(control);
+        expect(await store.compactIfNeeded(10)).toBe(false);
+        await expect(store.compactIfNeeded(3)).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+        await store.close();
+    });
+
+    it("refuses quarantineAndReset before anything is moved aside", async () => {
+        const control = await seeded(4);
+        const damaged = await fsp.readFile(journalPath(control), "utf8");
+        await fsp.writeFile(journalPath(control), damaged.replace("run_started", "run_startex"));
+        const store = await openWritable(control, { beforeWrite: refuse });
+        expect(store.status).toBe("recovery_required");
+        const before = await snapshot(control);
+        await expect(store.quarantineAndReset(runIdOf(77))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+        expect(store.status).toBe("recovery_required");
+    });
+
+    it("refuses torn-tail repair on open before the tail is quarantined or cut", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), '{"v":1,"seq":4,"ty');
+        const before = await snapshot(control);
+        await expect(openWritable(control, { beforeWrite: refuse })).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+    });
+
+    it("turns a guard failure that is not a WorkerError into control-unavailable and still writes nothing", async () => {
+        const control = await seeded(2);
+        const store = await openWritable(control, { beforeWrite: async () => { throw new Error("EACCES /proc/locks"); } });
+        const before = await snapshot(control);
+        const error = await store.append("run_started", runStartedBody(3), fixedAt(3)).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(WorkerError);
+        expect((error as WorkerError).message).toBe("control-unavailable");
+        expect(await snapshot(control)).toEqual(before);
+        await store.close();
+    });
+
+    it("leaves a store opened without a guard exactly as before", async () => {
+        const control = await seeded(2);
+        const store = await openWritable(control);
+        await store.append("run_started", runStartedBody(3), fixedAt(3));
+        expect(store.lastSeq).toBe(3);
+        await store.close();
+    });
+});
+
 describe("worker runtime file rules", () => {
     const dir = path.resolve(__dirname, "../../../../infrastructure/eformsign-backup/worker");
     it("ledger files import only what contract W1 allows and avoid the forbidden constructs", async () => {

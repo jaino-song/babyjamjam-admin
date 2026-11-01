@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { NFS_SUPER_MAGIC } from "infrastructure/eformsign-backup/worker/fs-probe";
+import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 
 import { spawnUnderFlock, type Spawned } from "./helpers/runner-flock-support";
 import { createHarness, destroyHarness, initArchive, pairDoc, readLedgerRecords, type Harness } from "./helpers/runner-support";
@@ -68,6 +69,41 @@ describe("T-WRK-13: the real lock (flock -n -F -E 75, two real processes)", () =
 
         const lockAfter = await fs.stat(h.lockPath);
         expect([lockAfter.ino, lockAfter.dev, lockAfter.size]).toEqual([lockBefore.ino, lockBefore.dev, lockBefore.size]);
+    }, 240_000);
+
+    it("should stop the writer holding a deleted lock file with lock-not-held before it writes, while the holder of the new lock finishes", async () => {
+        h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+        await initArchive(h);
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        h.api.addFault({ route: "artifact", times: 1, fault: { kind: "stall", until: gate } });
+
+        const first = start(["run", "--config", h.configPath]);
+        await until(() => h.api.artifactRequests().length >= 1, "the first process to ask for an artifact");
+        const oldInode = (await fs.stat(h.lockPath)).ino;
+
+        // An operator deletes the lock while A is mid-run: flock -n creates a new inode, so B takes it without contention.
+        await fs.rm(h.lockPath);
+        const second = start(["run", "--config", h.configPath]);
+        expect(await second.exited).toEqual({ code: 0, signal: null });
+        expect((await fs.stat(h.lockPath)).ino).not.toBe(oldInode);
+
+        const journal = path.join(h.control, "ledger", "journal-000000000001.jsonl");
+        const bytesAfterSecond = await fs.readFile(journal);
+        const recordsAfterSecond = await readLedgerRecords(h.control);
+
+        release();
+        expect(await first.exited).toEqual({ code: 78, signal: null });
+        expect(first.stderr()).toContain("lock-not-held");
+        expect(await fs.readFile(journal)).toEqual(bytesAfterSecond);
+        expect(await readLedgerRecords(h.control)).toEqual(recordsAfterSecond);
+
+        const replayed = await LedgerStore.open(h.control, { readOnly: true });
+        expect(replayed.status).toBe("ok");
+        expect(replayed.reasons).toEqual([]);
+        const seqs = recordsAfterSecond.map((record) => record.seq);
+        expect(seqs).toEqual(seqs.map((_seq, index) => index + 1));
+        expect(replayed.lastSeq).toBe(seqs.length);
+        expect(recordsAfterSecond[recordsAfterSecond.length - 1]).toMatchObject({ type: "run_finished", body: { snapshotStatus: "partial" } });
     }, 240_000);
 
     it("should refuse with 78 and lock-not-held when the process was not started under flock, writing nothing", async () => {

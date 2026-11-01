@@ -39,6 +39,12 @@ export interface LedgerOpenOptions {
     now?: () => string;
     /** Required by `initialize` only. */
     writeMarker?: LedgerMarkerWriter;
+    /**
+     * Runs before every write the store makes (append, initialize, compaction, quarantine, torn-tail repair), before its first
+     * byte. A throw aborts that write untouched and does not poison the store; a non-`WorkerError` becomes `control-unavailable`.
+     * The worker wires its lock re-check here so a lock file replaced under a running writer stops it.
+     */
+    beforeWrite?: () => void | Promise<void>;
 }
 
 export interface LedgerInitializeParams {
@@ -139,6 +145,7 @@ export class LedgerStore {
     initialize(params: LedgerInitializeParams): Promise<void> {
         return this.serialize(async () => {
             this.requireWritable("not_initialized");
+            await this.guardWrite();
             const writeMarker = this.options.writeMarker;
             if (writeMarker === undefined) throw new WorkerError("internal");
             const { installedBody } = params;
@@ -182,6 +189,7 @@ export class LedgerStore {
             if (this.journalRecords <= threshold) return false;
             const bytes = encodeCheckpoint(this._state);
             const { lastSeq } = this._state;
+            await this.guardWrite();
             try {
                 await this.writeCheckpointTemp(`checkpoint-${lastSeq}.tmp`, bytes);
                 this.options.fault?.("checkpoint-before-rename");
@@ -207,6 +215,7 @@ export class LedgerStore {
         return this.serialize(async () => {
             this.requireWritable("recovery_required");
             if (!UUID_V4_PATTERN.test(runId)) throw new WorkerError("invalid-path-segment");
+            await this.guardWrite();
             try {
                 await this.closeHandle();
                 const existing = await lstatOrNull(this.fs, this.ledgerDir);
@@ -259,12 +268,24 @@ export class LedgerStore {
         return unavailable();
     }
 
+    /** The caller's pre-write guard. Its failure is the caller's to handle: nothing was written, so the store is not poisoned. */
+    private async guardWrite(): Promise<void> {
+        const guard = this.options.beforeWrite;
+        if (guard === undefined) return;
+        try {
+            await guard();
+        } catch (error) {
+            throw error instanceof WorkerError ? error : unavailable();
+        }
+    }
+
     /** Validate and reduce in memory, then write and fsync. Only a durable record advances the in-memory state. */
     private async commit(record: LedgerRecord): Promise<void> {
         const line = encodeLedgerLine(record);
         const next = applyLedgerRecord(this._state, record);
         const bytes = Buffer.from(line, "utf8");
         const { fault } = this.options;
+        await this.guardWrite();
         try {
             const handle = await this.journalHandle();
             fault?.("before-write");
@@ -391,6 +412,7 @@ export class LedgerStore {
             };
             encodeLedgerLine(probe);
             applyLedgerRecord(this._state, probe);
+            await this.guardWrite();
             const quarantineName = await this.quarantineTail(seq, tail);
             const handle = await this.journalHandle();
             await handle.truncate(validLength);
