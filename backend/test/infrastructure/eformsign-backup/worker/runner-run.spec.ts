@@ -7,7 +7,7 @@ import type { FixtureDoc } from "./helpers/fake-export-api";
 import {
     COMPANY, TOKEN, archivePdfs, createHarness, destinationStates, destroyHarness, identityFor, initArchive, listFiles,
     pairDoc, readCompletions, readJsonFile, readLedgerRecords, recordTypes, runOnce, singleDoc, transitionPath, treeContains,
-    tryRun, type Harness,
+    tryRun, withWorker, type Harness,
 } from "./helpers/runner-support";
 
 /** Same pattern as runner-matrix.spec.ts: the archive directory is replaced by an empty one, the real one is kept aside. */
@@ -579,6 +579,69 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             const before = (await destinationTransitions(id)).length;
             await runOnce(h);
             expect((await destinationTransitions(id)).length).toBe(before);
+        });
+
+        describe("a carried publication stays recoverable (BJJ-455 P2 FU-10: 3.4-d x 3.4-f)", () => {
+            const manifestsOf = async (doc: string): Promise<string[]> =>
+                (await listFiles(h.archive)).filter((file) => file.includes(`/${doc}/manifests/`));
+            const manifestRecords = async () =>
+                (await readLedgerRecords(h.control)).filter((record) => record.type === "manifest_published");
+            /** Run 1 stages D001 while the archive is gone; run 2 finds the archive again and no longer lists D001. */
+            async function carried(): Promise<{ id: string; second: Awaited<ReturnType<typeof runOnce>> }> {
+                const x = singleDoc("D001");
+                h = await createHarness({ docs: [x] });
+                await initArchive(h);
+                const away = await swapArchive(h);
+                const id = identityFor(h, x, "document");
+                await runOnce(h);
+                expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["blocked"]);
+                await swapBack(h, away);
+                h.api.docs = [pairDoc("D002")];
+                const second = await runOnce(h);
+                expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+                return { id, second };
+            }
+
+            it("should be rebuilt by recover from the archive after the ledger is lost, and verify --all should check all three PDFs", async () => {
+                const { id, second } = await carried();
+
+                // The carried document has its own manifest, but the snapshot's completion does not claim it.
+                expect(await manifestsOf("D001")).toHaveLength(1);
+                const completion = (await readCompletions(h.archive)).pop()!;
+                expect(completion.value["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D002"]);
+                expect(completion.value["gaps"]).toEqual([]);
+                expect(second.counts).toMatchObject({ blocked: 0, terminalUnavailable: 0 });
+
+                const journal = path.join(h.control, "ledger", "journal-000000000001.jsonl");
+                const bytes = await fs.readFile(journal);
+                bytes[bytes.indexOf(0x0a) + 30] = bytes[bytes.indexOf(0x0a) + 30]! ^ 0xff;
+                await fs.writeFile(journal, bytes);
+                const installationId = (await readJsonFile(path.join(h.archive, ".bjj-backup", "installation.json")))["installationId"];
+
+                const recovered = await withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+
+                expect(recovered).toMatchObject({ recovered: 3, unverified: 0, knownGaps: 0 });
+                expect((await destinationStates(h.control))[id]).toBe("verified");
+                const verified = await withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }));
+                expect(verified).toMatchObject({ checked: 3, integrityErrors: 0 });
+            });
+
+            it("should publish the manifest once: a later run that still omits the document writes nothing new for it", async () => {
+                const { id } = await carried();
+                const manifest = (await manifestsOf("D001"))[0]!;
+                const manifestBytes = await fs.readFile(path.join(h.archive, manifest));
+                const records = (await manifestRecords()).length;
+                const transitions = (await destinationTransitions(id)).length;
+
+                const third = await runOnce(h);
+
+                expect(await manifestsOf("D001")).toEqual([manifest]);
+                expect((await fs.readFile(path.join(h.archive, manifest))).equals(manifestBytes)).toBe(true);
+                expect((await manifestRecords()).length).toBe(records);
+                expect((await destinationTransitions(id)).length).toBe(transitions);
+                expect(third.counts).toMatchObject({ blocked: 0, terminalUnavailable: 0 });
+                expect(await archivePdfs(h.archive)).toHaveLength(3);
+            });
         });
 
         it("should settle a pending entry made by crash recovery as exact-bytes-unavailable once its document leaves the snapshot", async () => {

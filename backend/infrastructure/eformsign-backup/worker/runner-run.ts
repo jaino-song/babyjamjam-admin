@@ -43,6 +43,12 @@ interface WorkCandidate {
     metadataRevision: string;
     artifacts: ArtifactJob[];
 }
+/** What a manifest is built from: one document revision and the artifacts it was observed with. */
+interface ManifestSource {
+    documentId: string;
+    metadataRevision: string;
+    artifacts: ReadonlyArray<{ artifactType: ArchiveArtifactType; artifactIdentity: string; sha256: string; byteLength: number }>;
+}
 
 function sortedUnique(codes: Iterable<WorkerReasonCode>): WorkerReasonCode[] {
     return [...new Set(codes)].sort();
@@ -80,6 +86,8 @@ class RunExecution {
     private readonly reasons = new Set<WorkerReasonCode>();
     private readonly blockedCandidates: WorkerReasonCode[] = [];
     private readonly work: WorkCandidate[] = [];
+    /** The previous snapshot's included candidates, read before the new snapshot binding replaces them in the ledger. */
+    private priorRevisions: ManifestSource[] = [];
     private totalCandidates = 0;
     private includedCandidates = 0;
 
@@ -111,6 +119,9 @@ class RunExecution {
         await this.finishOpenRuns();
         this.startedAt = this.now();
         await this.deps.ledger.append("run_started", { runId: this.runId, scheduledFor: this.scheduledFor, startedAt: this.startedAt }, this.startedAt);
+        this.priorRevisions = [...this.state.candidates.values()]
+            .filter((candidate) => candidate.classification === "included" && candidate.artifacts.length > 0)
+            .map((candidate) => ({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, artifacts: candidate.artifacts }));
         try {
             await this.snapshotStage();
             await this.processCandidates();
@@ -675,34 +686,69 @@ class RunExecution {
 
     // ---- steps 9-10: manifests and the completion ------------------------------------------------------------------
 
+    /**
+     * Builds and publishes the manifest of one document revision. `null` when it was refused (an archive-side refusal
+     * marks the archive lost; any other is recorded against the run).
+     */
+    private async writeManifest(source: ManifestSource): Promise<{ key: string; sha256: string } | null> {
+        const manifest = buildManifest({
+            companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision,
+            artifacts: source.artifacts.map((artifact) => ({
+                artifactType: artifact.artifactType, artifactIdentity: artifact.artifactIdentity, sha256: artifact.sha256, byteLength: artifact.byteLength,
+            })),
+        });
+        const key = manifestKey({ companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision });
+        const published = await this.archive.publishJson(key, manifest.bytes);
+        if (!published.ok) {
+            if (isArchiveSide(published.reasonCode)) this.archiveLost();
+            else {
+                this.blockedCandidates.push(published.reasonCode);
+                this.reasons.add(published.reasonCode);
+            }
+            return null;
+        }
+        return { key, sha256: manifest.sha256 };
+    }
+
+    private async recordManifest(written: { key: string; sha256: string }): Promise<void> {
+        if (!this.state.manifests.has(written.key)) {
+            await this.deps.ledger.append("manifest_published", { relativeKey: written.key, sha256: written.sha256 }, this.now());
+        }
+    }
+
+    /**
+     * A document that left the snapshot has no candidate any more, yet an artifact carried over for it (or one whose
+     * manifest was never written) is only found again by recovery through a manifest. So the revision the ledger last
+     * observed gets its manifest once every one of its artifacts is verified. The manifest is not a completion entry:
+     * the completion lists what this snapshot covers, and this document is not in it. Recovery reads such a file as an
+     * unreferenced manifest. A revision the ledger already has a manifest for is left alone, so a later run writes nothing.
+     */
+    private async publishLeftRevisions(): Promise<void> {
+        const inSnapshot = new Set(this.work.map((candidate) => `${candidate.documentId}\u0000${candidate.metadataRevision}`));
+        for (const source of this.priorRevisions) {
+            if (!this.archiveOk) break;
+            if (inSnapshot.has(`${source.documentId}\u0000${source.metadataRevision}`)) continue;
+            const key = manifestKey({ companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision });
+            if (this.state.manifests.has(key)) continue;
+            if (!source.artifacts.every((artifact) => this.dl.entryOf(artifact.artifactIdentity)?.state === "verified")) continue;
+            const written = await this.writeManifest(source);
+            if (written !== null) await this.recordManifest(written);
+        }
+    }
+
     private async publishRecords(): Promise<void> {
         if (this.snapshotId === null) return;
+        await this.publishLeftRevisions();
         const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string }> = [];
         for (const candidate of this.work) {
             if (!this.archiveOk) break;
             const verified = candidate.artifacts.every((job) => this.dl.entryOf(job.artifactIdentity)?.state === "verified");
             if (!verified) continue;
-            const manifest = buildManifest({
-                companyId: this.companyId, documentId: candidate.documentId, metadataRevision: candidate.metadataRevision,
-                artifacts: candidate.artifacts.map((job) => ({
-                    artifactType: job.artifactType, artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength,
-                })),
-            });
-            const key = manifestKey({ companyId: this.companyId, documentId: candidate.documentId, metadataRevision: candidate.metadataRevision });
-            const published = await this.archive.publishJson(key, manifest.bytes);
-            if (!published.ok) {
-                if (isArchiveSide(published.reasonCode)) this.archiveLost();
-                else {
-                    this.blockedCandidates.push(published.reasonCode);
-                    this.reasons.add(published.reasonCode);
-                }
-                continue;
-            }
+            const written = await this.writeManifest(candidate);
+            if (written === null) continue;
             await this.fault("after-manifest-before-record");
-            if (!this.state.manifests.has(key)) {
-                await this.deps.ledger.append("manifest_published", { relativeKey: key, sha256: manifest.sha256 }, this.now());
-            }
-            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: manifest.sha256 });
+            await this.recordManifest(written);
+            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: written.sha256 });
         }
         if (entries.length === 0 || !this.archiveOk) return;
         const binding = this.state.snapshots.get(this.snapshotId);
