@@ -1,4 +1,4 @@
-import { promises as fsp, statSync } from "node:fs";
+import { constants, promises as fsp, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -7,6 +7,7 @@ import {
 import {
     LedgerStore, type LedgerFileHandle, type LedgerFs, type LedgerFaultPoint, type LedgerMarkerWriter,
 } from "infrastructure/eformsign-backup/worker/ledger-store";
+import { REAL_LEDGER_FS } from "infrastructure/eformsign-backup/worker/ledger-fs";
 import {
     INSTALL_AT, INSTALL_PARAMS, expectedSeededState, fixedAt, runIdOf, runStartedBody, seedLedger, testMarkerWriter,
 } from "./helpers/ledger-fixtures";
@@ -763,6 +764,335 @@ describe("quarantineAndReset", () => {
         const store = await openWritable(control);
         await expect(store.quarantineAndReset("../escape")).rejects.toBeInstanceOf(WorkerError);
         expect(await listLedger(control)).toEqual(["journal-000000000001.jsonl"]);
+        await store.close();
+    });
+});
+
+describe("beforeWrite guard", () => {
+    const refuse = (): never => { throw new WorkerError("lock-not-held"); };
+    /** Every file under the control directory with its size, so "nothing was written" is one comparison. */
+    async function snapshot(control: string): Promise<Record<string, number>> {
+        const sizes: Record<string, number> = {};
+        const walk = async (dir: string): Promise<void> => {
+            for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) { sizes[`${path.relative(control, full)}/`] = 0; await walk(full); } else sizes[path.relative(control, full)] = (await fsp.stat(full)).size;
+            }
+        };
+        await walk(control);
+        return sizes;
+    }
+
+    it("runs before the first byte of every append and lets a failing guard abort it untouched, without poisoning the store", async () => {
+        const control = await seeded(3);
+        let allow = true;
+        let seenSize = -1;
+        const store = await openWritable(control, {
+            beforeWrite: () => { seenSize = statSync(journalPath(control)).size; if (!allow) refuse(); },
+        });
+        const before = await fsp.readFile(journalPath(control));
+        await store.append("run_started", runStartedBody(4), fixedAt(4));
+        expect(seenSize).toBe(before.length);
+
+        allow = false;
+        const afterOne = await fsp.readFile(journalPath(control));
+        await expect(store.append("run_started", runStartedBody(5), fixedAt(5))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readFile(journalPath(control))).toEqual(afterOne);
+        expect(store.lastSeq).toBe(4);
+
+        allow = true;
+        await store.append("run_started", runStartedBody(5), fixedAt(5));
+        expect(store.lastSeq).toBe(5);
+        await store.close();
+        const reopened = await LedgerStore.open(control, { readOnly: true });
+        expect(reopened.status).toBe("ok");
+        expect(reopened.lastSeq).toBe(5);
+    });
+
+    it("writes nothing when the guard refuses an append on a fresh store, not even the journal handle's bytes", async () => {
+        const control = await seeded(2);
+        const store = await openWritable(control, { beforeWrite: refuse });
+        const before = await snapshot(control);
+        await expect(store.append("run_started", runStartedBody(3), fixedAt(3))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+        await store.close();
+    });
+
+    it("refuses initialize before the marker, the ledger directory or the journal exist", async () => {
+        const control = await newControl();
+        const store = await openWritable(control, { beforeWrite: refuse });
+        await expect(store.initialize(INSTALL_PARAMS)).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readdir(control)).toEqual([]);
+        expect(store.status).toBe("not_initialized");
+    });
+
+    it("refuses compaction before the checkpoint temp file, but only when it would have compacted", async () => {
+        const control = await seeded(5);
+        const store = await openWritable(control, { beforeWrite: refuse });
+        const before = await snapshot(control);
+        expect(await store.compactIfNeeded(10)).toBe(false);
+        await expect(store.compactIfNeeded(3)).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+        await store.close();
+    });
+
+    it("refuses quarantineAndReset before anything is moved aside", async () => {
+        const control = await seeded(4);
+        const damaged = await fsp.readFile(journalPath(control), "utf8");
+        await fsp.writeFile(journalPath(control), damaged.replace("run_started", "run_startex"));
+        const store = await openWritable(control, { beforeWrite: refuse });
+        expect(store.status).toBe("recovery_required");
+        const before = await snapshot(control);
+        await expect(store.quarantineAndReset(runIdOf(77))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await snapshot(control)).toEqual(before);
+        expect(store.status).toBe("recovery_required");
+    });
+
+    it("refuses torn-tail repair on open before the journal is cut; only the new, harmless quarantine copy may exist", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), '{"v":1,"seq":4,"ty');
+        const before = await snapshot(control);
+        const journalBefore = await fsp.readFile(journalPath(control));
+        await expect(openWritable(control, { beforeWrite: refuse })).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readFile(journalPath(control))).toEqual(journalBefore);
+        const after = await snapshot(control);
+        const added = Object.keys(after).filter((name) => !(name in before));
+        expect(added).toEqual([path.join("ledger", "tail-4.quarantine")]);
+        for (const name of Object.keys(before)) expect(after[name]).toBe(before[name]);
+    });
+
+    it("turns a guard failure that is not a WorkerError into control-unavailable and still writes nothing", async () => {
+        const control = await seeded(2);
+        const store = await openWritable(control, { beforeWrite: async () => { throw new Error("EACCES /proc/locks"); } });
+        const before = await snapshot(control);
+        const error = await store.append("run_started", runStartedBody(3), fixedAt(3)).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(WorkerError);
+        expect((error as WorkerError).message).toBe("control-unavailable");
+        expect(await snapshot(control)).toEqual(before);
+        await store.close();
+    });
+
+    it("leaves a store opened without a guard exactly as before", async () => {
+        const control = await seeded(2);
+        const store = await openWritable(control);
+        await store.append("run_started", runStartedBody(3), fixedAt(3));
+        expect(store.lastSeq).toBe(3);
+        await store.close();
+    });
+});
+
+describe("beforeWrite guard on composite operations", () => {
+    const refuse = (): never => { throw new WorkerError("lock-not-held"); };
+    const TORN = '{"v":1,"seq":4,"ty';
+
+    /** Records every filesystem call, handle calls included, so the call made right after the guard can be named. */
+    function tracingFs(events: string[], onQuarantineClosed?: () => Promise<void>): LedgerFs {
+        return {
+            ...REAL_LEDGER_FS,
+            open: async (file, flags, mode) => {
+                events.push(`open:${path.basename(file)}`);
+                const handle = await REAL_LEDGER_FS.open(file, flags, mode);
+                const traced: LedgerFileHandle = {
+                    read: (...args) => handle.read(...args),
+                    write: (...args) => { events.push("write"); return handle.write(...args); },
+                    stat: () => handle.stat(),
+                    truncate: (length) => { events.push("truncate"); return handle.truncate(length); },
+                    sync: () => { events.push("sync"); return handle.sync(); },
+                    close: async () => {
+                        await handle.close();
+                        if (onQuarantineClosed !== undefined && file.endsWith("tail-4.quarantine")) await onQuarantineClosed();
+                    },
+                };
+                return traced;
+            },
+            lstat: (file) => { events.push("lstat"); return REAL_LEDGER_FS.lstat(file); },
+            readdir: (file) => { events.push("readdir"); return REAL_LEDGER_FS.readdir(file); },
+            mkdir: (file, mode) => { events.push("mkdir"); return REAL_LEDGER_FS.mkdir(file, mode); },
+            rename: (from, to) => { events.push("rename"); return REAL_LEDGER_FS.rename(from, to); },
+        };
+    }
+    const afterGuard = (events: string[]): string[] => events.slice(events.indexOf("guard") + 1);
+
+    it("F1: a lock lost during the tail quarantine copy stops the repair before the truncate, so the new writer's records survive", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        let lost = false;
+        let newWriterSeq = -1;
+        let beforeResume: Buffer = Buffer.alloc(0);
+        const racingFs = tracingFs([], async () => {
+            if (lost) return;
+            lost = true; // the operator replaces the lock while A is still copying the tail aside
+            const second = await LedgerStore.open(control); // B: the legitimate holder of the new lock, no guard of its own
+            await second.append("run_started", runStartedBody(5), fixedAt(5));
+            newWriterSeq = second.lastSeq;
+            await second.close();
+            beforeResume = await fsp.readFile(journalPath(control));
+        });
+        const stale = LedgerStore.open(control, { fs: racingFs, beforeWrite: () => { if (lost) refuse(); } });
+        await expect(stale).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(newWriterSeq).toBe(5);
+        expect(await fsp.readFile(journalPath(control))).toEqual(beforeResume);
+        const replayed = await LedgerStore.open(control, { readOnly: true });
+        expect(replayed.status).toBe("ok");
+        expect(replayed.lastSeq).toBe(5);
+    });
+
+    it("F2a: initialize checks the guard once, right before the marker write, and is never left half-applied by a later refusal", async () => {
+        const control = await newControl();
+        const events: string[] = [];
+        let calls = 0;
+        const store = await openWritable(control, {
+            fs: tracingFs(events),
+            writeMarker: async (dir, name, bytes) => { events.push("marker"); await testMarkerWriter(dir, name, bytes); },
+            beforeWrite: () => { events.push("guard"); if (++calls >= 2) refuse(); },
+        });
+        events.length = 0;
+        await store.initialize(INSTALL_PARAMS);
+        expect(calls).toBe(1);
+        expect(afterGuard(events)[0]).toBe("marker");
+        expect(events.slice(0, events.indexOf("guard")).filter((e) => e !== "lstat")).toEqual([]);
+        expect(store.status).toBe("ok");
+        await store.close();
+        const reopened = await LedgerStore.open(control, { readOnly: true });
+        expect(reopened.status).toBe("ok");
+        expect(reopened.lastSeq).toBe(1);
+    });
+
+    it("F2a: a guard that refuses initialize leaves no marker and no journal", async () => {
+        const control = await newControl();
+        const store = await openWritable(control, { beforeWrite: refuse });
+        await expect(store.initialize(INSTALL_PARAMS)).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readdir(control)).toEqual([]);
+        expect((await LedgerStore.open(control, { readOnly: true })).status).toBe("not_initialized");
+    });
+
+    it("F2b: torn-tail repair checks the guard once, immediately before the truncate, and records tail_discarded after it passes", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        const events: string[] = [];
+        let calls = 0;
+        const store = await LedgerStore.open(control, {
+            fs: tracingFs(events),
+            beforeWrite: () => { events.push("guard"); if (++calls >= 2) refuse(); },
+        });
+        expect(calls).toBe(1);
+        expect(afterGuard(events)[0]).toBe("truncate");
+        expect(store.reasons).toContain("torn-tail-repaired");
+        expect(store.lastSeq).toBe(4);
+        await store.close();
+        const reopened = await LedgerStore.open(control, { readOnly: true });
+        expect(reopened.status).toBe("ok");
+        expect(reopened.lastSeq).toBe(4);
+        expect(reopened.reasons).toEqual([]);
+        expect(await listLedger(control)).toContain("tail-4.quarantine");
+    });
+
+    it("F2b: a guard that refuses the repair leaves the journal untouched, so the next open repairs it completely", async () => {
+        const control = await seeded(3);
+        await fsp.appendFile(journalPath(control), TORN);
+        const before = await fsp.readFile(journalPath(control));
+        await expect(LedgerStore.open(control, { beforeWrite: refuse })).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await fsp.readFile(journalPath(control))).toEqual(before);
+        const repaired = await LedgerStore.open(control);
+        expect(repaired.reasons).toContain("torn-tail-repaired");
+        expect(repaired.lastSeq).toBe(4);
+        await repaired.close();
+    });
+
+    it("quarantineAndReset finishes its reads first and its guard is followed straight away by the rename", async () => {
+        const control = await seeded(4);
+        const damaged = await fsp.readFile(journalPath(control), "utf8");
+        await fsp.writeFile(journalPath(control), damaged.replace("run_started", "run_startex"));
+        const events: string[] = [];
+        let calls = 0;
+        const store = await openWritable(control, { fs: tracingFs(events), beforeWrite: () => { events.push("guard"); calls++; } });
+        events.length = 0;
+        await store.quarantineAndReset(runIdOf(77));
+        expect(calls).toBe(1);
+        expect(afterGuard(events)[0]).toBe("rename");
+        expect(store.status).toBe("ok");
+        await store.close();
+    });
+
+    it("compaction checks the guard once, right before the checkpoint temp file is created", async () => {
+        const control = await seeded(5);
+        const events: string[] = [];
+        let calls = 0;
+        const store = await openWritable(control, { fs: tracingFs(events), beforeWrite: () => { events.push("guard"); calls++; } });
+        events.length = 0;
+        expect(await store.compactIfNeeded(3)).toBe(true);
+        expect(calls).toBe(1);
+        expect(afterGuard(events)[0]).toMatch(/^open:checkpoint-5\.tmp$/);
+        await store.close();
+    });
+
+    /** A control directory whose checkpoint is published (lastSeq 5) but whose next journal does not exist yet. */
+    async function checkpointedWithoutJournal(): Promise<{ control: string; next: string }> {
+        const control = await seeded(5);
+        const store = await openWritable(control);
+        expect(await store.compactIfNeeded(3)).toBe(true);
+        await store.close();
+        const next = journalPath(control, 6);
+        await fsp.rm(next);
+        return { control, next };
+    }
+    const exists = (file: string): Promise<boolean> => fsp.access(file).then(() => true, () => false);
+
+    it("a stale writer refused at the guard creates no journal, so the legitimate writer's first-use create still succeeds", async () => {
+        const { control, next } = await checkpointedWithoutJournal();
+        let reachedEnoent: () => void = () => undefined;
+        const paused = new Promise<void>((resolve) => { reachedEnoent = resolve; });
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const legitimate = await openWritable(control, {
+            fs: {
+                ...REAL_LEDGER_FS,
+                open: async (file, flags, mode) => {
+                    try {
+                        return await REAL_LEDGER_FS.open(file, flags, mode);
+                    } catch (error) {
+                        if (file === next && (flags & constants.O_CREAT) === 0) { reachedEnoent(); await gate; } // B saw ENOENT, then stalls
+                        throw error;
+                    }
+                },
+            },
+            beforeWrite: () => undefined,
+        });
+        const legitimateAppend = legitimate.append("run_started", runStartedBody(6), fixedAt(6));
+        await paused;
+
+        const stale = await openWritable(control, { beforeWrite: refuse });
+        await expect(stale.append("run_started", runStartedBody(6), fixedAt(6))).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+        expect(await exists(next)).toBe(false);
+
+        release();
+        const record = await legitimateAppend;
+        expect(record.seq).toBe(6);
+        await legitimate.close();
+        await stale.close();
+        const replayed = await LedgerStore.open(control, { readOnly: true });
+        expect(replayed.status).toBe("ok");
+        expect(replayed.lastSeq).toBe(6);
+    });
+
+    it("on the ENOENT path a guarded append checks the guard strictly before it creates the journal", async () => {
+        const { control, next } = await checkpointedWithoutJournal();
+        const events: string[] = [];
+        const store = await openWritable(control, { fs: tracingFs(events), beforeWrite: () => { events.push("guard"); } });
+        events.length = 0;
+        await store.append("run_started", runStartedBody(6), fixedAt(6));
+        const name = `open:${path.basename(next)}`;
+        expect(events).toEqual([name, "guard", name, "open:ledger", "sync", "write", "sync"]);
+        await store.close();
+    });
+
+    it("a plain append checks the guard right before the journal write, after the handle is open", async () => {
+        const control = await seeded(2);
+        const events: string[] = [];
+        const store = await openWritable(control, { fs: tracingFs(events), beforeWrite: () => { events.push("guard"); } });
+        events.length = 0;
+        await store.append("run_started", runStartedBody(3), fixedAt(3));
+        expect(events).toEqual(["open:journal-000000000001.jsonl", "guard", "write", "sync"]);
         await store.close();
     });
 });
