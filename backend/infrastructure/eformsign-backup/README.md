@@ -381,7 +381,7 @@ from Drive alone"); no lock, no ledger:
 | 65 | at least one file failed verification: stderr `artifact-integrity`, else `drive-conflict`, else `mirror-missing`; the files that did verify are written, the failed ones are listed in the report |
 | 69 | Drive: `drive-root-changed` (no single root; see below), `drive-permission`, `drive-quota`, `drive-conflict`, `drive-unavailable`, `network-timeout`, `rate-limited` |
 | 70 | internal: any other reason code or an unexpected error |
-| 78 | configuration: `config-invalid` (the config file itself), `token-file-invalid`, `drive-not-configured`, `drive-token-invalid` |
+| 78 | configuration: `config-invalid` (the config file itself, or a configured `archive.path` or `control.path` that exists but cannot be resolved), `token-file-invalid`, `drive-not-configured`, `drive-token-invalid` |
 
 ## Never delete `worker.lock` while a run may be active
 
@@ -824,8 +824,12 @@ those need not exist. It only reads on Drive (GET requests).
 
 - `--out`: an absolute normal path of a new or an empty real directory. It must not be, contain
   or lie in the configured `archive.path` or `control.path` (also through symlinks), else
-  `restore-output-invalid` (exit 64) before any request. `--root-folder-id` must be a Drive
-  file id.
+  `restore-output-invalid` (exit 64) before any request. An `archive.path` or `control.path`
+  that exists but cannot be resolved (a dangling symlink, a symlink loop, an I/O error) is
+  `config-invalid` (exit 78), also before any request; a path that is simply absent is fine.
+  An existing empty `--out` is accepted as it is, with no check of its owner or mode: create
+  `--out` (or its parent) as the worker user with mode 0700, as for the archive, before the
+  restore. `--root-folder-id` must be a Drive file id.
 - The root is the untrashed folder labelled with `archive.archiveId`. None, or more than one
   (for example after a rebind), is `drive-root-changed` (exit 69): stdout then carries
   `{"event":"restore_drive_root_ambiguous","reasonCode":"drive-root-changed","candidates":[...ids]}`;
@@ -839,9 +843,11 @@ those need not exist. It only reads on Drive (GET requests).
   manifests on digest. Anything else (an unsafe name, an unknown path, a Google-native
   document) fails.
 - A file that fails is not written. A verified file is linked into place without ever
-  overwriting an existing one: if two Drive files map to the same path (Drive allows equal
-  names in one folder), the second is reported as `drive-conflict`. Files are 0600,
-  directories 0700.
+  overwriting an existing one. If two or more Drive files map to the same path (Drive allows
+  equal names in one folder), that path is reported once, as `drive-conflict`, whatever order
+  they come in and whichever copy verifies, and it is not counted in `verified`, so the run
+  ends 65; a copy that verified and was already linked stays in place. A path with one Drive
+  file is counted once. Files are 0600, directories 0700.
 - At the end `--out/restore-drive-report.json` holds `schemaVersion`, `rootFolderId`,
   `archiveId`, `verified`, `failed` and `failures` (`relativeKey` and a reason:
   `artifact-integrity`, `mirror-missing`, `drive-conflict`). stdout is one line:

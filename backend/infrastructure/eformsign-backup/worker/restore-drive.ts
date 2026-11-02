@@ -66,7 +66,8 @@ function inside(parent: string, child: string): boolean {
 
 /**
  * The physical location of a path that may not exist yet: its nearest EXISTING ancestor resolved through every symlink, plus the
- * missing lexical suffix. A dangling symlink, or any error other than "this suffix does not exist", is not resolved: fail closed.
+ * missing lexical suffix. A configured path that exists but will not resolve (a dangling symlink, a loop, an I/O error) is
+ * `config-invalid`: it is the configuration, not `--out`, that cannot be judged, and nothing is guessed about it (fail closed).
  */
 async function physicalPath(target: string): Promise<string> {
     const suffix: string[] = [];
@@ -74,14 +75,16 @@ async function physicalPath(target: string): Promise<string> {
         try {
             return path.join(await fs.realpath(existing), ...suffix.reverse());
         } catch (error) {
-            if (!hasCode(error, "ENOENT")) throw new WorkerError("restore-output-invalid");
+            if (!hasCode(error, "ENOENT")) throw new WorkerError("config-invalid");
         }
+        let present = true;
         try {
             await fs.lstat(existing);
-            throw new WorkerError("restore-output-invalid");
         } catch (error) {
-            if (error instanceof WorkerError || !hasCode(error, "ENOENT")) throw new WorkerError("restore-output-invalid");
+            if (!hasCode(error, "ENOENT")) throw new WorkerError("config-invalid");
+            present = false;
         }
+        if (present) throw new WorkerError("config-invalid");
         const parent = path.dirname(existing);
         if (parent === existing) throw new WorkerError("restore-output-invalid");
         suffix.push(path.basename(existing));
@@ -315,6 +318,9 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
         }
     }
     listed.sort((left, right) => rankOf(left.key) - rankOf(right.key) || byKeyThenId(left, right));
+    // A path that more than one Drive file maps to is ambiguous whichever copy verifies: it is reported once, as `drive-conflict`.
+    const copies = new Map<string, number>();
+    for (const { key } of listed) copies.set(key, (copies.get(key) ?? 0) + 1);
 
     // Pass 2: receive, verify, write.
     if (!output.exists) await fs.mkdir(outDir, { mode: 0o700 });
@@ -400,6 +406,8 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
         if (verified.completionEntries !== undefined) completions.set(key, verified.completionEntries.map((entry) => entry.manifestKey));
     }
 
+    for (const [key, count] of copies) if (count > 1) failures.set(key, "drive-conflict");
+
     // What a verified record names must be there: a manifest its artifacts, a completion its manifests.
     for (const manifest of manifests.values()) {
         for (const artifact of manifest.artifacts) if (!held.has(artifact.relativeKey)) fail(artifact.relativeKey, "mirror-missing");
@@ -409,7 +417,7 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
     }
 
     const report: RestoreDriveReport = {
-        schemaVersion: 1, rootFolderId: root.id, archiveId, verified: held.size, failed: failures.size,
+        schemaVersion: 1, rootFolderId: root.id, archiveId, verified: [...held.keys()].filter((key) => !failures.has(key)).length, failed: failures.size,
         failures: [...failures].map(([relativeKey, reason]) => ({ relativeKey, reason })).sort((a, b) => (a.relativeKey < b.relativeKey ? -1 : 1)),
     };
     const out = await fs.open(path.join(outDir, RESTORE_DRIVE_REPORT_NAME), "wx", 0o600);
