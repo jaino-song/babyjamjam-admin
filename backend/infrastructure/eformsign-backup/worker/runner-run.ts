@@ -5,7 +5,7 @@ import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import {
     WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, completionContentDigest,
     completionSchema, integrityErrorCount, integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey,
-    nextRetryAt, nextSnapshotSequence, parseCompletionName, runKey, toArchiveArtifactType,
+    nextRetryAt, nextSnapshotSequence, parseCompletionName, parseManifestKey, runKey, toArchiveArtifactType,
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
@@ -22,6 +22,61 @@ import {
 import { type RunSummary, type RunnerDependencies } from "./runner-types";
 
 const OPAQUE_ID = /^[^\u0000-\u001f\u007f]{1,512}$/u;
+
+/**
+ * The raw-manifest digests that valid completions bind to each manifest key, read with recovery's own rules: a completion
+ * counts only when its name, company, sequence and content digest agree with its content.
+ */
+export function completionBindings(
+    files: ReadonlyArray<{ name: string; content: unknown }>, companyId: string,
+): Map<string, Set<string>> {
+    const digests = new Map<string, Set<string>>();
+    for (const file of files) {
+        const name = parseCompletionName(file.name);
+        if (name === null) continue;
+        const content = completionSchema.safeParse(file.content);
+        if (!content.success || content.data.companyId !== companyId || content.data.sequence !== name.sequence
+            || completionContentDigest(content.data) !== name.contentDigest) continue;
+        for (const entry of content.data.entries) {
+            const known = digests.get(entry.manifestKey) ?? new Set<string>();
+            known.add(entry.manifestSha256);
+            digests.set(entry.manifestKey, known);
+        }
+    }
+    return digests;
+}
+
+/**
+ * `verify --all`: how many bound manifests (acknowledged by the ledger or named by a valid completion) are missing from the
+ * archive, are no valid manifest of their document, or have another digest than the ledger or a completion binds. Each is
+ * read once; nothing is repaired or written. An archive-side refusal is rethrown: the archive itself is not usable, which
+ * is not the file's fault. Plain `verify` (no `--all`) does not run this check, so its scope stays PDF-only.
+ */
+export async function countDamagedBoundManifests(deps: RunnerDependencies, archive: LocalDestination): Promise<number> {
+    const { companyId } = deps.config;
+    const bound = new Map<string, Set<string>>();
+    const bind = (key: string, sha256: string): void => {
+        bound.set(key, (bound.get(key) ?? new Set<string>()).add(sha256));
+    };
+    for (const [key, acknowledged] of deps.ledger.state.manifests) bind(key, acknowledged.sha256);
+    for (const [key, digests] of completionBindings(await archive.listCompletions(companyId), companyId)) for (const sha256 of digests) bind(key, sha256);
+    let damaged = 0;
+    for (const [key, digests] of bound) {
+        const parts = parseManifestKey(key);
+        if (parts === null || parts.companyId !== companyId) continue;
+        try {
+            const bytes = await archive.readArchiveFile(key);
+            if (bytes === null) throw new WorkerError("artifact-integrity");
+            const { sha256 } = parseManifestBytes(bytes, key, { companyId, documentId: parts.documentId, metadataRevision: parts.metadataRevision });
+            if ([...digests].some((expected) => expected !== sha256)) throw new WorkerError("artifact-integrity");
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            if (isArchiveSide(error.reasonCode)) throw error;
+            damaged += 1;
+        }
+    }
+    return damaged;
+}
 
 /** A run that cannot get a usable snapshot ends as `failed` with this reason; it is an outcome, not an error. */
 class StageFailure extends Error {
@@ -90,6 +145,8 @@ class RunExecution {
     private readonly indexConflicts = new Set<string>();
     /** The completion listing of this run, before this run writes any completion. */
     private completionListing: Awaited<ReturnType<LocalDestination["listCompletions"]>> | null = null;
+    /** The archive's manifest files, listed once per run: the bound-manifest existence check and the index verdicts share it. */
+    private manifestListing: ManifestFile[] | null = null;
     private totalCandidates = 0;
     private includedCandidates = 0;
 
@@ -792,20 +849,13 @@ class RunExecution {
 
     /** Raw-manifest digests that valid completions bind to each manifest key, read with recovery's own rules. */
     private async completionDigests(): Promise<Map<string, Set<string>>> {
-        const digests = new Map<string, Set<string>>();
-        for (const file of await this.completionFiles()) {
-            const name = parseCompletionName(file.name);
-            if (name === null) continue;
-            const content = completionSchema.safeParse(file.content);
-            if (!content.success || content.data.companyId !== this.companyId || content.data.sequence !== name.sequence
-                || completionContentDigest(content.data) !== name.contentDigest) continue;
-            for (const entry of content.data.entries) {
-                const known = digests.get(entry.manifestKey) ?? new Set<string>();
-                known.add(entry.manifestSha256);
-                digests.set(entry.manifestKey, known);
-            }
-        }
-        return digests;
+        return completionBindings(await this.completionFiles(), this.companyId);
+    }
+
+    /** The one manifest listing of the run. Taken after this run's own manifests were written, so they are in it. */
+    private async manifestFiles(): Promise<ManifestFile[]> {
+        this.manifestListing ??= await listManifestFiles(this.deps.config.archive.path, this.companyId);
+        return this.manifestListing;
     }
 
     /**
@@ -891,7 +941,7 @@ class RunExecution {
                 return (acknowledged !== undefined && acknowledged.sha256 !== sha256)
                     || [...(completions.get(key) ?? [])].some((expected) => expected !== sha256);
             };
-            const files: ManifestFile[] = (await listManifestFiles(this.deps.config.archive.path, this.companyId)).filter((file) => documents.has(file.documentId));
+            const files: ManifestFile[] = (await this.manifestFiles()).filter((file) => documents.has(file.documentId));
             for (const file of files) {
                 let bytes: Buffer | null;
                 try {
@@ -928,6 +978,65 @@ class RunExecution {
             return null;
         }
         return verdicts;
+    }
+
+    /**
+     * A manifest the ledger acknowledged or a valid completion names is bound: it must still be on the archive. The check
+     * is the existence of its name in the run's one manifest listing (no read of any manifest, whichever documents are in
+     * this snapshot). A missing one is republished at its own key when its exact bytes can be rebuilt (this snapshot's
+     * candidate, or a set the retained journals saw for exactly its revision, whose manifest digest is the bound digest);
+     * otherwise nothing is written and the run ends in `archive-conflict` after the independent work. Bytes are never
+     * invented and no completion is repointed. Damage to a bound manifest that is present is `verify --all`'s to report.
+     */
+    private async republishMissingBound(): Promise<void> {
+        if (!this.archiveOk) return;
+        const bound = new Map<string, Set<string>>();
+        const bind = (key: string, sha256: string): void => {
+            bound.set(key, (bound.get(key) ?? new Set<string>()).add(sha256));
+        };
+        let present: Set<string>;
+        try {
+            for (const [key, acknowledged] of this.state.manifests) bind(key, acknowledged.sha256);
+            for (const [key, digests] of await this.completionDigests()) for (const sha256 of digests) bind(key, sha256);
+            present = new Set((await this.manifestFiles()).map((file) => file.key));
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.archiveLost();
+            return;
+        }
+        for (const [key, digests] of bound) {
+            if (!this.archiveOk) break;
+            if (present.has(key)) continue;
+            const parts = parseManifestKey(key);
+            if (parts === null || parts.companyId !== this.companyId) continue;
+            const bytes = digests.size === 1 ? this.rebuiltBytes(key, parts, [...digests][0]!) : null;
+            if (bytes === null) {
+                this.failIndexConflict(key);
+                continue;
+            }
+            // An additive write the ledger does not make itself: held to the same ownership check, so a stale owner stops here.
+            await this.deps.ledger.guardExternalWrite();
+            const published = await this.archive.publishJson(key, bytes);
+            if (!published.ok) {
+                this.refuseManifest(published.reasonCode);
+                if (!isArchiveSide(published.reasonCode)) this.failIndexConflict(key);
+                continue;
+            }
+            await this.recordManifest({ key, sha256: [...digests][0]! });
+        }
+    }
+
+    /** The bytes of a bound manifest, from a source whose manifest has exactly the bound digest; `null` when none does. */
+    private rebuiltBytes(key: string, parts: { documentId: string; metadataRevision: string; manifestSha256: string | null }, digest: string): Uint8Array | null {
+        const current = this.work.find((candidate) => candidate.documentId === parts.documentId && candidate.metadataRevision === parts.metadataRevision);
+        const observed = this.history?.forRevision(parts.documentId, parts.metadataRevision) ?? "unavailable";
+        const sources = [...(current === undefined ? [] : [current]), ...(Array.isArray(observed) ? observed : [])];
+        for (const source of sources) {
+            const built = this.manifestOf(source);
+            // A legacy name carries no digest; a content-versioned one is exactly the key this source would be published under.
+            if (built.manifest.sha256 === digest && (parts.manifestSha256 === null || built.key === key)) return built.manifest.bytes;
+        }
+        return null;
     }
 
     /**
@@ -1018,6 +1127,7 @@ class RunExecution {
             entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: written.sha256, manifestKey: written.key });
             for (const job of candidate.artifacts) publishedNow.add(job.artifactIdentity);
         }
+        await this.republishMissingBound();
         await this.backfillManifests(publishedNow);
         if (entries.length === 0 || !this.archiveOk) return;
         const binding = this.state.snapshots.get(this.snapshotId);
