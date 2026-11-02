@@ -57,6 +57,13 @@ export function isPathIdentifier(value: unknown): value is string {
 }
 export const pathIdentifier = z.string().refine(isPathIdentifier);
 
+/**
+ * A Drive counter of a run (BJJ-456). Ledgers, checkpoints and run inventories written before the Drive destination
+ * existed do not have it, so a missing one reads as 0; a wrong type, a negative or an unknown key is still refused.
+ * Everything the worker writes carries all four.
+ */
+const driveCount = count.default(0);
+
 /** Counts a run reports (ledger `run_finished` and the archive run inventory share one shape). */
 export const runCountsSchema = z.strictObject({
     candidates: count,
@@ -67,9 +74,9 @@ export const runCountsSchema = z.strictObject({
     integrityError: count,
     terminalUnavailable: count,
     orphanTemps: count,
-    driveVerified: count,
-    driveBlocked: count,
-    driveRetryWait: count,
-    driveIntegrityError: count,
+    driveVerified: driveCount,
+    driveBlocked: driveCount,
+    driveRetryWait: driveCount,
+    driveIntegrityError: driveCount,
 });
 export type RunCounts = z.infer<typeof runCountsSchema>;

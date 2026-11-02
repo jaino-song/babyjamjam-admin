@@ -302,3 +302,32 @@ describe("completion entries may name a content-versioned manifest (BJJ-455 P2 F
         expect(wrong(versioned)).toBe(true);
     });
 });
+
+describe("run inventory written before the Drive counters existed (BJJ-456 U1-F1)", () => {
+    const LEGACY = {
+        schemaVersion: 1, runId: "11111111-1111-4111-8111-111111111111", scheduledFor: null, startedAt: "2026-10-19T00:00:00.000Z",
+        finishedAt: "2026-10-19T00:01:00.000Z", snapshotId: null, sequence: null, snapshotStatus: "partial", historicalCoverage: "unverified",
+        reasonCodes: ["coverage-unverified", "drive-not-configured"],
+        counts: { candidates: 4, included: 3, verified: 3, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+    };
+
+    it("accepts a legacy inventory and normalizes the Drive counters to zero", () => {
+        const parsed = runInventorySchema.safeParse(LEGACY);
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.counts).toEqual({ ...LEGACY.counts, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 });
+    });
+
+    it("stays strict about the Drive counters and unknown keys", () => {
+        for (const counts of [{ ...LEGACY.counts, driveVerified: "1" }, { ...LEGACY.counts, driveBlocked: -1 }, { ...LEGACY.counts, driveRetryWait: 0.5 }, { ...LEGACY.counts, other: 1 }]) {
+            expect(runInventorySchema.safeParse({ ...LEGACY, counts }).success).toBe(false);
+        }
+    });
+
+    it("builds an inventory with all four Drive counters", () => {
+        const input = Object.fromEntries(Object.entries(LEGACY).filter(([name]) => name !== "schemaVersion"));
+        const built = buildRunInventory({
+            ...input, counts: { ...LEGACY.counts, driveVerified: 2, driveBlocked: 0, driveRetryWait: 1, driveIntegrityError: 0 },
+        } as Parameters<typeof buildRunInventory>[0]);
+        expect(JSON.parse(Buffer.from(built.bytes).toString("utf8")).counts).toMatchObject({ driveVerified: 2, driveRetryWait: 1, driveBlocked: 0, driveIntegrityError: 0 });
+    });
+});

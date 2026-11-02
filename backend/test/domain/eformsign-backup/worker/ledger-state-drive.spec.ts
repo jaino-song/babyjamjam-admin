@@ -195,10 +195,52 @@ describe("Drive node reservations (BJJ-456 U1)", () => {
         nextSeq = second.lastSeq + 1;
         expect(reasonOf(() => applyLedgerRecord(second, created(FILE_1)))).toBe("ledger-inconsistent");
         nextSeq = second.lastSeq + 1;
+        expect(reasonOf(() => applyLedgerRecord(second, reserve(FILE_1)))).toBe("ledger-inconsistent");
+        nextSeq = second.lastSeq + 1;
         expect(reasonOf(() => applyLedgerRecord(second, reserve(FILE_2)))).toBe("ledger-inconsistent");
         // Re-reserving the id of a created node would silently reset it to `reserved`.
         nextSeq = first.lastSeq + 1;
         expect(reasonOf(() => applyLedgerRecord(first, reserve(FILE_1)))).toBe("ledger-inconsistent");
+    });
+
+    describe("a retired reservation id is never current again (u1f-retired)", () => {
+        const abandoned = (): LedgerState => build(() => [installed(), driveBound(), reserve(FILE_1), created(FILE_1), reserve(FILE_2)]);
+
+        it("refuses to reserve or create a superseded id for the same key, for another key and for a file", () => {
+            const state = abandoned();
+            expect(state.driveNodes.get(driveStateKey(REV_A, NODE))).toEqual({ kind: "folder", fileId: FILE_2, parentFileId: PARENT, status: "reserved" });
+            for (const next of [reserve(FILE_1), created(FILE_1), reserve(FILE_1, "folder", "eformsign/other"), reserve(FILE_1, "file", ART_KEY)]) {
+                nextSeq = state.lastSeq + 1;
+                expect(reasonOf(() => applyLedgerRecord(state, { ...next, seq: nextSeq }))).toBe("ledger-inconsistent");
+            }
+            expect(state.driveNodes.get(driveStateKey(REV_A, NODE))?.fileId).toBe(FILE_2);
+        });
+
+        it("keeps refusing it through any further supersession", () => {
+            const state = build(() => [installed(), driveBound(), reserve(FILE_1), reserve(FILE_2), reserve(FILE_3)]);
+            for (const retired of [FILE_1, FILE_2]) {
+                nextSeq = state.lastSeq + 1;
+                expect(reasonOf(() => applyLedgerRecord(state, reserve(retired)))).toBe("ledger-inconsistent");
+            }
+            nextSeq = state.lastSeq + 1;
+            expect(reasonOf(() => applyLedgerRecord(state, reserve(FILE_3)))).toBe("ledger-inconsistent");
+        });
+
+        it("still refuses it after a checkpoint round trip", () => {
+            const restored = ledgerStateFromJson(JSON.parse(canonicalJson(ledgerStateToJson(abandoned()))));
+            for (const next of [reserve(FILE_1), created(FILE_1)]) {
+                nextSeq = restored.lastSeq + 1;
+                expect(reasonOf(() => applyLedgerRecord(restored, { ...next, seq: nextSeq }))).toBe("ledger-inconsistent");
+            }
+            nextSeq = restored.lastSeq + 1;
+            expect(reasonOf(() => applyLedgerRecord(restored, reserve(FILE_3)))).toBeNull();
+        });
+
+        it("does not retire an id that was never superseded", () => {
+            const state = build(() => [installed(), driveBound(), reserve(FILE_1), created(FILE_1), reserve(FILE_2, "file", ART_KEY)]);
+            nextSeq = state.lastSeq + 1;
+            expect(reasonOf(() => applyLedgerRecord(state, reserve(FILE_3, "folder", "eformsign/other")))).toBeNull();
+        });
     });
 
     it("keeps a folder and a file under distinct node keys", () => {
@@ -389,6 +431,7 @@ describe("Drive state checkpoint and replay (BJJ-456 U1)", () => {
         expect(restored).toEqual(state);
         expect(canonicalJson(ledgerStateToJson(restored))).toBe(text);
         expect(restored.driveNodes.get(driveStateKey(REV_A, NODE))).toEqual({ kind: "folder", fileId: FILE_3, parentFileId: PARENT, status: "reserved" });
+        expect([...restored.driveRetiredIds]).toEqual([driveStateKey(REV_A, FILE_1)]);
         nextSeq = state.lastSeq + 1;
         const next = published(SHA, FILE_3, NODE + "/x.json");
         expect(canon(applyLedgerRecord(restored, next))).toBe(canon(applyLedgerRecord(state, next)));
@@ -422,6 +465,7 @@ describe("Drive state checkpoint and replay (BJJ-456 U1)", () => {
         delete json["driveNodes"];
         delete json["driveRecords"];
         delete json["driveRecordsPending"];
+        delete json["driveRetiredIds"];
         delete (json["installation"] as Record<string, unknown>)["drive"];
         expect(ledgerStateFromJson(json)).toEqual(local);
     });
@@ -439,6 +483,54 @@ describe("Drive state checkpoint and replay (BJJ-456 U1)", () => {
         value = clone(); value["installation"]["drive"]["bindingId"] = "nope"; broken.push(value);
         value = clone(); value["installation"]["drive"]["extra"] = 1; broken.push(value);
         value = clone(); value["driveNodes"] = "x"; broken.push(value);
+        value = clone(); value["driveRetiredIds"][0]["fileId"] = "short"; broken.push(value);
+        value = clone(); value["driveRetiredIds"][0]["extra"] = 1; broken.push(value);
         for (const candidate of broken) expect(reasonOf(() => ledgerStateFromJson(candidate))).toBe("ledger-schema");
+    });
+});
+
+describe("checkpoint written before the Drive counters existed (BJJ-456 U1-F1)", () => {
+    beforeEach(() => { nextSeq = 1; });
+    const RUN = "11111111-1111-4111-8111-111111111111";
+    const counts = { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 };
+    const zeroDrive = { driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 };
+
+    function withFinishedRun(): LedgerState {
+        return build(() => [
+            installed(), rec("run_started", { runId: RUN, scheduledFor: null, startedAt: clock(1) }),
+            rec("run_finished", {
+                runId: RUN, finishedAt: clock(2), snapshotStatus: "partial", historicalCoverage: "unverified",
+                reasonCodes: ["coverage-unverified", "drive-not-configured"], counts: { ...counts, ...zeroDrive },
+            }),
+        ]);
+    }
+    function legacyJson(): Record<string, any> {
+        const json = JSON.parse(canon(withFinishedRun())) as Record<string, any>;
+        for (const key of Object.keys(zeroDrive)) delete json["runs"][0]["counts"][key];
+        return json;
+    }
+
+    it("loads a checkpoint whose finished run has no Drive counters, normalized to zero", () => {
+        const json = legacyJson();
+        expect(Object.keys(json["runs"][0]["counts"])).toHaveLength(8);
+        const restored = ledgerStateFromJson(json);
+        expect(restored.runs.get(RUN)?.counts).toEqual({ ...counts, ...zeroDrive });
+        expect(restored).toEqual(withFinishedRun());
+    });
+
+    it("writes all four Drive counters again", () => {
+        const rewritten = JSON.parse(canon(ledgerStateFromJson(legacyJson()))) as Record<string, any>;
+        expect(rewritten["runs"][0]["counts"]).toEqual({ ...counts, ...zeroDrive });
+    });
+
+    it("stays strict about the Drive counters", () => {
+        for (const bad of ["1", -1, 0.5, null]) {
+            const json = legacyJson();
+            json["runs"][0]["counts"]["driveBlocked"] = bad;
+            expect(reasonOf(() => ledgerStateFromJson(json))).toBe("ledger-schema");
+        }
+        const extra = legacyJson();
+        extra["runs"][0]["counts"]["other"] = 1;
+        expect(reasonOf(() => ledgerStateFromJson(extra))).toBe("ledger-schema");
     });
 });

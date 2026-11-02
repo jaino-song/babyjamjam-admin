@@ -160,6 +160,8 @@ export interface LedgerState {
     driveRecords: Map<string, PublishedDriveRecord>;
     /** Records whose bytes wait in the Drive outbox, by `driveStateKey(revision, relativeKey)` -> sha256. */
     driveRecordsPending: Map<string, string>;
+    /** Reservation ids a later reservation superseded, as `driveStateKey(revision, fileId)`. They are never current again. */
+    driveRetiredIds: Set<string>;
 }
 
 export function emptyLedgerState(): LedgerState {
@@ -182,6 +184,7 @@ export function emptyLedgerState(): LedgerState {
         driveNodes: new Map(),
         driveRecords: new Map(),
         driveRecordsPending: new Map(),
+        driveRetiredIds: new Set(),
     };
 }
 
@@ -203,6 +206,7 @@ function cloneState(state: LedgerState): LedgerState {
         driveNodes: new Map([...state.driveNodes].map(([key, node]) => [key, { ...node }])),
         driveRecords: new Map([...state.driveRecords].map(([key, record]) => [key, { ...record }])),
         driveRecordsPending: new Map(state.driveRecordsPending),
+        driveRetiredIds: new Set(state.driveRetiredIds),
     };
 }
 
@@ -507,8 +511,12 @@ function applyRecord(draft: LedgerState, record: LedgerRecord): void {
             const { body } = record;
             requireDriveRevision(draft, body.destinationRevision);
             const key = driveStateKey(body.destinationRevision, body.nodeKey);
-            // A superseding reservation names a new id; the old one is never taken back.
-            if (draft.driveNodes.get(key)?.fileId === body.fileId) fail("ledger-inconsistent");
+            const known = draft.driveNodes.get(key);
+            // A reservation names an id nobody used before: not the current one, and not one an earlier supersession retired.
+            if (known?.fileId === body.fileId || draft.driveRetiredIds.has(driveStateKey(body.destinationRevision, body.fileId))) {
+                fail("ledger-inconsistent");
+            }
+            if (known !== undefined) draft.driveRetiredIds.add(driveStateKey(body.destinationRevision, known.fileId));
             draft.driveNodes.set(key, { kind: body.kind, fileId: body.fileId, parentFileId: body.parentFileId, status: "reserved" });
             break;
         }
@@ -645,7 +653,7 @@ const stateJsonSchema = z.strictObject({
     terminalUnavailable: z.array(hex64),
     gaps: z.array(knownGapSchema),
     tailDiscards: z.array(z.strictObject({ byteLength: count, quarantineName: z.string().min(1).max(128), at: isoUtc })),
-    // The three Drive arrays are absent in a checkpoint written before the Drive destination existed.
+    // The four Drive arrays are absent in a checkpoint written before the Drive destination existed.
     driveNodes: z.array(z.strictObject({
         destinationRevision: identifier, nodeKey: relativeKeyField, kind: z.enum(["folder", "file"]),
         fileId: driveFileId, parentFileId: driveFileId, status: z.enum(["reserved", "created"]),
@@ -656,6 +664,7 @@ const stateJsonSchema = z.strictObject({
     driveRecordsPending: z.array(z.strictObject({
         destinationRevision: identifier, relativeKey: relativeKeyField, sha256: hex64,
     })).default([]),
+    driveRetiredIds: z.array(z.strictObject({ destinationRevision: identifier, fileId: driveFileId })).default([]),
 });
 
 /** Plain, canonical-JSON-safe object (arrays instead of Map/Set, `null` instead of `undefined`). */
@@ -695,6 +704,10 @@ export function ledgerStateToJson(state: LedgerState): z.infer<typeof stateJsonS
             const [destinationRevision, relativeKey] = splitDriveStateKey(key);
             return { destinationRevision, relativeKey, sha256 };
         }),
+        driveRetiredIds: [...state.driveRetiredIds].map((key) => {
+            const [destinationRevision, fileId] = splitDriveStateKey(key);
+            return { destinationRevision, fileId };
+        }),
     };
 }
 
@@ -726,5 +739,6 @@ export function ledgerStateFromJson(value: unknown): LedgerState {
         driveNodes: new Map(json.driveNodes.map(({ destinationRevision, nodeKey, ...node }) => [driveStateKey(destinationRevision, nodeKey), node])),
         driveRecords: new Map(json.driveRecords.map(({ destinationRevision, relativeKey, ...record }) => [driveStateKey(destinationRevision, relativeKey), record])),
         driveRecordsPending: new Map(json.driveRecordsPending.map((pending) => [driveStateKey(pending.destinationRevision, pending.relativeKey), pending.sha256])),
+        driveRetiredIds: new Set(json.driveRetiredIds.map((retired) => driveStateKey(retired.destinationRevision, retired.fileId))),
     };
 }

@@ -175,3 +175,48 @@ describe("Drive record bodies (BJJ-456 U1)", () => {
         expect(decodeLedgerLine(signed(wrap("recovery_started", { ...base, drive: without(bound, "rootName") })))).toEqual({ ok: false, error: "schema" });
     });
 });
+
+describe("RunCounts written before the Drive counters existed (BJJ-456 U1-F1)", () => {
+    const RUN_ID = "11111111-1111-4111-8111-111111111111";
+    const LEGACY_COUNTS = { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 };
+    const ZERO_DRIVE = { driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 };
+    const finished = (counts: unknown) => signed({
+        v: 1, seq: 3, type: "run_finished", at: AT,
+        body: { runId: RUN_ID, finishedAt: AT, snapshotStatus: "partial", historicalCoverage: "unverified", reasonCodes: ["coverage-unverified", "drive-not-configured"], counts },
+    });
+
+    it("reads a legacy run_finished line (no Drive counters) and normalizes them to zero", () => {
+        const decoded = decodeLedgerLine(finished(LEGACY_COUNTS));
+        expect(decoded.ok).toBe(true);
+        if (decoded.ok && decoded.record.type === "run_finished") expect(decoded.record.body.counts).toEqual({ ...LEGACY_COUNTS, ...ZERO_DRIVE });
+    });
+
+    it("reads a line whose Drive counters are present, keeping them", () => {
+        const counts = { ...LEGACY_COUNTS, driveVerified: 4, driveBlocked: 1, driveRetryWait: 2, driveIntegrityError: 3 };
+        const decoded = decodeLedgerLine(finished(counts));
+        expect(decoded.ok && decoded.record.type === "run_finished" && decoded.record.body.counts).toEqual(counts);
+    });
+
+    it("reads a line with only some Drive counters, defaulting the rest", () => {
+        const decoded = decodeLedgerLine(finished({ ...LEGACY_COUNTS, driveVerified: 2 }));
+        expect(decoded.ok && decoded.record.type === "run_finished" && decoded.record.body.counts).toEqual({ ...LEGACY_COUNTS, ...ZERO_DRIVE, driveVerified: 2 });
+    });
+
+    it("stays strict: a wrong type, a negative value, an unknown key and a missing legacy counter are still rejected", () => {
+        for (const key of Object.keys(ZERO_DRIVE)) {
+            for (const bad of ["1", -1, null, true]) {
+                expect(decodeLedgerLine(finished({ ...LEGACY_COUNTS, [key]: bad }))).toEqual({ ok: false, error: "schema" });
+            }
+        }
+        expect(decodeLedgerLine(finished({ ...LEGACY_COUNTS, driveExtra: 1 }))).toEqual({ ok: false, error: "schema" });
+        const missingLegacy = Object.fromEntries(Object.entries(LEGACY_COUNTS).filter(([name]) => name !== "orphanTemps"));
+        expect(decodeLedgerLine(finished(missingLegacy))).toEqual({ ok: false, error: "schema" });
+    });
+
+    it("a record written by this code carries all four Drive counters", () => {
+        const record = { v: 1, seq: 3, type: "run_finished", at: AT, body: {
+            runId: RUN_ID, finishedAt: AT, snapshotStatus: "partial", historicalCoverage: "unverified", reasonCodes: [], counts: { ...LEGACY_COUNTS, ...ZERO_DRIVE },
+        } } as LedgerRecord;
+        expect((JSON.parse(encodeLedgerLine(record)) as { body: { counts: object } }).body.counts).toEqual({ ...LEGACY_COUNTS, ...ZERO_DRIVE });
+    });
+});
