@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const BACKEND = path.resolve(__dirname, "../../../..");
 const RUNTIME_DIRS = ["domain/eformsign-backup/worker", "infrastructure/eformsign-backup/worker"];
-const RUNTIME_SCRIPTS = ["scripts/eformsign-backup-worker.ts", "scripts/eformsign-backup-restore.ts"];
+const RUNTIME_SCRIPTS = ["scripts/eformsign-backup-worker.ts", "scripts/eformsign-backup-restore.ts", "scripts/eformsign-backup-restore-drive.ts"];
 /** The non-worker modules the worker may import (see ALLOWED_BARE); they run inside it, so they obey the same rules. */
 const ALLOWED_MODULE_FILES = [
     "infrastructure/eformsign-backup/local-artifact-archive.ts",
