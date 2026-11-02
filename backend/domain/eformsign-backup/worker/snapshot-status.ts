@@ -25,6 +25,17 @@ export interface SnapshotJudgementInput {
     controlFailure: WorkerReasonCode | null;
     /** The local destination state of every included artifact. */
     localEntries: ReadonlyArray<{ state: DestinationState; reasonCode: WorkerReasonCode | null }>;
+    /**
+     * The Google Drive destination (BJJ-456). Omitted, or `bound: false`, judges exactly as before: Drive is `drive-not-configured`.
+     * Drive is a second, independent destination, so nothing in here can make a run `blocked` or `failed`.
+     */
+    drive?: {
+        bound: boolean;
+        /** The Drive phase as a whole did not run to its end (token rejected, root changed, ...): the reason code, else null. */
+        phaseFailure: WorkerReasonCode | null;
+        /** The reason codes of the Drive entries that ended in blocked, retry_wait or integrity_error. */
+        entryReasons: readonly WorkerReasonCode[];
+    };
 }
 
 export interface SnapshotJudgement {
@@ -36,7 +47,7 @@ function sortedUnique(codes: Iterable<WorkerReasonCode>): WorkerReasonCode[] {
     return [...new Set(codes)].sort();
 }
 
-/** Contract W8: `failed` > `blocked` > `partial`. All-verified is still `partial`. */
+/** Contract W8: `failed` > `blocked` > `partial`. All-verified is still `partial`; a bound Drive destination swaps `drive-not-configured` for its own reasons. */
 export function judgeSnapshotStatus(input: SnapshotJudgementInput): SnapshotJudgement {
     if (input.snapshotFailure !== null) {
         return { snapshotStatus: "failed", reasonCodes: [input.snapshotFailure] };
@@ -48,6 +59,12 @@ export function judgeSnapshotStatus(input: SnapshotJudgementInput): SnapshotJudg
         for (const entry of blockedEntries) if (entry.reasonCode !== null) codes.push(entry.reasonCode);
         if (codes.length === 0) codes.push("archive-unavailable");
         return { snapshotStatus: "blocked", reasonCodes: sortedUnique(codes) };
+    }
+    const drive = input.drive;
+    if (drive?.bound) {
+        const codes: WorkerReasonCode[] = ["coverage-unverified", ...drive.entryReasons];
+        if (drive.phaseFailure !== null) codes.push(drive.phaseFailure);
+        return { snapshotStatus: "partial", reasonCodes: sortedUnique(codes) };
     }
     return { snapshotStatus: "partial", reasonCodes: ["coverage-unverified", "drive-not-configured"] };
 }

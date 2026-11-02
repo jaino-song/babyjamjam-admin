@@ -30,6 +30,9 @@ export const isoUtc = z.string().regex(ISO_UTC_PATTERN).refine((value) => !Numbe
 export const isoWithOffset = z.string().regex(ISO_OFFSET_PATTERN).refine((value) => !Number.isNaN(Date.parse(value)));
 export const reasonCodeField = z.enum(WORKER_REASON_CODES);
 export const fileNameField = z.string().regex(FILE_NAME_PATTERN);
+/** A Google Drive file or folder id (BJJ-456). Only characters Drive ids use, so it can never carry a path or a query. */
+export const DRIVE_FILE_ID_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
+export const driveFileId = z.string().regex(DRIVE_FILE_ID_PATTERN);
 export const artifactTypeField = z.enum(["document", "audit-trail"]);
 
 /** Path-safe relative POSIX key: no leading slash, no empty/`.`/`..` segment, no backslash or control character. */
@@ -54,6 +57,13 @@ export function isPathIdentifier(value: unknown): value is string {
 }
 export const pathIdentifier = z.string().refine(isPathIdentifier);
 
+/**
+ * A Drive counter of a run (BJJ-456). Ledgers, checkpoints and run inventories written before the Drive destination
+ * existed do not have it, so a missing one reads as 0; a wrong type, a negative or an unknown key is still refused.
+ * Everything the worker writes carries all four.
+ */
+const driveCount = count.default(0);
+
 /** Counts a run reports (ledger `run_finished` and the archive run inventory share one shape). */
 export const runCountsSchema = z.strictObject({
     candidates: count,
@@ -64,5 +74,9 @@ export const runCountsSchema = z.strictObject({
     integrityError: count,
     terminalUnavailable: count,
     orphanTemps: count,
+    driveVerified: driveCount,
+    driveBlocked: driveCount,
+    driveRetryWait: driveCount,
+    driveIntegrityError: driveCount,
 });
 export type RunCounts = z.infer<typeof runCountsSchema>;

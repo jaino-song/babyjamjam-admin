@@ -5,10 +5,14 @@ import {
     DESTINATION_STATES, destinationKey, transitionDestination, type DestinationState,
 } from "./destination-transitions";
 import {
-    knownGapSchema, type KnownGap, type LedgerBodies, type LedgerRecord, LEDGER_RECORD_VERSION,
+    DRIVE_DESTINATION_IDENTITY_PREFIX, DRIVE_LAYOUT_REVISION_PREFIX, isDriveDestinationIdentity,
+} from "./drive-layout";
+import {
+    driveBindingFields, knownGapSchema, type DriveBindingFields, type KnownGap, type LedgerBodies, type LedgerRecord,
+    LEDGER_RECORD_VERSION,
 } from "./ledger-records";
 import {
-    artifactTypeField, count, hex64, identifier, isoUtc, isoWithOffset, opaqueId, reasonCodeField,
+    artifactTypeField, count, driveFileId, hex64, identifier, isoUtc, isoWithOffset, opaqueId, reasonCodeField,
     relativeKeyField, runCountsSchema, runIdField, sequenceField, sequenceFloorField,
     type RunCounts,
 } from "./schema-fields";
@@ -22,6 +26,14 @@ import { WorkerError, type WorkerReasonCode } from "./worker-error";
  * Pure ledger state: the result of applying journal records one after another (contract W2, §4).
  * Built only by `applyLedgerRecord`; nothing here touches a file, a clock or the network.
  */
+/**
+ * The Google Drive binding of the installation (BJJ-456). `pending` after `drive_bound` (the root and its marker are still
+ * being set up); `ready` after `drive_ready`. The runner and recover use only a `ready` binding.
+ */
+export interface DriveBinding extends DriveBindingFields {
+    status: "pending" | "ready";
+}
+
 export interface Installation {
     installationId: string;
     archiveId: string;
@@ -32,6 +44,8 @@ export interface Installation {
     /** `installed` for a fresh ledger, `recovery_started` for one rebuilt from the archive. */
     origin: "installed" | "recovery_started";
     priorLedgerName: string | null;
+    /** The current Drive binding; `null` until `drive_bound`. A later `drive_bound` supersedes it with a new revision. */
+    drive: DriveBinding | null;
 }
 
 export interface RunState {
@@ -98,6 +112,25 @@ export interface DestinationEntry {
     history: DestinationHistoryEvent[];
 }
 
+/** A Drive file or folder the worker reserved an id for before creating it (reserve-first, BJJ-456 design §7.2). */
+export interface DriveNode {
+    kind: "folder" | "file";
+    fileId: string;
+    parentFileId: string;
+    status: "reserved" | "created";
+}
+/** A record (manifest, completion, run inventory, marker) published on Drive. */
+export interface PublishedDriveRecord { sha256: string; fileId: string }
+
+/** Key of the Drive maps: `<destinationRevision>|<nodeKey or relativeKey>`. A revision never contains `|`. */
+export function driveStateKey(destinationRevision: string, key: string): string {
+    return `${destinationRevision}|${key}`;
+}
+function splitDriveStateKey(key: string): [string, string] {
+    const at = key.indexOf("|");
+    return [key.slice(0, at), key.slice(at + 1)];
+}
+
 export interface StagedArtifact { sha256: string; byteLength: number; at: string }
 export interface PublishedFile { sha256: string; at: string }
 export interface PublishedCompletion extends PublishedFile { sequence: number }
@@ -121,6 +154,14 @@ export interface LedgerState {
     terminalUnavailable: Set<string>;
     gaps: KnownGap[];
     tailDiscards: TailDiscard[];
+    /** Drive nodes by `driveStateKey(revision, nodeKey)`; a later reservation of a key supersedes the earlier one. */
+    driveNodes: Map<string, DriveNode>;
+    /** Records published on Drive by `driveStateKey(revision, relativeKey)`. */
+    driveRecords: Map<string, PublishedDriveRecord>;
+    /** Records whose bytes wait in the Drive outbox, by `driveStateKey(revision, relativeKey)` -> sha256. */
+    driveRecordsPending: Map<string, string>;
+    /** Reservation ids a later reservation superseded, as `driveStateKey(revision, fileId)`. They are never current again. */
+    driveRetiredIds: Set<string>;
 }
 
 export function emptyLedgerState(): LedgerState {
@@ -140,13 +181,17 @@ export function emptyLedgerState(): LedgerState {
         terminalUnavailable: new Set(),
         gaps: [],
         tailDiscards: [],
+        driveNodes: new Map(),
+        driveRecords: new Map(),
+        driveRecordsPending: new Map(),
+        driveRetiredIds: new Set(),
     };
 }
 
 function cloneState(state: LedgerState): LedgerState {
     return {
         ...state,
-        installation: state.installation && { ...state.installation },
+        installation: state.installation && { ...state.installation, drive: state.installation.drive && { ...state.installation.drive } },
         runs: new Map([...state.runs].map(([key, run]) => [key, { ...run, reasonCodes: [...run.reasonCodes] }])),
         snapshots: new Map(state.snapshots),
         candidates: new Map(state.candidates),
@@ -158,6 +203,10 @@ function cloneState(state: LedgerState): LedgerState {
         terminalUnavailable: new Set(state.terminalUnavailable),
         gaps: [...state.gaps],
         tailDiscards: [...state.tailDiscards],
+        driveNodes: new Map([...state.driveNodes].map(([key, node]) => [key, { ...node }])),
+        driveRecords: new Map([...state.driveRecords].map(([key, record]) => [key, { ...record }])),
+        driveRecordsPending: new Map(state.driveRecordsPending),
+        driveRetiredIds: new Set(state.driveRetiredIds),
     };
 }
 
@@ -218,6 +267,29 @@ function requireInstallation(draft: LedgerState): Installation {
     return draft.installation ?? fail("ledger-first-record");
 }
 
+/** The identity and revision of a Drive binding follow from its root and binding ids; anything else is a corrupt record. */
+function assertBindingConsistent(binding: DriveBindingFields): void {
+    if (binding.destinationIdentity !== `${DRIVE_DESTINATION_IDENTITY_PREFIX}${binding.rootFolderId}`
+        || binding.destinationRevision !== `${DRIVE_LAYOUT_REVISION_PREFIX}${binding.bindingId}`) fail("ledger-inconsistent");
+}
+
+function sameBinding(left: DriveBindingFields, right: DriveBindingFields): boolean {
+    return (Object.keys(driveBindingFields) as Array<keyof DriveBindingFields>).every((field) => left[field] === right[field]);
+}
+
+/** A Drive result or reservation only belongs to the binding that is current when it is recorded (T29). */
+function assertCurrentDriveBinding(draft: LedgerState, identity: string, revision: string): DriveBinding {
+    const drive = requireInstallation(draft).drive;
+    if (drive === null || drive.destinationIdentity !== identity || drive.destinationRevision !== revision) fail("ledger-inconsistent");
+    return drive;
+}
+
+function requireDriveRevision(draft: LedgerState, revision: string): DriveBinding {
+    const drive = requireInstallation(draft).drive;
+    if (drive === null || drive.destinationRevision !== revision) fail("ledger-inconsistent");
+    return drive;
+}
+
 function applyInstall(
     draft: LedgerState, origin: Installation["origin"],
     body: LedgerBodies["installed"] & Partial<LedgerBodies["recovery_started"]>,
@@ -232,7 +304,12 @@ function applyInstall(
         destinationRevision: body.destinationRevision,
         origin,
         priorLedgerName: body.priorLedgerName ?? null,
+        drive: null,
     };
+    if (body.drive !== undefined) {
+        assertBindingConsistent(body.drive);
+        draft.installation.drive = { ...body.drive, status: "pending" };
+    }
     if (origin === "recovery_started") {
         draft.sequenceFloor = body.sequenceFloor ?? 0;
         for (const gap of body.knownGaps ?? []) addGap(draft, { ...gap });
@@ -241,6 +318,9 @@ function applyInstall(
 
 function applyTransition(draft: LedgerState, record: LedgerRecord & { type: "destination_transition" }): void {
     const { body } = record;
+    if (isDriveDestinationIdentity(body.destinationIdentity)) {
+        assertCurrentDriveBinding(draft, body.destinationIdentity, body.destinationRevision);
+    }
     const key = destinationKey(body.artifactIdentity, body.destinationIdentity, body.destinationRevision);
     const entry = draft.destinations.get(key);
     if ((entry?.state ?? null) !== body.from) fail("forbidden-transition");
@@ -272,7 +352,17 @@ function applyTransition(draft: LedgerState, record: LedgerRecord & { type: "des
 function applyRecovered(draft: LedgerState, record: LedgerRecord & { type: "recovered_verified" }): void {
     const { body } = record;
     const installation = requireInstallation(draft);
-    const key = destinationKey(body.artifactIdentity, installation.destinationIdentity, installation.destinationRevision);
+    let destinationIdentity = installation.destinationIdentity;
+    let destinationRevision = installation.destinationRevision;
+    const driveFields = [body.destinationIdentity, body.destinationRevision, body.fileId].filter((field) => field !== undefined).length;
+    if (driveFields !== 0 && driveFields !== 3) fail("ledger-schema");
+    if (body.destinationIdentity !== undefined && body.destinationRevision !== undefined) {
+        // A Drive result is for the current binding only: another revision's verification is never carried over.
+        assertCurrentDriveBinding(draft, body.destinationIdentity, body.destinationRevision);
+        destinationIdentity = body.destinationIdentity;
+        destinationRevision = body.destinationRevision;
+    }
+    const key = destinationKey(body.artifactIdentity, destinationIdentity, destinationRevision);
     const entry = draft.destinations.get(key);
     const parsed = parseArtifactKey(body.relativeKey);
     if (!draft.artifacts.has(body.artifactIdentity) && parsed) {
@@ -282,8 +372,8 @@ function applyRecovered(draft: LedgerState, record: LedgerRecord & { type: "reco
     }
     draft.destinations.set(key, {
         artifactIdentity: body.artifactIdentity,
-        destinationIdentity: installation.destinationIdentity,
-        destinationRevision: installation.destinationRevision,
+        destinationIdentity,
+        destinationRevision,
         state: "verified",
         attempts: entry?.attempts ?? 0,
         nextRetryAt: null,
@@ -295,6 +385,18 @@ function applyRecovered(draft: LedgerState, record: LedgerRecord & { type: "reco
             reasonCode: null, attempts: entry?.attempts ?? 0, kind: "recovery",
         }],
     });
+}
+
+function applyDriveBound(draft: LedgerState, body: LedgerBodies["drive_bound"]): void {
+    const installation = requireInstallation(draft);
+    assertBindingConsistent(body);
+    const known = installation.drive;
+    if (known !== null && known.destinationRevision === body.destinationRevision) {
+        // The same binding again changes nothing (and keeps its status); the same revision for other fields is corrupt.
+        if (!sameBinding(known, body)) fail("ledger-inconsistent");
+        return;
+    }
+    installation.drive = { ...body, status: "pending" };
 }
 
 function applyRecord(draft: LedgerState, record: LedgerRecord): void {
@@ -397,6 +499,58 @@ function applyRecord(draft: LedgerState, record: LedgerRecord): void {
         case "recovered_verified":
             applyRecovered(draft, record);
             break;
+        case "drive_bound":
+            applyDriveBound(draft, record.body);
+            break;
+        case "drive_ready": {
+            const drive = requireDriveRevision(draft, record.body.destinationRevision);
+            draft.installation!.drive = { ...drive, status: "ready" };
+            break;
+        }
+        case "drive_node_reserved": {
+            const { body } = record;
+            requireDriveRevision(draft, body.destinationRevision);
+            const key = driveStateKey(body.destinationRevision, body.nodeKey);
+            const known = draft.driveNodes.get(key);
+            // A reservation names an id nobody used before: not the current one, and not one an earlier supersession retired.
+            if (known?.fileId === body.fileId || draft.driveRetiredIds.has(driveStateKey(body.destinationRevision, body.fileId))) {
+                fail("ledger-inconsistent");
+            }
+            if (known !== undefined) draft.driveRetiredIds.add(driveStateKey(body.destinationRevision, known.fileId));
+            draft.driveNodes.set(key, { kind: body.kind, fileId: body.fileId, parentFileId: body.parentFileId, status: "reserved" });
+            break;
+        }
+        case "drive_node_created": {
+            const { body } = record;
+            requireDriveRevision(draft, body.destinationRevision);
+            const key = driveStateKey(body.destinationRevision, body.nodeKey);
+            const node = draft.driveNodes.get(key);
+            if (node === undefined || node.fileId !== body.fileId) fail("ledger-inconsistent");
+            draft.driveNodes.set(key, { ...node, status: "created" });
+            break;
+        }
+        case "drive_record_published": {
+            const { body } = record;
+            requireDriveRevision(draft, body.destinationRevision);
+            const key = driveStateKey(body.destinationRevision, body.relativeKey);
+            const known = draft.driveRecords.get(key);
+            const waiting = draft.driveRecordsPending.get(key);
+            if ((known !== undefined && known.sha256 !== body.sha256) || (waiting !== undefined && waiting !== body.sha256)) fail("drive-conflict");
+            draft.driveRecords.set(key, { sha256: body.sha256, fileId: body.fileId });
+            draft.driveRecordsPending.delete(key);
+            break;
+        }
+        case "drive_record_pending": {
+            const { body } = record;
+            requireDriveRevision(draft, body.destinationRevision);
+            const key = driveStateKey(body.destinationRevision, body.relativeKey);
+            const known = draft.driveRecords.get(key);
+            const waiting = draft.driveRecordsPending.get(key);
+            if ((known !== undefined && known.sha256 !== body.sha256) || (waiting !== undefined && waiting !== body.sha256)) fail("drive-conflict");
+            // Already published with these bytes: nothing is left to publish.
+            if (known === undefined) draft.driveRecordsPending.set(key, body.sha256);
+            break;
+        }
         default:
             fail("ledger-schema");
     }
@@ -429,6 +583,8 @@ const installationSchema = z.strictObject({
     destinationRevision: identifier,
     origin: z.enum(["installed", "recovery_started"]),
     priorLedgerName: z.string().min(1).max(128).nullable(),
+    // Absent in a checkpoint written before the Drive destination existed.
+    drive: z.strictObject({ ...driveBindingFields, status: z.enum(["pending", "ready"]) }).nullable().default(null),
 });
 const runSchema = z.strictObject({
     runId: runIdField,
@@ -497,6 +653,18 @@ const stateJsonSchema = z.strictObject({
     terminalUnavailable: z.array(hex64),
     gaps: z.array(knownGapSchema),
     tailDiscards: z.array(z.strictObject({ byteLength: count, quarantineName: z.string().min(1).max(128), at: isoUtc })),
+    // The four Drive arrays are absent in a checkpoint written before the Drive destination existed.
+    driveNodes: z.array(z.strictObject({
+        destinationRevision: identifier, nodeKey: relativeKeyField, kind: z.enum(["folder", "file"]),
+        fileId: driveFileId, parentFileId: driveFileId, status: z.enum(["reserved", "created"]),
+    })).default([]),
+    driveRecords: z.array(z.strictObject({
+        destinationRevision: identifier, relativeKey: relativeKeyField, sha256: hex64, fileId: driveFileId,
+    })).default([]),
+    driveRecordsPending: z.array(z.strictObject({
+        destinationRevision: identifier, relativeKey: relativeKeyField, sha256: hex64,
+    })).default([]),
+    driveRetiredIds: z.array(z.strictObject({ destinationRevision: identifier, fileId: driveFileId })).default([]),
 });
 
 /** Plain, canonical-JSON-safe object (arrays instead of Map/Set, `null` instead of `undefined`). */
@@ -505,7 +673,7 @@ export function ledgerStateToJson(state: LedgerState): z.infer<typeof stateJsonS
         schemaVersion: 1,
         lastSeq: state.lastSeq,
         lastAt: state.lastAt,
-        installation: state.installation && { ...state.installation },
+        installation: state.installation && { ...state.installation, drive: state.installation.drive && { ...state.installation.drive } },
         sequenceFloor: state.sequenceFloor,
         runs: [...state.runs.values()].map((run) => ({
             ...run, reasonCodes: [...run.reasonCodes], counts: run.counts && { ...run.counts },
@@ -524,6 +692,22 @@ export function ledgerStateToJson(state: LedgerState): z.infer<typeof stateJsonS
         terminalUnavailable: [...state.terminalUnavailable],
         gaps: state.gaps.map((gap) => ({ ...gap })),
         tailDiscards: state.tailDiscards.map((discard) => ({ ...discard })),
+        driveNodes: [...state.driveNodes].map(([key, node]) => {
+            const [destinationRevision, nodeKey] = splitDriveStateKey(key);
+            return { destinationRevision, nodeKey, ...node };
+        }),
+        driveRecords: [...state.driveRecords].map(([key, record]) => {
+            const [destinationRevision, relativeKey] = splitDriveStateKey(key);
+            return { destinationRevision, relativeKey, ...record };
+        }),
+        driveRecordsPending: [...state.driveRecordsPending].map(([key, sha256]) => {
+            const [destinationRevision, relativeKey] = splitDriveStateKey(key);
+            return { destinationRevision, relativeKey, sha256 };
+        }),
+        driveRetiredIds: [...state.driveRetiredIds].map((key) => {
+            const [destinationRevision, fileId] = splitDriveStateKey(key);
+            return { destinationRevision, fileId };
+        }),
     };
 }
 
@@ -552,5 +736,9 @@ export function ledgerStateFromJson(value: unknown): LedgerState {
         terminalUnavailable: new Set(json.terminalUnavailable),
         gaps: json.gaps,
         tailDiscards: json.tailDiscards,
+        driveNodes: new Map(json.driveNodes.map(({ destinationRevision, nodeKey, ...node }) => [driveStateKey(destinationRevision, nodeKey), node])),
+        driveRecords: new Map(json.driveRecords.map(({ destinationRevision, relativeKey, ...record }) => [driveStateKey(destinationRevision, relativeKey), record])),
+        driveRecordsPending: new Map(json.driveRecordsPending.map((pending) => [driveStateKey(pending.destinationRevision, pending.relativeKey), pending.sha256])),
+        driveRetiredIds: new Set(json.driveRetiredIds.map((retired) => driveStateKey(retired.destinationRevision, retired.fileId))),
     };
 }

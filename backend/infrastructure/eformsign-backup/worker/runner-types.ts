@@ -109,4 +109,5 @@ export interface WorkerRunnerPort {
 
 export const ZERO_COUNTS: Readonly<RunCounts> = Object.freeze({
     candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0,
+    driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0,
 });

@@ -283,7 +283,8 @@ class RunExecution {
             const at = this.now();
             await this.deps.ledger.append("run_finished", {
                 runId: run.runId, finishedAt: at, snapshotStatus: "failed", historicalCoverage: judgeHistoricalCoverage(this.state),
-                reasonCodes: ["crashed"], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+                reasonCodes: ["crashed"], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0,
+                    driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
             }, at);
         }
     }
@@ -1254,7 +1255,7 @@ class RunExecution {
         return {
             counts: {
                 candidates: this.totalCandidates, included: this.includedCandidates, verified, blocked, retryWait, integrityError,
-                terminalUnavailable, orphanTemps,
+                terminalUnavailable, orphanTemps, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0,
             },
             entries,
         };

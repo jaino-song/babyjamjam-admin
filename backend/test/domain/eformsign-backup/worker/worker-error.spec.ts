@@ -10,6 +10,7 @@ const REQUIRED = [
     "exact-bytes-unavailable", "archive-not-mount-point", "source-removed", "version-changed", "consistency-conflict",
     "artifact-too-large", "rate-limited", "artifact-pending", "mirror-missing", "export-unavailable", "network-timeout",
     "export-request-rejected", "idempotency-conflict", "internal",
+    "drive-unavailable", "drive-permission", "drive-quota", "drive-token-invalid", "drive-root-changed", "drive-conflict",
 ];
 
 describe("WorkerError", () => {

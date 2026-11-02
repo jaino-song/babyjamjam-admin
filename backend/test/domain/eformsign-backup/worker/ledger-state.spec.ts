@@ -43,7 +43,7 @@ const transition = (
 const finished = (runId = RUN1) => rec("run_finished", {
     runId, finishedAt: clock(50), snapshotStatus: "partial", historicalCoverage: "unverified",
     reasonCodes: ["coverage-unverified", "drive-not-configured"],
-    counts: { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+    counts: { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
 });
 
 function build(make: () => LedgerRecord[]): LedgerState {

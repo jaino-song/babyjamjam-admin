@@ -39,6 +39,64 @@ describe("judgeSnapshotStatus (T-WRK-03)", () => {
         })).toEqual(expected);
     });
 
+    describe("Drive destination (BJJ-456)", () => {
+        const base = { snapshotFailure: null, controlFailure: null, localEntries: [verified] } as const;
+        const unbound = judgeSnapshotStatus({ ...base });
+
+        it("is byte-identical to today when the drive input is omitted or unbound, whatever else it carries", () => {
+            expect(unbound).toEqual({ snapshotStatus: "partial", reasonCodes: ["coverage-unverified", "drive-not-configured"] });
+            expect(judgeSnapshotStatus({ ...base, drive: { bound: false, phaseFailure: null, entryReasons: [] } })).toEqual(unbound);
+            expect(judgeSnapshotStatus({ ...base, drive: { bound: false, phaseFailure: "drive-quota", entryReasons: ["drive-permission"] } })).toEqual(unbound);
+        });
+
+        it("drops drive-not-configured for a bound destination and keeps the run partial", () => {
+            expect(judgeSnapshotStatus({ ...base, drive: { bound: true, phaseFailure: null, entryReasons: [] } }))
+                .toEqual({ snapshotStatus: "partial", reasonCodes: ["coverage-unverified"] });
+        });
+
+        it("replaces drive-not-configured by the Drive phase failure and the distinct sorted entry reasons", () => {
+            expect(judgeSnapshotStatus({ ...base, drive: { bound: true, phaseFailure: "drive-token-invalid", entryReasons: [] } }))
+                .toEqual({ snapshotStatus: "partial", reasonCodes: ["coverage-unverified", "drive-token-invalid"] });
+            expect(judgeSnapshotStatus({
+                ...base,
+                drive: { bound: true, phaseFailure: null, entryReasons: ["rate-limited", "drive-quota", "rate-limited", "network-timeout"] },
+            })).toEqual({ snapshotStatus: "partial", reasonCodes: ["coverage-unverified", "drive-quota", "network-timeout", "rate-limited"] });
+            expect(judgeSnapshotStatus({
+                ...base, drive: { bound: true, phaseFailure: "drive-not-configured", entryReasons: ["drive-permission", "drive-not-configured"] },
+            })).toEqual({ snapshotStatus: "partial", reasonCodes: ["coverage-unverified", "drive-not-configured", "drive-permission"] });
+        });
+
+        it("never lets a Drive failure make the run blocked or failed (u1-driveblocks)", () => {
+            for (const phaseFailure of [null, "drive-not-configured", "drive-token-invalid", "drive-root-changed", "drive-quota", "drive-unavailable",
+                "drive-permission", "drive-conflict", "network-timeout", "rate-limited", "artifact-integrity", "crashed"] as const) {
+                const judged = judgeSnapshotStatus({
+                    ...base, drive: { bound: true, phaseFailure, entryReasons: ["drive-permission", "artifact-integrity", "archive-unavailable", "control-unavailable"] },
+                });
+                expect(judged.snapshotStatus).toBe("partial");
+            }
+        });
+
+        it("leaves failed and blocked judgements exactly as they are for a bound destination", () => {
+            const drive = { bound: true, phaseFailure: "drive-token-invalid", entryReasons: ["drive-quota"] } as const;
+            expect(judgeSnapshotStatus({ snapshotFailure: "credential-rejected", controlFailure: null, localEntries: [verified], drive }))
+                .toEqual({ snapshotStatus: "failed", reasonCodes: ["credential-rejected"] });
+            expect(judgeSnapshotStatus({ snapshotFailure: null, controlFailure: "control-unavailable", localEntries: [verified], drive }))
+                .toEqual({ snapshotStatus: "blocked", reasonCodes: ["control-unavailable"] });
+            expect(judgeSnapshotStatus({ snapshotFailure: null, controlFailure: null, localEntries: [{ state: "blocked", reasonCode: "archive-unavailable" }], drive }))
+                .toEqual({ snapshotStatus: "blocked", reasonCodes: ["archive-unavailable"] });
+        });
+
+        it("can never produce complete for a bound destination over the whole reason-code space", () => {
+            for (const phaseFailure of [null, ...WORKER_REASON_CODES]) {
+                for (const entryReason of WORKER_REASON_CODES) {
+                    const judged = judgeSnapshotStatus({ ...base, drive: { bound: true, phaseFailure, entryReasons: [entryReason] } });
+                    expect(judged.snapshotStatus).toBe("partial");
+                    expect(judged.reasonCodes).toContain("coverage-unverified");
+                }
+            }
+        });
+    });
+
     it("can never produce complete or skipped_overlap, over a broad input matrix", () => {
         const failures: Array<WorkerReasonCode | null> = [null, "credential-rejected", "snapshot-not-ready", "export-request-rejected"];
         const controls: Array<WorkerReasonCode | null> = [null, "control-unavailable", "control-space"];
