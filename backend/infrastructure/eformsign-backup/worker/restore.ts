@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
-    WorkerError, isPathIdentifier, manifestSchema, selectCompletion,
+    WorkerError, isPathIdentifier, manifestSchema, parseManifestKey, parseManifestName, selectCompletion,
     type ArchiveArtifactType, type Completion, type Manifest, type QuarantinedEntry,
 } from "domain/eformsign-backup/worker";
 import { createRealFsProbe } from "./fs-probe";
@@ -44,7 +44,6 @@ export interface RestoreReport {
 }
 
 const REPORT_NAME = "restore-report.json";
-const MANIFEST_NAME = /^([0-9a-f]{64})\.json$/;
 
 function isNormalAbsolute(candidate: string): boolean {
     return typeof candidate === "string" && path.isAbsolute(candidate) && candidate !== "/"
@@ -103,12 +102,20 @@ function artifactSetOf(manifest: Manifest): string {
     return manifest.artifacts.map((artifact) => `${artifact.artifactType}:${artifact.sha256}`).sort().join("|");
 }
 
-export async function readManifest(
-    archive: LocalDestination, key: string, expect: { companyId: string; documentId: string; metadataRevision: string; sha256?: string },
-): Promise<Manifest> {
-    const bytes = await archive.readArchiveFile(key);
-    if (bytes === null) throw new WorkerError("artifact-integrity");
-    if (expect.sha256 !== undefined && sha256Hex(bytes) !== expect.sha256) throw new WorkerError("artifact-integrity");
+/**
+ * The one validator of a manifest's bytes, shared by restore, recovery and the runner's indexing, so none of them can
+ * accept what another refuses: the digest the caller expects (a completion entry), the digest a content-versioned name
+ * carries (the name must be the raw file's own SHA-256), the schema, and the owner, document and revision. No second read.
+ */
+export function parseManifestBytes(
+    bytes: Buffer, key: string, expect: { companyId: string; documentId: string; metadataRevision: string; sha256?: string },
+): { manifest: Manifest; sha256: string } {
+    const sha256 = sha256Hex(bytes);
+    if (expect.sha256 !== undefined && sha256 !== expect.sha256) throw new WorkerError("artifact-integrity");
+    const named = parseManifestKey(key);
+    if (named === null || named.companyId !== expect.companyId || named.documentId !== expect.documentId
+        || named.metadataRevision !== expect.metadataRevision) throw new WorkerError("artifact-integrity");
+    if (named.manifestSha256 !== null && named.manifestSha256 !== sha256) throw new WorkerError("artifact-integrity");
     let parsed;
     try {
         parsed = manifestSchema.safeParse(JSON.parse(bytes.toString("utf8")));
@@ -117,7 +124,15 @@ export async function readManifest(
     }
     if (!parsed.success || parsed.data.companyId !== expect.companyId || parsed.data.documentId !== expect.documentId
         || parsed.data.metadataRevision !== expect.metadataRevision) throw new WorkerError("artifact-integrity");
-    return parsed.data;
+    return { manifest: parsed.data, sha256 };
+}
+
+export async function readManifest(
+    archive: LocalDestination, key: string, expect: { companyId: string; documentId: string; metadataRevision: string; sha256?: string },
+): Promise<Manifest> {
+    const bytes = await archive.readArchiveFile(key);
+    if (bytes === null) throw new WorkerError("artifact-integrity");
+    return parseManifestBytes(bytes, key, expect).manifest;
 }
 
 async function planFromCompletion(archive: LocalDestination, completion: Completion): Promise<PlannedDocument[]> {
@@ -137,7 +152,10 @@ export interface ManifestFile {
     key: string;
 }
 
-/** Every `eformsign/<company>/<document>/manifests/<revision>.json` in the archive, sorted by document, then revision. */
+/**
+ * Every `eformsign/<company>/<document>/manifests/<revision>.json` and `<revision>-<manifestSha256>.json` in the archive,
+ * sorted by document, then file name. `metadataRevision` is the revision the name carries in either shape.
+ */
 export async function listManifestFiles(archivePath: string, companyId: string): Promise<ManifestFile[]> {
     const root = `${archivePath}/eformsign/${companyId}`;
     let names: string[];
@@ -154,12 +172,12 @@ export async function listManifestFiles(archivePath: string, companyId: string):
         if (!stat.isDirectory()) continue;
         let files: string[];
         try {
-            files = (await fs.readdir(`${root}/${documentId}/manifests`)).filter((name) => MANIFEST_NAME.test(name)).sort();
+            files = (await fs.readdir(`${root}/${documentId}/manifests`)).filter((name) => parseManifestName(name) !== null).sort();
         } catch {
             continue;
         }
         for (const name of files) {
-            found.push({ documentId, metadataRevision: MANIFEST_NAME.exec(name)![1]!, key: `eformsign/${companyId}/${documentId}/manifests/${name}` });
+            found.push({ documentId, metadataRevision: parseManifestName(name)!.metadataRevision, key: `eformsign/${companyId}/${documentId}/manifests/${name}` });
         }
     }
     return found;

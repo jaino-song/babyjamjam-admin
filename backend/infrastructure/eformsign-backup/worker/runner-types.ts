@@ -15,6 +15,8 @@ export const RUNNER_FAULT_POINTS = [
     "after-publish-before-verifying",
     "after-verifying-before-verified",
     "after-manifest-before-record",
+    "after-manifest-first-before-record",
+    "after-verified",
     "after-completion-before-record",
     "recover-after-quarantine",
     "recover-after-first-recovered",

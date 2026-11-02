@@ -640,7 +640,8 @@ describe("LocalDestination", () => {
         const run = runKey({ companyId: "C001", runId: UUID_RUN });
         const bytes = Buffer.from('{"synthetic":1}\n');
 
-        it.each([["manifest", manifest], ["completion", completion], ["run", run]])("should publish a %s file, reuse it, and refuse different bytes", async (_name, key) => {
+        const versioned = manifestKey({ companyId: "C001", documentId: "D001", metadataRevision: "a".repeat(64), manifestSha256: "c".repeat(64) });
+        it.each([["manifest", manifest], ["content-versioned manifest", versioned], ["completion", completion], ["run", run]])("should publish a %s file, reuse it, and refuse different bytes", async (_name, key) => {
             const destination = makeDestination(fixture);
             expect(await destination.publishJson(key, bytes)).toEqual({ ok: true, relativeKey: key, disposition: "created" });
             expect((await fs.readFile(path.join(fixture.root, key))).equals(bytes)).toBe(true);
@@ -658,6 +659,10 @@ describe("LocalDestination", () => {
             ["a non-hex name", "eformsign/C001/D001/manifests/revision.json"],
             ["a marker key", ".bjj-backup/installation.json"],
             ["an upper-case hex name", "eformsign/C001/D001/manifests/" + "A".repeat(64) + ".json"],
+            ["a malformed manifest suffix", "eformsign/C001/D001/manifests/" + "a".repeat(64) + "-" + "c".repeat(63) + ".json"],
+            ["an upper-case manifest suffix", "eformsign/C001/D001/manifests/" + "a".repeat(64) + "-" + "C".repeat(64) + ".json"],
+            ["a doubled manifest suffix", "eformsign/C001/D001/manifests/" + "a".repeat(64) + "-" + "c".repeat(64) + "-" + "c".repeat(64) + ".json"],
+            ["a reserved document with a versioned name", "eformsign/C001/completions/manifests/" + "a".repeat(64) + "-" + "c".repeat(64) + ".json"],
         ])("should refuse %s", async (_name, key) => {
             const before = await snapshotTree(base);
             expect(await makeDestination(fixture).publishJson(key, bytes)).toEqual({ ok: false, reasonCode: "invalid-path-segment" });
@@ -717,6 +722,23 @@ describe("LocalDestination", () => {
             for (const key of ["../x", "/etc/passwd", "a\\b", "", "a//b", "./a"]) {
                 await expect(destination.readArchiveFile(key)).rejects.toMatchObject({ reasonCode: "invalid-path-segment" });
             }
+        });
+        it("should report an artifact's size without reading it, null when absent, and refuse a symlink, a bad key or a swapped root", async () => {
+            const destination = makeDestination(fixture);
+            const input = publishInput(pdf);
+            const published = await destination.publishArtifact(input, streamOf(pdf));
+            if (!published.ok) throw new Error("fixture");
+            const key = published.relativeKey;
+            expect(await destination.artifactSize(key)).toBe(pdf.length);
+            const absent = key.replace(/[0-9a-f]{64}\.pdf$/, `${"0".repeat(64)}.pdf`);
+            expect(await destination.artifactSize(absent)).toBeNull();
+            await expect(destination.artifactSize("eformsign/C001/D001/manifests/x.json")).rejects.toMatchObject({ reasonCode: "invalid-path-segment" });
+            await expect(destination.artifactSize("../x.pdf")).rejects.toMatchObject({ reasonCode: "invalid-path-segment" });
+            await fs.writeFile(path.join(base, "elsewhere.pdf"), pdf);
+            await fs.symlink(path.join(base, "elsewhere.pdf"), path.join(fixture.root, absent));
+            await expect(destination.artifactSize(absent)).rejects.toMatchObject({ reasonCode: "archive-unsafe-path" });
+            await swapRoot(true);
+            await expect(makeDestination(fixture).artifactSize(key)).rejects.toMatchObject({ reasonCode: "archive-identity-mismatch" });
         });
         it("should read without the archive marker or a supported filesystem (restore of a copied archive)", async () => {
             const destination = makeDestination(fixture);

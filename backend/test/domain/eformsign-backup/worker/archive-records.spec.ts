@@ -4,7 +4,7 @@ import {
 } from "domain/eformsign-backup/source-evidence";
 import {
     WorkerError, buildCompletion, buildManifest, buildRunInventory, bundleIdFor, completionContentDigest,
-    completionSchema, manifestSchema, parseCompletionName, runInventorySchema, toArchiveArtifactType,
+    completionSchema, manifestKey, manifestSchema, parseCompletionName, runInventorySchema, toArchiveArtifactType,
 } from "domain/eformsign-backup/worker";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -263,5 +263,42 @@ describe("completionSchema binds every manifestKey and orders entries (D1, D2)",
             expect(accepts({ ...good(), gaps: [{ documentId, reasonCode: "source-removed" }] })).toBe(false);
         }
         expect(accepts({ ...good(), gaps: [{ documentId: "Dé", reasonCode: "source-removed" }] })).toBe(true);
+    });
+});
+
+describe("completion entries may name a content-versioned manifest (BJJ-455 P2 FU-10-F5)", () => {
+    const base = {
+        companyId: COMPANY, sequence: 2, snapshotId: "snap-0002", runId: RUN, scopeRevision: "2026-10-19-company-all-docs",
+        policyRevision: "2026-10-18-completed-pdf-audit", destinationIdentity: "local:arch-1", destinationRevision: "local-layout-v1",
+        gaps: [],
+    };
+    const revision = sha("m-D001");
+    const digest = sha("f-D001");
+    const versioned = manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: revision, manifestSha256: digest });
+    const entry = { documentId: "D001", metadataRevision: revision, manifestSha256: digest };
+    const accepts = (value: unknown) => completionSchema.safeParse(value).success;
+
+    it("keeps the exact key it is given and accepts it only when the suffix is the entry's manifest digest", () => {
+        const built = buildCompletion({ ...base, entries: [{ ...entry, manifestKey: versioned }] });
+        expect(built.value.entries[0]!.manifestKey).toBe(versioned);
+        expect(accepts(built.value)).toBe(true);
+        const arbitrary = structuredClone(built.value);
+        arbitrary.entries[0]!.manifestKey = manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: revision, manifestSha256: sha("another") });
+        expect(accepts(arbitrary)).toBe(false);
+        expect(() => buildCompletion({ ...base, entries: [{ ...entry, manifestKey: arbitrary.entries[0]!.manifestKey }] })).toThrow();
+    });
+
+    it("still accepts the legacy metadata-only key, which is also the default", () => {
+        const legacy = buildCompletion({ ...base, entries: [entry] });
+        expect(legacy.value.entries[0]!.manifestKey).toBe(manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: revision }));
+        expect(accepts(legacy.value)).toBe(true);
+    });
+
+    it("rejects a versioned key of another document, another revision or another company", () => {
+        const wrong = (key: string) => accepts({ ...buildCompletion({ ...base, entries: [entry] }).value, entries: [{ ...entry, manifestKey: key }] });
+        expect(wrong(versioned.replace("/D001/", "/D002/"))).toBe(false);
+        expect(wrong(versioned.replace(revision, sha("m-other")))).toBe(false);
+        expect(wrong(versioned.replace(`/${COMPANY}/`, "/company-2/"))).toBe(false);
+        expect(wrong(versioned)).toBe(true);
     });
 });

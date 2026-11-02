@@ -16,6 +16,9 @@ export type ArchiveArtifactType = typeof ARCHIVE_ARTIFACT_TYPES[number];
 /** `eformsign/{companyId}/` also holds these two directories, so a document may not take their names. */
 const RESERVED_DOCUMENT_IDS: ReadonlySet<string> = new Set(["completions", "runs"]);
 const COMPLETION_NAME_PATTERN = /^(\d{12})-([0-9a-f]{64})\.json$/;
+/** `<revision>.json` (legacy) or `<revision>-<manifestSha256>.json` (content-versioned, BJJ-455 P2 FU-10-F5). */
+const MANIFEST_NAME_PATTERN = /^([0-9a-f]{64})(?:-([0-9a-f]{64}))?\.json$/;
+const MANIFEST_KEY_PATTERN = /^eformsign\/([^/]+)\/([^/]+)\/manifests\/([^/]+)$/;
 const ARTIFACT_KEY_PATTERN = /^eformsign\/([^/]+)\/([^/]+)\/artifacts\/(document|audit-trail)\/([0-9a-f]{64})\.pdf$/;
 
 function reject(): never {
@@ -53,9 +56,15 @@ export function artifactKey(input: {
         + `/artifacts/${artifactTypeSegment(input.artifactType)}/${hexSegment(input.sha256)}.pdf`;
 }
 
-export function manifestKey(input: { companyId: string; documentId: string; metadataRevision: string }): string {
+/**
+ * The key of a manifest. With `manifestSha256` (the digest of the manifest's own canonical bytes) the name carries the
+ * content, so two artifact sets of one metadata revision never share a file; without it the key is the legacy
+ * metadata-only name that archives written before FU-10-F5 hold.
+ */
+export function manifestKey(input: { companyId: string; documentId: string; metadataRevision: string; manifestSha256?: string | null }): string {
+    const version = input.manifestSha256 === undefined || input.manifestSha256 === null ? "" : `-${hexSegment(input.manifestSha256)}`;
     return `${ARCHIVE_DATA_DIRECTORY}/${identifierSegment(input.companyId)}/${documentSegment(input.documentId)}`
-        + `/manifests/${hexSegment(input.metadataRevision)}.json`;
+        + `/manifests/${hexSegment(input.metadataRevision)}${version}.json`;
 }
 
 export function completionName(input: { sequence: number; contentDigest: string }): string {
@@ -94,6 +103,28 @@ export function parseArtifactKey(key: string): {
             companyId: companyId!, documentId: documentId!, artifactType: artifactType as ArchiveArtifactType, sha256: sha256!,
         };
         return artifactKey(parts) === key ? parts : null;
+    } catch {
+        return null;
+    }
+}
+
+/** `null` unless the name is exactly `<revision>.json` or `<revision>-<manifestSha256>.json` (lower-case hex). */
+export function parseManifestName(name: string): { metadataRevision: string; manifestSha256: string | null } | null {
+    const match = MANIFEST_NAME_PATTERN.exec(name);
+    return match ? { metadataRevision: match[1]!, manifestSha256: match[2] ?? null } : null;
+}
+
+/** Inverse of `manifestKey`; `null` for anything that is not a valid manifest key (either shape). */
+export function parseManifestKey(key: string): {
+    companyId: string; documentId: string; metadataRevision: string; manifestSha256: string | null;
+} | null {
+    const match = MANIFEST_KEY_PATTERN.exec(key);
+    if (!match) return null;
+    const name = parseManifestName(match[3]!);
+    if (name === null) return null;
+    try {
+        const parts = { companyId: match[1]!, documentId: match[2]!, ...name };
+        return manifestKey(parts) === key ? parts : null;
     } catch {
         return null;
     }

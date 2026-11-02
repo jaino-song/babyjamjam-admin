@@ -3,12 +3,14 @@ import { promises as fs } from "node:fs";
 import { EXPORT_ARTIFACT_MAX_BYTES } from "domain/eformsign-backup/export/constants";
 import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import {
-    WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, integrityErrorCount,
-    integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey, nextRetryAt, nextSnapshotSequence,
-    parseCompletionName, runKey, toArchiveArtifactType,
-    type ArchiveArtifactType, type DestinationEntry, type ExportAction, type RunCounts, type WorkerReasonCode,
+    WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, completionContentDigest,
+    completionSchema, integrityErrorCount, integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey,
+    nextRetryAt, nextSnapshotSequence, parseCompletionName, runKey, toArchiveArtifactType,
+    type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
+import { listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
+import { readManifestHistory, type ManifestHistory, type ManifestSource } from "./runner-manifest-sources";
 import {
     ExportFailure, type CandidatePageView, type CandidateView, type SnapshotView,
 } from "./export-client";
@@ -80,6 +82,14 @@ class RunExecution {
     private readonly reasons = new Set<WorkerReasonCode>();
     private readonly blockedCandidates: WorkerReasonCode[] = [];
     private readonly work: WorkCandidate[] = [];
+    /** Manifest sources rebuilt from the retained journals once per run, before anything of this run is written. */
+    private history: ManifestHistory | null = null;
+    /** Verified artifacts whose indexing cannot be proven from the ledger's own evidence (no source, contradictory records). */
+    private readonly ledgerEvidenceFailures = new Set<string>();
+    /** Verified artifacts a manifest on the archive contradicts: the file is left as it is and the run ends visibly. */
+    private readonly indexConflicts = new Set<string>();
+    /** The completion listing of this run, before this run writes any completion. */
+    private completionListing: Awaited<ReturnType<LocalDestination["listCompletions"]>> | null = null;
     private totalCandidates = 0;
     private includedCandidates = 0;
 
@@ -104,6 +114,7 @@ class RunExecution {
     }
 
     async execute(): Promise<RunSummary> {
+        this.history = await readManifestHistory(this.deps.config.control.path, this.state.lastSeq, this.dl.installation);
         const check = await this.archive.checkArchive(0);
         if (!check.ok) this.archiveLost();
         this.runId = this.deps.uuid();
@@ -119,7 +130,11 @@ class RunExecution {
             if (!(error instanceof StageFailure)) throw error;
             this.snapshotFailure = error.reasonCode;
         }
-        return this.finish();
+        const summary = await this.finish();
+        // Everything else has been done and recorded; the operator must still see that recovery would lose these artifacts.
+        if (this.ledgerEvidenceFailures.size > 0) throw new WorkerError("ledger-inconsistent");
+        if (this.indexConflicts.size > 0) throw new WorkerError("archive-conflict");
+        return summary;
     }
 
     // ---- step 4a: crash recovery ---------------------------------------------------------------------------------
@@ -156,6 +171,8 @@ class RunExecution {
             }
         }
         if (found === "ok") {
+            // The file is there; before it counts as verified, recovery must be able to find it again through a manifest.
+            if (!(await this.manifestFirst(id, relativeKey))) return;
             if (entry.state === "transferring") await this.dl.transition(id, "verifying", { relativeKey });
             await this.dl.transition(id, "verified", { relativeKey });
             return;
@@ -263,12 +280,22 @@ class RunExecution {
         } while (cursor !== null);
     }
 
+    /**
+     * The archive's completion files, listed once per run. Only this run's own publishRecords writes a completion and it
+     * does so after both readers (the sequence at the snapshot stage, the manifest digests in the backfill), and the
+     * flock keeps any other writer out, so the first listing is still what the archive holds when the second reader asks.
+     */
+    private async completionFiles(): Promise<Awaited<ReturnType<LocalDestination["listCompletions"]>>> {
+        this.completionListing ??= await this.archive.listCompletions(this.companyId);
+        return this.completionListing;
+    }
+
     /** Highest sequence in the names of the archive's completion files (never a clock). */
     private async archiveMaxSequence(): Promise<number> {
         if (!this.archiveOk) return 0;
         try {
             let max = 0;
-            for (const file of await this.archive.listCompletions(this.companyId)) {
+            for (const file of await this.completionFiles()) {
                 max = Math.max(max, parseCompletionName(file.name)?.sequence ?? 0);
             }
             return max;
@@ -441,6 +468,8 @@ class RunExecution {
             return;
         }
 
+        // A carried artifact is no longer in any snapshot, so no later run writes its manifest: it goes first.
+        if (mode === "carry" && !(await this.manifestFirst(id, job.relativeKey))) return;
         if ((await this.transfer(job, !staged)) !== "staging-corrupt") return;
         // The staged copy did not match its own hash: it is set aside, so this artifact is now simply not staged.
         if (mode === "carry") {
@@ -643,6 +672,7 @@ class RunExecution {
         if (found === "ok") {
             await this.fault("after-verifying-before-verified");
             await this.dl.transition(id, "verified", { relativeKey });
+            await this.fault("after-verified");
             return "done";
         }
         if (found === "mismatch") await this.quarantine(relativeKey);
@@ -675,35 +705,320 @@ class RunExecution {
 
     // ---- steps 9-10: manifests and the completion ------------------------------------------------------------------
 
+    /** The manifest of one observed artifact set and the content-versioned key it is published under. */
+    private manifestOf(source: ManifestSource): { manifest: ReturnType<typeof buildManifest>; key: string } {
+        const manifest = buildManifest({
+            companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision,
+            artifacts: source.artifacts.map((artifact) => ({
+                artifactType: artifact.artifactType, artifactIdentity: artifact.artifactIdentity, sha256: artifact.sha256, byteLength: artifact.byteLength,
+            })),
+        });
+        const key = manifestKey({
+            companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision, manifestSha256: manifest.sha256,
+        });
+        return { manifest, key };
+    }
+
+    /**
+     * Builds and publishes (no-clobber, idempotent: an identical file is accepted) the manifest of one observed artifact
+     * set. The name carries the manifest's own digest, so a later snapshot that advertises other bytes under the same
+     * metadata revision gets a file of its own instead of colliding with this one.
+     */
+    private async writeManifest(source: ManifestSource): Promise<{ ok: true; key: string; sha256: string } | { ok: false; reasonCode: WorkerReasonCode }> {
+        const { manifest, key } = this.manifestOf(source);
+        const published = await this.archive.publishJson(key, manifest.bytes);
+        return published.ok ? { ok: true, key, sha256: manifest.sha256 } : { ok: false, reasonCode: published.reasonCode };
+    }
+
+    /** An archive-side refusal marks the archive lost; any other is recorded against the run. */
+    private refuseManifest(reasonCode: WorkerReasonCode): void {
+        if (isArchiveSide(reasonCode)) this.archiveLost();
+        else {
+            this.blockedCandidates.push(reasonCode);
+            this.reasons.add(reasonCode);
+        }
+    }
+
+    private async recordManifest(written: { key: string; sha256: string }): Promise<void> {
+        if (!this.state.manifests.has(written.key)) {
+            await this.deps.ledger.append("manifest_published", { relativeKey: written.key, sha256: written.sha256 }, this.now());
+        }
+    }
+
+    /**
+     * The source of the manifest an artifact belongs to: the latest revision the ledger ever observed it in, checked
+     * against what the state holds for it. History that is unreadable, broken, in conflict, or silent about an artifact the
+     * ledger has a destination entry for is a ledger failure; nothing is guessed, and no bytes are published on it.
+     */
+    private manifestSourceFor(artifactIdentity: string): ManifestSource {
+        const found = this.history?.find(artifactIdentity) ?? "invalid";
+        if (found === "invalid" || found === null) throw new WorkerError("ledger-inconsistent");
+        const info = this.state.artifacts.get(artifactIdentity);
+        const artifact = found.artifacts.find((candidate) => candidate.artifactIdentity === artifactIdentity);
+        if (info === undefined || artifact === undefined || info.documentId !== found.documentId || info.artifactType !== artifact.artifactType
+            || info.sha256 !== artifact.sha256 || info.byteLength !== artifact.byteLength) throw new WorkerError("ledger-inconsistent");
+        return found;
+    }
+
+    /**
+     * Manifest before bytes: the manifest of the artifact's document revision (the whole artifact set it was observed
+     * with, siblings or not) is on the archive and recorded before the artifact is published or promoted to verified. If
+     * it cannot be written the artifact is blocked and nothing is published for it. `false`: the caller stops.
+     */
+    private async manifestFirst(artifactIdentity: string, relativeKey: string | null): Promise<boolean> {
+        const source = this.manifestSourceFor(artifactIdentity);
+        const written = await this.writeManifest(source);
+        if (!written.ok) {
+            this.refuseManifest(written.reasonCode);
+            const reasonCode = isArchiveSide(written.reasonCode) ? "archive-unavailable" : written.reasonCode;
+            await this.dl.transition(artifactIdentity, "blocked", { reasonCode, relativeKey });
+            return false;
+        }
+        await this.fault("after-manifest-first-before-record");
+        await this.recordManifest(written);
+        return true;
+    }
+
+    private failLedgerEvidence(artifactIdentity: string): void {
+        this.ledgerEvidenceFailures.add(artifactIdentity);
+        this.reasons.add("ledger-inconsistent");
+    }
+
+    /** `subject`: the artifact identity a verdict is about, or the key of a bound manifest file that is damaged. */
+    private failIndexConflict(subject: string): void {
+        this.indexConflicts.add(subject);
+        this.reasons.add("archive-conflict");
+    }
+
+    /** Raw-manifest digests that valid completions bind to each manifest key, read with recovery's own rules. */
+    private async completionDigests(): Promise<Map<string, Set<string>>> {
+        const digests = new Map<string, Set<string>>();
+        for (const file of await this.completionFiles()) {
+            const name = parseCompletionName(file.name);
+            if (name === null) continue;
+            const content = completionSchema.safeParse(file.content);
+            if (!content.success || content.data.companyId !== this.companyId || content.data.sequence !== name.sequence
+                || completionContentDigest(content.data) !== name.contentDigest) continue;
+            for (const entry of content.data.entries) {
+                const known = digests.get(entry.manifestKey) ?? new Set<string>();
+                known.add(entry.manifestSha256);
+                digests.set(entry.manifestKey, known);
+            }
+        }
+        return digests;
+    }
+
+    /**
+     * Whether a manifest file, as a whole, is what the evidence says it must be. `bad`: another file than the evidence
+     * establishes. `unproven`: the evidence contradicts itself, so nothing can be established. The file is matched to
+     * the artifact set it was built from by its digest: this snapshot's candidate or any set the retained journals saw for
+     * exactly this revision, never "the latest" source.
+     */
+    private manifestLevel(key: string, manifest: Manifest, digest: string, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" {
+        const named = completions.get(key);
+        if (named !== undefined && [...named].some((expected) => expected !== digest)) return "bad";
+        const builtDigest = (source: ManifestSource): string => this.manifestOf(source).manifest.sha256;
+        const current = this.work.find((candidate) => candidate.documentId === manifest.documentId && candidate.metadataRevision === manifest.metadataRevision);
+        const observed = this.history?.forRevision(manifest.documentId, manifest.metadataRevision) ?? "unavailable";
+        const currentMatch = current !== undefined && builtDigest(current) === digest;
+        if (observed === "conflict" && !currentMatch) return "unproven";
+        const variants = observed === "unavailable" || observed === "conflict" ? [] : observed;
+        const matched = currentMatch || variants.some((variant) => builtDigest(variant) === digest);
+        const acknowledged = this.state.manifests.get(key);
+        if (acknowledged !== undefined && acknowledged.sha256 !== digest) return matched ? "unproven" : "bad";
+        if (matched) return "ok";
+        if (current === undefined && variants.length === 0) return "ok"; // nothing to compare the bytes with: the facts decide
+        return acknowledged !== undefined ? "unproven" : "bad";
+    }
+
+    /** One artifact entry of a manifest against what the ledger retained for it. Length comes from the ledger, else from the stored file's size. */
+    private async artifactFacts(
+        manifest: Manifest, artifact: Manifest["artifacts"][number], sizes: Map<string, number | null>,
+    ): Promise<"ok" | "bad" | "unproven"> {
+        const info = this.state.artifacts.get(artifact.artifactIdentity);
+        if (info === undefined) return "unproven";
+        if (info.documentId !== manifest.documentId || info.artifactType !== artifact.artifactType || info.sha256 !== artifact.sha256) return "bad";
+        try {
+            const derived = artifactKey({ companyId: this.companyId, documentId: manifest.documentId, artifactType: artifact.artifactType, sha256: artifact.sha256 });
+            if (artifact.relativeKey !== derived) return "bad";
+            const recorded = this.dl.entryOf(artifact.artifactIdentity)?.relativeKey ?? null;
+            if (recorded !== null && recorded !== artifact.relativeKey) return "bad";
+            // The length is not part of the identity; recomputing it only rejects an identity moved between claims.
+            const identity = artifactIdentity({
+                companyId: this.companyId, documentId: manifest.documentId, artifactKind: artifact.artifactType,
+                contentSha256: artifact.sha256, byteLength: artifact.byteLength,
+            });
+            if (identity !== artifact.artifactIdentity) return "bad";
+        } catch {
+            return "bad";
+        }
+        if (info.byteLength !== null) return info.byteLength === artifact.byteLength ? "ok" : "bad";
+        let size = sizes.get(artifact.relativeKey);
+        if (size === undefined) {
+            size = await this.archive.artifactSize(artifact.relativeKey);
+            sizes.set(artifact.relativeKey, size);
+        }
+        if (size === null) return "unproven";
+        return size === artifact.byteLength ? "ok" : "bad";
+    }
+
+    /**
+     * What the archive's own manifests say about each of the wanted artifacts: a verdict per identity over every manifest
+     * of the given documents that lists it. A single contradicting listing is enough to lose the artifact in recovery
+     * (it meets the first listing and does not look at the next), so `bad` outweighs `ok`. `null`: the archive is lost.
+     */
+    private async indexVerdicts(
+        documents: ReadonlySet<string>, wanted: ReadonlySet<string>, invalidDocuments: Set<string>,
+    ): Promise<Map<string, { ok: boolean; bad: boolean; unproven: boolean }> | null> {
+        const verdicts = new Map<string, { ok: boolean; bad: boolean; unproven: boolean }>();
+        const note = (identity: string, verdict: "ok" | "bad" | "unproven"): void => {
+            const known = verdicts.get(identity) ?? { ok: false, bad: false, unproven: false };
+            if (verdict === "ok") known.ok = true;
+            else if (verdict === "bad") known.bad = true;
+            else known.unproven = true;
+            verdicts.set(identity, known);
+        };
+        const sizes = new Map<string, number | null>();
+        try {
+            const completions = await this.completionDigests();
+            /**
+             * A file the ledger acknowledged or a valid completion names is bound: damage to it is a conflict of its own, whatever
+             * other manifest covers its artifacts. An invalid file nobody bound lists nothing (valid coverage is enough).
+             */
+            const bound = (key: string): boolean => this.state.manifests.has(key) || completions.has(key);
+            const contradicts = (key: string, sha256: string): boolean => {
+                const acknowledged = this.state.manifests.get(key);
+                return (acknowledged !== undefined && acknowledged.sha256 !== sha256)
+                    || [...(completions.get(key) ?? [])].some((expected) => expected !== sha256);
+            };
+            const files: ManifestFile[] = (await listManifestFiles(this.deps.config.archive.path, this.companyId)).filter((file) => documents.has(file.documentId));
+            for (const file of files) {
+                let bytes: Buffer | null;
+                try {
+                    bytes = await this.archive.readArchiveFile(file.key);
+                } catch (error) {
+                    if (error instanceof WorkerError && !isArchiveSide(error.reasonCode)) { // not a readable manifest: it lists nothing
+                        invalidDocuments.add(file.documentId);
+                        if (bound(file.key)) this.failIndexConflict(file.key);
+                        continue;
+                    }
+                    throw error;
+                }
+                if (bytes === null) continue;
+                // A file recovery would refuse to read lists nothing and shadows nothing, but it is not a manifest of this document either.
+                let parsed: { manifest: Manifest; sha256: string };
+                try {
+                    parsed = parseManifestBytes(bytes, file.key, { companyId: this.companyId, documentId: file.documentId, metadataRevision: file.metadataRevision });
+                } catch (error) {
+                    if (!(error instanceof WorkerError)) throw error;
+                    invalidDocuments.add(file.documentId);
+                    if (bound(file.key)) this.failIndexConflict(file.key);
+                    continue;
+                }
+                if (contradicts(file.key, parsed.sha256)) this.failIndexConflict(file.key);
+                const level = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
+                for (const artifact of parsed.manifest.artifacts) {
+                    if (!wanted.has(artifact.artifactIdentity)) continue;
+                    note(artifact.artifactIdentity, level === "ok" ? await this.artifactFacts(parsed.manifest, artifact, sizes) : level);
+                }
+            }
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.archiveLost();
+            return null;
+        }
+        return verdicts;
+    }
+
+    /**
+     * Every verified artifact outside this run's published manifests must be listed by manifests that really are on the
+     * archive and agree with the ledger's evidence (bytes, digest, length, owner, keys): the files are read, the ledger's
+     * word for them is not enough. One that no manifest lists gets one again, built from this run's candidate or the
+     * history of exactly its revision, and published idempotently. The destination entries are never touched. Anything
+     * that cannot be proven or contradicts the archive does not stop the other work; the run ends afterwards with
+     * `ledger-inconsistent` (evidence missing) or `archive-conflict` (a file contradicts it), and the files stay as they are.
+     */
+    private async backfillManifests(publishedNow: ReadonlySet<string>): Promise<void> {
+        if (!this.archiveOk) return;
+        const outside: Array<{ id: string; documentId: string }> = [];
+        for (const entry of this.state.destinations.values()) {
+            if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
+            if (entry.state !== "verified" || publishedNow.has(entry.artifactIdentity)) continue;
+            const info = this.state.artifacts.get(entry.artifactIdentity);
+            if (info === undefined) this.failLedgerEvidence(entry.artifactIdentity);
+            else outside.push({ id: entry.artifactIdentity, documentId: info.documentId });
+        }
+        if (outside.length === 0) return;
+        const invalidDocuments = new Set<string>();
+        const verdicts = await this.indexVerdicts(new Set(outside.map((artifact) => artifact.documentId)), new Set(outside.map((artifact) => artifact.id)), invalidDocuments);
+        if (verdicts === null) return;
+        const attempts = new Map<string, boolean>();
+        for (const artifact of outside) {
+            if (!this.archiveOk) break;
+            const verdict = verdicts.get(artifact.id);
+            if (verdict?.bad === true) {
+                this.failIndexConflict(artifact.id);
+                continue;
+            }
+            // One listing that cannot be proven outweighs another that can: recovery meets whichever it reads first.
+            if (verdict?.unproven === true) {
+                this.failLedgerEvidence(artifact.id);
+                continue;
+            }
+            if (verdict?.ok === true) continue;
+            // Listed nowhere: write the manifest again.
+            let source: ManifestSource;
+            const current = this.work.find((candidate) => candidate.artifacts.some((job) => job.artifactIdentity === artifact.id));
+            // A sibling that is only late (retry, damaged and about to be republished) does not hold the verified half back:
+            // the manifest is the full set of the candidate, and the sibling's own publication later finds it byte for byte.
+            if (current !== undefined) source = current;
+            else {
+                try {
+                    source = this.manifestSourceFor(artifact.id);
+                } catch (error) {
+                    if (!(error instanceof WorkerError)) throw error;
+                    // Nothing to rebuild it from; a file of its own document that is no manifest is the sharper finding.
+                    if (invalidDocuments.has(artifact.documentId)) this.failIndexConflict(artifact.id);
+                    else this.failLedgerEvidence(artifact.id);
+                    continue;
+                }
+            }
+            const { key } = this.manifestOf(source);
+            const known = attempts.get(key);
+            if (known !== undefined) {
+                if (!known) this.failIndexConflict(artifact.id);
+                continue;
+            }
+            const written = await this.writeManifest(source);
+            attempts.set(key, written.ok);
+            if (!written.ok) {
+                this.refuseManifest(written.reasonCode);
+                if (!isArchiveSide(written.reasonCode)) this.failIndexConflict(artifact.id);
+                continue;
+            }
+            await this.recordManifest(written);
+        }
+    }
+
     private async publishRecords(): Promise<void> {
         if (this.snapshotId === null) return;
-        const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string }> = [];
+        const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string; manifestKey: string }> = [];
+        const publishedNow = new Set<string>();
         for (const candidate of this.work) {
             if (!this.archiveOk) break;
             const verified = candidate.artifacts.every((job) => this.dl.entryOf(job.artifactIdentity)?.state === "verified");
             if (!verified) continue;
-            const manifest = buildManifest({
-                companyId: this.companyId, documentId: candidate.documentId, metadataRevision: candidate.metadataRevision,
-                artifacts: candidate.artifacts.map((job) => ({
-                    artifactType: job.artifactType, artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength,
-                })),
-            });
-            const key = manifestKey({ companyId: this.companyId, documentId: candidate.documentId, metadataRevision: candidate.metadataRevision });
-            const published = await this.archive.publishJson(key, manifest.bytes);
-            if (!published.ok) {
-                if (isArchiveSide(published.reasonCode)) this.archiveLost();
-                else {
-                    this.blockedCandidates.push(published.reasonCode);
-                    this.reasons.add(published.reasonCode);
-                }
+            const written = await this.writeManifest(candidate);
+            if (!written.ok) {
+                this.refuseManifest(written.reasonCode);
                 continue;
             }
             await this.fault("after-manifest-before-record");
-            if (!this.state.manifests.has(key)) {
-                await this.deps.ledger.append("manifest_published", { relativeKey: key, sha256: manifest.sha256 }, this.now());
-            }
-            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: manifest.sha256 });
+            await this.recordManifest(written);
+            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: written.sha256, manifestKey: written.key });
+            for (const job of candidate.artifacts) publishedNow.add(job.artifactIdentity);
         }
+        await this.backfillManifests(publishedNow);
         if (entries.length === 0 || !this.archiveOk) return;
         const binding = this.state.snapshots.get(this.snapshotId);
         if (binding === undefined) throw new WorkerError("ledger-inconsistent");

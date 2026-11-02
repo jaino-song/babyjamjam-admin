@@ -207,14 +207,21 @@ describe("T-WRK-10: failure matrix (V08)", () => {
 
         expect(summary.counts).toMatchObject({ verified: 3, integrityError: 1 });
         expect((await fs.readdir(path.dirname(damaged))).filter((name) => name.includes(".corrupt-"))).toHaveLength(1);
-        expect((await listFiles(h.archive)).filter((file) => file.includes("/manifests/"))).toHaveLength(1);
+        // The verified half of D001 is indexed at once (BJJ-455 P2 FU-10-F4), next to D002's manifest.
+        const manifestFiles = async () => (await listFiles(h.archive)).filter((file) => file.includes("/manifests/")).sort();
+        const indexed = await manifestFiles();
+        expect(indexed).toHaveLength(2);
+        const indexedBytes = await Promise.all(indexed.map((file) => fs.readFile(path.join(h.archive, file))));
 
         const next = await runOnce(h);
 
         expect(next.counts).toMatchObject({ verified: 4, integrityError: 0 });
         expect(h.api.artifactRequests()).toHaveLength(4);
         expect(await archivePdfs(h.archive)).toHaveLength(4);
-        expect((await listFiles(h.archive)).filter((file) => file.includes("/manifests/"))).toHaveLength(2);
+        // The republished artifact finds its manifest already there: same files, same bytes, no conflict.
+        expect(await manifestFiles()).toEqual(indexed);
+        const laterBytes = await Promise.all(indexed.map((file) => fs.readFile(path.join(h.archive, file))));
+        indexedBytes.forEach((bytes, index) => expect(bytes.equals(laterBytes[index]!)).toBe(true));
     });
 
     it("should keep an artifact pending, not download it, when the archive is broken and the control side has no room to stage", async () => {
