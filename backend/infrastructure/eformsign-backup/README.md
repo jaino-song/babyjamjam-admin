@@ -105,7 +105,7 @@ overlapping run", not as a failure.
 | --- | --- |
 | `init` | first install only: archive marker, control marker, first ledger record |
 | `run [--scheduled-for <ISO+offset>]` | finishes interrupted work, then one snapshot: download, publish, verify, manifests, completion |
-| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error` |
+| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error`. With `--all` it also reads every bound manifest (acknowledged by the ledger or named by a completion) and exits 69 `archive-conflict` if one is missing, is no valid manifest of its document, or has another digest than the ledger or a completion binds; it never writes anything |
 | `recover --installation-id <id>` | rebuilds a damaged ledger from the archive; see below |
 | `inspect` | read-only report of the ledger; needs no lock |
 
@@ -307,6 +307,13 @@ builds) are still read and are never modified; both shapes can sit side by side.
 A file whose name does not match its bytes is treated as damaged. A manifest is
 written as soon as one artifact of the revision is verified, before its sibling
 arrives; only a completion means the whole pair is there.
+
+A manifest the ledger acknowledged or a completion names is *bound*. `run` finds a bound
+manifest that has gone missing from the one manifest listing it already makes (no extra
+reads) and publishes it again, byte for byte, when it can be rebuilt from the current
+snapshot or from what the retained journals observed for that revision; if not, nothing is
+written and the run ends in `archive-conflict` after its other work. `run` does not read
+present bound manifests: damage to one is found by `verify --all`.
 
 Rollback: an older build does not know the versioned names. Once this build has
 written to an archive, going back to older code alone leaves the restore script

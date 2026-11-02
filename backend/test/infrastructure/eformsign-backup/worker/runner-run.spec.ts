@@ -5,6 +5,8 @@ import path from "node:path";
 import { WorkerError, buildCompletion, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 import { LocalDestination } from "infrastructure/eformsign-backup/worker/local-destination";
+import * as restoreModule from "infrastructure/eformsign-backup/worker/restore";
+import { restoreFromArchive } from "infrastructure/eformsign-backup/worker/restore";
 
 import type { FixtureDoc } from "./helpers/fake-export-api";
 import { spawnUnderFlock } from "./helpers/runner-flock-support";
@@ -1046,6 +1048,153 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
 
                     expect((await fs.readFile(junk, "utf8"))).toBe("{\"junk\":true}\n");
+                }, 240_000);
+            });
+
+            describe("a bound manifest never goes missing or damaged silently (BJJ-455 P2 FU-12)", () => {
+                const second = (): FixtureDoc => ({ ...singleDoc("D001"), templateId: "T2" });
+                const lengthPlusOne = (value: any): void => { value.artifacts[0].byteLength += 1; };
+                const keyOf = (file: string): string => path.relative(h.archive, file);
+                const manifestReadCount = (spy: jest.SpyInstance): number => spy.mock.calls.filter(([key]) => String(key).includes("/manifests/")).length;
+                /** D001 has two metadata revisions that share one PDF; the later snapshot names the second manifest, the earlier one the first. */
+                async function twoRevisions(leave: boolean): Promise<string[]> {
+                    h = await createHarness({ docs: [singleDoc("D001")] });
+                    await initArchive(h);
+                    await runOnce(h);
+                    h.api.docs = [second()];
+                    await runOnce(h);
+                    if (leave) {
+                        h.api.docs = [pairDoc("D002")];
+                        await runOnce(h);
+                    }
+                    const files = (await manifestsOf("D001")).map((name) => path.join(h.archive, name)).sort();
+                    expect(files).toHaveLength(2);
+                    return files;
+                }
+                const dropOldestJournal = async (): Promise<void> => {
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await runOnce(h, { compactionThreshold: 1 });
+                    await fs.rm(path.join(ledgerDir(), (await journals())[0]!));
+                };
+                const entryOf = async (file: string) =>
+                    (await readCompletions(h.archive)).find((completion) => completion.value["entries"].some((e: { manifestKey: string }) => e.manifestKey === keyOf(file)));
+                /** The first snapshot's manifest of D001: a bound file the later snapshot no longer names. */
+                const older = async (): Promise<string> =>
+                    path.join(h.archive, (await readCompletions(h.archive))[0]!.value["entries"].find((e: { documentId: string }) => e.documentId === "D001").manifestKey);
+                const cliVerify = (extra: string[] = []) => spawnUnderFlock(h, ["verify", "--config", h.configPath, ...extra]);
+
+                it("A1: should republish a deleted, acknowledged and completion-named manifest byte for byte when it can be rebuilt, then write nothing more", async () => {
+                    const files = await twoRevisions(true);
+                    const lost = files[0]!;
+                    const original = await fs.readFile(lost);
+                    const completion = await entryOf(lost);
+                    expect(completion).toBeDefined();
+                    await fs.rm(lost);
+                    const restoreOut = path.join(h.base, "restored-a1");
+                    await expect(restoreFromArchive({ archivePath: h.archive, companyId: COMPANY, selector: { snapshotId: completion!.value["snapshotId"] }, outDir: restoreOut }))
+                        .rejects.toBeInstanceOf(WorkerError);
+                    await fs.rm(restoreOut, { recursive: true, force: true });
+                    const records = (await manifestRecords()).length;
+
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+
+                    expect((await fs.readFile(lost)).equals(original)).toBe(true);
+                    expect((await manifestRecords()).length).toBe(records);
+                    const before = await listFiles(h.archive);
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect((await manifestRecords()).length).toBe(records);
+                    expect((await listFiles(h.archive)).filter((file) => file.includes("/manifests/"))).toEqual(before.filter((file) => file.includes("/manifests/")));
+                    expect((await fs.readFile(lost)).equals(original)).toBe(true);
+                    const report = await restoreFromArchive({ archivePath: h.archive, companyId: COMPANY, selector: { snapshotId: completion!.value["snapshotId"] }, outDir: restoreOut });
+                    expect(report.documents.map((doc) => doc.documentId)).toContain("D001");
+                    await fs.rm(restoreOut, { recursive: true, force: true });
+                }, 240_000);
+
+                it("A2: should end in archive-conflict, exit 69 and write nothing at the key when a deleted bound manifest cannot be rebuilt, still publishing independent work", async () => {
+                    const files = await twoRevisions(true);
+                    await dropOldestJournal();
+                    const lost = files[0]!;
+                    const original = await fs.readFile(lost);
+                    await fs.rm(lost);
+                    h.api.docs = [pairDoc("D002"), pairDoc("D003")];
+
+                    await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+
+                    expect(await fs.stat(lost).then(() => true, () => false)).toBe(false);
+                    expect((await readCompletions(h.archive)).pop()!.value["entries"].map((entry: { documentId: string }) => entry.documentId)).toContain("D003");
+                    expect((await readLedgerRecords(h.control)).filter((record) => record.type === "run_finished").pop()!.body["reasonCodes"]).toContain("archive-conflict");
+                    const child = spawnUnderFlock(h, ["run", "--config", h.configPath]);
+                    expect(await child.exited).toEqual({ code: 69, signal: null });
+                    expect(child.stderr().trim()).toBe("archive-conflict");
+                    expect(await fs.stat(lost).then(() => true, () => false)).toBe(false);
+
+                    await fs.writeFile(lost, original, { mode: 0o600 });
+                    h.clock.set(new Date(Date.now() + 60_000).toISOString());
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                }, 240_000);
+
+                it("A3: should find a deleted bound manifest of a current-snapshot document in the one listing, with no extra manifest reads", async () => {
+                    await twoRevisions(false);
+                    const lost = await older();
+                    const original = await fs.readFile(lost);
+                    await fs.rm(lost);
+                    const reads = jest.spyOn(LocalDestination.prototype, "readArchiveFile");
+                    const listing = jest.spyOn(restoreModule, "listManifestFiles");
+                    try {
+                        await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                        expect(manifestReadCount(reads)).toBe(0);
+                        expect(listing).toHaveBeenCalledTimes(1);
+                    } finally {
+                        reads.mockRestore();
+                        listing.mockRestore();
+                    }
+                    expect((await fs.readFile(lost)).equals(original)).toBe(true);
+                }, 240_000);
+
+                it("B1: should leave run alone but make verify --all report an older bound manifest damaged after its document was fully published", async () => {
+                    await twoRevisions(false);
+                    const damagedFile = await older();
+                    const original = await fs.readFile(damagedFile);
+                    const value = JSON.parse(original.toString("utf8"));
+                    lengthPlusOne(value);
+                    await fs.writeFile(damagedFile, JSON.stringify(value));
+                    const damaged = await fs.readFile(damagedFile);
+
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect((await fs.readFile(damagedFile)).equals(damaged)).toBe(true);
+
+                    await expect(verifyAll()).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+                    const child = cliVerify(["--all"]);
+                    expect(await child.exited).toEqual({ code: 69, signal: null });
+                    expect(child.stderr().trim()).toBe("archive-conflict");
+                    expect((await fs.readFile(damagedFile)).equals(damaged)).toBe(true);
+                    // Without --all the scope is unchanged: PDFs only.
+                    await expect(withWorker(h, "verify", (worker) => worker.runner.verify({ all: false }))).resolves.toMatchObject({ integrityErrors: 0 });
+
+                    await fs.writeFile(damagedFile, original);
+                    await expect(verifyAll()).resolves.toMatchObject({ integrityErrors: 0 });
+                    expect(await cliVerify(["--all"]).exited).toEqual({ code: 0, signal: null });
+                }, 240_000);
+
+                it("B1b: should make verify --all report a deleted bound manifest and never write it", async () => {
+                    await twoRevisions(false);
+                    const lost = await older();
+                    await fs.rm(lost);
+                    await expect(verifyAll()).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+                    expect(await fs.stat(lost).then(() => true, () => false)).toBe(false);
+                }, 240_000);
+
+                it("B2: should pass verify --all on a healthy archive, reading each bound manifest once and nothing else", async () => {
+                    const files = await twoRevisions(true);
+                    const reads = jest.spyOn(LocalDestination.prototype, "readArchiveFile");
+                    try {
+                        await expect(verifyAll()).resolves.toMatchObject({ integrityErrors: 0 });
+                        const bound = (await manifestRecords()).length;
+                        expect(manifestReadCount(reads)).toBe(bound);
+                        expect(files.length).toBeLessThanOrEqual(bound);
+                    } finally {
+                        reads.mockRestore();
+                    }
                 }, 240_000);
             });
 

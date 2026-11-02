@@ -1,9 +1,10 @@
 import { promises as fs } from "node:fs";
 
-import { WorkerError } from "domain/eformsign-backup/worker";
+import { WorkerError, parseManifestKey } from "domain/eformsign-backup/worker";
 import { executeRecover, executeVerify } from "./runner-recover";
-import { controlMarkerWriter, readArchiveMarker } from "./runner-common";
-import { executeRun } from "./runner-run";
+import { parseManifestBytes } from "./restore";
+import { controlMarkerWriter, isArchiveSide, readArchiveMarker, requireInstallation } from "./runner-common";
+import { completionBindings, executeRun } from "./runner-run";
 import {
     LOCAL_DESTINATION_REVISION, localDestinationIdentity,
     type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies, type VerifySummary,
@@ -12,6 +13,41 @@ import {
 
 export { controlMarkerWriter };
 export type { RunSummary };
+
+/**
+ * `verify --all`: every manifest the ledger acknowledged or a valid completion names must be on the archive, a valid
+ * manifest of its document, and have the digest each of them binds. Read-only: nothing is repaired, quarantined or written,
+ * and each bound manifest is read once. A missing, unreadable or mismatching one is an `archive-conflict` (exit 69
+ * through the unchanged exit mapping); `run` republishes a missing one it can rebuild, damage to a present one is only
+ * ever reported here. Without `--all` the check does not run: plain `verify` keeps its PDF-only scope.
+ */
+async function assertBoundManifests(deps: RunnerDependencies): Promise<void> {
+    const installation = requireInstallation(deps);
+    const archive = deps.createDestination({ dev: installation.archiveDev, ino: installation.archiveIno });
+    const { companyId } = deps.config;
+    const bound = new Map<string, Set<string>>();
+    const bind = (key: string, sha256: string): void => {
+        bound.set(key, (bound.get(key) ?? new Set<string>()).add(sha256));
+    };
+    for (const [key, acknowledged] of deps.ledger.state.manifests) bind(key, acknowledged.sha256);
+    for (const [key, digests] of completionBindings(await archive.listCompletions(companyId), companyId)) for (const sha256 of digests) bind(key, sha256);
+    let damaged = 0;
+    for (const [key, digests] of bound) {
+        const parts = parseManifestKey(key);
+        if (parts === null || parts.companyId !== companyId) continue;
+        try {
+            const bytes = await archive.readArchiveFile(key);
+            if (bytes === null) throw new WorkerError("artifact-integrity");
+            const { sha256 } = parseManifestBytes(bytes, key, { companyId, documentId: parts.documentId, metadataRevision: parts.metadataRevision });
+            if ([...digests].some((expected) => expected !== sha256)) throw new WorkerError("artifact-integrity");
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            if (isArchiveSide(error.reasonCode)) throw error; // the archive itself is not usable: not this file's fault
+            damaged += 1;
+        }
+    }
+    if (damaged > 0) throw new WorkerError("archive-conflict");
+}
 
 /** The worker's commands (contract section 3). Every one of them assumes the caller holds the worker lock. */
 export class WorkerRunner implements WorkerRunnerPort {
@@ -51,7 +87,9 @@ export class WorkerRunner implements WorkerRunnerPort {
 
     async verify(options: { all: boolean }): Promise<VerifySummary> {
         await this.refuseHalfInstalled();
-        return executeVerify(this.deps, options);
+        const summary = await executeVerify(this.deps, options);
+        if (options.all && summary.outcome === "finished" && summary.archiveAvailable) await assertBoundManifests(this.deps);
+        return summary;
     }
 
     async recover(options: { installationId: string }): Promise<RecoverSummary> {
