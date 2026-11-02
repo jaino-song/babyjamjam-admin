@@ -512,8 +512,8 @@ class RunExecution {
             } else if (recovered === null ? await this.stagedUsable(job) || await this.healFromDrive(job) : await this.recoveredBytesStaged(job)) {
                 if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
                 await this.processArtifact(job, "carry");
-            } else if (recovered !== null && !this.archiveOk) {
-                // The archive went away while the recovered artifact was being staged (the Drive copy cannot be used then): retry later.
+            } else if (!this.archiveOk) {
+                // The archive is down, so the verified Drive copy cannot be used (or went away while it was being staged): retry later, never terminal.
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "archive-unavailable", relativeKey });
             } else {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
