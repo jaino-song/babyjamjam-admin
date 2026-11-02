@@ -221,7 +221,7 @@ describe("DetailPanel", () => {
 
       const { headerLayout, trailingRow } = headerParts(container);
       expect(headerLayout).toHaveClass("max-md:flex-col", "max-md:items-stretch");
-      expect(trailingRow).toHaveClass("max-md:flex-wrap");
+      expect(trailingRow).toHaveClass("max-md:flex-wrap", "max-md:justify-end");
       expect(mdUpTokens(headerLayout)).toEqual(MD_UP_HEADER_CLASSES);
       expect(mdUpTokens(trailingRow)).toEqual(["flex", "shrink-0", "items-center", "gap-[calc(8px*var(--glint-ui-scale,1))]"]);
     });

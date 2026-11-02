@@ -1602,7 +1602,7 @@ function ClientDetailPanelBody({
                     </>
                 }
                 subtitle={getClientDetailSubtitle(client)}
-                trailing={<>{confirmButton}{trailing}</>}
+                trailing={confirmButton || trailing ? <>{confirmButton}{trailing}</> : undefined}
                 tabs={
                     <DetailTabs
                         tabs={activeClientDetailTabs}
