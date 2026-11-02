@@ -5,7 +5,9 @@ import { exitCodeFor, runWorkerCli } from "infrastructure/eformsign-backup/worke
 import { WorkerRunner } from "infrastructure/eformsign-backup/worker/runner";
 import { DriveRootCandidatesError } from "infrastructure/eformsign-backup/worker/runner-recover";
 
+import { bindDrive } from "./helpers/drive-run-support";
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
+import { driveFaults } from "./helpers/fake-drive-server";
 import {
     COMPANY, TOKEN, createHarness, destroyHarness, environmentFor, initArchive, listFiles, pairDoc, readLedgerRecords, rewriteConfig,
     runOnce, treeSignature, type Harness,
@@ -274,11 +276,55 @@ describe("worker CLI (argv, exit codes, output)", () => {
             ["token-file-invalid", 78],
             ["control-space", 74],
             ["archive-unavailable", 69],
-            ["rate-limited", 70],
-            ["network-timeout", 70],
+            ["rate-limited", 69],
+            ["network-timeout", 69],
             ["crashed", 70],
         ] as const)("should map %s to exit %i", (reasonCode, code) => {
             expect(exitCodeFor(reasonCode)).toBe(code);
+        });
+    });
+
+    describe("transient Drive reasons are 'unavailable, retry later' (69), never internal (70) (BJJ-456 U8-P1)", () => {
+        let fakes: DriveHarness;
+        beforeEach(async () => { fakes = await startDriveFakes(); });
+        afterEach(async () => { await fakes.close(); });
+
+        const TRANSIENT = [
+            ["rate-limited", driveFaults.status(429, undefined, 5)],
+            ["network-timeout", driveFaults.dropRequest()],
+        ] as const;
+
+        it.each(TRANSIENT)("should end drive-setup on %s with exit 69 and the reason code only, and succeed once Drive is back", async (reason, action) => {
+            h = await createHarness({ docs: [pairDoc("D001")], config: { drive: fakes.config } as never });
+            await initArchive(h);
+            const fault = fakes.drive.addFault({ route: "get", action });
+
+            const result = await cli(["drive-setup", "--config", h.configPath]);
+            fakes.drive.clearFaults();
+
+            expect(fault.hits).toBeGreaterThan(0);
+            expect(result).toMatchObject({ code: 69, stdout: [], stderr: [reason] });
+            expect(fakes.drive.creates).toBe(0);
+            expect((await cli(["drive-setup", "--config", h.configPath])).code).toBe(0);
+        });
+
+        it.each(TRANSIENT)("should end recover on %s with exit 69 and the reason code only, and finish the Drive part when Drive is back", async (reason, action) => {
+            h = await createHarness({ docs: [pairDoc("D001")], config: { drive: fakes.config } as never });
+            await initArchive(h);
+            await bindDrive(h);
+            await runOnce(h);
+            const installationId = (JSON.parse(await fs.readFile(path.join(h.archive, ".bjj-backup", "installation.json"), "utf8")) as { installationId: string }).installationId;
+            await fs.rename(path.join(h.control, "ledger"), path.join(h.base, "ledger.lost"));
+            const fault = fakes.drive.addFault({ route: "list", action });
+            const creates = fakes.drive.creates;
+
+            const result = await cli(["recover", "--config", h.configPath, "--installation-id", installationId]);
+            fakes.drive.clearFaults();
+
+            expect(fault.hits).toBeGreaterThan(0);
+            expect(result).toMatchObject({ code: 69, stderr: [reason] });
+            expect(fakes.drive.creates).toBe(creates);
+            expect((await cli(["recover", "--config", h.configPath, "--installation-id", installationId])).code).toBe(0);
         });
     });
 

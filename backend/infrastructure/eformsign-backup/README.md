@@ -335,7 +335,7 @@ Worker (`scripts/eformsign-backup-worker.ts`):
 | --- | --- |
 | 0 | ok. A `run` that ends `partial` or `blocked` is still 0; read the `run_*` event. The exceptions are a run that ends in `archive-conflict` or `ledger-inconsistent` (both 69): it has done and recorded all its other work, and its `run_*` and `run_reason` lines are still printed on stdout before the exit |
 | 66 | not the worker's: `flock` exits 66 (`EX_NOINPUT`) when `<control>` does not exist, before the worker runs |
-| 69 | state or archive: `not-initialized`, `recovery-required`, `ledger-duplicate-install`, `ledger-inconsistent`, `archive-identity-mismatch`, `archive-marker-invalid`, `archive-unavailable`, `archive-conflict`, `archive-not-mount-point`, `archive-unsafe-path`, `archive-space`; and the Drive reasons `drive-root-changed`, `drive-permission`, `drive-quota`, `drive-conflict`, `drive-unavailable` (see below) |
+| 69 | state or archive: `not-initialized`, `recovery-required`, `ledger-duplicate-install`, `ledger-inconsistent`, `archive-identity-mismatch`, `archive-marker-invalid`, `archive-unavailable`, `archive-conflict`, `archive-not-mount-point`, `archive-unsafe-path`, `archive-space`; and the Drive reasons `drive-root-changed`, `drive-permission`, `drive-quota`, `drive-conflict`, `drive-unavailable`, and the transient `network-timeout`, `rate-limited` (see below) |
 | 70 | internal: any other reason code or an unexpected error |
 | 74 | control directory: `control-unavailable`, `control-space` |
 | 75 | another worker holds the lock. Returned by `flock -E 75`, never by the worker itself |
@@ -345,8 +345,8 @@ The Drive reason codes end a command only when it is Drive-only (`drive-setup`) 
 Drive part of `recover` cannot finish. Inside `run` and `verify` they never end the command: they
 are reason codes of a `partial` run (see "What `run` does with two destinations"), and the exit
 stays 0. `drive-setup` and `recover` can also end on the transient Drive reasons `network-timeout` and
-`rate-limited`; the worker maps those to 70 (any other reason code), and running the command again is
-the answer. The meaning of each Drive reason code:
+`rate-limited`: they exit 69 ("unavailable, retry later", like `restore-drive`), and running the
+command again is the answer. The meaning of each Drive reason code:
 
 | reason code | meaning | exit when it ends a command |
 | --- | --- | --- |
@@ -357,6 +357,8 @@ the answer. The meaning of each Drive reason code:
 | `drive-quota` | HTTP 403 `storageQuotaExceeded`: the Drive account is full | 69 |
 | `drive-conflict` | an unexpected state at the Drive side: a file where the ledger expects another, two Drive objects at one path, or another 4xx answer | 69 |
 | `drive-unavailable` | HTTP 5xx, or a status the worker cannot classify | 69 |
+| `network-timeout` | no answer from Drive or the token endpoint in time, or the connection failed | 69 |
+| `rate-limited` | HTTP 429, or 403 with a rate-limit reason; Drive asks to slow down | 69 |
 
 Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no 74/78:
 
