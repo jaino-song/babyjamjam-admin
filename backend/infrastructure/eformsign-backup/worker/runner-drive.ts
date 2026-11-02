@@ -69,6 +69,12 @@ export interface DriveRunHost {
     completionContext(): DriveCompletionContext | null;
 }
 
+/**
+ * What staging a copy again from Drive came to: `true` staged; `false` Drive answered there is no usable copy (or holds none verified);
+ * `{ unavailable }` Drive could not be asked, so nothing is known about its copy (the reason is an existing, non-terminal code).
+ */
+export type DriveHeal = boolean | { unavailable: WorkerReasonCode };
+
 const TRANSIENT_REASONS: ReadonlySet<WorkerReasonCode> = new Set(["network-timeout", "drive-unavailable", "rate-limited"]);
 /** Failures that concern the whole account: nothing else in this run can succeed, so the phase stops. */
 const HALTING_REASONS: ReadonlySet<WorkerReasonCode> = new Set(["drive-token-invalid", "drive-permission", "drive-quota"]);
@@ -573,22 +579,28 @@ export class DriveRunPhase {
      * download (hash, size, PDF shape), before anything is downloaded or given up. A Drive copy that fails them is an integrity error
      * of the Drive entry.
      */
-    async restageFromDrive(job: DriveJob): Promise<boolean> {
+    async restageFromDrive(job: DriveJob): Promise<DriveHeal> {
         if (!this.driveVerified(job.artifactIdentity) || this.destination === null) return false;
         const node = this.state.driveNodes.get(driveStateKey(this.revision, job.relativeKey));
         if (node === undefined || node.kind !== "file") return false;
-        if (!(await this.ready())) return false;
+        // From here on Drive holds a verified copy: a failure that is not Drive's own answer ("no usable copy") means it could not be asked.
+        if (!(await this.ready())) return { unavailable: this.halted?.code ?? this.closedAs?.code ?? "drive-unavailable" };
         const got = await this.destination.download(node.fileId);
         if (!got.ok) {
-            if ("failure" in got && this.classifyAbsent(got.failure)) await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey: job.relativeKey });
-            return false;
+            if (!("failure" in got)) return { unavailable: "drive-conflict" };
+            if (this.classifyAbsent(got.failure)) {
+                await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey: job.relativeKey });
+                return false;
+            }
+            return { unavailable: this.classify(got.failure, 1).reasonCode };
         }
         const staged = await this.host.restage(job, guardTransfer(got.value));
         if (staged.ok) return true;
         if (staged.reasonCode === "artifact-integrity" || staged.reasonCode === "pdf-shape") {
             await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey: job.relativeKey });
+            return false;
         }
-        return false;
+        return { unavailable: staged.reasonCode };
     }
 
     private classifyAbsent(failure: DriveFailure): boolean {

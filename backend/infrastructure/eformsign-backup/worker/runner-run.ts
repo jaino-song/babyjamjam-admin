@@ -20,7 +20,7 @@ import {
     DestinationLedger, SNAPSHOT_POLL_LIMIT, SNAPSHOT_POLL_MS, TRANSIENT_STOP, assertLedgerRoom, assertSameInstallation,
     controlHasStagingRoom, countOrphanTemps, isArchiveSide, isTerminalReason, nowIso, requireInstallation,
 } from "./runner-common";
-import { DriveRunPhase, type DriveBuiltRecord, type DriveCompletionContext, type DriveRunHost } from "./runner-drive";
+import { DriveRunPhase, type DriveBuiltRecord, type DriveCompletionContext, type DriveHeal, type DriveRunHost } from "./runner-drive";
 import { type RunSummary, type RunnerDependencies } from "./runner-types";
 
 const OPAQUE_ID = /^[^\u0000-\u001f\u007f]{1,512}$/u;
@@ -509,15 +509,23 @@ class RunExecution {
             };
             if (entry.state === "integrity_error" && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "integrity-repeated", relativeKey });
-            } else if (recovered === null ? await this.stagedUsable(job) || await this.healFromDrive(job) : await this.recoveredBytesStaged(job)) {
-                if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
-                await this.processArtifact(job, "carry");
-            } else if (!this.archiveOk || !(await this.archiveStillUsable())) {
-                // The archive is down, so the verified Drive copy cannot be used (or went away while it was being staged): retry later, never terminal.
-                // The terminal outcome below needs an archive that is reachable now, not only at the start of the run.
-                await this.carryArchiveUnavailable(job.artifactIdentity, relativeKey);
             } else {
-                await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
+                const bytes: DriveHeal = recovered === null
+                    ? (await this.stagedUsable(job) ? true : await this.healFromDrive(job))
+                    : await this.recoveredBytesStaged(job);
+                if (bytes === true) {
+                    if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
+                    await this.processArtifact(job, "carry");
+                } else if (!this.archiveOk || !(await this.archiveStillUsable())) {
+                    // The archive is down, so the verified Drive copy cannot be used (or went away while it was being staged): retry later, never terminal.
+                    // The terminal outcome below needs an archive that is reachable now, not only at the start of the run.
+                    await this.carryArchiveUnavailable(job.artifactIdentity, relativeKey);
+                } else if (bytes !== false) {
+                    // Drive could not be asked: that says nothing about the copy it holds, so the local entry stays retryable (never terminal).
+                    await this.carryRetryable(job.artifactIdentity, relativeKey, bytes.unavailable);
+                } else {
+                    await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
+                }
             }
         }
     }
@@ -536,9 +544,18 @@ class RunExecution {
      */
     private async carryArchiveUnavailable(artifactIdentity: string, relativeKey: string): Promise<void> {
         this.archiveLost();
+        await this.carryRetryable(artifactIdentity, relativeKey, "archive-unavailable");
+    }
+
+    /**
+     * Records a non-terminal `blocked/<reasonCode>` for a carried artifact (the next run carries it again). A live entry that already says
+     * exactly that (same state, reason, key and retry timestamp) is a no-op. A terminal code is never recorded here (it would end the carry).
+     */
+    private async carryRetryable(artifactIdentity: string, relativeKey: string, wanted: WorkerReasonCode): Promise<void> {
+        const reasonCode: WorkerReasonCode = isTerminalReason(wanted) ? "drive-unavailable" : wanted;
         const live = this.dl.entryOf(artifactIdentity);
-        if (live !== undefined && live.state === "blocked" && live.reasonCode === "archive-unavailable" && live.relativeKey === relativeKey && live.nextRetryAt === null) return;
-        await this.dl.transition(artifactIdentity, "blocked", { reasonCode: "archive-unavailable", relativeKey });
+        if (live !== undefined && live.state === "blocked" && live.reasonCode === reasonCode && live.relativeKey === relativeKey && live.nextRetryAt === null) return;
+        await this.dl.transition(artifactIdentity, "blocked", { reasonCode, relativeKey });
     }
 
     /**
@@ -602,7 +619,7 @@ class RunExecution {
      * A recovered artifact's bytes, staged, with the length its archive manifest names: a staged copy on record that hashes to the artifact
      * (one that does not is set aside), else the verified Drive copy, which `restage` proves again by hash and size.
      */
-    private async recoveredBytesStaged(job: ArtifactJob): Promise<boolean> {
+    private async recoveredBytesStaged(job: ArtifactJob): Promise<DriveHeal> {
         if (await this.stagedUsable(job)) {
             if (await this.stagedHashes(job)) return true;
             await this.setStagingAside(job);
@@ -655,7 +672,8 @@ class RunExecution {
         if (entry !== undefined && state === "blocked" && !(await this.blockedMayRetry(entry, job, staged))) return;
         if (state === "transferring" || state === "verifying") return;
         // V10: a copy Drive holds verified is staged again before anything is downloaded or given up.
-        if (!staged) staged = await this.healFromDrive(job);
+        // Snapshot work falls back to the export when Drive could not be asked; carry work never gives up on that.
+        if (!staged) staged = (await this.healFromDrive(job)) === true;
 
         if (!staged) {
             if (mode === "carry" || this.stopDownloads) return;
@@ -913,8 +931,9 @@ class RunExecution {
     // ---- Google Drive seams (BJJ-456) ------------------------------------------------------------------------------
 
     /** V10: the artifact's staged bytes are gone and Drive holds it verified: stage it again from there, before downloading. */
-    private async healFromDrive(job: ArtifactJob): Promise<boolean> {
-        return this.drive !== null && this.archiveOk && this.drive.driveVerified(job.artifactIdentity) && await this.drive.restageFromDrive(job);
+    private async healFromDrive(job: ArtifactJob): Promise<DriveHeal> {
+        if (this.drive === null || !this.archiveOk || !this.drive.driveVerified(job.artifactIdentity)) return false;
+        return this.drive.restageFromDrive(job);
     }
 
     /**

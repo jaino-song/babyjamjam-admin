@@ -242,6 +242,36 @@ describe("BJJ-456 PF1: a recovered (length-less) artifact heals from its verifie
     }, 240_000);
 
     /**
+     * PB1 (e): a Drive that could not be asked is not an answer. A recovered (length-less) artifact whose verified Drive copy cannot be
+     * downloaded right now (503) stays retryable, never the terminal exact-bytes-unavailable, and heals once Drive answers.
+     */
+    it("should keep a recovered artifact retryable, not terminal, while the verified Drive copy answers 503, then heal from it (PB1 e)", async () => {
+        const lost = await lostLocalCopy();
+        const gapsBefore = (await ledgerState()).gaps.length;
+        const fault = fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+
+        const outage = await runOnce(h).then((summary) => summary, (error: unknown) => error);
+
+        expect(outage).toBeDefined();
+        expect(fault.hits).toBeGreaterThanOrEqual(1);
+        const during = await localState();
+        expect(during.state).toBe("blocked");
+        expect(during.reasonCode).toBe("drive-unavailable");
+        expect((await ledgerState()).gaps.length).toBe(gapsBefore);
+        expect(await driveState()).toBe("verified");
+        await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
+
+        fakes.drive.clearFaults();
+        const downloadsBefore = fakes.drive.downloads;
+        const summary = await runOnce(h);
+
+        expect(summary.outcome).toBe("finished");
+        expect(fakes.drive.downloads - downloadsBefore).toBe(1);
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+    }, 240_000);
+
+    /**
      * PF1c: the manifest listing that decides "no manifest lists this artifact" is complete-or-error, and the decision is taken against a
      * freshly checked archive. Faults are injected at the filesystem boundary; the runner, ledger, staging and publication are the real ones.
      */
@@ -580,5 +610,120 @@ describe("BJJ-456 PF1b: a known-length artifact is not made terminal by an archi
         expect(summary.outcome).toBe("finished");
         expect(await localState()).toEqual({ state: "blocked", reasonCode: "exact-bytes-unavailable" });
         await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
+    }, 240_000);
+});
+
+/**
+ * PB1: a Drive that could not be asked is not an answer. The local copy of a known-length artifact is lost, Drive holds it verified, and
+ * Drive cannot be asked (a download answering 503, or a root check that never lets the gate open): the local entry stays retryable
+ * (non-terminal blocked) and heals on the next run that can ask. Only "Drive answered, no usable copy" may end terminal.
+ */
+describe("BJJ-456 PB1: a Drive that could not be asked does not make a lost local copy terminal", () => {
+    let h: Harness;
+    let fakes: DriveHarness;
+
+    beforeEach(async () => { fakes = await startDriveFakes(); });
+    afterEach(async () => {
+        await destroyHarness(h);
+        await fakes.close();
+    });
+
+    const records = async (type?: string) => (await readLedgerRecords(h.control)).filter((record) => type === undefined || record.type === type);
+    const localTransitions = async () => (await records("destination_transition")).filter((record) => !isDrive(record));
+    const localState = async (): Promise<{ state: string; reasonCode: unknown }> => {
+        let last: { state: string; reasonCode: unknown } = { state: "none", reasonCode: null };
+        for (const record of await localTransitions()) last = { state: String(record.body["to"]), reasonCode: record.body["reasonCode"] ?? null };
+        return last;
+    };
+    const driveState = async (): Promise<string> => {
+        let last = "none";
+        for (const record of await records("destination_transition")) if (isDrive(record)) last = String(record.body["to"]);
+        return last;
+    };
+    const terminalTransitions = async (): Promise<number> =>
+        (await localTransitions()).filter((record) => record.body["reasonCode"] === "exact-bytes-unavailable").length;
+
+    /** One document verified locally and on Drive; the local PDF and every staged copy are lost; `verify --all` makes the local entry integrity_error; the next snapshot is empty. */
+    async function lostCopy(): Promise<{ localKey: string; pdf: Buffer }> {
+        h = await createHarness({ docs: [singleDoc("D001")], config: { drive: fakes.config } as never });
+        await initArchive(h);
+        await bindDrive(h);
+        await runOnce(h);
+        const localKey = (await listFiles(h.archive)).find((file) => PDF_KEY.test(`/${file}`))!;
+        const pdf = await fs.readFile(path.join(h.archive, localKey));
+        await fs.rm(path.join(h.archive, localKey));
+        for (const file of await listFiles(h.control)) if (file.endsWith(".bin")) await fs.rm(path.join(h.control, file));
+        const summary = await withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }));
+        expect(summary.integrityErrors).toBeGreaterThanOrEqual(1);
+        expect((await localState()).state).toBe("integrity_error");
+        h.api.docs = [];
+        return { localKey, pdf };
+    }
+
+    async function expectHealed(lost: { localKey: string; pdf: Buffer }): Promise<void> {
+        fakes.drive.clearFaults();
+        const downloadsBefore = fakes.drive.downloads;
+        const summary = await runOnce(h);
+        expect(summary.outcome).toBe("finished");
+        expect(fakes.drive.downloads - downloadsBefore).toBe(1);
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+        expect(await driveState()).toBe("verified");
+        expect(await terminalTransitions()).toBe(0);
+    }
+
+    it("should keep the local entry retryable while the Drive download answers 503, then heal from Drive (PB1 a)", async () => {
+        const lost = await lostCopy();
+        const fault = fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+
+        const outage = await runOnce(h).then((summary) => summary, (error: unknown) => error);
+
+        expect(outage).toBeDefined();
+        expect(fault.hits).toBeGreaterThanOrEqual(1);
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
+        expect(await terminalTransitions()).toBe(0);
+        expect(await driveState()).toBe("verified");
+        await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
+
+        await expectHealed(lost);
+    }, 240_000);
+
+    it("should keep the local entry retryable while the Drive root check fails and the gate never opens, then heal (PB1 b)", async () => {
+        const lost = await lostCopy();
+        const fault = fakes.drive.addFault({ route: "get", action: driveFaults.status(503, "backendError") });
+
+        const outage = await runOnce(h).then((summary) => summary, (error: unknown) => error);
+
+        expect(outage).toBeDefined();
+        expect(fault.hits).toBeGreaterThanOrEqual(1);
+        const during = await localState();
+        expect(during.state).toBe("blocked");
+        expect(during.reasonCode).not.toBe("exact-bytes-unavailable");
+        expect(during.reasonCode).toBe("drive-unavailable");
+        expect(await terminalTransitions()).toBe(0);
+        expect(await driveState()).toBe("verified");
+
+        await expectHealed(lost);
+    }, 240_000);
+
+    it("should write at most one local transition over repeated Drive outages (PB1 c)", async () => {
+        const lost = await lostCopy();
+        const before = (await localTransitions()).length;
+        fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+
+        for (let attempt = 0; attempt < 3; attempt += 1) await runOnce(h).then((summary) => summary, (error: unknown) => error);
+
+        expect((await localTransitions()).length - before).toBe(1);
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
+        expect(await terminalTransitions()).toBe(0);
+        const store = await LedgerStore.open(h.control, { deferTornTailRepair: true });
+        try {
+            const entry = [...store.state.destinations.values()].find((candidate) => !String(candidate.destinationIdentity).startsWith("drive:"))!;
+            expect(entry).toMatchObject({ state: "blocked", reasonCode: "drive-unavailable", nextRetryAt: null });
+        } finally {
+            await store.close();
+        }
+
+        await expectHealed(lost);
     }, 240_000);
 });
