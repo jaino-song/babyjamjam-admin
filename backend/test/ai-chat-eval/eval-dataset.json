@@ -33,11 +33,10 @@
                     "산모",
                     "고객",
                     "client",
-                    "mother"
+                    "mother",
+                    "직원"
                 ],
                 "mustInclude": [
-                    "직원",
-                    "관리사",
                     "제공인력",
                     "명"
                 ]
@@ -91,6 +90,7 @@
             "responseRules": {
                 "mustNotInclude": [
                     "직원",
+                    "제공인력",
                     "관리사",
                     "employee"
                 ]

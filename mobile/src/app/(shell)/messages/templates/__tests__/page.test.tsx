@@ -73,7 +73,7 @@ describe("TemplatesPage", () => {
         { templateKey: "CLIENT_WELCOME", name: "고객 등록 안내", description: "", updatedAt: "2026-09-01T00:00:00.000Z" },
         { templateKey: "SERVICE_START_REMINDER", name: "서비스 시작 알림", description: "", updatedAt: "2026-09-01T00:00:00.000Z" },
         { templateKey: "SERVICE_END_REMINDER", name: "서비스 종료 알림", description: "", updatedAt: "2026-09-01T00:00:00.000Z" },
-        { templateKey: "EMPLOYEE_ASSIGNED", name: "직원 배정 알림", description: "", updatedAt: "2026-09-01T00:00:00.000Z" },
+        { templateKey: "EMPLOYEE_ASSIGNED", name: "제공인력 배정 알림", description: "", updatedAt: "2026-09-01T00:00:00.000Z" },
         { templateKey: "GREETING", name: "인사(소개)", description: "소개", updatedAt: "2026-09-01T00:00:00.000Z" },
       ],
       isLoading: false,
@@ -84,7 +84,7 @@ describe("TemplatesPage", () => {
     expect(screen.getByText("고객 등록 안내")).toBeInTheDocument();
     expect(screen.getByText("서비스 시작 알림")).toBeInTheDocument();
     expect(screen.getByText("서비스 종료 알림")).toBeInTheDocument();
-    expect(screen.getByText("직원 배정 알림")).toBeInTheDocument();
+    expect(screen.getByText("제공인력 배정 알림")).toBeInTheDocument();
     expect(screen.getByText("인사(소개)")).toBeInTheDocument();
   });
 });

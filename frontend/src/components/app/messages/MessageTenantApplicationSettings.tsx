@@ -75,13 +75,13 @@ const TRIGGER_EVENT_LABELS: Record<TriggerEventType, string> = {
   CLIENT_CREATED: "고객 등록",
   SERVICE_START: "서비스 시작",
   SERVICE_END: "서비스 종료",
-  EMPLOYEE_ASSIGNED: "직원 배정",
+  EMPLOYEE_ASSIGNED: "제공인력 배정",
 };
 
 const TRIGGER_RECIPIENT_LABELS: Record<TriggerRecipientType, string> = {
   CLIENT: "고객",
-  PRIMARY_EMPLOYEE: "주 담당 직원",
-  SECONDARY_EMPLOYEE: "보조 직원",
+  PRIMARY_EMPLOYEE: "주 담당 제공인력",
+  SECONDARY_EMPLOYEE: "보조 제공인력",
 };
 
 const TRIGGER_OFFSET_LABELS: Record<TriggerEventType, Record<TriggerOffsetType, string>> = {

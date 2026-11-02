@@ -66,7 +66,7 @@ jest.mock("@/components/app/ui/info-row", () => ({
 
 const employeeWithoutRegisteredDate = {
   id: 7,
-  name: "알 수 없는 직원",
+  name: "알 수 없는 제공인력",
   workArea: ["서울"],
   phone: "821012345678",
   grade: "베스트",

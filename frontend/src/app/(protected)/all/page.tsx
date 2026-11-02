@@ -59,7 +59,7 @@ export default function AllMenuPage() {
       { href: "/dashboard", label: "대시보드", desc: "업무 현황", icon: LayoutDashboard },
       { href: "/clients", label: "고객", desc: "산모/이용자 관리", icon: Users },
       { href: "/contracts", label: "계약", desc: "계약서 발송/상태", icon: FileText },
-      { href: "/employees", label: "직원", desc: "제공인력 관리", icon: UserCog },
+      { href: "/employees", label: "제공인력", desc: "제공인력 관리", icon: UserCog },
       { href: "/files", label: "파일", desc: "문서 보관함", icon: FolderOpen },
       { href: "/messages", label: "메시지", desc: "문자/알림", icon: MessageCircle },
       { href: "/settings", label: "설정", desc: "서비스 환경", icon: Settings },

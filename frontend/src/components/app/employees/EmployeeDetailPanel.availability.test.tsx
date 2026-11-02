@@ -104,7 +104,7 @@ describe("EmployeeDetailPanel availability action", () => {
 
     const toggle = screen.getByRole("checkbox", { name: "다음 배정 가능 여부" });
     expect(toggle).toBeChecked();
-    expect(screen.queryByRole("button", { name: "직원 작업 메뉴 열기" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "제공인력 작업 메뉴 열기" })).not.toBeInTheDocument();
     expect(screen.queryByText("수정")).not.toBeInTheDocument();
     expect(screen.queryByText("삭제")).not.toBeInTheDocument();
 
@@ -132,7 +132,7 @@ describe("EmployeeDetailPanel availability action", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "직원 작업 메뉴 열기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "제공인력 작업 메뉴 열기" })).toBeInTheDocument();
     expect(screen.getByText("수정")).toBeInTheDocument();
     expect(screen.getByText("삭제")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "다음 배정 가능 여부" })).toBeChecked();

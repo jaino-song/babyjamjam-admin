@@ -68,7 +68,7 @@ const PAUSED_NO_DATA = {
 const LOADED_EMPTY = { data: [], isLoading: false, isError: false, error: null };
 
 const NETWORK_ERROR = Object.assign(new Error("Network Error"), { code: "ERR_NETWORK" });
-const ALERT_TITLE = "직원 수를 새로 불러오지 못했어요";
+const ALERT_TITLE = "제공인력 수를 새로 불러오지 못했어요";
 
 function employeesRow(): HTMLElement {
   return screen.getByRole("link", { name: /제공인력/ });

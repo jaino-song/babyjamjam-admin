@@ -243,7 +243,7 @@ describe("ServiceRecordLinkMessageForm", () => {
       employeePhoneInput.compareDocumentPosition(clientNameInput)
       & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(employeeNameInput).toHaveTextContent("새로 입력 또는 기존 직원 선택");
+    expect(employeeNameInput).toHaveTextContent("새로 입력 또는 기존 제공인력 선택");
     expect(employeeNameInput).toHaveAttribute("data-allow-manual-input", "true");
     expect(clientNameInput).toHaveTextContent("새로 입력 또는 기존 고객 선택");
     expect(

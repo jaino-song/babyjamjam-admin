@@ -29,6 +29,8 @@ describe("ApprovalTwoButtonModal", () => {
       "rounded-[24px]",
     );
     expect(screen.getByText("잠시 후 다시 시도해 주세요.")).not.toHaveClass("sr-only");
+    expect(screen.getByText("요청을 완료하지 못했습니다.")).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
+    expect(screen.getByText("잠시 후 다시 시도해 주세요.")).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(screen.getByRole("button", { name: "닫기" })).toHaveClass("h-11", "text-sm");
 
     fireEvent.click(screen.getByRole("button", { name: "닫기" }));

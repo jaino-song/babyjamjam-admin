@@ -19,7 +19,7 @@ const EmployeeSummarySchema = z.object({
 });
 const SearchInputSchema = z.object({
     query: z.string().trim().min(1).max(100).optional().describe(
-        "Partial, case-insensitive match against the employee's name or work area. Must be a specific value — never a generic word like 관리사 or 직원."
+        "Partial, case-insensitive match against the employee's name or work area. Must be a specific value — never a generic word like 관리사, 직원 or 제공인력."
     ),
 });
 const SearchOutputSchema = z.discriminatedUnion("kind", [
@@ -90,7 +90,7 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
                 meta: {
                     ...common,
                     name: "employees.search",
-                    description: "Search for one employee (caregiver/staff) in the current branch by name or work area, and return a single match or a short list to pick from. Use for: 관리사 찾기, 제공인력 조회, 도우미 검색, 선생님 성함으로 찾기. Input: query text is matched partially, case-insensitively, against the employee's name or work area. Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) when the search can compute it. Does not expose rest days, leave schedules or a detailed availability calendar. Requires a specific name or area; never pass a generic word such as 관리사, 직원 or 도우미 as the query — ask the user instead.",
+                    description: "Search for one employee (제공인력/caregiver/staff) in the current branch by name or work area, and return a single match or a short list to pick from. Use 제공인력 for replies; users may also say 직원 or 관리사. Use for: 관리사 찾기, 제공인력 찾기, 제공인력 조회, 도우미 검색, 선생님 성함으로 찾기. Input: query text is matched partially, case-insensitively, against the employee's name or work area. Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) when the search can compute it. Does not expose rest days, leave schedules or a detailed availability calendar. Requires a specific name or area; never pass a generic word such as 관리사, 직원, 제공인력 or 도우미 as the query — ask the user instead.",
                     renderer: "entity-choice",
                     flagKey: "agent.capability.employees.search",
                 },
@@ -109,7 +109,7 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
                     if (matches.length === 1) return { kind: "entity" as const, entity: matches[0]! };
                     return {
                         kind: "choices" as const,
-                        prompt: "어느 직원을 말씀하시는지 선택해 주세요.",
+                        prompt: "어느 제공인력을 말씀하시는지 선택해 주세요.",
                         choices: matches.map(({ id, name }) => ({ id, name })),
                     };
                 },
@@ -118,7 +118,7 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
                 meta: {
                     ...common,
                     name: "employees.get",
-                    description: "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use for: 관리사 상세정보, 직원 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) for today's Korean calendar date when it can be computed.",
+                    description: "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use 제공인력 for replies; users may also say 직원 or 관리사. Use for: 관리사 상세정보, 직원 정보 조회, 제공인력 상세정보, 제공인력 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) for today's Korean calendar date when it can be computed.",
                     renderer: "text",
                     flagKey: "agent.capability.employees.get",
                 },

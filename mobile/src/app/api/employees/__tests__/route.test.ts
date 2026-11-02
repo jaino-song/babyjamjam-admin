@@ -292,7 +292,7 @@ describe("employee API routes", () => {
       response: {
         status: 409,
         data: {
-          message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
+          message: "진행 중인 배정이 있는 제공인력은 삭제할 수 없어요.",
           error: "Conflict",
         },
       },
@@ -304,7 +304,7 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
+      message: "진행 중인 배정이 있는 제공인력은 삭제할 수 없어요.",
     });
   });
 

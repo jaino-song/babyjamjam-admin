@@ -189,7 +189,7 @@ function normalizeDatePart(value: string, emptyValue: string): string {
 
 function matchesHistoryQuery(record: MessageLogRecord, query: string): boolean {
   const normalized = normalizeMessageHistoryPresentation(record);
-  const recipientBadge = record.recipientType === "CLIENT" ? "고객" : record.recipientType ? "직원" : "";
+  const recipientBadge = record.recipientType === "CLIENT" ? "고객" : record.recipientType ? "제공인력" : "";
 
   return matchesSearchQuery(query, [
     normalized.title,
@@ -215,7 +215,7 @@ function matchesUpcomingQuery(job: UpcomingMessageTriggerJob, query: string): bo
     getMessageTemplateLabel(job.templateKey),
     reasonText,
     JOB_STATUS[job.status].label,
-    job.recipientType === "CLIENT" ? "고객" : "직원",
+    job.recipientType === "CLIENT" ? "고객" : "제공인력",
   ]);
 }
 

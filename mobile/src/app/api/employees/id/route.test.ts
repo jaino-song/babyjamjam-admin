@@ -14,10 +14,10 @@ function request(query = "?id=12", authenticated = true) {
 beforeEach(() => { mockGet.mockReset(); });
 
 it("forwards a valid id with authentication headers", async () => {
-    mockGet.mockResolvedValue({ data: { id: 12, name: "직원" } });
+    mockGet.mockResolvedValue({ data: { id: 12, name: "제공인력" } });
     const response = await GET(request());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ id: 12, name: "직원" });
+    expect(await response.json()).toEqual({ id: 12, name: "제공인력" });
     expect(mockGet).toHaveBeenCalledWith("/employees/id", {
         params: { id: "12" }, headers: expect.objectContaining({ Authorization: "Bearer test-token" }),
     });
