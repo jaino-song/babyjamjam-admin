@@ -744,6 +744,12 @@ adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError`
   such a completion lists.
 - **The copies heal each other.** An artifact whose staged copy is gone is restaged from the
   archive or from Drive, whichever holds a verified copy, before the export is asked again.
+  A copy that only Drive can give back while Drive cannot be asked (unreachable, rate-limited, a
+  secret file the worker cannot read, or no `drive` block in the configuration while the ledger
+  still records a verified Drive copy) is never given up: its local entry stays `blocked` with
+  that Drive reason, is counted in `blocked` and listed in the run's reasons, and every later run
+  tries it again. Only a Drive that answers without a usable copy (the file is gone, or its bytes
+  fail the hash, size or PDF checks) leaves the local entry `exact-bytes-unavailable`.
 
 ## Checking Drive with `verify`
 
