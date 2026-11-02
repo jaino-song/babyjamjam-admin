@@ -491,7 +491,13 @@ class RunExecution {
                 continue;
             }
             // `recover` records an artifact without a length. Its length then comes from a manifest on the archive that lists it, never a guess.
-            const recovered = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
+            const lookup = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
+            if (lookup !== null && lookup.status === "archive-unavailable") {
+                // A temporary archive outage is not proof that no manifest exists: stay retryable (never the terminal exact-bytes-unavailable).
+                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "archive-unavailable", relativeKey });
+                continue;
+            }
+            const recovered = lookup !== null && lookup.status === "found" ? lookup : null;
             const byteLength = info.byteLength ?? recovered?.byteLength ?? null;
             if (byteLength === null) {
                 await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
@@ -506,6 +512,9 @@ class RunExecution {
             } else if (recovered === null ? await this.stagedUsable(job) || await this.healFromDrive(job) : await this.recoveredBytesStaged(job)) {
                 if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
                 await this.processArtifact(job, "carry");
+            } else if (!this.archiveOk) {
+                // The archive is down, so the verified Drive copy cannot be used (or went away while it was being staged): retry later, never terminal.
+                await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "archive-unavailable", relativeKey });
             } else {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
             }
@@ -515,13 +524,14 @@ class RunExecution {
     /**
      * The archive manifest that proves a recovered artifact's length: one that parses as a manifest of its document, is not contradicted by
      * the ledger's or a valid completion's digest for its key, and lists this artifact with the recorded sha256, type and key. All such
-     * manifests must agree on one length; none, or a disagreement, is `null` (nothing is built or guessed). Listed afresh: the run's shared
-     * listing is taken later, after this run's own manifests exist.
+     * manifests must agree on one length; none, or a disagreement, is `none` (nothing is built or guessed). An archive that is not available
+     * (before the lookup, or lost during it) is `archive-unavailable`, not `none`: it says nothing about the manifests. Listed afresh: the
+     * run's shared listing is taken later, after this run's own manifests exist.
      */
     private async recoveredManifestFor(
         artifactIdentity: string, info: { documentId: string; artifactType: ArchiveArtifactType; sha256: string }, relativeKey: string,
-    ): Promise<{ key: string; sha256: string; byteLength: number } | null> {
-        if (!this.archiveOk) return null;
+    ): Promise<{ status: "found"; key: string; sha256: string; byteLength: number } | { status: "none" } | { status: "archive-unavailable" }> {
+        if (!this.archiveOk) return { status: "archive-unavailable" };
         const found: Array<{ key: string; sha256: string; byteLength: number }> = [];
         try {
             const completions = await this.completionDigests();
@@ -558,10 +568,10 @@ class RunExecution {
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
             this.archiveLost();
-            return null;
+            return { status: "archive-unavailable" };
         }
-        if (found.length === 0 || new Set(found.map((candidate) => candidate.byteLength)).size !== 1) return null;
-        return found[0]!;
+        if (found.length === 0 || new Set(found.map((candidate) => candidate.byteLength)).size !== 1) return { status: "none" };
+        return { status: "found", ...found[0]! };
     }
 
     /**
