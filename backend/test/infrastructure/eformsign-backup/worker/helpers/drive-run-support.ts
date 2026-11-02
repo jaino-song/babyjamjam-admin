@@ -164,7 +164,7 @@ export async function makePhaseRig(options: { archiveOk?: boolean } = {}): Promi
         },
     };
     const deps: any = {
-        config: { companyId: "C001", control: { path: dir, reserveBytes: 64 * 1024 * 1024, reserveInodes: 1000 } },
+        config: { companyId: "C001", control: { path: dir, reserveBytes: 64 * 1024 * 1024, reserveInodes: 1000 }, archive: { path: dir } },
         clock: { now: () => new Date(NOW) },
         probe: { statfs: async () => ({ type: 0xef53, bsize: 4096, bavail: Math.floor(controlFree.bytes / 4096), ffree: 1_000_000 }) },
         drive: { kind: "ready" },
