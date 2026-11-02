@@ -10,7 +10,7 @@ import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
 import { driveFaults } from "./helpers/fake-drive-server";
 import {
     COMPANY, TOKEN, createHarness, destroyHarness, environmentFor, initArchive, listFiles, pairDoc, readLedgerRecords, rewriteConfig,
-    runOnce, treeSignature, type Harness,
+    runOnce, singleDoc, treeSignature, type Harness,
 } from "./helpers/runner-support";
 
 interface Captured { code: number; stdout: string[]; stderr: string[] }
@@ -195,6 +195,21 @@ describe("worker CLI (argv, exit codes, output)", () => {
         const bad = await cli(["inspect", "--config", h.configPath], { probe: createRealFsProbe() });
         expect(bad.code).toBe(0);
         expect(lines(bad)[0]).toMatchObject({ event: "inspect", reasonCode: "recovery-required" });
+    });
+
+    it("should count a locally terminal entry (blocked exact-bytes-unavailable) as terminalUnavailable in inspect, like the run line, and not as blocked (QF4 L3)", async () => {
+        h = await createHarness({ docs: [singleDoc("D001"), pairDoc("D002")] });
+        h.api.addFault({ route: "artifact", times: 1, fault: { kind: "status", status: 429, code: "RATE_LIMITED", retryable: true, retryAfterSeconds: 120 } });
+        await initArchive(h);
+        await runOnce(h);
+        h.api.docs = [pairDoc("D002")];
+        const run = await runOnce(h);
+        expect(run.counts).toMatchObject({ blocked: 0, terminalUnavailable: 1 });
+
+        const inspect = await cli(["inspect", "--config", h.configPath]);
+
+        expect(inspect.code).toBe(0);
+        expect(lines(inspect)[0]).toMatchObject({ event: "inspect", counts: { verified: 2, blocked: 0, terminalUnavailable: 1 } });
     });
 
     it("should print the configuration's company nowhere but in the archive layout, never in the log lines", async () => {
