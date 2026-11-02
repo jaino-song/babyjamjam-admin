@@ -521,6 +521,68 @@ beforeEach(() => {
   mockData();
 });
 
+describe("MessagesPage template send responsive layout", () => {
+  function selectSendTemplate() {
+    const template = buildSystemTemplate({
+      templateKey: "CONTRACT_REMINDER",
+      name: "계약서 작성 요청",
+      content: "{{name}}님 계약서를 작성해 주세요.",
+    });
+    mockUseSystemTemplates.mockReturnValue({ data: [template], isLoading: false, isError: false });
+    mockUseSystemTemplate.mockReturnValue({ data: template, isLoading: false, isError: false });
+    render(<MessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: /계약서 작성 요청/ }));
+  }
+
+  function tabElements() {
+    const root = document.querySelector('[data-component="desktop_messages_sections_template-detail-tabpanes"]')!;
+    const track = root.firstElementChild!;
+    const details = track.querySelector('[data-panel="details"]')!;
+    return { root, track, details };
+  }
+
+  it("stacks shrinkable columns at natural height below xl and keeps the xl layout", () => {
+    selectSendTemplate();
+    const layout = document.querySelector('[data-component="desktop_messages_sections_template-send-layout"]');
+    const form = document.querySelector('[data-component="desktop_messages_sections_template-send-form"]');
+    expect(layout).toHaveClass("grid-cols-[minmax(0,1fr)]", "xl:h-full", "xl:min-h-0", "xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]");
+    expect(layout).not.toHaveClass("h-full");
+    expect(layout).not.toHaveClass("min-h-0");
+    expect(form).toHaveClass("max-xl:min-w-0", "xl:h-full");
+    expect(form).not.toHaveClass("h-full");
+
+    const { root, track, details } = tabElements();
+    expect(root).toHaveClass("overflow-hidden", "flex", "max-xl:flex-none", "xl:min-h-0", "xl:flex-1");
+    expect(track).toHaveClass("min-w-0", "flex-1", "xl:min-h-0");
+    expect(details).toHaveClass("min-w-0", "xl:h-full", "xl:min-h-0");
+    for (const element of [root, track, details]) {
+      for (const className of ["h-full", "min-h-0"]) {
+        expect(element).not.toHaveClass(className);
+      }
+    }
+  });
+
+  it.each(["send", "templates"])("keeps preview height constrained in the %s section", (section) => {
+    selectSendTemplate();
+    if (section === "templates") {
+      fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+      fireEvent.click(screen.getByRole("button", { name: /계약서 작성 요청/ }));
+      const { root, track, details } = tabElements();
+      expect(root).toHaveClass("min-h-0", "shrink-0");
+      expect(root).not.toHaveClass("max-xl:flex-none");
+      expect(track).toHaveClass("min-h-0");
+      expect(details).toHaveClass("min-h-0");
+    }
+    fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
+    const { root, track, details } = tabElements();
+    expect(root).toHaveClass("overflow-hidden", "flex", "min-h-0", "flex-1");
+    expect(root).not.toHaveClass("max-xl:flex-none");
+    expect(track).toHaveClass("min-h-0", "flex-1");
+    expect(details).toHaveClass("h-full", "min-h-0");
+    expect(track.querySelector('[data-panel="preview"]')).toHaveClass("h-full", "min-h-0", "overflow-y-auto");
+  });
+});
+
 describe("messages status StatMinis", () => {
   function stats() {
     const bar = document.querySelector('[data-component="desktop_messages_sections_stats"]');
