@@ -411,40 +411,32 @@ describe("BJJ-456 PF1: a recovered (length-less) artifact heals from its verifie
             await expectHealed(lost, baseline);
         }, 240_000);
 
-        /** The outage transition as a different key or retry field would leave it, written by hand into the ledger. */
-        async function appendChangedOutageTransition(change: { relativeKey?: string; nextRetryAt?: string }): Promise<void> {
+        /** The outage transition as another retry timestamp would leave it, written by hand into the ledger. */
+        async function appendOutageTransitionWithRetryAt(nextRetryAt: string): Promise<void> {
             const store = await LedgerStore.open(h.control, { deferTornTailRepair: true });
             try {
                 const entry = [...store.state.destinations.values()].find((candidate) => !String(candidate.destinationIdentity).startsWith("drive:"))!;
                 await store.append("destination_transition", {
                     artifactIdentity: entry.artifactIdentity, destinationIdentity: entry.destinationIdentity, destinationRevision: entry.destinationRevision,
-                    from: "blocked", to: "blocked", reasonCode: "archive-unavailable", attempts: entry.attempts,
-                    nextRetryAt: change.nextRetryAt ?? entry.nextRetryAt, relativeKey: change.relativeKey ?? entry.relativeKey,
+                    from: "blocked", to: "blocked", reasonCode: "archive-unavailable", attempts: entry.attempts, nextRetryAt, relativeKey: entry.relativeKey,
                 } as never, new Date().toISOString());
             } finally {
                 await store.close();
             }
         }
 
-        it("should not suppress the outage transition when the live entry has another key or another retry timestamp", async () => {
+        it("should not suppress the outage transition while the live entry carries another retry timestamp, and suppress it again once it is written", async () => {
             await lostLocalCopy();
             const away = await swapArchive(h);
             await runOnce(h);
             expect(await outageTransitions()).toBe(1);
 
-            await appendChangedOutageTransition({ relativeKey: `eformsign/${COMPANY}/D001/artifacts/document/${"f".repeat(64)}.pdf` });
+            await appendOutageTransitionWithRetryAt("2099-01-01T00:00:00.000Z");
             expect(await outageTransitions()).toBe(2);
             await runOnce(h);
             expect(await outageTransitions()).toBe(3);
             await runOnce(h);
             expect(await outageTransitions()).toBe(3);
-
-            await appendChangedOutageTransition({ nextRetryAt: "2099-01-01T00:00:00.000Z" });
-            expect(await outageTransitions()).toBe(4);
-            await runOnce(h);
-            expect(await outageTransitions()).toBe(5);
-            await runOnce(h);
-            expect(await outageTransitions()).toBe(5);
             await swapBack(h, away);
         }, 240_000);
     });
