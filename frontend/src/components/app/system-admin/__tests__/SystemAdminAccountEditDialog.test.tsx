@@ -21,7 +21,7 @@ const account: SystemAdminUser = {
   requestedRole: "manager",
 };
 
-const inactiveOwnedAdminAccount: SystemAdminUser = {
+const inactiveAdminBranchAccount: SystemAdminUser = {
   ...account,
   id: "approved-admin",
   name: "비활성 지점장",
@@ -42,7 +42,7 @@ describe("SystemAdminAccountEditDialog", () => {
           { id: "branch-gangnam", name: "강남점", isActive: true },
           { id: "branch-songdo", name: "송도점", isActive: true },
         ]}
-        ownedBranchIds={[]}
+        adminBranchIds={[]}
         isPending
         errorMessage="서버에서 계정 수정을 거절했어요."
         onOpenChange={onOpenChange}
@@ -61,18 +61,18 @@ describe("SystemAdminAccountEditDialog", () => {
     expect(screen.getByRole("dialog", { name: "계정 수정" })).toBeInTheDocument();
   });
 
-  it("requires an active branch when only an inactive owned branch is locked", async () => {
+  it("requires an active branch when only an inactive admin branch is locked", async () => {
     const onSubmit = jest.fn();
 
     render(
       <SystemAdminAccountEditDialog
         open
-        account={inactiveOwnedAdminAccount}
+        account={inactiveAdminBranchAccount}
         branches={[
           { id: "branch-inactive", name: "서대문점", isActive: false },
           { id: "branch-active", name: "송도점", isActive: true },
         ]}
-        ownedBranchIds={["branch-inactive"]}
+        adminBranchIds={["branch-inactive"]}
         isPending={false}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -116,7 +116,7 @@ describe("SystemAdminAccountEditDialog", () => {
         open
         account={{ ...account, role: null }}
         branches={[{ id: "branch-gangnam", name: "강남점", isActive: true }]}
-        ownedBranchIds={[]}
+        adminBranchIds={[]}
         isPending={false}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}
@@ -144,7 +144,7 @@ describe("SystemAdminAccountEditDialog", () => {
   it("preserves hidden initial memberships across role changes and submission", async () => {
     const onSubmit = jest.fn();
     const partialAdminAccount: SystemAdminUser = {
-      ...inactiveOwnedAdminAccount,
+      ...inactiveAdminBranchAccount,
       branches: [
         { id: "branch-active", name: "마포점", role: "admin" },
         { id: "branch-inactive", name: "서대문점", role: "admin" },
@@ -160,7 +160,7 @@ describe("SystemAdminAccountEditDialog", () => {
           { id: "branch-active", name: "마포점", isActive: true },
           { id: "branch-inactive", name: "서대문점", isActive: false },
         ]}
-        ownedBranchIds={["branch-active", "branch-inactive"]}
+        adminBranchIds={["branch-active", "branch-inactive"]}
         isPending={false}
         onOpenChange={jest.fn()}
         onSubmit={onSubmit}

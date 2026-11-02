@@ -98,7 +98,7 @@ beforeEach(() => {
             emailVerified: true,
             authProvider: "email",
             branches: [
-              { id: "branch-admin-owned", name: "마포점", role: "admin" },
+              { id: "branch-admin-assigned", name: "마포점", role: "admin" },
               { id: "branch-admin-inactive", name: "서대문점", role: "admin" },
             ],
             approvalStatus: "approved",
@@ -157,7 +157,7 @@ beforeEach(() => {
             isActive: true,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: {
+            admin: {
               id: "owner-1",
               name: "김오너",
               email: "owner@example.com",
@@ -178,7 +178,7 @@ beforeEach(() => {
             },
           },
           {
-            id: "branch-admin-owned",
+            id: "branch-admin-assigned",
             name: "마포점",
             slug: "mapo",
             region: "서울",
@@ -189,7 +189,7 @@ beforeEach(() => {
             isActive: true,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: {
+            admin: {
               id: "approved-admin",
               name: "기존 지점장 계정",
               email: "admin@example.com",
@@ -204,7 +204,7 @@ beforeEach(() => {
             },
           },
           {
-            id: "branch-songdo-ownerless",
+            id: "branch-songdo-adminless",
             name: "송도점",
             slug: "songdo",
             region: "인천",
@@ -215,7 +215,7 @@ beforeEach(() => {
             isActive: true,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: null,
+            admin: null,
             messageSenderApproval: {
               approvalStatus: "not_requested",
               requestedAt: null,
@@ -235,7 +235,7 @@ beforeEach(() => {
             isActive: false,
             createdAt: "2026-06-01T00:00:00.000Z",
             updatedAt: "2026-06-04T00:00:00.000Z",
-            owner: {
+            admin: {
               id: "approved-admin",
               name: "기존 지점장 계정",
               email: "admin@example.com",
@@ -392,7 +392,7 @@ describe("OwnerAdminConsole", () => {
     expect(screen.getByRole("button", { name: "승인" })).toBeDisabled();
     fireEvent.change(
       screen.getByRole("combobox", { name: "가입 대기 계정 임명 지점 선택" }),
-      { target: { value: "branch-songdo-ownerless" } },
+      { target: { value: "branch-songdo-adminless" } },
     );
     fireEvent.click(screen.getByRole("button", { name: "승인" }));
 
@@ -400,7 +400,7 @@ describe("OwnerAdminConsole", () => {
       id: "pending-user",
       role: "admin",
       branchId: "branch-real-gangnam",
-      ownerBranchId: "branch-songdo-ownerless",
+      adminBranchId: "branch-songdo-adminless",
       smsAutomationEnabled: true,
     });
     expect(screen.getByRole("button", { name: "거절" })).toBeInTheDocument();
@@ -515,7 +515,7 @@ describe("OwnerAdminConsole", () => {
     );
   });
 
-  it("limits the 임명 지점 select to ownerless active branches when 지점장 is selected", () => {
+  it("limits the 임명 지점 select to adminless active branches when 지점장 is selected", () => {
     render(<OwnerAdminConsole />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
@@ -527,10 +527,10 @@ describe("OwnerAdminConsole", () => {
       { target: { value: "admin" } },
     );
 
-    const ownerBranchSelect = screen.getByRole("combobox", {
+    const adminBranchSelect = screen.getByRole("combobox", {
       name: "가입 대기 계정 임명 지점 선택",
     });
-    const optionLabels = within(ownerBranchSelect)
+    const optionLabels = within(adminBranchSelect)
       .getAllByRole("option")
       .map((option) => option.textContent);
 
@@ -585,7 +585,7 @@ describe("OwnerAdminConsole", () => {
       expect(approveMutate).toHaveBeenCalledWith({
         id: "approved-user",
         role: "user",
-        branchIds: ["branch-songdo-ownerless"],
+        branchIds: ["branch-songdo-adminless"],
         expectedRole: "manager",
         expectedBranchIds: ["branch-real-gangnam"],
       }),
@@ -673,7 +673,7 @@ describe("OwnerAdminConsole", () => {
     expect(screen.getByRole("combobox", { name: /^권한/ })).toHaveValue("user");
   });
 
-  it("keeps an existing admin role while locking active and inactive owned branches", async () => {
+  it("keeps an existing admin role while locking active and inactive admin branches", async () => {
     render(<OwnerAdminConsole />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
@@ -688,16 +688,16 @@ describe("OwnerAdminConsole", () => {
         .map((option) => option.textContent),
     ).toEqual(["지점장", "매니저", "회원"]);
 
-    const lockedOwnedBranch = screen.getByRole("button", {
+    const lockedAdminBranch = screen.getByRole("button", {
       name: "마포점 지점: 지점장 임명으로 선택 고정",
     });
-    expect(lockedOwnedBranch).toBeDisabled();
-    expect(lockedOwnedBranch).toHaveAttribute("aria-pressed", "true");
-    const lockedInactiveOwnedBranch = screen.getByRole("button", {
+    expect(lockedAdminBranch).toBeDisabled();
+    expect(lockedAdminBranch).toHaveAttribute("aria-pressed", "true");
+    const lockedInactiveAdminBranch = screen.getByRole("button", {
       name: "서대문점 (비활성) 지점: 지점장 임명으로 선택 고정",
     });
-    expect(lockedInactiveOwnedBranch).toBeDisabled();
-    expect(lockedInactiveOwnedBranch).toHaveAttribute("aria-pressed", "true");
+    expect(lockedInactiveAdminBranch).toBeDisabled();
+    expect(lockedInactiveAdminBranch).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("서대문점 (비활성)")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "송도점 지점 선택" }));
@@ -708,17 +708,17 @@ describe("OwnerAdminConsole", () => {
         id: "approved-admin",
         role: "admin",
         branchIds: [
-          "branch-admin-owned",
-          "branch-songdo-ownerless",
+          "branch-admin-assigned",
+          "branch-songdo-adminless",
           "branch-admin-inactive",
         ],
         expectedRole: "admin",
-        expectedBranchIds: ["branch-admin-owned", "branch-admin-inactive"],
+        expectedBranchIds: ["branch-admin-assigned", "branch-admin-inactive"],
       }),
     );
   });
 
-  it("drops inactive memberships and unlocks active owned branches on explicit demotion", async () => {
+  it("drops inactive memberships and unlocks active admin branches on explicit demotion", async () => {
     render(<OwnerAdminConsole />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
@@ -741,9 +741,9 @@ describe("OwnerAdminConsole", () => {
       expect(approveMutate).toHaveBeenCalledWith({
         id: "approved-admin",
         role: "manager",
-        branchIds: ["branch-admin-owned"],
+        branchIds: ["branch-admin-assigned"],
         expectedRole: "admin",
-        expectedBranchIds: ["branch-admin-owned", "branch-admin-inactive"],
+        expectedBranchIds: ["branch-admin-assigned", "branch-admin-inactive"],
       }),
     );
 

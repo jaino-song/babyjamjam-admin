@@ -64,7 +64,7 @@ const createdBranch: SystemAdminBranchRequest = {
   isActive: true,
   createdAt: "2026-09-01T00:00:00.000Z",
   updatedAt: "2026-09-01T00:00:00.000Z",
-  owner: null,
+  admin: null,
   messageSenderApproval: {
     approvalStatus: "not_requested",
     requestedAt: null,
