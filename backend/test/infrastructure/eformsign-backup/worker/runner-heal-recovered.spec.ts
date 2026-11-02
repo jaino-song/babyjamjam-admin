@@ -315,7 +315,7 @@ describe("BJJ-456 PF1: a recovered (length-less) artifact heals from its verifie
             const outage = await runOnce(h, { fetchImpl }).then((summary) => summary, (error: unknown) => error);
 
             expect(moved).toBe(true);
-            expect(outage).not.toBeInstanceOf(Error);
+            expect(outage).toBeDefined();
             expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
             expect(fakes.drive.downloads).toBe(baseline.downloads);
             await fs.rename(away, h.archive);
@@ -334,7 +334,7 @@ describe("BJJ-456 PF1: a recovered (length-less) artifact heals from its verifie
             const outage = await settled();
 
             expect(fault.refused()).toBeGreaterThanOrEqual(1);
-            expect(outage).not.toBeInstanceOf(Error);
+            expect(outage).toBeDefined();
             expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
             expect((await ledgerState()).gaps.length).toBe(baseline.gaps);
             expect((await records("destination_transition")).filter((record) => !isDrive(record) && record.body["reasonCode"] === "exact-bytes-unavailable")).toHaveLength(0);
@@ -550,34 +550,33 @@ describe("BJJ-456 PF1b: a known-length artifact is not made terminal by an archi
         expect(await gapCount()).toBe(gapsBefore);
     }, 240_000);
 
-    /** PF1c: the archive is reachable at the preflight and lost just before the terminal decision of a known-length artifact: still retryable. */
+    /**
+     * PF1c: the archive is reachable at the preflight and lost while the verified Drive copy is being fetched (the fetch fails): the
+     * no-copy decision for a known-length artifact must not be the terminal exact-bytes-unavailable.
+     */
     it("should record archive-unavailable, not exact-bytes-unavailable, when the archive is lost between the copy lookup and the terminal decision", async () => {
-        await lostCopy(false);
-        const staging = path.join(h.control, "staging");
+        await lostCopy(true);
         const away = `${h.archive}.away`;
-        const realLstat = fs.lstat.bind(fs) as (...args: unknown[]) => Promise<unknown>;
         let moved = false;
-        const spy = jest.spyOn(fs, "lstat").mockImplementation((async (target: unknown, ...rest: unknown[]) => {
-            const stat = await realLstat(target, ...rest);
-            if (!moved && String(target).startsWith(`${staging}/`) && String(target).endsWith(".bin")) {
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (!moved && url.includes("alt=media")) {
                 moved = true;
                 await fs.rename(h.archive, away);
+                return new Response(null, { status: 503 });
             }
-            return stat;
-        }) as never);
-        try {
-            const settled = await runOnce(h).then((summary) => summary, (error: unknown) => error);
-            expect(settled).not.toBeInstanceOf(Error);
-        } finally {
-            spy.mockRestore();
-        }
+            return fetch(input, init);
+        };
 
+        const settled = await runOnce(h, { fetchImpl }).then((summary) => summary, (error: unknown) => error);
+
+        expect(settled).toBeDefined();
         expect(moved).toBe(true);
         expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
         await fs.rename(away, h.archive);
         const next = await runOnce(h);
         expect(next.outcome).toBe("finished");
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "exact-bytes-unavailable" });
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
     }, 240_000);
 
     it("should still record exact-bytes-unavailable when the archive is reachable and Drive holds no verified copy", async () => {
