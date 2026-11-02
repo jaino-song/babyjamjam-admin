@@ -19,6 +19,7 @@ import {
     DestinationLedger, SNAPSHOT_POLL_LIMIT, SNAPSHOT_POLL_MS, TRANSIENT_STOP, assertLedgerRoom, assertSameInstallation,
     controlHasStagingRoom, countOrphanTemps, isArchiveSide, isTerminalReason, nowIso, requireInstallation,
 } from "./runner-common";
+import { DriveRunPhase, type DriveBuiltRecord, type DriveCompletionContext, type DriveRunHost } from "./runner-drive";
 import { type RunSummary, type RunnerDependencies } from "./runner-types";
 
 const OPAQUE_ID = /^[^\u0000-\u001f\u007f]{1,512}$/u;
@@ -165,6 +166,11 @@ class RunExecution {
     private manifestListing: ManifestFile[] | null = null;
     private totalCandidates = 0;
     private includedCandidates = 0;
+    /** The Google Drive destination of this run; `null` without a `drive` block or a ready binding (the run is then exactly the local one). */
+    private readonly drive: DriveRunPhase | null;
+    /** The archive keys (manifests, completion) this run wrote locally, and the completion it built; the Drive phase reads them (A2.6). */
+    private readonly localPublished = new Set<string>();
+    private localCompletion: DriveBuiltRecord | null = null;
 
     constructor(
         private readonly deps: RunnerDependencies,
@@ -173,6 +179,7 @@ class RunExecution {
         private readonly scheduledFor: string | null,
     ) {
         this.dl = new DestinationLedger(deps, requireInstallation(deps));
+        this.drive = DriveRunPhase.forRun(deps, this.dl.installation, archive, staging, this.driveHost());
     }
 
     private get state() { return this.deps.ledger.state; }
@@ -192,12 +199,14 @@ class RunExecution {
         if (!check.ok) this.archiveLost();
         this.runId = this.deps.uuid();
         await this.recoverInterrupted();
+        await this.drive?.recoverInterrupted();
         await this.finishOpenRuns();
         this.startedAt = this.now();
         await this.deps.ledger.append("run_started", { runId: this.runId, scheduledFor: this.scheduledFor, startedAt: this.startedAt }, this.startedAt);
         try {
             await this.snapshotStage();
             await this.processCandidates();
+            await this.drive?.processWork(this.work);
             await this.publishRecords();
         } catch (error) {
             if (!(error instanceof StageFailure)) throw error;
@@ -484,7 +493,7 @@ class RunExecution {
             };
             if (entry.state === "integrity_error" && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "integrity-repeated", relativeKey });
-            } else if (await this.stagedUsable(job)) {
+            } else if (await this.stagedUsable(job) || await this.healFromDrive(job)) {
                 await this.processArtifact(job, "carry");
             } else {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
@@ -523,9 +532,11 @@ class RunExecution {
             await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
             return;
         }
-        const staged = await this.stagedUsable(job);
+        let staged = await this.stagedUsable(job);
         if (entry !== undefined && state === "blocked" && !(await this.blockedMayRetry(entry, job, staged))) return;
         if (state === "transferring" || state === "verifying") return;
+        // V10: a copy Drive holds verified is staged again before anything is downloaded or given up.
+        if (!staged) staged = await this.healFromDrive(job);
 
         if (!staged) {
             if (mode === "carry" || this.stopDownloads) return;
@@ -780,6 +791,58 @@ class RunExecution {
         return "done";
     }
 
+    // ---- Google Drive seams (BJJ-456) ------------------------------------------------------------------------------
+
+    /** V10: the artifact's staged bytes are gone and Drive holds it verified: stage it again from there, before downloading. */
+    private async healFromDrive(job: ArtifactJob): Promise<boolean> {
+        return this.drive !== null && this.archiveOk && this.drive.driveVerified(job.artifactIdentity) && await this.drive.restageFromDrive(job);
+    }
+
+    /**
+     * Stages `source` as the artifact's staged copy through the checks every staged file gets (hash, size, PDF shape), for a copy that
+     * comes from the other destination instead of the export. A control failure is thrown; any other failure is the reason it returns.
+     */
+    private async restage(job: ArtifactJob, source: AsyncIterable<Uint8Array>): Promise<{ ok: true } | { ok: false; reasonCode: WorkerReasonCode }> {
+        if (!(await controlHasStagingRoom(this.deps, job.byteLength))) return { ok: false, reasonCode: "control-space" };
+        // A staged file that is still there is not usable (otherwise nothing would be staged again): it would make the name conflict.
+        const leftover = await fs.lstat(`${this.staging.path}/${job.artifactIdentity}.bin`).catch(() => null);
+        if (leftover !== null) await this.setStagingAside(job);
+        const staged = await this.archive.stageArtifact(this.staging, this.input(job), source);
+        if (!staged.ok) {
+            if (staged.reasonCode === "control-unavailable" || staged.reasonCode === "control-space") throw new WorkerError(staged.reasonCode);
+            return { ok: false, reasonCode: staged.reasonCode };
+        }
+        await this.deps.ledger.append("staging_verified", { artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength }, this.now());
+        return { ok: true };
+    }
+
+    private driveHost(): DriveRunHost {
+        return {
+            archiveOk: () => this.archiveOk,
+            archiveLost: () => this.archiveLost(),
+            manifestOf: (candidate) => {
+                const { manifest, key } = this.manifestOf(candidate);
+                return { key, bytes: manifest.bytes, sha256: manifest.sha256 };
+            },
+            stagedUsable: (job) => this.stagedUsable(job),
+            setStagingAside: (job) => this.setStagingAside(job),
+            restage: (job, source) => this.restage(job, source),
+            locallyPublished: (relativeKey) => this.localPublished.has(relativeKey),
+            localCompletion: () => this.localCompletion,
+            completionContext: (): DriveCompletionContext | null => {
+                const binding = this.snapshotId === null ? undefined : this.state.snapshots.get(this.snapshotId);
+                if (binding === undefined) return null;
+                return {
+                    companyId: this.companyId, runId: this.runId, sequence: binding.sequence, snapshotId: binding.snapshotId,
+                    scopeRevision: binding.scopeRevision, policyRevision: binding.policyRevision,
+                    localIdentity: this.dl.destinationIdentity, localRevision: this.dl.destinationRevision,
+                    stateGaps: this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })),
+                    blockedDocuments: this.blockedDocuments, emptyDocuments: this.emptyDocuments,
+                };
+            },
+        };
+    }
+
     // ---- steps 9-10: manifests and the completion ------------------------------------------------------------------
 
     /** The manifest of one observed artifact set and the content-versioned key it is published under. */
@@ -817,6 +880,7 @@ class RunExecution {
     }
 
     private async recordManifest(written: { key: string; sha256: string }): Promise<void> {
+        this.localPublished.add(written.key);
         if (!this.state.manifests.has(written.key)) {
             await this.deps.ledger.append("manifest_published", { relativeKey: written.key, sha256: written.sha256 }, this.now());
         }
@@ -1217,12 +1281,14 @@ class RunExecution {
             destinationIdentity: this.dl.destinationIdentity, destinationRevision: this.dl.destinationRevision,
             entries, gaps: [...this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })), ...omissions],
         });
+        this.localCompletion = { key: completion.relativeKey, bytes: completion.bytes, sha256: completion.sha256 };
         const published = await this.archive.publishJson(completion.relativeKey, completion.bytes);
         if (!published.ok) {
             if (isArchiveSide(published.reasonCode)) this.archiveLost();
             else this.reasons.add(published.reasonCode);
             return;
         }
+        this.localPublished.add(completion.relativeKey);
         await this.fault("after-completion-before-record");
         await this.deps.ledger.append("completion_published", {
             relativeKey: completion.relativeKey, sha256: completion.sha256, sequence: binding.sequence,
@@ -1256,23 +1322,30 @@ class RunExecution {
             counts: {
                 candidates: this.totalCandidates, included: this.includedCandidates, verified, blocked, retryWait, integrityError,
                 terminalUnavailable, orphanTemps, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0,
+                ...(this.drive === null ? {} : this.drive.counts()),
             },
             entries,
         };
     }
 
     private async finish(): Promise<RunSummary> {
+        // The Drive copies of the manifests and the completion go first: what they could not do is part of what the run reports.
+        await this.drive?.publishRecords();
         const { counts, entries } = this.counts(await countOrphanTemps(this.staging.path));
         const localEntries = [
             ...entries,
             ...this.blockedCandidates.map((reasonCode) => ({ state: "blocked" as const, reasonCode })),
         ];
+        const driveReasons = this.drive?.entryReasons() ?? [];
         const judged = judgeSnapshotStatus({
             snapshotFailure: this.snapshotFailure,
             controlFailure: this.blockRun ?? (this.archiveOk ? null : "archive-unavailable"),
             localEntries,
+            ...(this.drive === null ? {} : { drive: { bound: true, phaseFailure: this.drive.phaseFailure, entryReasons: driveReasons } }),
         });
         const extras = new Set<WorkerReasonCode>(this.reasons);
+        for (const code of driveReasons) extras.add(code);
+        if (this.drive?.phaseFailure != null) extras.add(this.drive.phaseFailure);
         for (const entry of entries) if (entry.state === "retry_wait" && entry.reasonCode !== null) extras.add(entry.reasonCode);
         for (const entry of this.state.destinations.values()) {
             if (entry.state === "blocked" && isTerminalReason(entry.reasonCode) && entry.reasonCode !== null) extras.add(entry.reasonCode);
@@ -1281,14 +1354,16 @@ class RunExecution {
         const historicalCoverage = judgeHistoricalCoverage(this.state);
         const finishedAt = this.now();
         const binding = this.snapshotId === null ? undefined : this.state.snapshots.get(this.snapshotId);
-        if (this.archiveOk) {
+        if (this.archiveOk || this.drive !== null) {
             const inventory = buildRunInventory({
                 runId: this.runId, scheduledFor: this.scheduledFor, startedAt: this.startedAt, finishedAt,
                 snapshotId: this.snapshotId, sequence: binding?.sequence ?? null, snapshotStatus: judged.snapshotStatus,
                 historicalCoverage, reasonCodes, counts,
             });
+            const key = runKey({ companyId: this.companyId, runId: this.runId });
             // The inventory is a convenience copy; a refusal leaves the ledger record below as the only one.
-            await this.archive.publishJson(runKey({ companyId: this.companyId, runId: this.runId }), inventory.bytes);
+            const local = this.archiveOk ? (await this.archive.publishJson(key, inventory.bytes)).ok : false;
+            await this.drive?.publishInventory({ key, bytes: inventory.bytes, sha256: inventory.sha256 }, local);
         }
         await this.deps.ledger.append("run_finished", {
             runId: this.runId, finishedAt, snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes, counts,
