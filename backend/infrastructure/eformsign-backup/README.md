@@ -754,6 +754,12 @@ adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError`
   size or PDF checks) leaves the local entry `exact-bytes-unavailable`. An artifact the worker
   cannot place at all (no recorded details or key, or a recovered artifact whose length no
   archive manifest names) is `exact-bytes-unavailable` without asking Drive.
+  While Drive cannot be asked, a copy the export still offers is fetched from the export; bytes
+  from it that fail the hash check never stop a later heal: an artifact the export failed three
+  times (`blocked`, `integrity-repeated`, and the export is not asked for it again) is still
+  restaged from a Drive copy verified under the current binding on every run, as soon as Drive
+  answers, and then published and verified as usual. With no such Drive copy it stays
+  `integrity-repeated`.
 
 ## Checking Drive with `verify`
 
