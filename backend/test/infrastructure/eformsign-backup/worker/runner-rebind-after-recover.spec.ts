@@ -1,11 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+
+import { buildCompletion, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
 import { COMPLETION_KEY, MANIFEST_KEY, PDF_KEY, RUN_KEY, bindDrive, currentRootId, driveKeys, driveTree } from "./helpers/drive-run-support";
 import {
-    createHarness, destroyHarness, initArchive, listFiles, pairDoc, readCompletions, readJsonFile, readLedgerRecords, runOnce, withWorker, type Harness,
+    COMPANY, createHarness, destroyHarness, initArchive, listFiles, pairDoc, readCompletions, readJsonFile, readLedgerRecords, runOnce, withWorker, type Harness,
 } from "./helpers/runner-support";
+import { spawnUnderFlock } from "./helpers/runner-flock-support";
 
 const MARKER = ".bjj-backup/installation.json";
 
@@ -118,4 +122,134 @@ describe("BJJ-456 QF1: drive-setup --rebind after recover", () => {
         expect(driveKeys(await driveTree(h, fakes), PDF_KEY)).toHaveLength(6);
         expect(liveDuplicates()).toEqual([]);
     }, 180_000);
+
+    // ---- QF1-F1: errors at the new boundaries, and records a normal installation never acknowledged ------------------------------------
+
+    /** The Drive phase is listing a directory itself (or through `listCompletions`), not reading one file of the archive. */
+    const isDrivePhaseListing = (stack: string): boolean => /DriveRunPhase/.test(stack) && !/walkExisting|readArchiveFile|readFileNoFollow|listManifestFiles/.test(stack);
+
+    /** Makes the listing of the directory ending in `suffix` fail with a native EACCES, but only when the Drive phase asks for it. */
+    function failDrivePhaseListing(suffix: string): jest.SpyInstance {
+        const real = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+        return jest.spyOn(fs, "readdir").mockImplementation(((target: unknown, ...rest: unknown[]) => {
+            if (typeof target === "string" && target.endsWith(suffix) && isDrivePhaseListing(new Error().stack ?? "")) {
+                return Promise.reject(Object.assign(new Error("synthetic EACCES"), { code: "EACCES" }));
+            }
+            return real(target, ...rest);
+        }) as never);
+    }
+    const ledgerRunsFinished = async (): Promise<{ started: number; finished: number }> => {
+        const records = await readLedgerRecords(h.control);
+        return { started: records.filter((r) => r.type === "run_started").length, finished: records.filter((r) => r.type === "run_finished").length };
+    };
+
+    describe("F1: an unreadable optional input never aborts the command", () => {
+        afterEach(async () => {
+            jest.restoreAllMocks();
+            await fs.chmod(path.join(h.control, "staging"), 0o700).catch(() => undefined);
+        });
+
+        it("recover: an unreadable staging directory skips staged-copy adoption and recovery finishes as it always did", async () => {
+            await install();
+            const installationId = (await readJsonFile<{ installationId: string }>(path.join(h.archive, MARKER))).installationId;
+            await fs.rename(path.join(h.control, "ledger"), path.join(h.base, "ledger.lost"));
+            await fs.chmod(path.join(h.control, "staging"), 0o000);
+
+            const summary = await withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+
+            expect(summary).toMatchObject({ outcome: "finished", recovered: 6, unverified: 0 });
+            expect((await readLedgerRecords(h.control)).filter((record) => record.type === "staging_verified")).toEqual([]);
+        }, 180_000);
+
+        it("run: a failing completion listing in the Drive phase marks the archive unavailable, the run finishes, and the next run publishes", async () => {
+            await install();
+            await recoverLedger();
+            await runOnce(h);
+            await rebind();
+            const before = await ledgerRunsFinished();
+            const spy = failDrivePhaseListing("/completions");
+
+            const failed = await runOnce(h);
+
+            spy.mockRestore();
+            expect(failed.reasonCodes).toContain("archive-unavailable");
+            const after = await ledgerRunsFinished();
+            expect(after.started - before.started).toBe(1);
+            expect(after.finished - before.finished).toBe(1);
+            await runOnce(h);
+            await runOnce(h);
+            await expectNewRootEqualsArchive();
+        }, 180_000);
+
+        it("run: a failing runs/ listing is not an absent folder: it marks the archive unavailable and the standalone inventory follows on the next run", async () => {
+            await install();
+            await recoverLedger();
+            await runOnce(h);
+            const [anyRun] = (await listFiles(h.archive)).filter((key) => /\/runs\//.test(key));
+            const standaloneId = randomUUID();
+            const inventory = await readJsonFile<Record<string, unknown>>(path.join(h.archive, anyRun!));
+            const standaloneKey = `eformsign/${COMPANY}/runs/${standaloneId}.json`;
+            await fs.writeFile(path.join(h.archive, standaloneKey), JSON.stringify({ ...inventory, runId: standaloneId }), { mode: 0o600 });
+            await rebind();
+            const spy = failDrivePhaseListing("/runs");
+
+            const failed = await runOnce(h);
+
+            spy.mockRestore();
+            expect(failed.reasonCodes).toContain("archive-unavailable");
+            expect((await driveTree(h, fakes)).has(standaloneKey)).toBe(false);
+            await runOnce(h);
+            expect((await driveTree(h, fakes)).has(standaloneKey)).toBe(true);
+        }, 180_000);
+    });
+
+    describe("F3: records a normal installation wrote but never acknowledged", () => {
+        it("a kill after the completion is written and before completion_published: rebind then publishes that completion", async () => {
+            await install();
+            h.api.docs.push(pairDoc("D004"));
+            const child = spawnUnderFlock(h, ["run", "--config", h.configPath, "--kill-at", "after-completion-before-record"]);
+            expect(await child.exited).toEqual({ code: null, signal: "SIGKILL" });
+            const origin = (await readLedgerRecords(h.control)).find((record) => record.type === "installed" || record.type === "recovery_started")!;
+            expect(origin.type).toBe("installed");
+            h.clock.set(new Date(Date.now() + 60_000).toISOString());
+            await rebind();
+
+            await runOnce(h);
+            await runOnce(h);
+
+            const tree = await driveTree(h, fakes);
+            const archiveFiles = (await listFiles(h.archive)).sort();
+            expect([...tree.keys()].sort()).toEqual(archiveFiles);
+            expect(driveKeys(tree, COMPLETION_KEY)).toHaveLength((await readCompletions(h.archive)).length);
+            expect(liveDuplicates()).toEqual([]);
+        }, 180_000);
+
+        it("an archive completion that names a manifest the ledger does not know brings that manifest to the new root too", async () => {
+            await install();
+            const [manifestFile] = (await listFiles(h.archive)).filter((key) => /\/manifests\//.test(key));
+            const known = await readJsonFile<{ documentId: string; companyId: string; artifacts: Array<{ artifactType: string; artifactIdentity: string; sha256: string; byteLength: number }> }>(
+                path.join(h.archive, manifestFile!),
+            );
+            const revision = "c".repeat(64);
+            const crafted = buildManifest({ companyId: known.companyId, documentId: known.documentId, metadataRevision: revision, artifacts: known.artifacts } as never);
+            const craftedKey = manifestKey({ companyId: known.companyId, documentId: known.documentId, metadataRevision: revision, manifestSha256: crafted.sha256 });
+            await fs.writeFile(path.join(h.archive, craftedKey), crafted.bytes, { mode: 0o600 });
+            const [latest] = (await readCompletions(h.archive)).slice(-1);
+            const value = latest!.value;
+            const completion = buildCompletion({
+                companyId: known.companyId, sequence: 99, snapshotId: "crafted-snapshot", runId: randomUUID(), scopeRevision: value["scopeRevision"],
+                policyRevision: value["policyRevision"], destinationIdentity: value["destinationIdentity"], destinationRevision: value["destinationRevision"],
+                entries: [{ documentId: known.documentId, metadataRevision: revision, manifestKey: craftedKey, manifestSha256: crafted.sha256 }], gaps: [],
+            });
+            await fs.writeFile(path.join(h.archive, completion.relativeKey), completion.bytes, { mode: 0o600 });
+            await rebind();
+
+            await runOnce(h);
+            await runOnce(h);
+
+            const tree = await driveTree(h, fakes);
+            expect(tree.has(craftedKey)).toBe(true);
+            expect(tree.has(completion.relativeKey)).toBe(true);
+        }, 180_000);
+    });
 });
