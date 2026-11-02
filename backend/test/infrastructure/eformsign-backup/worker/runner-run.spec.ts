@@ -1642,7 +1642,7 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
         });
 
         describe("blocked entries that must not be carried over", () => {
-            const untouched = async (id: string, reasonCode: string, expectedGaps: unknown[], terminalUnavailable: number, omit: () => void): Promise<void> => {
+            const untouched = async (id: string, reasonCode: string, expectedGaps: unknown[], terminalUnavailable: number, omit: () => void, gapsWhileIncluded: unknown[] = expectedGaps): Promise<void> => {
                 expect((await destinationTransitions(id)).pop()!.body["reasonCode"]).toBe(reasonCode);
                 // Baseline BEFORE the document leaves the snapshot, so a transition made by that very run is seen.
                 const before = await destinationTransitions(id);
@@ -1655,7 +1655,7 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     expect(result.counts).toMatchObject({ terminalUnavailable });
                     expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual(expectedGaps);
                 }
-                expect(gapsBefore).toEqual(expectedGaps);
+                expect(gapsBefore).toEqual(gapsWhileIncluded);
             };
 
             it("should leave a source-removed entry untouched on the first run that omits it and on the next", async () => {
@@ -1680,9 +1680,62 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 // Three integrity errors, then the fourth run blocks it for good.
                 for (let run = 0; run < 4; run++) await runOnce(h);
 
-                await untouched(id, "integrity-repeated", [], 0, () => { h.api.docs = [pairDoc("D002")]; });
+                // While the snapshot still includes D001 its completion lists the omission (FU-13); once it leaves, there is nothing to list.
+                await untouched(id, "integrity-repeated", [], 0, () => { h.api.docs = [pairDoc("D002")]; }, [{ documentId: "D001", reasonCode: "integrity-repeated" }]);
             });
         });
+    });
+
+    describe("a completion never drops an included document silently (BJJ-455 P2 FU-13 F1, M4)", () => {
+        const gapsOf = async () => (await readCompletions(h.archive)).map((completion) => ({
+            documents: completion.value["entries"].map((entry: { documentId: string }) => entry.documentId),
+            gaps: completion.value["gaps"],
+        }));
+        const restoreLatest = async () => {
+            const outDir = path.join(h.base, `restored-${Math.random().toString(36).slice(2)}`);
+            try {
+                return await restoreFromArchive({ archivePath: h.archive, companyId: COMPANY, selector: { latest: true }, outDir });
+            } finally {
+                await fs.rm(outDir, { recursive: true, force: true });
+            }
+        };
+
+        it("F1: should list an included, intact document whose bound manifest conflicts as an archive-conflict gap, exit 69 and report the gap on restore --latest", async () => {
+            h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+            await initArchive(h);
+            await runOnce(h);
+            expect(await gapsOf()).toEqual([{ documents: ["D001", "D002"], gaps: [] }]);
+            const file = path.join(h.archive, (await listFiles(h.archive)).find((name) => name.includes("/D001/manifests/"))!);
+            const damaged = JSON.parse(await fs.readFile(file, "utf8"));
+            damaged.artifacts[0].byteLength += 1;
+            await fs.writeFile(file, JSON.stringify(damaged));
+
+            await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+
+            expect(await gapsOf()).toEqual([
+                { documents: ["D001", "D002"], gaps: [] },
+                { documents: ["D002"], gaps: [{ documentId: "D001", reasonCode: "archive-conflict" }] },
+            ]);
+            const report = await restoreLatest();
+            expect(report.documents.map((doc) => doc.documentId)).toEqual(["D002"]);
+            expect(report.gaps).toEqual([{ documentId: "D001", reasonCode: "archive-conflict" }]);
+        }, 240_000);
+
+        it("M4: should list a document whose pair is incomplete as a gap with the reason the ledger holds, and drop the gap once the pair completes", async () => {
+            h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+            h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 503, code: "EXPORT_UNAVAILABLE", retryable: true } });
+            await initArchive(h);
+            await runOnce(h);
+
+            expect(await gapsOf()).toEqual([{ documents: ["D002"], gaps: [{ documentId: "D001", reasonCode: "export-unavailable" }] }]);
+            const report = await restoreLatest();
+            expect(report.gaps).toEqual([{ documentId: "D001", reasonCode: "export-unavailable" }]);
+
+            h.api.clearFaults();
+            h.clock.set(new Date(Date.now() + 3_600_000).toISOString());
+            await runOnce(h);
+            expect((await gapsOf()).pop()).toEqual({ documents: ["D001", "D002"], gaps: [] });
+        }, 240_000);
     });
 
     describe("preconditions", () => {

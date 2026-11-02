@@ -78,6 +78,17 @@ export async function countDamagedBoundManifests(deps: RunnerDependencies, archi
     return damaged;
 }
 
+/**
+ * The failure a run ends with after everything else has been done and recorded (`ledger-inconsistent`, `archive-conflict`).
+ * It carries the run's summary, so the command line can still print the run's own lines before it exits.
+ */
+export class RunEndedWithFailure extends WorkerError {
+    constructor(reasonCode: WorkerReasonCode, readonly summary: RunSummary) {
+        super(reasonCode);
+        this.name = "RunEndedWithFailure";
+    }
+}
+
 /** A run that cannot get a usable snapshot ends as `failed` with this reason; it is an outcome, not an error. */
 class StageFailure extends Error {
     constructor(readonly reasonCode: WorkerReasonCode) {
@@ -143,6 +154,9 @@ class RunExecution {
     private readonly ledgerEvidenceFailures = new Set<string>();
     /** Verified artifacts a manifest on the archive contradicts: the file is left as it is and the run ends visibly. */
     private readonly indexConflicts = new Set<string>();
+    /** Included documents whose manifest could not be written (the refusal), and included candidates the checks blocked: both stay out of the completion. */
+    private readonly manifestRefusals = new Map<string, WorkerReasonCode>();
+    private readonly blockedDocuments = new Map<string, WorkerReasonCode>();
     /** The completion listing of this run, before this run writes any completion. */
     private completionListing: Awaited<ReturnType<LocalDestination["listCompletions"]>> | null = null;
     /** The archive's manifest files, listed once per run: the bound-manifest existence check and the index verdicts share it. */
@@ -189,8 +203,8 @@ class RunExecution {
         }
         const summary = await this.finish();
         // Everything else has been done and recorded; the operator must still see that recovery would lose these artifacts.
-        if (this.ledgerEvidenceFailures.size > 0) throw new WorkerError("ledger-inconsistent");
-        if (this.indexConflicts.size > 0) throw new WorkerError("archive-conflict");
+        if (this.ledgerEvidenceFailures.size > 0) throw new RunEndedWithFailure("ledger-inconsistent", summary);
+        if (this.indexConflicts.size > 0) throw new RunEndedWithFailure("archive-conflict", summary);
         return summary;
     }
 
@@ -422,6 +436,7 @@ class RunExecution {
         if (blocked !== null) {
             this.blockedCandidates.push(blocked);
             this.reasons.add(blocked);
+            if (included && OPAQUE_ID.test(item.documentId)) this.blockedDocuments.set(item.documentId, blocked);
         } else if (jobs.length > 0) {
             this.work.push({ documentId: item.documentId, metadataRevision: item.metadataRevision, artifacts: jobs });
         }
@@ -1109,6 +1124,39 @@ class RunExecution {
         }
     }
 
+    /**
+     * Every document this snapshot includes but the completion does not list is a gap of that completion, with the reason it
+     * is missing, so a restore from it never leaves a document out silently: a manifest or index conflict, a manifest that
+     * could not be written, a candidate the checks blocked, or (the pair is not complete) the reason the ledger holds for
+     * its first artifact that is not verified. Reason codes are the existing ones; nothing is invented.
+     */
+    private omissionGaps(listed: ReadonlyArray<{ documentId: string }>): Array<{ documentId: string; reasonCode: WorkerReasonCode }> {
+        const present = new Set(listed.map((entry) => entry.documentId));
+        const documentOf = (subject: string): string | undefined => parseManifestKey(subject)?.documentId ?? this.state.artifacts.get(subject)?.documentId;
+        const conflicted = new Set([...this.indexConflicts].map(documentOf));
+        const unproven = new Set([...this.ledgerEvidenceFailures].map(documentOf));
+        const gaps: Array<{ documentId: string; reasonCode: WorkerReasonCode }> = [];
+        for (const [documentId, reasonCode] of this.blockedDocuments) gaps.push({ documentId, reasonCode });
+        for (const candidate of this.work) {
+            if (present.has(candidate.documentId)) continue;
+            const reasonCode = conflicted.has(candidate.documentId) ? "archive-conflict"
+                : unproven.has(candidate.documentId) ? "ledger-inconsistent"
+                    : this.manifestRefusals.get(candidate.documentId) ?? this.pendingReason(candidate);
+            if (reasonCode !== null) gaps.push({ documentId: candidate.documentId, reasonCode });
+        }
+        return gaps;
+    }
+
+    /** What the ledger says about the first artifact of the candidate that is not verified; `null` when all are. */
+    private pendingReason(candidate: WorkCandidate): WorkerReasonCode | null {
+        for (const job of candidate.artifacts) {
+            const entry = this.dl.entryOf(job.artifactIdentity);
+            if (entry?.state === "verified") continue;
+            return entry?.reasonCode ?? (entry?.state === "integrity_error" ? "artifact-integrity" : "artifact-pending");
+        }
+        return null;
+    }
+
     private async publishRecords(): Promise<void> {
         if (this.snapshotId === null) return;
         const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string; manifestKey: string }> = [];
@@ -1120,6 +1168,7 @@ class RunExecution {
             const written = await this.writeManifest(candidate);
             if (!written.ok) {
                 this.refuseManifest(written.reasonCode);
+                this.manifestRefusals.set(candidate.documentId, written.reasonCode);
                 continue;
             }
             await this.fault("after-manifest-before-record");
@@ -1136,7 +1185,7 @@ class RunExecution {
             companyId: this.companyId, sequence: binding.sequence, snapshotId: binding.snapshotId, runId: this.runId,
             scopeRevision: binding.scopeRevision, policyRevision: binding.policyRevision,
             destinationIdentity: this.dl.destinationIdentity, destinationRevision: this.dl.destinationRevision,
-            entries, gaps: this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })),
+            entries, gaps: [...this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })), ...this.omissionGaps(entries)],
         });
         const published = await this.archive.publishJson(completion.relativeKey, completion.bytes);
         if (!published.ok) {

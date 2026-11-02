@@ -47,6 +47,26 @@ describe("worker CLI (argv, exit codes, output)", () => {
         expect(lines(inspect)[0]).toMatchObject({ event: "inspect", counts: { verified: 4 } });
     });
 
+    it("should still print the run line and its reasons on stdout when the run ends in archive-conflict: stderr is the reason code only, exit 69 (FU-13 M1)", async () => {
+        h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+        await initArchive(h);
+        await runOnce(h);
+        const file = path.join(h.archive, (await listFiles(h.archive)).find((name) => name.includes("/D001/manifests/"))!);
+        const damaged = JSON.parse(await fs.readFile(file, "utf8"));
+        damaged.artifacts[0].byteLength += 1;
+        await fs.writeFile(file, JSON.stringify(damaged));
+
+        const run = await cli(["run", "--config", h.configPath]);
+
+        expect(run.code).toBe(69);
+        expect(run.stderr).toEqual(["archive-conflict"]);
+        const events = lines(run);
+        expect(events[0]).toMatchObject({ event: "run_blocked", runId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+        expect(events.slice(1)).toContainEqual(expect.objectContaining({ event: "run_reason", reasonCode: "archive-conflict" }));
+        for (const line of events) for (const key of Object.keys(line)) expect(ALLOWED_KEYS.has(key)).toBe(true);
+        expect(run.stdout.join("\n")).not.toContain(h.base);
+    });
+
     it("should never print the token, a path or an error message: stderr is the reason code only", async () => {
         h = await createHarness({ docs: [pairDoc("D001")] });
         const result = await cli(["run", "--config", h.configPath]);

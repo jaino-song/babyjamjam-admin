@@ -10,6 +10,7 @@ import { lockGuard, verifyLockHeld } from "./lock";
 import { LocalDestination } from "./local-destination";
 import { controlMarkerWriter } from "./runner-common";
 import { WorkerRunner } from "./runner";
+import { RunEndedWithFailure } from "./runner-run";
 import type { ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 import {
     ZERO_COUNTS, type Clock, type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies,
@@ -197,13 +198,21 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
             emit({ event: "initialized" });
             return;
         case "run": {
-            const summary = await runner.run({ scheduledFor: parsed.scheduledFor });
-            if (summary.outcome === "disabled" || summary.runId === null || summary.snapshotStatus === null) {
-                emit({ event: "disabled" });
-                return;
+            const emitRun = (summary: RunSummary): void => {
+                if (summary.outcome === "disabled" || summary.runId === null || summary.snapshotStatus === null) {
+                    emit({ event: "disabled" });
+                    return;
+                }
+                emit({ event: `run_${summary.snapshotStatus}`, runId: summary.runId, counts: { ...(summary.counts ?? ZERO_COUNTS) } });
+                for (const reasonCode of summary.reasonCodes) emit({ event: "run_reason", runId: summary.runId, reasonCode });
+            };
+            try {
+                emitRun(await runner.run({ scheduledFor: parsed.scheduledFor }));
+            } catch (error) {
+                // A run that ended with a deferred failure has recorded itself: its own lines are still the operator's summary.
+                if (error instanceof RunEndedWithFailure) emitRun(error.summary);
+                throw error;
             }
-            emit({ event: `run_${summary.snapshotStatus}`, runId: summary.runId, counts: { ...(summary.counts ?? ZERO_COUNTS) } });
-            for (const reasonCode of summary.reasonCodes) emit({ event: "run_reason", runId: summary.runId, reasonCode });
             return;
         }
         case "verify": {
@@ -250,12 +259,17 @@ export async function runWorkerCli(args: readonly string[], environment: WorkerE
         const config = await loadWorkerConfig(parsed.configPath);
         const worker = await openWorker(config, parsed.command, environment);
         const lines: LogLine[] = [];
+        let failure: unknown = null;
         try {
             await execute(parsed, worker, (line) => lines.push(line));
+        } catch (error) {
+            failure = error;
         } finally {
             await worker.close();
         }
+        // Whatever a command had to say before it failed goes out first; stderr still carries the reason code only.
         for (const line of lines) out(JSON.stringify(line));
+        if (failure !== null) throw failure;
         return 0;
     } catch (error) {
         if (error instanceof WorkerError) {
