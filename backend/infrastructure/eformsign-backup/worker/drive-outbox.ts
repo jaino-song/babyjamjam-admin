@@ -38,7 +38,23 @@ async function ensureOutbox(controlPath: string): Promise<string> {
     } catch (error) {
         throw error instanceof WorkerError ? error : new WorkerError("control-unavailable");
     }
+    // The directory's own entry lives in the control directory: it is made durable before any byte is queued in it (a crash after the
+    // ledger learns the record is pending must not lose the directory). Done on every call because an earlier call may have died
+    // between the mkdir and this sync, and a write here is rare.
+    await syncDirectory(controlPath);
     return directory;
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+    let handle;
+    try {
+        handle = await fs.open(directory, constants.O_RDONLY | constants.O_DIRECTORY);
+        await handle.sync();
+    } catch {
+        throw new WorkerError("control-unavailable");
+    } finally {
+        try { await handle?.close(); } catch { /* read-only handle */ }
+    }
 }
 
 /**

@@ -6,6 +6,7 @@ import { runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
 import { restoreFromArchive } from "infrastructure/eformsign-backup/worker/restore";
 import { DRIVE_OUTBOX_DIR } from "infrastructure/eformsign-backup/worker/drive-outbox";
 import { driveStateKey } from "domain/eformsign-backup/worker";
+import { assertLedgerRoom } from "infrastructure/eformsign-backup/worker/runner-common";
 import { readOutbox, writeOutbox } from "infrastructure/eformsign-backup/worker/drive-outbox";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 import { DestinationLedger, controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runner-common";
@@ -610,5 +611,68 @@ describe("rebind completeness (BJJ-456 U5-F2), phase with a stubbed Drive", () =
         await rig.phase.publishRecords();
 
         expect(rig.recordUploads.filter((upload) => upload.key === doc.manifestKey)).toHaveLength(1); // only this run's own manifest
+    });
+});
+
+describe("control readiness and outbox durability (BJJ-456 U5-F3), phase with a stubbed Drive", () => {
+    let rig: PhaseRig;
+    afterEach(async () => { await rig.cleanup(); });
+
+    it("should make no Drive request once the control directory has fallen below the ledger's reserve, whichever Drive operation comes first", async () => {
+        rig = await makePhaseRig();
+        const doc = rigDoc("D001");
+        rig.knowArtifact(doc);
+        await assertLedgerRoom(rig.deps); // the run's preflight passed; the space then went during the local phase
+        rig.controlFree.bytes = 10 * MIB;
+
+        await expect(rig.phase.processWork([doc.candidate])).rejects.toMatchObject({ reasonCode: "control-space" });
+        expect(rig.calls).toEqual([]);
+    });
+
+    it("should check control space before the recovery of an interrupted entry and before a record upload", async () => {
+        rig = await makePhaseRig();
+        const doc = rigDoc("D001");
+        rig.knowArtifact(doc);
+        rig.setEntry(doc, rig.driveIdentity, rig.revision, "transferring");
+        rig.state().driveNodes.set(driveStateKey(rig.revision, doc.job.relativeKey), { kind: "file", fileId: "artifact00001", parentFileId: "parent000001", status: "created" });
+        rig.controlFree.bytes = 10 * MIB;
+
+        await expect(rig.phase.recoverInterrupted()).rejects.toMatchObject({ reasonCode: "control-space" });
+        expect(rig.calls).toEqual([]);
+
+        rig.state().driveRecordsPending.set(driveStateKey(rig.revision, doc.manifestKey), doc.manifest.sha256);
+        rig.setEntry(doc, rig.driveIdentity, rig.revision, "verified");
+        await writeOutbox(rig.dir, doc.manifest.bytes);
+        await expect(rig.newPhase().publishRecords()).rejects.toMatchObject({ reasonCode: "control-space" });
+        expect(rig.calls).toEqual([]);
+    });
+
+    it("should sync the control directory, which holds the new outbox directory's entry, before the first record is queued in the ledger", async () => {
+        rig = await makePhaseRig({ archiveOk: false });
+        const doc = rigDoc("D001");
+        rig.knowArtifact(doc);
+        rig.setEntry(doc, rig.driveIdentity, rig.revision, "verified");
+        rig.host.completionContext = rig.completionContext;
+        const events: string[] = [];
+        const append = rig.deps.ledger.append;
+        rig.deps.ledger.append = async (type: string, body: unknown, at: string) => { events.push(`append:${type}`); await append(type, body, at); };
+        const originalOpen = fs.open;
+        (fs as { open: unknown }).open = async function (target: string, ...args: unknown[]) {
+            const handle = await (originalOpen as (...a: unknown[]) => Promise<{ sync: () => Promise<void> }>).call(this, target, ...args);
+            const sync = handle.sync.bind(handle);
+            handle.sync = async () => { events.push(`sync:${path.relative(rig.dir, target) || "."}`); return sync(); };
+            return handle;
+        };
+        try {
+            await rig.phase.processWork([doc.candidate]);
+            await rig.phase.publishRecords();
+        } finally {
+            (fs as { open: unknown }).open = originalOpen;
+        }
+
+        const firstPending = events.indexOf("append:drive_record_pending");
+        expect(firstPending).toBeGreaterThan(-1);
+        expect(events.slice(0, firstPending)).toContain("sync:.");
+        expect(events.slice(0, firstPending)).toContain("sync:drive-outbox");
     });
 });

@@ -107,6 +107,24 @@ async function* once(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
 }
 
 /**
+ * The Drive destination with control readiness enforced immediately before every operation that reaches Drive (V08): below the
+ * ledger's reserve the call is not made and the run stops with `control-space`, like any other ledger write would. Every Drive
+ * call this phase makes goes through this wrapper, so no call site has to remember.
+ */
+function guardedByControlSpace(deps: RunnerDependencies, inner: DriveDestination): DriveDestination {
+    const room = (): Promise<void> => assertLedgerRoom(deps);
+    const guarded = {
+        checkRoot: async (...args: Parameters<DriveDestination["checkRoot"]>) => { await room(); return inner.checkRoot(...args); },
+        ensureFolderChain: async (...args: Parameters<DriveDestination["ensureFolderChain"]>) => { await room(); return inner.ensureFolderChain(...args); },
+        uploadArtifact: async (...args: Parameters<DriveDestination["uploadArtifact"]>) => { await room(); return inner.uploadArtifact(...args); },
+        verifyRemote: async (...args: Parameters<DriveDestination["verifyRemote"]>) => { await room(); return inner.verifyRemote(...args); },
+        publishJson: async (...args: Parameters<DriveDestination["publishJson"]>) => { await room(); return inner.publishJson(...args); },
+        download: async (...args: Parameters<DriveDestination["download"]>) => { await room(); return inner.download(...args); },
+    };
+    return guarded as unknown as DriveDestination;
+}
+
+/**
  * The Google Drive destination of one `run` (BJJ-456 design 7.1-7.3). It is a second, independent destination: it works from
  * the staged bytes and from what the ledger and the archive hold, never depends on the archive being up, and whatever goes
  * wrong here makes the run `partial` and never ends it. Every id is reserved in the ledger before Drive sees it (the destination
@@ -150,10 +168,10 @@ export class DriveRunPhase {
             this.gate = "closed";
             this.phaseFailure = deps.drive.reason;
         } else {
-            this.destination = deps.createDriveDestination({
+            this.destination = guardedByControlSpace(deps, deps.createDriveDestination({
                 rootFolderId: binding.rootFolderId, rootName: binding.rootName, rootParentId: binding.rootParentId, bindingId: binding.bindingId,
                 installationId: installation.installationId, archiveId: installation.archiveId,
-            });
+            }));
         }
     }
 
