@@ -415,28 +415,37 @@ describe("drive-setup (BJJ-456 U4): durable, resumable, idempotent binding of th
         };
         const depsOf = (worker: { runner: unknown }): RunnerDependencies => (worker.runner as { deps: RunnerDependencies }).deps;
 
-        it("should be ready, and build a DriveDestination, when the Drive secrets are usable", async () => {
-            await withWorker(h, "run", async (worker) => {
+        it.each(["run", "recover", "verify", "drive-setup"] as const)("should be ready, and build a DriveDestination, for %s when the Drive secrets are usable", async (command) => {
+            await withWorker(h, command, async (worker) => {
                 const deps = depsOf(worker);
                 expect(deps.drive?.kind).toBe("ready");
                 expect(deps.createDriveDestination(binding)).toBeInstanceOf(DriveDestination);
             });
         });
 
+        it.each(["init", "inspect"] as const)("should leave the Drive dependency null for %s and never read the secret files", async (command) => {
+            await fs.chmod(fakes.refreshTokenFile, 0o644);
+            await withWorker(h, command, async (worker) => {
+                expect(depsOf(worker).drive).toBeNull();
+            });
+        });
+
         it("should throw drive-not-configured when the config has no drive block", async () => {
             const plain = await createHarness({ docs: [] });
             try {
-                await withWorker(plain, "run", async (worker) => {
-                    const deps = depsOf(worker);
-                    expect(deps.drive).toBeNull();
-                    expect(() => deps.createDriveDestination(binding)).toThrow(expect.objectContaining({ reasonCode: "drive-not-configured" }));
-                });
+                for (const command of ["run", "verify"] as const) {
+                    await withWorker(plain, command, async (worker) => {
+                        const deps = depsOf(worker);
+                        expect(deps.drive).toBeNull();
+                        expect(() => deps.createDriveDestination(binding)).toThrow(expect.objectContaining({ reasonCode: "drive-not-configured" }));
+                    });
+                }
             } finally {
                 await destroyHarness(plain);
             }
         });
 
-        it.each(["run", "recover"] as const)("should carry the failure instead of a client for %s when a Drive secret file is unusable, and throw token-file-invalid", async (command) => {
+        it.each(["run", "recover", "verify"] as const)("should carry the failure instead of a client for %s when a Drive secret file is unusable, and throw token-file-invalid", async (command) => {
             await fs.chmod(fakes.refreshTokenFile, 0o644);
             await withWorker(h, command, async (worker) => {
                 const deps = depsOf(worker);
@@ -486,6 +495,18 @@ describe("drive-setup (BJJ-456 U4): durable, resumable, idempotent binding of th
             expect(lines(rebound)[0]!["rootFolderId"]).not.toBe(rootId);
             expect(await records("drive_ready")).toHaveLength(1);
         });
+    });
+
+    it("should hand an injected fetch to the Drive token source and client, so every Drive call goes through it", async () => {
+        const urls: string[] = [];
+        const fetchImpl: typeof fetch = (input, init) => { urls.push(String(input)); return fetch(input, init); };
+        const code = await runWorkerCli(["drive-setup", "--config", h.configPath], environmentFor(h, { fetchImpl, out: () => undefined, err: () => undefined }));
+
+        expect(code).toBe(0);
+        expect(urls.some((url) => url.startsWith(fakes.oauth.tokenUrl))).toBe(true);
+        expect(urls.some((url) => url.startsWith(fakes.drive.apiBaseUrl))).toBe(true);
+        expect(urls.some((url) => url.startsWith(fakes.drive.uploadBaseUrl))).toBe(true);
+        expect(urls.length).toBe(fakes.drive.requests.length + fakes.oauth.tokenRequests);
     });
 
     it("should never print or store the client secret, the refresh token or an access token", async () => {

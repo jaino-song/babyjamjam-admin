@@ -278,7 +278,7 @@ describe("worker CLI (argv, exit codes, output)", () => {
             expect(fakes.drive.requests).toHaveLength(0);
         };
 
-        it.each(["run", "drive-setup", "recover"])("should report lock-not-held, not token-file-invalid, for %s when the lock is not held and a Drive secret file is unusable", async (command) => {
+        it.each(["run", "drive-setup", "recover", "verify"])("should report lock-not-held, not token-file-invalid, for %s when the lock is not held and a Drive secret file is unusable", async (command) => {
             await withDrive();
             await badMode();
             const { createRealFsProbe } = await import("infrastructure/eformsign-backup/worker/fs-probe");
@@ -338,6 +338,17 @@ describe("worker CLI (argv, exit codes, output)", () => {
             await damage();
             const result = await cli(["drive-setup", "--config", h.configPath]);
             expect(result).toMatchObject({ code: 78, stdout: [], stderr: ["token-file-invalid"] });
+            untouched();
+        });
+
+        it("should not let an unusable Drive secret file stop verify: it ends exactly as it does without the problem (A8)", async () => {
+            await withDrive();
+            const healthy = await cli(["verify", "--config", h.configPath]);
+            await badMode();
+            const damaged = await cli(["verify", "--config", h.configPath]);
+            const withoutRunId = (captured: Captured) => ({ ...captured, stdout: lines(captured).map((line) => ({ ...line, runId: undefined })) });
+            expect(withoutRunId(damaged)).toEqual(withoutRunId(healthy));
+            expect(damaged.code).toBe(0);
             untouched();
         });
 

@@ -64,8 +64,8 @@ class DisabledRunner implements WorkerRunnerPort {
 
 const LOCK_NAME = "worker.lock";
 
-/** The commands that may talk to Drive, and so read the Drive secret files. `verify`, `init` and `inspect` never do. */
-const DRIVE_COMMANDS: ReadonlySet<WorkerCommand> = new Set(["run", "drive-setup", "recover"]);
+/** The commands that may talk to Drive, and so read the Drive secret files. `init` and `inspect` never do. */
+const DRIVE_COMMANDS: ReadonlySet<WorkerCommand> = new Set(["run", "drive-setup", "recover", "verify"]);
 const DRIVE_CLIENT_FILE_MAX_BYTES = 4096;
 const DRIVE_REFRESH_TOKEN_MAX_BYTES = 1024;
 const DRIVE_REFRESH_TOKEN_PATTERN = /^[A-Za-z0-9_\-/.]{20,512}$/;
@@ -75,7 +75,7 @@ const driveClientFileSchema = z.strictObject({ client_id: z.string().min(1).max(
  * The Drive client for a config with a `drive` block. Unreadable or badly permissioned secret files are `token-file-invalid`
  * (a token the server rejects is `drive-token-invalid`, and only later). No request is made here.
  */
-async function openDrive(config: WorkerConfig, clock: Clock): Promise<DriveDependency | null> {
+async function openDrive(config: WorkerConfig, clock: Clock, fetchImpl: typeof fetch | undefined): Promise<DriveDependency | null> {
     const settings = resolveDriveConfig(config);
     if (settings === null || config.drive === undefined) return null;
     const credentials = await readSecretJson(config.drive.clientFile, driveClientFileSchema, DRIVE_CLIENT_FILE_MAX_BYTES, "token-file-invalid");
@@ -84,11 +84,11 @@ async function openDrive(config: WorkerConfig, clock: Clock): Promise<DriveDepen
     });
     const tokens = new DriveTokenSource({
         tokenUrl: settings.tokenUrl, clientId: credentials.client_id, clientSecret: credentials.client_secret, refreshToken,
-        now: () => clock.now(), requestTimeoutMs: settings.requestTimeoutMs,
+        now: () => clock.now(), requestTimeoutMs: settings.requestTimeoutMs, ...(fetchImpl === undefined ? {} : { fetchImpl }),
     });
     const client = new DriveClient({
         apiBaseUrl: settings.apiBaseUrl, uploadBaseUrl: settings.uploadBaseUrl, tokens,
-        requestTimeoutMs: settings.requestTimeoutMs, chunkBytes: settings.chunkBytes,
+        requestTimeoutMs: settings.requestTimeoutMs, chunkBytes: settings.chunkBytes, ...(fetchImpl === undefined ? {} : { fetchImpl }),
     });
     return { kind: "ready", client, settings };
 }
@@ -97,9 +97,9 @@ async function openDrive(config: WorkerConfig, clock: Clock): Promise<DriveDepen
  * `drive-setup` is a Drive-only command: an unusable secret file ends it (78). `run` and `recover` have a local side that must not
  * depend on Drive (design 7.1), so for them the failure becomes a dependency of kind `unavailable` (A8).
  */
-async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock: Clock): Promise<DriveDependency | null> {
+async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock: Clock, fetchImpl: typeof fetch | undefined): Promise<DriveDependency | null> {
     try {
-        return await openDrive(config, clock);
+        return await openDrive(config, clock, fetchImpl);
     } catch (error) {
         if (command === "drive-setup" || !(error instanceof WorkerError) || error.reasonCode !== "token-file-invalid") throw error;
         return { kind: "unavailable", reason: "token-file-invalid" };
@@ -108,7 +108,7 @@ async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock:
 
 /**
  * Opens what one command needs, in this order: the lock check (before anything is touched), the filesystem checks, the
- * token file (`run` only), the Drive secret files (`run`, `drive-setup`, `recover`, when the config has a `drive` block; a bad one ends only
+ * token file (`run` only), the Drive secret files (`run`, `drive-setup`, `recover`, `verify`, when the config has a `drive` block; a bad one ends only
  * `drive-setup`), the ledger. A failure at any step leaves the earlier ones unopened.
  */
 export async function openWorker(config: WorkerConfig, command: WorkerCommand, environment: WorkerEnvironment = {}): Promise<OpenedWorker> {
@@ -136,7 +136,7 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
             requestTimeoutMs: config.requestTimeoutMs, ...(environment.fetchImpl === undefined ? {} : { fetchImpl: environment.fetchImpl }),
         })
         : null;
-    const drive = DRIVE_COMMANDS.has(command) ? await openDriveFor(command, config, clock) : null;
+    const drive = DRIVE_COMMANDS.has(command) ? await openDriveFor(command, config, clock, environment.fetchImpl) : null;
 
     const openLedger = (): Promise<LedgerStore> => LedgerStore.open(controlPath, {
         readOnly: command === "inspect",
