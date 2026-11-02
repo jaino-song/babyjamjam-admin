@@ -30,7 +30,9 @@ jest.mock("@/services/api", () => ({ eformsignApi: {
 } }));
 jest.mock("@/components/app/clients/ClientServiceRecordsTab", () => ({ ClientServiceRecordsTab: () => null }));
 jest.mock("@/components/app/v3", () => ({
-  DetailPanel: ({ trailing, children }: { trailing: ReactNode; children: ReactNode }) => <main>{trailing}{children}</main>,
+  DetailPanel: ({ trailing, children }: { trailing?: ReactNode; children: ReactNode }) => (
+    <main data-testid="detail-panel" data-has-trailing={trailing ? "true" : "false"}>{trailing}{children}</main>
+  ),
   DetailTabPanels: () => null,
   DetailTabs: () => null,
 }));
@@ -42,10 +44,14 @@ const client: Client = {
   voucherClient: false, breastPump: false, serviceStatus: "pre_booking", bookingConfirmedAt: null,
   eDocId: null, hasSigned: false, documentStatus: null,
 };
-function renderPanel(overrides: Partial<Client> = {}, onBookingConfirmed = jest.fn()) {
+function renderPanel(
+  overrides: Partial<Client> = {},
+  onBookingConfirmed = jest.fn(),
+  trailing: ReactNode = <span>기존 메뉴</span>,
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={queryClient}>
-    <ClientDetailPanel client={{ ...client, ...overrides }} trailing={<span>기존 메뉴</span>} onBookingConfirmed={onBookingConfirmed} />
+    <ClientDetailPanel client={{ ...client, ...overrides }} trailing={trailing} onBookingConfirmed={onBookingConfirmed} />
   </QueryClientProvider>);
 }
 
@@ -60,6 +66,22 @@ describe("ClientDetailPanel confirm booking", () => {
     renderPanel(overrides);
     expect(screen.queryByRole("button", { name: "예약 확정" })).not.toBeInTheDocument();
     expect(screen.getByText("기존 메뉴")).toBeInTheDocument();
+  });
+  describe("header trailing presence (drives the stacked header below md)", () => {
+    const hasTrailing = () => screen.getByTestId("detail-panel").getAttribute("data-has-trailing");
+    it("passes no trailing when there is neither a confirm button nor a trailing prop", () => {
+      renderPanel({ serviceStatus: "active" }, jest.fn(), null);
+      expect(hasTrailing()).toBe("false");
+    });
+    it("passes trailing when only the trailing prop is present", () => {
+      renderPanel({ serviceStatus: "active" });
+      expect(hasTrailing()).toBe("true");
+    });
+    it("passes trailing when only the confirm button is present", () => {
+      renderPanel({}, jest.fn(), null);
+      expect(screen.getByRole("button", { name: "예약 확정" })).toBeInTheDocument();
+      expect(hasTrailing()).toBe("true");
+    });
   });
   it("shows enabled confirmation for an unconfirmed dated client", () => {
     renderPanel();

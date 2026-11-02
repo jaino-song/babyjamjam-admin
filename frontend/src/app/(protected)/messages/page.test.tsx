@@ -608,6 +608,8 @@ describe("messages page — narrow viewport layout (below md)", () => {
     expect(region().firstElementChild).toBe(document.querySelector('[data-component="desktop_messages_sections_stats"]'));
     expect(region().lastElementChild).toBe(document.querySelector('[data-slot="page-sections"]'));
     expect(region().parentElement).toHaveAttribute("data-component", "desktop_messages_sections");
+    // SplitLayout measures its parent's box; the `contents` region must never be that parent.
+    expect(region().querySelectorAll(':scope > [data-testid="split-layout"]')).toHaveLength(0);
   });
 
   it("gives every section a viewport-tall split area so the detail panel is not squeezed by the stats", () => {

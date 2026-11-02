@@ -153,7 +153,7 @@ export function DetailPanel({
   const hasHeaderTrailing = !!stepper || !!trailing;
   const shouldPlaceStepperBelowTitle = stepperPlacement === "below-title" && !!stepper;
   // Without a stepper, trailing actions (badge, buttons, chips) are `shrink-0` and
-  // would squeeze the title to a sliver on a phone, so below md they stack under it.
+  // would squeeze the title to a sliver on a phone, so below md they stack right-aligned under it.
   const shouldStackTrailingBelowMd = !!trailing && !stepper;
   const renderedTabs =
     isLoading &&
@@ -190,7 +190,7 @@ export function DetailPanel({
         <div className={cn(
           "flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]",
           shouldPlaceStepperBelowTitle && "w-full min-w-0 max-w-full justify-center overflow-x-auto",
-          shouldStackTrailingBelowMd && "max-md:flex-wrap",
+          shouldStackTrailingBelowMd && "max-md:flex-wrap max-md:justify-end",
         )}>
           {stepper}
           {trailing}

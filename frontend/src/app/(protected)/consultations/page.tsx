@@ -200,7 +200,7 @@ export default function ConsultationsPage() {
     }, [statsInquiries]);
 
     return (
-        <PageSection name="consultations"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto max-md:[&>[data-slot=split-layout]]:min-h-[calc(100vh-calc(160px*var(--glint-ui-scale,1)))]">
+        <PageSection name="consultations"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
             <StatsBar
                 name="consultations" showDocumentJobs="whenActive"
                 isLoading={isListLoading || isStatsLoading}
@@ -211,7 +211,7 @@ export default function ConsultationsPage() {
                     { icon: Search, value: statsUnavailable ? "—" : stats.closedCount, label: "종료", counter: "건", colorIndex: 3 },
                 ]}
             />
-
+            <div data-slot="split-area" className="flex min-h-0 flex-1 flex-col max-md:min-h-[calc(100vh-calc(160px*var(--glint-ui-scale,1)))]">
             <SplitLayout data-component="desktop_consultations_split-layout"
                 hasSelection={!!activeInquiry}
                 onBack={() => {
@@ -422,7 +422,7 @@ export default function ConsultationsPage() {
                         message="상담 문의를 선택하면 상세 정보가 표시됩니다"
                     />
                 )}
-            </SplitLayout>
+            </SplitLayout></div>
         </div></PageSection>
     );
 }
