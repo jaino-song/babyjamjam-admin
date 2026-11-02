@@ -130,7 +130,7 @@ describe("LedgerStore.open / initialize / append", () => {
         const size = (await fsp.stat(journalPath(control))).size;
         await expect(store.append("run_finished", {
             runId: runIdOf(99), finishedAt: fixedAt(9), snapshotStatus: "partial", historicalCoverage: "unverified",
-            reasonCodes: [], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+            reasonCodes: [], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
         }, fixedAt(9))).rejects.toMatchObject({ reasonCode: "ledger-inconsistent" });
         await expect(store.append("run_started", runStartedBody(2), "not-a-time")).rejects.toMatchObject({ reasonCode: "ledger-schema" });
         expect((await fsp.stat(journalPath(control))).size).toBe(size);

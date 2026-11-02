@@ -82,13 +82,96 @@ describe("ledger record line codec", () => {
         expect(() => encodeLedgerLine({ ...record, v: 2 } as unknown as LedgerRecord)).toThrow(expect.objectContaining({ reasonCode: "ledger-schema" }));
     });
 
-    it("has a strict body schema for exactly the twelve contract types", () => {
+    it("has a strict body schema for exactly the eighteen contract types (twelve BJJ-455 plus six Drive)", () => {
         expect([...LEDGER_RECORD_TYPES].sort()).toEqual([
-            "candidate_observed", "completion_published", "destination_transition", "installed", "manifest_published",
-            "recovered_verified", "recovery_started", "run_finished", "run_started", "snapshot_bound",
+            "candidate_observed", "completion_published", "destination_transition", "drive_bound", "drive_node_created",
+            "drive_node_reserved", "drive_ready", "drive_record_pending", "drive_record_published", "installed",
+            "manifest_published", "recovered_verified", "recovery_started", "run_finished", "run_started", "snapshot_bound",
             "staging_verified", "tail_discarded",
         ]);
         expect(Object.keys(LEDGER_BODY_SCHEMAS).sort()).toEqual([...LEDGER_RECORD_TYPES].sort());
         expect(H).toHaveLength(64);
+    });
+});
+
+describe("Drive record bodies (BJJ-456 U1)", () => {
+    const BIND = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const REV = `drive-layout-v1:${BIND}`;
+    const FILE = "fileId_0123456789";
+    const PARENT = "parentId_0123456789";
+    const KEY = `eformsign/company-1/D001/artifacts/document/${H}.pdf`;
+    const bound = {
+        destinationIdentity: "drive:rootFolder0001", destinationRevision: REV, bindingId: BIND, rootFolderId: "rootFolder0001",
+        rootName: "bjj-eformsign-backup", rootParentId: "myDriveRoot0001", accountId: "permission-1",
+    };
+    const bodies: Record<string, unknown> = {
+        drive_bound: bound,
+        drive_ready: { destinationRevision: REV },
+        drive_node_reserved: { destinationRevision: REV, kind: "folder", nodeKey: "eformsign/company-1", fileId: FILE, parentFileId: PARENT },
+        drive_node_created: { destinationRevision: REV, nodeKey: "eformsign/company-1", fileId: FILE },
+        drive_record_published: { destinationRevision: REV, relativeKey: KEY, sha256: H, fileId: FILE },
+        drive_record_pending: { destinationRevision: REV, relativeKey: KEY, sha256: H },
+    };
+    const wrap = (type: string, body: unknown) => ({ v: 1, seq: 9, type, at: AT, body });
+    const without = (body: object, key: string): Record<string, unknown> => Object.fromEntries(Object.entries(body).filter(([name]) => name !== key));
+
+    it("round-trips every new record type through the line codec", () => {
+        for (const [type, body] of Object.entries(bodies)) {
+            const original = wrap(type, body) as LedgerRecord;
+            expect(decodeLedgerLine(encodeLedgerLine(original))).toEqual({ ok: true, record: original });
+        }
+    });
+
+    it("rejects an extra field, a missing field and a bad value in every new body", () => {
+        for (const [type, body] of Object.entries(bodies)) {
+            const base = body as Record<string, unknown>;
+            expect(decodeLedgerLine(signed(wrap(type, { ...base, extra: 1 })))).toEqual({ ok: false, error: "schema" });
+            for (const key of Object.keys(base)) {
+                expect(decodeLedgerLine(signed(wrap(type, without(base, key))))).toEqual({ ok: false, error: "schema" });
+            }
+        }
+        const bad = (type: string, patch: Record<string, unknown>) => decodeLedgerLine(signed(wrap(type, { ...(bodies[type] as object), ...patch })));
+        for (const fileId of ["short", "has space 0123456789", "x".repeat(129), "../../etc/passwd", ""]) {
+            expect(bad("drive_node_reserved", { fileId })).toEqual({ ok: false, error: "schema" });
+            expect(bad("drive_node_reserved", { parentFileId: fileId })).toEqual({ ok: false, error: "schema" });
+            expect(bad("drive_node_created", { fileId })).toEqual({ ok: false, error: "schema" });
+            expect(bad("drive_record_published", { fileId })).toEqual({ ok: false, error: "schema" });
+            expect(bad("drive_bound", { rootFolderId: fileId })).toEqual({ ok: false, error: "schema" });
+            expect(bad("drive_bound", { rootParentId: fileId })).toEqual({ ok: false, error: "schema" });
+        }
+        expect(bad("drive_node_reserved", { kind: "link" })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_node_reserved", { nodeKey: "../escape" })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_record_published", { sha256: "A".repeat(64) })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_record_pending", { sha256: "short" })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_bound", { bindingId: "not-a-uuid" })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_bound", { bindingId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA" })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_bound", { rootName: "" })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_bound", { rootName: "n".repeat(256) })).toEqual({ ok: false, error: "schema" });
+        expect(bad("drive_bound", { rootName: "n".repeat(255) })).toEqual({ ok: true, record: expect.anything() });
+        expect(bad("drive_ready", { destinationRevision: "has space" })).toEqual({ ok: false, error: "schema" });
+    });
+
+    it("keeps recovered_verified valid without Drive fields and requires the three Drive fields together", () => {
+        const local = { artifactIdentity: H, relativeKey: KEY, sha256: H };
+        const drive = { destinationIdentity: "drive:rootFolder0001", destinationRevision: REV, fileId: FILE };
+        expect(decodeLedgerLine(signed(wrap("recovered_verified", local))).ok).toBe(true);
+        expect(decodeLedgerLine(signed(wrap("recovered_verified", { ...local, ...drive }))).ok).toBe(true);
+        for (const key of Object.keys(drive)) {
+            expect(decodeLedgerLine(signed(wrap("recovered_verified", { ...local, ...without(drive, key) })))).toEqual({ ok: false, error: "schema" });
+        }
+        expect(decodeLedgerLine(signed(wrap("recovered_verified", { ...local, ...drive, fileId: "short" })))).toEqual({ ok: false, error: "schema" });
+        expect(decodeLedgerLine(signed(wrap("recovered_verified", { ...local, ...drive, extra: 1 })))).toEqual({ ok: false, error: "schema" });
+    });
+
+    it("keeps recovery_started valid without a drive binding and accepts an optional strict drive object", () => {
+        const base = {
+            installationId: "inst-1", archiveId: "arch-1", archiveDev: 1, archiveIno: 2, destinationIdentity: "local:arch-1",
+            destinationRevision: "local-layout-v1", priorLedgerName: "ledger.quarantine-x", sequenceFloor: 3, knownGaps: [],
+        };
+        expect(decodeLedgerLine(signed(wrap("recovery_started", base))).ok).toBe(true);
+        expect(decodeLedgerLine(signed(wrap("recovery_started", { ...base, drive: bound }))).ok).toBe(true);
+        expect(decodeLedgerLine(signed(wrap("recovery_started", { ...base, drive: { ...bound, extra: 1 } })))).toEqual({ ok: false, error: "schema" });
+        expect(decodeLedgerLine(signed(wrap("recovery_started", { ...base, drive: { ...bound, bindingId: "nope" } })))).toEqual({ ok: false, error: "schema" });
+        expect(decodeLedgerLine(signed(wrap("recovery_started", { ...base, drive: without(bound, "rootName") })))).toEqual({ ok: false, error: "schema" });
     });
 });

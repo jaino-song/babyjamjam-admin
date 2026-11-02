@@ -53,6 +53,12 @@ export const WORKER_REASON_CODES = [
     "export-request-rejected",
     "idempotency-conflict",
     "internal",
+    "drive-unavailable",
+    "drive-permission",
+    "drive-quota",
+    "drive-token-invalid",
+    "drive-root-changed",
+    "drive-conflict",
 ] as const;
 
 export type WorkerReasonCode = typeof WORKER_REASON_CODES[number];

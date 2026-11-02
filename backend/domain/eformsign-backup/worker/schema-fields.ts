@@ -30,6 +30,9 @@ export const isoUtc = z.string().regex(ISO_UTC_PATTERN).refine((value) => !Numbe
 export const isoWithOffset = z.string().regex(ISO_OFFSET_PATTERN).refine((value) => !Number.isNaN(Date.parse(value)));
 export const reasonCodeField = z.enum(WORKER_REASON_CODES);
 export const fileNameField = z.string().regex(FILE_NAME_PATTERN);
+/** A Google Drive file or folder id (BJJ-456). Only characters Drive ids use, so it can never carry a path or a query. */
+export const DRIVE_FILE_ID_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
+export const driveFileId = z.string().regex(DRIVE_FILE_ID_PATTERN);
 export const artifactTypeField = z.enum(["document", "audit-trail"]);
 
 /** Path-safe relative POSIX key: no leading slash, no empty/`.`/`..` segment, no backslash or control character. */
@@ -64,5 +67,9 @@ export const runCountsSchema = z.strictObject({
     integrityError: count,
     terminalUnavailable: count,
     orphanTemps: count,
+    driveVerified: count,
+    driveBlocked: count,
+    driveRetryWait: count,
+    driveIntegrityError: count,
 });
 export type RunCounts = z.infer<typeof runCountsSchema>;

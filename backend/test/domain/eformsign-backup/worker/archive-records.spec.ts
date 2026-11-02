@@ -152,7 +152,7 @@ describe("buildRunInventory", () => {
             runId: RUN, scheduledFor: "2026-10-19T10:00:00+09:00", startedAt: "2026-10-19T01:00:00.000Z",
             finishedAt: "2026-10-19T01:05:00.000Z", snapshotId: "snap-0002", sequence: 2, snapshotStatus: "partial" as const,
             historicalCoverage: "unverified" as const, reasonCodes: ["coverage-unverified" as const, "drive-not-configured" as const],
-            counts: { candidates: 4, included: 3, verified: 3, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+            counts: { candidates: 4, included: 3, verified: 3, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
         };
         const built = buildRunInventory(input);
         expect(built.value).toEqual({ schemaVersion: 1, ...input });
