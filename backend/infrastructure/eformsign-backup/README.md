@@ -552,25 +552,28 @@ installation. Nothing repairs this on its own. To decide:
 
 `<control>/staging` holds `<artifactIdentity>.bin` (kept after publishing, so a
 damaged archive copy can be republished without a download) and, after damage,
-`<artifactIdentity>.bin.corrupt-<runId>`. The worker never deletes anything. Both
-kinds of leftover (and any temporary file a killed run left) are safe to remove by
-hand while no worker is running, after you have looked at them; a `.bin` the
-ledger still needs is simply downloaded again. `orphanTemps` in the run counts
-everything in the directory that is not a plain `<64 hex>.bin`, including the
+`<artifactIdentity>.bin.corrupt-<runId>`. The worker never deletes anything. The
+`.corrupt-` copies and any temporary file a killed run left are safe to remove by hand
+while no worker is running, after you have looked at them. A plain `.bin` is not in that
+class: it can be the only copy of an artifact (for example one that was staged but never
+published, or one the ledger no longer knows after a ledger loss and `recover`, or one the
+export no longer offers), and deleting it then loses the artifact. `orphanTemps` in the run
+counts everything in the directory that is not a plain `<64 hex>.bin`, including the
 `.corrupt-` copies, so it tells you when something is waiting for you.
 
 With a Drive binding the staged `.bin` is also the source of the Drive upload, so it matters
 which destination still needs it. A staged copy that is gone is restaged from the archive or from
 Drive (whichever holds a verified copy) before the export is asked again, and a damaged archive
-or Drive copy is replaced from the staged one. The worker still deletes nothing, and a staged `.bin` may be removed by hand only when
-its artifact is verified on the local archive AND on the current Drive revision. `inspect`
-reports the number of such artifacts as `stagingReleasable` (it appears once a Drive binding
-exists; it names no file). It is a count, so use it as a whole: when `stagingReleasable`
-equals `verified`, and `pending`, `transferring`, `verifying`, `blocked`, `retryWait` and
-`integrityError` are all 0 (these top-level counts are the local archive's), every
-`<64 hex>.bin` in `<control>/staging` is releasable. In any other state `inspect` cannot tell
-you which files are, so leave them. The `.corrupt-` copies and temporary files above are not
-covered by this: they are never needed.
+or Drive copy is replaced from the staged one. The worker still deletes nothing. A staged `.bin`
+may be removed by hand only when that specific artifact (the file name is its
+`artifactIdentity`) is verified on the local archive AND on the current Drive revision, and
+no command checks that per file yet. `inspect` reports `stagingReleasable`, the number of such
+artifacts (it appears once a Drive binding exists); it is only a count, names no file, and
+never authorizes deleting any particular file, even when it equals `verified`: after a ledger
+loss and `recover`, a staged-only artifact is not in the rebuilt ledger at all, so the counts
+can add up while that `.bin` is the artifact's only copy. A `.bin` that the ledger (rebuilt or
+not) does not account for must be kept. Staging cleanup is not supported by the tooling yet:
+keep the `.bin` files.
 
 # Google Drive destination (BJJ-456)
 
@@ -594,7 +597,8 @@ downloaded bytes when Drive reports none); labels stored on a file prove nothing
 The root folder carries three identifiers as labels (`bjjInstallationId`, `bjjArchiveId`,
 `bjjBindingId`; no secret) that `recover` and `restore-drive` use to find it again. In the ledger
 the destination is `drive:<root folder id>` and its revision `drive-layout-v1:<binding id>`;
-a new binding (`--rebind`, or `recover` adopting a root) is a new revision.
+`drive-setup --rebind` creates a new binding and so a new revision; `recover` adopts the root's
+existing binding id, so the revision stays the same.
 
 ## Preparing OAuth for a personal Gmail account
 
@@ -669,7 +673,8 @@ the current one is intact, so do not use it for anything else. It leaves the old
 everything in it untouched (nothing is deleted or reused) and starts a new revision with nothing
 uploaded. The following `run` commands then upload everything again under the new root:
 the artifacts the archive holds verified (from the staged copy, else from the archive after a
-hash check), then the manifests, completions and run inventories, from the archive or, for
+hash check; this includes artifacts `recover` adopted from the archive, whose length the
+ledger does not hold: it is taken from the archive bytes once they match the recorded hash), then the manifests, completions and run inventories, from the archive or, for
 records only the Drive outbox held, from the outbox bytes. The first run after a rebind can
 therefore take as long as the whole archive needs to upload; the run is resumable, so a killed
 run continues from the ledger. `inspect` counts only the current revision. Because the old and

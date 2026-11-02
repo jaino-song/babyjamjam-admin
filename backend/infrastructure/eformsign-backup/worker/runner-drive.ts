@@ -333,14 +333,18 @@ export class DriveRunPhase {
         for (const identity of missing.sort()) {
             if (this.halted !== null) return;
             const info = this.state.artifacts.get(identity);
-            if (info === undefined || info.byteLength === null) continue;
+            if (info === undefined) continue;
             let relativeKey: string;
             try {
                 relativeKey = artifactKey({ companyId: this.deps.config.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
             } catch { continue; }
+            // `recover` records an artifact it adopted from the archive without a length. Its length is taken from the archive bytes,
+            // and only when they are the artifact (their hash is the recorded one); anything else is skipped, as before.
+            const byteLength = info.byteLength ?? await this.archiveLengthOf(relativeKey, info.sha256);
+            if (byteLength === null) continue;
             await this.processJob({
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
-                artifactIdentity: identity, sha256: info.sha256, byteLength: info.byteLength, relativeKey,
+                artifactIdentity: identity, sha256: info.sha256, byteLength, relativeKey,
             });
         }
     }
@@ -375,6 +379,20 @@ export class DriveRunPhase {
         if (entry?.state === "blocked" && entry.reasonCode === reasonCode) return;
         if (entry?.state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
         await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode, relativeKey: job.relativeKey });
+    }
+
+    /** The length of the archive's copy of an artifact whose ledger record has none, when that copy hashes to `sha256`; otherwise `null`. */
+    private async archiveLengthOf(relativeKey: string, sha256: string): Promise<number | null> {
+        if (!this.host.archiveOk()) return null;
+        let bytes: Buffer | null;
+        try {
+            bytes = await this.archive.readArchiveFile(relativeKey);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.host.archiveLost();
+            return null;
+        }
+        return bytes !== null && sha256Of(bytes) === sha256 ? bytes.byteLength : null;
     }
 
     private async stagedHashOk(job: DriveJob): Promise<boolean> {

@@ -583,6 +583,54 @@ describe("rebind completeness (BJJ-456 U5-F2), phase with a stubbed Drive", () =
         expect(rig.recordUploads.map((upload) => upload.key)).toEqual([doc.manifestKey, completion.relativeKey]);
     });
 
+    // BJJ-456 U8-F1 (F2): `recover` records an artifact the archive holds with no length (`byteLength: null`); after `drive-setup --rebind`
+    // the Drive phase must still upload it, from the archive bytes whose hash matches the ledger's, never skip it.
+    describe("a recovered artifact (ledger length unknown) that the snapshot no longer offers (BJJ-456 U8-F1)", () => {
+        const recoveredRig = async (): Promise<{ doc: ReturnType<typeof rigDoc>; sent: Buffer[] }> => {
+            rig = await makePhaseRig();
+            const doc = rigDoc("D001");
+            rig.knowArtifact(doc);
+            rig.state().artifacts.set(doc.job.artifactIdentity, { documentId: doc.documentId, artifactType: doc.job.artifactType, sha256: doc.job.sha256, byteLength: null });
+            rig.setEntry(doc, rig.state().installation.destinationIdentity, rig.state().installation.destinationRevision, "verified");
+            const sent: Buffer[] = [];
+            const upload = rig.destination.uploadArtifact;
+            rig.destination.uploadArtifact = async (input: unknown, parent: unknown, nodes: unknown, open: (offset: number) => AsyncIterable<Uint8Array>) => {
+                const chunks: Buffer[] = [];
+                for await (const chunk of open(0)) chunks.push(Buffer.from(chunk));
+                sent.push(Buffer.concat(chunks));
+                return upload(input, parent, nodes, open);
+            };
+            return { doc, sent };
+        };
+
+        it("should upload it once, with the archive's verified bytes, when the new Drive revision lacks it", async () => {
+            const { doc, sent } = await recoveredRig();
+            rig.archiveFiles.set(doc.job.relativeKey, Buffer.from(doc.pdf));
+
+            await rig.phase.processWork([]);
+
+            expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
+            expect(sent).toHaveLength(1);
+            expect(sha256Of(sent[0]!)).toBe(doc.job.sha256);
+            expect(rig.phase.driveVerified(doc.job.artifactIdentity)).toBe(true);
+        });
+
+        it.each([
+            ["the archive no longer has the bytes", (): Buffer | null => null],
+            ["the archive bytes do not match the recorded hash", (): Buffer | null => Buffer.from("%PDF-1.4\nsomething else\n%%EOF\n")],
+        ])("should not upload and not throw when %s", async (_name, bytes) => {
+            const { doc, sent } = await recoveredRig();
+            const content = bytes();
+            if (content !== null) rig.archiveFiles.set(doc.job.relativeKey, content);
+
+            await expect(rig.phase.processWork([])).resolves.toBeUndefined();
+
+            expect(rig.artifactUploads).toEqual([]);
+            expect(sent).toEqual([]);
+            expect(rig.phase.driveVerified(doc.job.artifactIdentity)).toBe(false);
+        });
+    });
+
     it("should copy records an earlier revision published from the outbox (archive down) to the new revision, manifest before completion, with the original bytes", async () => {
         rig = await makePhaseRig({ archiveOk: false });
         const doc = rigDoc("D001");
