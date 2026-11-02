@@ -152,6 +152,9 @@ export function DetailPanel({
   const hasStructuredHeader = !!resolvedTitle;
   const hasHeaderTrailing = !!stepper || !!trailing;
   const shouldPlaceStepperBelowTitle = stepperPlacement === "below-title" && !!stepper;
+  // Without a stepper, trailing actions (badge, buttons, chips) are `shrink-0` and
+  // would squeeze the title to a sliver on a phone, so below md they stack under it.
+  const shouldStackTrailingBelowMd = !!trailing && !stepper;
   const renderedTabs =
     isLoading &&
     React.isValidElement<React.ComponentProps<typeof DetailTabs>>(tabs) &&
@@ -167,6 +170,7 @@ export function DetailPanel({
         : stepper
           ? "flex-col items-stretch md:flex-row md:items-center"
           : "items-center",
+      shouldStackTrailingBelowMd && "max-md:flex-col max-md:items-stretch",
     )}>
       <div className="flex min-w-0 items-center gap-[calc(12px*var(--glint-ui-scale,1))]">
         {avatar}
@@ -186,6 +190,7 @@ export function DetailPanel({
         <div className={cn(
           "flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]",
           shouldPlaceStepperBelowTitle && "w-full min-w-0 max-w-full justify-center overflow-x-auto",
+          shouldStackTrailingBelowMd && "max-md:flex-wrap",
         )}>
           {stepper}
           {trailing}

@@ -593,6 +593,34 @@ describe("messages status StatMinis", () => {
   });
 });
 
+describe("messages page — narrow viewport layout (below md)", () => {
+  const SPLIT_MIN_HEIGHT = "max-md:min-h-[calc(100vh-calc(160px*var(--glint-ui-scale,1)))]";
+
+  function region() {
+    const node = document.querySelector('[data-slot="page-scroll-region"]');
+    expect(node).toBeInTheDocument();
+    return node as HTMLElement;
+  }
+
+  it("scrolls the page content below md and disappears from the layout at md and up", () => {
+    render(<MessagesPage />);
+    expect(region()).toHaveClass("contents", "max-md:flex", "max-md:min-h-0", "max-md:flex-1", "max-md:flex-col", "max-md:overflow-y-auto");
+    expect(region().firstElementChild).toBe(document.querySelector('[data-component="desktop_messages_sections_stats"]'));
+    expect(region().lastElementChild).toBe(document.querySelector('[data-slot="page-sections"]'));
+    expect(region().parentElement).toHaveAttribute("data-component", "desktop_messages_sections");
+  });
+
+  it("gives every section a viewport-tall split area so the detail panel is not squeezed by the stats", () => {
+    render(<MessagesPage />);
+    const sections = document.querySelector('[data-slot="page-sections"]') as HTMLElement;
+    expect(sections).toHaveClass("flex-1", "min-h-0", "lg:flex-row", SPLIT_MIN_HEIGHT);
+
+    goToHistorySection();
+    expect(document.querySelector('[data-slot="page-sections"]')).toBe(sections);
+    expect(sections).toHaveClass(SPLIT_MIN_HEIGHT);
+  });
+});
+
 describe("messages page — server system-template catalog", () => {
   it("saves only the newly selected template's content and variables after switching editors", async () => {
     mockAuthUser({ id: "owner-1", role: "owner" });
