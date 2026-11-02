@@ -557,7 +557,9 @@ damaged archive copy can be republished without a download) and, after damage,
 while no worker is running, after you have looked at them. A plain `.bin` is not in that
 class: it can be the only copy of an artifact (for example one that was staged but never
 published, or one the ledger no longer knows after a ledger loss and `recover`, or one the
-export no longer offers), and deleting it then loses the artifact. `orphanTemps` in the run
+export no longer offers), and deleting it then loses the artifact. When `recover` proves an artifact from the
+archive and the plain `.bin` of that artifact is there with exactly the manifest's length and a matching sha256, it
+records that copy as staged, so later runs (a rebind's included) use it and never set it aside as damaged. `orphanTemps` in the run
 counts everything in the directory that is not a plain `<64 hex>.bin`, including the
 `.corrupt-` copies, so it tells you when something is waiting for you.
 
@@ -677,7 +679,9 @@ hash check; this includes artifacts `recover` adopted from the archive, whose le
 ledger does not hold: it is taken from the archive bytes once they match the recorded hash), and
 the artifacts whose only proven copy is the staged one (a local entry that is not verified and not
 terminal, or an entry under an earlier Drive revision), uploaded only after the staged bytes match
-the recorded hash and length; then the manifests, completions and run inventories, from the archive or, for
+the recorded hash and length; then the manifests, completions and run inventories, from the archive (every one it holds, also those
+written before a `recover`, which the rebuilt ledger does not name: a completion needs its name, sequence and content digest to agree,
+a manifest must parse and match the digest a valid completion binds, a run inventory must be the one of its run) or, for
 records only the Drive outbox held, from the outbox bytes. The first run after a rebind can
 therefore take as long as the whole archive needs to upload; the run is resumable, so a killed
 run continues from the ledger. `inspect` counts only the current revision. Because the old and

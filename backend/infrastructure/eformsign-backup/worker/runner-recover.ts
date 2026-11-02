@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -269,6 +270,40 @@ async function readCompletionFacts(archive: LocalDestination, companyId: string)
 }
 
 /**
+ * A staged copy of an artifact `recover` has just proven from the archive: when `<control>/staging/<identity>.bin` is a regular file of
+ * exactly the manifest's length whose bytes hash to the artifact's sha256, the ledger learns it (`staging_verified`, the same record a run
+ * writes after staging), so a later run takes that copy as the one it staged instead of setting it aside as damaged and staging it again.
+ * Nothing is read from anywhere but that file, nothing is changed on disk, and a copy that is missing, unreadable (any error reading
+ * it, `EACCES` included) or different is left exactly as it is (never an error of `recover`: the next run treats it as it always did).
+ * Only the ledger write is outside that: its failure propagates.
+ */
+async function adoptStagedCopy(
+    deps: RunnerDependencies, archive: LocalDestination, artifact: { artifactIdentity: string; sha256: string; byteLength: number },
+): Promise<void> {
+    if (deps.ledger.state.staged.has(artifact.artifactIdentity)) return;
+    const directory = path.join(deps.config.control.path, "staging");
+    try {
+        const root = await fs.lstat(directory);
+        if (!root.isDirectory()) return;
+        const file = await fs.lstat(path.join(directory, `${artifact.artifactIdentity}.bin`));
+        if (!file.isFile() || file.size !== artifact.byteLength) return;
+        const hash = createHash("sha256");
+        let seen = 0;
+        for await (const chunk of archive.openStaged({ path: directory, dev: root.dev, ino: root.ino }, artifact.artifactIdentity)) {
+            hash.update(chunk);
+            seen += chunk.byteLength;
+        }
+        if (seen !== artifact.byteLength || hash.digest("hex") !== artifact.sha256) return;
+    } catch {
+        // Optional: any failure to read the staged copy (a directory or file the worker cannot open included) leaves recovery as it was.
+        return;
+    }
+    await deps.ledger.append("staging_verified", {
+        artifactIdentity: artifact.artifactIdentity, sha256: artifact.sha256, byteLength: artifact.byteLength,
+    }, nowIso(deps));
+}
+
+/**
  * `recover` (contract section 3): builds a new ledger from what the archive itself proves. It refuses, changing nothing,
  * unless the archive is the one that was installed and the operator named its installation id.
  *
@@ -386,7 +421,11 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
         for (const artifact of manifest.artifacts) {
             if (seen.has(artifact.artifactIdentity)) continue;
             seen.add(artifact.artifactIdentity);
-            if (done?.entryOf(artifact.artifactIdentity)?.state === "verified") continue;
+            if (done?.entryOf(artifact.artifactIdentity)?.state === "verified") {
+                // An interrupted pass proved this one already; the staged copy it may have had is still owed its record.
+                await adoptStagedCopy(deps, archive, artifact);
+                continue;
+            }
             let state: "ok" | "missing" | "mismatch" = "missing";
             try {
                 state = await archive.reverify(artifact.relativeKey, artifact.sha256, artifact.byteLength);
@@ -402,6 +441,7 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
             }, nowIso(deps));
             recovered += 1;
             if (recovered === 1) await deps.runnerFault?.("recover-after-first-recovered");
+            await adoptStagedCopy(deps, archive, artifact);
         }
     }
     // The local ledger is rebuilt and kept whatever happens next; the Drive part adopts what Drive already holds and creates nothing.
