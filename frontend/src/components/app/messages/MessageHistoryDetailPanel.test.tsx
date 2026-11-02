@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { MessageResendBlock } from "@babyjamjam/shared";
-import { MESSAGE_LOG_STATUS_BADGE_VARIANT } from "@babyjamjam/shared";
+import { MESSAGE_FAILURE_REASON_FALLBACK, MESSAGE_LOG_STATUS_BADGE_VARIANT } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
 import { statusBadgeVariants } from "@/components/app/ui/status-badge";
 import { cn } from "@/lib/utils";
@@ -122,6 +122,34 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     errorMessage: "수신자 연락처가 필요합니다.",
   } as unknown as MessageLogRecord;
   const prefix = "desktop_messages_test";
+
+  it("renders the Korean fallback after normalizing and formatting an English failed reason", () => {
+    render(
+      <MessageHistoryDetailPanel
+        selectedRecord={normalizeMessageHistoryRecord({
+          ...baseLog, errorMessage: "Aligo SMS integration is not configured.",
+        })}
+        dataComponentPrefix={prefix}
+      />,
+    );
+    expect(screen.getByText("실패 사유")).toBeInTheDocument();
+    expect(screen.getByText(MESSAGE_FAILURE_REASON_FALLBACK)).toBeInTheDocument();
+    expect(screen.queryByText(".")).not.toBeInTheDocument();
+  });
+
+  it("keeps an English cancellation reason hidden without adding the failure fallback", () => {
+    render(
+      <MessageHistoryDetailPanel
+        selectedRecord={normalizeMessageHistoryRecord({
+          ...baseLog, status: "canceled", errorMessage: "Related client or schedule deleted",
+        })}
+        dataComponentPrefix={prefix}
+      />,
+    );
+    expect(screen.queryByText("취소 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText(MESSAGE_FAILURE_REASON_FALLBACK)).not.toBeInTheDocument();
+  });
 
   it.each([
     { resentByLogId: null, retryBlockedByLogId: null },

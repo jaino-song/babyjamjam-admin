@@ -7,6 +7,8 @@ import {
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_SETUP_REASON_LABEL,
   MESSAGE_RESENT_LABEL,
+  MESSAGE_FAILURE_REASON_FALLBACK,
+  formatFailedMessageReason,
   formatMessageFailureReason,
   getMessageResendBlockCard,
   normalizeMessageHistoryPresentation,
@@ -224,6 +226,19 @@ describe("needs_setup presentation", () => {
 });
 
 describe("formatMessageFailureReason", () => {
+  it.each([
+    null,
+    undefined,
+    "",
+    " \t\n ",
+    ".",
+    "Aligo SMS integration is not configured.",
+    "발송 실패: Aligo error.",
+    "Related client or schedule deleted",
+  ])("hides a reason with no Hangul in its body (%s)", (reason) => {
+    expect(formatMessageFailureReason(reason)).toBe("");
+  });
+
   it.each(["잔액 부족", "인증 오류", "수신 거부", "잘못된 번호"])(
     "preserves the permanent-failure prefix for %s", (reason) => {
       const message = `발송 실패: ${reason}`;
@@ -257,4 +272,48 @@ describe("formatMessageFailureReason", () => {
     expect(formatMessageFailureReason("발송 실패: 잔액 부족 1234"))
       .toBe("발송 실패: 잔액 부족");
   });
+});
+
+describe("failed message reason presentation", () => {
+  it.each([
+    [null, ""],
+    [undefined, ""],
+    ["", ""],
+    [" \t\n ", ""],
+    ["Aligo SMS integration is not configured.", "발송 중 오류가 발생했어요."],
+    ["발송 실패: Aligo error.", "발송 중 오류가 발생했어요."],
+    [".", "발송 중 오류가 발생했어요."],
+    ["잔액 부족", "잔액 부족"],
+    ["통신사 전달 실패: 1234 가입자없음, 5678 결번", "통신사 전달 실패: 1234 가입자없음, 5678 결번"],
+  ])("formats a failed reason (%s)", (reason, expected) => {
+    expect(formatFailedMessageReason(reason)).toBe(expected);
+  });
+
+  it("keeps the fallback unchanged when consumers format it again", () => {
+    expect(MESSAGE_FAILURE_REASON_FALLBACK).toBe("발송 중 오류가 발생했어요.");
+    expect(formatMessageFailureReason(MESSAGE_FAILURE_REASON_FALLBACK)).toBe(MESSAGE_FAILURE_REASON_FALLBACK);
+    expect(formatFailedMessageReason(MESSAGE_FAILURE_REASON_FALLBACK)).toBe(MESSAGE_FAILURE_REASON_FALLBACK);
+  });
+
+  it.each(["Aligo SMS integration is not configured.", "발송 실패: Aligo error.", "."])(
+    "uses a Korean fallback for a nonblank failed reason (%s)", (errorMessage) => {
+      expect(normalizeMessageHistoryPresentation(historyRecord({ status: "failed", errorMessage })).failureReason)
+        .toBe("발송 중 오류가 발생했어요.");
+    },
+  );
+
+  it.each([null, "", " \t\n "])("keeps a blank failed reason hidden (%s)", (errorMessage) => {
+    expect(normalizeMessageHistoryPresentation(historyRecord({ status: "failed", errorMessage })).failureReason)
+      .toBeUndefined();
+  });
+
+  it.each(["canceled", "needs_setup", "sent", "pending"] as const)(
+    "does not add a failure fallback to %s", (status) => {
+      const view = normalizeMessageHistoryPresentation(historyRecord({
+        status, errorMessage: "Related client or schedule deleted",
+      }));
+      expect(view.failureReason).toBeUndefined();
+      expect(view.setupReason).toBeUndefined();
+    },
+  );
 });
