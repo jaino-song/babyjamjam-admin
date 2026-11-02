@@ -8,7 +8,7 @@ import { EXPORT_ARTIFACT_MAX_BYTES } from "domain/eformsign-backup/export/consta
 import { artifactIdentity, canonicalJson } from "domain/eformsign-backup/source-evidence";
 import {
     PDF_TAIL_WINDOW, UUID_V4_PATTERN, WorkerError, artifactKey, checkPdfShape, completionKey, identifier, isPathIdentifier,
-    isSafeRelativeKey, isoUtc, manifestKey, parseArtifactKey, runKey, type ArchiveArtifactType, type WorkerReasonCode,
+    isSafeRelativeKey, isoUtc, parseArtifactKey, parseManifestKey, runKey, type ArchiveArtifactType, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { LocalArtifactArchive, type ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 import { publishBytesNoClobber } from "./atomic-file";
@@ -65,7 +65,6 @@ const WRITABLE_BY_OTHERS = 0o022;
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 
-const MANIFEST_KEY = /^eformsign\/([^/]+)\/([^/]+)\/manifests\/([0-9a-f]{64})\.json$/;
 const COMPLETION_KEY = /^eformsign\/([^/]+)\/completions\/(\d{12})-([0-9a-f]{64})\.json$/;
 const RUN_KEY = /^eformsign\/([^/]+)\/runs\/([^/]+)\.json$/;
 
@@ -78,12 +77,11 @@ function reasonOf(error: unknown): WorkerReasonCode {
 function ok(): CheckResult { return { ok: true }; }
 function refuse(reasonCode: WorkerReasonCode): { ok: false; reasonCode: WorkerReasonCode } { return { ok: false, reasonCode }; }
 
-/** True for exactly the keys `manifestKey`, `completionKey` and `runKey` can produce. */
+/** True for exactly the keys `manifestKey` (either shape), `completionKey` and `runKey` can produce. */
 function isJsonKey(key: string): boolean {
     try {
-        let match = MANIFEST_KEY.exec(key);
-        if (match) return manifestKey({ companyId: match[1]!, documentId: match[2]!, metadataRevision: match[3]! }) === key;
-        match = COMPLETION_KEY.exec(key);
+        if (parseManifestKey(key) !== null) return true;
+        let match = COMPLETION_KEY.exec(key);
         if (match) return completionKey({ companyId: match[1]!, sequence: Number(match[2]), contentDigest: match[3]! }) === key;
         match = RUN_KEY.exec(key);
         if (match) return runKey({ companyId: match[1]!, runId: match[2]! }) === key;

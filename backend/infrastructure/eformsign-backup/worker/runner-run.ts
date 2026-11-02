@@ -5,11 +5,11 @@ import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import {
     WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, completionContentDigest,
     completionSchema, integrityErrorCount, integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey,
-    manifestSchema, nextRetryAt, nextSnapshotSequence, parseCompletionName, runKey, toArchiveArtifactType,
+    nextRetryAt, nextSnapshotSequence, parseCompletionName, runKey, toArchiveArtifactType,
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
-import { listManifestFiles, type ManifestFile } from "./restore";
+import { listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
 import { readManifestHistory, type ManifestHistory, type ManifestSource } from "./runner-manifest-sources";
 import {
     ExportFailure, type CandidatePageView, type CandidateView, type SnapshotView,
@@ -17,7 +17,7 @@ import {
 import type { LocalDestination, StagingRoot } from "./local-destination";
 import {
     DestinationLedger, SNAPSHOT_POLL_LIMIT, SNAPSHOT_POLL_MS, TRANSIENT_STOP, assertLedgerRoom, assertSameInstallation,
-    controlHasStagingRoom, countOrphanTemps, isArchiveSide, isTerminalReason, nowIso, requireInstallation, sha256Hex,
+    controlHasStagingRoom, countOrphanTemps, isArchiveSide, isTerminalReason, nowIso, requireInstallation,
 } from "./runner-common";
 import { type RunSummary, type RunnerDependencies } from "./runner-types";
 
@@ -705,15 +705,27 @@ class RunExecution {
 
     // ---- steps 9-10: manifests and the completion ------------------------------------------------------------------
 
-    /** Builds and publishes (no-clobber, idempotent: an identical file is accepted) the manifest of one document revision. */
-    private async writeManifest(source: ManifestSource): Promise<{ ok: true; key: string; sha256: string } | { ok: false; reasonCode: WorkerReasonCode }> {
+    /** The manifest of one observed artifact set and the content-versioned key it is published under. */
+    private manifestOf(source: ManifestSource): { manifest: ReturnType<typeof buildManifest>; key: string } {
         const manifest = buildManifest({
             companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision,
             artifacts: source.artifacts.map((artifact) => ({
                 artifactType: artifact.artifactType, artifactIdentity: artifact.artifactIdentity, sha256: artifact.sha256, byteLength: artifact.byteLength,
             })),
         });
-        const key = manifestKey({ companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision });
+        const key = manifestKey({
+            companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision, manifestSha256: manifest.sha256,
+        });
+        return { manifest, key };
+    }
+
+    /**
+     * Builds and publishes (no-clobber, idempotent: an identical file is accepted) the manifest of one observed artifact
+     * set. The name carries the manifest's own digest, so a later snapshot that advertises other bytes under the same
+     * metadata revision gets a file of its own instead of colliding with this one.
+     */
+    private async writeManifest(source: ManifestSource): Promise<{ ok: true; key: string; sha256: string } | { ok: false; reasonCode: WorkerReasonCode }> {
+        const { manifest, key } = this.manifestOf(source);
         const published = await this.archive.publishJson(key, manifest.bytes);
         return published.ok ? { ok: true, key, sha256: manifest.sha256 } : { ok: false, reasonCode: published.reasonCode };
     }
@@ -777,17 +789,6 @@ class RunExecution {
         this.reasons.add("archive-conflict");
     }
 
-    /**
-     * The manifest a document revision is expected to have: the one this run just validated, else what the retained
-     * journals observed for exactly that revision. `"unavailable"`: nothing usable; `"conflict"`: the history disagrees with itself.
-     */
-    private expectedSource(documentId: string, metadataRevision: string): ManifestSource | "unavailable" | "conflict" {
-        const current = this.work.find((candidate) => candidate.documentId === documentId && candidate.metadataRevision === metadataRevision);
-        if (current !== undefined) return current;
-        const found = this.history?.forRevision(documentId, metadataRevision) ?? "unavailable";
-        return found === null ? "unavailable" : found;
-    }
-
     /** Raw-manifest digests that valid completions bind to each manifest key, read with recovery's own rules. */
     private async completionDigests(): Promise<Map<string, Set<string>>> {
         const digests = new Map<string, Set<string>>();
@@ -808,27 +809,25 @@ class RunExecution {
 
     /**
      * Whether a manifest file, as a whole, is what the evidence says it must be. `bad`: another file than the evidence
-     * establishes. `unproven`: the evidence contradicts itself, so nothing can be established.
+     * establishes. `unproven`: the evidence contradicts itself, so nothing can be established. The file is matched to
+     * the artifact set it was built from by its digest: this snapshot's candidate or any set the retained journals saw for
+     * exactly this revision, never "the latest" source.
      */
-    private manifestLevel(key: string, manifest: Manifest, bytes: Buffer, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" {
-        const digest = sha256Hex(bytes);
+    private manifestLevel(key: string, manifest: Manifest, digest: string, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" {
         const named = completions.get(key);
         if (named !== undefined && [...named].some((expected) => expected !== digest)) return "bad";
-        const source = this.expectedSource(manifest.documentId, manifest.metadataRevision);
+        const builtDigest = (source: ManifestSource): string => this.manifestOf(source).manifest.sha256;
+        const current = this.work.find((candidate) => candidate.documentId === manifest.documentId && candidate.metadataRevision === manifest.metadataRevision);
+        const observed = this.history?.forRevision(manifest.documentId, manifest.metadataRevision) ?? "unavailable";
+        const currentMatch = current !== undefined && builtDigest(current) === digest;
+        if (observed === "conflict" && !currentMatch) return "unproven";
+        const variants = observed === "unavailable" || observed === "conflict" ? [] : observed;
+        const matched = currentMatch || variants.some((variant) => builtDigest(variant) === digest);
         const acknowledged = this.state.manifests.get(key);
-        if (source === "conflict") return "unproven";
-        if (source !== "unavailable") {
-            const built = buildManifest({
-                companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision,
-                artifacts: source.artifacts.map((artifact) => ({
-                    artifactType: artifact.artifactType, artifactIdentity: artifact.artifactIdentity, sha256: artifact.sha256, byteLength: artifact.byteLength,
-                })),
-            });
-            if (acknowledged !== undefined && acknowledged.sha256 !== built.sha256) return "unproven";
-            return built.sha256 === digest ? "ok" : "bad";
-        }
-        if (acknowledged !== undefined) return acknowledged.sha256 === digest ? "ok" : "bad";
-        return "ok";
+        if (acknowledged !== undefined && acknowledged.sha256 !== digest) return matched ? "unproven" : "bad";
+        if (matched) return "ok";
+        if (current === undefined && variants.length === 0) return "ok"; // nothing to compare the bytes with: the facts decide
+        return acknowledged !== undefined ? "unproven" : "bad";
     }
 
     /** One artifact entry of a manifest against what the ledger retained for it. Length comes from the ledger, else from the stored file's size. */
@@ -895,22 +894,18 @@ class RunExecution {
                 }
                 if (bytes === null) continue;
                 // A file recovery would refuse to read lists nothing and shadows nothing, but it is not a manifest of this document either.
-                let parsed;
+                let parsed: { manifest: Manifest; sha256: string };
                 try {
-                    parsed = manifestSchema.safeParse(JSON.parse(bytes.toString("utf8")));
-                } catch {
+                    parsed = parseManifestBytes(bytes, file.key, { companyId: this.companyId, documentId: file.documentId, metadataRevision: file.metadataRevision });
+                } catch (error) {
+                    if (!(error instanceof WorkerError)) throw error;
                     invalidDocuments.add(file.documentId);
                     continue;
                 }
-                if (!parsed.success || parsed.data.companyId !== this.companyId || parsed.data.documentId !== file.documentId
-                    || parsed.data.metadataRevision !== file.metadataRevision) {
-                    invalidDocuments.add(file.documentId);
-                    continue;
-                }
-                const level = this.manifestLevel(file.key, parsed.data, bytes, completions);
-                for (const artifact of parsed.data.artifacts) {
+                const level = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
+                for (const artifact of parsed.manifest.artifacts) {
                     if (!wanted.has(artifact.artifactIdentity)) continue;
-                    note(artifact.artifactIdentity, level === "ok" ? await this.artifactFacts(parsed.data, artifact, sizes) : level);
+                    note(artifact.artifactIdentity, level === "ok" ? await this.artifactFacts(parsed.manifest, artifact, sizes) : level);
                 }
             }
         } catch (error) {
@@ -974,7 +969,7 @@ class RunExecution {
                     continue;
                 }
             }
-            const key = manifestKey({ companyId: this.companyId, documentId: source.documentId, metadataRevision: source.metadataRevision });
+            const { key } = this.manifestOf(source);
             const known = attempts.get(key);
             if (known !== undefined) {
                 if (!known) this.failIndexConflict(artifact.id);
@@ -993,7 +988,7 @@ class RunExecution {
 
     private async publishRecords(): Promise<void> {
         if (this.snapshotId === null) return;
-        const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string }> = [];
+        const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string; manifestKey: string }> = [];
         const publishedNow = new Set<string>();
         for (const candidate of this.work) {
             if (!this.archiveOk) break;
@@ -1006,7 +1001,7 @@ class RunExecution {
             }
             await this.fault("after-manifest-before-record");
             await this.recordManifest(written);
-            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: written.sha256 });
+            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: written.sha256, manifestKey: written.key });
             for (const job of candidate.artifacts) publishedNow.add(job.artifactIdentity);
         }
         await this.backfillManifests(publishedNow);

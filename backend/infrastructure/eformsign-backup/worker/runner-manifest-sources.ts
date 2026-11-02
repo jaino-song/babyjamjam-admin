@@ -13,7 +13,14 @@ export interface ManifestSource {
     artifacts: ReadonlyArray<{ artifactType: ArchiveArtifactType; artifactIdentity: string; sha256: string; byteLength: number }>;
 }
 
-interface Observed { source: ManifestSource; signature: string; lastSeq: number; conflict: boolean }
+/**
+ * A document revision's metadata does not bind its artifact bytes (the export's metadata revision leaves hashes and
+ * lengths out), so different snapshots may advertise different artifact sets under one revision. Each distinct set seen is
+ * one variant. Two observations of one revision inside ONE snapshot that disagree contradict each other: the group is
+ * `contradicted` and none of its variants is trusted.
+ */
+interface Group { contradicted: boolean; bySnapshot: Map<string, string> }
+interface Variant { source: ManifestSource; signature: string; lastSeq: number; group: Group }
 
 /**
  * The manifest sources of the current ledger lineage, rebuilt from the retained journal files. The state projection
@@ -22,38 +29,48 @@ interface Observed { source: ManifestSource; signature: string; lastSeq: number;
  */
 export class ManifestHistory {
     private constructor(
-        private readonly byIdentity: Map<string, Observed> | null,
-        private readonly byRevision: Map<string, Observed> | null,
+        private readonly byIdentity: Map<string, Variant[]> | null,
+        private readonly byRevision: Map<string, { group: Group; variants: Variant[] }> | null,
+        private readonly lengthConflicts: ReadonlySet<string>,
     ) {}
 
-    static readonly unavailable = new ManifestHistory(null, null);
+    static readonly unavailable = new ManifestHistory(null, null, new Set());
 
-    static of(byIdentity: Map<string, Observed>, byRevision: Map<string, Observed>): ManifestHistory {
-        return new ManifestHistory(byIdentity, byRevision);
-    }
-
-    /** What the history says about one document revision (by document and revision, never by "latest"). */
-    forRevision(documentId: string, metadataRevision: string): RevisionLookup {
-        if (this.byRevision === null) return "unavailable";
-        const observed = this.byRevision.get(`${documentId}\u0000${metadataRevision}`);
-        if (observed === undefined) return null;
-        return observed.conflict ? "conflict" : observed.source;
+    static of(
+        byIdentity: Map<string, Variant[]>, byRevision: Map<string, { group: Group; variants: Variant[] }>, lengthConflicts: ReadonlySet<string>,
+    ): ManifestHistory {
+        return new ManifestHistory(byIdentity, byRevision, lengthConflicts);
     }
 
     /**
-     * The latest observed revision that lists the artifact. `null`: the history is sound and never observed it.
-     * `"invalid"`: the history cannot be trusted (unreadable, broken, or two observations of one revision disagree).
+     * Every artifact set the ledger observed for one document revision, oldest first (by document and revision, never by
+     * "latest"). Empty: the history is sound and never saw the revision.
+     */
+    forRevision(documentId: string, metadataRevision: string): RevisionLookup {
+        if (this.byRevision === null) return "unavailable";
+        const known = this.byRevision.get(`${documentId}\u0000${metadataRevision}`);
+        if (known === undefined) return [];
+        return known.group.contradicted ? "conflict" : known.variants.map((variant) => variant.source);
+    }
+
+    /**
+     * The latest sound observation that lists the artifact. `null`: the history is sound and never observed it.
+     * `"invalid"`: the history cannot be trusted (unreadable, broken, every observation of it contradicts itself, or two
+     * observations disagree on a length the identity does not bind).
      */
     find(artifactIdentity: string): ManifestSource | "invalid" | null {
-        if (this.byIdentity === null) return "invalid";
-        const observed = this.byIdentity.get(artifactIdentity);
-        if (observed === undefined) return null;
-        return observed.conflict ? "invalid" : observed.source;
+        if (this.byIdentity === null || this.lengthConflicts.has(artifactIdentity)) return "invalid";
+        const variants = this.byIdentity.get(artifactIdentity);
+        if (variants === undefined) return null;
+        for (let index = variants.length - 1; index >= 0; index -= 1) {
+            if (!variants[index]!.group.contradicted) return variants[index]!.source;
+        }
+        return "invalid";
     }
 }
 
-/** A revision's source; `null` when never observed, `"unavailable"` when the history cannot be used, `"conflict"` when observations disagree. */
-export type RevisionLookup = ManifestSource | "unavailable" | "conflict" | null;
+/** A revision's observed artifact sets; `"unavailable"` when the history cannot be used, `"conflict"` when one snapshot's observations disagree. */
+export type RevisionLookup = ManifestSource[] | "unavailable" | "conflict";
 
 function signatureOf(source: ManifestSource): string {
     return JSON.stringify([...source.artifacts]
@@ -83,7 +100,9 @@ export async function readManifestHistory(
         }
         journals.sort((a, b) => a.base - b.base);
 
-        const seen = new Map<string, Observed>();
+        const seen = new Map<string, { group: Group; variants: Map<string, Variant> }>();
+        const lengths = new Map<string, number>();
+        const lengthConflicts = new Set<string>();
         let expected = 1;
         for (const [index, journal] of journals.entries()) {
             if (expected > lastSeq) break;
@@ -112,11 +131,24 @@ export async function readManifestHistory(
                     };
                     const key = `${source.documentId}\u0000${source.metadataRevision}`;
                     const signature = signatureOf(source);
-                    const known = seen.get(key);
-                    if (known === undefined) seen.set(key, { source, signature, lastSeq: record.seq, conflict: false });
-                    else {
-                        known.lastSeq = record.seq;
-                        if (known.signature !== signature) known.conflict = true;
+                    let known = seen.get(key);
+                    if (known === undefined) {
+                        known = { group: { contradicted: false, bySnapshot: new Map() }, variants: new Map() };
+                        seen.set(key, known);
+                    }
+                    let variant = known.variants.get(signature);
+                    if (variant === undefined) {
+                        variant = { source, signature, lastSeq: record.seq, group: known.group };
+                        known.variants.set(signature, variant);
+                    }
+                    variant.lastSeq = record.seq;
+                    const earlier = known.group.bySnapshot.get(record.body.snapshotId);
+                    if (earlier === undefined) known.group.bySnapshot.set(record.body.snapshotId, signature);
+                    else if (earlier !== signature) known.group.contradicted = true;
+                    for (const artifact of source.artifacts) {
+                        const length = lengths.get(artifact.artifactIdentity);
+                        if (length === undefined) lengths.set(artifact.artifactIdentity, artifact.byteLength);
+                        else if (length !== artifact.byteLength) lengthConflicts.add(artifact.artifactIdentity);
                     }
                 }
                 expected += 1;
@@ -124,11 +156,19 @@ export async function readManifestHistory(
         }
         if (expected !== lastSeq + 1) return ManifestHistory.unavailable;
 
-        const byIdentity = new Map<string, Observed>();
-        for (const observed of [...seen.values()].sort((a, b) => a.lastSeq - b.lastSeq)) {
-            for (const artifact of observed.source.artifacts) byIdentity.set(artifact.artifactIdentity, observed);
+        const byIdentity = new Map<string, Variant[]>();
+        const byRevision = new Map<string, { group: Group; variants: Variant[] }>();
+        for (const [key, known] of seen) {
+            const variants = [...known.variants.values()].sort((a, b) => a.lastSeq - b.lastSeq);
+            byRevision.set(key, { group: known.group, variants });
+            for (const variant of variants) {
+                for (const artifact of variant.source.artifacts) {
+                    byIdentity.set(artifact.artifactIdentity, [...(byIdentity.get(artifact.artifactIdentity) ?? []), variant]);
+                }
+            }
         }
-        return ManifestHistory.of(byIdentity, seen);
+        for (const variants of byIdentity.values()) variants.sort((a, b) => a.lastSeq - b.lastSeq);
+        return ManifestHistory.of(byIdentity, byRevision, lengthConflicts);
     } catch {
         return ManifestHistory.unavailable;
     }

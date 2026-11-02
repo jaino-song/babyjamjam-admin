@@ -640,7 +640,8 @@ describe("LocalDestination", () => {
         const run = runKey({ companyId: "C001", runId: UUID_RUN });
         const bytes = Buffer.from('{"synthetic":1}\n');
 
-        it.each([["manifest", manifest], ["completion", completion], ["run", run]])("should publish a %s file, reuse it, and refuse different bytes", async (_name, key) => {
+        const versioned = manifestKey({ companyId: "C001", documentId: "D001", metadataRevision: "a".repeat(64), manifestSha256: "c".repeat(64) });
+        it.each([["manifest", manifest], ["content-versioned manifest", versioned], ["completion", completion], ["run", run]])("should publish a %s file, reuse it, and refuse different bytes", async (_name, key) => {
             const destination = makeDestination(fixture);
             expect(await destination.publishJson(key, bytes)).toEqual({ ok: true, relativeKey: key, disposition: "created" });
             expect((await fs.readFile(path.join(fixture.root, key))).equals(bytes)).toBe(true);
@@ -658,6 +659,10 @@ describe("LocalDestination", () => {
             ["a non-hex name", "eformsign/C001/D001/manifests/revision.json"],
             ["a marker key", ".bjj-backup/installation.json"],
             ["an upper-case hex name", "eformsign/C001/D001/manifests/" + "A".repeat(64) + ".json"],
+            ["a malformed manifest suffix", "eformsign/C001/D001/manifests/" + "a".repeat(64) + "-" + "c".repeat(63) + ".json"],
+            ["an upper-case manifest suffix", "eformsign/C001/D001/manifests/" + "a".repeat(64) + "-" + "C".repeat(64) + ".json"],
+            ["a doubled manifest suffix", "eformsign/C001/D001/manifests/" + "a".repeat(64) + "-" + "c".repeat(64) + "-" + "c".repeat(64) + ".json"],
+            ["a reserved document with a versioned name", "eformsign/C001/completions/manifests/" + "a".repeat(64) + "-" + "c".repeat(64) + ".json"],
         ])("should refuse %s", async (_name, key) => {
             const before = await snapshotTree(base);
             expect(await makeDestination(fixture).publishJson(key, bytes)).toEqual({ ok: false, reasonCode: "invalid-path-segment" });

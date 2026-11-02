@@ -13,10 +13,10 @@ const hex = (n: number): string => n.toString(16).padStart(64, "0");
 type Artifact = LedgerBodies["candidate_observed"]["artifacts"][number];
 const artifact = (type: Artifact["artifactType"], n: number): Artifact => ({ artifactType: type, artifactIdentity: hex(n), sha256: hex(n + 1000), byteLength: 100 + n });
 
-function observed(seq: number, documentId: string, revision: number, artifacts: Artifact[], classification: LedgerBodies["candidate_observed"]["classification"] = "included"): LedgerRecord {
+function observed(seq: number, documentId: string, revision: number, artifacts: Artifact[], classification: LedgerBodies["candidate_observed"]["classification"] = "included", snapshotId = "snap-1"): LedgerRecord {
     return {
         v: 1, seq, type: "candidate_observed", at: fixedAt(seq),
-        body: { snapshotId: "snap-1", ordinal: seq, documentId, classification, metadataRevision: hex(revision), artifacts },
+        body: { snapshotId, ordinal: seq, documentId, classification, metadataRevision: hex(revision), artifacts },
     };
 }
 const installed = (): LedgerRecord => ({ v: 1, seq: 1, type: "installed", at: fixedAt(1), body: INSTALL_BODY });
@@ -63,6 +63,50 @@ describe("readManifestHistory (BJJ-455 P2 FU-10-F1)", () => {
 
         expect(history.find(hex(1))).toMatchObject({ documentId: "D001" });
         expect(history.find(hex(5))).toBe("invalid");
+    });
+
+    describe("artifact-set variants of one revision (BJJ-455 P2 FU-10-F5)", () => {
+        const doc = artifact("document", 1);
+        const auditOld = artifact("audit-trail", 2);
+        const auditNew = { ...artifact("audit-trail", 3) };
+
+        it("should keep both artifact sets that two snapshots advertised under one revision, oldest first", async () => {
+            await journal(1, lines([installed(), observed(2, "D001", 1, [doc, auditOld], "included", "snap-1"), observed(3, "D001", 1, [doc, auditNew], "included", "snap-2")]));
+
+            const history = await read(3);
+
+            expect(history.forRevision("D001", hex(1))).toEqual([
+                { documentId: "D001", metadataRevision: hex(1), artifacts: [doc, auditOld] },
+                { documentId: "D001", metadataRevision: hex(1), artifacts: [doc, auditNew] },
+            ]);
+            expect(history.forRevision("D001", hex(9))).toEqual([]);
+            // The latest sound observation of the artifact decides what it is rebuilt from.
+            expect(history.find(hex(1))).toMatchObject({ artifacts: [doc, auditNew] });
+            expect(history.find(hex(2))).toMatchObject({ artifacts: [doc, auditOld] });
+        });
+
+        it("should report observations of one revision that disagree inside ONE snapshot, and skip them when rebuilding", async () => {
+            await journal(1, lines([installed(), observed(2, "D001", 1, [doc, auditOld], "included", "snap-1"), observed(3, "D001", 1, [doc, auditNew], "included", "snap-1"),
+                observed(4, "D001", 2, [doc], "included", "snap-2")]));
+
+            const history = await read(4);
+
+            expect(history.forRevision("D001", hex(1))).toBe("conflict");
+            expect(history.forRevision("D001", hex(2))).toEqual([{ documentId: "D001", metadataRevision: hex(2), artifacts: [doc] }]);
+            expect(history.find(hex(1))).toMatchObject({ metadataRevision: hex(2) });
+            expect(history.find(hex(2))).toBe("invalid");
+        });
+
+        it("should refuse an artifact whose length two observations contradict, though its identity does not bind the length", async () => {
+            await journal(1, lines([installed(), observed(2, "D001", 1, [doc], "included", "snap-1"),
+                observed(3, "D002", 2, [{ ...doc, byteLength: doc.byteLength + 1 }], "included", "snap-2")]));
+
+            expect((await read(3)).find(hex(1))).toBe("invalid");
+        });
+
+        it("should be unavailable for revisions when the history is", async () => {
+            expect((await read(1)).forRevision("D001", hex(1))).toBe("unavailable");
+        });
     });
 
     it.each([

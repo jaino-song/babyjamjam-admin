@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { WorkerError, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
+import { WorkerError, buildCompletion, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 import { LocalDestination } from "infrastructure/eformsign-backup/worker/local-destination";
 
@@ -9,7 +10,7 @@ import type { FixtureDoc } from "./helpers/fake-export-api";
 import { spawnUnderFlock } from "./helpers/runner-flock-support";
 import {
     COMPANY, TOKEN, archivePdfs, createHarness, destinationStates, destroyHarness, identityFor, initArchive, listFiles,
-    pairDoc, readCompletions, readJsonFile, readLedgerRecords, recordTypes, runOnce, singleDoc, transitionPath, treeContains,
+    pairDoc, pdfOf, readCompletions, readJsonFile, readLedgerRecords, recordTypes, runOnce, singleDoc, transitionPath, treeContains,
     tryRun, withWorker, type Harness,
 } from "./helpers/runner-support";
 
@@ -836,6 +837,118 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 });
             });
 
+            describe("a manifest is named by its content (BJJ-455 P2 FU-10-F5)", () => {
+                const lateAudit = (): FixtureDoc => pairDoc("D001");
+                const changedAudit = (): FixtureDoc => ({
+                    ...lateAudit(),
+                    artifacts: lateAudit().artifacts!.map((a) => (a.fileType === "audit_trail" ? { ...a, bytes: pdfOf("new audit bytes while the metadata is unchanged") } : a)),
+                });
+                /** D001's document verifies and its audit trail waits for a retry; D002 completes. */
+                async function earlyIndexed(): Promise<{ early: string; bytes: Buffer }> {
+                    h = await createHarness({ docs: [lateAudit(), pairDoc("D002")] });
+                    h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 503, code: "EXPORT_UNAVAILABLE", retryable: true } });
+                    await initArchive(h);
+                    await runOnce(h);
+                    const files = await manifestsOf("D001");
+                    expect(files).toHaveLength(1);
+                    h.api.clearFaults();
+                    h.clock.set(new Date(Date.now() + 3_600_000).toISOString());
+                    return { early: files[0]!, bytes: await fs.readFile(path.join(h.archive, files[0]!)) };
+                }
+                const completionEntry = async (doc: string) =>
+                    (await readCompletions(h.archive)).pop()!.value["entries"].find((entry: { documentId: string }) => entry.documentId === doc);
+
+                it("should name every new manifest by the digest of its own bytes", async () => {
+                    const { early, bytes } = await earlyIndexed();
+                    const name = path.basename(early);
+                    expect(name).toMatch(/^[0-9a-f]{64}-[0-9a-f]{64}\.json$/);
+                    expect(name.slice(65, 129)).toBe(createHash("sha256").update(bytes).digest("hex"));
+                });
+
+                it("should index a changed sibling claim under the same metadata revision next to the early manifest, and keep it recoverable after the document leaves the snapshot", async () => {
+                    const { early, bytes } = await earlyIndexed();
+                    h.api.docs = [changedAudit(), pairDoc("D002")];
+
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+
+                    const files = await manifestsOf("D001");
+                    expect(files).toHaveLength(2);
+                    expect((await fs.readFile(path.join(h.archive, early))).equals(bytes)).toBe(true);
+                    const entry = await completionEntry("D001");
+                    expect(entry.manifestKey).toBe(files.find((file) => file !== early));
+                    expect(entry.manifestKey).toContain(`-${entry.manifestSha256}.json`);
+
+                    // The document leaves the snapshot: the history holds two artifact sets for one revision.
+                    h.api.docs = [pairDoc("D002")];
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect(await manifestsOf("D001")).toEqual(files);
+
+                    // Four PDFs are recoverable; the audit trail that never arrived is the one unverified claim.
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 4, unverified: 1 });
+                    expect(await verifyAll()).toMatchObject({ checked: 4 });
+                }, 240_000);
+
+                it("should recover both audit trails exactly once when two snapshots each verified another one under one revision", async () => {
+                    h = await createHarness({ docs: [lateAudit(), pairDoc("D002")] });
+                    await initArchive(h);
+                    await runOnce(h);
+                    h.api.docs = [changedAudit(), pairDoc("D002")];
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect(await manifestsOf("D001")).toHaveLength(2);
+
+                    h.api.docs = [pairDoc("D002")];
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 5, unverified: 0 });
+                    expect(await verifyAll()).toMatchObject({ checked: 5 });
+                }, 240_000);
+
+                it("should leave an early manifest of the old name untouched and complete the document under a new one", async () => {
+                    h = await createHarness({ docs: [lateAudit(), pairDoc("D002")] });
+                    h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 503, code: "EXPORT_UNAVAILABLE", retryable: true } });
+                    await initArchive(h);
+                    await runOnce(h);
+                    // What the previous release left behind: the same early manifest under the metadata-only name.
+                    const versioned = (await manifestsOf("D001"))[0]!;
+                    const manifest = await readJsonFile(path.join(h.archive, versioned));
+                    const legacyKey = manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: manifest["metadataRevision"] as string });
+                    await fs.rename(path.join(h.archive, versioned), path.join(h.archive, legacyKey));
+                    const legacyBytes = await fs.readFile(path.join(h.archive, legacyKey));
+                    await loseLedgerAndRecover();
+
+                    h.api.clearFaults();
+                    h.api.docs = [changedAudit(), pairDoc("D002")];
+                    h.clock.set(new Date(Date.now() + 3_600_000).toISOString());
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+
+                    const files = await manifestsOf("D001");
+                    expect(files).toHaveLength(2);
+                    expect(files).toContain(legacyKey);
+                    expect((await fs.readFile(path.join(h.archive, legacyKey))).equals(legacyBytes)).toBe(true);
+                    const entry = await completionEntry("D001");
+                    expect(entry.manifestKey).not.toBe(legacyKey);
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 4, unverified: 1 });
+                    expect(await verifyAll()).toMatchObject({ checked: 4 });
+                }, 240_000);
+
+                it("should refuse a well-named manifest whose claim no snapshot ever made, even next to a good one", async () => {
+                    const { early } = await earlyIndexed();
+                    h.api.docs = [pairDoc("D002")];
+                    await runOnce(h); // D001 leaves the snapshot with its audit trail still unverified
+                    const manifest = await readJsonFile(path.join(h.archive, early));
+                    (manifest["artifacts"] as Array<{ byteLength: number }>)[0]!.byteLength += 1;
+                    const forged = Buffer.from(JSON.stringify(manifest));
+                    const forgedKey = early.replace(/-[0-9a-f]{64}\.json$/, `-${createHash("sha256").update(forged).digest("hex")}.json`);
+                    await fs.writeFile(path.join(h.archive, forgedKey), forged, { mode: 0o600 });
+
+                    await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+                    expect((await fs.readFile(path.join(h.archive, forgedKey))).equals(forged)).toBe(true);
+                    await fs.rm(path.join(h.archive, forgedKey));
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                }, 240_000);
+            });
+
             describe("backfill proves the archive file and never skips silently (BJJ-455 P2 FU-10-F2)", () => {
                 it("should publish a carried manifest again when the ledger records it but the archive file is gone", async () => {
                     const { id } = await carried();
@@ -932,6 +1045,42 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     await fs.writeFile(file, pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
                     return original;
                 };
+                /**
+                 * A schema-valid manifest with a wrong claim, well-named by its own digest and put NEXT to the good one (a name that
+                 * carries the digest cannot be forged in place: it would just be a file that is no manifest). `undo` removes it.
+                 */
+                const forge = async (file: string, change: (value: any) => void): Promise<{ forged: string; bytes: Buffer; undo: () => Promise<void> }> => {
+                    const value = JSON.parse(await fs.readFile(file, "utf8"));
+                    change(value);
+                    const bytes = Buffer.from(JSON.stringify(value));
+                    const forged = path.join(path.dirname(file), `${path.basename(file).slice(0, 64)}-${createHash("sha256").update(bytes).digest("hex")}.json`);
+                    await fs.writeFile(forged, bytes, { mode: 0o600 });
+                    return { forged, bytes, undo: () => fs.rm(forged) };
+                };
+                /** What the release before FU-10-F5 left: manifests and completions under the metadata-only name. */
+                const toLegacyNames = async (): Promise<void> => {
+                    for (const name of await fs.readdir(path.join(h.archive, "eformsign", COMPANY))) {
+                        if (name === "completions" || name === "runs") continue;
+                        const dir = path.join(h.archive, "eformsign", COMPANY, name, "manifests");
+                        for (const file of await fs.readdir(dir).catch(() => [] as string[])) {
+                            if (file.includes("-")) await fs.rename(path.join(dir, file), path.join(dir, `${file.slice(0, 64)}.json`));
+                        }
+                    }
+                    const directory = path.join(h.archive, "eformsign", COMPANY, "completions");
+                    for (const old of await readCompletions(h.archive)) {
+                        const value = old.value;
+                        const built = buildCompletion({
+                            companyId: value["companyId"], sequence: value["sequence"], snapshotId: value["snapshotId"], runId: value["runId"],
+                            scopeRevision: value["scopeRevision"], policyRevision: value["policyRevision"], destinationIdentity: value["destinationIdentity"],
+                            destinationRevision: value["destinationRevision"], gaps: value["gaps"],
+                            entries: value["entries"].map((entry: { documentId: string; metadataRevision: string; manifestSha256: string }) => ({
+                                documentId: entry.documentId, metadataRevision: entry.metadataRevision, manifestSha256: entry.manifestSha256,
+                            })),
+                        });
+                        await fs.rm(path.join(directory, old.name));
+                        await fs.writeFile(path.join(h.archive, built.relativeKey), built.bytes, { mode: 0o600 });
+                    }
+                };
                 const state = async () => {
                     const ledger = await LedgerStore.open(h.control, { readOnly: true });
                     const value = ledger.state;
@@ -946,9 +1095,9 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
 
                 it("should end in archive-conflict, exit 69, keep the conflicting file and the verified entry, and still finish independent work", async () => {
                     const { id } = await carried();
-                    const file = await manifestPath("D001");
-                    const original = await rewrite(file, (value) => { value.artifacts[0].byteLength += 1; });
-                    const tampered = await fs.readFile(file);
+                    const forgedFile = await forge(await manifestPath("D001"), (value) => { value.artifacts[0].byteLength += 1; });
+                    const file = forgedFile.forged;
+                    const tampered = forgedFile.bytes;
                     h.api.docs = [pairDoc("D002"), pairDoc("D003")];
                     const transitions = (await destinationTransitions(id)).length;
 
@@ -967,19 +1116,28 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     expect(child.stderr().trim()).toBe("archive-conflict");
                     expect((await fs.readFile(file)).equals(tampered)).toBe(true);
 
-                    await fs.writeFile(file, original);
+                    await forgedFile.undo();
                     h.clock.set(new Date(Date.now() + 60_000).toISOString());
                     await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
                     expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 5, unverified: 0 });
                     expect(await verifyAll()).toMatchObject({ checked: 5 });
                 }, 180_000);
 
+                it("should reject a well-named manifest with a different length when the history is gone, acknowledged or not", async () => {
+                    await carried();
+                    await dropOldestJournal();
+                    const forgedFile = await forge(await manifestPath("D001"), (value) => { value.artifacts[0].byteLength += 1; });
+                    await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+                    expect((await fs.readFile(forgedFile.forged)).equals(forgedFile.bytes)).toBe(true);
+                    await forgedFile.undo();
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                });
+
                 it.each([
-                    ["a different length", (value: any) => { value.artifacts[0].byteLength += 1; }],
                     ["a different digest", (value: any) => { value.artifacts[0].sha256 = "0".repeat(64); }],
                     ["a different type", (value: any) => { value.artifacts[0].artifactType = "audit-trail"; }],
                     ["a different key", (value: any) => { value.artifacts[0].relativeKey = value.artifacts[0].relativeKey.replace("/D001/", "/D777/"); }],
-                ])("should reject a manifest with %s when the history is gone, acknowledged or not", async (_name, change) => {
+                ])("should reject a manifest file changed in place to %s: it is no manifest, so its artifact is unlisted and cannot be rebuilt", async (_name, change) => {
                     await carried();
                     await dropOldestJournal();
                     // Acknowledged by the ledger: the digest of the file is what counts.
@@ -1032,10 +1190,9 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                             jest.restoreAllMocks();
                         }
 
-                        const file = await manifestPath("D001");
-                        const original = await rewrite(file, (value) => { value.artifacts[0].byteLength += 1; });
+                        const forgedFile = await forge(await manifestPath("D001"), (value) => { value.artifacts[0].byteLength += 1; });
                         await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
-                        await fs.writeFile(file, original);
+                        await forgedFile.undo();
                         await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
                     });
 
@@ -1043,9 +1200,12 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                         h = await createHarness({ docs: [singleDoc("D001")] });
                         await initArchive(h);
                         await runOnce(h);
+                        // A name that carries the digest already refuses other bytes; the completion binding is what protects a legacy name.
+                        await toLegacyNames();
                         expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 1 });
                         h.api.docs = [pairDoc("D002")];
                         const file = await manifestPath("D001");
+                        expect(path.basename(file)).toMatch(/^[0-9a-f]{64}\.json$/);
                         const original = await rewrite(file, () => undefined, true);
 
                         await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
@@ -1083,12 +1243,13 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     h.api.docs = [pairDoc("D002")];
                     const files = (await manifestsOf("D001")).map((name) => path.join(h.archive, name)).sort();
                     const seen = await Promise.all(files.map((file) => fs.readFile(file)));
-                    // Whichever revision sorts first is the one recovery meets first; give it a wrong length.
-                    await rewrite(files[0]!, (value) => { value.artifacts[0].byteLength += 1; });
+                    // Whichever revision sorts first is the one recovery meets first; give it a second, wrong claim.
+                    const forgedFile = await forge(files[0]!, (value) => { value.artifacts[0].byteLength += 1; });
 
                     await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
 
                     expect((await fs.readFile(files[1]!)).equals(seen[1]!)).toBe(true);
+                    expect((await fs.readFile(forgedFile.forged)).equals(forgedFile.bytes)).toBe(true);
                 });
 
                 it("should not let an identity listed by another document's manifest count as coverage", async () => {
@@ -1168,8 +1329,13 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     const id = identityFor(h, d1, "document");
                     const observed = (await readLedgerRecords(h.control)).find((record) => record.type === "candidate_observed")!;
                     await restore();
-                    await fs.mkdir(path.join(h.archive, "eformsign", COMPANY, "D001", "manifests"), { recursive: true, mode: 0o700 });
-                    await fs.writeFile(path.join(h.archive, "eformsign", COMPANY, "D001", "manifests", `${observed.body["metadataRevision"]}.json`), "{\"other\":true}\n", { mode: 0o600 });
+                    // The key is the manifest's own digest: other bytes sitting exactly there are what blocks it.
+                    const expected = buildManifest({ companyId: COMPANY, documentId: "D001", metadataRevision: observed.body["metadataRevision"] as string, artifacts: observed.body["artifacts"] as never });
+                    const sitting = path.join(h.archive, manifestKey({
+                        companyId: COMPANY, documentId: "D001", metadataRevision: observed.body["metadataRevision"] as string, manifestSha256: expected.sha256,
+                    }));
+                    await fs.mkdir(path.dirname(sitting), { recursive: true, mode: 0o700 });
+                    await fs.writeFile(sitting, "{\"other\":true}\n", { mode: 0o600 });
                     h.api.docs = [];
 
                     const run = await runOnce(h);
