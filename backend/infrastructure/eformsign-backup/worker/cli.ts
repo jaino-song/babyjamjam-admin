@@ -249,6 +249,8 @@ const STATE: ReadonlySet<WorkerReasonCode> = new Set([
     "archive-marker-invalid", "archive-unavailable", "archive-conflict", "archive-not-mount-point", "archive-unsafe-path", "archive-space",
     // A Drive-only command (drive-setup, restore-drive) ends on these; inside `run` a Drive failure never ends the run.
     "drive-root-changed", "drive-permission", "drive-quota", "drive-conflict", "drive-unavailable",
+    // Transient Drive failures that end drive-setup or recover: "unavailable, retry later", the same 69 restore-drive gives them.
+    "network-timeout", "rate-limited",
 ]);
 
 /** 78 configuration, 74 control side, 69 state or archive, 70 anything else. */

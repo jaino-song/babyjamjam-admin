@@ -180,7 +180,7 @@ describe("drive-setup (BJJ-456 U4): durable, resumable, idempotent binding of th
         ["a 503", driveFaults.status(503), 69, "drive-unavailable"],
         ["a 403 without quota", driveFaults.status(403, "forbidden"), 69, "drive-permission"],
         ["a 403 storageQuotaExceeded", driveFaults.status(403, "storageQuotaExceeded"), 69, "drive-quota"],
-        ["a 429", driveFaults.status(429, undefined, 5), 70, "rate-limited"],
+        ["a 429", driveFaults.status(429, undefined, 5), 69, "rate-limited"],
     ])("should end drive-setup on %s with exit %i and the reason code only", async (_name, action, code, reason) => {
         const fault = fakes.drive.addFault({ route: "get", action });
         const result = await setup();

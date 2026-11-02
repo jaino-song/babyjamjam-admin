@@ -266,9 +266,12 @@ export class DriveRunPhase {
         }
         const node = relativeKey === null ? undefined : this.state.driveNodes.get(driveStateKey(this.revision, relativeKey));
         let found: "ok" | "missing" | "mismatch" = "missing";
-        if (relativeKey !== null && info !== undefined && info.byteLength !== null && node !== undefined && node.kind === "file") {
+        const length = relativeKey !== null && info !== undefined && node !== undefined && node.kind === "file"
+            ? await this.resolveLength(id, info, relativeKey)
+            : null;
+        if (relativeKey !== null && info !== undefined && length !== null && node !== undefined && node.kind === "file") {
             const checked = await this.destination!.verifyRemote(node.fileId, {
-                name: driveNameOf(relativeKey), parentFileId: node.parentFileId, sha256: info.sha256, byteLength: info.byteLength, mimeType: driveMimeOf(relativeKey),
+                name: driveNameOf(relativeKey), parentFileId: node.parentFileId, sha256: info.sha256, byteLength: length, mimeType: driveMimeOf(relativeKey),
             });
             if (!checked.ok) {
                 if ("failure" in checked) await this.applyFailure({ artifactIdentity: id, relativeKey }, checked.failure);
@@ -303,15 +306,17 @@ export class DriveRunPhase {
         for (const entry of this.entries()) {
             if (!open(entry) || inSnapshot.has(entry.artifactIdentity)) continue;
             const info = this.state.artifacts.get(entry.artifactIdentity);
-            if (info === undefined || info.byteLength === null) continue;
+            if (info === undefined) continue;
             let relativeKey: string;
             try {
                 relativeKey = entry.relativeKey ?? artifactKey({ companyId: this.deps.config.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
             } catch { continue; }
+            const byteLength = await this.resolveLength(entry.artifactIdentity, info, relativeKey);
+            if (byteLength === null) continue;
             await this.processJob({
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
                 artifactIdentity: entry.artifactIdentity,
-                sha256: info.sha256, byteLength: info.byteLength, relativeKey,
+                sha256: info.sha256, byteLength, relativeKey,
             });
         }
         await this.processHistorical(inSnapshot);
@@ -333,14 +338,16 @@ export class DriveRunPhase {
         for (const identity of missing.sort()) {
             if (this.halted !== null) return;
             const info = this.state.artifacts.get(identity);
-            if (info === undefined || info.byteLength === null) continue;
+            if (info === undefined) continue;
             let relativeKey: string;
             try {
                 relativeKey = artifactKey({ companyId: this.deps.config.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
             } catch { continue; }
+            const byteLength = await this.resolveLength(identity, info, relativeKey);
+            if (byteLength === null) continue;
             await this.processJob({
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
-                artifactIdentity: identity, sha256: info.sha256, byteLength: info.byteLength, relativeKey,
+                artifactIdentity: identity, sha256: info.sha256, byteLength, relativeKey,
             });
         }
     }
@@ -375,6 +382,39 @@ export class DriveRunPhase {
         if (entry?.state === "blocked" && entry.reasonCode === reasonCode) return;
         if (entry?.state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
         await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode, relativeKey: job.relativeKey });
+    }
+
+    /**
+     * The one place an artifact's length is settled for Drive work. `recover` records an artifact it adopted from the archive without a
+     * length, and a Drive entry of it may be carried over, settled after a crash or uploaded later, so every such path asks here:
+     * the ledger's length; else the length of a staged copy that is on record for this artifact AND hashes to the recorded sha256;
+     * else the length of the archive's copy when its bytes hash to it. `null` (nothing proves a length): the artifact is skipped.
+     */
+    private async resolveLength(identity: string, info: NonNullable<ReturnType<LedgerState["artifacts"]["get"]>>, relativeKey: string): Promise<number | null> {
+        if (info.byteLength !== null) return info.byteLength;
+        const staged = this.state.staged.get(identity);
+        if (staged !== undefined && staged.sha256 === info.sha256) {
+            const job: DriveJob = {
+                documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
+                artifactIdentity: identity, sha256: info.sha256, byteLength: staged.byteLength, relativeKey,
+            };
+            if (await this.host.stagedUsable(job) && await this.stagedHashOk(job)) return staged.byteLength;
+        }
+        return this.archiveLengthOf(relativeKey, info.sha256);
+    }
+
+    /** The length of the archive's copy of an artifact whose ledger record has none, when that copy hashes to `sha256`; otherwise `null`. */
+    private async archiveLengthOf(relativeKey: string, sha256: string): Promise<number | null> {
+        if (!this.host.archiveOk()) return null;
+        let bytes: Buffer | null;
+        try {
+            bytes = await this.archive.readArchiveFile(relativeKey);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.host.archiveLost();
+            return null;
+        }
+        return bytes !== null && sha256Of(bytes) === sha256 ? bytes.byteLength : null;
     }
 
     private async stagedHashOk(job: DriveJob): Promise<boolean> {

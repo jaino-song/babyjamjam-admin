@@ -88,6 +88,12 @@ environment variables: one JSON configuration file, one token file, two
 directories. It is a command line tool; scheduling and the real host paths are
 BJJ-457, not this unit.
 
+BJJ-456 adds an optional second, independent destination: a Google Drive folder
+that mirrors the archive. It is switched on by a `drive` block in the configuration
+and two more secret files, and is described under "Google Drive destination" below.
+A configuration without a `drive` block behaves exactly as described for the local
+archive alone.
+
 ## Running it
 
 Every command except `inspect` must run while the process holds
@@ -114,15 +120,22 @@ file, so set `0700` yourself. If the control directory does not exist, `flock` f
 | --- | --- |
 | `init` | first install only: archive marker, control marker, first ledger record |
 | `run [--scheduled-for <ISO+offset>]` | finishes interrupted work, then one snapshot: download, publish, verify, manifests, completion |
-| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error`. With `--all` it also reads every bound manifest (acknowledged by the ledger or named by a completion) and exits 69 `archive-conflict` if one is missing, is no valid manifest of its document, or has another digest than the ledger or a completion binds (the run's `run_finished` record carries `archive-conflict`). It never repairs or rewrites a manifest, but it still moves damaged PDFs aside and writes ledger records |
-| `recover --installation-id <id>` | rebuilds a damaged ledger from the archive; see below |
+| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error`. With `--all` it also reads every bound manifest (acknowledged by the ledger or named by a completion) and exits 69 `archive-conflict` if one is missing, is no valid manifest of its document, or has another digest than the ledger or a completion binds (the run's `run_finished` record carries `archive-conflict`). It never repairs or rewrites a manifest, but it still moves damaged PDFs aside and writes ledger records. With a `ready` Drive binding it also rechecks the Drive copies, see "Checking Drive with `verify`" |
+| `recover --installation-id <id> [--drive-root-folder-id <id>]` | rebuilds a damaged ledger from the archive; see below. With a `drive` block it then adopts the existing Drive root, see "Recovery with Drive" (the flag is accepted only here and picks the Drive root) |
+| `drive-setup [--rebind]` | binds the Google Drive root folder of this installation (resumable); `--rebind` binds a new root. Needs a `drive` block, see "Binding the Drive root: `drive-setup`" |
 | `inspect` | read-only report of the ledger; needs no lock |
+
+`drive-setup` runs under the lock like `run` and ignores `"enabled": false`. A separate tool,
+`restore-drive`, copies the Drive tree into an empty directory and needs neither the lock nor the
+ledger; see "`restore-drive`: the archive from Drive alone".
 
 With `"enabled": false` the commands `run`, `verify` and `recover` print
 `{"event":"disabled"}` and do nothing (no lock, no ledger, no network).
 
 stdout is one JSON object per line with keys from `event`, `runId`,
-`reasonCode`, `counts`. stderr is a reason code and nothing else, so no token, path
+`reasonCode`, `counts`; `drive-setup` adds `rootFolderId` and `destinationRevision`
+(`drive_bound`), and `recover` adds `candidates` (`recover_drive_root_ambiguous` only).
+stderr is a reason code and nothing else, so no token, path
 or provider message reaches a log. The exit codes of the worker and of restore are
 listed under "Exit codes" below.
 
@@ -136,7 +149,9 @@ least one included candidate was refused (`invalid-path-segment`,
 an excluded one never changes the status. Documents gone at the source
 (`source-removed`, `exact-bytes-unavailable`) are gaps, reported as
 `known_gap` coverage, not as `blocked`. `failed` means no usable snapshot.
-Reason codes in the run record say why.
+Reason codes in the run record say why. A run with no `ready` Drive binding (no `drive`
+block, or `drive-setup` never finished) always lists `drive-not-configured` among them; a
+bound Drive replaces that code by its own, see "What `run` does with two destinations".
 
 A completion lists every document the snapshot includes but the completion does not
 contain as a gap, with the reason: `archive-conflict` when a manifest of the document
@@ -163,7 +178,7 @@ still resolve it, so it stays in that completion and is not imported.
 ## worker.json
 
 One JSON file, passed as `--config <abs path>`, read once at start. It is strict:
-an unknown field (top level or inside `control` / `archive`), a wrong type or a
+an unknown field (top level or inside `control` / `archive` / `drive`), a wrong type or a
 missing required field is `config-invalid`. No environment variable is read. A
 disabled worker (`"enabled": false`) still has its file validated first.
 
@@ -183,6 +198,7 @@ disabled worker (`"enabled": false`) still has its file validated first.
 | `archive.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
 | `archive.requireMountPoint` | boolean | `true`: the archive root must be a mount point (its device differs from its parent's) | `true` |
 | `requestTimeoutMs` | integer | 1 to 600000 | `120000`; for the JSON requests (snapshot, candidates) a total deadline for the whole request; for an artifact download a deadline for the response headers plus an idle timeout for each body read, with no total deadline (see below) |
+| `drive` | object | optional; strict, see "The `drive` block" below | absent: no Drive destination |
 
 `requestTimeoutMs` is not a limit on how long a run takes. Each JSON request (snapshot,
 candidates) must finish within it. For an artifact download it bounds only the wait for
@@ -232,6 +248,37 @@ Minimal example (placeholder values only):
       }
     }
 
+### The `drive` block
+
+Optional. With it the worker can keep a second copy of the archive in Google Drive (see "Google
+Drive destination"). Strict like the rest of the file; every field outside this table is
+`config-invalid`.
+
+| field | type | constraint | default |
+| --- | --- | --- | --- |
+| `drive.clientFile` | string | normal absolute path; must not be inside `archive.path` or `control.path` (nor equal to either) | required |
+| `drive.refreshTokenFile` | string | normal absolute path; same placement rule | required |
+| `drive.tokenUrl` | string | 1 to 2048 characters; `https:`, or `http:` only for host `127.0.0.1`, `localhost` or `[::1]`; no user name, password, query or fragment (the rule of `exportBaseUrl`) | `https://oauth2.googleapis.com/token` |
+| `drive.apiBaseUrl` | string | same rule | `https://www.googleapis.com` |
+| `drive.uploadBaseUrl` | string | same rule | `https://www.googleapis.com` |
+| `drive.rootFolderName` | string | 1 to 255 characters, none of them a control character (U+0000 to U+001F, U+007F) | `bjj-eformsign-backup` |
+| `drive.chunkBytes` | integer | at least 262144 and a multiple of 262144 (256 KiB), the size of one resumable upload chunk | `8388608` (8 MiB) |
+| `drive.requestTimeoutMs` | integer | 1 to 600000 | the top-level `requestTimeoutMs` |
+
+The three URLs default to Google's real endpoints; override them only for a test double on the
+loopback address. `rootFolderName` is the name given to the Drive folder `drive-setup` creates.
+`drive.requestTimeoutMs` is the deadline of one Drive or OAuth request; the body of a Drive
+download has, like an export download, no total deadline but an idle timeout of the same length
+for each read.
+
+Placeholder example (the `drive` block next to the fields of the example above):
+
+    "drive": {
+      "clientFile": "/path/to/secrets/drive-client.json",
+      "refreshTokenFile": "/path/to/secrets/drive-refresh-token",
+      "rootFolderName": "bjj-eformsign-backup"
+    }
+
 ### Ownership and mode rules
 
 Every refusal below is a reason code only; the path is never printed.
@@ -244,6 +291,19 @@ Every refusal below is a reason code only; the path is never printed.
   mode exactly 0600, owned by the user running the worker, at most 256 bytes. The
   content is `ebx_` followed by 43 characters from `A-Z a-z 0-9 _ -`, with at most
   one trailing newline. Otherwise `token-file-invalid` (exit 78).
+- **Drive secret files** (`drive.clientFile` and `drive.refreshTokenFile`; read by `run`,
+  `drive-setup`, `recover`, `verify` and `restore-drive`, never by `init` or `inspect`): each a
+  regular file, not a symlink, mode exactly 0600, owned by the user running the worker.
+  `clientFile` is at most 4096 bytes of one JSON object with exactly the two non-empty
+  string fields `client_id` and `client_secret` (each at most 512 characters) and nothing
+  else. `refreshTokenFile` is at most 1024 bytes: one line of 20 to 512 characters from
+  `A-Z a-z 0-9 _ - / .`, with at most one trailing newline. Otherwise `token-file-invalid`.
+  It ends `drive-setup` and `restore-drive` (exit 78). `run`, `verify` and `recover` do not stop for it: the
+  local work goes on and the Drive part reports `token-file-invalid` instead (`run`: a
+  `partial` run with that reason; `verify`: that reason on its `run_finished` record; `recover`:
+  the local ledger is rebuilt, then it exits 78 unless a `ready` Drive binding is already in the ledger). Both files must lie outside
+  `archive.path` and `control.path` (`config-invalid` otherwise). A token the Google
+  server refuses is a different error, `drive-token-invalid`, and only shows up later.
 - **Control directory**: must already exist, be a real directory (not a symlink),
   owned by the user running the worker and not writable by group or others, else
   `control-unavailable` (exit 74). The exception is a control directory that is
@@ -275,11 +335,30 @@ Worker (`scripts/eformsign-backup-worker.ts`):
 | --- | --- |
 | 0 | ok. A `run` that ends `partial` or `blocked` is still 0; read the `run_*` event. The exceptions are a run that ends in `archive-conflict` or `ledger-inconsistent` (both 69): it has done and recorded all its other work, and its `run_*` and `run_reason` lines are still printed on stdout before the exit |
 | 66 | not the worker's: `flock` exits 66 (`EX_NOINPUT`) when `<control>` does not exist, before the worker runs |
-| 69 | state or archive: `not-initialized`, `recovery-required`, `ledger-duplicate-install`, `ledger-inconsistent`, `archive-identity-mismatch`, `archive-marker-invalid`, `archive-unavailable`, `archive-conflict`, `archive-not-mount-point`, `archive-unsafe-path`, `archive-space` |
+| 69 | state or archive: `not-initialized`, `recovery-required`, `ledger-duplicate-install`, `ledger-inconsistent`, `archive-identity-mismatch`, `archive-marker-invalid`, `archive-unavailable`, `archive-conflict`, `archive-not-mount-point`, `archive-unsafe-path`, `archive-space`; and the Drive reasons `drive-root-changed`, `drive-permission`, `drive-quota`, `drive-conflict`, `drive-unavailable`, and the transient `network-timeout`, `rate-limited` (see below) |
 | 70 | internal: any other reason code or an unexpected error |
 | 74 | control directory: `control-unavailable`, `control-space` |
 | 75 | another worker holds the lock. Returned by `flock -E 75`, never by the worker itself |
-| 78 | configuration: `config-invalid` (which includes any command line mistake), `token-file-invalid`, `export-base-url-invalid`, `lock-not-held`, `unsupported-filesystem` |
+| 78 | configuration: `config-invalid` (which includes any command line mistake), `token-file-invalid`, `export-base-url-invalid`, `lock-not-held`, `unsupported-filesystem`; and the Drive reasons `drive-not-configured`, `drive-token-invalid` |
+
+The Drive reason codes end a command only when it is Drive-only (`drive-setup`) or when the
+Drive part of `recover` cannot finish. Inside `run` and `verify` they never end the command: they
+are reason codes of a `partial` run (see "What `run` does with two destinations"), and the exit
+stays 0. `drive-setup` and `recover` can also end on the transient Drive reasons `network-timeout` and
+`rate-limited`: they exit 69 ("unavailable, retry later", like `restore-drive`), and running the
+command again is the answer. The meaning of each Drive reason code:
+
+| reason code | meaning | exit when it ends a command |
+| --- | --- | --- |
+| `drive-not-configured` | no `drive` block, or no `ready` binding where one is needed (`drive-setup` not finished); also `recover --drive-root-folder-id` without a `drive` block | 78 |
+| `drive-token-invalid` | Google's token endpoint refused the refresh token or the OAuth client (`invalid_grant`, `invalid_client` or `unauthorized_client`): a revoked or expired token, or a changed client; replace the secret files | 78 |
+| `drive-root-changed` | the bound root folder is gone, trashed, renamed, moved or lacks its binding property; or `recover` found no root, or several | 69 |
+| `drive-permission` | HTTP 401 after a forced token refresh, or 403 other than a rate-limit or quota reason | 69 |
+| `drive-quota` | HTTP 403 `storageQuotaExceeded`: the Drive account is full | 69 |
+| `drive-conflict` | an unexpected state at the Drive side: a file where the ledger expects another, two Drive objects at one path, or another 4xx answer | 69 |
+| `drive-unavailable` | HTTP 5xx, or a status the worker cannot classify | 69 |
+| `network-timeout` | no answer from Drive or the token endpoint in time, or the connection failed | 69 |
+| `rate-limited` | HTTP 429, or 403 with a rate-limit reason; Drive asks to slow down | 69 |
 
 Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no 74/78:
 
@@ -291,6 +370,18 @@ Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no
 | 66 | nothing to restore: `not-initialized` |
 | 69 | archive: `archive-unavailable`, `archive-unsafe-path`, `archive-identity-mismatch`, `archive-marker-invalid` |
 | 70 | internal: any other reason code or an unexpected error, including `artifact-too-large` (an archive file that has grown past the 128 MiB read limit; when it happens while copying, partial output may be left in `--out`) |
+
+Restore from Drive (`scripts/eformsign-backup-restore-drive.ts`, see "`restore-drive`: the archive
+from Drive alone"); no lock, no ledger:
+
+| exit | meaning |
+| --- | --- |
+| 0 | every file verified and written |
+| 64 | usage (unknown, repeated or valueless flag, a missing or relative `--config` / `--out`, a bad `--root-folder-id`; stderr `config-invalid`), or `restore-output-invalid` (`--out` not new or empty, or inside or around the archive or control path) |
+| 65 | at least one file failed verification: stderr `artifact-integrity`, else `drive-conflict`, else `mirror-missing`; the files that did verify are written, the failed ones are listed in the report |
+| 69 | Drive: `drive-root-changed` (no single root; see below), `drive-permission`, `drive-quota`, `drive-conflict`, `drive-unavailable`, `network-timeout`, `rate-limited` |
+| 70 | internal: any other reason code or an unexpected error |
+| 78 | configuration: `config-invalid` (the config file itself), `token-file-invalid`, `drive-not-configured`, `drive-token-invalid` |
 
 ## Never delete `worker.lock` while a run may be active
 
@@ -453,14 +544,332 @@ installation. Nothing repairs this on its own. To decide:
    other `ok` ledger. A wrong installation id or a swapped archive gives
    `archive-identity-mismatch`, and a missing marker `archive-marker-invalid` (both
    exit 69).
+7. With a `drive` block, `recover` continues after the steps above with the Drive part
+   ("Recovery with Drive" below). It never creates anything on Drive, and the rebuilt local
+   ledger stays whatever the Drive part ends with.
 
 ## Staging files the worker leaves behind
 
 `<control>/staging` holds `<artifactIdentity>.bin` (kept after publishing, so a
 damaged archive copy can be republished without a download) and, after damage,
-`<artifactIdentity>.bin.corrupt-<runId>`. The worker never deletes anything. Both
-kinds of leftover (and any temporary file a killed run left) are safe to remove by
-hand while no worker is running, after you have looked at them; a `.bin` the
-ledger still needs is simply downloaded again. `orphanTemps` in the run counts
-everything in the directory that is not a plain `<64 hex>.bin`, including the
+`<artifactIdentity>.bin.corrupt-<runId>`. The worker never deletes anything. The
+`.corrupt-` copies and any temporary file a killed run left are safe to remove by hand
+while no worker is running, after you have looked at them. A plain `.bin` is not in that
+class: it can be the only copy of an artifact (for example one that was staged but never
+published, or one the ledger no longer knows after a ledger loss and `recover`, or one the
+export no longer offers), and deleting it then loses the artifact. `orphanTemps` in the run
+counts everything in the directory that is not a plain `<64 hex>.bin`, including the
 `.corrupt-` copies, so it tells you when something is waiting for you.
+
+With a Drive binding the staged `.bin` is also the source of the Drive upload, so it matters
+which destination still needs it. A staged copy that is gone is restaged from the archive or from
+Drive (whichever holds a verified copy) before the export is asked again, and a damaged archive
+or Drive copy is replaced from the staged one. The worker still deletes nothing. A staged `.bin`
+may be removed by hand only when that specific artifact (the file name is its
+`artifactIdentity`) is verified on the local archive AND on the current Drive revision, and
+no command checks that per file yet. `inspect` reports `stagingReleasable`, the number of such
+artifacts (it appears once a Drive binding exists); it is only a count, names no file, and
+never authorizes deleting any particular file, even when it equals `verified`: after a ledger
+loss and `recover`, a staged-only artifact is not in the rebuilt ledger at all, so the counts
+can add up while that `.bin` is the artifact's only copy. A `.bin` that the ledger (rebuilt or
+not) does not account for must be kept. Staging cleanup is not supported by the tooling yet:
+keep the `.bin` files.
+
+# Google Drive destination (BJJ-456)
+
+Drive is a second destination next to the local archive. The two are independent: a Drive
+failure never fails the local side, and a lost archive does not stop the Drive upload. All of
+this is optional and off unless the configuration has a `drive` block. The worker was developed
+against a fake Drive on the loopback address only; what is not yet proven against the real Google
+service is listed at the end ("Not yet proven against real Drive").
+
+## What lands on Drive
+
+One root folder holds a copy of the archive tree, path for path: every archive path
+(`.bjj-backup/installation.json`, `eformsign/<company>/<document>/artifacts/<type>/<sha256>.pdf`,
+the manifests, the completions and the run inventories) is a path below the root, every
+`/`-separated prefix is a folder, and the last segment is the file name. The bytes are the
+archive's bytes. The worker only ever creates and reads on Drive: it never deletes, trashes,
+renames, moves or overwrites a file there. It trusts only Drive's own facts about a file (not
+trashed, one parent, name, type, size, and the SHA-256 Drive computed, or the hash of the
+downloaded bytes when Drive reports none); labels stored on a file prove nothing.
+
+The root folder carries three identifiers as labels (`bjjInstallationId`, `bjjArchiveId`,
+`bjjBindingId`; no secret) that `recover` and `restore-drive` use to find it again. In the ledger
+the destination is `drive:<root folder id>` and its revision `drive-layout-v1:<binding id>`;
+`drive-setup --rebind` creates a new binding and so a new revision; `recover` adopts the root's
+existing binding id, so the revision stays the same.
+
+## Preparing OAuth for a personal Gmail account
+
+The worker authenticates as one Google account with an OAuth refresh token. The worker ships no
+consent helper, so this part is manual and happens once. No value below goes into the repository
+or a ticket.
+
+1. In the Google Cloud console create (or choose) a project and enable the Google Drive API in it.
+2. Configure the OAuth consent screen: user type External, and add only the scope
+   `https://www.googleapis.com/auth/drive.file` (access to the files the app itself creates).
+   Then publish the app to Production. While it stays in Testing, Google expires the refresh token
+   after 7 days and the worker ends with `drive-token-invalid`; the scope is non-sensitive, so
+   publishing does not need Google's verification review.
+3. Create an OAuth client of type Desktop app. Its client id and client secret are the contents
+   of `drive.clientFile`; the worker accepts only the flat JSON object
+   `{"client_id": "<id>", "client_secret": "<secret>"}`, so copy the two values into a new file
+   rather than using a downloaded file as it is.
+4. With that client, run one OAuth authorization-code flow as the Gmail account that is to own
+   the backup: scope `drive.file`, `access_type=offline`, redirect to a loopback address
+   (`http://127.0.0.1:<port>`) on a machine you trust, then exchange the code at the token
+   endpoint. Keep only the refresh token (one line of 20 to 512 characters from
+   `A-Z a-z 0-9 _ - / .`) and discard the rest.
+5. Write both files as the worker user with mode 0600 (for example under `umask 077`), outside
+   the archive and control directories, and point `drive.clientFile` and
+   `drive.refreshTokenFile` at them.
+
+Keep the OAuth client for the life of the backup. The `drive.file` scope only shows an app the
+files its own client created, so a different client sees none of the existing Drive tree: the
+worker would no longer find the root (`drive-root-changed`), and `recover` and `restore-drive`
+could not find it either. Replacing only the refresh token of the same client is fine: rewrite
+`drive.refreshTokenFile`. A revoked or expired refresh token, or an OAuth client that Google no
+longer accepts, is `drive-token-invalid`.
+
+## Binding the Drive root: `drive-setup`
+
+    cd backend && NODE_PATH=. flock -n -F -E 75 <control>/worker.lock \
+      node -r ts-node/register/transpile-only scripts/eformsign-backup-worker.ts \
+      drive-setup --config <abs path to worker.json> [--rebind]
+
+It needs an initialized installation with a healthy ledger (`init` first: `not-initialized`
+and `recovery-required` otherwise, both exit 69), a readable archive marker (`archive-unavailable`,
+exit 69) and a `drive` block with usable secret files (`drive-not-configured`,
+`token-file-invalid`, `drive-token-invalid`: exit 78). On success it prints one line, for example
+`{"event":"drive_bound","rootFolderId":"<id>","destinationRevision":"drive-layout-v1:<uuid>"}`.
+
+What it does, in this order, and every step is durable and can be resumed:
+
+1. Reads the id of the account's My Drive and the account's permission id, and takes a new
+   file id for the root from Drive.
+2. Appends `drive_bound` to the ledger with that id and a new binding id. The binding now exists
+   with status `pending`.
+3. Creates the root folder (named `drive.rootFolderName`, directly in My Drive) under exactly
+   that id, carrying the three labels above. A lost answer or a retry is resolved by looking the
+   id up and comparing, never by creating a second folder.
+4. Publishes the archive marker as `.bjj-backup/installation.json` on Drive, byte for byte.
+5. Appends `drive_ready`; the binding is now `ready`.
+
+It is idempotent. Run again after a failure or a kill, it finishes the `pending` binding with
+the same root id: no new id, no second root. Run on a `ready` binding whose root is intact and
+whose marker is on Drive it changes nothing and prints the same line. **A `pending` binding is
+not usable:** a `run` with a pending (or no) binding uploads nothing to Drive and reports
+`drive-not-configured`; running `drive-setup` again completes it.
+
+The root counts as intact while it is the same folder: not trashed, still named as bound,
+still the only parent the binding recorded, still carrying its `bjjBindingId`. If someone
+renames, moves or trashes it (or it can no longer be found), `run` stops its Drive work with
+`drive-root-changed` and `drive-setup` ends with it (exit 69). If the cause is simply undone
+(rename back, restore from the trash), the next command works again without any rebind.
+
+`drive-setup --rebind` is for when the root is really gone. It always binds a new root, even if
+the current one is intact, so do not use it for anything else. It leaves the old root and
+everything in it untouched (nothing is deleted or reused) and starts a new revision with nothing
+uploaded. The following `run` commands then upload everything again under the new root:
+the artifacts the archive holds verified (from the staged copy, else from the archive after a
+hash check; this includes artifacts `recover` adopted from the archive, whose length the
+ledger does not hold: it is taken from the archive bytes once they match the recorded hash), then the manifests, completions and run inventories, from the archive or, for
+records only the Drive outbox held, from the outbox bytes. The first run after a rebind can
+therefore take as long as the whole archive needs to upload; the run is resumable, so a killed
+run continues from the ledger. `inspect` counts only the current revision. Because the old and
+the new root both carry the archive id and installation id, a later `recover` (or
+`restore-drive`) sees two roots and needs the root named explicitly, unless the old root was
+trashed (see the sections below).
+
+## What `run` does with two destinations
+
+With a `ready` binding each `run` does its normal local work and, as a second, independent
+destination, the same for Drive. The Drive side uploads from the staged copies in
+`<control>/staging`, never needs the archive to be up, and keeps its own ledger entry
+for every artifact (`pending`, `transferring`, `verifying`, `verified`, and the failure states)
+under the Drive revision. Interrupted Drive entries of an earlier run are settled first, by
+asking Drive what exists under the reserved file id. Every file id is written to the ledger
+before Drive sees it, so a killed run resumes with the same id instead of creating a duplicate. The `run_*` line
+adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError` to its
+`counts`.
+
+- **Drive failures make the run `partial`, never `failed` or `blocked`, and the exit stays 0.**
+  They are reason codes of the run: `drive-token-invalid`, `drive-permission`, `drive-quota`
+  and `drive-conflict` (the entry is `blocked`), `network-timeout`, `rate-limited` and
+  `drive-unavailable` (the entry waits in `retry_wait`), `drive-root-changed`,
+  `artifact-integrity` (a Drive copy that does not match its artifact: `integrity_error`,
+  uploaded again under a new file id; after repeated failures `integrity-repeated`, which is not
+  retried), and `token-file-invalid` (a Drive secret file cannot be used). They replace
+  `drive-not-configured` in the list. A healthy run is `partial` with `coverage-unverified`, as
+  before. A `blocked` or `retry_wait` Drive entry is tried again by every later run.
+- **Waiting and stopping.** A transient failure waits `min(60 * 2^(n-1), 21600)` seconds
+  before that artifact is tried again (n is the attempt number; a `Retry-After` from Drive is a
+  lower bound). Three transient failures in a row stop the Drive work for the rest of the run.
+  `drive-token-invalid`, `drive-permission` and `drive-quota` also stop it, because nothing
+  else can succeed; the remaining artifacts are recorded as blocked with that reason.
+  `drive-root-changed` is found once, before the first Drive call that has work to do, and
+  stops the Drive work for the whole run before anything is uploaded. The local archive is
+  untouched by all of this.
+- **Archive down, Drive up.** The local side ends as `blocked` with `archive-unavailable`, but
+  the Drive side goes on uploading from staging and publishes its records. The first run after
+  the archive returns catches the archive up from the staged copies without a new export download.
+- **Control down, nothing new.** When the control directory is unusable or below its reserve the
+  run ends with `control-space` or `control-unavailable` (exit 74), as it always did. The worker
+  checks the control directory's ledger reserve immediately before every Drive operation: below
+  it, no Drive request is made and the run stops with `control-space`.
+- **Order of records.** A manifest goes to Drive only when every artifact it names is verified on
+  the current Drive revision. A completion goes only when every manifest it names is on Drive,
+  byte for byte. So Drive never holds a record that names something Drive does not have, and
+  a completion on Drive means everything it lists is on Drive.
+- **Records the archive could not keep.** A manifest, completion or run inventory that the
+  Drive phase must publish but the local archive did not publish in the same run (archive down,
+  or refused) is first written to `<control>/drive-outbox/<sha256>.json` (directory 0700, file 0600,
+  synced, never replaced) and recorded as pending in the ledger; the next runs publish it from
+  those bytes, checking the hash. A missing or damaged outbox file leaves the record pending and
+  the run reports `artifact-integrity`. Records the archive did publish are caught up from the
+  archive's bytes. The worker never deletes an outbox file. Keep them: they are small, and a
+  later `--rebind` re-publishes records from them when the archive does not hold the record. An
+  outbox file whose record is still pending must never be removed; one whose record is on Drive
+  may be removed by hand if you accept that limit.
+- **A completion written while the archive was down exists only on Drive.** It lists the
+  documents whose artifacts are all on Drive and a gap, with its reason, for each other document
+  of the snapshot. It still names the local destination identity (it is built from the same bytes
+  the archive would have written), and there is never more than one completion per snapshot
+  sequence: with a healthy archive only the local completion exists, and a byte-identical copy
+  of it goes to Drive. `restore-drive` followed by `restore --latest` gives exactly the documents
+  such a completion lists.
+- **The copies heal each other.** An artifact whose staged copy is gone is restaged from the
+  archive or from Drive, whichever holds a verified copy, before the export is asked again.
+
+## Checking Drive with `verify`
+
+With a `ready` binding, `verify` also rechecks the Drive copies of the current revision, in
+addition to the archive: with `--all` every Drive artifact is downloaded and hashed; without it,
+those never checked or last verified more than 7 days ago are checked against Drive's own facts
+(parent, name, type, size, checksum; a download only when Drive reports no checksum). It checks
+artifacts only, not the Drive copies of manifests or completions. A Drive copy found missing or
+different becomes an `integrity_error` of its Drive entry, and the next `run` uploads it again
+under a new file id; nothing is deleted on Drive. The `verify_finished` counts (`checked`,
+`integrityErrors`) include the Drive entries. If Drive cannot answer (unreachable, token refused,
+root changed, unusable secret file) nothing is recorded as damaged and the exact reason code
+(for example `drive-root-changed`, `network-timeout`, `drive-token-invalid`) is on the verify
+run's `run_finished` record in the ledger; the exit stays 0. The Drive pass also runs when the
+archive is unavailable.
+
+## Recovery with Drive
+
+**Ledger lost, Drive and archive present.** Run `recover` as described above. With a `drive`
+block it then adopts the Drive root that already holds the archive. It creates, uploads, renames
+and trashes nothing on Drive. Everything it reads is validated before it is written to the
+ledger: the marker must equal the archive marker byte for byte, the manifests, completions and run
+inventories must pass their parsers, and an artifact is recovered only after Drive's checksum
+(or the downloaded bytes) proves it. A completion that only Drive holds still counts as the
+sequence evidence, so its sequence number is never reused. The root is chosen in this order:
+
+1. `recover --installation-id <id> --drive-root-folder-id <root id>`: that folder, which must be
+   an untrashed folder of this installation holding the archive marker.
+2. Else the root of the `pending` binding already in the ledger (an interrupted `recover`).
+3. Else discovery: the untrashed folders whose installation label equals the installation id and
+   that hold a marker equal to the archive marker. Exactly one is adopted. If more than one
+   qualifies (typically after a rebind, since the old root is left in place), `recover` prints
+   `{"event":"recover_drive_root_ambiguous","reasonCode":"drive-root-changed","candidates":[{"rootFolderId":"<id>","bindingId":"<uuid>"}]}`
+   (ids only), exits 69, and you run it again with `--drive-root-folder-id <id>` of the root
+   you want, or trash the old root first. A root whose marker differs from the archive's is never
+   adopted: if every candidate holds a different marker the result is `archive-conflict`
+   (exit 69), and with no candidate at all `drive-root-changed`.
+
+The local part is finished and kept whatever the Drive part ends with. A Drive that cannot be
+used now (unreachable, token refused, secret file unusable) ends `recover` with that reason
+and a later `recover` with the same arguments finishes the Drive part without creating
+anything twice. If the config has a `drive` block but there is no root on Drive at all (it was
+never set up), `recover` finishes locally and then exits 69 `drive-root-changed`: run
+`drive-setup`. Two Drive objects at one path of the layout are `drive-conflict` (exit 69) and
+nothing from Drive is written. A `recover` that finds a `ready` binding already in the ledger
+does nothing more for Drive, and refuses a different `--drive-root-folder-id` with
+`drive-root-changed`: use `drive-setup --rebind` to bind another root.
+
+After `recover` the next `run` resumes with no duplicate creates: the adopted folders, files
+and records are in the ledger.
+
+**Local archive lost too.** Rebuild the archive from Drive first, then continue as above:
+
+1. `restore-drive` (next section) into a new empty directory outside the configured archive and
+   control paths. It refuses any `--out` inside or around them.
+2. Move `.restore-drive-tmp/` and `restore-drive-report.json` out of that directory (the
+   archive must hold only its own files), put the directory at the configured `archive.path`
+   (the same `archive.archiveId`; with the default `requireMountPoint: true` it must be a
+   mount point) with the ownership and mode rules above, and have a control directory with
+   its `worker.lock` and no ledger (new, or the old one with `ledger/` and every
+   `ledger.quarantine-*` moved out, since the restored archive is a new inode).
+3. `recover --installation-id <id>` with `<id>` from `<archive>/.bjj-backup/installation.json`,
+   under the lock, as above. It rebuilds the ledger from the archive and adopts the Drive
+   root.
+
+To only get the documents back, you do not need steps 2 and 3: run the normal restore on the
+`restore-drive` output.
+
+## `restore-drive`: the archive from Drive alone
+
+    cd backend && NODE_PATH=. node -r ts-node/register/transpile-only \
+      scripts/eformsign-backup-restore-drive.ts --config <abs path to worker.json> \
+      --out <abs new or empty dir> [--root-folder-id <id>]
+
+It copies the Drive tree into `--out`, path for path, so the result has the layout of the
+archive and the unchanged `scripts/eformsign-backup-restore.ts` works on it. It needs only the
+`drive` block and its secret files (the rest of the config is validated; `archive.archiveId`
+selects the root, `archive.path` and `control.path` only keep `--out` away from them, and
+`enabled` is ignored). It takes no lock and reads no ledger, archive or control directory, and
+those need not exist. It only reads on Drive (GET requests).
+
+- `--out`: an absolute normal path of a new or an empty real directory. It must not be, contain
+  or lie in the configured `archive.path` or `control.path` (also through symlinks), else
+  `restore-output-invalid` (exit 64) before any request. `--root-folder-id` must be a Drive
+  file id.
+- The root is the untrashed folder labelled with `archive.archiveId`. None, or more than one
+  (for example after a rebind), is `drive-root-changed` (exit 69): stdout then carries
+  `{"event":"restore_drive_root_ambiguous","reasonCode":"drive-root-changed","candidates":[...ids]}`;
+  rerun with `--root-folder-id <id>` to choose one (it must be an untrashed folder of this
+  archive id).
+- The whole tree is listed first. Each file is then received, verified against what its own
+  path claims, and only then written. An artifact must have the SHA-256 in its name and be a
+  PDF of the expected shape; a manifest, completion, run inventory and the marker must pass
+  their parsers (a completion's name must match its content, the marker must name this archive
+  id). A manifest must agree with its verified artifacts on length and a completion with its
+  manifests on digest. Anything else (an unsafe name, an unknown path, a Google-native
+  document) fails.
+- A file that fails is not written. A verified file is linked into place without ever
+  overwriting an existing one: if two Drive files map to the same path (Drive allows equal
+  names in one folder), the second is reported as `drive-conflict`. Files are 0600,
+  directories 0700.
+- At the end `--out/restore-drive-report.json` holds `schemaVersion`, `rootFolderId`,
+  `archiveId`, `verified`, `failed` and `failures` (`relativeKey` and a reason:
+  `artifact-integrity`, `mirror-missing`, `drive-conflict`). stdout is one line:
+  `restore_drive_verified` (exit 0) or `restore_drive_failed` (exit 65), each with
+  `rootFolderId` and `counts` (`verified`, `failed`). The exit codes are in the table above.
+  A command that ends before that point (69, 78, 70) leaves no report and may leave
+  partial output: start again in a new empty directory.
+- `--out/.restore-drive-tmp/` stays: the worker deletes nothing, files that failed or collided
+  are truncated to zero bytes, and a verified file is a hard link of its mirrored file. You may
+  delete `.restore-drive-tmp/` after the run; the mirrored files are not affected.
+
+**If a file failed (exit 65).** The unchanged restore is fail-fast: a missing or corrupt artifact
+named by the completion it selects stops it. `restore-drive` therefore does not give you a
+partial restore of the latest snapshot. `restore --latest` on the output fails with
+`artifact-integrity` when the latest completion names a failed file. Read `failures` in the
+report and restore a `--snapshot` whose completion names none of the failed files (an earlier
+one, which restores normally), as under "Restore from the archive alone":
+
+    cd backend && NODE_PATH=. node -r ts-node/register/transpile-only \
+      scripts/eformsign-backup-restore.ts --archive <the restore-drive --out dir> --company <id> \
+      (--latest | --snapshot <id>) --out <another new dir>
+
+## Not yet proven against real Drive
+
+Everything above was built and tested against a fake Drive and fake OAuth server on the loopback
+address. These points stay unverified until the first real run (BJJ-457): that publishing the
+consent screen to Production is what keeps the refresh token alive (Testing: 7 days) and that
+`drive.file` is enough for every call the worker makes; that real Drive reports a SHA-256
+checksum for every uploaded file (the worker downloads and hashes when it does not); how real
+Drive answers a create with a pre-generated id, including a repeated create (the worker
+treats a 409 by looking the id up and comparing); and the upload of a zero-byte file.
