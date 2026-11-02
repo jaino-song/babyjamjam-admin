@@ -351,7 +351,8 @@ describe("BJJ-456 PF1: a recovered (length-less) artifact heals from its verifie
             const lost = await lostLocalCopy();
             await fs.rm(path.join(h.archive, lost.manifestKey));
             const away = `${h.archive}.away`;
-            const spy = afterListing(manifestsDirOf(lost), async () => { await fs.rename(h.archive, away); });
+            // The enumeration lists D001, then the company's completions and runs directories: it is complete (and negative) after the last one.
+            const spy = afterListing(path.join(h.archive, "eformsign", COMPANY, "runs"), async () => { await fs.rename(h.archive, away); });
 
             await settled();
 
