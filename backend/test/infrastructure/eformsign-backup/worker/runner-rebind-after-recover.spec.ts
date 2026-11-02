@@ -178,7 +178,11 @@ describe("BJJ-456 QF1: drive-setup --rebind after recover", () => {
             expect(after.finished - before.finished).toBe(1);
             await runOnce(h);
             await runOnce(h);
-            await expectNewRootEqualsArchive();
+            const tree = await driveTree(h, fakes);
+            const archiveFiles = (await listFiles(h.archive)).sort();
+            for (const key of archiveFiles) expect(tree.get(key)?.equals(await fs.readFile(path.join(h.archive, key)))).toBe(true);
+            // The failed run's own inventory could not be written to the archive; it is held on Drive only, which is what the archive-down path does.
+            expect([...tree.keys()].filter((key) => !archiveFiles.includes(key)).every((key) => RUN_KEY.test(key))).toBe(true);
         }, 180_000);
 
         it("run: a failing runs/ listing is not an absent folder: it marks the archive unavailable and the standalone inventory follows on the next run", async () => {

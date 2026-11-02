@@ -273,8 +273,9 @@ async function readCompletionFacts(archive: LocalDestination, companyId: string)
  * A staged copy of an artifact `recover` has just proven from the archive: when `<control>/staging/<identity>.bin` is a regular file of
  * exactly the manifest's length whose bytes hash to the artifact's sha256, the ledger learns it (`staging_verified`, the same record a run
  * writes after staging), so a later run takes that copy as the one it staged instead of setting it aside as damaged and staging it again.
- * Nothing is read from anywhere but that file, nothing is changed on disk, and a copy that is missing, unreadable or different is left
- * exactly as it is (never an error of `recover`: the next run treats it as it always did).
+ * Nothing is read from anywhere but that file, nothing is changed on disk, and a copy that is missing, unreadable (any error reading
+ * it, `EACCES` included) or different is left exactly as it is (never an error of `recover`: the next run treats it as it always did).
+ * Only the ledger write is outside that: its failure propagates.
  */
 async function adoptStagedCopy(
     deps: RunnerDependencies, archive: LocalDestination, artifact: { artifactIdentity: string; sha256: string; byteLength: number },
@@ -293,9 +294,9 @@ async function adoptStagedCopy(
             seen += chunk.byteLength;
         }
         if (seen !== artifact.byteLength || hash.digest("hex") !== artifact.sha256) return;
-    } catch (error) {
-        if (isEnoent(error) || error instanceof WorkerError) return;
-        throw error;
+    } catch {
+        // Optional: any failure to read the staged copy (a directory or file the worker cannot open included) leaves recovery as it was.
+        return;
     }
     await deps.ledger.append("staging_verified", {
         artifactIdentity: artifact.artifactIdentity, sha256: artifact.sha256, byteLength: artifact.byteLength,
