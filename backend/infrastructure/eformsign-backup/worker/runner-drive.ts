@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
 
 import {
-    WorkerError, artifactKey, buildCompletion, classifyDriveFailure, completionSchema, destinationKey, driveMimeOf, driveNameOf, driveStateKey, isDriveDestinationIdentity,
-    integrityErrorCount, integrityRetryDecision, parseManifestKey, runInventorySchema, runKey,
+    WorkerError, artifactKey, buildCompletion, classifyDriveFailure, completionContentDigest, completionKey, completionSchema, destinationKey, driveMimeOf, driveNameOf,
+    UUID_V4_PATTERN, driveStateKey, isDriveDestinationIdentity, integrityErrorCount, integrityRetryDecision, parseCompletionName, parseManifestKey, runInventorySchema, runKey,
     type ArchiveArtifactType, type DestinationEntry, type Installation, type LedgerState, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { readOutbox, writeOutbox } from "./drive-outbox";
 import { DriveTransferError, type DriveFailure } from "./drive-client";
 import type { DriveDestination, DriveNodeLedger, DriveStep } from "./drive-destination";
 import type { LocalDestination, StagingRoot } from "./local-destination";
-import { parseManifestBytes } from "./restore";
+import { listManifestFiles, parseManifestBytes } from "./restore";
 import { DestinationLedger, TRANSIENT_STOP, assertLedgerRoom, isTerminalReason, ledgerDriveNodes, nowIso } from "./runner-common";
 import type { RunnerDependencies } from "./runner-types";
 
@@ -761,6 +762,7 @@ export class DriveRunPhase {
                 if (!pushed.ok) this.manifestFailures.set(parts.documentId, pushed.reasonCode);
                 if (this.halted !== null) break;
             }
+            await this.publishArchiveOnlyManifests(handled);
         }
 
         // 4. The completion of this run's snapshot. Bytes the archive did not publish are queued first (they exist nowhere else) and
@@ -799,13 +801,16 @@ export class DriveRunPhase {
                 await this.push(key, bytes, false);
                 if (this.halted !== null) break;
             }
+            await this.publishArchiveOnlyCompletions(handled);
         }
 
         // 6. Run inventories the archive published and Drive does not have yet (an earlier run's refused upload, or every earlier run
         // after a rebind), from the archive's own bytes. The ledger keeps no hash for them, so the bytes must be a run inventory of
         // exactly that run; a run that never published one has no file and costs one failed lookup.
         if (this.host.archiveOk()) {
-            for (const runId of [...this.state.runs.keys()]) {
+            const runIds = new Set(this.state.runs.keys());
+            for (const runId of await this.archiveOnlyRunIds()) runIds.add(runId);
+            for (const runId of runIds) {
                 if (this.halted !== null) break;
                 const key = runKey({ companyId: config.companyId, runId });
                 if (handled.has(key) || this.state.driveRecords.has(driveStateKey(this.revision, key))) continue;
@@ -822,6 +827,143 @@ export class DriveRunPhase {
                 await this.push(key, bytes, false);
             }
         }
+    }
+
+    /**
+     * After a `recover` the ledger knows only the records written since: the manifests, completions and run inventories the archive
+     * held before it are in no ledger map the steps above walk, so a Drive revision that starts empty (a rebind) would never receive
+     * them. These three helpers walk the archive itself for exactly those records, with the checks the ledger's own would get: a
+     * completion counts only when its name, company, sequence and content digest agree with its bytes (what `recover` itself requires),
+     * a manifest only when it parses as its document's manifest under its key and, when a valid completion binds a digest to it, has that
+     * digest, a run inventory only when it is the inventory of the run its name says. Nothing is invented: every byte comes from the
+     * archive's own file, and the guards of `completionReady` and `manifestArtifactsVerified` apply unchanged. Only an installation that
+     * `recover` built pays for the walk; a ledger that has seen every run itself already names all of them.
+     */
+    private get recovered(): boolean {
+        return this.installation.origin === "recovery_started";
+    }
+
+    /** Valid completions of the archive that the ledger has not acknowledged, with the bytes their files hold. */
+    private async archiveOnlyCompletions(): Promise<Array<{ key: string; bytes: Buffer; content: ReturnType<typeof completionSchema.parse> }> | null> {
+        const { companyId } = this.deps.config;
+        let files: Awaited<ReturnType<LocalDestination["listCompletions"]>>;
+        try {
+            files = await this.archive.listCompletions(companyId);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.host.archiveLost();
+            return null;
+        }
+        const found: Array<{ key: string; bytes: Buffer; content: ReturnType<typeof completionSchema.parse> }> = [];
+        for (const file of files) {
+            const name = parseCompletionName(file.name);
+            if (name === null) continue;
+            const parsed = completionSchema.safeParse(file.content);
+            if (!parsed.success || parsed.data.companyId !== companyId || parsed.data.sequence !== name.sequence
+                || completionContentDigest(parsed.data) !== name.contentDigest) continue;
+            const key = completionKey({ companyId, sequence: name.sequence, contentDigest: name.contentDigest });
+            let bytes: Buffer | null;
+            try {
+                bytes = await this.archive.readArchiveFile(key);
+            } catch (error) {
+                if (!(error instanceof WorkerError)) throw error;
+                this.host.archiveLost();
+                return null;
+            }
+            if (bytes === null) continue;
+            let again: unknown;
+            try { again = JSON.parse(bytes.toString("utf8")); } catch { continue; }
+            const reread = completionSchema.safeParse(again);
+            if (!reread.success || completionContentDigest(reread.data) !== name.contentDigest) continue;
+            found.push({ key, bytes, content: reread.data });
+        }
+        return found;
+    }
+
+    private archiveCompletionScan: Promise<Awaited<ReturnType<DriveRunPhase["archiveOnlyCompletions"]>>> | null = null;
+
+    private scanArchiveCompletions(): Promise<Awaited<ReturnType<DriveRunPhase["archiveOnlyCompletions"]>>> {
+        this.archiveCompletionScan ??= this.archiveOnlyCompletions();
+        return this.archiveCompletionScan;
+    }
+
+    private async publishArchiveOnlyManifests(handled: Set<string>): Promise<void> {
+        if (!this.recovered || this.halted !== null) return;
+        const { config } = this.deps;
+        const completions = await this.scanArchiveCompletions();
+        if (completions === null) return;
+        const bound = new Map<string, Set<string>>();
+        for (const completion of completions) {
+            for (const entry of completion.content.entries) bound.set(entry.manifestKey, (bound.get(entry.manifestKey) ?? new Set<string>()).add(entry.manifestSha256));
+        }
+        let files: Awaited<ReturnType<typeof listManifestFiles>>;
+        try {
+            files = await listManifestFiles(config.archive.path, config.companyId);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.host.archiveLost();
+            return;
+        }
+        for (const file of files) {
+            const key = file.key;
+            if (handled.has(key) || this.state.manifests.has(key)) continue;
+            const parts = parseManifestKey(key);
+            if (parts === null || parts.companyId !== config.companyId) continue;
+            let bytes: Buffer | null;
+            try {
+                bytes = await this.archive.readArchiveFile(key);
+            } catch (error) {
+                if (!(error instanceof WorkerError)) throw error;
+                this.host.archiveLost();
+                return;
+            }
+            if (bytes === null) continue;
+            const digest = sha256Of(bytes);
+            const expected = bound.get(key);
+            if (expected !== undefined && !expected.has(digest)) continue;
+            if (this.onDrive(key, digest) || this.state.driveRecordsPending.get(driveStateKey(this.revision, key)) === digest) continue;
+            if (!this.isRecordShape(key, bytes) || !this.manifestArtifactsVerified(key, bytes)) continue;
+            handled.add(key);
+            const pushed = await this.push(key, bytes, false);
+            if (!pushed.ok) this.manifestFailures.set(parts.documentId, pushed.reasonCode);
+            if (this.halted !== null) return;
+        }
+    }
+
+    private async publishArchiveOnlyCompletions(handled: Set<string>): Promise<void> {
+        if (!this.recovered || this.halted !== null) return;
+        const completions = await this.scanArchiveCompletions();
+        if (completions === null) return;
+        for (const completion of completions) {
+            if (handled.has(completion.key) || this.state.completions.has(completion.key)) continue;
+            if (this.onDrive(completion.key, sha256Of(completion.bytes)) || !this.completionReady(completion.bytes)) continue;
+            handled.add(completion.key);
+            await this.push(completion.key, completion.bytes, false);
+            if (this.halted !== null) return;
+        }
+    }
+
+    /** The run ids whose inventories the archive may hold: those named by a valid completion, and the file names of its `runs/` folder. */
+    private async archiveOnlyRunIds(): Promise<string[]> {
+        if (!this.recovered) return [];
+        const ids = new Set<string>();
+        for (const completion of (await this.scanArchiveCompletions()) ?? []) ids.add(completion.content.runId);
+        const { archive, companyId } = { archive: this.deps.config.archive.path, companyId: this.deps.config.companyId };
+        try {
+            let directory = archive;
+            for (const segment of ["eformsign", companyId, "runs"]) {
+                directory = `${directory}/${segment}`;
+                const stat = await fs.lstat(directory);
+                if (stat.isSymbolicLink() || !stat.isDirectory()) return [...ids];
+            }
+            for (const name of await fs.readdir(directory)) {
+                const match = /^(.{36})\.json$/.exec(name);
+                if (match !== null && UUID_V4_PATTERN.test(match[1]!)) ids.add(match[1]!);
+            }
+        } catch {
+            // No runs folder (or one that cannot be listed): the ids a completion names are all there is to try.
+        }
+        return [...ids];
     }
 
     private isInventoryOf(bytes: Uint8Array, runId: string): boolean {
