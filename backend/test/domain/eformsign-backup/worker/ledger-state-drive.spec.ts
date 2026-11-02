@@ -1,6 +1,6 @@
 import {
     WorkerError, applyLedgerRecord, applyLedgerRecords, assertVerifiedReusable, destinationKey, driveDestinationIdentity,
-    driveDestinationRevision, driveStateKey, emptyLedgerState, ledgerStateFromJson, ledgerStateToJson, transitionDestination,
+    driveDestinationRevision, driveStateKey, emptyLedgerState, ledgerStateFromJson, ledgerStateToJson, nextSnapshotSequence, transitionDestination,
     type LedgerBodies, type LedgerRecord, type LedgerRecordType, type LedgerState,
 } from "domain/eformsign-backup/worker";
 import { canonicalJson } from "domain/eformsign-backup/source-evidence";
@@ -404,6 +404,27 @@ describe("Drive destination entries do not cross bindings (T29, u1-reuse)", () =
         const state = applyLedgerRecord(plain, rec("recovered_verified", { artifactIdentity: ART1, relativeKey: ART_KEY, sha256: hex("a") }));
         expect(state.destinations.get(destinationKey(ART1, "local:arch-1", "local-layout-v1"))?.state).toBe("verified");
         expect(state.destinations.get(destinationKey(ART1, ID_A, REV_A))).toBeUndefined();
+    });
+});
+
+describe("a published Drive completion is sequence evidence (BJJ-456 U6-F1)", () => {
+    const completionKey = (sequence: number, company = "company-1", digest = hex("d")) =>
+        `eformsign/${company}/completions/${String(sequence).padStart(12, "0")}-${digest}.json`;
+
+    it("advances the next snapshot sequence past the highest completion recorded as published on Drive", () => {
+        const state = build(() => [
+            installed(), driveBound(), published(hex("1"), FILE_1, completionKey(7)), published(hex("2"), FILE_2, completionKey(3)), driveReady(),
+        ]);
+
+        expect(nextSnapshotSequence(state)).toBe(8);
+        expect(nextSnapshotSequence(state, 12)).toBe(13);
+        expect(nextSnapshotSequence(ledgerStateFromJson(ledgerStateToJson(state)))).toBe(8);
+    });
+
+    it("ignores published records that are not completion files", () => {
+        const state = build(() => [installed(), driveBound(), published(hex("1"), FILE_1, REC_KEY), published(hex("2"), FILE_2, "eformsign/company-1/completions/not-a-completion.json")]);
+
+        expect(nextSnapshotSequence(state)).toBe(1);
     });
 });
 

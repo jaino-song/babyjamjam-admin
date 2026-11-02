@@ -332,6 +332,8 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
         deps.ledger = await deps.reopenLedger();
         if (deps.ledger.status === "ok") {
             await deps.ledger.repairPendingTail();
+            // The marker was the only thing missing; a Drive part an earlier pass could not finish is still owed (and an unusable Drive still reported).
+            await recoverDrive(deps, archive, options);
             return { outcome: "finished", recovered: 0, unverified: 0, sequenceFloor: deps.ledger.state.lastSeq, knownGaps: 0 };
         }
     }

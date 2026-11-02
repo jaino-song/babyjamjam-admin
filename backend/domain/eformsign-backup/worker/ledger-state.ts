@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { EXPORT_CLASSIFICATIONS } from "domain/eformsign-backup/export/constants";
-import { parseArtifactKey } from "./archive-paths";
+import { parseArtifactKey, parseCompletionName } from "./archive-paths";
 import {
     DESTINATION_STATES, destinationKey, transitionDestination, type DestinationState,
 } from "./destination-transitions";
@@ -126,6 +126,8 @@ export interface PublishedDriveRecord { sha256: string; fileId: string }
 export function driveStateKey(destinationRevision: string, key: string): string {
     return `${destinationRevision}|${key}`;
 }
+/** The archive path of a completion file: `eformsign/<company>/completions/<name>`. */
+const DRIVE_COMPLETION_KEY = /^eformsign\/[^/]+\/completions\/([^/]+)$/;
 function splitDriveStateKey(key: string): [string, string] {
     const at = key.indexOf("|");
     return [key.slice(0, at), key.slice(at + 1)];
@@ -218,6 +220,12 @@ function maxSequence(state: LedgerState): number {
     let max = state.sequenceFloor;
     for (const binding of state.snapshots.values()) max = Math.max(max, binding.sequence);
     for (const completion of state.completions.values()) max = Math.max(max, completion.sequence);
+    // A completion that only Drive holds (recover imported it, the archive does not have it) still owns its sequence.
+    for (const key of state.driveRecords.keys()) {
+        const name = splitDriveStateKey(key)[1].match(DRIVE_COMPLETION_KEY)?.[1];
+        const parsed = name === undefined ? null : parseCompletionName(name);
+        if (parsed !== null) max = Math.max(max, parsed.sequence);
+    }
     return max;
 }
 

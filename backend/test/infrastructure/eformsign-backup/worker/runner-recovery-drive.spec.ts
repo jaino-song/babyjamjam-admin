@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { WorkerError } from "domain/eformsign-backup/worker";
+import { WorkerError, parseCompletionName } from "domain/eformsign-backup/worker";
 import { runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
 import { runRestoreDriveCli } from "infrastructure/eformsign-backup/worker/cli-restore-drive";
 
@@ -10,7 +10,7 @@ import { PDF_KEY, JSON_KEY, bindDrive, currentRootId, driveKeys, driveTree, swap
 import { driveFaults } from "./helpers/fake-drive-server";
 import { spawnUnderFlock } from "./helpers/runner-flock-support";
 import {
-    ARCHIVE_ID, createHarness, destroyHarness, environmentFor, initArchive, listFiles, pairDoc, readJsonFile, readLedgerRecords, runOnce, tryRun,
+    ARCHIVE_ID, createHarness, destroyHarness, environmentFor, initArchive, listFiles, pairDoc, readCompletions, readJsonFile, readLedgerRecords, runOnce, tryRun,
     withWorker, type Harness,
 } from "./helpers/runner-support";
 
@@ -217,6 +217,64 @@ describe("T30 / BJJ-456 U6: recover and verify with Drive as the second destinat
             expect(await records("drive_bound")).toEqual([]);
             expect((await records("recovered_verified")).length).toBe(PDFS);
         }, 180_000);
+    });
+
+    describe("what the Drive completion sequence and the marker repair leave behind (U6-F1)", () => {
+        const completionSequences = (keys: Iterable<string>): number[] => [...keys]
+            .filter((key) => key.includes("/completions/"))
+            .map((key) => parseCompletionName(key.split("/").pop()!)!.sequence).sort((a, b) => a - b);
+
+        it("should give the next snapshot a sequence past a completion only Drive holds, so no sequence has two completions", async () => {
+            await populate();
+            const localNames = (await readCompletions(h.archive)).map((completion) => completion.name).sort();
+            expect(localNames).toHaveLength(2);
+            await fs.rm(path.join(h.archive, "eformsign", "C001", "completions", localNames[1]!));
+            await loseLedger();
+            expect(completionSequences(driveIds().files.keys())).toEqual([1, 2]);
+
+            await recover();
+            await runOnce(h);
+
+            expect(completionSequences(driveIds().files.keys())).toEqual([1, 2, 3]);
+            expect((await readCompletions(h.archive)).map((completion) => completion.value["sequence"] as number).sort((a, b) => a - b)).toEqual([1, 3]);
+        }, 240_000);
+
+        /** A recover that ended on a Drive that could not be used, and then lost the control marker as well. */
+        async function lostMarkerAfterUnusableDrive(): Promise<void> {
+            await populate();
+            await loseLedger();
+            await fs.chmod(fakes.refreshTokenFile, 0o644);
+            const err: string[] = [];
+            const code = await runWorkerCli(
+                ["recover", "--config", h.configPath, "--installation-id", installationId],
+                environmentFor(h, { out: () => undefined, err: (line) => err.push(line) }),
+            );
+            expect([code, err]).toEqual([78, ["token-file-invalid"]]);
+            expect(await records("drive_bound")).toEqual([]);
+            await fs.unlink(path.join(h.control, "installation.json"));
+        }
+
+        it("should still run the Drive part when this recover only had to restore the control marker", async () => {
+            await lostMarkerAfterUnusableDrive();
+            await fs.chmod(fakes.refreshTokenFile, 0o600);
+            const before = counters();
+
+            await recover();
+
+            expect((await records("drive_bound"))[0]!.body).toEqual(original);
+            expect(await records("drive_ready")).toHaveLength(1);
+            expect(await driveRecovered()).toHaveLength(PDFS);
+            expect(fakes.drive.creates).toBe(before.creates);
+            expect(fakes.drive.uploadsCompleted).toBe(before.uploads);
+        }, 240_000);
+
+        it("should report the unusable Drive instead of a clean finish when the marker repair path meets it", async () => {
+            await lostMarkerAfterUnusableDrive();
+
+            await expect(recover()).rejects.toMatchObject({ reasonCode: "token-file-invalid" });
+
+            expect(await records("drive_bound")).toEqual([]);
+        }, 240_000);
     });
 
     describe("conflicts are refused, the local result is kept", () => {
