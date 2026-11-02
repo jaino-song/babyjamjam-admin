@@ -784,8 +784,9 @@ class RunExecution {
         this.reasons.add("ledger-inconsistent");
     }
 
-    private failIndexConflict(artifactIdentity: string): void {
-        this.indexConflicts.add(artifactIdentity);
+    /** `subject`: the artifact identity a verdict is about, or the key of a bound manifest file that is damaged. */
+    private failIndexConflict(subject: string): void {
+        this.indexConflicts.add(subject);
         this.reasons.add("archive-conflict");
     }
 
@@ -880,6 +881,16 @@ class RunExecution {
         const sizes = new Map<string, number | null>();
         try {
             const completions = await this.completionDigests();
+            /**
+             * A file the ledger acknowledged or a valid completion names is bound: damage to it is a conflict of its own, whatever
+             * other manifest covers its artifacts. An invalid file nobody bound lists nothing (valid coverage is enough).
+             */
+            const bound = (key: string): boolean => this.state.manifests.has(key) || completions.has(key);
+            const contradicts = (key: string, sha256: string): boolean => {
+                const acknowledged = this.state.manifests.get(key);
+                return (acknowledged !== undefined && acknowledged.sha256 !== sha256)
+                    || [...(completions.get(key) ?? [])].some((expected) => expected !== sha256);
+            };
             const files: ManifestFile[] = (await listManifestFiles(this.deps.config.archive.path, this.companyId)).filter((file) => documents.has(file.documentId));
             for (const file of files) {
                 let bytes: Buffer | null;
@@ -888,6 +899,7 @@ class RunExecution {
                 } catch (error) {
                     if (error instanceof WorkerError && !isArchiveSide(error.reasonCode)) { // not a readable manifest: it lists nothing
                         invalidDocuments.add(file.documentId);
+                        if (bound(file.key)) this.failIndexConflict(file.key);
                         continue;
                     }
                     throw error;
@@ -900,8 +912,10 @@ class RunExecution {
                 } catch (error) {
                     if (!(error instanceof WorkerError)) throw error;
                     invalidDocuments.add(file.documentId);
+                    if (bound(file.key)) this.failIndexConflict(file.key);
                     continue;
                 }
+                if (contradicts(file.key, parsed.sha256)) this.failIndexConflict(file.key);
                 const level = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
                 for (const artifact of parsed.manifest.artifacts) {
                     if (!wanted.has(artifact.artifactIdentity)) continue;
