@@ -118,6 +118,13 @@ function sortedUnique(codes: Iterable<WorkerReasonCode>): WorkerReasonCode[] {
     return [...new Set(codes)].sort();
 }
 
+/** The export has failed this artifact for good: `integrity_error` past the retry limit, or already `blocked integrity-repeated`. */
+function integrityExhausted(entry: DestinationEntry): boolean {
+    return entry.state === "integrity_error"
+        ? integrityRetryDecision(integrityErrorCount(entry)).to === "blocked"
+        : entry.state === "blocked" && entry.reasonCode === "integrity-repeated";
+}
+
 /** An entry that still has work to do: not verified, not in flight, and not blocked for good (terminal or integrity-repeated). */
 function carryable(entry: DestinationEntry): boolean {
     switch (entry.state) {
@@ -479,38 +486,43 @@ class RunExecution {
         const inSnapshot = new Set(this.work.flatMap((candidate) => candidate.artifacts.map((job) => job.artifactIdentity)));
         for (const entry of [...this.state.destinations.values()]) {
             if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
-            if (!carryable(entry) || inSnapshot.has(entry.artifactIdentity)) continue;
+            if (inSnapshot.has(entry.artifactIdentity)) continue;
+            // QF3: an entry the export failed for good is picked up only to heal it from a verified Drive copy; it is otherwise left as it is.
+            const repeated = entry.state === "blocked" && entry.reasonCode === "integrity-repeated";
+            if (repeated ? !this.holdsVerifiedDriveCopy(entry.artifactIdentity, entry.relativeKey) : !carryable(entry)) continue;
             const info = this.state.artifacts.get(entry.artifactIdentity);
             if (info === undefined) {
-                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
+                if (!repeated) await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
                 continue;
             }
             let relativeKey: string;
             try {
                 relativeKey = entry.relativeKey ?? artifactKey({ companyId: this.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
             } catch {
-                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
+                if (!repeated) await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
                 continue;
             }
             // `recover` records an artifact without a length. Its length then comes from a manifest on the archive that lists it, never a guess.
             const lookup = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
             if (lookup !== null && lookup.status === "archive-unavailable") {
                 // A temporary archive outage is not proof that no manifest exists: stay retryable (never the terminal exact-bytes-unavailable).
-                await this.carryArchiveUnavailable(entry.artifactIdentity, relativeKey);
+                if (!repeated) await this.carryArchiveUnavailable(entry.artifactIdentity, relativeKey);
                 continue;
             }
             const recovered = lookup !== null && lookup.status === "found" ? lookup : null;
             const byteLength = info.byteLength ?? recovered?.byteLength ?? null;
             if (byteLength === null) {
-                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
+                if (!repeated) await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
                 continue;
             }
             const job: ArtifactJob = {
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
                 artifactIdentity: entry.artifactIdentity, sha256: info.sha256, byteLength, relativeKey,
             };
-            if (entry.state === "integrity_error" && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
-                await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "integrity-repeated", relativeKey });
+            if (integrityExhausted(entry)) {
+                // Recorded blocked integrity-repeated, then healed from Drive if it holds a verified copy (processArtifact); else it stays so.
+                if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
+                await this.processArtifact(job, "carry");
             } else {
                 const bytes: DriveHeal = recovered === null
                     ? (await this.stagedUsable(job) ? true : await this.healFromDrive(job))
@@ -666,17 +678,21 @@ class RunExecution {
         }
         const state = entry?.state ?? null;
         if (entry !== undefined && state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
-        if (entry !== undefined && state === "integrity_error"
-            && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
-            await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
-            return;
+        let staged: boolean;
+        if (entry !== undefined && integrityExhausted(entry)) {
+            if (state === "integrity_error") await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
+            // QF3 / V10: the export has failed this artifact for good, but a copy Drive holds verified still heals it, on every run, without
+            // asking the export again. While Drive cannot be asked (or holds no usable copy) the entry stays blocked integrity-repeated.
+            if ((await this.healFromDrive(job)) !== true) return;
+            staged = true;
+        } else {
+            staged = await this.stagedUsable(job);
+            if (entry !== undefined && state === "blocked" && !(await this.blockedMayRetry(entry, job, staged))) return;
+            if (state === "transferring" || state === "verifying") return;
+            // V10: a copy Drive holds verified is staged again before anything is downloaded or given up.
+            // Snapshot work falls back to the export when Drive could not be asked; carry work never gives up on that.
+            if (!staged) staged = (await this.healFromDrive(job)) === true;
         }
-        let staged = await this.stagedUsable(job);
-        if (entry !== undefined && state === "blocked" && !(await this.blockedMayRetry(entry, job, staged))) return;
-        if (state === "transferring" || state === "verifying") return;
-        // V10: a copy Drive holds verified is staged again before anything is downloaded or given up.
-        // Snapshot work falls back to the export when Drive could not be asked; carry work never gives up on that.
-        if (!staged) staged = (await this.healFromDrive(job)) === true;
 
         if (!staged) {
             if (mode === "carry" || this.stopDownloads) return;
@@ -939,19 +955,19 @@ class RunExecution {
         if (this.drive === null) {
             // No Drive phase this run (no `drive` block in the config, or the binding is not ready). A verified Drive copy the ledger still
             // holds for the installation's binding was not asked about: that is not an answer, so the local entry stays retryable.
-            return this.holdsVerifiedDriveCopy(job) ? { unavailable: "drive-not-configured" } : false;
+            return this.holdsVerifiedDriveCopy(job.artifactIdentity, job.relativeKey) ? { unavailable: "drive-not-configured" } : false;
         }
         if (!this.drive.driveVerified(job.artifactIdentity)) return false;
         return this.drive.restageFromDrive(job);
     }
 
     /** The ledger records the artifact verified on the installation's Drive binding, with the file node that holds it. */
-    private holdsVerifiedDriveCopy(job: ArtifactJob): boolean {
+    private holdsVerifiedDriveCopy(artifactIdentity: string, relativeKey: string | null): boolean {
         const binding = this.dl.installation.drive;
-        if (binding === null) return false;
-        const entry = this.state.destinations.get(destinationKey(job.artifactIdentity, binding.destinationIdentity, binding.destinationRevision));
+        if (binding === null || relativeKey === null) return false;
+        const entry = this.state.destinations.get(destinationKey(artifactIdentity, binding.destinationIdentity, binding.destinationRevision));
         if (entry?.state !== "verified") return false;
-        return this.state.driveNodes.get(driveStateKey(binding.destinationRevision, job.relativeKey))?.kind === "file";
+        return this.state.driveNodes.get(driveStateKey(binding.destinationRevision, relativeKey))?.kind === "file";
     }
 
     /**
