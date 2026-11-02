@@ -790,6 +790,52 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 expect(await verifyAll()).toMatchObject({ checked: 3 });
             });
 
+            describe("a sibling that is only late does not strand the verified half (BJJ-455 P2 FU-10-F4)", () => {
+                it("should index the verified half while its sibling waits for a retry, without a completion entry, and keep the manifest when the sibling lands", async () => {
+                    const late = pairDoc("D001");
+                    h = await createHarness({ docs: [late, pairDoc("D002")] });
+                    h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 503, code: "EXPORT_UNAVAILABLE", retryable: true } });
+                    await initArchive(h);
+                    const id = identityFor(h, late, "document");
+                    const sibling = identityFor(h, late, "audit_trail");
+
+                    await runOnce(h);
+
+                    expect((await destinationStates(h.control))[sibling]).toBe("retry_wait");
+                    expect((await transitionPath(h.control, id)).slice(-1)).toEqual(["verified"]);
+                    const manifests = await manifestsOf("D001");
+                    expect(manifests).toHaveLength(1);
+                    expect((await readCompletions(h.archive)).pop()!.value["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D002"]);
+                    // Recovery finds the verified document and D002's pair, and reports the sibling that never arrived.
+                    const lostAndFound = await loseLedgerAndRecover();
+                    expect(lostAndFound).toMatchObject({ recovered: 3, unverified: 1 });
+                    expect(await verifyAll()).toMatchObject({ checked: 3 });
+                });
+
+                it("should publish the same manifest again, byte for byte and without a conflict, when the late sibling lands", async () => {
+                    const late = pairDoc("D001");
+                    h = await createHarness({ docs: [late, pairDoc("D002")] });
+                    h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 503, code: "EXPORT_UNAVAILABLE", retryable: true } });
+                    await initArchive(h);
+                    await runOnce(h);
+                    const before = await manifestsOf("D001");
+                    expect(before).toHaveLength(1);
+                    const bytes = await fs.readFile(path.join(h.archive, before[0]!));
+
+                    h.api.clearFaults();
+                    h.clock.set(new Date(Date.now() + 3_600_000).toISOString());
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+
+                    const after = await manifestsOf("D001");
+                    expect(after).toEqual(before);
+                    expect((await fs.readFile(path.join(h.archive, after[0]!))).equals(bytes)).toBe(true);
+                    const entries = (await readCompletions(h.archive)).pop()!.value["entries"].map((entry: { documentId: string }) => entry.documentId);
+                    expect(entries).toContain("D001");
+                    expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 4, unverified: 0 });
+                    expect(await verifyAll()).toMatchObject({ checked: 4 });
+                });
+            });
+
             describe("backfill proves the archive file and never skips silently (BJJ-455 P2 FU-10-F2)", () => {
                 it("should publish a carried manifest again when the ledger records it but the archive file is gone", async () => {
                     const { id } = await carried();

@@ -88,6 +88,8 @@ class RunExecution {
     private readonly ledgerEvidenceFailures = new Set<string>();
     /** Verified artifacts a manifest on the archive contradicts: the file is left as it is and the run ends visibly. */
     private readonly indexConflicts = new Set<string>();
+    /** The completion listing of this run, before this run writes any completion. */
+    private completionListing: Awaited<ReturnType<LocalDestination["listCompletions"]>> | null = null;
     private totalCandidates = 0;
     private includedCandidates = 0;
 
@@ -278,12 +280,22 @@ class RunExecution {
         } while (cursor !== null);
     }
 
+    /**
+     * The archive's completion files, listed once per run. Only this run's own publishRecords writes a completion and it
+     * does so after both readers (the sequence at the snapshot stage, the manifest digests in the backfill), and the
+     * flock keeps any other writer out, so the first listing is still what the archive holds when the second reader asks.
+     */
+    private async completionFiles(): Promise<Awaited<ReturnType<LocalDestination["listCompletions"]>>> {
+        this.completionListing ??= await this.archive.listCompletions(this.companyId);
+        return this.completionListing;
+    }
+
     /** Highest sequence in the names of the archive's completion files (never a clock). */
     private async archiveMaxSequence(): Promise<number> {
         if (!this.archiveOk) return 0;
         try {
             let max = 0;
-            for (const file of await this.archive.listCompletions(this.companyId)) {
+            for (const file of await this.completionFiles()) {
                 max = Math.max(max, parseCompletionName(file.name)?.sequence ?? 0);
             }
             return max;
@@ -779,7 +791,7 @@ class RunExecution {
     /** Raw-manifest digests that valid completions bind to each manifest key, read with recovery's own rules. */
     private async completionDigests(): Promise<Map<string, Set<string>>> {
         const digests = new Map<string, Set<string>>();
-        for (const file of await this.archive.listCompletions(this.companyId)) {
+        for (const file of await this.completionFiles()) {
             const name = parseCompletionName(file.name);
             if (name === null) continue;
             const content = completionSchema.safeParse(file.content);
@@ -948,17 +960,10 @@ class RunExecution {
             // Listed nowhere: write the manifest again.
             let source: ManifestSource;
             const current = this.work.find((candidate) => candidate.artifacts.some((job) => job.artifactIdentity === artifact.id));
-            if (current !== undefined) {
-                // A sibling that is still on its way (retry, damaged and about to be republished) is this candidate's own business:
-                // the run reports it, and the manifest follows when the candidate completes. Only a sibling that is gone for good
-                // leaves the verified half stranded, so only then is it indexed on its own.
-                const pending = current.artifacts.some((job) => {
-                    const state = this.dl.entryOf(job.artifactIdentity)?.state;
-                    return state !== undefined && state !== "verified" && state !== "blocked";
-                });
-                if (pending) continue;
-                source = current;
-            } else {
+            // A sibling that is only late (retry, damaged and about to be republished) does not hold the verified half back:
+            // the manifest is the full set of the candidate, and the sibling's own publication later finds it byte for byte.
+            if (current !== undefined) source = current;
+            else {
                 try {
                     source = this.manifestSourceFor(artifact.id);
                 } catch (error) {
