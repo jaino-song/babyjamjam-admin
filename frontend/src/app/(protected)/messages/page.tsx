@@ -1857,7 +1857,7 @@ export default function MessagesPage() {
     return (
       <div
         data-component="desktop_messages_sections_template-send-layout"
-        className="grid h-full min-h-0 items-stretch gap-4 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]"
+        className="grid grid-cols-[minmax(0,1fr)] items-stretch gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(0,1.45fr)]"
       >
         <TemplateSendForm
           key={`${activeBranchId ?? "unavailable"}:${activeTemplateId}`}
@@ -1870,7 +1870,7 @@ export default function MessagesPage() {
           deliveryMode={deliveryMode}
           serviceRecordLinkPreparation={serviceRecordLinkPreparation}
           receiptLinkPreparation={receiptLinkPreparation}
-          className="h-full"
+          className="max-xl:min-w-0 xl:h-full"
           formId={TEMPLATE_SEND_FORM_ID}
           showSubmitButton={false}
           onSubmitStateChange={setTemplateSendSubmitState}
@@ -2035,7 +2035,7 @@ export default function MessagesPage() {
     ) : undefined;
 
   return (
-    <PageSection name="desktop_messages_sections">
+    <PageSection name="desktop_messages_sections"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
       <StatsBar
         name="desktop_messages_sections"
         showDocumentJobs="whenActive"
@@ -2050,7 +2050,7 @@ export default function MessagesPage() {
       />
       <div
         data-slot="page-sections"
-        className="flex flex-1 min-h-0 flex-col gap-4 lg:flex-row lg:items-stretch"
+        className="flex flex-1 min-h-0 flex-col gap-4 max-md:min-h-[calc(100vh-calc(160px*var(--glint-ui-scale,1)))] lg:flex-row lg:items-stretch"
       >
         <SectionNav
           data-component="desktop_messages_sections_section-nav"
@@ -2276,24 +2276,24 @@ export default function MessagesPage() {
                       panelDataComponent="desktop_messages_sections_template-detail-pane"
                       className={
                         templateDetailTab === "preview" || activeSection === "send"
-                          ? "flex min-h-0 flex-1"
+                          ? templateDetailTab === "preview" ? "flex min-h-0 flex-1" : "flex max-xl:flex-none xl:min-h-0 xl:flex-1"
                           : "min-h-0 shrink-0"
                       }
                       trackClassName={
                         templateDetailTab === "preview" || activeSection === "send"
-                          ? "min-h-0 flex-1"
+                          ? templateDetailTab === "preview" ? "min-h-0 flex-1" : "min-w-0 flex-1 xl:min-h-0"
                           : "min-h-0"
                       }
                       panelClassName={
                         templateDetailTab === "preview" || activeSection === "send"
-                          ? "h-full min-h-0"
+                          ? templateDetailTab === "preview" ? "h-full min-h-0" : "xl:h-full xl:min-h-0"
                           : "min-h-0"
                       }
                       panels={[
                         {
                           key: "details",
                           className: activeSection === "send"
-                            ? "min-h-0"
+                            ? templateDetailTab === "preview" ? "min-h-0" : "xl:min-h-0"
                             : undefined,
                           children: selectedTemplateFormContent,
                         },
@@ -2386,6 +2386,6 @@ export default function MessagesPage() {
           )}
         </div>
       </div>
-    </PageSection>
+    </div></PageSection>
   );
 }

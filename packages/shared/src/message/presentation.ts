@@ -443,7 +443,15 @@ export function formatMessageFailureReason(reason: string | null | undefined): s
     .replace(/\s+/g, " ")
     .replace(/\s+\./g, ".")
     .trim();
+  if (!/[\uAC00-\uD7A3\u3131-\u318E]/.test(sanitizedReason)) return "";
   return permanentFailure && sanitizedReason ? `발송 실패: ${sanitizedReason}` : sanitizedReason;
+}
+
+export const MESSAGE_FAILURE_REASON_FALLBACK = "발송 중 오류가 발생했어요.";
+
+export function formatFailedMessageReason(reason: string | null | undefined): string {
+  if (!reason?.trim()) return "";
+  return formatMessageFailureReason(reason) || MESSAGE_FAILURE_REASON_FALLBACK;
 }
 
 export interface NormalizeMessageHistoryPresentationOptions {
@@ -496,7 +504,7 @@ export function normalizeMessageHistoryPresentation(
       || fallbackRecipientName
       || "";
   const failureReason = record.status === "failed"
-    ? formatMessageFailureReason(record.errorMessage)
+    ? formatFailedMessageReason(record.errorMessage)
     : "";
   const setupReason = record.status === "needs_setup"
     ? formatMessageFailureReason(record.errorMessage)
