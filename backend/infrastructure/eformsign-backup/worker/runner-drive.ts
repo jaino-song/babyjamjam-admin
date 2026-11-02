@@ -10,7 +10,7 @@ import { DriveTransferError, type DriveFailure } from "./drive-client";
 import type { DriveDestination, DriveNodeLedger, DriveStep } from "./drive-destination";
 import type { LocalDestination, StagingRoot } from "./local-destination";
 import { parseManifestBytes } from "./restore";
-import { DestinationLedger, TRANSIENT_STOP, assertLedgerRoom, ledgerDriveNodes, nowIso } from "./runner-common";
+import { DestinationLedger, TRANSIENT_STOP, assertLedgerRoom, isTerminalReason, ledgerDriveNodes, nowIso } from "./runner-common";
 import type { RunnerDependencies } from "./runner-types";
 
 /** One artifact the run works on, as `runner-run.ts` holds it (structurally the same shape). */
@@ -323,19 +323,29 @@ export class DriveRunPhase {
     }
 
     /**
-     * Artifacts the local destination holds verified and this Drive revision has no entry for at all (everything a rebind starts
-     * without, and anything no snapshot offers any more): they become Drive work like any other, uploaded from verified bytes
-     * (staging, else the local archive after a hash check) before their records. One pass over the ledger per run.
+     * Artifacts this Drive revision has no entry for at all (everything a rebind starts without, and anything no snapshot offers any
+     * more) that still have verified bytes to upload from, and so become Drive work like any other, before their records. Two kinds:
+     * what the local destination holds verified (uploaded from staging, else the local archive after a hash check), and what only
+     * staging holds: the local entry is not verified and not terminal, or an earlier Drive revision had an entry for it (it reached
+     * Drive during an archive outage, and the local side never verified it). The latter is selected only when a staged copy on record
+     * passes the length and hash checks right here, so an artifact without verifiable bytes never reaches `processJob`. One pass over
+     * the ledger per run.
      */
     private async processHistorical(inSnapshot: ReadonlySet<string>): Promise<void> {
         const local = this.installation;
-        const missing: string[] = [];
+        const verifiedLocally = new Set<string>();
+        const stagedOnly = new Set<string>();
         for (const entry of this.state.destinations.values()) {
-            if (entry.destinationIdentity !== local.destinationIdentity || entry.destinationRevision !== local.destinationRevision) continue;
-            if (entry.state !== "verified" || inSnapshot.has(entry.artifactIdentity) || this.dl.entryOf(entry.artifactIdentity) !== undefined) continue;
-            missing.push(entry.artifactIdentity);
+            const id = entry.artifactIdentity;
+            if (inSnapshot.has(id) || this.dl.entryOf(id) !== undefined) continue;
+            if (entry.destinationIdentity === local.destinationIdentity && entry.destinationRevision === local.destinationRevision) {
+                if (entry.state === "verified") verifiedLocally.add(id);
+                else if (!isTerminalReason(entry.reasonCode)) stagedOnly.add(id);
+            } else if (entry.destinationIdentity.startsWith("drive:") && entry.destinationRevision !== this.revision) {
+                stagedOnly.add(id);
+            }
         }
-        for (const identity of missing.sort()) {
+        for (const identity of [...new Set([...verifiedLocally, ...stagedOnly])].sort()) {
             if (this.halted !== null) return;
             const info = this.state.artifacts.get(identity);
             if (info === undefined) continue;
@@ -343,12 +353,34 @@ export class DriveRunPhase {
             try {
                 relativeKey = artifactKey({ companyId: this.deps.config.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
             } catch { continue; }
-            const byteLength = await this.resolveLength(identity, info, relativeKey);
+            const byteLength = verifiedLocally.has(identity)
+                ? await this.resolveLength(identity, info, relativeKey)
+                : await this.stagedLength(identity, info, relativeKey);
             if (byteLength === null) continue;
             await this.processJob({
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
                 artifactIdentity: identity, sha256: info.sha256, byteLength, relativeKey,
             });
+        }
+    }
+
+    /**
+     * The length of an artifact's staged copy when that copy is on record for exactly this artifact, agrees with the ledger's length
+     * when it has one, is on disk with the recorded size and hashes to the recorded sha256; otherwise `null`. Nothing is changed.
+     */
+    private async stagedLength(identity: string, info: NonNullable<ReturnType<LedgerState["artifacts"]["get"]>>, relativeKey: string): Promise<number | null> {
+        const staged = this.state.staged.get(identity);
+        if (staged === undefined || staged.sha256 !== info.sha256) return null;
+        if (info.byteLength !== null && staged.byteLength !== info.byteLength) return null;
+        const job: DriveJob = {
+            documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
+            artifactIdentity: identity, sha256: info.sha256, byteLength: staged.byteLength, relativeKey,
+        };
+        try {
+            return await this.host.stagedUsable(job) && await this.stagedHashOk(job) ? staged.byteLength : null;
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            return null;
         }
     }
 
