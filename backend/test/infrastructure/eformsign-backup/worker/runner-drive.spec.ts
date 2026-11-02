@@ -5,7 +5,7 @@ import { runRestoreDriveCli } from "infrastructure/eformsign-backup/worker/cli-r
 import { runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
 import { restoreFromArchive } from "infrastructure/eformsign-backup/worker/restore";
 import { DRIVE_OUTBOX_DIR } from "infrastructure/eformsign-backup/worker/drive-outbox";
-import { driveStateKey } from "domain/eformsign-backup/worker";
+import { destinationKey, driveStateKey } from "domain/eformsign-backup/worker";
 import { assertLedgerRoom } from "infrastructure/eformsign-backup/worker/runner-common";
 import { readOutbox, writeOutbox } from "infrastructure/eformsign-backup/worker/drive-outbox";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
@@ -613,6 +613,78 @@ describe("rebind completeness (BJJ-456 U5-F2), phase with a stubbed Drive", () =
             expect(sent).toHaveLength(1);
             expect(sha256Of(sent[0]!)).toBe(doc.job.sha256);
             expect(rig.phase.driveVerified(doc.job.artifactIdentity)).toBe(true);
+        });
+
+        // U8-F2: the length is resolved in one place for every Drive path; a first transient failure must not strand the artifact.
+        const driveEntry = (doc: ReturnType<typeof rigDoc>): { state: string; nextRetryAt: string | null } =>
+            rig.state().destinations.get(destinationKey(doc.job.artifactIdentity, rig.driveIdentity, rig.revision));
+
+        it("should upload it on the next run after a transient failure (retry_wait, null length) once the retry time has passed, exactly once", async () => {
+            const { doc, sent } = await recoveredRig();
+            rig.archiveFiles.set(doc.job.relativeKey, Buffer.from(doc.pdf));
+            const upload = rig.destination.uploadArtifact;
+            let attempts = 0;
+            rig.destination.uploadArtifact = async (...args: unknown[]) => {
+                attempts += 1;
+                if (attempts === 1) return { ok: false, failure: { kind: "timeout", httpStatus: null, reason: null, retryAfterSeconds: null } };
+                return (upload as (...a: unknown[]) => unknown)(...args);
+            };
+
+            await rig.phase.processWork([]);
+            expect(driveEntry(doc).state).toBe("retry_wait");
+            expect(rig.state().artifacts.get(doc.job.artifactIdentity).byteLength).toBeNull();
+
+            const retryAt = Date.parse(driveEntry(doc).nextRetryAt!);
+            rig.deps.clock.now = () => new Date(retryAt + 1000);
+            const next = rig.newPhase();
+            await next.recoverInterrupted();
+            await next.processWork([]);
+
+            expect(attempts).toBe(2);
+            expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
+            expect(sent).toHaveLength(1); // the failed first attempt never streamed; this is the one object sent
+            expect(sha256Of(sent[0]!)).toBe(doc.job.sha256);
+            expect(driveEntry(doc).state).toBe("verified");
+        });
+
+        it("should not retry before the retry time even though the length is derivable (guards kept)", async () => {
+            const { doc } = await recoveredRig();
+            rig.archiveFiles.set(doc.job.relativeKey, Buffer.from(doc.pdf));
+            let attempts = 0;
+            rig.destination.uploadArtifact = async () => { attempts += 1; return { ok: false, failure: { kind: "timeout", httpStatus: null, reason: null, retryAfterSeconds: null } }; };
+
+            await rig.phase.processWork([]);
+            const next = rig.newPhase();
+            await next.processWork([]);
+
+            expect(attempts).toBe(1);
+            expect(driveEntry(doc).state).toBe("retry_wait");
+        });
+
+        it("should take the length from a staged copy on record when it hashes to the artifact, even with the archive copy gone", async () => {
+            const { doc } = await recoveredRig();
+            rig.state().staged.set(doc.job.artifactIdentity, { sha256: doc.job.sha256, byteLength: doc.pdf.length, at: "2026-11-02T00:00:00.000Z" });
+
+            await rig.phase.processWork([]);
+
+            expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
+        });
+
+        it.each(["transferring", "verifying"])("should settle a crashed %s Drive entry of a recovered artifact by asking Drive, not by uploading again", async (state) => {
+            const { doc } = await recoveredRig();
+            rig.archiveFiles.set(doc.job.relativeKey, Buffer.from(doc.pdf));
+            rig.setEntry(doc, rig.driveIdentity, rig.revision, state);
+            rig.state().driveNodes.set(driveStateKey(rig.revision, doc.job.relativeKey), { kind: "file", fileId: "artifact00001", parentFileId: "parent000001", status: "created" });
+            const asked: unknown[] = [];
+            rig.destination.verifyRemote = async (_fileId: string, expected: unknown) => { asked.push(expected); return { ok: true, value: "ok" }; };
+
+            await rig.phase.recoverInterrupted();
+            await rig.phase.processWork([]);
+
+            expect(asked).toHaveLength(1);
+            expect((asked[0] as { byteLength: number }).byteLength).toBe(doc.pdf.length);
+            expect(rig.artifactUploads).toEqual([]);
+            expect(driveEntry(doc).state).toBe("verified");
         });
 
         it.each([
