@@ -756,8 +756,10 @@ adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError`
   in the run's reasons, and every later run tries it again. Among carried copies (artifacts no
   longer in the snapshot), only a Drive that answers without a usable copy (the file is gone, or
   its bytes fail the hash, size or PDF checks) leaves the local entry `exact-bytes-unavailable`;
-  an exhausted or `integrity-repeated` entry whose Drive copy turns out damaged stays
-  `integrity-repeated` instead. An artifact the worker
+  an exhausted entry (one the export has failed three times) whose Drive copy turns out damaged
+  is never made `exact-bytes-unavailable`: it stays `blocked` with the reason it already carries
+  (`integrity-repeated`, or an earlier one such as `archive-unavailable`), and the export is still
+  not asked for it. An artifact the worker
   cannot place at all (no recorded details or key, or a recovered artifact whose length no
   archive manifest names) is `exact-bytes-unavailable` without asking Drive.
   While Drive cannot be asked, a copy the export still offers is fetched from the export; bytes
@@ -765,7 +767,7 @@ adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError`
   times (`blocked`, `integrity-repeated`, and the export is not asked for it again) is still
   restaged from a Drive copy verified under the current binding on every run, as soon as Drive
   answers, and then published and verified as usual. With no such Drive copy it stays
-  `integrity-repeated`. That the export is not asked again is a property of the artifact's
+  `blocked` (normally `integrity-repeated`). That the export is not asked again is a property of the artifact's
   recorded history, not of the reason it carries at the moment: it persists across archive
   outages (the entry may then read `archive-unavailable`), Drive failures and later runs, and
   ends only when the artifact is verified. A copy already staged and usable is published as it
