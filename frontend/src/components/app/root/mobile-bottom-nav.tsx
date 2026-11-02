@@ -34,7 +34,10 @@ export function MobileBottomNav() {
         "grid grid-cols-5 items-end gap-1 p-2",
         "bg-white/80 backdrop-blur-xl rounded-3xl",
         "shadow-v3-hover",
-        "md:hidden"
+        "md:hidden",
+        // Sits at z-[1000], above every Radix Sheet/Dialog (z-50/60) and its overlay;
+        // react-remove-scroll marks <body data-scroll-locked> while a modal is open.
+        "[body[data-scroll-locked]_&]:hidden"
       )}
     >
       {navItems.map((item) => {
