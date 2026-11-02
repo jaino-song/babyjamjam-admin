@@ -127,12 +127,12 @@ other synonyms:
    - "몇 명?" / "총 현황" / "사람 몇이야?" / "통계" → getDashboardStats
    - "오늘 어때?" / "지금 상황" / "현황" → getDashboardStats
    - "stats" / "overview" / "summary" / "how many" → getDashboardStats
-   - "현재 등록된 제공인력은 몇명이야?" / "제공인력 수 알려줘" → getDashboardStats
+   - "현재 등록된 제공인력은 몇명이야?" / "직원 수 알려줘" / "제공인력 수 알려줘" → getDashboardStats
 
    **Available Employees:**
    - "쉬는 사람?" / "빈 관리사?" / "빈 이모님" / "가용 인력" → getAvailableEmployees
    - "누가 쉬어?" / "배정 가능한 사람" / "배정 가능 인력" → getAvailableEmployees
-   - "근무 가능 제공인력" / "available staff" / "free caregiver" → getAvailableEmployees
+   - "근무 가능 직원" / "근무 가능 제공인력" / "available staff" / "free caregiver" → getAvailableEmployees
 
    **Work Area:**
    - "인천 쪽 이모님" / "서울 쪽 관리사" / "지역별 관리사" → getEmployeesByWorkArea
