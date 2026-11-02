@@ -4,6 +4,8 @@ import {
     WorkerError, destinationKey, driveDestinationIdentity, driveDestinationRevision, driveStateKey, identifier, isDriveDestinationIdentity,
     type DriveBinding, type Installation,
 } from "domain/eformsign-backup/worker";
+import type { ResolvedDriveConfig } from "./config";
+import type { DriveClient } from "./drive-client";
 import { DriveDestination, driveReasonCode, type DriveBinding as DriveDestinationBinding, type DriveStep } from "./drive-destination";
 import { executeRecover, executeVerify } from "./runner-recover";
 import {
@@ -91,6 +93,8 @@ export class WorkerRunner implements WorkerRunnerPort {
         const { deps } = this;
         const installation = requireInstallation(deps);
         if (deps.drive === null) throw new WorkerError("drive-not-configured");
+        if (deps.drive.kind === "unavailable") throw new WorkerError(deps.drive.reason);
+        const { client, settings } = deps.drive;
         let binding = installation.drive;
         const resuming = binding !== null && !options.rebind;
         const markerPublished = (revision: string): boolean => deps.ledger.state.driveRecords.has(driveStateKey(revision, ARCHIVE_MARKER_FILE));
@@ -102,17 +106,20 @@ export class WorkerRunner implements WorkerRunnerPort {
         }
         // Everything below publishes something, so the marker is read first: an archive that cannot give it stops us before Drive is touched.
         const marker = await this.readLocalMarker(installation);
-        if (binding === null || !resuming) binding = await this.bindNewRoot();
-        const { client } = deps.drive;
+        const resumedPending = resuming && binding?.status === "pending";
+        if (binding === null || !resuming) binding = await this.bindNewRoot(client, settings);
         const revision = binding.destinationRevision;
         const bound = driveDestinationBinding(binding, installation);
 
         await deps.runnerFault?.("drive-setup-after-bound");
         if (binding.status === "pending") {
-            settle(await DriveDestination.createRootWithId(client, {
+            const made = await DriveDestination.createRootWithId(client, {
                 id: binding.rootFolderId, name: binding.rootName, parentId: binding.rootParentId,
                 installationId: installation.installationId, archiveId: installation.archiveId, bindingId: binding.bindingId,
-            }));
+            });
+            // A root made by an earlier attempt that is no longer what this binding made points the operator at `--rebind`.
+            if (resumedPending && !made.ok && "conflict" in made) throw new WorkerError("drive-root-changed");
+            settle(made);
         }
         await deps.runnerFault?.("drive-setup-after-root");
         if (!markerPublished(revision)) {
@@ -179,9 +186,8 @@ export class WorkerRunner implements WorkerRunnerPort {
     }
 
     /** Takes a root id from Drive and appends `drive_bound` for it (status `pending`): nothing is created on Drive yet. */
-    private async bindNewRoot(): Promise<DriveBinding> {
+    private async bindNewRoot(client: DriveClient, settings: ResolvedDriveConfig): Promise<DriveBinding> {
         const { deps } = this;
-        const { client, settings } = deps.drive!;
         const parent = settle(await client.getFile("root"));
         if (parent === null) throw new WorkerError("drive-unavailable");
         const account = settle(await client.about());

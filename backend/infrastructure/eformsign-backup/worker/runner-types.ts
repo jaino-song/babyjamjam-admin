@@ -49,6 +49,15 @@ export function localDestinationIdentity(archiveId: string): string {
     return `local:${archiveId}`;
 }
 
+/**
+ * What a command has of Google Drive. `ready`: a client built from usable secret files. `unavailable`: the config has a `drive`
+ * block but the command could not use it (a Drive secret file is unreadable or invalid); `run` and `recover` still go on with the
+ * local side and treat Drive as a failed phase with `reason` (A8). `null` means no `drive` block, or a command that never uses Drive.
+ */
+export type DriveDependency =
+    | { kind: "ready"; client: DriveClient; settings: ResolvedDriveConfig }
+    | { kind: "unavailable"; reason: WorkerReasonCode };
+
 export interface RunnerDependencies {
     config: WorkerConfig;
     clock: Clock;
@@ -63,8 +72,8 @@ export interface RunnerDependencies {
     /** `null` for every command except `run`. */
     exportClient: ExportPort | null;
     /** The Drive client and settings, built only when the config has a `drive` block (and the command may use them); `null` otherwise. */
-    drive: { client: DriveClient; settings: ResolvedDriveConfig } | null;
-    /** The Drive side for a given binding. Throws `drive-not-configured` when `drive` is `null`. */
+    drive: DriveDependency | null;
+    /** The Drive side for a given binding. Throws `drive-not-configured` when `drive` is `null` and the dependency's reason when it is `unavailable`. */
     createDriveDestination(binding: DriveDestinationBinding): DriveDestination;
     compactionThreshold?: number;
     runnerFault?: RunnerFault;

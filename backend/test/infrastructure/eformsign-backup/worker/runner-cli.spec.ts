@@ -288,13 +288,38 @@ describe("worker CLI (argv, exit codes, output)", () => {
             untouched();
         });
 
-        it.each(["run", "drive-setup", "recover"])("should report token-file-invalid before any request for %s when the refresh token file is not 0600", async (command) => {
+        it("should report token-file-invalid (78) for drive-setup, before any request, when the refresh token file is not 0600", async () => {
             await withDrive();
             await badMode();
-            const extra = command === "recover" ? ["--installation-id", "abc"] : [];
-            const result = await cli([command, "--config", h.configPath, ...extra]);
+            const result = await cli(["drive-setup", "--config", h.configPath]);
             expect(result).toMatchObject({ code: 78, stdout: [], stderr: ["token-file-invalid"] });
-            expect(h.api.requests).toHaveLength(0);
+            untouched();
+        });
+
+        it("should not let an unusable Drive secret file stop run: same exit code and lines as a local-only run, no Drive request (A8)", async () => {
+            await withDrive();
+            const localOnly = await createHarness({ docs: [pairDoc("D001")] });
+            await initArchive(localOnly);
+            const expected = await runWorkerCli(["run", "--config", localOnly.configPath], environmentFor(localOnly, { out: () => undefined, err: () => undefined }));
+            await destroyHarness(localOnly);
+            await badMode();
+
+            const result = await cli(["run", "--config", h.configPath]);
+
+            expect(result.code).toBe(expected);
+            expect(result.code).toBe(0);
+            expect(result.stderr).toEqual([]);
+            expect(lines(result)[0]).toMatchObject({ event: "run_partial", counts: { verified: 2 } });
+            untouched();
+        });
+
+        it("should not let an unusable Drive secret file stop recover: it ends exactly as it does without the problem (A8)", async () => {
+            await withDrive();
+            const healthy = await cli(["recover", "--config", h.configPath, "--installation-id", "abc"]);
+            await badMode();
+            const damaged = await cli(["recover", "--config", h.configPath, "--installation-id", "abc"]);
+            expect(damaged).toEqual(healthy);
+            expect(damaged.code).toBe(69);
             untouched();
         });
 

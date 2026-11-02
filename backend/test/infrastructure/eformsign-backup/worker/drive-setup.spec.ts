@@ -2,8 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { DestinationState, WorkerReasonCode } from "domain/eformsign-backup/worker";
-import { runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
+import { openWorker, runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
+import { DriveDestination } from "infrastructure/eformsign-backup/worker/drive-destination";
 import { DestinationLedger, controlMarkerWriter, ledgerDriveNodes } from "infrastructure/eformsign-backup/worker/runner-common";
 import { RUNNER_FAULT_POINTS, ZERO_COUNTS, type RunnerDependencies } from "infrastructure/eformsign-backup/worker/runner-types";
 
@@ -11,7 +12,7 @@ import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
 import { driveFaults, type FakeNode } from "./helpers/fake-drive-server";
 import { spawnUnderFlock } from "./helpers/runner-flock-support";
 import {
-    ARCHIVE_ID, createHarness, destroyHarness, environmentFor, initArchive, readLedgerRecords, treeContains,
+    ARCHIVE_ID, createHarness, destroyHarness, environmentFor, initArchive, readLedgerRecords, treeContains, withWorker,
     type Harness,
 } from "./helpers/runner-support";
 
@@ -405,6 +406,86 @@ describe("drive-setup (BJJ-456 U4): durable, resumable, idempotent binding of th
             "drive-after-verified", "drive-recover-after-first",
         ]));
         expect(ZERO_COUNTS).toMatchObject({ driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 });
+    });
+
+    describe("the Drive dependency and createDriveDestination (A8)", () => {
+        const binding = {
+            rootFolderId: "RootFolderId0000001", rootName: ROOT_NAME, rootParentId: "ParentFolderId0001",
+            bindingId: "00000000-0000-4000-8000-000000000001", installationId: "inst", archiveId: "arch",
+        };
+        const depsOf = (worker: { runner: unknown }): RunnerDependencies => (worker.runner as { deps: RunnerDependencies }).deps;
+
+        it("should be ready, and build a DriveDestination, when the Drive secrets are usable", async () => {
+            await withWorker(h, "run", async (worker) => {
+                const deps = depsOf(worker);
+                expect(deps.drive?.kind).toBe("ready");
+                expect(deps.createDriveDestination(binding)).toBeInstanceOf(DriveDestination);
+            });
+        });
+
+        it("should throw drive-not-configured when the config has no drive block", async () => {
+            const plain = await createHarness({ docs: [] });
+            try {
+                await withWorker(plain, "run", async (worker) => {
+                    const deps = depsOf(worker);
+                    expect(deps.drive).toBeNull();
+                    expect(() => deps.createDriveDestination(binding)).toThrow(expect.objectContaining({ reasonCode: "drive-not-configured" }));
+                });
+            } finally {
+                await destroyHarness(plain);
+            }
+        });
+
+        it.each(["run", "recover"] as const)("should carry the failure instead of a client for %s when a Drive secret file is unusable, and throw token-file-invalid", async (command) => {
+            await fs.chmod(fakes.refreshTokenFile, 0o644);
+            await withWorker(h, command, async (worker) => {
+                const deps = depsOf(worker);
+                expect(deps.drive).toEqual({ kind: "unavailable", reason: "token-file-invalid" });
+                expect(() => deps.createDriveDestination(binding)).toThrow(expect.objectContaining({ reasonCode: "token-file-invalid" }));
+            });
+            expect(fakes.oauth.tokenRequests).toBe(0);
+        });
+
+        it("should still refuse to open drive-setup with an unusable Drive secret file (token-file-invalid)", async () => {
+            await fs.chmod(fakes.refreshTokenFile, 0o644);
+            await expect(openWorker(h.config, "drive-setup", environmentFor(h))).rejects.toMatchObject({ reasonCode: "token-file-invalid" });
+        });
+    });
+
+    describe("resuming a pending binding whose root was changed (P1 note 10)", () => {
+        async function pendingWithRootCreated(): Promise<string> {
+            const crash = new Error("simulated crash");
+            const stdout: string[] = [];
+            const code = await runWorkerCli(["drive-setup", "--config", h.configPath], environmentFor(h, {
+                out: (line) => stdout.push(line), err: () => undefined,
+                runnerFault: (point) => { if (point === "drive-setup-after-root") throw crash; },
+            }));
+            expect(code).toBe(70);
+            const types = (await readLedgerRecords(h.control)).map((record) => record.type);
+            expect(types).toContain("drive_bound");
+            expect(types).not.toContain("drive_ready");
+            return roots()[0]!.id;
+        }
+
+        it.each([
+            ["renamed", (id: string) => fakes.drive.rename(id, "someone-renamed-this")],
+            ["trashed", (id: string) => fakes.drive.trash(id)],
+            ["moved", (id: string) => { fakes.drive.seed({ id: "ElsewhereFolder0001", name: "elsewhere" }); fakes.drive.move(id, "ElsewhereFolder0001"); }],
+        ])("should report drive-root-changed (69) when the pending root was %s, and --rebind then binds a new root", async (_name, damage) => {
+            const rootId = await pendingWithRootCreated();
+            damage(rootId);
+            const before = (await readLedgerRecords(h.control)).length;
+
+            const result = await setup();
+
+            expect(result).toMatchObject({ code: 69, stdout: [], stderr: ["drive-root-changed"] });
+            expect((await readLedgerRecords(h.control)).length).toBe(before);
+
+            const rebound = await setup("--rebind");
+            expect(rebound).toMatchObject({ code: 0, stderr: [] });
+            expect(lines(rebound)[0]!["rootFolderId"]).not.toBe(rootId);
+            expect(await records("drive_ready")).toHaveLength(1);
+        });
     });
 
     it("should never print or store the client secret, the refresh token or an access token", async () => {

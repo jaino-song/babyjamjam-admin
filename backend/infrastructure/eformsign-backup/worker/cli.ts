@@ -19,7 +19,7 @@ import { RunEndedWithFailure } from "./runner-run";
 import { readSecretFile, readSecretJson } from "./secret-file";
 import type { ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 import {
-    ZERO_COUNTS, type Clock, type DriveSetupSummary, type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies,
+    ZERO_COUNTS, type Clock, type DriveDependency, type DriveSetupSummary, type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies,
     type RunnerFault, type VerifySummary, type WorkerRunnerPort,
 } from "./runner-types";
 
@@ -75,7 +75,7 @@ const driveClientFileSchema = z.strictObject({ client_id: z.string().min(1).max(
  * The Drive client for a config with a `drive` block. Unreadable or badly permissioned secret files are `token-file-invalid`
  * (a token the server rejects is `drive-token-invalid`, and only later). No request is made here.
  */
-async function openDrive(config: WorkerConfig, clock: Clock): Promise<RunnerDependencies["drive"]> {
+async function openDrive(config: WorkerConfig, clock: Clock): Promise<DriveDependency | null> {
     const settings = resolveDriveConfig(config);
     if (settings === null || config.drive === undefined) return null;
     const credentials = await readSecretJson(config.drive.clientFile, driveClientFileSchema, DRIVE_CLIENT_FILE_MAX_BYTES, "token-file-invalid");
@@ -90,12 +90,26 @@ async function openDrive(config: WorkerConfig, clock: Clock): Promise<RunnerDepe
         apiBaseUrl: settings.apiBaseUrl, uploadBaseUrl: settings.uploadBaseUrl, tokens,
         requestTimeoutMs: settings.requestTimeoutMs, chunkBytes: settings.chunkBytes,
     });
-    return { client, settings };
+    return { kind: "ready", client, settings };
+}
+
+/**
+ * `drive-setup` is a Drive-only command: an unusable secret file ends it (78). `run` and `recover` have a local side that must not
+ * depend on Drive (design 7.1), so for them the failure becomes a dependency of kind `unavailable` (A8).
+ */
+async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock: Clock): Promise<DriveDependency | null> {
+    try {
+        return await openDrive(config, clock);
+    } catch (error) {
+        if (command === "drive-setup" || !(error instanceof WorkerError) || error.reasonCode !== "token-file-invalid") throw error;
+        return { kind: "unavailable", reason: "token-file-invalid" };
+    }
 }
 
 /**
  * Opens what one command needs, in this order: the lock check (before anything is touched), the filesystem checks, the
- * token file (`run` only), the Drive secret files (`run`, `drive-setup`, `recover`, when the config has a `drive` block), the ledger. A failure at any step leaves the earlier ones unopened.
+ * token file (`run` only), the Drive secret files (`run`, `drive-setup`, `recover`, when the config has a `drive` block; a bad one ends only
+ * `drive-setup`), the ledger. A failure at any step leaves the earlier ones unopened.
  */
 export async function openWorker(config: WorkerConfig, command: WorkerCommand, environment: WorkerEnvironment = {}): Promise<OpenedWorker> {
     if (!config.enabled && (command === "run" || command === "verify" || command === "recover")) {
@@ -122,7 +136,7 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
             requestTimeoutMs: config.requestTimeoutMs, ...(environment.fetchImpl === undefined ? {} : { fetchImpl: environment.fetchImpl }),
         })
         : null;
-    const drive = DRIVE_COMMANDS.has(command) ? await openDrive(config, clock) : null;
+    const drive = DRIVE_COMMANDS.has(command) ? await openDriveFor(command, config, clock) : null;
 
     const openLedger = (): Promise<LedgerStore> => LedgerStore.open(controlPath, {
         readOnly: command === "inspect",
@@ -150,6 +164,7 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
         drive,
         createDriveDestination: (binding) => {
             if (drive === null) throw new WorkerError("drive-not-configured");
+            if (drive.kind === "unavailable") throw new WorkerError(drive.reason);
             return new DriveDestination(drive.client, binding);
         },
         ...(environment.compactionThreshold === undefined ? {} : { compactionThreshold: environment.compactionThreshold }),
