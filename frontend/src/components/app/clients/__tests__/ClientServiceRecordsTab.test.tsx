@@ -403,6 +403,7 @@ describe("ClientServiceRecordsTab", () => {
                     caseVersion: 4,
                     currentRevisionId: "revision-1",
                     currentUsableRevisionId: null,
+                    caregiverEdits: [],
                     revisions: [{
                         id: "revision-1",
                         revisionNumber: 1,
@@ -492,7 +493,7 @@ describe("ClientServiceRecordsTab", () => {
         // The overview (its schedule projection) is cached, so it stays on screen with
         // the inline notice rather than being replaced by the panel error.
         expect(screen.getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
-        expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+        expect(screen.getByText("서비스 제공기록 원본을 확인할 수 없어요.")).toBeInTheDocument();
         expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
         // A failed overview never turns the revision 404 into a "no history" claim.
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
@@ -543,6 +544,7 @@ describe("ClientServiceRecordsTab", () => {
             caseVersion: 4,
             currentRevisionId: "revision-1",
             currentUsableRevisionId: null,
+            caregiverEdits: [],
             revisions: [{
                 id: "revision-1",
                 revisionNumber: 1,
@@ -1225,6 +1227,30 @@ describe("ClientServiceRecordsTab", () => {
         }
     });
 
+    it.each([
+        ["without Saturday service", undefined, ["예정일 2026.12.17", "예정일 2026.12.18", "예정일 2026.12.21"]],
+        ["with Saturday service", { saturday: true, sunday: false, holiday: false }, ["예정일 2026.12.17", "예정일 2026.12.18", "예정일 2026.12.19"]],
+    ] as const)("computes fallback 예정일 %s", (_label, serviceDays, expected) => {
+        const assignment = {
+            ...createAssignment(1, "none"),
+            startDate: "2026-12-17T00:00:00.000Z",
+            endDate: "2026-12-21T00:00:00.000Z",
+            totalSessions: 3,
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                serviceDays={serviceDays}
+            />,
+        );
+
+        expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(expected);
+    });
+
     it("chains an unwritten slot's 예정일 from the last written session's actual date", () => {
         function writtenSession(sessionIndex: number, serviceDate: string): ServiceRecordSession {
             return {
@@ -1364,6 +1390,33 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getAllByText("예정일 -")).toHaveLength(2);
         expect(screen.queryByText("예정일 2026.07.02")).not.toBeInTheDocument();
         expect(screen.queryByText("제공기록지 작성 확인이 필요해요")).not.toBeInTheDocument();
+    });
+
+    it("shows grouped Korean reasons instead of the backend's per-session English messages", () => {
+        const assignment = { ...createAssignment(1, "sent"), totalSessions: 15 };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{
+                    assignments: [assignment],
+                    scheduleProjection: {
+                        entries: [],
+                        blockingReasons: Array.from({ length: 15 }, (_, index) => ({
+                            code: "MISSING_ASSIGNMENT_PROVENANCE",
+                            message: `Session ${index + 1} has no uniquely-owned service-record assignment`,
+                            sessionIndex: index + 1,
+                        })),
+                    },
+                }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByText("예정 회차를 확인할 수 없습니다.")).toBeInTheDocument();
+        expect(screen.getByText("담당 제공인력 배정 정보를 찾을 수 없어요 (1–15회차)")).toBeInTheDocument();
+        expect(screen.queryByText(/uniquely-owned/)).not.toBeInTheDocument();
     });
 
     it("shows an alert from 18:00 KST on the second service date when sessions one and two are unwritten", () => {

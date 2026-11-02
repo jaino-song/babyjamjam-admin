@@ -30,6 +30,15 @@ const makeProps = (overrides: Partial<ReviewStepProps> = {}): ReviewStepProps =>
     ...overrides,
 });
 
+const lockedContext = (employeeId?: number | null): ReviewStepProps["context"] => ({
+    totalSessions: 5, startDate: "2026-09-21", header: null, employee: { id: 7, name: "김돌봄" },
+    sessions: [{
+        sessionIndex: 1, serviceDate: "2026-09-21", locked: true, clientSignature: "data:image/png;base64,SAVED",
+        ...(employeeId === undefined ? {} : { employeeId }),
+    }],
+});
+const ownLockedContext = lockedContext(7);
+
 describe("ReviewStep", () => {
     it("names the three review sections and their rows", () => {
         render(<ReviewStep {...makeProps()} />);
@@ -53,10 +62,11 @@ describe("ReviewStep", () => {
 
     it("sends the section index from each 수정 button when editing a submitted day", async () => {
         const user = userEvent.setup();
-        const props = makeProps({ editing: true });
+        const props = makeProps({ editing: true, context: ownLockedContext });
         render(<ReviewStep {...props} />);
 
         expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toHaveTextContent("이미 제출된 회차입니다.");
+        expect(document.querySelector(`[data-component="${ROOT}_body_other-caregiver-notice"]`)).toBeNull();
         expect(screen.getByRole("button", { name: "산모 수정" })).toHaveTextContent("수정");
         await user.click(screen.getByRole("button", { name: "산모 수정" }));
         await user.click(screen.getByRole("button", { name: "신생아 수정" }));
@@ -85,8 +95,8 @@ describe("ReviewStep", () => {
     it("takes the signature of an already submitted session and locks the pad", () => {
         render(<ReviewStep {...makeProps({
             context: {
-                totalSessions: 5, startDate: "2026-09-21", header: null,
-                sessions: [{ sessionIndex: 1, serviceDate: "2026-09-21", locked: true, clientSignature: "data:image/png;base64,SAVED" }],
+                totalSessions: 5, startDate: "2026-09-21", header: null, employee: { id: 7, name: "김돌봄" },
+                sessions: [{ sessionIndex: 1, serviceDate: "2026-09-21", locked: true, employeeId: 7, clientSignature: "data:image/png;base64,SAVED" }],
             },
         })} />);
         expect(screen.getByRole("button", { name: "서명 입력" })).toHaveAttribute("data-locked", "true");
@@ -110,5 +120,28 @@ describe("ReviewStep", () => {
         render(<ReviewStep {...makeProps({ hasServiceDateMismatch: true })} />);
         const row = document.querySelector(`[data-component="${ROOT}_body_service-date-readonly"]`) as HTMLElement;
         expect(row.querySelector('[data-slot="lab-msg"]')).toHaveTextContent("오늘과 다른 날짜예요");
+    });
+    it("resubmits the caregiver's own submitted day: 수정 buttons and the submit action stay", async () => {
+        const user = userEvent.setup();
+        const props = makeProps({ editing: true, context: ownLockedContext });
+        render(<ReviewStep {...props} />);
+
+        expect(screen.getByRole("button", { name: "산모 수정" })).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "확인" }));
+        expect(props.onOpenSubmitModal).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["another caregiver", 99],
+        ["no recorded caregiver (null)", null],
+        ["no recorded caregiver (missing)", undefined],
+    ])("shows a day submitted by %s read-only with a note and no actions", (_label, employeeId) => {
+        render(<ReviewStep {...makeProps({ editing: true, context: lockedContext(employeeId) })} />);
+
+        expect(document.querySelector(`[data-component="${ROOT}_body_other-caregiver-notice"]`)).toHaveTextContent("다른 제공인력이 제출한 회차라 수정할 수 없어요.");
+        expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toBeNull();
+        expect(screen.queryByRole("button", { name: /수정$/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: "확인" })).toBeNull();
+        expect(screen.getByRole("region", { name: "산모" })).toBeInTheDocument();
     });
 });

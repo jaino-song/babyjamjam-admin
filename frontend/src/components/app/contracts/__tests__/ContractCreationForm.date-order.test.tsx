@@ -6,7 +6,7 @@ import { useFormStore } from "@/stores/form-store";
 import { ContractCreationForm } from "../ContractCreationForm";
 
 const mockOpenDocument = jest.fn();
-const mockDispatchHeadless = jest.fn();
+const mockEnqueueCreation = jest.fn();
 const mockGenerateDocument = jest.fn();
 const mockCreateClientMutateAsync = jest.fn();
 const mockUpdateClientMutateAsync = jest.fn();
@@ -36,7 +36,7 @@ jest.mock("@/hooks/useEformsign", () => ({
 
 jest.mock("@/services/api", () => ({
   eformsignApi: {
-    dispatchHeadless: (...args: unknown[]) => mockDispatchHeadless(...args),
+    enqueueDocumentCreation: (...args: unknown[]) => mockEnqueueCreation(...args),
     generateDocument: (...args: unknown[]) => mockGenerateDocument(...args),
     createDocRecord: jest.fn().mockResolvedValue({}),
     adoptDocument: jest.fn().mockResolvedValue({}),
@@ -172,7 +172,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     mockUpdateClientMutateAsync.mockResolvedValue({});
     mockDeleteClientMutateAsync.mockReset();
     mockDeleteClientMutateAsync.mockResolvedValue({});
-    mockDispatchHeadless.mockReset();
+    mockEnqueueCreation.mockReset().mockResolvedValue({ jobId: "job-1", status: "queued", existing: false });
     mockGenerateDocument.mockReset();
     mockOpenDocument.mockReset();
     useFormStore.getState().resetAll();
@@ -202,7 +202,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     await waitFor(() => expect(screen.getByLabelText("계약 종료일")).toHaveFocus());
     expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
     expect(mockGenerateDocument).not.toHaveBeenCalled();
     // Not a form-level failure, so the top alert stays empty.
     expect(screen.queryByText(DATE_RANGE_ERROR, { selector: '[role="alert"] *' })).not.toBeInTheDocument();
@@ -224,7 +224,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     await waitFor(() => expect(screen.getByLabelText("계약 종료일")).toHaveFocus());
     expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
   });
 
   it("hints while an end date is incomplete, then turns into an error once the field is left", async () => {
@@ -251,7 +251,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     fireEvent.click(screen.getByTestId("contract-creation-submit"));
     await waitFor(() => expect(endDateInput).toHaveFocus());
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
   });
 
   it("shows the format error for an incomplete payment date after submit is pressed", async () => {
@@ -270,7 +270,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     expect(paymentDateInput).toHaveAttribute("aria-invalid", "true");
     expect(paymentDateInput).toHaveAttribute("aria-describedby", error.id);
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
   });
 
   it("rejects a non-existent payment date and associates it with the inline error", async () => {
@@ -288,7 +288,7 @@ describe("ContractCreationForm — contract date ordering", () => {
 
     await waitFor(() => expect(paymentDateInput).toHaveFocus());
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
   });
 
   it("rejects a non-existent start date even when the optional end date is empty", async () => {
@@ -304,7 +304,7 @@ describe("ContractCreationForm — contract date ordering", () => {
 
     await waitFor(() => expect(screen.getByLabelText("계약 시작일")).toHaveFocus());
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
   });
 
   it("asks for required dates only after submit is pressed, and focuses the first empty one", async () => {
@@ -323,7 +323,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     expect(screen.getByText("계약 시작일을 입력해 주세요")).toHaveAttribute("data-slot", "field-error-message");
     expect(screen.getByText("본인부담금 결제일을 입력해 주세요")).toHaveAttribute("data-slot", "field-error-message");
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockEnqueueCreation).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -331,7 +331,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     ["later", "2026-09-21", "2026-09-22"],
   ])("allows a %s end date", async (_label, startDate, endDate) => {
     seedContractDates({ startDate, endDate });
-    mockDispatchHeadless.mockResolvedValue({ ok: true });
+    mockEnqueueCreation.mockResolvedValue({ jobId: "job-1", status: "queued", existing: false });
 
     renderForm();
     overrideEndDate(endDate);
@@ -341,7 +341,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
     await waitFor(() => expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockEnqueueCreation).toHaveBeenCalledTimes(1));
     expect(mockUpdateClientMutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         dto: expect.objectContaining({ startDate, endDate }),
@@ -351,7 +351,7 @@ describe("ContractCreationForm — contract date ordering", () => {
 
   it("allows the existing optional end date", async () => {
     seedContractDates({ startDate: "2026-09-21", endDate: "" });
-    mockDispatchHeadless.mockResolvedValue({ ok: true });
+    mockEnqueueCreation.mockResolvedValue({ jobId: "job-1", status: "queued", existing: false });
 
     renderForm();
     overrideEndDate("");
@@ -361,7 +361,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
     await waitFor(() => expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockEnqueueCreation).toHaveBeenCalledTimes(1));
     expect(mockUpdateClientMutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ dto: expect.objectContaining({ endDate: null }) }),
     );
@@ -369,29 +369,25 @@ describe("ContractCreationForm — contract date ordering", () => {
 
   it("revalidates dates before a retry and returns to step 4 without a second mutation", async () => {
     seedContractDates();
-    mockDispatchHeadless.mockResolvedValueOnce({
-      ok: false,
-      reason: "manual check required",
-      fallbackHint: "manual_check",
-    });
+    mockEnqueueCreation.mockRejectedValueOnce(new Error("Network Error"));
 
     renderRetryableForm();
     fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
-    await waitFor(() => expect(screen.getByTestId("contract-creation-retry")).toBeInTheDocument());
+    await screen.findByText("전송 여부를 확인하지 못했어요. 처리중 목록에서 이 고객의 작업을 확인해 주세요.");
     expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
-    expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCreation).toHaveBeenCalledTimes(1);
 
     act(() => {
       useFormStore.setState({ endDate: "2026-09-20" });
     });
-    fireEvent.click(screen.getByTestId("contract-creation-retry"));
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
     await waitFor(() => expect(screen.getByText(DATE_RANGE_ERROR)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByLabelText("계약 종료일")).toHaveFocus());
     expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled();
     expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
-    expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueCreation).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: "2026-09-22" } });
     expect(screen.queryByText(DATE_RANGE_ERROR)).not.toBeInTheDocument();

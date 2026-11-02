@@ -93,6 +93,20 @@ import {
 import type { MessageLogRecord, UpcomingMessageTriggerJob } from "@/features/message-triggers/types";
 
 const mockToast = jest.fn();
+let mockDocumentJobsActive = false;
+
+jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {
+  const actual = jest.requireActual("@/features/document-jobs/DocumentJobsProvider");
+  return {
+    ...actual,
+    useDocumentJobs: () => ({
+      ...actual.useDocumentJobs(),
+      summary: { activeCount: mockDocumentJobsActive ? 2 : 0, unresolvedCount: 0 },
+      total: mockDocumentJobsActive ? 2 : 0,
+      unresolvedCount: 0,
+    }),
+  };
+});
 const mockCancelMutateAsync = jest.fn();
 const mockRetryMutateAsync = jest.fn();
 const mockResendMutateAsync = jest.fn();
@@ -464,6 +478,7 @@ function getDetailPanel() {
 }
 
 beforeEach(() => {
+  mockDocumentJobsActive = false;
   mockSearchParams = new URLSearchParams();
   document.cookie = "selected_branch_id=branch-test; path=/";
   mockAuthUser({ id: "user-1", role: "user", branchRole: "manager" });
@@ -504,6 +519,78 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useResendMessageTriggerJob>);
 
   mockData();
+});
+
+describe("messages status StatMinis", () => {
+  function stats() {
+    const bar = document.querySelector('[data-component="desktop_messages_sections_stats"]');
+    expect(bar).toBeInTheDocument();
+    return bar as HTMLElement;
+  }
+
+  function expectCounts(values: string[]) {
+    const cards = Array.from(stats().children);
+    expect(cards).toHaveLength(values.length);
+    values.forEach((value, index) => expect(cards[index]).toHaveTextContent(value));
+  }
+
+  it("is the first page row and counts tabs ignoring the active tab but applying list search/date filters", () => {
+    mockData({
+      upcoming: [buildUpcomingJob()],
+      history: [
+        buildHistoryRecord({ recipientName: "김서연" }),
+        buildHistoryRecord({ id: 102, status: "failed", recipientName: "김서연" }),
+        buildHistoryRecord({ id: 103, status: "canceled", recipientName: "김서연", lastAttemptAt: "2025-08-01T00:00:00.000Z" }),
+        buildHistoryRecord({ id: 104, recipientName: "다른고객" }),
+      ],
+    });
+    render(<MessagesPage />);
+    expect(stats().parentElement?.firstElementChild).toBe(stats());
+    expectCounts(["5건전체", "1건예정", "2건발송 성공", "1건발송 실패", "1건발송 취소"]);
+    goToHistorySection();
+    fireEvent.change(screen.getByLabelText("검색어"), { target: { value: "김서연" } });
+    fireEvent.click(screen.getByRole("button", { name: "2026년" }));
+    fireEvent.click(screen.getByRole("button", { name: "발송 실패" }));
+    expectCounts(["3건전체", "1건예정", "1건발송 성공", "1건발송 실패", "0건발송 취소"]);
+    expect(getCountNode("desktop_messages_sections_history-list-count")).toHaveTextContent("1건");
+    expect(getZoneContainer("upcoming")).not.toBeInTheDocument();
+  });
+
+  it("shows unknown only for tabs needing a failed source without cached data", () => {
+    mockData({ upcoming: [buildUpcomingJob()] });
+    mockedUseMessageHistory.mockReturnValue({ data: undefined, isError: true, isLoading: false } as unknown as ReturnType<typeof useMessageHistory>);
+    render(<MessagesPage />);
+    expectCounts(["—건전체", "1건예정", "—건발송 성공", "—건발송 실패", "—건발송 취소"]);
+  });
+
+  it("retains cached counts on a refetch failure and marks a full source as a lower bound", () => {
+    mockData({ history: Array.from({ length: 200 }, (_, id) => buildHistoryRecord({ id })) });
+    mockedUseMessageHistory.mockReturnValue({ ...mockedUseMessageHistory(), isError: true } as ReturnType<typeof useMessageHistory>);
+    render(<MessagesPage />);
+    expectCounts(["200+건전체", "0건예정", "200+건발송 성공", "0+건발송 실패", "0+건발송 취소"]);
+  });
+
+  it("keeps history totals known when only the upcoming source fails without a cache", () => {
+    mockData({ history: [buildHistoryRecord()] });
+    mockedUseUpcomingMessageTriggerJobs.mockReturnValue({ data: undefined, isError: true, isLoading: false } as unknown as ReturnType<typeof useUpcomingMessageTriggerJobs>);
+    render(<MessagesPage />);
+    expectCounts(["—건전체", "—건예정", "1건발송 성공", "0건발송 실패", "0건발송 취소"]);
+  });
+
+  it("marks upcoming and all as lower bounds when the upcoming source reaches its limit", () => {
+    mockData({ upcoming: Array.from({ length: 200 }, (_, index) => buildUpcomingJob({ id: `job-${index}` })) });
+    render(<MessagesPage />);
+    expectCounts(["200+건전체", "200+건예정", "0건발송 성공", "0건발송 실패", "0건발송 취소"]);
+    expect(mockedUseMessageHistory).toHaveBeenLastCalledWith(200);
+    expect(mockedUseUpcomingMessageTriggerJobs).toHaveBeenLastCalledWith(200);
+  });
+
+  it("renders the active document jobs card before all status cards", () => {
+    mockDocumentJobsActive = true;
+    render(<MessagesPage />);
+    expect(stats().firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
+    expect(stats().children).toHaveLength(6);
+  });
 });
 
 describe("messages page — server system-template catalog", () => {

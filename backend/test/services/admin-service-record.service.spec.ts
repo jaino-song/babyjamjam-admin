@@ -338,6 +338,119 @@ describe("AdminServiceRecordService", () => {
         expect(editRepository.loadSource).toHaveBeenCalledWith("branch-1", { clientId: 100 });
     });
 
+    describe("client service days", () => {
+        // A legacy case (no persisted vector) is projected from the calendar: counting from Fri 2026-09-04,
+        // Saturday 09-05 is a service day only for a client that offers Saturday service.
+        const legacySource = () => {
+            const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+            return {
+                caseId: "case-1",
+                caseVersion: 7,
+                formVersion: 3,
+                requiredSessionCount: 3,
+                startDate: "2026-09-04",
+                endDate: "2026-09-08",
+                header: { momName: null, momBirth: null, babyName: null, babyBirth: null, deliveryType: null, babyWeight: null },
+                sessions: [],
+                assignments: [{
+                    id: assignmentId,
+                    branchId: "branch-1",
+                    serviceRecordCaseId: "case-1",
+                    scheduleId: 55,
+                    employeeId: 9,
+                    startDate: "2026-09-04",
+                    endDate: "2026-09-10",
+                    replaced: false,
+                    employeeName: "제공자",
+                    scheduleStartDate: "2026-09-04",
+                    scheduleEndDate: "2026-09-10",
+                    scheduleTerminatedAt: null,
+                    primaryEmployeeId: 9,
+                    secondaryEmployeeId: null,
+                    primaryEmployeeName: "제공자",
+                }],
+                plannedSessions: null,
+                client: {
+                    id: 100,
+                    branchId: "branch-1",
+                    name: "김산모",
+                    duration: 15,
+                    startDate: "2026-09-04",
+                    endDate: "2026-09-08",
+                    serviceStatus: "in_progress",
+                },
+            };
+        };
+
+        function serviceFor(flags: Record<string, boolean | null>, withRepository = true) {
+            const prisma = createPrisma();
+            prisma.client.findFirst.mockResolvedValue({ id: 100, ...flags });
+            prisma.service_record_case.findFirst.mockResolvedValue(null);
+            // No schedules at all: the schedules' client include cannot carry the flags.
+            prisma.employee_schedule.findMany.mockResolvedValue([]);
+            const editRepository = { loadSource: jest.fn().mockResolvedValue(legacySource()) };
+            const service = new AdminServiceRecordService(
+                prisma as unknown as PrismaService,
+                createLinkService() as unknown as ServiceRecordLinkService,
+                createTriggerService() as unknown as MessageTriggerService,
+                createHolidayCalendarStub(), undefined,
+                withRepository ? editRepository as never : undefined,
+            );
+            return { service, prisma };
+        }
+
+        it("returns the toggles and projects the editor on the client's own calendar, even without schedules", async () => {
+            const saturday = serviceFor({ allowSaturdayService: true, allowSundayService: false, allowHolidayService: false });
+            const editor = await saturday.service.getClientEditor("branch-1", 100);
+            expect(editor.serviceDays).toEqual({ saturday: true, sunday: false, holiday: false });
+            expect(editor.assignments).toEqual([]);
+            expect(editor.scheduleProjection?.blockingReasons).toEqual([]);
+            expect(editor.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
+                "2026-09-04", "2026-09-05", "2026-09-07",
+            ]);
+            expect(saturday.prisma.client.findFirst).toHaveBeenCalledWith({
+                where: { id: 100, branchId: "branch-1" },
+                select: { allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+            });
+
+            const weekdaysOnly = serviceFor({ allowSaturdayService: false, allowSundayService: false, allowHolidayService: false });
+            const plain = await weekdaysOnly.service.getClientEditor("branch-1", 100);
+            expect(plain.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
+            expect(plain.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
+                "2026-09-04", "2026-09-07", "2026-09-08",
+            ]);
+        });
+
+        it("carries the toggles on the regular overview and treats a null flag as off", async () => {
+            const { service } = serviceFor({ allowSaturdayService: null, allowSundayService: true, allowHolidayService: null });
+            const overview = await service.getClientOverview("branch-1", 100);
+            expect(overview.serviceDays).toEqual({ saturday: false, sunday: true, holiday: false });
+        });
+
+        it("keeps the toggles when the editor falls back without an edit repository", async () => {
+            const { service } = serviceFor({ allowSaturdayService: true, allowSundayService: false, allowHolidayService: false }, false);
+            const editor = await service.getClientEditor("branch-1", 100);
+            expect(editor.serviceDays).toEqual({ saturday: true, sunday: false, holiday: false });
+            expect(editor.scheduleProjection?.blockingReasons).toEqual([
+                expect.objectContaining({ code: "EDITOR_PROJECTION_UNAVAILABLE" }),
+            ]);
+        });
+
+        it("omits the toggles when the client row cannot be read", async () => {
+            const prisma = createPrisma();
+            prisma.client.findFirst.mockResolvedValue(null);
+            prisma.employee_schedule.findMany.mockResolvedValue([]);
+            const service = new AdminServiceRecordService(
+                prisma as unknown as PrismaService,
+                createLinkService() as unknown as ServiceRecordLinkService,
+                createTriggerService() as unknown as MessageTriggerService,
+                createHolidayCalendarStub(),
+            );
+            const overview = await service.getClientOverview("branch-1", 100);
+            expect(overview.serviceDays).toBeUndefined();
+        });
+    });
+
     it("keeps unsupported-year legacy cases viewable while blocking the canonical projection", async () => {
         const prisma = createPrisma();
         prisma.client.findFirst.mockResolvedValue({ id: 100 });

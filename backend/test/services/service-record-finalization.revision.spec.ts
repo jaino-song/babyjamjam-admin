@@ -7,6 +7,7 @@ import {
     createKrBusinessDayCalendar,
     type KrBusinessDayCalendar,
 } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const branchId = "00000000-0000-4000-8000-000000000010";
@@ -186,6 +187,35 @@ describe("ServiceRecordFinalizationService revised claim and the branch calendar
         await expect(claim()).rejects.toMatchObject({
             response: { code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" },
         });
+    });
+
+    it.each([
+        ["a default client's calendar", undefined],
+        ["a Saturday-enabled client's calendar", { allowSaturdayService: true }],
+    ])("keeps a source with a persisted Saturday session eligible under %s", async (_label, flags) => {
+        // Sat 2026-12-19 is no business day for a default client, but a stored planned date is
+        // never re-judged against any calendar: written and approved dates keep their validity.
+        const saturday = new Date("2026-12-19T00:00:00.000Z");
+        const record = sourceWith({
+            startDate: saturday,
+            endDate: saturday,
+            plannedSessions: source().plannedSessions.map((entry) => ({
+                ...entry,
+                serviceDate: "2026-12-19",
+                originalDate: "2026-12-19",
+            })),
+            days: source().days.map((day) => ({ ...day, serviceDate: saturday })),
+        });
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () =>
+            withClientServiceDays(KR_BUILTIN_CALENDAR, flags));
+        const { claim, lifecycle } = claimHarness(holidayCalendar, record);
+
+        // Eligible sources proceed to freezing, which needs the job service this harness omits.
+        await expect(claim()).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" },
+        });
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
     });
 
     it("keeps a READY revised source eligible after its planned date becomes a holiday", async () => {

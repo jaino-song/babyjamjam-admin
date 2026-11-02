@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
     DAY_PAGES,
     getWizardProgress,
@@ -10,7 +10,9 @@ import {
 
 import { ServiceRecordStepHeader } from "@/components/app/v3/ServiceRecordStepHeader";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
+import { Skeleton } from "@/components/ui/skeleton";
 
+import { ServiceRecordGuide } from "../guide";
 import type { MobileServiceRecordWizardProps } from "../ServiceRecordWizard";
 import { DayPageStep } from "./DayPageStep";
 import {
@@ -56,6 +58,31 @@ function StatusBody({ "data-component": dataComponent, children }: { "data-compo
 }
 
 /**
+ * The loading body: a placeholder shaped like the step that follows (title, two help
+ * lines, a labelled field and the action button), so the layout does not jump when it
+ * resolves. The copy is for assistive technology only; the shapes carry the state.
+ */
+function LoadingBody({ "data-component": dataComponent }: { "data-component": string }) {
+    return (
+        <div
+            data-component={dataComponent}
+            role="status"
+            aria-label={LOADING_COPY}
+            aria-busy="true"
+            className="flex min-w-0 flex-1 flex-col px-4 pb-6 pt-5"
+        >
+            <span className="sr-only">{LOADING_COPY}</span>
+            <Skeleton aria-hidden="true" className="mb-3 h-[22px] w-3/5 rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-2 h-3 w-[90%] rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-6 h-3 w-[70%] rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-2.5 h-3.5 w-[28%] rounded-lg bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="mb-4 h-[50px] w-full rounded-xl bg-v3-dim-white" />
+            <Skeleton aria-hidden="true" className="h-[46px] w-full rounded-full bg-v3-dim-white" />
+        </div>
+    );
+}
+
+/**
  * The mobile service-record flow on m.admin's design system. It renders the same
  * screens, copy and callbacks as the shared `ServiceRecordWizard` does for the public
  * (non-admin, editable) flow (SRW:677-1053). Each step renders its own body and
@@ -67,6 +94,7 @@ export function MobileServiceRecordScreen({
     phone,
     phoneError,
     phoneFieldError,
+    phoneNotice,
     context,
     header,
     day,
@@ -99,6 +127,16 @@ export function MobileServiceRecordScreen({
     slots,
 }: MobileServiceRecordScreenProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
+    // The how-to guide opens by itself over a first-time service-info step (no saved header on the
+    // server: `context.header`, not the page's `header` state, which always carries `deliveryType`),
+    // and from 사용방법 on the overview. Closing it ends the automatic opening for this mount.
+    const [guideDismissed, setGuideDismissed] = useState(false);
+    const [guideRequested, setGuideRequested] = useState(false);
+    const guideOpen = guideRequested || (!guideDismissed && screen === "service" && context != null && context.header == null);
+    const closeGuide = () => {
+        setGuideDismissed(true);
+        setGuideRequested(false);
+    };
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const { plannedDateVectorProvided, plannedDateVectorValid, currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
@@ -137,6 +175,7 @@ export function MobileServiceRecordScreen({
                 )}
                 crumbs={crumbs}
                 progress={progress / 100}
+                indeterminate={screen === "loading"}
             />
             {context && plannedDateVectorProvided && !plannedDateVectorValid ? (
                 <p
@@ -148,11 +187,7 @@ export function MobileServiceRecordScreen({
                 </p>
             ) : null}
 
-            {screen === "loading" && (
-                <StatusBody data-component={child("body")}>
-                    <p data-component={child("body_loading")} className="text-sm text-v3-text-muted">{LOADING_COPY}</p>
-                </StatusBody>
-            )}
+            {screen === "loading" && <LoadingBody data-component={child("body_loading")} />}
 
             {screen === "invalid" && (
                 <StatusBody data-component={child("body")}>
@@ -171,6 +206,7 @@ export function MobileServiceRecordScreen({
                     phone={phone}
                     phoneError={phoneError}
                     phoneFieldError={phoneFieldError}
+                    phoneNotice={phoneNotice}
                     busy={busy}
                     onPhoneChange={onPhoneChange}
                     onSubmitPhone={onSubmitPhone}
@@ -205,6 +241,7 @@ export function MobileServiceRecordScreen({
                     scheduleChangeBusy={scheduleChangeBusy}
                     onOpenDay={onOpenDay}
                     onOpenScheduleChangePreview={onOpenScheduleChangePreview}
+                    onOpenGuide={() => setGuideRequested(true)}
                 />
             )}
 
@@ -258,6 +295,7 @@ export function MobileServiceRecordScreen({
                     </div>
                 </StatusBody>
             )}
+            <ServiceRecordGuide data-component={child("guide")} open={guideOpen} onClose={closeGuide} />
             {slots?.submitModal}
             {slots?.scheduleChangeModal}
             {slots?.serviceDateChangeModal}

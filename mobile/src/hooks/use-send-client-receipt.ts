@@ -1,8 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { useToast } from "@/hooks/use-toast";
 import { describeReceiptLinkError } from "@/lib/receipt-link";
 import { eformsignApi } from "@/services/api";
@@ -19,6 +21,7 @@ export function useSendClientReceipt(): {
   sendReceipt: (clientId: number) => Promise<void>;
 } {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isSending, setIsSending] = useState(false);
   const sendingRef = useRef(false);
 
@@ -37,6 +40,11 @@ export function useSendClientReceipt(): {
         clientId,
         recipientPhone: prepared.recipientPhone,
       });
+
+      // The send just created a pending job; show it in the scheduled list and in
+      // this client's message history now instead of after the next poll.
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+      void queryClient.invalidateQueries({ queryKey: ["messages", "logs", "client", clientId] });
 
       toast({
         variant: "success",

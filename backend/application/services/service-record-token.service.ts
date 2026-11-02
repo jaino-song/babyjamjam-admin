@@ -9,6 +9,30 @@ import { ServiceRecordSecurityEventService } from "./service-record-security-eve
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 export const SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS = 5;
+
+/**
+ * Whether a token row may still authorise a caregiver write. Shared by
+ * `resolveAccess` (request guard) and the entry service's in-transaction
+ * re-check so the two cannot drift apart.
+ */
+export function isServiceRecordAccessTokenUsable(
+    record: {
+        active: boolean;
+        revokedAt: Date | null;
+        verifiedAt: Date | null;
+        lockedAt: Date | null;
+        failedAttempts: number;
+        expiresAt: Date;
+    },
+    now: number = Date.now(),
+): boolean {
+    return record.active
+        && !record.revokedAt
+        && Boolean(record.verifiedAt)
+        && !record.lockedAt
+        && record.failedAttempts < SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS
+        && record.expiresAt.getTime() > now;
+}
 export const SERVICE_RECORD_PHONE_CHALLENGE_WINDOW_MS = 15 * 60 * 1000;
 
 /** Resolved context attached to a request after the access token is validated. */
@@ -495,20 +519,37 @@ export class ServiceRecordTokenService {
         });
     }
 
+    /**
+     * Lock one token row by id and return its current state, for a caregiver write
+     * transaction that must re-check the token after the guard resolved it. The
+     * lock makes a concurrent revoke/replace serialise with the write. The row is
+     * read through system scope so tenant scoping cannot hide it. The fallback
+     * keeps narrow unit-test doubles compatible; production Prisma always has
+     * `$queryRaw` on its transaction client.
+     */
+    async lockAccessTokenForWrite(tx: Prisma.TransactionClient, tokenId: string) {
+        const transaction = tx as Prisma.TransactionClient & {
+            $queryRaw?: <T>(query: Prisma.Sql) => Promise<T>;
+        };
+        if (typeof transaction.$queryRaw === "function") {
+            await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT "id"
+                FROM "service_record_token"
+                WHERE "id" = ${tokenId}::uuid
+                FOR UPDATE
+            `);
+        }
+        return runSystemScope(async () => await tx.service_record_token.findUnique({
+            where: { id: tokenId },
+        }));
+    }
+
     /** Resolve a usable access token to its assignment context, else null. */
     async resolveAccess(accessToken: string): Promise<ServiceRecordTokenContext | null> {
         const record = await runSystemScope(async () => await this.prismaService.service_record_token.findUnique({
             where: { accessTokenHash: this.hash(accessToken) },
         }));
-        if (
-            !record ||
-            !record.active ||
-            record.revokedAt ||
-            !record.verifiedAt ||
-            record.lockedAt ||
-            record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS ||
-            record.expiresAt.getTime() <= Date.now()
-        ) {
+        if (!record || !isServiceRecordAccessTokenUsable(record)) {
             return null;
         }
         const current = await this.currentProvider(record, this.prismaService);

@@ -39,9 +39,17 @@ export type EformsignDocumentJobStatus =
     | "failed"
     | "requires_attention";
 
+export type EformsignDocumentJobRecoveryKind = "manual_send" | "verify_result";
+
 export interface EformsignDocumentJobSummary {
     activeCount: number;
     requiresAttentionCount: number;
+    /** Contract jobs that failed in the last 7 days and are not yet resolved. */
+    failedCount: number;
+    /** Contract jobs staff can act on: failedCount + contract requires_attention. */
+    unresolvedCount: number;
+    /** Ids of those unresolved jobs, newest first, at most 50. */
+    unresolvedJobIds: string[];
 }
 
 /** Fields intentionally exposed by the backend's safe job response DTO. */
@@ -52,6 +60,7 @@ export interface EformsignDocumentJobResponse {
     status: EformsignDocumentJobStatus;
     clientId: number | null;
     documentId: string | null;
+    /** "manual_in_progress" while a staff member holds the manual-recovery claim. */
     progressStep: string | null;
     attempts: number;
     nextAttemptAt: string;
@@ -59,6 +68,9 @@ export interface EformsignDocumentJobResponse {
     completedAt: string | null;
     createdAt: string;
     updatedAt: string;
+    clientName: string | null;
+    recoveryKind: EformsignDocumentJobRecoveryKind | null;
+    lastErrorCode: string | null;
 }
 
 export interface EformsignDocumentJobList {
@@ -77,12 +89,41 @@ export interface CreateEformsignDocumentJobRequest {
     requestKey: string;
     clientId: number;
     contractData: ContractDataDto;
+    /** Unsigned contract the server cancels after the new one is sent (re-issue). */
+    supersedeDocumentId?: string;
 }
 
 export interface FinalizeEformsignDocumentJobRequest {
     requestKey: string;
     documentId: string;
     prefillEndDate?: string;
+}
+
+/** 200 from POST /eformsign-docs/jobs/:jobId/recovery. Holds a 10-minute claim for the caller. */
+export interface ClaimEformsignDocumentJobRecoveryResponse {
+    job: EformsignDocumentJobResponse;
+    recoveryKind: EformsignDocumentJobRecoveryKind | null;
+    /** Original create/finalize job payload; only for manual_send, otherwise null. */
+    payload: Record<string, unknown> | null;
+    claimExpiresAt: string | null;
+}
+
+/** 200 from POST /eformsign-docs/jobs/:jobId/resolve. */
+export interface ResolveEformsignDocumentJobResponse {
+    job: EformsignDocumentJobResponse;
+    alreadyResolved: boolean;
+}
+
+/**
+ * Error bodies of the recovery/resolve routes: 404 RESOURCE_NOT_FOUND,
+ * 409 MANUAL_RECOVERY_CLAIMED (expiresAt), 409 JOB_NOT_RECOVERABLE (status),
+ * 410 RECOVERY_PAYLOAD_EXPIRED (claimExpiresAt), 403 without contract.dispatch, 401.
+ */
+export interface EformsignDocumentJobRecoveryErrorBody {
+    code?: string;
+    expiresAt?: string;
+    claimExpiresAt?: string;
+    status?: EformsignDocumentJobStatus;
 }
 
 export interface ReceiptLinkPreparation {
@@ -259,6 +300,18 @@ export const eformsignApi = {
         const { data } = await api.post<EnqueueEformsignDocumentJobResponse>(
             '/eformsign-docs/jobs/finalization',
             params,
+        );
+        return data;
+    },
+    claimDocumentJobRecovery: async (jobId: string): Promise<ClaimEformsignDocumentJobRecoveryResponse> => {
+        const { data } = await api.post<ClaimEformsignDocumentJobRecoveryResponse>(
+            `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/recovery`,
+        );
+        return data;
+    },
+    resolveDocumentJob: async (jobId: string): Promise<ResolveEformsignDocumentJobResponse> => {
+        const { data } = await api.post<ResolveEformsignDocumentJobResponse>(
+            `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/resolve`,
         );
         return data;
     },

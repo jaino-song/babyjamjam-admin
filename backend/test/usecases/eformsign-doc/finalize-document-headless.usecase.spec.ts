@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { EformsignOperationAlreadyRunningError } from "infrastructure/locking/eformsign-operation-lock.service";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
@@ -93,6 +94,7 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             "access-token",
             "refresh-token",
             undefined,
+            undefined,
         );
         expect(headlessService.dispatchFinalize).toHaveBeenCalledWith({
             documentOption: { mode: { type: "02" } },
@@ -113,6 +115,40 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
                 suppressOutboundAutomation: true,
                 strictCompletionReconciliation: true,
             },
+        );
+    });
+
+    it("passes prefillAmounts to the staff completion options", async () => {
+        const prefillAmounts = {
+            fullPrice: 1015000, grant: 812000, actualPrice: 203000, servicePeriod: "20261005 ~ 20261014",
+        };
+        const eformsignService = {
+            generateStaffCompletionOptions: jest.fn().mockResolvedValue({ mode: { type: "02" } }),
+        };
+        const headlessService = {
+            dispatchFinalize: jest.fn().mockResolvedValue({ ok: true, durationMs: 10 }),
+        };
+        const usecase = new FinalizeDocumentHeadlessUsecase(
+            eformsignService as never,
+            headlessService as never,
+            createCredentialBoundary() as never,
+            { emit: jest.fn() } as never,
+            undefined,
+            { syncDocument: jest.fn().mockResolvedValue({ status: "synced" }) } as never,
+        );
+
+        await usecase.execute({
+            documentId: "service-record-1",
+            prefillEndDate: "2026-10-14",
+            prefillAmounts,
+        }, TEST_PRINCIPAL);
+
+        expect(eformsignService.generateStaffCompletionOptions).toHaveBeenCalledWith(
+            "service-record-1",
+            "access-token",
+            "refresh-token",
+            "2026-10-14",
+            prefillAmounts,
         );
     });
 
@@ -635,6 +671,45 @@ describe("FinalizeDocumentHeadlessUsecase revoke-requested documents", () => {
         expect(dispatchBoundary.markAccepted).not.toHaveBeenCalled();
         expect(dispatchBoundary.markUncertain).toHaveBeenCalledTimes(1);
         expect(progressService.emit).not.toHaveBeenCalledWith("p-1", "sent");
+    });
+
+    describe("claim fingerprint", () => {
+        const expectedFingerprint = (extra: Record<string, unknown>) => createHash("sha256")
+            .update(JSON.stringify({
+                documentId: "doc-1",
+                prefillEndDate: null,
+                ...extra,
+                templateId: "template-1",
+                generation: "2026-10-01T00:00:00.000Z",
+            }))
+            .digest("hex");
+
+        async function claimedFingerprint(prefillAmounts?: Record<string, unknown>) {
+            const { usecase, dispatchBoundary } = build({
+                workflowStates: [STEP_070, ...Array.from({ length: 6 }, () => ({ ...STEP_070, statusCode: "040" }))],
+            });
+            jest.useFakeTimers();
+            const result = usecase.execute({
+                documentId: "doc-1",
+                branchId: "branch-1",
+                progressId: "p-1",
+                ...(prefillAmounts ? { prefillAmounts: prefillAmounts as never } : {}),
+            }, TEST_PRINCIPAL);
+            await jest.runAllTimersAsync();
+            await result;
+            return (dispatchBoundary.claim.mock.calls[0]![0] as { fingerprint: string }).fingerprint;
+        }
+
+        it("is unchanged when no amounts are passed", async () => {
+            expect(await claimedFingerprint()).toBe(expectedFingerprint({}));
+        });
+
+        it("includes the amounts when they are passed", async () => {
+            const prefillAmounts = { fullPrice: 1000, grant: 500, actualPrice: 500 };
+            const fingerprint = await claimedFingerprint(prefillAmounts);
+            expect(fingerprint).toBe(expectedFingerprint({ prefillAmounts }));
+            expect(fingerprint).not.toBe(expectedFingerprint({}));
+        });
     });
 
     it("applies the same classification when only the status code can be read", async () => {

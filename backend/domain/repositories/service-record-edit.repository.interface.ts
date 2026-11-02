@@ -117,6 +117,10 @@ export interface ServiceRecordEditSource {
         startDate: string | null;
         endDate: string | null;
         serviceStatus: string | null;
+        /** Which non-weekday days the client accepts service on; absent means false. */
+        allowSaturdayService?: boolean | null;
+        allowSundayService?: boolean | null;
+        allowHolidayService?: boolean | null;
     };
 }
 
@@ -474,6 +478,20 @@ export interface ServiceRecordEditConfirmPlan {
     /** Independent period/token operations; omitted only for legacy plans. */
     contractOperation?: ServiceRecordEditConfirmOperationPlan | null;
     receiptOperation?: ServiceRecordEditConfirmOperationPlan | null;
+    /**
+     * New client service-day toggles, set only when the draft carries toggles that
+     * differ from the stored ones. Written whatever the plan status: a toggle-only
+     * change is not a "change" (no revision, no document) but must still be saved.
+     */
+    clientServiceDays?: { saturday: boolean; sunday: boolean; holiday: boolean };
+    /**
+     * Set only with `clientServiceDays` on a `no_changes` plan whose case has no stored
+     * `plannedSessions` (a legacy case whose dates are derived on read): the selected dates equal
+     * the old projection, but the new toggles would re-project them differently, so the vector is
+     * stored as-is. A narrow write — the case vector, version and end dates; never a revision,
+     * a document or a start-date change.
+     */
+    materializedPlannedSessions?: { plannedSessions: ServiceRecordEditJsonValue; endDate: string | null };
 }
 
 export interface ServiceRecordEditConfirmInput {
@@ -529,6 +547,15 @@ export interface IServiceRecordEditRepository {
         & { beforeSnapshot: ServiceRecordEditJsonValue | null }
         | null
     >;
+    /** Read one caregiver edit of a submitted day only inside the owning branch and client. */
+    findCaregiverEditForChanges(branchId: string, clientId: number, editId: string): Promise<{
+        id: string;
+        editedAt: Date;
+        employeeNameSnapshot: string;
+        caseSessionIndex: number;
+        before: ServiceRecordEditJsonValue;
+        after: ServiceRecordEditJsonValue;
+    } | null>;
     /** Read one mutable operation row by all server-owned scope keys. */
     findRevisionDocumentState(
         branchId: string,

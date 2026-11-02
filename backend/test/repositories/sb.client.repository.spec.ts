@@ -905,6 +905,9 @@ describe("SbClientRepository", () => {
                         dueDate: null,
                         birthDate: null,
                         areaId: null,
+                        allowSaturdayService: false,
+                        allowSundayService: false,
+                        allowHolidayService: false,
                     },
                 });
                 expect(clientModel.findFirst).toHaveBeenCalledWith(expect.objectContaining({

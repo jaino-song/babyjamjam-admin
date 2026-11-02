@@ -123,11 +123,13 @@ function validChunk() {
 function transactionHarness(rows: unknown[]) {
     const queryRaw = jest.fn();
     rows.forEach((row) => queryRaw.mockResolvedValueOnce(row));
-    const tx = { $queryRaw: queryRaw };
+    // Row-less raw writes go through `$executeRaw` (affected count), see `rawStateExecute`.
+    const executeRaw = jest.fn().mockResolvedValue(1);
+    const tx = { $queryRaw: queryRaw, $executeRaw: executeRaw };
     const prisma = {
         $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
     };
-    return { prisma, tx, queryRaw };
+    return { prisma, tx, queryRaw, executeRaw };
 }
 
 function sqlText(value: unknown): string {
@@ -235,7 +237,6 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
             [{ maxVersion: 2n }],
             [allocatedState],
             [{ id: "66666666-6666-4666-8666-666666666666", payload: { kind: "service_record_revision", generation: "generation-1" } }],
-            [],
         ]);
         const repository = new ServiceRecordEditRepository(harness.prisma as never);
 
@@ -244,7 +245,10 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
 
         const sqlCalls = harness.queryRaw.mock.calls.map(([query]) => sqlText(query));
         expect(sqlCalls.some((query) => query.includes("GREATEST"))).toBe(true);
-        expect(sqlCalls.some((query) => query.includes("payload_fingerprint"))).toBe(true);
+        // The job payload pin is a row-less write, so it is issued through `$executeRaw`.
+        const executeCalls = harness.executeRaw.mock.calls.map(([query]) => sqlText(query));
+        expect(executeCalls).toHaveLength(1);
+        expect(executeCalls[0]).toContain("payload_fingerprint");
     });
 
     it("rejects an auxiliary retry before changing state when its dispatch context is incomplete", async () => {
@@ -300,6 +304,13 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
         const jobUpdate = sqlCalls.find((query) => query.includes('UPDATE "eformsign_document_job"'));
         expect(jobUpdate).toContain("status = 'queued'");
         expect(jobUpdate).toContain("progress_step = 'queued'");
+        // The terminal re-queue guard also blocks dispatch_authorized (a crash
+        // mid-click can leave it on a requires_attention row).
+        const jobUpdateQuery = harness.queryRaw.mock.calls
+            .map(([query]) => query as { values: unknown[] })
+            .find((query) => sqlText(query).includes('UPDATE "eformsign_document_job"'));
+        expect(sqlText(jobUpdateQuery)).toContain("NOT IN (");
+        expect(jobUpdateQuery?.values).toContain("dispatch_authorized");
         expect(jobUpdate).not.toContain("payload =");
         expect(jobUpdate).not.toContain("document_id =");
         expect(sqlCalls.some((query) => query.includes('INSERT INTO "eformsign_document_job"'))).toBe(false);
@@ -330,6 +341,32 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
         expect(sqlCalls.some((query) => query.includes('UPDATE "service_record_revision_document_state"'))).toBe(false);
         expect(sqlCalls.some((query) => query.includes('UPDATE "eformsign_document_job"'))).toBe(false);
     });
+
+    it.each(["dispatch_authorized", "creating", "sent", "reconciling", "unknown"])(
+        "refuses to re-queue a terminal snapshot job whose progress step is %s",
+        async (progressStep) => {
+            const retryState = retryableSnapshotState();
+            const harness = transactionHarness([
+                [retryState], // branch-scoped discovery
+                [ownerCase()], // current revision owner lock
+                [retryState], // state reread under its lock
+                [snapshotJobRow({ status: "requires_attention", progressStep })],
+            ]);
+            const repository = new ServiceRecordEditRepository(harness.prisma as never);
+
+            await expect(repository.retryRevisionDocumentState({
+                branchId,
+                clientId,
+                revisionId,
+                stateId,
+                expectedGeneration: retryState.generation as string,
+            })).rejects.toThrow("Revision snapshot job is not safely retryable");
+
+            const sqlCalls = harness.queryRaw.mock.calls.map(([query]) => sqlText(query));
+            expect(sqlCalls.some((query) => query.includes('UPDATE "service_record_revision_document_state"'))).toBe(false);
+            expect(sqlCalls.some((query) => query.includes('UPDATE "eformsign_document_job"'))).toBe(false);
+        },
+    );
 
     it("refuses pointer promotion until every persisted chunk/document is complete", async () => {
         const harness = transactionHarness(promotionRows([]));

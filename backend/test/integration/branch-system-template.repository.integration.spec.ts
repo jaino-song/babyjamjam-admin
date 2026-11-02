@@ -1,7 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
-import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
 
 const databaseUrl = process.env["BRANCH_SYSTEM_TEMPLATE_TEST_DATABASE_URL"];
@@ -292,7 +291,7 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
             .toBe(`concurrent-${testMarker}-reminder`);
     });
 
-    it("fails closed when a frozen snapshot is missing a template key", async () => {
+    it("resolves a key added after the snapshot was frozen from the global template", async () => {
         const branchId = await createBranch();
         await repository.updateBranchTemplate(
             branchId,
@@ -309,9 +308,25 @@ describeDisposable("SbSystemTemplateRepository branch snapshots (local PostgreSQ
             data: { systemTemplateSnapshot: snapshot as unknown as Prisma.InputJsonValue },
         });
 
+        const globalInfo = await repository.findByKey(SystemTemplateKey.INFO);
+
         await expect(repository.findByBranchKey(branchId, SystemTemplateKey.INFO))
-            .rejects.toBeInstanceOf(BranchSystemTemplateSnapshotError);
-        await expect(repository.findAllByBranch(branchId))
-            .rejects.toBeInstanceOf(BranchSystemTemplateSnapshotError);
+            .resolves.toMatchObject({ content: globalInfo!.content });
+        const all = await repository.findAllByBranch(branchId);
+        expect(all.find((template) => template.templateKey === SystemTemplateKey.INFO)?.content)
+            .toBe(globalInfo!.content);
+        expect(all.find((template) => template.templateKey === SystemTemplateKey.GREETING)?.content)
+            .toBe(`branch-${testMarker}-greeting`);
+
+        await repository.updateBranchTemplate(
+            branchId,
+            SystemTemplateKey.INFO,
+            `branch-${testMarker}-info`,
+            "user-a",
+            undefined,
+            acceptCandidate,
+        );
+        expect((await repository.findBranchSnapshot(branchId))!.templates[SystemTemplateKey.INFO]?.content)
+            .toBe(`branch-${testMarker}-info`);
     });
 });

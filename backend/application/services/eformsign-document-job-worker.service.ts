@@ -14,7 +14,12 @@ import {
     FinalizeHeadlessResult,
 } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import type { EformsignHeadlessProgressStep } from "application/services/eformsign-headless-progress.service";
-import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
+import {
+    classifyRecovery,
+    DISPATCH_AUTHORIZED_PROGRESS_STEP,
+    EformsignDocumentJobEntity,
+    isContractJob,
+} from "domain/entities/eformsign-document-job.entity";
 import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     IEformsignDocumentJobRepository,
@@ -27,8 +32,12 @@ import {
     CLIENT_REPOSITORY,
     IClientRepository,
 } from "domain/repositories/client.repository.interface";
+import type { StaffCompletionPrefillAmounts } from "application/services/eformsign.service";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
+import { NotificationService } from "application/services/notification.service";
+import { parsePrefillAmounts } from "application/services/eformsign-document-job.service";
 import type {
     ServiceRecordRevisionGenerationInput,
     ServiceRecordRevisionDispatchContext,
@@ -53,6 +62,9 @@ const MAX_CONSECUTIVE_FINALIZE_STEPS = 3;
 const WORKER_ENABLED_ENV = "EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED";
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60_000;
+const RECOVERY_SWEEP_INTERVAL_MS = 60 * 60_000;
+const RECOVERY_RENOTIFY_WINDOW_MS = 24 * 60 * 60_000;
+const FALLBACK_CLIENT_NAME = "고객";
 const TEMPLATE_WORKFLOW_FAILURE_REASONS = new Set([
     "template_workflow_config_invalid",
     "template_workflow_unsupported",
@@ -63,16 +75,38 @@ function isTemplateWorkflowFailure(reason: unknown): reason is string {
     return typeof reason === "string" && TEMPLATE_WORKFLOW_FAILURE_REASONS.has(reason);
 }
 
+/**
+ * The operation-lock service refused before the use case's browser/provider
+ * body was entered (it is only raised while acquiring the lock), so no 전송
+ * click could have run. Matches the exact reason: `operation_lock_lost` can
+ * surface mid-flight and `operation_in_progress` belongs to another owner, so
+ * neither is a verified pre-send refusal.
+ */
+function isLockUnavailableRefusal(
+    result: DispatchHeadlessResult | FinalizeHeadlessResult,
+): boolean {
+    return "reason" in result
+        && result.reason === "operation_lock_unavailable"
+        && "outcome" in result
+        && result.outcome === "NOT_APPLIED";
+}
+
 interface CreateDocumentJobPayload {
     clientId: number;
     contractData: ContractDataDto;
     progressId?: string;
     force?: boolean;
+    /** The contract this re-issue replaces; cancelled once the new one is sent. */
+    supersedeDocumentId?: string;
 }
+
+export const CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE = "contract-supersede-failed";
+export const EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE = "eformsign-document-job-failed";
 
 interface FinalizeDocumentJobPayload {
     documentId?: string;
     prefillEndDate?: string;
+    prefillAmounts?: StaffCompletionPrefillAmounts;
     progressId?: string;
 }
 
@@ -334,6 +368,7 @@ export class EformsignDocumentJobWorkerService {
     private readonly logger = new Logger(EformsignDocumentJobWorkerService.name);
     private running = false;
     private lastRetentionSweepAt = 0;
+    private lastRecoverySweepAt = 0;
 
     constructor(
         private readonly configService: ConfigService,
@@ -348,6 +383,8 @@ export class EformsignDocumentJobWorkerService {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         private readonly schedulerLease: SchedulerLeaseService,
+        private readonly contractSupersedeService: ContractSupersedeService,
+        private readonly notificationService: NotificationService,
         @Optional()
         @Inject(SERVICE_RECORD_REVISION_GENERATION)
         private readonly revisionGenerator?: ServiceRecordRevisionGenerationPort,
@@ -365,6 +402,7 @@ export class EformsignDocumentJobWorkerService {
         this.running = true;
         try {
             this.sweepExpiredTerminalJobs();
+            void this.sweepStaffFailureRecovery();
             const stale = await this.repository.recoverStale(
                 new Date(Date.now() - STALE_CUTOFF_MS),
             );
@@ -399,6 +437,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "JOB_TARGET_NOT_OWNED_BY_BRANCH",
             );
+            this.notifyTransition(attention);
             return;
         }
         if (!job.payload) {
@@ -408,13 +447,26 @@ export class EformsignDocumentJobWorkerService {
                 "MISSING_JOB_PAYLOAD",
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, "MISSING_JOB_PAYLOAD");
+            this.notifyTransition(attention);
             return;
         }
+
+        // Send evidence is latched for the whole attempt and seeded from the
+        // claimed row, so a marker an earlier attempt persisted survives into
+        // this one. It is captured before authorization mirrors its own
+        // `dispatch_authorized` marker onto the claim. That marker proves
+        // exclusivity only: it is never send evidence, so only a real
+        // `creating`/`sent` step latches here.
+        const sendEvidence: SendEvidence = { step: dispatchEvidenceOf(job.progressStep) };
 
         let revisionAuthorization: CreateDispatchAuthorizationResult;
         try {
             revisionAuthorization = await this.authorizeRevisionJob(job);
         } catch {
+            if (sendEvidence.step) {
+                await this.markAndReconcile(job, sendEvidence.step);
+                return;
+            }
             await this.handlePreSendFailure(job, "SERVICE_RECORD_REVISION_AUTHORIZATION_FAILURE");
             return;
         }
@@ -429,13 +481,17 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
             );
+            this.notifyTransition(attention);
             return;
         }
         if (revisionAuthorization.irreversible) {
-            // The database marker is the source of truth for confirm races;
-            // mirror it on this claimed copy so any exception after the
-            // marker follows reconciliation instead of a retry path.
-            Object.assign(job, { progressStep: "creating" });
+            // The database marker is the source of truth for exclusivity and
+            // confirm races; mirror it on this claimed copy so the attempt
+            // keeps the fence up (progress writes stay `dispatch_authorized`
+            // until real send evidence latches). It is not send evidence: an
+            // exception before the 전송 click still follows the pre-send retry
+            // path.
+            Object.assign(job, { progressStep: DISPATCH_AUTHORIZED_PROGRESS_STEP });
         }
 
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
@@ -443,11 +499,18 @@ export class EformsignDocumentJobWorkerService {
             job.id,
             job.leaseToken,
             () => latestProgressStep,
-            job.progressStep === "creating" || job.progressStep === "sent",
+            () => dispatchFenceOf(sendEvidence, job.progressStep),
         );
         try {
             if (job.jobType === "create_document") {
                 const revisionOperations = revisionOperationsPayload(job.payload);
+                if (revisionOperations || revisionPayload(job.payload)) {
+                    // Revision paths send through their own coordinators and
+                    // report no progress steps, so nothing here can prove a
+                    // failure is pre-send: any throw after authorization keeps
+                    // reconciling instead of entering the pre-send retry.
+                    observeSendEvidence(sendEvidence, "creating");
+                }
                 if (revisionOperations) {
                     await this.processRevisionOperations(job, revisionOperations);
                 } else {
@@ -455,13 +518,13 @@ export class EformsignDocumentJobWorkerService {
                     if (revision) {
                         await this.processRevision(job, revision);
                     } else {
-                        await this.processCreation(job, (step) => {
+                        await this.processCreation(job, sendEvidence, (step) => {
                             latestProgressStep = step;
                         });
                     }
                 }
             } else if (job.jobType === "finalize_document") {
-                await this.processFinalization(job, (step) => {
+                await this.processFinalization(job, sendEvidence, (step) => {
                     latestProgressStep = step;
                 });
             } else {
@@ -471,10 +534,11 @@ export class EformsignDocumentJobWorkerService {
                     "UNSUPPORTED_JOB_TYPE",
                 );
                 await this.recordAutoFinalizeTerminalOutcome(job, failed, "UNSUPPORTED_JOB_TYPE");
+                this.notifyTransition(failed);
             }
         } catch {
             this.logger.warn(`Eformsign document job ${job.id} failed`);
-            await this.handleExecutionFailure(job, latestProgressStep);
+            await this.handleExecutionFailure(job, sendEvidence, latestProgressStep);
         } finally {
             clearInterval(heartbeat);
         }
@@ -502,6 +566,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_UNAVAILABLE",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -525,6 +590,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "SERVICE_RECORD_REVISION_OPERATION_COORDINATOR_FAILURE",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -539,6 +605,7 @@ export class EformsignDocumentJobWorkerService {
                 attention,
                 "INVALID_SERVICE_RECORD_REVISION_OPERATION_RESULT",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -551,12 +618,13 @@ export class EformsignDocumentJobWorkerService {
             || `SERVICE_RECORD_REVISION_OPERATION_${result.status.toUpperCase()}`;
         const attention = await this.repository.markRequiresAttention(job.id, leaseToken, reason);
         await this.recordAutoFinalizeTerminalOutcome(job, attention, reason);
+        this.notifyTransition(attention);
     }
 
     /**
      * A revision job carries a complete immutable generation input rather than
      * legacy contractData.  Route it only through the renderer boundary after
-     * repository authorization has committed the durable `creating` marker;
+     * repository authorization has committed the durable `dispatch_authorized` marker;
      * malformed/missing renderer wiring is a terminal attention outcome and
      * never falls back to the mutable live-case renderer or contract sender.
      */
@@ -582,6 +650,7 @@ export class EformsignDocumentJobWorkerService {
                     ? "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD"
                     : "SERVICE_RECORD_REVISION_RENDERER_UNAVAILABLE",
             );
+            this.notifyTransition(attention);
             return;
         }
 
@@ -624,6 +693,7 @@ export class EformsignDocumentJobWorkerService {
 
     private async processCreation(
         job: EformsignDocumentJobEntity,
+        sendEvidence: SendEvidence,
         onProgressStep?: (step: EformsignHeadlessProgressStep) => void,
     ): Promise<void> {
         const leaseToken = job.leaseToken;
@@ -636,6 +706,7 @@ export class EformsignDocumentJobWorkerService {
                 "INVALID_CREATE_JOB_PAYLOAD",
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, "INVALID_CREATE_JOB_PAYLOAD");
+            this.notifyTransition(attention);
             return;
         }
 
@@ -649,12 +720,13 @@ export class EformsignDocumentJobWorkerService {
                 force: payload.force,
                 onProgress: async (step) => {
                     latestProgressStep = step;
+                    observeSendEvidence(sendEvidence, step);
                     onProgressStep?.(step);
                     await this.recordProgress(
                         job.id,
                         leaseToken,
                         step,
-                        job.progressStep === "creating" || job.progressStep === "sent",
+                        dispatchFenceOf(sendEvidence, job.progressStep),
                     );
                 },
             },
@@ -662,37 +734,103 @@ export class EformsignDocumentJobWorkerService {
         );
 
         if (result.ok) {
-            await this.repository.markCompleted(job.id, leaseToken, result.documentId);
+            const completed = await this.repository.markCompleted(job.id, leaseToken, result.documentId);
+            // Only the holder of the lease may act on the completion; a lost lease
+            // means another run owns this job's outcome.
+            if (completed) await this.supersedeAfterReissue(job, result.documentId);
             return;
         }
         if (isTemplateWorkflowFailure(result.reason)) {
             // Workflow validation/read failures happen before the provider send
-            // boundary. Keep them on the deterministic pre-send path even when
-            // a queued job carries a stale `creating` marker from authorization;
+            // boundary. Keep them on the deterministic pre-send path;
             // reconciling such a run would imply a provider submission that was
             // never attempted.
             await this.handlePreSendFailure(job, result.reason);
             return;
         }
-        if (this.isAmbiguous(result, latestProgressStep)) {
-            await this.markAndReconcile(job, latestProgressStep);
+        if (
+            !sendEvidence.step
+            && latestProgressStep !== "creating"
+            && latestProgressStep !== "sent"
+            && isLockUnavailableRefusal(result)
+        ) {
+            // Refused before execution started: retry on the pre-send schedule
+            // instead of treating the lock hint as an unknown outcome.
+            await this.handlePreSendFailure(job, result.reason);
             return;
         }
-        if (job.progressStep === "creating") {
-            // A durable pre-send authorization marker makes this attempt
-            // irreversible from the confirm race's perspective. Even when
-            // the provider reports a synchronous failure before its callback,
-            // reconcile instead of reopening a second send via retry.
-            await this.markAndReconcile(job, "creating");
+        if (sendEvidence.step || this.isAmbiguous(result, latestProgressStep)) {
+            await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
             return;
         }
+        // No send evidence and not ambiguous: the failure happened before the
+        // 전송 click could have run. The `dispatch_authorized` marker only
+        // fences concurrent owners, so it never forces reconciliation.
         await this.handlePreSendFailure(job, "HEADLESS_CREATE_PRE_SEND_FAILURE");
+    }
+
+    /**
+     * Cancel the contract a server-side re-issue replaced, after the new one
+     * exists. Shared by the normal success branch and the reconciliation
+     * completion so an ambiguous send never leaves the old contract live
+     * silently. A failure here never fails or retries the create job (the new
+     * contract was already sent): it notifies the branch and logs ids only.
+     */
+    private async supersedeAfterReissue(
+        job: EformsignDocumentJobEntity,
+        newDocumentId: string | undefined,
+    ): Promise<void> {
+        const payload = parseCreatePayload(job.payload ?? {});
+        const oldDocumentId = payload?.supersedeDocumentId;
+        if (!payload || !oldDocumentId || !newDocumentId || oldDocumentId === newDocumentId) return;
+        try {
+            // `job.clientId` is the value ownsTarget verified against the job's
+            // branch; the payload's copy is only a cross-check.
+            if (job.clientId === null || payload.clientId !== job.clientId) {
+                throw new Error("SUPERSEDE_CLIENT_MISMATCH");
+            }
+            // The same branch visibility the HTTP route enforces; the document lookup
+            // inside the service is not branch-scoped.
+            if (!(await this.contractSupersedeService.isDocumentVisibleToBranch(job.branchId, oldDocumentId))) {
+                throw new Error("SUPERSEDE_DOCUMENT_NOT_VISIBLE");
+            }
+            // The replacement is only safe to rely on once the client points at it. The
+            // create flow swallows a failed client link (warning only), so a fresh
+            // branch-scoped read must confirm it before the old contract is cancelled
+            // and purged (the purge would otherwise leave the client with no contract).
+            const client = await this.clientRepository.findById(job.branchId, job.clientId);
+            if (!client || client.eDocId !== newDocumentId) {
+                throw new Error("SUPERSEDE_REPLACEMENT_NOT_LINKED");
+            }
+            await this.contractSupersedeService.supersede({
+                branchId: job.branchId,
+                clientId: job.clientId,
+                documentId: oldDocumentId,
+                principal: createEformsignWorkerPrincipal(job.branchId),
+            });
+        } catch (error) {
+            this.logger.warn(
+                `[Service Stop] could not supersede oldDocumentId=${oldDocumentId} newDocumentId=${newDocumentId}: ${errorClassName(error)}`,
+            );
+            await this.notificationService.sendToBranchUsers(
+                job.branchId,
+                "기존 계약서 취소 실패",
+                "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
+                {
+                    type: CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE,
+                    documentId: oldDocumentId,
+                    url: `/contracts?documentId=${encodeURIComponent(oldDocumentId)}`,
+                },
+                { dedupe: { type: CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE, documentId: oldDocumentId } },
+            ).catch(() => undefined);
+        }
     }
 
     /**
      * The worker owns provider orchestration only. The repository owns the
      * transaction, aggregate locks, authoritative rereads, and durable
-     * creating marker so every caller reaches the same dispatch boundary.
+     * `dispatch_authorized` marker so every caller reaches the same dispatch
+     * boundary.
      */
     private async authorizeRevisionJob(
         job: EformsignDocumentJobEntity,
@@ -751,6 +889,7 @@ export class EformsignDocumentJobWorkerService {
 
     private async processFinalization(
         job: EformsignDocumentJobEntity,
+        sendEvidence: SendEvidence,
         onProgressStep?: (step: EformsignHeadlessProgressStep) => void,
     ): Promise<void> {
         const leaseToken = job.leaseToken;
@@ -764,6 +903,7 @@ export class EformsignDocumentJobWorkerService {
                 "INVALID_FINALIZE_JOB_PAYLOAD",
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, "INVALID_FINALIZE_JOB_PAYLOAD");
+            this.notifyTransition(attention);
             return;
         }
 
@@ -774,15 +914,17 @@ export class EformsignDocumentJobWorkerService {
                     branchId: job.branchId,
                     documentId,
                     prefillEndDate: payload.prefillEndDate,
+                    prefillAmounts: payload.prefillAmounts,
                     progressId: payload.progressId,
                     onProgress: async (progressStep) => {
                         latestProgressStep = progressStep;
+                        observeSendEvidence(sendEvidence, progressStep);
                         onProgressStep?.(progressStep);
                         await this.recordProgress(
                             job.id,
                             leaseToken,
                             progressStep,
-                            job.progressStep === "creating" || job.progressStep === "sent",
+                            dispatchFenceOf(sendEvidence, job.progressStep),
                         );
                     },
                 },
@@ -790,8 +932,19 @@ export class EformsignDocumentJobWorkerService {
             );
 
             if (!result.ok) {
-                if (this.isAmbiguous(result, latestProgressStep)) {
-                    await this.markAndReconcile(job, latestProgressStep);
+                // A later step's failure must not erase an earlier step's send:
+                // `latestProgressStep` only remembers the most recent step.
+                if (
+                    !sendEvidence.step
+                    && latestProgressStep !== "creating"
+                    && latestProgressStep !== "sent"
+                    && isLockUnavailableRefusal(result)
+                ) {
+                    await this.handlePreSendFailure(job, result.reason);
+                    return;
+                }
+                if (sendEvidence.step || this.isAmbiguous(result, latestProgressStep)) {
+                    await this.markAndReconcile(job, sendEvidence.step ?? latestProgressStep);
                     return;
                 }
                 await this.handlePreSendFailure(job, "HEADLESS_FINALIZE_PRE_SEND_FAILURE");
@@ -803,21 +956,27 @@ export class EformsignDocumentJobWorkerService {
             }
         }
 
-        await this.markAndReconcile(job, "reconciling");
+        await this.markAndReconcile(job, sendEvidence.step ?? "reconciling");
     }
 
     private async handleExecutionFailure(
         job: EformsignDocumentJobEntity,
+        sendEvidence: SendEvidence,
         latestProgressStep?: EformsignHeadlessProgressStep,
     ): Promise<void> {
-        const sendAttempted = latestProgressStep === "creating"
+        const sendAttempted = Boolean(sendEvidence.step)
+            || latestProgressStep === "creating"
             || latestProgressStep === "sent"
             || job.progressStep === "creating"
             || job.progressStep === "sent";
         if (sendAttempted) {
+            // Never persist a step that is behind the evidence already seen.
             await this.markAndReconcile(
                 job,
-                latestProgressStep ?? job.progressStep ?? "reconciling",
+                sendEvidence.step
+                    ?? dispatchEvidenceOf(job.progressStep)
+                    ?? latestProgressStep
+                    ?? "reconciling",
             );
             return;
         }
@@ -843,6 +1002,7 @@ export class EformsignDocumentJobWorkerService {
             "PRE_SEND_RETRY_EXHAUSTED",
         );
         await this.recordAutoFinalizeTerminalOutcome(job, failed, "PRE_SEND_RETRY_EXHAUSTED");
+        this.notifyTransition(failed);
     }
 
     private async markAndReconcile(
@@ -880,15 +1040,17 @@ export class EformsignDocumentJobWorkerService {
                 revisionBlockReason,
             );
             await this.recordAutoFinalizeTerminalOutcome(job, attention, revisionBlockReason);
+            this.notifyTransition(attention);
             return;
         }
         if (!(await this.ownsTarget(job))) {
             if (job.leaseToken) {
-                await this.repository.markRequiresAttention(
+                const attention = await this.repository.markRequiresAttention(
                     job.id,
                     job.leaseToken,
                     "JOB_TARGET_NOT_OWNED_BY_BRANCH",
                 );
+                this.notifyTransition(attention);
             }
             return;
         }
@@ -896,6 +1058,13 @@ export class EformsignDocumentJobWorkerService {
             job,
             createEformsignWorkerPrincipal(job.branchId),
         );
+        if (
+            result.status === "completed"
+            && result.completionRecorded === true
+            && job.jobType === "create_document"
+        ) {
+            await this.supersedeAfterReissue(job, result.documentId);
+        }
         if (
             result.status === "requires_attention"
             && job.source === "auto_finalize"
@@ -907,18 +1076,22 @@ export class EformsignDocumentJobWorkerService {
                 result.recordedAttempts ?? null,
             );
         }
+        // `result.status` alone is not proof of a transition: only a row this run
+        // actually moved (lease still held) may be announced.
+        if (result.status === "requires_attention") this.notifyTransition(result.transitioned);
     }
 
     private startHeartbeat(
         jobId: string,
         jobLeaseToken: string,
         progressStep: () => string | undefined,
-        preserveDispatchMarker = false,
+        dispatchFence: () => DispatchFence | undefined,
     ): ReturnType<typeof setInterval> {
         const heartbeat = setInterval(() => {
             const observed = progressStep();
-            const persisted = preserveDispatchMarker
-                ? observed === "sent" ? "sent" : "creating"
+            const fence = dispatchFence();
+            const persisted = fence
+                ? persistedFenceStep(fence, observed)
                 : observed ?? "processing";
             void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date()).catch(() => {
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
@@ -932,9 +1105,13 @@ export class EformsignDocumentJobWorkerService {
         jobId: string,
         leaseToken: string,
         step: EformsignHeadlessProgressStep,
-        preserveDispatchMarker = false,
+        dispatchFence?: DispatchFence,
     ): Promise<void> {
-        const persistedStep = preserveDispatchMarker && step !== "sent" ? "creating" : step;
+        // While the attempt holds the dispatch fence the persisted step may
+        // only move `dispatch_authorized` -> `creating` -> `sent`, never back
+        // to an ordinary progress step; a latched `creating`/`sent` stays put
+        // through every later step.
+        const persistedStep = dispatchFence ? persistedFenceStep(dispatchFence, step) : step;
         const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date());
         if (!updated) {
             throw new Error("EFORMSIGN_DOCUMENT_JOB_LEASE_LOST");
@@ -963,6 +1140,108 @@ export class EformsignDocumentJobWorkerService {
             .catch(() => this.logger.warn("Eformsign document job retention sweep failed"));
     }
 
+    /**
+     * Hourly: drop the payloads of aged `requires_attention` contract jobs, then
+     * re-announce the staff contract failures of the last day. Each half has its
+     * own catch so one failing never stops the other, and nothing here can throw
+     * into the tick (which would skip `claimDue`).
+     *
+     * Accepted behaviour: notification dedupe is per recipient over their latest
+     * 100 notifications and is check-then-send, so a rare duplicate is possible.
+     * The first sweep after a deploy notifies every unresolved staff contract
+     * failure of the past 24 h; that is intended, staff were never told about them.
+     */
+    private async sweepStaffFailureRecovery(): Promise<void> {
+        try {
+            const now = Date.now();
+            if (now - this.lastRecoverySweepAt < RECOVERY_SWEEP_INTERVAL_MS) return;
+            this.lastRecoverySweepAt = now;
+            try {
+                await this.repository.purgeExpiredAttentionPayloads(new Date(now));
+            } catch (error) {
+                this.logger.warn(
+                    `Eformsign document job attention payload purge failed: ${errorClassName(error)}`,
+                );
+            }
+            try {
+                const failures = await this.repository.listRecentStaffFailures(
+                    new Date(now - RECOVERY_RENOTIFY_WINDOW_MS),
+                );
+                for (const job of failures) await this.notifyStaffFailure(job);
+            } catch (error) {
+                this.logger.warn(
+                    `Eformsign document job failure re-notification failed: ${errorClassName(error)}`,
+                );
+            }
+        } catch (error) {
+            this.logger.warn(`Eformsign document job recovery sweep failed: ${errorClassName(error)}`);
+        }
+    }
+
+    /** Fire-and-forget: `sendToBranchUsers` also emails and must not stall the tick. */
+    private notifyTransition(transitioned: EformsignDocumentJobEntity | null | undefined): void {
+        if (!transitioned) return;
+        void this.notifyStaffFailure(transitioned);
+    }
+
+    /**
+     * Tell every user of the branch that a staff contract job ended in `failed` or
+     * `requires_attention`. Never throws; logs ids and the error class only.
+     */
+    private async notifyStaffFailure(job: EformsignDocumentJobEntity): Promise<void> {
+        try {
+            if (!isContractJob(job)) return;
+            const recoveryKind = classifyRecovery(job);
+            if (!recoveryKind) return;
+
+            const clientName = await this.resolveClientName(job);
+            const copy = recoveryKind === "verify_result"
+                ? {
+                    title: `전자문서 결과 확인 필요 · ${clientName}`,
+                    body: "전송 여부를 확인하지 못했어요. 눌러서 결과를 확인해 주세요.",
+                }
+                : job.jobType === "finalize_document"
+                    ? {
+                        title: `검토완료 자동 처리 실패 · ${clientName}`,
+                        body: "자동 처리에 실패했어요. 눌러서 직접 처리해 주세요.",
+                    }
+                    : {
+                        title: `계약서 자동 전송 실패 · ${clientName}`,
+                        body: "자동 전송에 실패했어요. 눌러서 직접 작성해 주세요.",
+                    };
+            const documentId = `eformsign-document-job:${job.id}`;
+            await this.notificationService.sendToBranchUsers(
+                job.branchId,
+                copy.title,
+                copy.body,
+                {
+                    type: EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE,
+                    documentId,
+                    jobId: job.id,
+                    recoveryKind,
+                    url: `/contracts?recoverJobId=${encodeURIComponent(job.id)}`,
+                },
+                { dedupe: { type: EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE, documentId } },
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Eformsign document job ${job.id} failure notification failed: ${errorClassName(error)}`,
+            );
+        }
+    }
+
+    private async resolveClientName(job: EformsignDocumentJobEntity): Promise<string> {
+        const joined = job.clientName?.trim();
+        if (joined) return joined;
+        if (job.clientId === null) return FALLBACK_CLIENT_NAME;
+        try {
+            const client = await this.clientRepository.findById(job.branchId, job.clientId);
+            return client?.name?.trim() || FALLBACK_CLIENT_NAME;
+        } catch {
+            return FALLBACK_CLIENT_NAME;
+        }
+    }
+
     private isEnabled(): boolean {
         return this.configService.get<string>(WORKER_ENABLED_ENV)?.trim().toLowerCase() === "true";
     }
@@ -980,6 +1259,55 @@ export class EformsignDocumentJobWorkerService {
     }
 }
 
+type DispatchEvidence = "creating" | "sent";
+
+/**
+ * What the attempt has durably claimed. `authorized` is the exclusivity marker
+ * only (no send evidence); `creating`/`sent` are real or possible send
+ * evidence. Ordering: authorized < creating < sent.
+ */
+type DispatchFence = "authorized" | DispatchEvidence;
+
+/**
+ * The fence an attempt holds: latched in-attempt evidence first, otherwise
+ * whatever the claimed copy carries (`dispatch_authorized` after a successful
+ * authorization). Undefined when the attempt holds no authorization.
+ */
+function dispatchFenceOf(
+    evidence: SendEvidence,
+    claimedStep: string | null | undefined,
+): DispatchFence | undefined {
+    const claimedEvidence = dispatchEvidenceOf(claimedStep);
+    if (evidence.step === "sent" || claimedEvidence === "sent") return "sent";
+    if (evidence.step === "creating" || claimedEvidence === "creating") return "creating";
+    return claimedStep === DISPATCH_AUTHORIZED_PROGRESS_STEP ? "authorized" : undefined;
+}
+
+/** The step to persist while the fence is up: never behind the fence or the step. */
+function persistedFenceStep(fence: DispatchFence, step: string | undefined): string {
+    if (fence === "sent" || step === "sent") return "sent";
+    if (fence === "creating" || step === "creating") return "creating";
+    return DISPATCH_AUTHORIZED_PROGRESS_STEP;
+}
+
+/**
+ * Whether a job's provider send may have happened, latched across every step
+ * and attempt of one job. A step that only reports ordinary progress after a
+ * `creating`/`sent` step must never clear it.
+ */
+interface SendEvidence {
+    step: DispatchEvidence | undefined;
+}
+
+function dispatchEvidenceOf(step: string | null | undefined): DispatchEvidence | undefined {
+    return step === "creating" || step === "sent" ? step : undefined;
+}
+
+function observeSendEvidence(evidence: SendEvidence, step: string): void {
+    if (step === "sent") evidence.step = "sent";
+    else if (step === "creating" && evidence.step !== "sent") evidence.step = "creating";
+}
+
 function parseCreatePayload(payload: Record<string, unknown>): CreateDocumentJobPayload | null {
     const clientId = payload["clientId"];
     const contractData = payload["contractData"];
@@ -989,6 +1317,9 @@ function parseCreatePayload(payload: Record<string, unknown>): CreateDocumentJob
         contractData,
         ...(readOptionalString(payload["progressId"]) ? { progressId: readOptionalString(payload["progressId"]) } : {}),
         ...(payload["force"] === true ? { force: true } : {}),
+        ...(readOptionalString(payload["supersedeDocumentId"])
+            ? { supersedeDocumentId: readOptionalString(payload["supersedeDocumentId"]) }
+            : {}),
     };
 }
 
@@ -999,9 +1330,12 @@ function parseFinalizePayload(payload: Record<string, unknown>): FinalizeDocumen
     if (payload["documentId"] !== undefined && !documentId) return null;
     if (payload["prefillEndDate"] !== undefined && !prefillEndDate) return null;
     if (payload["progressId"] !== undefined && !progressId) return null;
+    const prefillAmounts = parsePrefillAmounts(payload["prefillAmounts"]);
+    if (prefillAmounts === null) return null;
     return {
         ...(documentId ? { documentId } : {}),
         ...(prefillEndDate ? { prefillEndDate } : {}),
+        ...(prefillAmounts ? { prefillAmounts } : {}),
         ...(progressId ? { progressId } : {}),
     };
 }
@@ -1022,4 +1356,8 @@ function isContractData(value: unknown): value is ContractDataDto {
 
 function readOptionalString(value: unknown): string | undefined {
     return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function errorClassName(error: unknown): string {
+    return error instanceof Error ? error.constructor.name : typeof error;
 }

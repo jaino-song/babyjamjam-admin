@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
@@ -11,11 +11,17 @@ export interface AgentActionSweepLease { isHeld(): boolean }
 
 @Injectable()
 export class AgentActionSweepLockService implements OnModuleDestroy {
+    private readonly logger = new Logger(AgentActionSweepLockService.name);
     private readonly redis: Redis | null;
 
     constructor(config: ConfigService) {
         const url = config.get<string>("VALKEY_URL")?.trim();
         this.redis = url ? new Redis(url, { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 1 }) : null;
+        // Without an 'error' listener ioredis prints a raw stack to the console for every
+        // connection error; runExclusive still surfaces failures through its own calls.
+        this.redis?.on("error", (error) => {
+            this.logger.warn(`Valkey client error: ${error instanceof Error ? error.message : "Unknown error"}`);
+        });
     }
 
     isAvailable(): boolean { return this.redis !== null; }

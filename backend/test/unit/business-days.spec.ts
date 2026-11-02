@@ -1,5 +1,8 @@
 import {
     addBusinessDaysKr,
+    createKrBusinessDayCalendar,
+    DEFAULT_SERVICE_DAY_POLICY,
+    KR_BUILTIN_CALENDAR,
     countBusinessDaysKr,
     diffBusinessDaysKr,
     isBusinessDayKr,
@@ -71,6 +74,24 @@ describe("Korean business day utilities", () => {
             expect(isBusinessDayKr("2026-07-04")).toBe(false);
             expect(isBusinessDayKr("2026-02-16")).toBe(false);
             expect(isBusinessDayKr("")).toBe(false);
+        });
+    });
+
+    describe("withServiceDays (vendored shared calendar)", () => {
+        it("exposes withServiceDays and keeps the default policy on the same instance and version", () => {
+            expect(typeof KR_BUILTIN_CALENDAR.withServiceDays).toBe("function");
+            expect(KR_BUILTIN_CALENDAR.withServiceDays(DEFAULT_SERVICE_DAY_POLICY)).toBe(KR_BUILTIN_CALENDAR);
+            const branch = createKrBusinessDayCalendar(["2026-12-25"], { version: "kr-db-0123456789ab" });
+            expect(branch.withServiceDays(DEFAULT_SERVICE_DAY_POLICY)).toBe(branch);
+            expect(branch.version).toMatch(/^kr-db-[0-9a-f]{12}$/);
+        });
+
+        it("opens Saturday service days and suffixes the version only for a non-default policy", () => {
+            const sat = KR_BUILTIN_CALENDAR.withServiceDays({ saturday: true, sunday: false, holiday: false });
+            expect(sat.version).toBe(`${KR_BUILTIN_CALENDAR.version}+sd-100`);
+            expect(KR_BUILTIN_CALENDAR.isBusinessDay("2026-12-19")).toBe(false);
+            expect(sat.isBusinessDay("2026-12-19")).toBe(true);
+            expect(sat.calcEndDateBusinessDays("2026-12-14", 10)).toBe("2026-12-24");
         });
     });
 });

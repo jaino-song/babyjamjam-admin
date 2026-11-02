@@ -59,12 +59,12 @@ describe("ListActiveClientsByEmployeeUsecase", () => {
         expect(repository.findActiveClientsByEmployee).not.toHaveBeenCalled();
     });
 
-    it("should return an empty array for a soft-deleted employee", async () => {
+    it("should return 404 for a soft-deleted employee hidden by the repository", async () => {
         const deletedEmployee = EmployeeFactory.create({ id: 7 });
         Object.defineProperty(deletedEmployee, "deletedAt", { value: new Date("2026-07-01") });
         repository.setData([deletedEmployee]);
 
-        await expect(usecase.execute(branchId, 7)).resolves.toEqual([]);
+        await expect(usecase.execute(branchId, 7)).rejects.toMatchObject({ status: 404 });
         expect(repository.findActiveClientsByEmployee).not.toHaveBeenCalled();
     });
 });

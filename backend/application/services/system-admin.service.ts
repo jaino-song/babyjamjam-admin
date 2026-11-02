@@ -12,6 +12,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
+
+const MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS = 3;
 
 @Injectable()
 export class SystemAdminService {
@@ -43,7 +46,7 @@ export class SystemAdminService {
                 smsSenderApprovalRequestedAt: true,
                 smsSenderApprovalApprovedAt: true,
                 smsSenderApprovalRequestedBy: true,
-                owner: {
+                admin: {
                     select: {
                         id: true,
                         name: true,
@@ -90,7 +93,8 @@ export class SystemAdminService {
             isActive: branch.isActive ?? false,
             createdAt: branch.createdAt?.toISOString() ?? null,
             updatedAt: branch.updatedAt?.toISOString() ?? null,
-            owner: branch.owner,
+            admin: branch.admin,
+            owner: branch.admin,
             messageSenderApproval: {
                 approvalStatus: normalizeMessageSenderApprovalStatus(
                     branch.smsSenderApprovalStatus,
@@ -105,23 +109,28 @@ export class SystemAdminService {
     }
 
     async createBranch(
-        dto: CreateSystemAdminBranchDto,
+        dto: Omit<CreateSystemAdminBranchDto, "ownerId">,
         onCreated?: (transaction: Prisma.TransactionClient, branchId: string) => Promise<void>,
         actor?: AdminAuditActor,
     ): Promise<SystemAdminBranchRequestDto> {
         actor = actor ?? currentAdminAuditActor();
         // Fail before opening a write transaction for legacy callers while the
         // transaction-local lookup below remains the race-safe authority check.
-        if (dto.ownerId) {
-            await this.getEligibleBranchManager(this.prisma, dto.ownerId);
+        if (dto.adminId) {
+            await this.getEligibleBranchManager(this.prisma, dto.adminId);
         }
         try {
-            const branch = await this.prisma.$transaction(async (tx) => {
+            const branch = await this.runBranchMutationTransaction(async (tx) => {
+                // Match approval/account mutations: user locks precede branch writes.
+                if (dto.adminId) await this.lockRow(tx, "user", dto.adminId);
+                const manager = dto.adminId
+                    ? await this.getEligibleBranchManager(tx, dto.adminId)
+                    : null;
                 const createdBranch = await tx.branch.create({
                     data: {
                         name: dto.name,
                         slug: dto.slug,
-                        ownerId: dto.ownerId ?? null,
+                        adminId: dto.adminId ?? null,
                         region: normalizeOptionalText(dto.region),
                         district: normalizeOptionalText(dto.district),
                         address: normalizeOptionalText(dto.address),
@@ -132,9 +141,6 @@ export class SystemAdminService {
                     select: { id: true },
                 });
 
-                const manager = dto.ownerId
-                    ? await this.getEligibleBranchManager(tx, dto.ownerId)
-                    : null;
                 if (manager) {
                     await this.assignBranchManager(tx, createdBranch.id, manager);
                 }
@@ -147,7 +153,7 @@ export class SystemAdminService {
                     before: null,
                     after: {
                         id: createdBranch.id,
-                        ownerId: dto.ownerId ?? null,
+                        adminId: dto.adminId ?? null,
                         isActive: dto.isActive ?? true,
                     },
                 });
@@ -162,26 +168,46 @@ export class SystemAdminService {
 
     async updateBranch(
         branchId: string,
-        dto: UpdateSystemAdminBranchDto,
+        dto: Omit<UpdateSystemAdminBranchDto, "ownerId">,
         actor?: AdminAuditActor,
     ): Promise<SystemAdminBranchRequestDto> {
         actor = actor ?? currentAdminAuditActor();
         try {
-            await this.prisma.$transaction(async (tx) => {
+            await this.runBranchMutationTransaction(async (tx) => {
+                // Discover the lock set without holding a branch lock. All involved
+                // users are locked in one order before the branch, including the old
+                // admin whose final-branch read/demotion must serialize across branches.
+                const snapshot = await tx.branch.findUnique({
+                    where: { id: branchId },
+                    select: { adminId: true },
+                });
+                if (!snapshot) {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                const userIds = [...new Set([snapshot.adminId, dto.adminId]
+                    .filter((id): id is string => Boolean(id)))].sort();
+                for (const userId of userIds) {
+                    await this.lockRow(tx, "user", userId);
+                }
                 await this.lockRow(tx, "branch", branchId);
                 const existing = await tx.branch.findUnique({
                     where: { id: branchId },
-                    select: { ownerId: true, isActive: true },
+                    select: { adminId: true, isActive: true },
                 });
                 if (!existing) {
                     throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
+                // A concurrent writer may have changed the branch admin while we waited.
+                // Never acquire an extra user lock after the branch (lock inversion).
+                if (existing.adminId !== snapshot.adminId) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
 
-                const manager = dto.ownerId
-                    ? await this.getEligibleBranchManager(tx, dto.ownerId)
+                const manager = dto.adminId
+                    ? await this.getEligibleBranchManager(tx, dto.adminId)
                     : null;
-                if (dto.ownerId === undefined && existing.ownerId) {
-                    await this.ensureOwnerMembership(tx, branchId, existing.ownerId);
+                if (dto.adminId === undefined && existing.adminId) {
+                    await this.ensureAdminMembership(tx, branchId, existing.adminId);
                 }
 
                 await tx.branch.update({
@@ -189,7 +215,7 @@ export class SystemAdminService {
                     data: {
                         ...(dto.name !== undefined ? { name: dto.name } : {}),
                         ...(dto.slug !== undefined ? { slug: dto.slug } : {}),
-                        ...(dto.ownerId !== undefined ? { ownerId: dto.ownerId } : {}),
+                        ...(dto.adminId !== undefined ? { adminId: dto.adminId } : {}),
                         ...(dto.region !== undefined
                             ? { region: normalizeOptionalText(dto.region) }
                             : {}),
@@ -214,10 +240,10 @@ export class SystemAdminService {
                     await this.assignBranchManager(tx, branchId, manager);
                 }
 
-                if (dto.ownerId !== undefined && existing.ownerId && existing.ownerId !== dto.ownerId) {
+                if (dto.adminId !== undefined && existing.adminId && existing.adminId !== dto.adminId) {
                     await tx.user_branch.updateMany({
                         where: {
-                            userId: existing.ownerId,
+                            userId: existing.adminId,
                             branchId,
                             role: "admin",
                         },
@@ -227,26 +253,26 @@ export class SystemAdminService {
                     // role. Revoke that authority as well during transfer.
                     await tx.user_branch.updateMany({
                         where: {
-                            userId: existing.ownerId,
+                            userId: existing.adminId,
                             branchId,
                             role: "owner",
                         },
                         data: { role: "user" },
                     });
-                    const stillOwnsBranch = await tx.branch.findFirst({
-                        where: { ownerId: existing.ownerId },
+                    const stillAdminsBranch = await tx.branch.findFirst({
+                        where: { adminId: existing.adminId },
                         select: { id: true },
                     });
-                    if (!stillOwnsBranch) {
+                    if (!stillAdminsBranch) {
                         await tx.user.updateMany({
-                            where: { id: existing.ownerId, role: "admin" },
+                            where: { id: existing.adminId, role: "admin" },
                             data: { role: "user" },
                         });
                     }
                 }
 
                 await this.appendAudit(tx, actor, {
-                    action: dto.ownerId !== undefined && existing.ownerId !== dto.ownerId
+                    action: dto.adminId !== undefined && existing.adminId !== dto.adminId
                         ? "branch.owner_transferred"
                         : "branch.updated",
                     branchId,
@@ -254,12 +280,12 @@ export class SystemAdminService {
                     targetId: branchId,
                     before: {
                         id: branchId,
-                        ownerId: existing.ownerId ?? null,
+                        adminId: existing.adminId ?? null,
                         isActive: existing.isActive ?? true,
                     },
                     after: {
                         id: branchId,
-                        ownerId: dto.ownerId !== undefined ? dto.ownerId : existing.ownerId ?? null,
+                        adminId: dto.adminId !== undefined ? dto.adminId : existing.adminId ?? null,
                         isActive: dto.isActive !== undefined
                             ? dto.isActive
                             : existing.isActive ?? true,
@@ -271,6 +297,22 @@ export class SystemAdminService {
         } catch (error) {
             this.rethrowBranchMutationError(error);
         }
+    }
+
+    private async runBranchMutationTransaction<T>(
+        callback: (tx: Prisma.TransactionClient) => Promise<T>,
+    ): Promise<T> {
+        for (let attempt = 1; attempt <= MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS; attempt += 1) {
+            try {
+                return await this.prisma.$transaction(callback);
+            } catch (error) {
+                if (!isTransactionConflict(error)) throw error;
+                if (attempt === MAX_BRANCH_MUTATION_TRANSACTION_ATTEMPTS) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+            }
+        }
+        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
     }
 
     private async getEligibleBranchManager(
@@ -317,29 +359,29 @@ export class SystemAdminService {
         });
     }
 
-    private async ensureOwnerMembership(
+    private async ensureAdminMembership(
         tx: Prisma.TransactionClient,
         branchId: string,
-        ownerId: string,
+        adminId: string,
     ): Promise<void> {
-        // Older rows may contain owner_id without the corresponding membership.
+        // Older rows may contain admin_id without the corresponding membership.
         // Repair that narrow inconsistency inside the same locked branch
         // transaction before allowing any further branch mutation.
         if (typeof tx.user_branch.findUnique !== "function") return;
         const membership = await tx.user_branch.findUnique({
-            where: { userId_branchId: { userId: ownerId, branchId } },
+            where: { userId_branchId: { userId: adminId, branchId } },
         });
         if (!membership) {
             await tx.user_branch.upsert({
-                where: { userId_branchId: { userId: ownerId, branchId } },
-                create: { userId: ownerId, branchId, role: "admin" },
+                where: { userId_branchId: { userId: adminId, branchId } },
+                create: { userId: adminId, branchId, role: "admin" },
                 update: { role: "admin" },
             });
             return;
         }
         if (membership.role !== "admin" && membership.role !== "owner") {
             await tx.user_branch.updateMany({
-                where: { userId: ownerId, branchId },
+                where: { userId: adminId, branchId },
                 data: { role: "admin" },
             });
         }
@@ -398,7 +440,7 @@ export class SystemAdminService {
                 smsSenderApprovalRequestedAt: true,
                 smsSenderApprovalApprovedAt: true,
                 smsSenderApprovalRequestedBy: true,
-                owner: {
+                admin: {
                     select: {
                         id: true,
                         name: true,
@@ -439,7 +481,8 @@ export class SystemAdminService {
             isActive: branch.isActive ?? false,
             createdAt: branch.createdAt?.toISOString() ?? null,
             updatedAt: branch.updatedAt?.toISOString() ?? null,
-            owner: branch.owner,
+            admin: branch.admin,
+            owner: branch.admin,
             messageSenderApproval: {
                 approvalStatus: normalizeMessageSenderApprovalStatus(
                     branch.smsSenderApprovalStatus,

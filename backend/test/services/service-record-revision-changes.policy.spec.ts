@@ -1,4 +1,4 @@
-import { buildServiceRecordRevisionChanges } from "application/policies/service-record-revision-changes.policy";
+import { buildServiceRecordCaregiverEditChanges, buildServiceRecordRevisionChanges } from "application/policies/service-record-revision-changes.policy";
 import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
 import type { ServiceRecordEditJsonValue as Json } from "domain/repositories/service-record-edit.repository.interface";
 
@@ -112,5 +112,53 @@ describe("service-record revision changes", () => {
     it("marks legacy null snapshots unavailable rather than diffing against empty content", () => {
         expect(revision(null, { sessions: [row] })).toMatchObject({ beforeAvailable: false, basicInfo: [], sessions: [] });
         expect(revision({}, {})).toMatchObject({ beforeAvailable: true, basicInfo: [], sessions: [] });
+    });
+});
+
+describe("service-record caregiver edit changes", () => {
+    const snap = (overrides: Record<string, Json> = {}): Json => ({
+        serviceDate: "2026-10-20",
+        answers: { a: ["yes"] },
+        etcService: null,
+        notes: null,
+        paymentConfirmed: false,
+        ...overrides,
+    });
+    const edit = (before: Json, after: Json) => buildServiceRecordCaregiverEditChanges({
+        id: "edit-1", editedAt: new Date("2026-10-28T01:02:03Z"), employeeNameSnapshot: "김제공", caseSessionIndex: 3, before, after,
+    });
+
+    it("always returns the changed session, labelled with the case-level index and the stored date", () => {
+        expect(edit(snap(), snap())).toEqual({
+            editId: "edit-1",
+            editedAt: "2026-10-28T01:02:03.000Z",
+            employeeName: "김제공",
+            session: { sessionIndex: 3, kind: "changed", serviceDateBefore: "2026-10-20", serviceDateAfter: "2026-10-20", changes: [] },
+        });
+    });
+
+    it("compares the union of answer keys, then etcService, notes and paymentConfirmed, in revision path vocabulary", () => {
+        const result = edit(
+            snap({ answers: { a: ["yes"], removed: 1, obj: { b: 2, a: 1 } } }),
+            snap({ answers: { a: ["no"], added: true, obj: { a: 1, b: 3 } }, etcService: "care", notes: "note", paymentConfirmed: true }),
+        );
+        expect(result.session.changes).toEqual([
+            { path: "session.answers.a", before: ["yes"], after: ["no"] },
+            { path: "session.answers.added", before: null, after: true },
+            { path: "session.answers.obj", before: '{"a":1,"b":2}', after: '{"a":1,"b":3}' },
+            { path: "session.answers.removed", before: 1, after: null },
+            { path: "session.etcService", before: null, after: "care" },
+            { path: "session.notes", before: null, after: "note" },
+            { path: "session.paymentConfirmed", before: false, after: true },
+        ]);
+    });
+
+    it("ignores key insertion order and never reports signature or employee paths", () => {
+        const result = edit(
+            snap({ answers: { b: 2, a: 1 }, clientSignature: signature, employeeId: 1, employeeNameSnapshot: "A" }),
+            snap({ answers: { a: 1, b: 2 }, clientSignature: "other", employeeId: 2, employeeNameSnapshot: "B" }),
+        );
+        expect(result.session.changes).toEqual([]);
+        expect(JSON.stringify(edit(snap(), snap({ notes: signature })))).not.toMatch(/data:|iVBOR/);
     });
 });

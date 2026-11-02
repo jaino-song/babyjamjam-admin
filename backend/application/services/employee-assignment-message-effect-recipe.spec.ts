@@ -51,8 +51,8 @@ const schedule: EmployeeAssignmentScheduleSource & { incarnationId: string } = {
     primaryEmployeeId: 971300021,
     secondaryEmployeeId: 971300022,
     client: { id: clientId, name: "합성 고객" },
-    primaryEmployee: { id: 971300021, name: "합성 담당자", phone: "01000000231" },
-    secondaryEmployee: { id: 971300022, name: "합성 보조자", phone: "01000000232" },
+    primaryEmployee: { id: 971300021, name: "합성 담당자", phone: "01000000231", deletedAt: null },
+    secondaryEmployee: { id: 971300022, name: "합성 보조자", phone: "01000000232", deletedAt: null },
 };
 
 function snapshot(): SmsTriggerDeliverySnapshot {

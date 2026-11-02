@@ -11,6 +11,7 @@ import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { isEformsignDocumentAbsentError } from "infrastructure/api/eformsign-api.error";
+import type { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { createEformsignGlobalWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 
@@ -60,24 +61,18 @@ export class EformsignWebhookController {
         try {
             if (documentId !== "unknown") {
                 if (isCompletionWebhook(payload)) {
-                    // Mirror detail and files first, but leave the branch-owned status
-                    // projection for the webhook CAS. A failed sync therefore cannot
-                    // consume the completion claim, and a replay cannot republish it.
-                    const mirrorSync =
-                        await this.syncWebhookDocument(documentId, payload, {
-                            requireCompletionReady: true,
-                        });
-                    if (!mirrorSync.ready) {
+                    const completionMirror =
+                        await this.syncCompletionReadyMirror(documentId, payload);
+                    if (!completionMirror.ready) {
                         await this.recordDroppedWebhook(
                             payload,
                             documentId,
-                            mirrorSync.dropOutcome,
-                            mirrorSync.dropReason,
+                            completionMirror.dropOutcome,
+                            completionMirror.dropReason,
                         );
                         return { success: true };
                     }
-                    const mirroredDocument =
-                        await this.documentMirrorService.getStoredDetail(documentId);
+                    const { mirroredDocument, ownershipChanged } = completionMirror;
                     if (
                         !mirroredDocument
                         || !this.isWebhookCurrentEnough(payload, mirroredDocument.updated_date)
@@ -103,7 +98,7 @@ export class EformsignWebhookController {
                         result?.completionBranchId
                         && (result.completionClaim === "claimed"
                             || result.duplicateServiceRecordLifecycleChanged === true
-                            || mirrorSync.ownershipChanged)
+                            || ownershipChanged)
                     ) {
                         await this.webhookService.publishCompletionEvent(payload, {
                             branchId: result.completionBranchId,
@@ -136,12 +131,25 @@ export class EformsignWebhookController {
                         return { success: true };
                     }
                     if (!this.isWebhookCurrentEnough(payload, mirroredDocument.updated_date)) {
+                        // The branch-owned summary is the webhook CAS's to write and this
+                        // delivery is being dropped, so a document eformsign completed right
+                        // after it would stay at its last step forever (no doc_complete is
+                        // guaranteed to follow). Heal it through the same readiness and
+                        // reconciliation gates a doc_complete delivery goes through.
+                        const staleDrop = await this.healCompletedDocumentFromStaleDrop(
+                            payload,
+                            documentId,
+                            mirroredDocument,
+                        );
                         await this.recordDroppedWebhook(
                             payload,
                             documentId,
-                            EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
-                            "mirror is newer",
+                            staleDrop.outcome,
+                            staleDrop.reason,
                         );
+                        if (staleDrop.publish) {
+                            await this.webhookService.publishLocalDocumentChange(documentId);
+                        }
                         return { success: true };
                     }
                     await this.webhookService.processWebhook(payload, {
@@ -249,6 +257,95 @@ export class EformsignWebhookController {
                 dropReason: sanitizeEformsignErrorMessage(error),
             };
         }
+    }
+
+    /**
+     * The completion-ready half shared by a `doc_complete` delivery and the stale-drop heal:
+     * mirror detail and files first, but leave the branch-owned status projection for the
+     * webhook CAS. A failed sync therefore cannot consume the completion claim, and a replay
+     * cannot republish it. A reconciliation error propagates so the caller answers 503.
+     */
+    private async syncCompletionReadyMirror(
+        documentId: string,
+        payload: EformsignWebhookPayloadDto,
+    ): Promise<
+        | {
+            ready: true;
+            ownershipChanged: boolean;
+            mirroredDocument: EformsignApiDocumentResponse | null;
+        }
+        | {
+            ready: false;
+            dropOutcome: EformsignWebhookOutcome;
+            dropReason: string;
+        }
+    > {
+        const mirrorSync = await this.syncWebhookDocument(documentId, payload, {
+            requireCompletionReady: true,
+        });
+        if (!mirrorSync.ready) {
+            return {
+                ready: false,
+                dropOutcome: mirrorSync.dropOutcome,
+                dropReason: mirrorSync.dropReason,
+            };
+        }
+        return {
+            ready: true,
+            ownershipChanged: mirrorSync.ownershipChanged,
+            mirroredDocument:
+                await this.documentMirrorService.getStoredDetail(documentId),
+        };
+    }
+
+    private async healCompletedDocumentFromStaleDrop(
+        payload: EformsignWebhookPayloadDto,
+        documentId: string,
+        storedDetail: EformsignApiDocumentResponse,
+    ): Promise<{ outcome: EformsignWebhookOutcome; reason: string; publish: boolean }> {
+        const stale = {
+            outcome: EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_EVENT,
+            reason: "mirror is newer",
+            publish: false,
+        };
+        // Decide from the local row before paying for the strict sync (a second vendor
+        // fetch): an unassigned, purge-requested, missing or non-final row is dropped
+        // exactly as it was before the heal existed.
+        const eligibility = await this.webhookService.resolveCompletionHealEligibility(
+            documentId,
+            storedDetail,
+        );
+        if (!eligibility.eligible) {
+            return stale;
+        }
+        const completionMirror =
+            await this.syncCompletionReadyMirror(documentId, payload);
+        if (!completionMirror.ready) {
+            return {
+                outcome: completionMirror.dropOutcome,
+                reason: completionMirror.dropReason,
+                publish: false,
+            };
+        }
+        const { mirroredDocument, ownershipChanged } = completionMirror;
+        if (!mirroredDocument) {
+            return { ...stale, publish: ownershipChanged };
+        }
+        // The claim re-resolves eligibility against the freshly synced row and detail.
+        const claim = await this.webhookService.claimCompletionFromStoredDetail(
+            documentId,
+            mirroredDocument,
+        );
+        const claimed =
+            claim?.completionClaim === "claimed" && Boolean(claim.completionBranchId);
+        if (claimed) {
+            return {
+                outcome: EFORMSIGN_WEBHOOK_OUTCOME.COMPLETION_CLAIMED,
+                reason: "mirror is newer; completion claimed from the stored detail",
+                publish: true,
+            };
+        }
+        return { ...stale, publish: ownershipChanged };
     }
 
     private async recordDroppedWebhook(

@@ -13,9 +13,88 @@ function parse(text) {
 }
 const read = name => readFileSync(resolve(root,'.github/workflows',name),'utf8');
 const old = name => execFileSync('git',['show',`${base}:.github/workflows/${name}`],{cwd:root,encoding:'utf8'});
+function withStateIntegrityRealDatabaseStep(steps) {
+  const name = 'Real-database specs (holiday calendar and review)';
+  assert.equal(steps.filter(step => step.name === name).length, 1);
+  return steps.map(step => step.name !== name ? step : {
+    ...step,
+    run: "psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'\n" +
+      'pnpm --filter ./backend exec prisma migrate deploy\n' +
+      'pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/\n',
+    env: {...step.env, STATE_INTEGRITY_REAL_DB: '1'},
+  });
+}
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
 const apps=['backend','frontend','mobile'];
+// e3929e6b3 made backend `start` run `node dist/main` (no compile), so every job that
+// starts the backend must build it first. Same command as backend-ci.yml and Dockerfile.lightsail.
+const backendBuildStep = {name:'Build backend',run:'pnpm --filter ./backend run build'};
+// Asserts the build step sits immediately before 'Start backend' and returns the job's
+// steps without it, so the caller can still compare every remaining step exactly.
+function stepsWithoutBackendBuild(job,label) {
+  const start=job.steps.findIndex(s=>s.name==='Start backend');
+  assert.ok(start>0,`${label}: Start backend step exists`);
+  assert.deepEqual(job.steps[start-1],backendBuildStep,`${label}: backend is built immediately before it starts`);
+  assert.equal(job.steps.filter(s=>s.name===backendBuildStep.name).length,1,`${label}: exactly one backend build step`);
+  return job.steps.filter((_,index)=>index!==start-1);
+}
+// The backend tsc peaks near Node's default ~2 GB heap (OOM in run 41173922396), so the
+// backend 'Type check' step raises it. Asserts that exact env and returns the steps without
+// it, so the caller can still compare every step exactly against the pinned base.
+const typeCheckHeapEnv = {NODE_OPTIONS:'--max-old-space-size=4096'};
+function stepsWithoutTypeCheckHeap(steps,label) {
+  const index=steps.findIndex(s=>s.name==='Type check');
+  assert.ok(index>=0,`${label}: Type check step exists`);
+  assert.deepEqual(steps[index].env,typeCheckHeapEnv,`${label}: Type check raises the Node heap`);
+  const copy=structuredClone(steps);delete copy[index].env;return copy;
+}
+// Preview Cloud Run concurrency was raised from 8 to 16: two admin tabs' long-lived realtime
+// requests filled 8 slots on the single instance and starved every other request (QA
+// 2026-11-01). Asserts the exact new verify check once, then maps it back to the pinned base
+// text so every other byte of the deploy job is still compared exactly.
+const previewConcurrencyCheck = {
+  after: '[[ "$container_concurrency" == "16" ]] \\\n            || fail_check "containerConcurrency must be 16"',
+  before: '[[ "$container_concurrency" == "8" ]] \\\n            || fail_check "containerConcurrency must be 8"',
+};
+function withPreviewConcurrencyAtBase(text,label) {
+  assert.equal(text.split(previewConcurrencyCheck.after).length-1,1,`${label}: preview containerConcurrency must be verified as exactly 16, once`);
+  assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
+  return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
+}
+// The LightNode warm-standby change adds exactly these contract-test commands to the
+// 'Verify backend deployment automation contracts' step, right after the ci-deployer
+// contract line, plus one new job. Each is asserted here, then removed so the caller still
+// compares every other step and job exactly against the pinned base.
+const standbyContractStep = 'Verify backend deployment automation contracts';
+const standbyContractAnchor = 'backend/deploy/fallback-server/ci/ci-deployer-contract.test.sh';
+const standbyContractAdditions = [
+  'bash backend/deploy/fallback-server/ci/ci-deployer.behavior.test.sh',
+  'bash backend/deploy/fallback-server/ci/standby-decision.test.sh',
+  'bash backend/deploy/fallback-server/ci/newer-primary-release.test.sh',
+];
+function stepsWithoutStandbyContractTests(steps,label) {
+  const index=steps.findIndex(s=>s.name===standbyContractStep);
+  assert.ok(index>=0,`${label}: ${standbyContractStep} step exists`);
+  const lines=steps[index].run.split('\n');
+  const anchor=lines.indexOf(standbyContractAnchor);
+  assert.ok(anchor>=0,`${label}: ci-deployer contract line exists`);
+  assert.deepEqual(lines.slice(anchor+1,anchor+1+standbyContractAdditions.length),standbyContractAdditions,`${label}: standby contract tests directly follow the ci-deployer contract`);
+  for(const added of standbyContractAdditions) assert.equal(lines.filter(line=>line===added).length,1,`${label}: ${added} occurs exactly once`);
+  const copy=structuredClone(steps);
+  copy[index].run=[...lines.slice(0,anchor+1),...lines.slice(anchor+1+standbyContractAdditions.length)].join('\n');
+  return copy;
+}
+// The only job the warm-standby change adds. Asserts it exists with exactly its approved
+// dependencies and that no other job was added or removed; every pre-existing job is
+// still compared exactly by the callers. `routingJobs` are the jobs the CI impact routing
+// itself introduced after an older pinned base (empty for a base that already has them).
+function assertOnlyStandbyJobAdded(before,after,label,routingJobs=[]) {
+  const added=Object.keys(after).filter(id=>!(id in before));
+  assert.deepEqual(added,[...routingJobs,'deploy-lightnode-standby'],`${label}: the standby job is the only job added besides the routing jobs`);
+  assert.deepEqual(Object.keys(before).filter(id=>!(id in after)),[],`${label}: no job was removed`);
+  assert.deepEqual(needs(after['deploy-lightnode-standby']),['build-lightsail-image','resolve-backend-deploy-target','deploy-lightsail'],`${label}: standby job dependencies`);
+}
 const reusable = parse(read('ci-impact.yml'));
 const loader = reusable.jobs.classify.steps.find(s=>s.id==='impact').run;
 const expectedNames={backend:'backend · type-check · lint · test',frontend:'frontend · type-check · lint · test · build',mobile:'type-check · lint · test · build'};
@@ -42,8 +121,9 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
-  assert.deepEqual(appSteps,parse(old(file)).jobs.verify.steps,'preserve all existing application checks');
-  if(app==='backend') {assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
+  const previousSteps = parse(old(file)).jobs.verify.steps;
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
+  if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
   Object.keys(j).forEach(visit);
@@ -56,7 +136,8 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
   if(app==='backend') {assert.equal(enabled(j.impact,{backend:true},'workflow_dispatch','lightnode-status'),false);assert.equal(enabled(j.verify,{backend:true},'workflow_dispatch','lightnode-status'),false);}
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
-  const before=old('backend-ci.yml'),after=read('backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
+  const before=old('backend-ci.yml'),after=withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
+  assertOnlyStandbyJobAdded(a,b,'backend-ci.yml',['impact','checks']);
   for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e'].includes(id))) {
     assert.equal(jobText(after,id),jobText(before,id),`${id} raw block changed`);assert.deepEqual(b[id],a[id]);
   }
@@ -67,7 +148,11 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
 });
 test('mobile advisory keeps every step/service and full suite; only relevance and direct dependency change',()=>{
   const a=parse(old('mobile-ci.yml')).jobs.e2e,b=parse(read('mobile-ci.yml')).jobs.e2e;
-  assert.deepEqual(needs(b),['verify','impact']);assert.deepEqual({...b,needs:a.needs,if:a.if},a);
+  assert.deepEqual(needs(b),['verify','impact']);
+  const {steps:_bSteps,...bRest}=b,{steps:aSteps,...aRest}=a;
+  assert.deepEqual({...bRest,needs:a.needs,if:a.if,'runs-on':a['runs-on']},aRest);
+  assert.deepEqual(stepsWithoutBackendBuild(b,'mobile e2e'),aSteps,'every other step is unchanged');
+  assert.equal(b['runs-on'],'ubuntu-24.04','mobile advisory e2e is pinned to ubuntu-24.04');
   assert.equal(b['continue-on-error'],undefined);assert.ok(b.steps.some(s=>s.run==='pnpm --filter ./mobile run test:e2e'));
 });
 test('reusable classification and completion are self-contained protected-base authority with full bootstrap',()=>{
@@ -93,14 +178,15 @@ test('service-record-ui reaches all downstream path-filtered required and adviso
 const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
 const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
 test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
-  const text = read('backend-ci.yml'), workflow = parse(text);
+  const text = withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
   const steps = workflow.jobs.checks.steps;
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');
   assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
-  assert.deepEqual(steps.filter(s => s.name !== 'CI impact routing contracts'), previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts'));
+  assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
@@ -121,7 +207,10 @@ test('Playwright conditions the full service job, preserves the full lane and ev
   assert.deepEqual(needs(w.jobs.test), ['impact']);
   assert.match(w.jobs.test.if, /!cancelled\(\)/);
   const {needs: _needs, if: _if, ...heavy} = w.jobs.test;
-  assert.deepEqual(heavy, before.jobs.test, 'services, fixtures, commands, artifacts and timeout remain unchanged');
+  assert.equal(heavy['runs-on'], 'ubuntu-24.04', 'frontend auth lifecycle job is pinned to ubuntu-24.04');
+  const {steps: _heavySteps, ...heavyRest} = heavy, {steps: beforeSteps, ...beforeRest} = before.jobs.test;
+  assert.deepEqual({...heavyRest, 'runs-on': before.jobs.test['runs-on']}, beforeRest, 'services, fixtures, artifacts and timeout remain unchanged');
+  assert.deepEqual(stepsWithoutBackendBuild(heavy, 'frontend auth lifecycle'), beforeSteps, 'every other step and command remains unchanged');
   const visited = new Set(), active = new Set();
   function visit(id) {
     assert.ok(w.jobs[id], `missing job ${id}`);assert.equal(active.has(id), false, `cycle at ${id}`);

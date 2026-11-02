@@ -1,10 +1,17 @@
+import { EventEmitter } from "events";
+
 import { Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import Redis from "ioredis";
 
 import {
+    createEformsignBackfillRedisClient,
     EformsignBackfillAlreadyRunningError,
     EformsignBackfillLockService,
     EformsignBackfillLockUnavailableError,
 } from "infrastructure/locking/eformsign-backfill-lock.service";
+
+jest.mock("ioredis", () => jest.fn());
 
 class FakeRedisLockClient {
     status = "ready";
@@ -233,5 +240,29 @@ describe("EformsignBackfillLockService", () => {
         );
         expect(messages).not.toContain("renew-secret");
         expect(messages).not.toContain("release-secret");
+    });
+});
+
+describe("createEformsignBackfillRedisClient", () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it("handles Valkey client error events instead of leaving them unhandled", () => {
+        const client = new EventEmitter();
+        jest.mocked(Redis).mockImplementation(() => client as unknown as Redis);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const config = { get: () => "redis://cache-user:secret@127.0.0.1:6379" } as unknown as ConfigService;
+
+        createEformsignBackfillRedisClient(config);
+
+        expect(client.listenerCount("error")).toBeGreaterThan(0);
+        expect(() => client.emit(
+            "error",
+            new Error("connect ECONNREFUSED redis://cache-user:secret@127.0.0.1:6379"),
+        )).not.toThrow();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]?.[0])).toContain("connect ECONNREFUSED");
+        expect(String(warn.mock.calls[0]?.[0])).not.toContain("secret");
     });
 });

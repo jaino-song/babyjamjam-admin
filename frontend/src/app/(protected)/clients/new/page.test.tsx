@@ -212,4 +212,30 @@ describe("NewClientPage inline field messages", () => {
     expect((await screen.findByLabelText("계약 상태")).tagName).toBe("SELECT");
     expectNoFieldMessageBelowControl(document.body);
   });
+  it("offers the weekend and holiday service switches on the service step and sends them on create", async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText(/연락처/), { target: { value: "01012345678" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    const saturday = await screen.findByRole("switch", { name: "토요일" });
+    expect(saturday).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "일요일" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "공휴일" })).not.toBeChecked();
+
+    fireEvent.click(saturday);
+    fireEvent.click(screen.getByRole("switch", { name: "공휴일" }));
+    expect(saturday).toBeChecked();
+
+    mockCreateClient.mockResolvedValue({ id: 5 });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.click(await screen.findByRole("button", { name: "등록" }));
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
+    expect(mockCreateClient.mock.calls[0][0]).toMatchObject({
+      allowSaturdayService: true,
+      allowSundayService: false,
+      allowHolidayService: true,
+    });
+  });
 });

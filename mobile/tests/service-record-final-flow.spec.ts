@@ -40,6 +40,17 @@ async function mockShellRequests(page: import("@playwright/test").Page) {
   });
 }
 
+// The how-to guide opens by itself over a first-time (no saved header) service-info step, and
+// as a modal it makes the form behind it inaccessible. A caregiver skips it with 건너뛰기; do
+// the same through the real UI. It asserts the dialog is open first, so a regression of the
+// auto-open fails here instead of passing silently.
+async function dismissServiceRecordGuide(page: import("@playwright/test").Page) {
+  const guide = page.getByRole("dialog", { name: "제공기록지 작성 가이드" });
+  await expect(guide).toBeVisible();
+  await guide.getByRole("button", { name: "건너뛰기" }).click();
+  await expect(guide).toBeHidden();
+}
+
 async function signServiceRecord(page: import("@playwright/test").Page) {
   const signaturePad = page.getByLabel("산모 서명 입력");
   await expect(signaturePad).toBeVisible();
@@ -153,6 +164,7 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   }));
 
   await page.goto(`/service-record/${token}`);
+  await dismissServiceRecordGuide(page);
   const momBirth = page.getByLabel("산모 생년월일", { exact: true });
   const babyBirth = page.getByLabel("신생아 출생일자", { exact: true });
   // The format hint lives in the label-row slot now, so the labels carry no "(YYYY-MM-DD)"
@@ -244,6 +256,7 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   }));
 
   await page.goto(`/service-record/${token}`);
+  await dismissServiceRecordGuide(page);
   const momBirth = page.getByLabel("산모 생년월일", { exact: true });
   const babyBirth = page.getByLabel("신생아 출생일자", { exact: true });
   await expect(momBirth).toHaveAttribute("placeholder", "1994-03-15");
@@ -271,6 +284,8 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_service-title"]')).toHaveText("서비스 기본정보");
 
   await page.reload();
+  // The save failed, so no header exists and the guide opens again on the reloaded step.
+  await dismissServiceRecordGuide(page);
   await expect(page.getByLabel("산모 성명", { exact: true })).toHaveValue(header.momName);
   await expect(momBirth).toHaveValue(header.momBirth);
   await expect(page.getByLabel("신생아 성명", { exact: true })).toHaveValue(header.babyName);

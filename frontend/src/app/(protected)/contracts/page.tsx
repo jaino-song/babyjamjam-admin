@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import {
@@ -43,8 +43,8 @@ import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInfiniteContracts";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
-import type { EformsignDocument, EformsignDocumentOption, EformsignStatusCountsResponse } from "@/lib/eformsign/types";
-import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import type { EformsignDocument, EformsignStatusCountsResponse } from "@/lib/eformsign/types";
 import { useDebounce } from "use-debounce";
 import {
   DocumentFilterType,
@@ -107,7 +107,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { eformsignApi, withEformsignReauth } from "@/services/api";
+import { eformsignApi, withEformsignReauth, type EnqueueEformsignDocumentJobResponse } from "@/services/api";
 import { cn } from "@/lib/utils";
 import {
   extractDocumentAddress,
@@ -134,19 +134,14 @@ import {
   ContractCreationForm,
   CONTRACT_CREATION_STEPPER_STEPS,
 } from "@/components/app/contracts/ContractCreationForm";
-import { StaffCompletionIframeModal } from "@/components/app/contracts/StaffCompletionIframeModal";
+import { useFormStore } from "@/stores/form-store";
+import { DocumentJobRecoveryDialog } from "@/components/app/contracts/DocumentJobRecoveryDialog";
 import {
   HeadlessProgressStepper,
-  type HeadlessProgressEvent,
   type HeadlessProgressState,
   type HeadlessProgressStep,
-  type HeadlessProgressStepKey,
 } from "@/components/app/eformsign/HeadlessProgressStepper";
-import { isFeatureEnabled } from "@/lib/feature-flags";
-import {
-  useEformsignDocumentJobs,
-  useEnqueueEformsignDocumentFinalization,
-} from "@/hooks/useEformsignDocumentJobs";
+import { useEnqueueEformsignDocumentFinalization } from "@/hooks/useEformsignDocumentJobs";
 
 const FINALIZE_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
   { key: "client-started", label: "전자문서 클라이언트 시작", errorLabel: "전자문서 클라이언트 시작 실패" },
@@ -163,15 +158,6 @@ const INITIAL_FINALIZE_PROGRESS: HeadlessProgressState = {
   completed: false,
   failed: false,
 };
-
-type FinalizeProgressEvent = HeadlessProgressEvent;
-
-function isFinalizeProgressStepKey(
-  value: string,
-  steps: readonly HeadlessProgressStep[] = FINALIZE_PROGRESS_STEPS,
-): value is HeadlessProgressStepKey {
-  return steps.some((item) => item.key === value);
-}
 
 function createFinalizeProgressId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -209,34 +195,6 @@ const DETAIL_TABS = [
 ] as const;
 
 type DetailTabKey = (typeof DETAIL_TABS)[number]["key"];
-
-/**
- * Every headless-finalize refusal used to surface as the generic message below,
- * so an operator could not tell "already handled, waiting for the status to
- * catch up" apart from a real failure and kept re-clicking. These are the
- * reasons the backend returns with fallbackHint "manual_check"
- * (finalize-document-headless.usecase.ts); anything else — including sanitized
- * vendor text, which is internal English — falls back to the generic message.
- */
-const FINALIZE_MANUAL_CHECK_MESSAGES: Record<string, string> = {
-  dispatch_already_accepted:
-    "이 단계는 이미 처리를 접수했어요. 문서 상태가 갱신되면 다음 단계를 진행할 수 있어요.",
-  dispatch_uncertain_manual_reconciliation_required:
-    "직전 요청의 처리 결과를 확인하지 못했어요. eformsign에서 문서 상태를 확인한 뒤 다시 시도해 주세요.",
-  operation_in_progress: "이 문서를 처리하는 중이에요. 잠시 후 다시 시도해 주세요.",
-  operation_lock_unavailable: "처리 순서를 확보하지 못했어요. 잠시 후 다시 시도해 주세요.",
-  operation_lock_lost: "처리 순서를 확보하지 못했어요. 잠시 후 다시 시도해 주세요.",
-  authorization_denied:
-    "이 문서를 완료 처리할 수 없어요. 고객 등록과 제공인력 배정이 저장되었는지 확인해 주세요.",
-  eformsign_terminal_failure:
-    "eformsign에서 문서가 종료 상태로 처리됐어요. 문서 상태를 확인해 주세요.",
-  // Raised by finalizeHeadless itself once its provider-step loop is exhausted.
-  provider_workflow_incomplete:
-    "제공기관 단계가 아직 남아 있어요. 목록을 새로고침한 뒤 다시 시도해 주세요.",
-};
-
-const FINALIZE_MANUAL_CHECK_FALLBACK_MESSAGE =
-  "완료 처리 결과를 확인하지 못했어요. eformsign에서 문서 상태를 확인한 뒤 다시 시도해 주세요.";
 
 type InfoCardRow = {
   label: string;
@@ -482,6 +440,11 @@ export default function ContractsPage() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [hasContractCreationSession, setHasContractCreationSession] = useState(false);
+  // A creation form is open (shown or hidden behind a document), whatever its step. The
+  // form reports a session only while it is processing, so this is what keeps an ordinary
+  // editing draft mounted — and its component-local state — when the user looks away.
+  // Cleared only by an explicit close, cancel, or successful submit (handleCloseContractCreation).
+  const [hasOpenCreationDraft, setHasOpenCreationDraft] = useState(false);
   const [contractCreationActiveStep, setContractCreationActiveStep] = useState(0);
   const [deleteTargetDocumentId, setDeleteTargetDocumentId] = useState<string | null>(null);
   const [registerClientDocumentId, setRegisterClientDocumentId] = useState<string | null>(null);
@@ -489,8 +452,8 @@ export default function ContractsPage() {
   const [serviceRecordActiveTab, setServiceRecordActiveTab] = useState("all");
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
   const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
-  const [isDocumentJobsPopoverOpen, setIsDocumentJobsPopoverOpen] = useState(false);
-  const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
+  const [recoverJobId, setRecoverJobId] = useState<string | null>(null);
+  const [contractCreationFormKey, setContractCreationFormKey] = useState(0);
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     requireAccessToken: false,
     syncOnWindowFocus: false,
@@ -500,10 +463,6 @@ export default function ContractsPage() {
   useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const documentJobsQuery = useEformsignDocumentJobs({
-    isAuthenticated: isAuthenticated && documentJobsEnabled,
-    isPopoverOpen: isDocumentJobsPopoverOpen,
-  });
   const deleteDocument = useDeleteEformsignDocument();
   const registerCandidateQuery = useContractClientCandidate(registerClientDocumentId);
   const registerClientPrefill = useMemo(
@@ -642,13 +601,16 @@ export default function ContractsPage() {
 
   const handleStartContractCreation = useCallback(() => {
     setSelectedDocId(null);
-    // A creation still in progress is resumed where it is; only a genuinely new
-    // contract starts at the first step.
-    if (!hasContractCreationSession) {
+    // A creation still in progress is resumed where it is, and so is a draft that was only
+    // hidden behind a document (open but not showing); only a genuinely new contract starts
+    // at the first step.
+    const isHiddenDraft = hasOpenCreationDraft && !isCreating;
+    if (!hasContractCreationSession && !isHiddenDraft) {
       setContractCreationActiveStep(0);
     }
+    setHasOpenCreationDraft(true);
     setIsCreating(true);
-  }, [hasContractCreationSession]);
+  }, [hasContractCreationSession, hasOpenCreationDraft, isCreating]);
 
   useEffect(() => {
     if (searchParams.get("create") !== "1") return;
@@ -671,8 +633,32 @@ export default function ContractsPage() {
     router.replace("/contracts", { scroll: false });
   }, [router, searchParams]);
 
+  // Deep link used by failed-job notifications, popups and the jobs list
+  // (/contracts?recoverJobId=…): open the recovery dialog and clear the param.
+  useEffect(() => {
+    const recoverJobIdParam = searchParams.get("recoverJobId");
+    if (!recoverJobIdParam) return;
+
+    setRecoverJobId(recoverJobIdParam);
+    router.replace("/contracts", { scroll: false });
+  }, [router, searchParams]);
+
+  // A fresh send for a job that cannot be resent: drop whatever is in the form store and
+  // remount the form so no step, field or request key of an earlier send carries over.
+  const handleStartFreshContractCreation = useCallback(() => {
+    useFormStore.getState().resetAll();
+    setActiveSection("maternity");
+    setSelectedDocId(null);
+    setHasContractCreationSession(false);
+    setContractCreationActiveStep(0);
+    setContractCreationFormKey((key) => key + 1);
+    setHasOpenCreationDraft(true);
+    setIsCreating(true);
+  }, []);
+
   const handleCloseContractCreation = useCallback(() => {
     setIsCreating(false);
+    setHasOpenCreationDraft(false);
     setHasContractCreationSession(false);
     setContractCreationActiveStep(0);
   }, []);
@@ -744,7 +730,7 @@ export default function ContractsPage() {
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <ContractStatsBar
         name="contracts" density="responsive-square"
-        showDocumentJobs={documentJobsEnabled} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
+        showDocumentJobs={true} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
         isLoading={isStatsLoading} onRetryStats={isAuthenticated && isStatsBranchContextReady ? () => void statusCountsQuery.refetch() : undefined}
         items={[
           { icon: CheckCircle2, value: stats?.reviewNeeded ?? "—", label: "검토 필요", counter: "건", colorIndex: 0 },
@@ -753,14 +739,6 @@ export default function ContractsPage() {
           { icon: FileText, value: stats?.drafting ?? "—", label: "작성 대기중", counter: "건" },
           { icon: AlertTriangle, value: stats?.expired ?? "—", label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
-        summary={documentJobsEnabled ? documentJobsQuery.summary : null} summaryError={documentJobsEnabled ? documentJobsQuery.summaryQuery.error : null} summaryHasData={documentJobsEnabled && documentJobsQuery.summary !== undefined}
-        isSummaryRefreshing={documentJobsEnabled && documentJobsQuery.summaryQuery.isFetching} onRetrySummary={documentJobsEnabled ? () => void documentJobsQuery.summaryQuery.refetch() : undefined} documentJobs={documentJobsEnabled ? (documentJobsQuery.data ?? null) : null}
-        isJobsLoading={documentJobsEnabled && (
-          documentJobsQuery.summaryQuery.isLoading || documentJobsQuery.isLoading
-        )}
-        jobsError={documentJobsEnabled ? documentJobsQuery.error : null}
-        onRetryJobs={documentJobsEnabled ? () => void documentJobsQuery.refetch() : undefined}
-        onJobsPopoverOpenChange={setIsDocumentJobsPopoverOpen}
       />
 
       {activeSection === "maternity" && <ContractLinkConfirmationsNotice />}
@@ -884,12 +862,13 @@ export default function ContractsPage() {
               which moves the creation form (and unmounts its session) the moment a document is
               selected. One stable detail group keeps the form mounted while it is hidden. */}
           <>
-          {(isCreating || hasContractCreationSession) && (
+          {(isCreating || hasOpenCreationDraft || hasContractCreationSession) && (
             <div
               data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session"
               className={isCreating ? "contents" : "hidden"}
             >
                 <ContractCreationForm
+                  key={contractCreationFormKey}
                   onClose={handleCloseContractCreation}
                   onSessionStateChange={handleContractCreationSessionChange}
                   activeStep={contractCreationActiveStep}
@@ -1190,6 +1169,24 @@ export default function ContractsPage() {
           }}
         />
       )}
+
+      {recoverJobId !== null && (
+        <DocumentJobRecoveryDialog
+          key={recoverJobId}
+          jobId={recoverJobId}
+          hasCreationInProgress={isCreating || hasOpenCreationDraft || hasContractCreationSession}
+          onStartFresh={handleStartFreshContractCreation}
+          onViewDocument={(documentId) => {
+            setActiveSection("maternity");
+            // Leaving creation mode only hides the form — it stays mounted (an open draft or a
+            // processing session), so the in-progress input is kept, not discarded.
+            setIsCreating(false);
+            setRegisterClientDocumentId(null);
+            setSelectedDocId(documentId);
+          }}
+          onClose={() => setRecoverJobId(null)}
+        />
+      )}
     </PageSection>
   );
 }
@@ -1217,7 +1214,6 @@ export function ContractDetail({
   const { toast } = useToast();
   // Display-only (status label, receipt gate): the built-in calendar stands in while it loads.
   const { calendar } = useBusinessDayCalendar();
-  const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
   const enqueueFinalizationMutation = useEnqueueEformsignDocumentFinalization();
   const detailQuery = useQuery<EformsignDocument>({
     queryKey: ["eformsign-documents", "detail", doc.id],
@@ -1273,12 +1269,6 @@ export function ContractDetail({
   const [isFinalizeOpen, setIsFinalizeOpen] = useState(false);
   const [isServiceRecordFinalizeConfirmOpen, setIsServiceRecordFinalizeConfirmOpen] = useState(false);
   const [finalizeEndDate, setFinalizeEndDate] = useState<string>("");
-  const [finalizeProgress, setFinalizeProgress] = useState<HeadlessProgressState>(INITIAL_FINALIZE_PROGRESS);
-  const finalizeProgressIdRef = useRef<string | null>(null);
-  const finalizeEventSourceRef = useRef<EventSource | null>(null);
-  const [isStaffCompletionOpen, setIsStaffCompletionOpen] = useState(false);
-  const [staffCompletionOption, setStaffCompletionOption] = useState<EformsignDocumentOption | null>(null);
-  const reviewDocumentLabel = reviewAction === "preview" ? "제공기록지" : "계약서";
   const finalizeProgressSteps = isServiceRecordDocument
     ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
     : FINALIZE_PROGRESS_STEPS;
@@ -1465,41 +1455,10 @@ export function ContractDetail({
     setRecipientPhone(initialRecipientPhone);
   };
 
-  const closeFinalizeProgressStream = useCallback(() => {
-    finalizeEventSourceRef.current?.close();
-    finalizeEventSourceRef.current = null;
-    finalizeProgressIdRef.current = null;
-  }, []);
-
   const resetFinalizeState = () => {
     setIsFinalizeOpen(false);
     setIsServiceRecordFinalizeConfirmOpen(false);
     setFinalizeEndDate("");
-    setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
-    closeFinalizeProgressStream();
-  };
-
-  useEffect(() => {
-    return () => {
-      finalizeEventSourceRef.current?.close();
-      finalizeEventSourceRef.current = null;
-      finalizeProgressIdRef.current = null;
-    };
-  }, []);
-
-  const closeStaffCompletionModal = () => {
-    setIsStaffCompletionOpen(false);
-    setStaffCompletionOption(null);
-  };
-
-  const handleFinalizeSuccess = () => {
-    toast({
-      variant: "success",
-      title: "최종 확인을 마쳤어요",
-      description: `${reviewDocumentLabel}를 완료 처리했어요`,
-    });
-    resetFinalizeState();
-    queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
   };
 
   const reRequestMutation = useMutation({
@@ -1538,119 +1497,35 @@ export function ContractDetail({
   });
 
   const openStaffCompletionMutation = useMutation({
-    mutationFn: async (endDate?: string): Promise<
-      | { kind: "queued" }
-      | { kind: "headless" }
-      | { kind: "iframe"; option: EformsignDocumentOption }
-    > => {
-      if (documentJobsEnabled) {
-        await enqueueFinalizationMutation.mutateAsync({
-          requestKey: createFinalizeProgressId(),
-          documentId: doc.id,
-          prefillEndDate: endDate,
-        });
-        return { kind: "queued" };
-      }
-
-      // BJJ-90: try the backend-driven finalize first when the flag is on.
-      if (isFeatureEnabled("headlessDispatch")) {
-        // Raised inside the try but acted on outside it: the catch below exists
-        // to turn transport failures into an iframe retry, and it would swallow
-        // this signal just as readily.
-        let manualCheckRequired = false;
-        let manualCheckReason: string | undefined;
-        let transportOutcomeUnknown = false;
-        try {
-          const progressId = finalizeProgressIdRef.current ?? undefined;
-          const headless = await eformsignApi.finalizeHeadless(doc.id, endDate, progressId);
-          if (headless.ok) {
-            return { kind: "headless" };
-          }
-          // BJJ-319 5-4c: the structured outcome is the primary classification
-          // when the envelope carries it. An UNKNOWN verdict means eformsign may
-          // already have applied the step, so the recovery is the manual status
-          // check — never the reviewer iframe. Envelopes without the field keep
-          // the fallbackHint decision.
-          const structuredOutcome = readHeadlessOutcome(headless.outcome);
-          manualCheckRequired = headless.fallbackHint === "manual_check"
-            || structuredOutcome === "UNKNOWN";
-          manualCheckReason = headless.reason;
-          console.warn(
-            "[finalize] headless finalize ok=false",
-            headless.reason,
-            headless.fallbackHint,
-          );
-        } catch (headlessError) {
-          transportOutcomeUnknown = true;
-          console.warn("[finalize] headless finalize verdict is unknown", headlessError);
-        }
-        // The backend asks for the iframe only once it has confirmed with
-        // eformsign that the step is still unfinished. When it could not
-        // confirm, reopening the editor would invite re-approval of a step that
-        // may already be done.
-        if (manualCheckRequired || transportOutcomeUnknown) {
-          // A transport failure carries no reason, so it keeps the generic text.
-          throw new Error(
-            (manualCheckReason
-              ? FINALIZE_MANUAL_CHECK_MESSAGES[manualCheckReason]
-              : undefined) ?? FINALIZE_MANUAL_CHECK_FALLBACK_MESSAGE,
-          );
-        }
-      }
-
-      // Provider authentication runs only inside the server boundary.
-      // Client callers never receive or submit eformsign credentials.
-      // The server selects configured provider identity and capabilities.
-      // Keep this fallback limited to the server-mediated option request.
-      // (No client-side token acquisition.)
-      const option = await eformsignApi.generateStaffDocument(doc.id, endDate);
-      return { kind: "iframe", option };
-    },
-    onSuccess: (result) => {
-      closeFinalizeProgressStream();
-      setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
-      if (result.kind === "queued") {
-        setIsPreviewOpen(false);
-        setIsFinalizeOpen(false);
-        setIsServiceRecordFinalizeConfirmOpen(false);
-        setFinalizeEndDate("");
-        toast({ description: "전자문서 작업을 시작했어요" });
-        return;
-      }
-      if (result.kind === "headless") {
-        setIsPreviewOpen(false);
-        setIsFinalizeOpen(false);
-        setFinalizeEndDate("");
+    mutationFn: ({ endDate }: { endDate?: string } = {}): Promise<EnqueueEformsignDocumentJobResponse> =>
+      enqueueFinalizationMutation.mutateAsync({
+        requestKey: createFinalizeProgressId(),
+        documentId: doc.id,
+        prefillEndDate: endDate,
+      }),
+    onSuccess: ({ existing, status }) => {
+      // `existing` means the server kept a prior finalize job for this document
+      // (the active key survives queued/processing and requires_attention), so
+      // nothing new was created and "시작했어요" would be false.
+      if (existing && (status === "failed" || status === "requires_attention")) {
         toast({
-          variant: "success",
-          title: "최종 확인을 마쳤어요",
-          description: `${reviewDocumentLabel}를 완료 처리했어요`,
-        });
-        // Headless finalize completes within ~1s of the SDK success callback,
-        // but eformsign's status field (060 → 070) and the matching webhook
-        // can lag a few seconds behind. Invalidate immediately and again at
-        // 2s/5s so the list eventually reflects the new status without
-        // requiring the user to refresh the tab.
-        queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
-        const delays = [2000, 5000];
-        delays.forEach((delay) => {
-          setTimeout(() => {
-            queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
-            queryClient.invalidateQueries({
-              queryKey: ["eformsign-documents", "detail", doc.id],
-            });
-          }, delay);
+          variant: "destructive",
+          title: "최종 확인을 마치지 못했어요",
+          description: "이 계약서의 검토완료 작업이 처리중 목록에 남아 있어요. 처리중 목록에서 확인해 주세요.",
         });
         return;
       }
       setIsPreviewOpen(false);
-      setStaffCompletionOption(result.option);
       setIsFinalizeOpen(false);
-      setIsStaffCompletionOpen(true);
+      setIsServiceRecordFinalizeConfirmOpen(false);
+      setFinalizeEndDate("");
+      if (existing) {
+        toast({ description: "이 계약서의 검토완료가 이미 처리 중이에요." });
+        return;
+      }
+      toast({ description: "전자문서 작업을 시작했어요" });
     },
     onError: (error) => {
-      closeFinalizeProgressStream();
-      setFinalizeProgress(INITIAL_FINALIZE_PROGRESS);
       // Registered problem message (verified) or locally authored copy —
       // upstream internals are never rendered.
       const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
@@ -1666,6 +1541,10 @@ export function ContractDetail({
     mutationFn: (documentId: string) => eformsignApi.sendReceiptLink(documentId),
     onSuccess: (result) => {
       setReceiptSendTarget(null);
+      // 방금 만든 대기 job이 알림 발송 목록에 바로 보이게 한다. 이 화면에는 고객 id가 없어
+      // client-history는 prefix로 무효화한다.
+      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+      void queryClient.invalidateQueries({ queryKey: [...messageTriggerKeys.all, "client-history"] });
       toast({
         variant: "success",
         title: "서비스 종료 안내 발송 예약",
@@ -1697,85 +1576,9 @@ export function ContractDetail({
     resetFinalizeState();
   };
 
-  const handleStaffCompletionSuccess = () => {
-    closeStaffCompletionModal();
-    handleFinalizeSuccess();
-  };
-
-  const handleStaffCompletionError = (message: string) => {
-    toast({
-      variant: "destructive",
-      title: "최종 확인을 마치지 못했어요",
-      description: message,
-    });
-    closeStaffCompletionModal();
-  };
-
-  const handleStaffCompletionCancel = () => {
-    toast({
-      title: "최종 확인을 취소했어요",
-      description: "필요하면 다시 최종 확인을 진행할 수 있어요",
-    });
-    closeStaffCompletionModal();
-  };
-
-  const startFinalizeFlow = (endDate?: string) => {
-    if (isFinalizePending) {
-      return;
-    }
-
-    const progressId = createFinalizeProgressId();
-    finalizeProgressIdRef.current = progressId;
-    setFinalizeProgress({ step: "client-started", completed: false, failed: false });
-
-    // Close any prior stream defensively before opening a new one (e.g. retry).
-    finalizeEventSourceRef.current?.close();
-    const source = new EventSource(
-      `/api/eformsign-docs/finalize-headless/progress?progressId=${encodeURIComponent(progressId)}`,
-    );
-    finalizeEventSourceRef.current = source;
-    source.addEventListener("progress", (event) => {
-      let data: FinalizeProgressEvent;
-      try {
-        data = JSON.parse((event as MessageEvent).data) as FinalizeProgressEvent;
-      } catch {
-        return;
-      }
-      if (data.step === "failed") {
-        const fallbackStep =
-          data.failedStep && isFinalizeProgressStepKey(data.failedStep, finalizeProgressSteps)
-            ? data.failedStep
-            : null;
-        setFinalizeProgress((current) => ({
-          step: fallbackStep ?? current.step ?? "client-started",
-          completed: false,
-          failed: true,
-        }));
-        return;
-      }
-      if (!isFinalizeProgressStepKey(data.step, finalizeProgressSteps)) return;
-      const nextStep = data.step;
-      setFinalizeProgress((current) =>
-        current.failed
-          ? current
-          : {
-            step: nextStep,
-            completed: nextStep === "sent",
-            failed: false,
-          },
-      );
-    });
-
-    openStaffCompletionMutation.mutate(endDate);
-  };
-
   const handleFinalizeSubmit = () => {
-    if (documentJobsEnabled) {
-      if (!isFinalizeEndDateValid) return;
-      openStaffCompletionMutation.mutate(finalizeEndDate);
-      return;
-    }
-    startFinalizeFlow(finalizeEndDate);
+    if (!isFinalizeEndDateValid) return;
+    openStaffCompletionMutation.mutate({ endDate: finalizeEndDate });
   };
 
   const handleServiceRecordReviewConfirm = () => {
@@ -1785,12 +1588,7 @@ export function ContractDetail({
 
   const handleServiceRecordFinalizeApprove = () => {
     setIsServiceRecordFinalizeConfirmOpen(false);
-    if (documentJobsEnabled) {
-      openStaffCompletionMutation.mutate(undefined);
-      return;
-    }
-    setIsFinalizeOpen(true);
-    startFinalizeFlow();
+    openStaffCompletionMutation.mutate({});
   };
 
   const activityItems: {
@@ -2364,14 +2162,14 @@ export function ContractDetail({
                 : "서비스 완료일을 수정한 뒤 확정해 주세요."}
             </DialogDescription>
           </DialogHeader>
-          {isFinalizePending || finalizeProgress.step !== null ? (
+          {isFinalizePending ? (
             <div
               data-component={`${dataComponent}_dialogs_finalize_progress-section`}
               className="flex justify-center py-[calc(8px*var(--glint-ui-scale,1))]"
             >
               <HeadlessProgressStepper
                 steps={finalizeProgressSteps}
-                progress={finalizeProgress}
+                progress={INITIAL_FINALIZE_PROGRESS}
                 ariaLabel={
                   isServiceRecordDocument
                     ? "제공기록지 검토 진행 상태"
@@ -2424,18 +2222,6 @@ export function ContractDetail({
           )}
         </DialogContent>
       </Dialog>
-      <StaffCompletionIframeModal
-        open={isStaffCompletionOpen}
-        documentOption={staffCompletionOption}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeStaffCompletionModal();
-          }
-        }}
-        onSuccess={handleStaffCompletionSuccess}
-        onError={handleStaffCompletionError}
-        onCancel={handleStaffCompletionCancel}
-      />
       <Dialog open={isActivityOpen} onOpenChange={setIsActivityOpen}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>

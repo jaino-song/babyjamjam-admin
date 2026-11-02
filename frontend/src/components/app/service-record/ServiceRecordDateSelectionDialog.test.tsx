@@ -210,4 +210,18 @@ describe("ServiceRecordDateSelectionDialog", () => {
             reason: "unsupported-year",
         });
     });
+
+    it("offers Saturday only on a calendar wrapped with the client's Saturday service", () => {
+        const saturdayCalendar = KR_BUILTIN_CALENDAR.withServiceDays({ saturday: true, sunday: false, holiday: false });
+        expect(isSelectableServiceRecordDate("2026-12-19", KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isSelectableServiceRecordDate("2026-12-19", saturdayCalendar)).toBe(true);
+        // Sunday stays closed: only the toggles the client has are opened.
+        expect(isSelectableServiceRecordDate("2026-12-20", saturdayCalendar)).toBe(false);
+        expect(getBusinessDayOptions(2026, 12, KR_BUILTIN_CALENDAR).map((option) => option.value)).not.toContain("19");
+        expect(getBusinessDayOptions(2026, 12, saturdayCalendar).map((option) => option.value)).toContain("19");
+
+        renderDialog({ calendar: saturdayCalendar, currentServiceDate: "2026-12-18" });
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        expect(screen.getByRole("option", { name: "19일" })).toBeInTheDocument();
+    });
 });

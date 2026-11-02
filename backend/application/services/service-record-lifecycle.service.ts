@@ -8,6 +8,7 @@ import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
+import { withClientServiceDays } from "domain/utils/client-service-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -363,6 +364,9 @@ export class ServiceRecordLifecycleService {
                 duration: true,
                 serviceStatus: true,
                 bookingConfirmedAt: true,
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
                 employeeSchedules: {
                     include: { primaryEmployee: true },
                     orderBy: [{ startDate: "asc" }, { id: "asc" }],
@@ -407,6 +411,9 @@ export class ServiceRecordLifecycleService {
                     duration: true,
                     serviceStatus: true,
                     bookingConfirmedAt: true,
+                    allowSaturdayService: true,
+                    allowSundayService: true,
+                    allowHolidayService: true,
                     employeeSchedules: {
                         include: { primaryEmployee: true },
                         orderBy: [{ startDate: "asc" }, { id: "asc" }],
@@ -438,6 +445,10 @@ export class ServiceRecordLifecycleService {
         // never change a stored N on its own, so an existing case with a stored
         // N and an unchanged period needs no calendar at all.
         let calendar = passedCalendar;
+        // N and the planned dates are the CLIENT's service days: apply the
+        // service-day policy of the row read under the write lock, so a flag
+        // change racing this write cannot be missed. Callers hand in the branch
+        // calendar; re-wrapping replaces any policy already on it.
         const resolveCalendar = async (): Promise<KrBusinessDayCalendar> => {
             if (!calendar) {
                 if (tx) {
@@ -453,7 +464,7 @@ export class ServiceRecordLifecycleService {
                 }
                 calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
             }
-            return calendar;
+            return withClientServiceDays(calendar, client);
         };
         const finalizationDueAt = client.endDate
             ? getServiceRecordFinalizationDueAt(client.endDate)
@@ -1148,10 +1159,19 @@ export class ServiceRecordLifecycleService {
         // do not expose findUnique; those retain the historical
         // end-date-only update shape.
         let duration: number | null | undefined;
+        // The calendar handed on to `ensureForClient` carries the locked
+        // client's service-day policy (it re-applies the policy itself).
+        let clientCalendar = calendar;
         if (typeof tx.client.findUnique === "function") {
             const currentClient = await tx.client.findUnique({
                 where: { id: params.clientId },
-                select: { startDate: true, duration: true },
+                select: {
+                    startDate: true,
+                    duration: true,
+                    allowSaturdayService: true,
+                    allowSundayService: true,
+                    allowHolidayService: true,
+                },
             });
             const existingCase = typeof tx.service_record_case?.findUnique === "function"
                 ? await tx.service_record_case.findUnique({
@@ -1159,6 +1179,7 @@ export class ServiceRecordLifecycleService {
                     select: { id: true, requiredSessionCount: true },
                 })
                 : undefined;
+            clientCalendar = withClientServiceDays(calendar, currentClient);
             // A null client duration on a case that already has persisted
             // service-record state is legacy evidence, not permission to
             // backfill the nominal voucher from a later period edit. Keep it
@@ -1172,7 +1193,7 @@ export class ServiceRecordLifecycleService {
                     const derived = deriveInitialSessionCount({
                         startDate: currentClient.startDate,
                         endDate: params.endDate,
-                        calendar,
+                        calendar: clientCalendar,
                     });
                     if (derived === null) {
                         throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -1199,7 +1220,7 @@ export class ServiceRecordLifecycleService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        await this.ensureForClient(params.clientId, tx, calendar);
+        await this.ensureForClient(params.clientId, tx, clientCalendar);
     }
 
     private hasCompleteServiceRecordWriteLockSurface(
@@ -1365,7 +1386,7 @@ export class ServiceRecordLifecycleService {
         db: DbClient,
         calendar?: KrBusinessDayCalendar,
     ) {
-        const record = await db.service_record_case.findUnique({
+        const loaded = await db.service_record_case.findUnique({
             where: { id: serviceRecordCaseId },
             include: {
                 assignments: { include: { schedule: { select: { replaced: true } } } },
@@ -1377,9 +1398,18 @@ export class ServiceRecordLifecycleService {
                         momApproval: true,
                     },
                 },
+                client: {
+                    select: {
+                        allowSaturdayService: true,
+                        allowSundayService: true,
+                        allowHolidayService: true,
+                    },
+                },
             },
         });
-        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (!loaded) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        // The client is read only for its service-day policy; keep it out of the record.
+        const { client: policyClient, ...record } = loaded;
         if (
             IMMUTABLE_FINALIZATION_STATUSES.has(record.status)
             || record.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED
@@ -1394,13 +1424,19 @@ export class ServiceRecordLifecycleService {
         // holiday-calendar edit alone must never move N). Only a null legacy N
         // is derived from the case period. Existing zero and inconsistent
         // legacy evidence remain visible and block preview.
+        // A null legacy N is derived on the CLIENT's service days: apply the
+        // service-day policy of the case's own client (read with the case, in
+        // this transaction) to the branch calendar.
         const required = hasAuthoritativeRevision(record) || record.requiredSessionCount !== null
             ? record.requiredSessionCount
             : legacySessionCount(
                 record.startDate,
                 record.endDate,
                 record.requiredSessionCount,
-                calendar ?? await this.holidayCalendar.forBranch(record.branchId, { fresh: true }),
+                withClientServiceDays(
+                    calendar ?? await this.holidayCalendar.forBranch(record.branchId, { fresh: true }),
+                    policyClient,
+                ),
             );
         const usableRequired = required ?? 0;
         const inPeriodDays = record.days.filter((day) => (

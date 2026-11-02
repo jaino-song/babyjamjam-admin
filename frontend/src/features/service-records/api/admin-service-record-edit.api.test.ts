@@ -128,6 +128,59 @@ describe("admin service-record edit API adapter", () => {
         await expect(adminServiceRecordEditApi.updateDraft("d-1", 3, {})).rejects.toBeInstanceOf(AdminServiceRecordEditApiError);
     });
 
+    it("sends a whole-set schedule replacement in the PATCH body", async () => {
+        global.fetch = jest.fn().mockResolvedValueOnce(
+            response({ draft: { id: "d-1", status: "ACTIVE", changes: {}, draftVersion: 2 } }, 200),
+        );
+        const schedule = {
+            serviceDays: { saturday: true, sunday: false, holiday: false },
+            dates: ["2026-12-14", "2026-12-15", "2026-12-19"],
+        };
+
+        await adminServiceRecordEditApi.updateDraft("d-1", 1, {}, undefined, schedule);
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            "/api/admin/service-records/drafts/d-1",
+            expect.objectContaining({
+                method: "PATCH",
+                body: JSON.stringify({ expectedDraftVersion: 1, changes: {}, schedule }),
+            }),
+        );
+    });
+
+    it("refuses to send a schedule together with a dateMove", async () => {
+        global.fetch = jest.fn();
+
+        await expect(adminServiceRecordEditApi.updateDraft(
+            "d-1",
+            1,
+            {},
+            { sessionIndex: 2, toDate: "2026-07-13" },
+            { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: ["2026-07-13"] },
+        )).rejects.toThrow("cannot be sent together");
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("exposes the schedule code and blocking reasons of a rejected request", async () => {
+        global.fetch = jest.fn()
+            .mockResolvedValueOnce(response({ code: "VALIDATION_FAILED", scheduleCode: "SCHEDULE_COUNT_MISMATCH" }, 400))
+            .mockResolvedValueOnce(response({
+                code: "REQUEST_CONFLICT",
+                blockingReasons: [{ code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 3 }, { code: "bad code" }],
+            }, 409));
+
+        const rejected = await adminServiceRecordEditApi.updateDraft("d-1", 1, {}).catch((error: unknown) => error);
+        expect(rejected).toBeInstanceOf(AdminServiceRecordEditApiError);
+        expect((rejected as AdminServiceRecordEditApiError).scheduleCode).toBe("SCHEDULE_COUNT_MISMATCH");
+        expect((rejected as AdminServiceRecordEditApiError).blockingReasons).toEqual([]);
+
+        const conflicted = await adminServiceRecordEditApi.confirmDraft("d-1", 1, "p-1", "key-1").catch((error: unknown) => error);
+        expect((conflicted as AdminServiceRecordEditApiError).scheduleCode).toBeNull();
+        expect((conflicted as AdminServiceRecordEditApiError).blockingReasons).toEqual([
+            { code: "LOCKED_SESSION_DATE_CHANGED", sessionIndex: 3 },
+        ]);
+    });
+
     it("sends an explicit dateMove and reads a typed preview without inferring dates", async () => {
         global.fetch = jest.fn()
             .mockResolvedValueOnce(response({ draft: { id: "d-1", status: "ACTIVE", changes: {}, draftVersion: 2 } }, 200))

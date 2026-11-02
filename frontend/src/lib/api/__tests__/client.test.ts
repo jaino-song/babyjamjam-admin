@@ -1,6 +1,9 @@
 import axios from "axios";
 import type { AxiosError, AxiosRequestConfig } from "axios";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
+import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
+import { getQueryClient } from "@/lib/queryClient";
+import { QueryObserver } from "@tanstack/react-query";
 
 type AxiosMockInternals = {
     requestInterceptorUse: jest.Mock;
@@ -119,6 +122,74 @@ function createResponseError(
         toJSON: () => ({}),
     } as AxiosError;
 }
+
+describe("api client permission denial", () => {
+    const client = getQueryClient();
+
+    beforeEach(() => {
+        mockAxios.mockClear();
+        mockAxios.__mockApi.barePost.mockReset();
+        mockResetAuthorityState.mockClear();
+        client.clear();
+    });
+
+    afterEach(() => {
+        client.clear();
+        jest.restoreAllMocks();
+    });
+
+    it("refreshes active authority only, preserving the session and original plain 403 error", async () => {
+        const admin = { id: "user-1", role: "admin" };
+        const refreshed = { id: "user-1", role: "user" };
+        client.setQueryData(AUTH_USER_QUERY_KEY, admin);
+        client.setQueryData(["clients"], "unrelated cache");
+        const queryFn = jest.fn().mockResolvedValue(refreshed);
+        const observer = new QueryObserver(client, {
+            queryKey: AUTH_USER_QUERY_KEY,
+            queryFn,
+            staleTime: Infinity,
+        });
+        const unsubscribe = observer.subscribe(() => undefined);
+        const invalidate = jest.spyOn(client, "invalidateQueries");
+        const originalHref = window.location.href;
+        const error = createUnauthorizedError({ method: "PATCH", url: "/clients/1" });
+        error.response!.status = 403;
+        error.response!.data = { message: "Permission denied" };
+        try {
+            await expect(getResponseRejectedHandler()(error)).rejects.toBe(error);
+            await invalidate.mock.results[0].value;
+
+            expect(invalidate).toHaveBeenCalledTimes(1);
+            expect(invalidate).toHaveBeenCalledWith({ queryKey: AUTH_USER_QUERY_KEY });
+            expect(queryFn).toHaveBeenCalledTimes(1);
+            expect(client.getQueryData(AUTH_USER_QUERY_KEY)).toEqual(refreshed);
+            expect(client.getQueryData(["clients"])).toBe("unrelated cache");
+            expect(client.getQueryState(["clients"])?.isInvalidated).toBe(false);
+            expect(mockResetAuthorityState).not.toHaveBeenCalled();
+            expect(mockAxios).not.toHaveBeenCalled();
+            expect(mockAxios.__mockApi.barePost).not.toHaveBeenCalled();
+            expect(window.location.href).toBe(originalHref);
+        } finally {
+            unsubscribe();
+        }
+    });
+
+    it.each([
+        "/auth/me", "/api/auth/me", "https://example.test/api/auth/me?refresh=1",
+        "/eformsign/documents/doc-1", "/api/eformsign/documents/doc-1", "/refresh-access-token", "/api/access-token",
+    ])("does not invalidate authority for 403 from %s", async (url) => {
+        client.setQueryData(AUTH_USER_QUERY_KEY, { role: "admin" });
+        const invalidate = jest.spyOn(client, "invalidateQueries");
+        const error = createUnauthorizedError({ method: "GET", url });
+        error.response!.status = 403;
+
+        await expect(getResponseRejectedHandler()(error)).rejects.toBe(error);
+
+        expect(invalidate).not.toHaveBeenCalled();
+        expect(mockResetAuthorityState).not.toHaveBeenCalled();
+        expect(mockAxios.__mockApi.barePost).not.toHaveBeenCalled();
+    });
+});
 
 describe("api client network retry", () => {
     beforeEach(() => {

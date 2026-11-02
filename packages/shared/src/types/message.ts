@@ -226,6 +226,8 @@ export interface MessageTriggerRule {
    * a branch may only opt OUT of a global rule, never opt in.
    */
   isActive: boolean;
+  /** Server-owned default marker; absent on older API responses. Defaults cannot be deleted. */
+  isDefault?: boolean;
   /**
    * True when a global rule is switched off globally, so no branch can turn it
    * back on. Absent/false for branch-owned rules. Drives the disabled state of

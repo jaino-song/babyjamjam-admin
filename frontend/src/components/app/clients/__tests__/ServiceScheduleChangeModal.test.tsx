@@ -86,6 +86,74 @@ describe("ServiceScheduleChangeModal", () => {
         await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(true));
     });
 
+    it("treats a Saturday as a normal service day for a Saturday-enabled client", async () => {
+        const onSubmit = jest.fn();
+        render(
+            <ServiceScheduleChangeModal
+                open
+                sessionIndex={3}
+                currentDate="2026-07-20"
+                minimumDate="2026-07-17"
+                selectedDate="2026-07-18"
+                isPending={false}
+                onDateChange={jest.fn()}
+                onClose={jest.fn()}
+                onSubmit={onSubmit}
+                serviceDays={{ saturday: true, sunday: false, holiday: false }}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+        expect(onSubmit).toHaveBeenCalledWith(false);
+        expect(screen.queryByText("주말·공휴일이에요")).not.toBeInTheDocument();
+    });
+
+    it("still asks before a Sunday when only Saturday service is enabled", async () => {
+        const onSubmit = jest.fn();
+        render(
+            <ServiceScheduleChangeModal
+                open
+                sessionIndex={3}
+                currentDate="2026-07-20"
+                minimumDate="2026-07-17"
+                selectedDate="2026-07-19"
+                isPending={false}
+                onDateChange={jest.fn()}
+                onClose={jest.fn()}
+                onSubmit={onSubmit}
+                serviceDays={{ saturday: true, sunday: false, holiday: false }}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("still asks before a Saturday for a client without Saturday service", async () => {
+        const onSubmit = jest.fn();
+        render(
+            <ServiceScheduleChangeModal
+                open
+                sessionIndex={3}
+                currentDate="2026-07-20"
+                minimumDate="2026-07-17"
+                selectedDate="2026-07-18"
+                isPending={false}
+                onDateChange={jest.fn()}
+                onClose={jest.fn()}
+                onSubmit={onSubmit}
+                serviceDays={{ saturday: false, sunday: false, holiday: false }}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(true));
+    });
+
     it("submits a date earlier than the current service date but not before the birth date", async () => {
         const onSubmit = jest.fn();
         render(

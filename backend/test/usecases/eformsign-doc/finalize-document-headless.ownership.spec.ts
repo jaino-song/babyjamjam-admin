@@ -115,6 +115,7 @@ describe("FinalizeDocumentHeadlessUsecase ownership boundary", () => {
             "server-access",
             "server-refresh",
             undefined,
+            undefined,
         );
         expect(headlessService.dispatchFinalize).toHaveBeenCalledTimes(1);
         expect(dispatchBoundary.claim).toHaveBeenCalledWith(expect.objectContaining({

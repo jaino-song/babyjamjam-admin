@@ -37,6 +37,17 @@ export interface EformsignDocUnscopedResult {
     branchId: string | null;
 }
 
+/**
+ * The plain columns the completion heal classifies a row by. Read without reconstructing
+ * the entity, so a legacy row the entity invariants reject is still classifiable.
+ */
+export interface EformsignCompletionHealMetadata {
+    branchId: string | null;
+    documentKind: string | null;
+    templateId: string | null;
+    permanentPurgeRequestedAt: Date | null;
+}
+
 export interface EformsignVoidCandidate {
     documentId: string;
     clientId: number | null;
@@ -260,6 +271,13 @@ export interface IEformsignDocRepository {
     ): Promise<EformsignDocEntity | null>;
     findByDocumentIdUnscoped(documentId: string): Promise<EformsignDocUnscopedResult | null>;
     findBranchIdByDocumentId(documentId: string): Promise<string | null>;
+    /**
+     * Narrow column read for the stored-detail completion heal's eligibility decision.
+     * Never builds an `EformsignDocEntity`, so it cannot throw on a legacy row that
+     * violates an entity invariant. Null when no row exists; purge-requested rows are
+     * returned (with `permanentPurgeRequestedAt` set) for the caller to refuse.
+     */
+    findCompletionHealMetadata(documentId: string): Promise<EformsignCompletionHealMetadata | null>;
     claimCompletionStatus(
         branchid: string,
         params: EformsignDocCompletionClaimParams,

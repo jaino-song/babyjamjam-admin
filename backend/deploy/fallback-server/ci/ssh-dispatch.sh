@@ -16,6 +16,15 @@ case "$original_command" in
     status)
         exec /usr/bin/sudo -n "$DEPLOYER" status
         ;;
+    standby-status)
+        exec /usr/bin/sudo -n "$DEPLOYER" standby-status
+        ;;
+    deploy-standby\ *)
+        if [[ "$original_command" =~ ^deploy-standby\ ([0-9a-f]{40})\ (sha256:[0-9a-f]{64})$ ]]; then
+            exec /usr/bin/sudo -n "$DEPLOYER" deploy-standby "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        fi
+        die
+        ;;
     replace\ *)
         if [[ "$original_command" =~ ^replace\ ([0-9a-f]{40})\ (sha256:[0-9a-f]{64})$ ]]; then
             exec /usr/bin/sudo -n "$DEPLOYER" replace "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"

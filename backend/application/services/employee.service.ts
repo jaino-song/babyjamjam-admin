@@ -20,6 +20,7 @@ import { normalizeEmployeeGrade } from "domain/constants/employee-grade.constant
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import {
     ActiveClientByEmployee,
+    DeletedEmployeePhoneMatchAction,
     EMPLOYEE_REPOSITORY,
     IEmployeeRepository,
     PaginatedEmployeeWorkHistory,
@@ -84,8 +85,8 @@ export class EmployeeService {
 
     async create(
         branchid: string,
-        params: { name: string; workArea: string[]; phone: string; grade: string; openToNextWork: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean }
-    ): Promise<EmployeeEntity> {
+        params: { name: string; workArea?: string[]; phone: string; grade?: string; openToNextWork?: boolean; registeredDate?: string; birthday?: string; smsAutomationEnabled?: boolean; onDeletedPhoneMatch?: DeletedEmployeePhoneMatchAction }
+    ): Promise<EmployeeEntity & { restored: boolean }> {
         assertEmployeePhoneInput(params.phone);
         try {
             return await this.createEmployeeUsecase.execute(
@@ -93,12 +94,13 @@ export class EmployeeService {
                 params.name,
                 params.workArea,
                 params.phone,
-                normalizeEmployeeGrade(params.grade),
+                params.grade === undefined ? undefined : normalizeEmployeeGrade(params.grade),
                 params.openToNextWork,
                 params.registeredDate ? new Date(params.registeredDate) : undefined,
                 params.birthday,
                 undefined,
                 params.smsAutomationEnabled,
+                params.onDeletedPhoneMatch,
             );
         } catch (error) {
             this.rethrowPhoneConflict(error);
@@ -141,8 +143,9 @@ export class EmployeeService {
         return updatedEmployee;
     }
 
-    delete(branchid: string, id: number): Promise<void> {
-        return this.deleteEmployeeUsecase.execute(branchid, id);
+    async delete(branchid: string, id: number): Promise<void> {
+        await this.deleteEmployeeUsecase.execute(branchid, id);
+        await this.refreshEmployeeAssignmentJobs(branchid, id);
     }
 
     findAll(branchid: string): Promise<EmployeeEntity[]> {
@@ -181,9 +184,9 @@ export class EmployeeService {
         const normalizedPhone = normalizePhone(phone);
         if (!normalizedPhone) return false;
 
-        // 소프트 삭제된 직원도 DB 유니크 제약 대상이므로 삭제 여부와 무관하게 조회한다.
+        // 삭제된 관리사의 번호는 신규 등록 시 기존 행을 복원할 수 있다.
         const existing = await this.employeeRepository.findByPhone(branchid, normalizedPhone);
-        return existing !== null;
+        return existing !== null && !existing.deletedAt;
     }
 
     private rethrowPhoneConflict(error: unknown): never {

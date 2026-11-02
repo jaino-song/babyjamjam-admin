@@ -13,6 +13,7 @@ import {
     IHolidayCalendarRepository,
 } from "domain/repositories/holiday-calendar.repository.interface";
 import { KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
+import { decideReviewItemAction } from "domain/utils/holiday-review";
 import { HolidayCalendarService } from "./holiday-calendar.service";
 import { HOLIDAY_REVIEW_GRACE_MS, HolidayReviewProcessorService } from "./holiday-review-processor.service";
 
@@ -161,11 +162,79 @@ describe("HolidayReviewProcessorService", () => {
                         storedEnd: STORED_END,
                         recalculatedEnd: "2026-11-16",
                         previousEnd: STORED_END,
+                        allowSaturdayService: false,
+                        allowSundayService: false,
+                        allowHolidayService: false,
                         affectedFrom: "2026-11-10",
                         category: "safe",
                         reason: "no_sessions_after_date",
                     },
                 ],
+            });
+        });
+
+        it("carries the service-day flags each draft was computed with, so the repository can fence on them", async () => {
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-10"],
+                queue: [event({ id: "e1", date: "2026-11-10" })],
+                candidates: {
+                    [BRANCH_A]: [
+                        candidate({ allowHolidayService: true, allowSaturdayService: true }),
+                        candidate({ clientId: 2 }),
+                    ],
+                },
+            });
+
+            await service.processDueEvents(NOW);
+
+            const drafts = repository.applyEventResult.mock.calls[0]![0].drafts;
+            expect(drafts.map((d) => [d.clientId, d.allowSaturdayService, d.allowSundayService, d.allowHolidayService]))
+                .toEqual([[1, true, false, true], [2, false, false, false]]);
+        });
+
+        it("computes a holiday-enabled client's end dates on its own service days, so a weekday holiday moves nothing", async () => {
+            const holidayEnabled = candidate({ allowHolidayService: true });
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-10"],
+                queue: [event({ id: "e1", date: "2026-11-10" })],
+                candidates: { [BRANCH_A]: [holidayEnabled, candidate({ clientId: 2 })] },
+            });
+
+            await service.processDueEvents(NOW);
+
+            const [enabled, defaultClient] = repository.applyEventResult.mock.calls[0]![0].drafts;
+            // 11-10 stays a service day for the holiday-enabled client: the end date does not move.
+            expect(enabled).toMatchObject({ clientId: 1, recalculatedEnd: STORED_END, previousEnd: STORED_END });
+            expect(decideReviewItemAction({
+                hadOpenItem: false,
+                storedEnd: enabled!.storedEnd,
+                recalculatedEnd: enabled!.recalculatedEnd,
+                previousEnd: enabled!.previousEnd,
+            })).toEqual({ obsoleteOpenItem: false, createItem: false });
+            // The default client's end date shifts by the new holiday.
+            expect(defaultClient).toMatchObject({ clientId: 2, recalculatedEnd: "2026-11-16", previousEnd: STORED_END });
+            expect(decideReviewItemAction({
+                hadOpenItem: false,
+                storedEnd: defaultClient!.storedEnd,
+                recalculatedEnd: defaultClient!.recalculatedEnd,
+                previousEnd: defaultClient!.previousEnd,
+            })).toEqual({ obsoleteOpenItem: false, createItem: true });
+        });
+
+        it("counts a Saturday-enabled client's end date over Saturdays while the holiday still shifts it", async () => {
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-10"],
+                queue: [event({ id: "e1", date: "2026-11-10" })],
+                candidates: { [BRANCH_A]: [candidate({ allowSaturdayService: true, endDate: "2026-11-12" })] },
+            });
+
+            await service.processDueEvents(NOW);
+
+            // Ten service days from Mon 11-02 with Saturday 11-07: 11-12 before the holiday, 11-13 after.
+            expect(repository.applyEventResult.mock.calls[0]![0].drafts[0]).toMatchObject({
+                storedEnd: "2026-11-12",
+                previousEnd: "2026-11-12",
+                recalculatedEnd: "2026-11-13",
             });
         });
 

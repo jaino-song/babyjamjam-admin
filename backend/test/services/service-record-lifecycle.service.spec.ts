@@ -2329,3 +2329,156 @@ describe("ServiceRecordLifecycleService", () => {
         });
     });
 });
+
+describe("ServiceRecordLifecycleService client service days", () => {
+    // 2026-12-14 (Mon)..2026-12-24 (Thu): nine weekdays, ten with Saturday 12-19.
+    const START = "2026-12-14";
+    const END = "2026-12-24";
+    const saturdayOnly = { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false };
+    const weekdayOnly = { allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
+
+    it.each([
+        ["a Saturday-enabled client", saturdayOnly, 10],
+        ["a default client", weekdayOnly, 9],
+    ])("ensureForClient derives a new case N for %s from the client's service days", async (_label, flags, expected) => {
+        const record = { id: "case-1" };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1,
+                    branchId: rawQueryBranchId,
+                    startDate: date(START),
+                    endDate: date(END),
+                    duration: 10,
+                    serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
+                    employeeSchedules: [],
+                    ...flags,
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1);
+
+        expect(prisma.client.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+            select: expect.objectContaining({
+                allowSaturdayService: true,
+                allowSundayService: true,
+                allowHolidayService: true,
+            }),
+        }));
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: expected }),
+        }));
+    });
+
+    it("ensureForClient applies the client's policy to a branch calendar handed in by the caller", async () => {
+        const record = { id: "case-1" };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1, branchId: rawQueryBranchId, startDate: date(START), endDate: date(END), duration: 10,
+                    serviceStatus: "in_progress", bookingConfirmedAt: date("2026-01-01"), employeeSchedules: [],
+                    ...saturdayOnly,
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        };
+        const holidayCalendar = createHolidayCalendarStub();
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+
+        await service.ensureForClient(1, prisma as never, KR_BUILTIN_CALENDAR);
+
+        expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+        expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ requiredSessionCount: 10 }),
+        }));
+    });
+
+    it.each([
+        ["a Saturday-enabled client", saturdayOnly, 10],
+        ["a default client", weekdayOnly, 9],
+    ])("syncEndDateFromContract derives the duration for %s from the locked client's policy", async (_label, flags, expected) => {
+        const transactionClient = {
+            service_record_case: { findUnique: jest.fn().mockResolvedValue(null) },
+            client: {
+                findUnique: jest.fn().mockResolvedValue({ startDate: date(START), duration: null, ...flags }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                callback(transactionClient)),
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
+        const ensure = jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
+
+        await service.syncEndDateFromContract({ branchId: rawQueryBranchId, clientId: 1, endDate: date(END) });
+
+        expect(transactionClient.client.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+            select: expect.objectContaining({ allowSaturdayService: true }),
+        }));
+        expect(transactionClient.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: { endDate: date(END), duration: expected },
+        }));
+        // The calendar handed on carries the same policy.
+        const handedOn = ensure.mock.calls[0]![2]!;
+        expect(handedOn.isBusinessDay("2026-12-19")).toBe(expected === 10);
+    });
+
+    it.each([
+        ["a Saturday-enabled client", { client: saturdayOnly }, 10],
+        ["a default client", { client: weekdayOnly }, 9],
+        ["a case without a client row", { client: null }, 9],
+    ])("recompute derives a null legacy N for %s from the client's service days", async (_label, clientPart, expected) => {
+        const record = {
+            id: "case-1",
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            startDate: date(START),
+            endDate: date(END),
+            requiredSessionCount: null as number | null,
+            finalizationDueAt: new Date("2026-12-24T11:00:00.000Z"),
+            completedAt: null,
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+            assignments: [{ schedule: { replaced: false } }],
+            days: [],
+            ...clientPart,
+        };
+        const prisma = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
+            },
+        };
+
+        await new ServiceRecordLifecycleService(
+            prisma as unknown as PrismaService,
+            createHolidayCalendarStub(),
+        ).recompute("case-1");
+
+        expect(prisma.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ requiredSessionCount: expected }),
+        }));
+    });
+});

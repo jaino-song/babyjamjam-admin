@@ -261,18 +261,10 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
         throw new BranchSystemTemplateSnapshotError(branchId, undefined, 'branch not found');
       }
 
-      const snapshot = parseSnapshot(branch.systemTemplateSnapshot, branchId);
-      if (snapshot) {
-        const entry = snapshot.templates[key];
-        if (!entry) {
-          throw new BranchSystemTemplateSnapshotError(
-            branchId,
-            key,
-            'template key is missing from the frozen snapshot',
-          );
-        }
-        return entryToEntity(key, entry);
-      }
+      // A key added to the registry after the branch froze its snapshot is
+      // not part of the frozen set; it resolves like an unfrozen branch.
+      const entry = parseSnapshot(branch.systemTemplateSnapshot, branchId)?.templates[key];
+      if (entry) return entryToEntity(key, entry);
 
       const row = await transaction.system_template.findUnique({ where: { templateKey: key } });
       return row ? SystemTemplateMapper.toDomain(row) : null;
@@ -295,27 +287,18 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       }
 
       const snapshot = parseSnapshot(branch.systemTemplateSnapshot, branchId);
-      if (snapshot) {
-        return SYSTEM_TEMPLATE_KEYS.map((key) => {
-          const entry = snapshot.templates[key];
-          if (!entry) {
-            throw new BranchSystemTemplateSnapshotError(
-              branchId,
-              key,
-              'template key is missing from the frozen snapshot',
-            );
-          }
-          return entryToEntity(key, entry);
-        });
-      }
-
-      const rows = await transaction.system_template.findMany({
-        orderBy: { templateKey: 'asc' },
-      });
+      // Keys added to the registry after the snapshot was frozen resolve
+      // like an unfrozen branch: global row, else registry default.
+      const needsGlobalRows = !snapshot || SYSTEM_TEMPLATE_KEYS.some((key) => !snapshot.templates[key]);
+      const rows = needsGlobalRows
+        ? await transaction.system_template.findMany({ orderBy: { templateKey: 'asc' } })
+        : [];
       const rowsByKey = new Map(
         rows.map((row) => [row.templateKey as SystemTemplateKey, row as GlobalSystemTemplateRow]),
       );
       return SYSTEM_TEMPLATE_KEYS.map((key) => {
+        const entry = snapshot?.templates[key];
+        if (entry) return entryToEntity(key, entry);
         const row = rowsByKey.get(key);
         return row
           ? globalRowToEntity(row)
@@ -350,25 +333,18 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       }
 
       const snapshot = parseSnapshot(branch.system_template_snapshot, branchId);
-      const globalRows = snapshot
+      const snapshotEntry = snapshot?.templates[key];
+      const globalRows = snapshotEntry
         ? null
         : await transaction.system_template.findMany({ orderBy: { templateKey: 'asc' } });
       const globalRowsByKey = new Map(
         (globalRows ?? []).map((row) => [row.templateKey as SystemTemplateKey, row as GlobalSystemTemplateRow]),
       );
 
-      const currentTemplate = snapshot
-        ? (() => {
-          const entry = snapshot.templates[key];
-          if (!entry) {
-            throw new BranchSystemTemplateSnapshotError(
-              branchId,
-              key,
-              'template key is missing from the frozen snapshot',
-            );
-          }
-          return entryToEntity(key, entry);
-        })()
+      // A key added after the snapshot was frozen starts from the same
+      // global/default template an unfrozen branch would see.
+      const currentTemplate = snapshotEntry
+        ? entryToEntity(key, snapshotEntry)
         : (globalRowsByKey.get(key)
           ? globalRowToEntity(globalRowsByKey.get(key)!)
           : defaultTemplateEntity(key));

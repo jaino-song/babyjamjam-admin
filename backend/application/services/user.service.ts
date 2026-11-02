@@ -19,6 +19,7 @@ import { AdminAuditActor, AdminAuditEventWriter } from "application/services/adm
 import { UserMapper } from "infrastructure/database/mapper/user.mapper";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
+import { isTransactionConflict } from "application/utils/transaction-conflict";
 
 const MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS = 3;
 
@@ -226,6 +227,7 @@ export class UserService {
         const callerId = (params.actor ?? currentAdminAuditActor())?.userId;
         const runTransaction = () => this.prismaService.$transaction(async (tx) => {
             await this.assertCallerStillOwner(tx, callerId);
+            await this.lockRow(tx, "user", id);
             const target = await tx.user.findUnique({
                 where: { id },
                 select: {
@@ -238,7 +240,7 @@ export class UserService {
                     approvedBy: true,
                     requestedRole: true,
                     tokenVersion: true,
-                    ownedBranches: {
+                    adminBranches: {
                         select: {
                             id: true,
                             isActive: true,
@@ -258,8 +260,8 @@ export class UserService {
             if (!target) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
-            for (const ownedBranch of target.ownedBranches) {
-                await this.lockRow(tx, "branch", ownedBranch.id);
+            for (const adminBranch of target.adminBranches) {
+                await this.lockRow(tx, "branch", adminBranch.id);
             }
             if (target.role === "owner") {
                 throw new ForbiddenException(this.ownerRoleChangeProblem());
@@ -307,23 +309,23 @@ export class UserService {
                 );
             }
 
-            const inactiveOwnedBranchIds = params.role === "admin"
-                ? target.ownedBranches
-                    .filter((ownedBranch) => ownedBranch.isActive !== true)
-                    .map((ownedBranch) => ownedBranch.id)
+            const inactiveAdminBranchIds = params.role === "admin"
+                ? target.adminBranches
+                    .filter((adminBranch) => adminBranch.isActive !== true)
+                    .map((adminBranch) => adminBranch.id)
                 : [];
             const inactiveExistingMembershipIds = target.userBranches
                 .filter((membership) => membership.branch.isActive !== true)
                 .map((membership) => membership.branchId);
             const allowedInactiveBranchIdSet = new Set([
-                ...inactiveOwnedBranchIds,
+                ...inactiveAdminBranchIds,
                 ...inactiveExistingMembershipIds,
             ]);
             if (
                 params.role === "admin"
-                && target.ownedBranches.some(
-                    (ownedBranch) => ownedBranch.isActive === true
-                        && !params.branchIds.includes(ownedBranch.id),
+                && target.adminBranches.some(
+                    (adminBranch) => adminBranch.isActive === true
+                        && !params.branchIds.includes(adminBranch.id),
                 )
             ) {
                 throw new BadRequestException(
@@ -334,7 +336,7 @@ export class UserService {
             const effectiveBranchIds = params.role === "admin"
                 ? [
                     ...params.branchIds,
-                    ...inactiveOwnedBranchIds.filter(
+                    ...inactiveAdminBranchIds.filter(
                         (branchId) => !params.branchIds.includes(branchId),
                     ),
                 ]
@@ -359,7 +361,7 @@ export class UserService {
             }
 
             const effectiveBranchIdSet = new Set(effectiveBranchIds);
-            const ownedBranchIdSet = new Set(target.ownedBranches.map((branch) => branch.id));
+            const adminBranchIdSet = new Set(target.adminBranches.map((branch) => branch.id));
             const membershipSetMatches = currentBranchIds.length === effectiveBranchIds.length
                 && currentBranchIds.every(
                     (branchId) => effectiveBranchIdSet.has(branchId),
@@ -389,8 +391,8 @@ export class UserService {
 
             if (target.role === "admin" && params.role !== "admin") {
                 await tx.branch.updateMany({
-                    where: { ownerId: id },
-                    data: { ownerId: null },
+                    where: { adminId: id },
+                    data: { adminId: null },
                 });
             }
 
@@ -421,7 +423,7 @@ export class UserService {
             });
             for (const branchId of effectiveBranchIds) {
                 const currentMembershipRole = currentMembershipRoleByBranchId.get(branchId);
-                const membershipRole = params.role === "admin" && ownedBranchIdSet.has(branchId)
+                const membershipRole = params.role === "admin" && adminBranchIdSet.has(branchId)
                     ? "admin"
                     : getRetainedMembershipRole(
                         currentMembershipRole,
@@ -478,7 +480,7 @@ export class UserService {
             try {
                 return await runTransaction();
             } catch (error) {
-                if (!isPrismaTransactionWriteConflict(error)) {
+                if (!isTransactionConflict(error)) {
                     throw error;
                 }
                 if (attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
@@ -508,12 +510,12 @@ export class UserService {
         if (params?.branchId) {
             const scopes: Prisma.userWhereInput[] = [
                 { userBranches: { some: { branchId: params.branchId } } },
-                { ownedBranches: { some: { id: params.branchId } } },
+                { adminBranches: { some: { id: params.branchId } } },
             ];
             if (params.includeUnassigned) {
                 // Pending sign-ups have no branch membership until an approver assigns one
                 // (ApproveUserDto.branchId), so scoping them away would make approval impossible.
-                scopes.push({ userBranches: { none: {} }, ownedBranches: { none: {} } });
+                scopes.push({ userBranches: { none: {} }, adminBranches: { none: {} } });
             }
             where.OR = scopes;
         }
@@ -525,7 +527,7 @@ export class UserService {
         if (params?.callerRole !== "owner") {
             // `role` is nullable, and a bare `not: "owner"` would also drop role-less users
             // (SQL NULL), so the null case is spelled out. This covers owners reached through
-            // ownedBranches and owners who are plain members alike: both are users whose
+            // adminBranches and owners who are plain members alike: both are users whose
             // global role is "owner".
             where.AND = [{ OR: [{ role: null }, { role: { not: "owner" } }] }];
         }
@@ -649,15 +651,15 @@ export class UserService {
             const updated = await tx.user.update({ where: { id }, data });
 
             if (roleChanged && current.role === "admin" && params.role !== "admin") {
-                const ownedBranches = await tx.branch.findMany({
-                    where: { ownerId: id },
+                const adminBranches = await tx.branch.findMany({
+                    where: { adminId: id },
                     select: { id: true },
                 });
-                if (ownedBranches.length > 0) {
-                    const branchIds = ownedBranches.map((branch) => branch.id);
+                if (adminBranches.length > 0) {
+                    const branchIds = adminBranches.map((branch) => branch.id);
                     await tx.branch.updateMany({
-                        where: { id: { in: branchIds }, ownerId: id },
-                        data: { ownerId: null },
+                        where: { id: { in: branchIds }, adminId: id },
+                        data: { adminId: null },
                     });
                     await tx.user_branch.updateMany({
                         where: { userId: id, branchId: { in: branchIds }, role: "admin" },
@@ -699,7 +701,7 @@ export class UserService {
     ): Promise<UserEntity> {
         return runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "branch", branchId);
-            const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { ownerId: true } });
+            const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { adminId: true } });
             if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             // 권한-04: the caller's authority is read again here, inside the write
             // transaction, so a caller demoted a moment ago cannot complete a change.
@@ -715,7 +717,7 @@ export class UserService {
                 where: { userId_branchId: { userId: id, branchId } },
             });
             if (!caller.isOwner) {
-                if (!membership && branch.ownerId !== id) {
+                if (!membership && branch.adminId !== id) {
                     throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
                 this.assertDelegatedBranchChange(caller, {
@@ -723,22 +725,22 @@ export class UserService {
                     targetGlobalRole: current.role,
                     targetApprovalStatus: current.approvalStatus,
                     targetMembershipRole: membership?.role,
-                    branchOwnerId: branch.ownerId,
+                    branchAdminId: branch.adminId,
                     requestedRole: branchRole,
                 });
             }
             if (current.role === "owner" && branchRole !== "admin") {
                 throw new ConflictException(this.ownerRoleChangeProblem());
             }
-            if (branch.ownerId === id && branchRole !== "admin") {
-                throw new ConflictException(this.branchOwnershipProblem());
+            if (branch.adminId === id && branchRole !== "admin") {
+                throw new ConflictException(this.branchAdminProblem());
             }
 
-            if (!membership && branch.ownerId !== id) {
+            if (!membership && branch.adminId !== id) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             }
             const beforeRole = membership?.role ?? null;
-            if (membership || branch.ownerId !== id) {
+            if (membership || branch.adminId !== id) {
                 const updatedMembership = await tx.user_branch.updateMany({
                     where: { userId: id, branchId },
                     data: { role: branchRole },
@@ -758,8 +760,8 @@ export class UserService {
                 branchId,
                 targetType: "user_branch",
                 targetId: `${id}:${branchId}`,
-                before: { userId: id, branchId, role: beforeRole, ownerId: branch.ownerId },
-                after: { userId: id, branchId, role: branchRole, ownerId: branch.ownerId },
+                before: { userId: id, branchId, role: beforeRole, adminId: branch.adminId },
+                after: { userId: id, branchId, role: branchRole, adminId: branch.adminId },
             });
             return UserMapper.toDomain(persisted);
         });
@@ -803,7 +805,7 @@ export class UserService {
      * role must rank strictly above BOTH the target's current role and (for a change) the
      * requested role, and a non-owner never acts on their own membership. The target's rank
      * is the highest of its role in this branch and its global role; the branch's appointed
-     * 지점장 ranks as admin. Runs before the ownership 409s so a non-owner is answered with
+     * 지점장 ranks as admin. Runs before the branch-admin 409s so a non-owner is answered with
      * 403 rather than a conflict that describes the branch.
      */
     private assertDelegatedBranchChange(
@@ -813,7 +815,7 @@ export class UserService {
             targetGlobalRole: string | null | undefined;
             targetApprovalStatus: string | null | undefined;
             targetMembershipRole: string | null | undefined;
-            branchOwnerId: string | null;
+            branchAdminId: string | null;
             requestedRole?: string;
         },
     ): void {
@@ -828,7 +830,7 @@ export class UserService {
         const targetRank = Math.max(
             membershipRank,
             globalRank,
-            target.branchOwnerId === target.targetId ? BRANCH_DELEGATION_ROLE_RANK.get("admin")! : 0,
+            target.branchAdminId === target.targetId ? BRANCH_DELEGATION_ROLE_RANK.get("admin")! : 0,
         );
         if (targetRank >= caller.rank) {
             throw new ForbiddenException(this.delegationDeniedProblem());
@@ -879,7 +881,7 @@ export class UserService {
         await runSerializableTransaction(this.prismaService, async (tx) => {
             let target = await tx.user.findUnique({
                 where: { id },
-                select: { id: true, role: true, approvalStatus: true, ownedBranches: { select: { id: true } } },
+                select: { id: true, role: true, approvalStatus: true, adminBranches: { select: { id: true } } },
             });
             if (!target) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (target.role === "owner") {
@@ -904,7 +906,7 @@ export class UserService {
                 }
                 target = await tx.user.findUnique({
                     where: { id },
-                    select: { id: true, role: true, approvalStatus: true, ownedBranches: { select: { id: true } } },
+                    select: { id: true, role: true, approvalStatus: true, adminBranches: { select: { id: true } } },
                 });
                 if (!target) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 const lockedOwners = await tx.user.findMany({
@@ -920,8 +922,8 @@ export class UserService {
                         }),
                     );
                 }
-                if (target.ownedBranches.length > 0) {
-                    throw new ConflictException(this.branchOwnershipProblem());
+                if (target.adminBranches.length > 0) {
+                    throw new ConflictException(this.branchAdminProblem());
                 }
             } else {
                 await this.lockRow(tx, "user", id);
@@ -930,7 +932,7 @@ export class UserService {
                 action: "user.deleted",
                 targetType: "user",
                 targetId: id,
-                before: { id, role: target.role, approvalStatus: target.approvalStatus, ownedBranchCount: target.ownedBranches.length },
+                before: { id, role: target.role, approvalStatus: target.approvalStatus, adminBranchCount: target.adminBranches.length },
                 after: null,
             });
             await tx.user.delete({ where: { id } });
@@ -946,7 +948,7 @@ export class UserService {
             await this.lockRow(tx, "branch", branchId);
             const branch = await tx.branch.findUnique({
                 where: { id: branchId },
-                select: { ownerId: true, isActive: true },
+                select: { adminId: true, isActive: true },
             });
             if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             // 권한-04: same in-transaction caller re-read and rank rule as a role change.
@@ -969,7 +971,7 @@ export class UserService {
                     where: { userId_branchId: { userId: id, branchId } },
                     select: { role: true },
                 });
-                if (!targetMembership && branch.ownerId !== id) {
+                if (!targetMembership && branch.adminId !== id) {
                     throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
                 this.assertDelegatedBranchChange(caller, {
@@ -977,11 +979,11 @@ export class UserService {
                     targetGlobalRole: target.role,
                     targetApprovalStatus: target.approvalStatus,
                     targetMembershipRole: targetMembership?.role,
-                    branchOwnerId: branch.ownerId,
+                    branchAdminId: branch.adminId,
                 });
             }
-            if (branch.ownerId === id) {
-                throw new ConflictException(this.branchOwnershipProblem());
+            if (branch.adminId === id) {
+                throw new ConflictException(this.branchAdminProblem());
             }
             const deleted = await tx.user_branch.deleteMany({ where: { userId: id, branchId } });
             if (deleted.count !== 1) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -994,7 +996,7 @@ export class UserService {
                 branchId,
                 targetType: "user_branch",
                 targetId: `${id}:${branchId}`,
-                before: { userId: id, branchId, ownerId: branch.ownerId },
+                before: { userId: id, branchId, adminId: branch.adminId },
                 after: null,
             });
         });
@@ -1032,11 +1034,11 @@ export class UserService {
         });
     }
 
-    private branchOwnershipProblem() {
+    private branchAdminProblem() {
         return problemBody("REQUEST_CONFLICT", {
             pointer: "/branchIds",
             code: "INVALID_VALUE",
-            detail: "지점 소유권을 먼저 다른 승인된 계정으로 이전해 주세요.",
+            detail: "지점장 지정을 먼저 다른 승인된 계정으로 넘겨 주세요.",
         });
     }
 
@@ -1111,14 +1113,38 @@ export class UserService {
             role: string;
             approvedBy: string;
             branchId: string;
-            ownerBranchId?: string;
+            adminBranchId?: string;
             /** Omitted leaves the stored value (column default true for a fresh sign-up). */
             smsAutomationEnabled?: boolean;
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
-        return this.prismaService.$transaction(async (tx) => {
+        return runTransactionWithConflictRetry(this.prismaService, async (tx) => {
             await this.assertCallerStillOwner(tx, params.approvedBy);
+            await this.lockRow(tx, "user", id);
+            const target = await tx.user.findUnique({
+                where: { id },
+                select: { id: true, role: true, approvalStatus: true },
+            });
+            if (!target) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            if (target.id === params.approvedBy || target.id === params.actor?.userId) {
+                throw new ForbiddenException(this.selfApprovalProblem());
+            }
+            if (target.role === "owner") {
+                throw new ForbiddenException(this.ownerApprovalProblem());
+            }
+
+            // 지점장 지정은 먼저 명시적으로 넘겨야 해요. 승인으로 지점장을 강등하지 않아요.
+            // admin is the only branch-admin-capable role accepted by ApproveUserDto.
+            if (params.role !== "admin") {
+                const adminBranch = await tx.branch.findFirst({ where: { adminId: id }, select: { id: true } });
+                if (adminBranch) {
+                    throw new ConflictException(this.branchAdminProblem());
+                }
+            }
+
             const branch = await tx.branch.findUnique({
                 where: { id: params.branchId },
                 select: { id: true },
@@ -1128,26 +1154,26 @@ export class UserService {
             }
 
             if (params.role === "admin") {
-                if (!params.ownerBranchId) {
+                if (!params.adminBranchId) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                        pointer: "/ownerBranchId",
+                        pointer: "/adminBranchId",
                         code: "REQUIRED",
                         detail: "지점장 승인에는 임명할 지점이 필요해요.",
                     }));
                 }
 
-                await this.lockRow(tx, "branch", params.ownerBranchId);
+                await this.lockRow(tx, "branch", params.adminBranchId);
 
-                const ownerBranch = await tx.branch.findUnique({
-                    where: { id: params.ownerBranchId },
-                    select: { id: true, ownerId: true },
+                const adminBranch = await tx.branch.findUnique({
+                    where: { id: params.adminBranchId },
+                    select: { id: true, adminId: true },
                 });
-                if (!ownerBranch) {
-                    throw new BadRequestException(this.branchSelectionProblem("유효하지 않은 지점이에요.", "/ownerBranchId"));
+                if (!adminBranch) {
+                    throw new BadRequestException(this.branchSelectionProblem("유효하지 않은 지점이에요.", "/adminBranchId"));
                 }
-                if (ownerBranch.ownerId) {
+                if (adminBranch.adminId) {
                     throw new ConflictException(problemBody("REQUEST_CONFLICT", {
-                        pointer: "/ownerBranchId",
+                        pointer: "/adminBranchId",
                         code: "INVALID_VALUE",
                         detail: "이미 지점장이 있는 지점이에요.",
                     }));
@@ -1198,19 +1224,19 @@ export class UserService {
                     role: params.role,
                 },
             });
-            if (params.role === "admin" && params.ownerBranchId) {
+            if (params.role === "admin" && params.adminBranchId) {
                 await tx.branch.update({
-                    where: { id: params.ownerBranchId },
-                    data: { ownerId: id },
+                    where: { id: params.adminBranchId },
+                    data: { adminId: id },
                 });
                 await tx.user_branch.upsert({
                     where: {
-                        userId_branchId: { userId: id, branchId: params.ownerBranchId },
+                        userId_branchId: { userId: id, branchId: params.adminBranchId },
                     },
                     update: { role: "admin" },
                     create: {
                         userId: id,
-                        branchId: params.ownerBranchId,
+                        branchId: params.adminBranchId,
                         role: "admin",
                     },
                 });
@@ -1224,19 +1250,22 @@ export class UserService {
                 },
             });
 
+            // adminBranchId is only validated for the admin role; for any other role it is
+            // ignored above, so it must not reach the audit row either.
+            const assignedAdminBranchId = params.role === "admin" ? params.adminBranchId : undefined;
             await this.appendAudit(tx, params.actor ?? currentAdminAuditActor(), {
-                action: params.role === "admin" && params.ownerBranchId
+                action: assignedAdminBranchId
                     ? "branch.owner_assigned"
                     : "user.approved",
-                branchId: params.ownerBranchId ?? params.branchId,
+                branchId: assignedAdminBranchId ?? params.branchId,
                 targetType: "user",
                 targetId: id,
-                before: { id, role: null, approvalStatus: "pending" },
+                before: { id, role: target.role, approvalStatus: target.approvalStatus },
                 after: {
                     id,
                     role: user.role,
                     approvalStatus: user.approvalStatus,
-                    ownerBranchId: params.ownerBranchId ?? null,
+                    adminBranchId: assignedAdminBranchId ?? null,
                 },
             });
 
@@ -1273,7 +1302,7 @@ export class UserService {
     }
 
     reject(id: string, actor?: AdminAuditActor): Promise<UserApprovalSummary> {
-        return this.prismaService.$transaction(async (tx) => {
+        return runTransactionWithConflictRetry(this.prismaService, async (tx) => {
             const effectiveActor = actor ?? currentAdminAuditActor();
             await this.assertCallerStillOwner(tx, effectiveActor?.userId);
             if (effectiveActor?.userId && effectiveActor.userId === id) {
@@ -1297,8 +1326,8 @@ export class UserService {
                 where: { userId: id },
                 select: { branchId: true, role: true, joinedAt: true },
             });
-            const ownedBranches = await tx.branch.findMany({
-                where: { ownerId: id },
+            const adminBranches = await tx.branch.findMany({
+                where: { adminId: id },
                 select: { id: true },
             });
 
@@ -1324,8 +1353,8 @@ export class UserService {
             await tx.user_branch.deleteMany({ where: { userId: id } });
 
             await tx.branch.updateMany({
-                where: { ownerId: id },
-                data: { ownerId: null },
+                where: { adminId: id },
+                data: { adminId: null },
             });
 
             await tx.auth_session.updateMany({
@@ -1347,16 +1376,34 @@ export class UserService {
                         branchId: membership.branchId,
                         role: membership.role,
                     })),
-                    ownedBranchIds: ownedBranches.map((branch) => branch.id),
+                    adminBranchIds: adminBranches.map((branch) => branch.id),
                 },
                 after: {
                     id,
                     approvalStatus: "rejected",
                     removedBranchIds: removedMemberships.map((membership) => membership.branchId),
-                    clearedOwnerBranchIds: ownedBranches.map((branch) => branch.id),
+                    clearedAdminBranchIds: adminBranches.map((branch) => branch.id),
                 },
             });
             return user;
+        });
+    }
+
+    /** 403 body: an actor may not approve their own admission. */
+    private selfApprovalProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "본인 계정은 승인할 수 없어요.",
+        });
+    }
+
+    /** 403 body: a global owner's admission may not be changed through approval. */
+    private ownerApprovalProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "오너 계정은 이 경로로 승인/역할을 바꿀 수 없어요.",
         });
     }
 
@@ -1379,26 +1426,24 @@ export class UserService {
     }
 }
 
-function isPrismaTransactionWriteConflict(error: unknown): boolean {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "P2034";
-}
-
 async function runSerializableTransaction<T>(
     prisma: PrismaService,
     callback: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
+    return runTransactionWithConflictRetry(prisma, callback, Prisma.TransactionIsolationLevel.Serializable);
+}
+
+/** Retry only rolled-back database conflicts; admission keeps the database's default isolation. */
+async function runTransactionWithConflictRetry<T>(
+    prisma: PrismaService,
+    callback: (tx: Prisma.TransactionClient) => Promise<T>,
+    isolationLevel?: Prisma.TransactionIsolationLevel,
+): Promise<T> {
     for (let attempt = 1; attempt <= MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS; attempt += 1) {
         try {
-            return await prisma.$transaction(callback, {
-                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            });
+            return await prisma.$transaction(callback, isolationLevel ? { isolationLevel } : undefined);
         } catch (error) {
-            if (!isPrismaTransactionWriteConflict(error) || attempt === MAX_ACCOUNT_ASSIGNMENT_TRANSACTION_ATTEMPTS) {
-                throw error;
-            }
+            if (!isTransactionConflict(error)) throw error;
         }
     }
     throw new ConflictException(problemBody("REQUEST_CONFLICT", {

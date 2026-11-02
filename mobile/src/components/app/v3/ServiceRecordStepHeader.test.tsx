@@ -43,6 +43,20 @@ describe("ServiceRecordStepHeader", () => {
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
   });
 
+  it("reports no value and marks the bar busy while indeterminate", () => {
+    const { rerender } = render(<ServiceRecordStepHeader data-component={BASE} title="제목" progress={0.4} indeterminate />);
+    const bar = screen.getByRole("progressbar", { name: "진행률" });
+    expect(bar).not.toHaveAttribute("aria-valuenow");
+    expect(bar).toHaveAttribute("aria-busy", "true");
+    expect(bar.firstElementChild).toHaveAttribute("data-indeterminate", "true");
+    expect(bar.firstElementChild).not.toHaveAttribute("style");
+
+    rerender(<ServiceRecordStepHeader data-component={BASE} title="제목" progress={0.4} />);
+    expect(bar).toHaveAttribute("aria-valuenow", "40");
+    expect(bar).not.toHaveAttribute("aria-busy");
+    expect(bar.firstElementChild).not.toHaveAttribute("data-indeterminate");
+  });
+
   it("accepts a custom progress label", () => {
     render(<ServiceRecordStepHeader data-component={BASE} title="제목" progress={0.5} progressLabel="작성 진행률" />);
     expect(screen.getByRole("progressbar", { name: "작성 진행률" })).toBeInTheDocument();

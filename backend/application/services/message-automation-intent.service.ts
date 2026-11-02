@@ -9,6 +9,7 @@ import {
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
 } from "domain/constants/message-automation-intent";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import {
     persistClientMessageAutomationIntent,
     persistEmployeeProfileRefreshMessageAutomationIntent,
@@ -275,7 +276,10 @@ export class MessageAutomationIntentService {
         const expectedIntentFilter = expectedIntentAt
             ? Prisma.sql`AND scheduled_for = ${expectedIntentAt}`
             : Prisma.empty;
-        const claimed = await this.prisma.$queryRaw<Array<{
+        // The lease claim only moves `next_attempt_at`/`updated_at` of an internal recovery intent that no
+        // screen lists (every job list excludes MESSAGE_AUTOMATION_INTENT_RULE_ID), so it must not emit a
+        // realtime `message` hint. The status-changing writes of this service keep emitting.
+        const claimed = await withoutEntityChangeHints(() => this.prisma.$queryRaw<Array<{
             id: string;
             scheduled_for: Date | string;
             updated_at?: Date | string;
@@ -291,7 +295,7 @@ export class MessageAutomationIntentService {
               ${expectedIntentFilter}
               AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())
             RETURNING id, scheduled_for, updated_at;
-        `);
+        `));
         const row = claimed[0];
         if (!row) return null;
 
@@ -312,7 +316,9 @@ export class MessageAutomationIntentService {
     }
 
     private async releaseIntent(claim: ScheduleIntentClaim): Promise<void> {
-        await this.prisma.message_trigger_job.updateMany({
+        // Giving the lease back only moves `nextAttemptAt` of an internal intent no screen lists, like
+        // the claim above: no realtime hint. Deleting or quarantining an intent below still emits.
+        await withoutEntityChangeHints(() => this.prisma.message_trigger_job.updateMany({
             where: {
                 id: claim.id,
                 ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
@@ -325,7 +331,7 @@ export class MessageAutomationIntentService {
             data: {
                 nextAttemptAt: new Date(Date.now() + RETRY_DELAY_MS),
             },
-        });
+        }));
     }
 
     private async releaseAfterFailure(

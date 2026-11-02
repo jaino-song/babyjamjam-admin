@@ -290,10 +290,16 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             }
             return this.toDomain(current);
         }
-        const row = await this.prisma.message_trigger_job.update({
-            where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
+        // Token-less callers may hold a stale non-terminal snapshot. Do not
+        // overwrite a terminal row even if the entity itself was not terminal.
+        await this.prisma.message_trigger_job.updateMany({
+            where: { id: job.id, status: { notIn: ["sent", "canceled"] }, ...branchWhere, ...ordinaryAutomationJobWhere() },
             data: this.toUpdate(job),
         });
+        const row = await this.prisma.message_trigger_job.findUnique({
+            where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
+        });
+        if (!row) throw new Error(`Message trigger job not found: ${job.id}`);
         return this.toDomain(row);
     }
 
@@ -406,6 +412,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 INNER JOIN candidate_job AS candidate
                     ON candidate.rule_id = rule.id
                 WHERE ${ruleBranchPredicate}
+                  AND rule.deleted_at IS NULL
                   AND (rule.jobs_stale = false OR ${manualJob})
                   AND ${ruleActivationPredicate}
                 FOR UPDATE OF rule
@@ -517,6 +524,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_job" AS job
                 INNER JOIN "message_trigger_rule" AS rule ON rule.id = job.rule_id
                 WHERE ${ordinaryJob}
+                  AND rule.deleted_at IS NULL
                   AND NOT ${manualJob}
                   AND job.branch_id = ${branchId}::uuid
                   AND job.client_id = ${clientId}
@@ -1133,6 +1141,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_rule"
                 WHERE id = ${ruleId}
                   AND branch_id = ${branchId}::uuid
+                  AND deleted_at IS NULL
                 FOR UPDATE
             `);
             const rule = rules[0];
@@ -1234,12 +1243,14 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 //    waits at its own rule lock (it has not touched the job row yet);
                 //    when it resumes the candidate job is canceled, `status = 'pending'`
                 //    no longer matches and it claims nothing.
-                await transaction.$queryRaw(Prisma.sql`
+                const rules = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     SELECT id
                     FROM "message_trigger_rule"
                     WHERE id = ${ruleId}
+                      AND deleted_at IS NULL
                     FOR UPDATE
                 `);
+                if (rules.length !== 1) throw new Error(`Message trigger rule not found: ${ruleId}`);
                 // Row-lock every live job. A claim that already committed is seen here
                 // as processing (refuse); none can start while the rule lock is held.
                 const live = await transaction.$queryRaw<Array<{ id: string; status: string }>>(Prisma.sql`
@@ -1328,12 +1339,14 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             await client.$executeRaw(Prisma.sql`
                 SELECT pg_advisory_xact_lock(hashtextextended(${scheduleFenceLockKey(ruleId, employeeScheduleId)}, 0))
             `);
-            await client.$queryRaw(Prisma.sql`
+            const rules = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                 SELECT id
                 FROM "message_trigger_rule"
                 WHERE id = ${ruleId}
+                  AND deleted_at IS NULL
                 FOR UPDATE
             `);
+            if (rules.length !== 1) return null;
             // The claim only started because no blocker existed, so any row seen
             // here appeared afterwards: a manual send, a dispatcher claim of one,
             // or a message that already went out. Promoting would queue a second
@@ -1428,6 +1441,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_rule"
                 WHERE id = ${job.ruleId}
                   AND ${branchPredicate}
+                  AND deleted_at IS NULL
                 FOR UPDATE
             `);
             const rule = rules[0];
@@ -1603,13 +1617,15 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 // rule is re-verified against the locked row below (`sameRetrySource`);
                 // the retry job's rule, if it differs, is locked too, in id order.
                 const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
-                await transaction.$queryRaw(Prisma.sql`
+                const rules = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     SELECT id
                     FROM "message_trigger_rule"
                     WHERE id IN (${Prisma.join(ruleIds)})
+                      AND deleted_at IS NULL
                     ORDER BY id
                     FOR UPDATE
                 `);
+                if (rules.length !== ruleIds.length) return { kind: "not_claimable" };
                 const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
                     SELECT *
                     FROM "message_trigger_job"

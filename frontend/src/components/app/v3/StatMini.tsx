@@ -15,6 +15,8 @@ export interface StatMiniProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   animationDelay?: React.CSSProperties["animationDelay"];
   isLoading?: boolean;
   counter?: string;
+  /** Optional alert marker pinned to the card's top-right corner, e.g. "실패 2". Omit for none. */
+  marker?: string;
   density?: StatMiniDensity;
   className?: string;
   "data-component"?: string;
@@ -43,6 +45,7 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
       animationDelay,
       isLoading = false,
       counter = "",
+      marker,
       density = "default",
       className,
       "data-component": dataComponent = "desktop_v3_stat-mini",
@@ -65,6 +68,7 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
         : "flex h-auto min-h-[calc(85px*var(--glint-ui-scale,1))] w-[calc(176px*var(--glint-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--glint-ui-scale,1))] whitespace-normal rounded-[20px] border-0 bg-white p-[calc(16px*var(--glint-ui-scale,1))] shadow-v3",
       // Component-level animation so stats behave identically across pages.
       "animate-v3-pop-up",
+      marker && "relative",
       className,
     );
 
@@ -121,6 +125,14 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
             <p data-slot="stat-mini-label" className="break-words text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
               {label}
             </p>
+            {marker ? (
+              <span
+                data-slot="stat-mini-marker"
+                className="absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(8px*var(--glint-ui-scale,1))] rounded-full bg-v3-burgundy-light px-[calc(6px*var(--glint-ui-scale,1))] py-[calc(1px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))] font-bold leading-tight text-v3-burgundy"
+              >
+                {marker}
+              </span>
+            ) : null}
           </div>
         )}
       </>

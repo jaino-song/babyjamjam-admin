@@ -67,7 +67,7 @@ ALIGO_API_URL="https://kakaoapi.aligo.in"
 ALIGO_API_KEY=
 ALIGO_USER_ID="forchildrenbys"
 ALIGO_SENDER_KEY=
-ALIGO_SENDER_PHONE="010-9641-1878"
+ALIGO_SENDER_PHONE="032-442-5992"
 # data.go.kr (KASI special-day API) Decoding service key; blank disables the holiday sync.
 DATA_GO_KR_SERVICE_KEY=
 CHANNELTALK_API_URL="https://api.channel.io"

@@ -125,7 +125,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             message_trigger_rule: {
-                upsert: jest.fn().mockResolvedValue(undefined),
+                findUnique: jest.fn().mockResolvedValue(null),
+                createManyAndReturn: jest.fn().mockResolvedValue([{ id: "marker", branchId: null }]),
             },
             message_trigger_job: {
                 upsert: jest.fn().mockResolvedValue(undefined),
@@ -1228,7 +1229,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 autoRegisteredClient: true,
             },
         });
-        expect(transaction.message_trigger_rule.upsert).toHaveBeenCalledTimes(1);
+        expect(transaction.message_trigger_rule.createManyAndReturn).toHaveBeenCalledTimes(1);
         expect(transaction.message_trigger_job.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
                 create: expect.objectContaining({
@@ -1626,7 +1627,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
-        expect(transaction.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
     });
@@ -1676,7 +1677,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
-        expect(transaction.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
@@ -2182,7 +2183,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
         });
         prisma.user.findFirst.mockResolvedValue({
-            ownedBranches: [],
+            adminBranches: [],
             userBranches: [],
         });
         transaction.client.findMany.mockResolvedValue([]);
@@ -2223,7 +2224,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         const { prisma, transaction, usecase } = setup(document);
         prisma.user.findFirst.mockResolvedValue({
-            ownedBranches: [],
+            adminBranches: [],
             userBranches: [{ branch: { id: "branch-2" } }],
         });
         prisma.branch.findMany.mockResolvedValue([
@@ -2254,11 +2255,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         ];
         prisma.user.findFirst.mockImplementation(({ select }) =>
             Promise.resolve({
-                ownedBranches: candidates
+                adminBranches: candidates
                     .filter(
                         (branch) =>
                             branch.isActive
-                            === select.ownedBranches.where.isActive,
+                            === select.adminBranches.where.isActive,
                     )
                     .map(({ id }) => ({ id })),
                 userBranches: candidates
@@ -2282,7 +2283,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 },
             },
             select: {
-                ownedBranches: {
+                adminBranches: {
                     where: { isActive: true },
                     select: { id: true },
                 },
@@ -2311,7 +2312,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         const { prisma, transaction, usecase } = setup(document);
         prisma.user.findFirst.mockResolvedValue({
-            ownedBranches: [],
+            adminBranches: [],
             userBranches: [],
         });
         prisma.branch.findMany.mockResolvedValue([{ id: "branch-1" }]);

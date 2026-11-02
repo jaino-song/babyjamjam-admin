@@ -1049,7 +1049,7 @@ export function TriggerRulesManager({
 
   const handleDelete = async () => {
     if (isRuleEditingBlocked || isSelectedSystemRule) return;
-    if (!selectedRule) return;
+    if (!selectedRule || selectedRule.isDefault) return;
     try {
       await deleteMutation.mutateAsync(selectedRule.id);
       setSelectedRuleId(null);
@@ -1254,7 +1254,7 @@ export function TriggerRulesManager({
               }
               footer={isSelectedSystemRule ? undefined : (
                 <>
-                  {isDetailLoading || selectedRule ? (
+                  {(isDetailLoading || selectedRule) && !selectedRule?.isDefault ? (
                     <Button
                       type="button"
                       variant="negative-outline"

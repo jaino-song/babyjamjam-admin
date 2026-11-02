@@ -163,6 +163,29 @@ export interface ServiceRecordEditPreviewImpactedAssignment {
     endDate: string | null;
 }
 
+/** Which non-weekday days a client accepts service on (mirrors `ServiceDayPolicy`). */
+export interface ServiceRecordEditServiceDays {
+    saturday: boolean;
+    sunday: boolean;
+    holiday: boolean;
+}
+
+/**
+ * Whole-set schedule replacement sent with a draft update: exactly one date per
+ * session (strictly ascending, unique) plus the client's service-day toggles.
+ */
+export interface ServiceRecordEditSchedule {
+    serviceDays: ServiceRecordEditServiceDays;
+    dates: string[];
+}
+
+export interface ServiceRecordEditPreviewServiceDays {
+    /** The client's stored toggles. */
+    before: ServiceRecordEditServiceDays;
+    /** The toggles that confirming this draft would store. */
+    after: ServiceRecordEditServiceDays;
+}
+
 /**
  * Server-owned preview contract. The identifier is bound to every value that
  * a later atomic confirm will recheck; clients cannot supply provenance or
@@ -176,6 +199,8 @@ export interface ServiceRecordEditPreviewResponse {
     sourceFingerprint: string;
     requiredSessionCount: number | null;
     calendarVersion: string;
+    /** Absent on previews produced before service-day toggles existed. */
+    serviceDays?: ServiceRecordEditPreviewServiceDays;
     before: ServiceRecordEditPreviewVector;
     after: ServiceRecordEditPreviewVector;
     provenance: ServiceRecordEditPreviewAssignmentRange[];
@@ -336,12 +361,25 @@ export interface ServiceRecordRevisionHistoryEntry {
     documents: ServiceRecordRevisionDocumentSummary[];
 }
 
+/**
+ * One caregiver edit of an already-submitted day (제공인력 수정). Not a
+ * revision: the list carries identity only, never the before/after payloads.
+ */
+export interface ServiceRecordCaregiverEditSummary {
+    id: string;
+    editedAt: string; // ISO 8601
+    /** Case-level 1-based index, the same meaning as a revision session change's sessionIndex. */
+    sessionIndex: number;
+    employeeName: string;
+}
+
 export interface ServiceRecordRevisionHistoryResponse {
     caseId: string;
     caseVersion: number;
     currentRevisionId: string | null;
     currentUsableRevisionId: string | null;
     revisions: ServiceRecordRevisionHistoryEntry[];
+    caregiverEdits: ServiceRecordCaregiverEditSummary[];
 }
 
 export type ServiceRecordRevisionChangeValue = string | number | boolean | null | string[];
@@ -371,6 +409,14 @@ export interface ServiceRecordRevisionChangesResponse {
     beforeAvailable: boolean;
     basicInfo: ServiceRecordRevisionFieldChange[];
     sessions: ServiceRecordRevisionSessionChange[];
+}
+
+export interface ServiceRecordCaregiverEditChangesResponse {
+    editId: string;
+    editedAt: string; // ISO 8601
+    employeeName: string;
+    /** Always present; `changes` is empty when nothing differs. kind is "changed". */
+    session: ServiceRecordRevisionSessionChange;
 }
 
 export interface ServiceRecordRevisionDocumentRetryRequest {

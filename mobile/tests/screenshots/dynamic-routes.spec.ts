@@ -1,4 +1,4 @@
-import { test, type Page, type Route, type Request } from "@playwright/test";
+import { expect, test, type Page, type Route, type Request } from "@playwright/test";
 
 import { mobileDynamicScreenshotRoutes } from "./route-manifest";
 
@@ -67,6 +67,16 @@ const feedbackDetailFixture = {
 } as const;
 
 async function mockDynamicRouteData(page: Page) {
+  // The app shell opens one long-lived server-sent-event stream
+  // (useRealtimeInvalidation, since 5fdc1aecf) that the BFF proxy holds open for
+  // up to 50s. Playwright counts an open request as network activity, so
+  // "networkidle" can never settle while it is live. Fail the stream instead:
+  // the realtime hook just schedules a retry (3s apart), leaving the network
+  // idle between attempts, and nothing this capture renders depends on it.
+  await page.route("**/api/realtime/events", async (route: Route) => {
+    await route.abort("failed");
+  });
+
   await page.route("**/api/admin/feedback/feedback-1", async (route: Route) => {
     await route.fulfill({
       status: 200,
@@ -75,7 +85,10 @@ async function mockDynamicRouteData(page: Page) {
     });
   });
 
-  await page.route("**/api/system-templates/THANKS", async (route: Route, request: Request) => {
+  // The detail page reads the branch-effective template, with the session's
+  // branch in the query string (expectedBranchId); the global
+  // /api/system-templates/THANKS endpoint is no longer requested.
+  await page.route("**/api/branch-system-templates/THANKS*", async (route: Route, request: Request) => {
     if (request.method() !== "GET") {
       return route.continue();
     }
@@ -108,6 +121,29 @@ async function mockDynamicRouteData(page: Page) {
   });
 }
 
+// A capture of an error or loading state would "pass" silently, so each route
+// must show its fixture's known content before the screenshot is taken.
+const contentAssertions: Record<string, (page: Page) => Promise<void>> = {
+  "admin-feedback-detail": async (page) => {
+    await expect(page.locator('[data-component="mobile_admin_feedback-detail_content_info"]')).toContainText(
+      feedbackDetailFixture.comment,
+      { timeout: 15000 },
+    );
+  },
+  "messages-system-template-detail": async (page) => {
+    await expect(
+      page.locator(
+        '[data-component="mobile_messages_system-templates_template-key-detail_detail-panel_info-card_content"]',
+      ),
+    ).toContainText(systemTemplateFixture.content, { timeout: 15000 });
+  },
+  "messages-template-edit": async (page) => {
+    await expect(
+      page.locator('[data-component="mobile_messages_templates_edit_page_content_body_text"]'),
+    ).toHaveText(templateFixture.content, { timeout: 15000 });
+  },
+};
+
 const viewports = {
   mobile: { width: 375, height: 667 },
   tablet: { width: 768, height: 1024 },
@@ -122,6 +158,11 @@ for (const [viewportName, viewportSize] of Object.entries(viewports)) {
       test(`capture ${route.slug}`, async ({ page }) => {
         await mockDynamicRouteData(page);
         await page.goto(route.path);
+        const assertContent = contentAssertions[route.slug];
+        if (!assertContent) {
+          throw new Error(`No content assertion registered for dynamic route ${route.slug}`);
+        }
+        await assertContent(page);
         await page.waitForLoadState("networkidle", { timeout: 15000 });
 
         await page.screenshot({

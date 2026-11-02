@@ -1,4 +1,5 @@
 import {
+    AGENT_SMS_RULE_ID_PREFIX,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -6,6 +7,8 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
+import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 
@@ -23,12 +26,12 @@ describe("SbMessageTriggerRuleRepository", () => {
         branchId: string | null;
         name: string;
         isActive: boolean;
-        eventType: string;
-        offsetType: string;
+        eventType: MessageTriggerEventType;
+        offsetType: MessageTriggerOffsetType;
         offsetDays: number;
         sendTime: string;
-        recipientType: string;
-        templateKey: string;
+        recipientType: MessageTriggerRecipientType;
+        templateKey: MessageTriggerTemplateKey;
         isDefault: boolean;
         jobsStale: boolean;
         targetClientStatus?: string;
@@ -40,9 +43,11 @@ describe("SbMessageTriggerRuleRepository", () => {
     const createMockPrismaMessageTriggerRule = () => ({
         findMany: jest.fn(),
         findFirst: jest.fn(),
+        findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
         upsert: jest.fn(),
+        createMany: jest.fn(),
         updateMany: jest.fn(),
         deleteMany: jest.fn(),
         $queryRaw: jest.fn(),
@@ -93,6 +98,42 @@ describe("SbMessageTriggerRuleRepository", () => {
         } as unknown as PrismaService);
     });
 
+    it.each([
+        `${AGENT_SMS_RULE_ID_PREFIX}branch-1`,
+        SERVICE_END_NOTICE_RULE_ID,
+        SERVICE_RECORD_LINK_RULE_ID,
+        MESSAGE_AUTOMATION_INTENT_RULE_ID,
+    ])("refuses every delete path for reserved carrier %s before any write", async (id) => {
+        const expected = MessageTriggerRuleEntity.reconstitute(
+            id, "branch-1", "Reserved carrier", false,
+            MessageTriggerEventType.CLIENT_CREATED, MessageTriggerOffsetType.IMMEDIATE, 0,
+            MessageTriggerRecipientType.CLIENT, MessageTriggerTemplateKey.INFO,
+            new Date(), new Date(),
+        );
+        await repository.delete("branch-1", id);
+        await expect(repository.deleteIfTargetMatches("branch-1", expected)).resolves.toBe(false);
+        await expect(repository.deleteIfTargetMatchesAndFenceJobs("branch-1", expected, "Rule deleted")).resolves.toBe(false);
+        expect(messageTriggerRuleModel.updateMany).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$queryRaw).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it("refuses default deletion in all repository paths", async () => {
+        const row = createRow();
+        const expected = MessageTriggerRuleEntity.reconstitute(
+            row.id, row.branchId, row.name, row.isActive, row.eventType, row.offsetType, row.offsetDays,
+            row.recipientType, row.templateKey, row.createdAt, row.updatedAt, true,
+        );
+        messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 0 });
+        await repository.delete("branch-1", row.id);
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: row.id, branchId: "branch-1", deletedAt: null, isDefault: false } }));
+        expect(await repository.deleteIfTargetMatches("branch-1", expected)).toBe(false);
+        expect(await repository.deleteIfTargetMatchesAndFenceJobs("branch-1", expected, "Rule deleted")).toBe(false);
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledTimes(1);
+        expect(messageTriggerRuleModel.$queryRaw).not.toHaveBeenCalled();
+        expect(messageTriggerRuleModel.$executeRaw).not.toHaveBeenCalled();
+    });
+
     afterEach(() => {
         jest.clearAllMocks();
     });
@@ -127,7 +168,7 @@ describe("SbMessageTriggerRuleRepository", () => {
 
             expect(rule).toBeNull();
             expect(messageTriggerRuleModel.findFirst).toHaveBeenCalledWith({
-                where: { id: SERVICE_END_NOTICE_RULE_ID, branchId: realBranchId },
+                where: { id: SERVICE_END_NOTICE_RULE_ID, branchId: realBranchId, deletedAt: null },
             });
         },
     );
@@ -147,7 +188,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         const result = await repository.findAll("branch-1");
 
         expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
-            where: { OR: [{ branchId: "branch-1" }, { branchId: null }] },
+            where: { deletedAt: null, OR: [{ branchId: "branch-1" }, { branchId: null }] },
             orderBy: { createdAt: "desc" },
         });
         expect(result.map((rule) => rule.branchId)).toEqual(["branch-1", null]);
@@ -162,6 +203,7 @@ describe("SbMessageTriggerRuleRepository", () => {
             where: {
                 isDefault: true,
                 isActive: false,
+                deletedAt: null,
             },
             orderBy: { updatedAt: "asc" },
             take: 50,
@@ -194,6 +236,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
             where: {
                 isActive: true,
+                deletedAt: null,
                 templateKey: { in: [MessageTriggerTemplateKey.SERVICE_INFO] },
             },
             select: { templateKey: true },
@@ -219,6 +262,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
             where: {
                 OR: [{ branchId: "branch-1" }, { branchId: null }],
+                deletedAt: null,
                 isActive: true,
                 templateKey: { in: [MessageTriggerTemplateKey.SERVICE_INFO] },
             },
@@ -249,24 +293,25 @@ describe("SbMessageTriggerRuleRepository", () => {
         await repository.update("branch-1", rule);
 
         expect(messageTriggerRuleModel.update).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: "rule-1", branchId: "branch-1" } }),
+            expect.objectContaining({ where: { id: "rule-1", branchId: "branch-1", deletedAt: null } }),
         );
     });
 
-    it("markJobsStale sets jobsStale true for the branch-scoped rule id", async () => {
+    it("markJobsStale sets jobsStale true only on a rule that is not already stale", async () => {
         messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 1 });
 
         await repository.markJobsStale("branch-1", "rule-1");
 
+        // `jobsStale: false` in the where is the guard: an already-stale rule matches nothing, so no write
+        // (and no realtime hint) happens for a value it already has.
         expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledWith({
-            where: { id: "rule-1", branchId: "branch-1" },
+            where: { id: "rule-1", branchId: "branch-1", deletedAt: null, jobsStale: false },
             data: { jobsStale: true },
         });
     });
 
-    it("ensureSystemRule upserts the branchless system rule row inside runSystemScope", async () => {
-        messageTriggerRuleModel.upsert.mockResolvedValue(createRow());
-        const rule = new MessageTriggerRuleEntity(
+    describe("ensureSystemRule", () => {
+        const systemRule = () => new MessageTriggerRuleEntity(
             "system:service_end_notice",
             null,
             "서비스 종료 안내 (수동 발송)",
@@ -282,28 +327,63 @@ describe("SbMessageTriggerRuleRepository", () => {
             false,
         );
 
-        await repository.ensureSystemRule(rule);
+        it("creates the branchless system rule row inside runSystemScope when it does not exist", async () => {
+            messageTriggerRuleModel.findUnique.mockResolvedValue(null);
+            messageTriggerRuleModel.createMany.mockResolvedValue({ count: 1 });
 
-        expect(runSystemScope).toHaveBeenCalledTimes(1);
-        expect(messageTriggerRuleModel.upsert).toHaveBeenCalledWith({
-            where: { id: "system:service_end_notice" },
-            create: {
-                id: "system:service_end_notice",
-                branchId: null,
-                name: "서비스 종료 안내 (수동 발송)",
-                isActive: true,
-                eventType: MessageTriggerEventType.SERVICE_END,
-                offsetType: MessageTriggerOffsetType.SAME_DAY,
-                offsetDays: 0,
-                sendTime: "09:00",
-                recipientType: MessageTriggerRecipientType.CLIENT,
-                templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-                isDefault: false,
-                jobsStale: false,
-                targetClientStatus: "all",
-                retryOnFailure: true,
-            },
-            update: {},
+            await repository.ensureSystemRule(systemRule());
+
+            expect(runSystemScope).toHaveBeenCalledTimes(1);
+            expect(messageTriggerRuleModel.findUnique).toHaveBeenCalledWith({
+                where: { id: "system:service_end_notice", deletedAt: null },
+                select: { id: true },
+            });
+            expect(messageTriggerRuleModel.createMany).toHaveBeenCalledTimes(1);
+            expect(messageTriggerRuleModel.createMany).toHaveBeenCalledWith({
+                skipDuplicates: true,
+                data: [{
+                    id: "system:service_end_notice",
+                    branchId: null,
+                    name: "서비스 종료 안내 (수동 발송)",
+                    isActive: true,
+                    eventType: MessageTriggerEventType.SERVICE_END,
+                    offsetType: MessageTriggerOffsetType.SAME_DAY,
+                    offsetDays: 0,
+                    sendTime: "09:00",
+                    recipientType: MessageTriggerRecipientType.CLIENT,
+                    templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+                    isDefault: false,
+                    jobsStale: false,
+                    targetClientStatus: "all",
+                    retryOnFailure: true,
+                }],
+            });
+        });
+
+        it("treats a lost creation race (count 0) as success", async () => {
+            messageTriggerRuleModel.findUnique.mockResolvedValue(null);
+            messageTriggerRuleModel.createMany.mockResolvedValue({ count: 0 });
+
+            await expect(repository.ensureSystemRule(systemRule())).resolves.toBeUndefined();
+        });
+
+        it("writes nothing when the system rule row already exists", async () => {
+            messageTriggerRuleModel.findUnique.mockResolvedValue({ id: "system:service_end_notice" });
+
+            await repository.ensureSystemRule(systemRule());
+
+            expect(messageTriggerRuleModel.createMany).not.toHaveBeenCalled();
+        });
+
+        it("reads and writes on the supplied transaction client, not on the root client", async () => {
+            const transactionRule = { findUnique: jest.fn().mockResolvedValue(null), createMany: jest.fn().mockResolvedValue({ count: 1 }) };
+
+            await repository.ensureSystemRule(systemRule(), { message_trigger_rule: transactionRule } as never);
+
+            expect(transactionRule.findUnique).toHaveBeenCalledTimes(1);
+            expect(transactionRule.createMany).toHaveBeenCalledTimes(1);
+            expect(messageTriggerRuleModel.findUnique).not.toHaveBeenCalled();
+            expect(messageTriggerRuleModel.createMany).not.toHaveBeenCalled();
         });
     });
 
@@ -313,7 +393,7 @@ describe("SbMessageTriggerRuleRepository", () => {
         const result = await repository.findStaleRules(7);
 
         expect(messageTriggerRuleModel.findMany).toHaveBeenCalledWith({
-            where: { jobsStale: true },
+            where: { jobsStale: true, deletedAt: null },
             orderBy: { updatedAt: "asc" },
             take: 7,
         });
@@ -337,6 +417,7 @@ describe("SbMessageTriggerRuleRepository", () => {
             where: {
                 id: "rule-1",
                 jobsStale: true,
+                deletedAt: null,
                 updatedAt: readUpdatedAt,
             },
             data: { jobsStale: false, updatedAt: readUpdatedAt },
@@ -358,7 +439,7 @@ describe("SbMessageTriggerRuleRepository", () => {
             MessageTriggerTemplateKey.SERVICE_INFO,
             createdAt,
             updatedAt,
-            true,
+            false,
             false,
         );
         const next = MessageTriggerRuleEntity.reconstitute(
@@ -376,8 +457,7 @@ describe("SbMessageTriggerRuleRepository", () => {
             expected.isDefault,
             expected.jobsStale,
         );
-        messageTriggerRuleModel.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
-        messageTriggerRuleModel.deleteMany.mockResolvedValueOnce({ count: 1 });
+        messageTriggerRuleModel.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
 
         await expect(repository.updateIfTargetMatches("branch-1", expected, next)).resolves.toBe(next);
         await expect(repository.updateIfTargetMatches("branch-1", expected, next)).resolves.toBeNull();
@@ -385,9 +465,11 @@ describe("SbMessageTriggerRuleRepository", () => {
         expect(messageTriggerRuleModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ id: "rule-1", branchId: "branch-1", updatedAt }),
         }));
-        expect(messageTriggerRuleModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ id: "rule-1", branchId: "branch-1", updatedAt }),
+        expect(messageTriggerRuleModel.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: "rule-1", branchId: "branch-1", updatedAt, deletedAt: null }),
+            data: { deletedAt: expect.any(Date), isActive: false, jobsStale: false },
         }));
+        expect(messageTriggerRuleModel.deleteMany).not.toHaveBeenCalled();
     });
 
     it("atomically locks the rule, fences pending jobs, and sets jobsStale", async () => {
@@ -518,7 +600,7 @@ describe("SbMessageTriggerRuleRepository", () => {
             const rule = await repository.findByIdIncludingGlobal("branch-1", "rule-global");
 
             expect(messageTriggerRuleModel.findFirst).toHaveBeenCalledWith({
-                where: { id: "rule-global", OR: [{ branchId: "branch-1" }, { branchId: null }] },
+                where: { id: "rule-global", deletedAt: null, OR: [{ branchId: "branch-1" }, { branchId: null }] },
             });
             expect(rule).toMatchObject({ branchId: null, targetClientStatus: "pre_booking" });
             messageTriggerRuleModel.findFirst.mockResolvedValue(null);
@@ -526,10 +608,9 @@ describe("SbMessageTriggerRuleRepository", () => {
         });
 
         it("compares and writes both fields in the target-match updates and deletes", async () => {
-            const expected = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }));
-            const next = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }), { name: "변경" });
+            const expected = entityFrom(createRow({ isDefault: false, targetClientStatus: "waiting", retryOnFailure: false }));
+            const next = entityFrom(createRow({ isDefault: false, targetClientStatus: "waiting", retryOnFailure: false }), { name: "변경" });
             messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 1 });
-            messageTriggerRuleModel.deleteMany.mockResolvedValue({ count: 1 });
 
             await repository.updateIfTargetMatches("branch-1", expected, next);
             await repository.deleteIfTargetMatches("branch-1", expected);
@@ -538,8 +619,9 @@ describe("SbMessageTriggerRuleRepository", () => {
                 where: expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
                 data: expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
             }));
-            expect(messageTriggerRuleModel.deleteMany.mock.calls[0]![0]).toEqual(expect.objectContaining({
+            expect(messageTriggerRuleModel.updateMany.mock.calls[1]![0]).toEqual(expect.objectContaining({
                 where: expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
+                data: { deletedAt: expect.any(Date), isActive: false, jobsStale: false },
             }));
         });
 

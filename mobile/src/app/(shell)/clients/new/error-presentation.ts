@@ -25,6 +25,9 @@ export const CLIENT_WIZARD_FIELD_IDS = [
   "careCenter",
   "voucherClient",
   "breastPump",
+  "allowSaturdayService",
+  "allowSundayService",
+  "allowHolidayService",
   "serviceStatus",
 ] as const;
 
@@ -68,6 +71,12 @@ const FIELD_POINTERS: Readonly<Record<string, ClientWizardFieldId>> = {
   "/voucher_client": "voucherClient",
   "/breastPump": "breastPump",
   "/breast_pump": "breastPump",
+  "/allowSaturdayService": "allowSaturdayService",
+  "/allow_saturday_service": "allowSaturdayService",
+  "/allowSundayService": "allowSundayService",
+  "/allow_sunday_service": "allowSundayService",
+  "/allowHolidayService": "allowHolidayService",
+  "/allow_holiday_service": "allowHolidayService",
   "/serviceStatus": "serviceStatus",
   "/service_status": "serviceStatus",
 };
@@ -91,6 +100,9 @@ const FIELD_LABEL_KEYS: Readonly<Record<ClientWizardFieldId, string>> = {
   careCenter: "clients.form.care-center",
   voucherClient: "clients.form.voucher-client",
   breastPump: "clients.form.breast-pump",
+  allowSaturdayService: "clients.form.service-day-saturday",
+  allowSundayService: "clients.form.service-day-sunday",
+  allowHolidayService: "clients.form.service-day-holiday",
   serviceStatus: "clients.form.contract-status",
 };
 
@@ -113,6 +125,9 @@ const FIELD_LABEL_FALLBACKS: Readonly<Record<ClientWizardFieldId, Readonly<Recor
   careCenter: { ko: "조리원 이용", en: "Postpartum care center" },
   voucherClient: { ko: "바우처 고객", en: "Voucher client" },
   breastPump: { ko: "유축기 대여", en: "Breast pump rental" },
+  allowSaturdayService: { ko: "토요일 서비스", en: "Saturday service" },
+  allowSundayService: { ko: "일요일 서비스", en: "Sunday service" },
+  allowHolidayService: { ko: "공휴일 서비스", en: "Holiday service" },
   serviceStatus: { ko: "계약 상태", en: "Contract status" },
 };
 
@@ -135,6 +150,9 @@ const FIELD_STEPS: Readonly<Record<ClientWizardFieldId, number>> = {
   careCenter: 1,
   voucherClient: 1,
   breastPump: 1,
+  allowSaturdayService: 1,
+  allowSundayService: 1,
+  allowHolidayService: 1,
   serviceStatus: 2,
 };
 

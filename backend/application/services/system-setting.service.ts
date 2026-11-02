@@ -5,6 +5,7 @@ import { currentAdminAuditActor } from "application/services/admin-audit-context
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import {
     SystemSettingEntity,
     RibbonConfig,
@@ -362,9 +363,11 @@ export class SystemSettingService {
             true,
             "scheduler",
         );
-        return auditContext
+        // Scheduler bookkeeping (a watermark nobody renders): no realtime `settings` hint, or every
+        // digest run would make all clients refetch settings.
+        return withoutEntityChangeHints(() => auditContext
             ? this.updateSettingUsecase.execute(key, value, auditContext)
-            : this.updateSettingUsecase.execute(key, value);
+            : this.updateSettingUsecase.execute(key, value));
     }
 
     private auditContext(
@@ -424,12 +427,14 @@ export class SystemSettingService {
         const expectedVersion = current
             ? this.pwaDigestDeliveryVersion(current.value)
             : PWA_DIGEST_DELIVERY_ABSENT_VERSION;
-        const updated = await this.updateSettingUsecase.executeIfVersion(
+        // The claim row is internal bookkeeping no screen reads: suppress its realtime hint. Only this
+        // write is wrapped; the notification rows a digest send creates stay announced.
+        const updated = await withoutEntityChangeHints(() => this.updateSettingUsecase.executeIfVersion(
             key,
             JSON.stringify(nextState),
             expectedVersion,
             (value) => this.pwaDigestDeliveryVersion(value),
-        );
+        ));
 
         return updated ? token : null;
     }
@@ -454,12 +459,13 @@ export class SystemSettingService {
             status,
             token,
         };
-        const updated = await this.updateSettingUsecase.executeIfVersion(
+        // Same internal claim row as claimPwaDigestDelivery: no realtime hint for its completion.
+        const updated = await withoutEntityChangeHints(() => this.updateSettingUsecase.executeIfVersion(
             key,
             JSON.stringify(nextState),
             this.pwaDigestDeliveryVersion(current.value),
             (value) => this.pwaDigestDeliveryVersion(value),
-        );
+        ));
 
         return Boolean(updated);
     }

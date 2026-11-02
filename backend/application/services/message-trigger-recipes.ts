@@ -66,8 +66,8 @@ export interface EmployeeAssignmentScheduleSource {
     primaryEmployeeId: number;
     secondaryEmployeeId: number | null;
     client: { id: number; name: string };
-    primaryEmployee: { id: number; name: string; phone: string } | null;
-    secondaryEmployee: { id: number; name: string; phone: string } | null;
+    primaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
+    secondaryEmployee: { id: number; name: string; phone: string; deletedAt: Date | null } | null;
 }
 
 type EmployeeAssignmentScheduleFingerprintSource = Pick<
@@ -81,10 +81,14 @@ type EmployeeAssignmentScheduleFingerprintSource = Pick<
     | "replaced"
     | "primaryEmployeeId"
     | "secondaryEmployeeId"
-> & Partial<Pick<EmployeeAssignmentScheduleSource, "client" | "primaryEmployee" | "secondaryEmployee">>;
+> & Partial<Pick<EmployeeAssignmentScheduleSource, "client">> & {
+    // Deletion gates materialization, not the persisted source fingerprint.
+    primaryEmployee?: { id: number; name: string; phone: string } | null;
+    secondaryEmployee?: { id: number; name: string; phone: string } | null;
+};
 
 function employeeAssignmentEmployeeFingerprint(
-    employee: EmployeeAssignmentScheduleSource["primaryEmployee"] | undefined,
+    employee: EmployeeAssignmentScheduleFingerprintSource["primaryEmployee"],
 ): { id: number; name: string; phone: string } | null {
     if (!employee) return null;
     return { id: employee.id, name: employee.name, phone: employee.phone };
@@ -168,7 +172,7 @@ export function buildEmployeeAssignmentMessageRecipe(
         rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE
             ? schedule.primaryEmployee
             : schedule.secondaryEmployee;
-    if (!employee?.phone) return null;
+    if (!employee?.phone || employee.deletedAt) return null;
 
     const scheduledFor = new Date(now);
     const memberId = `employee:${employee.id}`;

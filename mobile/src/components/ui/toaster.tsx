@@ -1,9 +1,15 @@
 "use client";
 
+import {
+  createContext,
+  useContext,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from "react";
+import { Check, X } from "lucide-react";
+
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
-import { X } from "lucide-react";
 
 /**
  * Mobile toasts sit at the bottom centre, clear of the tab bar and the home
@@ -19,14 +25,54 @@ const TOASTER_POSITION =
  */
 const TOASTER_LAYER = "z-[1000]";
 
-const VARIANT_SURFACE = {
-  // A plain toast is a floating surface rather than a state, so it keeps the
-  // white card colour. The neutral status tint is the same value as the page
-  // background and would disappear against it.
-  default: "bg-card border-v3-border text-v3-text",
-  success: STATUS_SURFACE.success,
-  destructive: STATUS_SURFACE.danger,
+/**
+ * Every variant is the same dark snackbar; only the leading icon tells them
+ * apart. Green-500 / red-500 are used for the icon discs because the status
+ * tokens are tuned for light tinted surfaces and read too dark on this navy.
+ */
+const VARIANT_ICON = {
+  default: null,
+  success: { disc: "bg-green-500", glyph: <Check className="h-3.5 w-3.5" strokeWidth={3} /> },
+  destructive: {
+    disc: "bg-red-500",
+    glyph: <span className="text-sm font-bold leading-none">!</span>,
+  },
 } as const;
+
+/** Lets a `ToastAction` dismiss the toast it is rendered inside. */
+const ToastDismissContext = createContext<(() => void) | null>(null);
+
+/**
+ * The action button of a toast: run the caller's `onClick`, then dismiss the
+ * toast. Light blue on the dark surface, with a 44px minimum touch target.
+ */
+export function ToastAction({
+  children,
+  className,
+  onClick,
+  type = "button",
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode }) {
+  const dismissToast = useContext(ToastDismissContext);
+
+  return (
+    <button
+      data-slot="toast-action"
+      type={type}
+      onClick={(event) => {
+        onClick?.(event);
+        dismissToast?.();
+      }}
+      className={cn(
+        "-my-2 -mr-2 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg px-2 text-sm font-semibold text-[#9cc3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9cc3ff]",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function Toaster() {
   const { toasts, dismiss } = useToast();
@@ -44,37 +90,61 @@ export function Toaster() {
         "pointer-events-none flex flex-col-reverse gap-2",
       )}
     >
-      {toasts.map((toast) => (
-        <div
-          data-component="mobile_shell_toaster_toast"
-          key={toast.id}
-          className={cn(
-            "group pointer-events-auto relative flex items-center justify-between gap-4 rounded-2xl border p-4 pr-8 shadow-lg transition-all duration-300",
-            toast.open === false
-              ? "animate-out slide-out-to-bottom-2 fade-out-0"
-              : "animate-in slide-in-from-bottom-2 fade-in-0",
-            VARIANT_SURFACE[toast.variant ?? "default"],
-          )}
-        >
-          <div className="grid gap-1">
-            {toast.title && (
-              <p className="text-sm font-semibold">{toast.title}</p>
+      {toasts.map((toast) => {
+        const variant = toast.variant ?? "default";
+        const icon = VARIANT_ICON[variant];
+
+        return (
+          <div
+            data-component="mobile_shell_toaster_toast"
+            data-variant={variant}
+            key={toast.id}
+            className={cn(
+              "group pointer-events-auto relative flex items-center gap-3 rounded-[14px] bg-v3-dark px-4 py-[13px] text-white shadow-[0_8px_24px_rgba(15,28,51,0.28)] transition-all duration-300",
+              toast.open === false
+                ? "animate-out slide-out-to-bottom-2 fade-out-0"
+                : "animate-in slide-in-from-bottom-2 fade-in-0",
             )}
-            {toast.description && (
-              <p className="text-sm opacity-90">{toast.description}</p>
-            )}
-          </div>
-          {toast.action}
-          <button
-            type="button"
-            onClick={() => dismiss(toast.id)}
-            aria-label="알림 닫기"
-            className="absolute right-2 top-2 rounded-2xl p-1 opacity-0 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100"
           >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      ))}
+            {icon && (
+              <span
+                data-slot="toast-icon"
+                aria-hidden="true"
+                className={cn(
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white",
+                  icon.disc,
+                )}
+              >
+                {icon.glyph}
+              </span>
+            )}
+            <div className="grid min-w-0 flex-1 gap-0.5 break-keep">
+              {toast.title && (
+                <p data-slot="toast-title" className="text-[14.5px] font-semibold leading-snug">
+                  {toast.title}
+                </p>
+              )}
+              {toast.description && (
+                <p data-slot="toast-description" className="text-[13px] leading-snug text-white/75">
+                  {toast.description}
+                </p>
+              )}
+            </div>
+            <ToastDismissContext.Provider value={() => dismiss(toast.id)}>
+              {toast.action}
+            </ToastDismissContext.Provider>
+            <button
+              data-slot="toast-close"
+              type="button"
+              onClick={() => dismiss(toast.id)}
+              aria-label="알림 닫기"
+              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-v3-dark text-white opacity-0 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[#9cc3ff] group-hover:opacity-100"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -7,8 +7,7 @@ import {
     IEformsignDocumentMirrorRepository,
 } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
-import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
-import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
+import { isFinalContractCompletionStatus } from "domain/constants/eformsign-doc-status.constants";
 
 import {
     LinkMirroredEformsignDocByPhoneUsecase,
@@ -247,6 +246,5 @@ function isCurrentVersionReady(state: Awaited<ReturnType<IEformsignDocumentMirro
 }
 
 function isFinalContractCompletion(detail: EformsignApiDocumentResponse): boolean {
-    const statusType = normalizeEformsignStatusCode(detail.current_status?.status_type);
-    return statusType !== "062" && EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType);
+    return isFinalContractCompletionStatus(detail.current_status?.status_type);
 }

@@ -6,6 +6,9 @@ import packageJson from "./package.json";
 const sentryRelease = process.env.SENTRY_RELEASE ?? process.env.VERCEL_GIT_COMMIT_SHA;
 
 const nextConfig: NextConfig = {
+    // `next dev` otherwise writes AGENTS.md and CLAUDE.md into this app folder;
+    // agent rules live in the repository root AGENTS.md.
+    agentRules: false,
     env: {
         NEXT_PUBLIC_APP_VERSION: packageJson.version,
         NEXT_PUBLIC_SENTRY_RELEASE: sentryRelease,

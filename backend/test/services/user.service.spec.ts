@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { UserService } from "../../application/services/user.service";
 import {
     CreateUserUsecase,
@@ -26,6 +27,7 @@ describe("UserService", () => {
                 update: jest.fn(),
             },
             branch: {
+                findFirst: jest.fn().mockResolvedValue(null),
                 findMany: jest.fn().mockResolvedValue([]),
                 findUnique: jest.fn().mockResolvedValue({ id: "branch-1" }),
                 update: jest.fn().mockResolvedValue({ id: "branch-1" }),
@@ -85,6 +87,70 @@ describe("UserService", () => {
         jest.clearAllMocks();
     });
 
+    describe("serializable transaction retries for membership updates", () => {
+        const conflicts = [
+            ["P2034", { code: "P2034" }],
+            ["raw deadlock code", { code: "40P01" }],
+            ["raw serialization code", { code: "40001" }],
+            ["unknown-request deadlock message", new Prisma.PrismaClientUnknownRequestError(
+                'Raw query failed. Code: `40P01`. Message: deadlock detected', { clientVersion: "test" },
+            )],
+            ["unknown-request serialization message", new Prisma.PrismaClientUnknownRequestError(
+                'Raw query failed. Code: `40001`.', { clientVersion: "test" },
+            )],
+            ["raw-query deadlock metadata", new Prisma.PrismaClientKnownRequestError("raw query failed", {
+                code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+            })],
+            ["raw-query serialization metadata", new Prisma.PrismaClientKnownRequestError("raw query failed", {
+                code: "P2010", clientVersion: "test", meta: { code: "40001" },
+            })],
+        ] as const;
+        const updateMembership = () => service.update("u1", {
+            branchId: "branch-1", branchRole: "admin", actor: ownerActor,
+        });
+
+        beforeEach(() => {
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", adminId: "u1" });
+            prismaService.user.findUnique.mockResolvedValue({ id: "u1", role: "owner" });
+        });
+
+        it.each(conflicts)("retries the whole transaction after %s", async (_label, error) => {
+            prismaService.$queryRaw.mockRejectedValueOnce(error);
+
+            await expect(updateMembership()).resolves.toMatchObject({ id: "u1" });
+
+            expect(prismaService.$transaction).toHaveBeenCalledTimes(2);
+            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(2);
+            expect(prismaService.$transaction).toHaveBeenLastCalledWith(expect.any(Function), {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            });
+            expect(auditAppend).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(conflicts)("maps exhausted %s to a clean 409 after three attempts", async (_label, error) => {
+            prismaService.$queryRaw.mockRejectedValue(error);
+
+            await expect(updateMembership()).rejects.toMatchObject({
+                status: 409,
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
+            });
+
+            expect(prismaService.$transaction).toHaveBeenCalledTimes(3);
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it("rethrows a non-conflict error unchanged without retrying", async () => {
+            const error = Object.assign(new Error("database unavailable"), { code: "P1001" });
+            prismaService.$queryRaw.mockRejectedValue(error);
+
+            await expect(updateMembership()).rejects.toBe(error);
+
+            expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+    });
+
     // ============================================
     // findDirectory
     // ============================================
@@ -101,7 +167,7 @@ describe("UserService", () => {
             expect(result[0]).not.toHaveProperty("passwordHash");
         });
         it("revokes active sessions after deleting a branch membership", async () => {
-            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "other", isActive: true });
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", adminId: "other", isActive: true });
             prismaService.user_branch.deleteMany.mockResolvedValue({ count: 1 });
             prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
             await service.delete("u1", "branch-1", ownerActor);
@@ -164,8 +230,8 @@ describe("UserService", () => {
                     where: expect.objectContaining({
                         OR: [
                             { userBranches: { some: { branchId: "branch-1" } } },
-                            { ownedBranches: { some: { id: "branch-1" } } },
-                            { userBranches: { none: {} }, ownedBranches: { none: {} } },
+                            { adminBranches: { some: { id: "branch-1" } } },
+                            { userBranches: { none: {} }, adminBranches: { none: {} } },
                         ],
                     }),
                 }),
@@ -180,7 +246,7 @@ describe("UserService", () => {
                     where: expect.objectContaining({
                         OR: [
                             { userBranches: { some: { branchId: "branch-1" } } },
-                            { ownedBranches: { some: { id: "branch-1" } } },
+                            { adminBranches: { some: { id: "branch-1" } } },
                         ],
                     }),
                 }),
@@ -204,8 +270,8 @@ describe("UserService", () => {
                         approvalStatus: "pending",
                         OR: [
                             { userBranches: { some: { branchId: "branch-1" } } },
-                            { ownedBranches: { some: { id: "branch-1" } } },
-                            { userBranches: { none: {} }, ownedBranches: { none: {} } },
+                            { adminBranches: { some: { id: "branch-1" } } },
+                            { userBranches: { none: {} }, adminBranches: { none: {} } },
                         ],
                     }),
                 }),
@@ -225,11 +291,11 @@ describe("UserService", () => {
                 await service.findDirectory({ branchId: "branch-1", callerRole });
 
                 const where = prismaService.user.findMany.mock.calls[0][0].where;
-                // Branch scope is untouched: owners attached via ownedBranches AND owners that
+                // Branch scope is untouched: owners attached via adminBranches AND owners that
                 // are plain members are both removed by the same global-role predicate.
                 expect(where.OR).toEqual([
                     { userBranches: { some: { branchId: "branch-1" } } },
-                    { ownedBranches: { some: { id: "branch-1" } } },
+                    { adminBranches: { some: { id: "branch-1" } } },
                 ]);
                 expect(where.AND).toEqual([ownerWhereGuard]);
             });
@@ -294,7 +360,7 @@ describe("UserService", () => {
                     authProvider: "email",
                     approvalStatus: "pending",
                     requestedRole: "admin",
-                    ownedBranches: [],
+                    adminBranches: [],
                     userBranches: [],
                 },
             ]);
@@ -322,7 +388,7 @@ describe("UserService", () => {
             );
         });
 
-        it("should map branch roles from each user's membership without manager ownership overriding them", async () => {
+        it("should map branch roles from each user's membership without a manager's branch admin assignment overriding them", async () => {
             const sharedFields = {
                 kakaoId: null,
                 phone: "010-1234-5678",
@@ -342,11 +408,11 @@ describe("UserService", () => {
                     email: "owner@example.com",
                     name: "송진호",
                     role: "owner",
-                    ownedBranches: [],
+                    adminBranches: [],
                     userBranches: [
                         {
                             role: "admin",
-                            branch: { id: "owner-branch-id", name: "인천 아이미래로" },
+                            branch: { id: "admin-branch-id", name: "인천 아이미래로" },
                         },
                     ],
                 },
@@ -356,7 +422,7 @@ describe("UserService", () => {
                     email: "manager@example.com",
                     name: "송진호",
                     role: "admin",
-                    ownedBranches: [
+                    adminBranches: [
                         { id: "manager-branch-id", name: "인천 서구점" },
                     ],
                     userBranches: [
@@ -375,7 +441,7 @@ describe("UserService", () => {
                     id: "owner-user-id",
                     branches: [
                         expect.objectContaining({
-                            id: "owner-branch-id",
+                            id: "admin-branch-id",
                             role: "owner",
                         }),
                     ],
@@ -424,7 +490,7 @@ describe("UserService", () => {
             approvedBy: "owner-1",
             requestedRole: "admin",
             tokenVersion: 1,
-            ownedBranches: [{ id: branchIds[0], isActive: true }],
+            adminBranches: [{ id: branchIds[0], isActive: true }],
             userBranches: branchIds.map((branchId) => membership(branchId)),
             ...overrides,
         });
@@ -479,8 +545,11 @@ describe("UserService", () => {
                 expect.any(Function),
                 { isolationLevel: "Serializable" },
             );
-            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
-            const [lockQuery] = prismaService.$queryRaw.mock.calls[0] ?? [];
+            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(2);
+            const [userLock] = prismaService.$queryRaw.mock.calls[0] ?? [];
+            expect(userLock.strings.join(" ")).toContain('SELECT "id" FROM "user"');
+            expect(userLock.values).toEqual(["u1"]);
+            const [lockQuery] = prismaService.$queryRaw.mock.calls[1] ?? [];
             expect(lockQuery.strings.join(" ")).toContain('SELECT "id" FROM "branch"');
             expect(lockQuery.strings.join(" ")).toMatch(/WHERE "id" =\s*::uuid FOR UPDATE/);
             expect(lockQuery.values).toEqual([branchIds[0]]);
@@ -492,8 +561,8 @@ describe("UserService", () => {
                 select: { id: true },
             });
             expect(prismaService.branch.updateMany).toHaveBeenCalledWith({
-                where: { ownerId: "u1" },
-                data: { ownerId: null },
+                where: { adminId: "u1" },
+                data: { adminId: null },
             });
             expect(prismaService.user.update).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -605,7 +674,7 @@ describe("UserService", () => {
         it("caps retained manager memberships when demoting a manager to user", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [
                     membership(branchIds[0], "manager"),
                     membership(branchIds[1], "user"),
@@ -646,7 +715,7 @@ describe("UserService", () => {
         it("preserves lower retained branch roles during a promotion", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "user",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "user")],
             }));
             prismaService.user.update.mockResolvedValue({
@@ -684,7 +753,7 @@ describe("UserService", () => {
         it("keeps a same-role assignment a no-op when retained branch roles are not above it", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [
                     membership(branchIds[0], "manager"),
                     membership(branchIds[1], "user"),
@@ -711,7 +780,7 @@ describe("UserService", () => {
         it("preserves a deliberate above-global retained role when the global role is unchanged", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [
                     membership(branchIds[0], "admin"),
                     membership(branchIds[1], "user"),
@@ -733,7 +802,7 @@ describe("UserService", () => {
         it("returns 409 without writes when the expected role is stale", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "user")],
             }));
 
@@ -756,7 +825,7 @@ describe("UserService", () => {
         it("returns 409 without writes when the expected branch set is stale", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "manager")],
             }));
 
@@ -779,7 +848,7 @@ describe("UserService", () => {
         it("returns the current summary without writes or session revocation for an exact semantic no-op", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "manager")],
             }));
             prismaService.branch.findMany.mockResolvedValue([{ id: branchIds[0] }]);
@@ -805,7 +874,7 @@ describe("UserService", () => {
         it("retries a serializable write conflict and then returns the successful result", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "manager")],
             }));
             prismaService.branch.findMany.mockResolvedValue([{ id: branchIds[0] }]);
@@ -869,7 +938,7 @@ describe("UserService", () => {
             expectNoAssignmentWrites();
         });
 
-        it("refuses an unknown or inactive non-owned branch before any durable write", async () => {
+        it("refuses an unknown or inactive non-administered branch before any durable write", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 userBranches: [membership(branchIds[0])],
             }));
@@ -899,7 +968,7 @@ describe("UserService", () => {
             const inactiveMembershipBranchId = "33333333-3333-4333-8333-333333333333";
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [
                     membership(branchIds[0], "manager"),
                     membership(inactiveMembershipBranchId, "manager", false),
@@ -948,11 +1017,11 @@ describe("UserService", () => {
             });
         });
 
-        it("preserves an omitted inactive owned branch while adding an active branch", async () => {
-            const inactiveOwnedBranchId = "33333333-3333-4333-8333-333333333333";
+        it("preserves an omitted inactive administered branch while adding an active branch", async () => {
+            const inactiveAdminBranchId = "33333333-3333-4333-8333-333333333333";
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
-                ownedBranches: [{ id: inactiveOwnedBranchId, isActive: false }],
-                userBranches: [membership(inactiveOwnedBranchId, "admin", false)],
+                adminBranches: [{ id: inactiveAdminBranchId, isActive: false }],
+                userBranches: [membership(inactiveAdminBranchId, "admin", false)],
             }));
             prismaService.branch.findMany.mockResolvedValue([{ id: branchIds[0] }]);
             prismaService.user.update.mockResolvedValue({
@@ -972,7 +1041,7 @@ describe("UserService", () => {
                 assignmentParams({
                     role: "admin",
                     branchIds: [branchIds[0]],
-                    expectedBranchIds: [inactiveOwnedBranchId],
+                    expectedBranchIds: [inactiveAdminBranchId],
                 }),
             );
 
@@ -988,7 +1057,7 @@ describe("UserService", () => {
                 where: {
                     userId: "u1",
                     branchId: {
-                        notIn: [branchIds[0], inactiveOwnedBranchId],
+                        notIn: [branchIds[0], inactiveAdminBranchId],
                     },
                 },
             });
@@ -1002,26 +1071,26 @@ describe("UserService", () => {
             });
             expect(prismaService.user_branch.upsert).toHaveBeenNthCalledWith(2, {
                 where: {
-                    userId_branchId: { userId: "u1", branchId: inactiveOwnedBranchId },
+                    userId_branchId: { userId: "u1", branchId: inactiveAdminBranchId },
                 },
                 update: { role: "admin" },
-                create: { userId: "u1", branchId: inactiveOwnedBranchId, role: "admin" },
+                create: { userId: "u1", branchId: inactiveAdminBranchId, role: "admin" },
             });
         });
 
-        it("refuses an inactive-owned-only admin membership set before any durable write", async () => {
-            const inactiveOwnedBranchId = "33333333-3333-4333-8333-333333333333";
+        it("refuses an inactive-administered-only admin membership set before any durable write", async () => {
+            const inactiveAdminBranchId = "33333333-3333-4333-8333-333333333333";
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
-                ownedBranches: [{ id: inactiveOwnedBranchId, isActive: false }],
-                userBranches: [membership(inactiveOwnedBranchId, "admin", false)],
+                adminBranches: [{ id: inactiveAdminBranchId, isActive: false }],
+                userBranches: [membership(inactiveAdminBranchId, "admin", false)],
             }));
 
             await expect(service.updateAccountAssignment(
                 "u1",
                 assignmentParams({
                     role: "admin",
-                    branchIds: [inactiveOwnedBranchId],
-                    expectedBranchIds: [inactiveOwnedBranchId],
+                    branchIds: [inactiveAdminBranchId],
+                    expectedBranchIds: [inactiveAdminBranchId],
                 }),
             )).rejects.toMatchObject({
                 status: 400,
@@ -1041,11 +1110,11 @@ describe("UserService", () => {
             expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
         });
 
-        it("drops an omitted inactive owned membership when demoting an admin", async () => {
-            const inactiveOwnedBranchId = "33333333-3333-4333-8333-333333333333";
+        it("drops an omitted inactive administered membership when demoting an admin", async () => {
+            const inactiveAdminBranchId = "33333333-3333-4333-8333-333333333333";
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
-                ownedBranches: [{ id: inactiveOwnedBranchId, isActive: false }],
-                userBranches: [membership(inactiveOwnedBranchId, "admin", false)],
+                adminBranches: [{ id: inactiveAdminBranchId, isActive: false }],
+                userBranches: [membership(inactiveAdminBranchId, "admin", false)],
             }));
             prismaService.branch.findMany.mockResolvedValue([{ id: branchIds[0] }]);
 
@@ -1054,13 +1123,13 @@ describe("UserService", () => {
                 assignmentParams({
                     role: "manager",
                     branchIds: [branchIds[0]],
-                    expectedBranchIds: [inactiveOwnedBranchId],
+                    expectedBranchIds: [inactiveAdminBranchId],
                 }),
             );
 
             expect(prismaService.branch.updateMany).toHaveBeenCalledWith({
-                where: { ownerId: "u1" },
-                data: { ownerId: null },
+                where: { adminId: "u1" },
+                data: { adminId: null },
             });
             expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({
                 where: {
@@ -1074,14 +1143,14 @@ describe("UserService", () => {
                     where: {
                         userId_branchId: {
                             userId: "u1",
-                            branchId: inactiveOwnedBranchId,
+                            branchId: inactiveAdminBranchId,
                         },
                     },
                 }),
             );
         });
 
-        it("preserves an existing admin while changing memberships without clearing branch ownership", async () => {
+        it("preserves an existing admin while changing memberships without clearing the branch admin assignment", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 userBranches: [membership(branchIds[0])],
             }));
@@ -1128,7 +1197,7 @@ describe("UserService", () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 id: "manager-target",
                 role: "manager",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "manager")],
             }));
 
@@ -1158,10 +1227,10 @@ describe("UserService", () => {
             expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
         });
 
-        it("refuses removing an owned branch while retaining admin before any durable write", async () => {
+        it("refuses removing an administered branch while retaining admin before any durable write", async () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 id: "admin-target",
-                ownedBranches: branchIds.map((branchId) => ({
+                adminBranches: branchIds.map((branchId) => ({
                     id: branchId,
                     isActive: true,
                 })),
@@ -1195,7 +1264,7 @@ describe("UserService", () => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget({
                 id: "owner-target",
                 role: "owner",
-                ownedBranches: [],
+                adminBranches: [],
             }));
 
             await expect(service.updateAccountAssignment(
@@ -1227,7 +1296,7 @@ describe("UserService", () => {
                 id: "pending-target",
                 role: null,
                 approvalStatus: "pending",
-                ownedBranches: [],
+                adminBranches: [],
             }));
 
             await expect(service.updateAccountAssignment(
@@ -1259,7 +1328,7 @@ describe("UserService", () => {
                 id: "legacy-target",
                 role: null,
                 approvalStatus: "approved",
-                ownedBranches: [],
+                adminBranches: [],
                 userBranches: [membership(branchIds[0], "admin")],
             }));
 
@@ -1429,7 +1498,144 @@ describe("UserService", () => {
 
     describe("approve", () => {
         beforeEach(() => {
-            prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === "owner-1"
+                    ? { id: "owner-1", role: "owner" }
+                    : { id: where.id, role: null, approvalStatus: "pending" });
+        });
+
+        it.each(["user", "manager"])("refuses re-approval as %s while the target administers any branch", async (role) => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: "admin", approvalStatus: "approved" });
+            prismaService.branch.findFirst.mockResolvedValue({ id: "other-admin-branch" });
+            prismaService.user.update.mockResolvedValue({ id: "u1", role, approvalStatus: "approved" });
+
+            await expect(service.approve("u1", {
+                role, approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1",
+            })).rejects.toMatchObject({
+                status: 409,
+                response: { code: "REQUEST_CONFLICT", errors: [{ pointer: "/branchIds", code: "INVALID_VALUE" }] },
+            });
+
+            expect(prismaService.branch.findFirst).toHaveBeenCalledWith({ where: { adminId: "u1" }, select: { id: true } });
+            expect(prismaService.$queryRaw.mock.invocationCallOrder[0])
+                .toBeLessThan(prismaService.branch.findFirst.mock.invocationCallOrder[0]!);
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.deleteMany).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.branch.update).not.toHaveBeenCalled();
+            expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it("locks the target user before reading its state and before any write", async () => {
+            prismaService.user.update.mockResolvedValue({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await service.approve("u1", { role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1" });
+
+            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
+            const [lockQuery] = prismaService.$queryRaw.mock.calls[0];
+            expect(lockQuery.strings.join(" ")).toContain('SELECT "id" FROM "user"');
+            expect(lockQuery.strings.join(" ")).toContain("FOR UPDATE");
+            expect(lockQuery.values).toEqual(["u1"]);
+            const targetReadIndex = prismaService.user.findUnique.mock.calls
+                .findIndex(([args]: [{ where: { id: string } }]) => args.where.id === "u1");
+            expect(targetReadIndex).toBeGreaterThanOrEqual(0);
+            expect(prismaService.$queryRaw.mock.invocationCallOrder[0])
+                .toBeLessThan(prismaService.user.findUnique.mock.invocationCallOrder[targetReadIndex]!);
+            expect(prismaService.user.findUnique.mock.invocationCallOrder[targetReadIndex])
+                .toBeLessThan(prismaService.user.update.mock.invocationCallOrder[0]!);
+        });
+
+        it("refuses a missing target with 404 before any writes", async () => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" }).mockResolvedValueOnce(null);
+
+            await expect(service.approve("missing", {
+                role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1",
+            })).rejects.toMatchObject({ status: 404, response: { code: "RESOURCE_NOT_FOUND" } });
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it("refuses an owner target with the ACCESS_DENIED problem before any writes", async () => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: "owner", approvalStatus: "approved" });
+
+            await expect(service.approve("u1", {
+                role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1",
+            })).rejects.toMatchObject({
+                status: 403,
+                response: {
+                    code: "ACCESS_DENIED", outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                    errors: [{ pointer: "/id", code: "INVALID_VALUE" }],
+                },
+            });
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it.each(["approvedBy", "actor"])("refuses self approval matched by %s independently of target role", async (identity) => {
+            // A non-owner target isolates the self guard from the owner-target guard.
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await expect(service.approve("u1", {
+                role: "manager", branchId: "branch-1",
+                approvedBy: identity === "approvedBy" ? "u1" : "owner-1",
+                actor: identity === "actor" ? { userId: "u1", globalRole: "user" } : ownerActor,
+            })).rejects.toMatchObject({
+                status: 403,
+                response: { code: "ACCESS_DENIED", outcome: "NOT_APPLIED", errors: [{ pointer: "/id", code: "INVALID_VALUE" }] },
+            });
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+            expect(auditAppend).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            { role: null, approvalStatus: "pending" },
+            { role: null, approvalStatus: "rejected" },
+            { role: "manager", approvalStatus: "approved" },
+        ])("audits the real prior state $role/$approvalStatus and keeps the transition allowed", async (prior) => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", ...prior });
+            prismaService.user.update.mockResolvedValue({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await service.approve("u1", { role: "user", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1" });
+
+            expect(auditAppend).toHaveBeenCalledWith(prismaService, expect.objectContaining({
+                action: "user.approved", before: { id: "u1", ...prior },
+                after: { id: "u1", role: "user", approvalStatus: "approved", adminBranchId: null },
+            }));
+        });
+
+        it("ignores an adminBranchId sent with a non-admin role, so it never reaches the audit row", async () => {
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" })
+                .mockResolvedValueOnce({ id: "u1", role: null, approvalStatus: "pending" });
+            prismaService.user.update.mockResolvedValue({ id: "u1", role: "user", approvalStatus: "approved" });
+
+            await service.approve("u1", {
+                role: "user",
+                approvedBy: "owner-1",
+                actor: ownerActor,
+                branchId: "branch-1",
+                adminBranchId: "unvalidated-branch",
+            });
+
+            expect(auditAppend).toHaveBeenCalledWith(prismaService, expect.objectContaining({
+                action: "user.approved",
+                branchId: "branch-1",
+                after: { id: "u1", role: "user", approvalStatus: "approved", adminBranchId: null },
+            }));
         });
 
         it("should approve a user in a single transaction, assigning role, approval metadata, and bumping tokenVersion", async () => {
@@ -1450,7 +1656,7 @@ describe("UserService", () => {
                 approvedBy: "owner-1",
                 actor: ownerActor,
                 branchId: "branch-1",
-                ownerBranchId: "branch-1",
+                adminBranchId: "branch-1",
             });
 
             expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
@@ -1552,11 +1758,11 @@ describe("UserService", () => {
             expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
         });
 
-        it("should assign branch ownership when approving role 'admin' with an ownerBranchId on a vacant branch", async () => {
+        it("should assign the branch admin when approving role 'admin' with an adminBranchId on a vacant branch", async () => {
             prismaService.branch.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
                 if (where.id === "branch-1") return Promise.resolve({ id: "branch-1" });
-                if (where.id === "owner-branch-1") {
-                    return Promise.resolve({ id: "owner-branch-1", ownerId: null });
+                if (where.id === "admin-branch-1") {
+                    return Promise.resolve({ id: "admin-branch-1", adminId: null });
                 }
                 return Promise.resolve(null);
             });
@@ -1572,29 +1778,29 @@ describe("UserService", () => {
                 approvedBy: "owner-1",
                 actor: ownerActor,
                 branchId: "branch-1",
-                ownerBranchId: "owner-branch-1",
+                adminBranchId: "admin-branch-1",
             });
 
             expect(prismaService.branch.update).toHaveBeenCalledWith({
-                where: { id: "owner-branch-1" },
-                data: { ownerId: "u1" },
+                where: { id: "admin-branch-1" },
+                data: { adminId: "u1" },
             });
             expect(prismaService.user_branch.upsert).toHaveBeenCalledWith(
                 expect.objectContaining({
                     where: {
-                        userId_branchId: { userId: "u1", branchId: "owner-branch-1" },
+                        userId_branchId: { userId: "u1", branchId: "admin-branch-1" },
                     },
                     update: { role: "admin" },
-                    create: { userId: "u1", branchId: "owner-branch-1", role: "admin" },
+                    create: { userId: "u1", branchId: "admin-branch-1", role: "admin" },
                 }),
             );
         });
 
-        it("should reject approving role 'admin' when the ownerBranchId already has an owner", async () => {
+        it("should reject approving role 'admin' when the adminBranchId already has an admin", async () => {
             prismaService.branch.findUnique.mockImplementation(({ where }: { where: { id: string } }) => {
                 if (where.id === "branch-1") return Promise.resolve({ id: "branch-1" });
-                if (where.id === "owner-branch-1") {
-                    return Promise.resolve({ id: "owner-branch-1", ownerId: "existing-owner" });
+                if (where.id === "admin-branch-1") {
+                    return Promise.resolve({ id: "admin-branch-1", adminId: "existing-admin" });
                 }
                 return Promise.resolve(null);
             });
@@ -1604,7 +1810,7 @@ describe("UserService", () => {
                 approvedBy: "owner-1",
                 actor: ownerActor,
                 branchId: "branch-1",
-                ownerBranchId: "owner-branch-1",
+                adminBranchId: "admin-branch-1",
             })).rejects.toMatchObject({
                 status: 409,
                 response: expect.objectContaining({
@@ -1619,7 +1825,7 @@ describe("UserService", () => {
             expect(prismaService.branch.update).not.toHaveBeenCalled();
         });
 
-        it("should reject approving role 'admin' without an ownerBranchId", async () => {
+        it("should reject approving role 'admin' without an adminBranchId", async () => {
             await expect(service.approve("u1", {
                 role: "admin",
                 approvedBy: "owner-1",
@@ -1640,7 +1846,7 @@ describe("UserService", () => {
         });
 
         it.each(["manager", "user"])(
-            "should approve role '%s' without an ownerBranchId and without touching branch ownership",
+            "should approve role '%s' without an adminBranchId and without touching the branch admin assignment",
             async (role) => {
                 prismaService.user.update.mockResolvedValue({
                     id: "u1",
@@ -1704,34 +1910,34 @@ describe("UserService", () => {
             expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
         });
 
-        it("clears ownerId on every branch owned by the rejected user", async () => {
+        it("clears adminId on every branch administered by the rejected user", async () => {
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
-            prismaService.branch.findMany.mockResolvedValue([{ id: "owner-branch-1" }]);
+            prismaService.branch.findMany.mockResolvedValue([{ id: "admin-branch-1" }]);
 
             await service.reject("u1", ownerActor);
 
             expect(prismaService.branch.updateMany).toHaveBeenCalledWith({
-                where: { ownerId: "u1" },
-                data: { ownerId: null },
+                where: { adminId: "u1" },
+                data: { adminId: null },
             });
         });
 
-        it("still calls branch.updateMany unconditionally when the user owns no branch (closes the ownership-clear race)", async () => {
+        it("still calls branch.updateMany unconditionally when the user administers no branch (closes the admin-clear race)", async () => {
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
             prismaService.branch.findMany.mockResolvedValue([]);
 
             await service.reject("u1", ownerActor);
 
-            // Must run unconditionally: a concurrent approve() that grants ownership
+            // Must run unconditionally: a concurrent approve() that assigns a branch admin
             // between the pre-lock read and this call would otherwise be skipped by
-            // an `if (ownedBranches.length > 0)` guard gated on a stale read.
+            // an `if (adminBranches.length > 0)` guard gated on a stale read.
             expect(prismaService.branch.updateMany).toHaveBeenCalledWith({
-                where: { ownerId: "u1" },
-                data: { ownerId: null },
+                where: { adminId: "u1" },
+                data: { adminId: null },
             });
         });
 
-        it("locks the user row before reading role, approval status, memberships, and owned branches", async () => {
+        it("locks the user row before reading role, approval status, memberships, and administered branches", async () => {
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
 
             await service.reject("u1", ownerActor);
@@ -1765,7 +1971,7 @@ describe("UserService", () => {
             prismaService.user.findUnique.mockResolvedValue({ id: "u1", role: "manager", approvalStatus: "approved" });
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
             prismaService.user_branch.findMany.mockResolvedValue([{ branchId: "branch-1", role: "admin", joinedAt: new Date("2026-01-01") }]);
-            prismaService.branch.findMany.mockResolvedValue([{ id: "owner-branch-1" }]);
+            prismaService.branch.findMany.mockResolvedValue([{ id: "admin-branch-1" }]);
 
             await service.reject("u1", actor);
 
@@ -1782,13 +1988,13 @@ describe("UserService", () => {
                         approvalStatus: "approved",
                         role: "manager",
                         memberships: [{ branchId: "branch-1", role: "admin" }],
-                        ownedBranchIds: ["owner-branch-1"],
+                        adminBranchIds: ["admin-branch-1"],
                     },
                     after: expect.objectContaining({
                         id: "u1",
                         approvalStatus: "rejected",
                         removedBranchIds: ["branch-1"],
-                        clearedOwnerBranchIds: ["owner-branch-1"],
+                        clearedAdminBranchIds: ["admin-branch-1"],
                     }),
                 }),
             );
@@ -2076,7 +2282,7 @@ describe("UserService", () => {
 
         beforeEach(() => {
             membershipUpdateMany = jest.fn();
-            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "someone-else" });
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", adminId: "someone-else" });
             prismaService.user.findUnique.mockResolvedValue(ownerTarget);
             Object.assign(prismaService.user_branch, { updateMany: membershipUpdateMany });
         });
@@ -2135,7 +2341,7 @@ describe("UserService", () => {
             targetGlobal?: string | null;
             targetMembership?: string | null;
             targetApproval?: string;
-            branchOwnerId?: string | null;
+            branchAdminId?: string | null;
         }
 
         let membershipUpdateMany: jest.Mock;
@@ -2151,10 +2357,10 @@ describe("UserService", () => {
                 targetGlobal = "user",
                 targetMembership = "user",
                 targetApproval = "approved",
-                branchOwnerId = null,
+                branchAdminId = null,
             } = scenario;
             membershipUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
-            prismaService.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: branchOwnerId, isActive: true });
+            prismaService.branch.findUnique.mockResolvedValue({ id: BRANCH, adminId: branchAdminId, isActive: true });
             prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
                 if (where.id === "caller-1") return { id: "caller-1", role: callerGlobal };
                 if (where.id === "target-1") {
@@ -2233,12 +2439,12 @@ describe("UserService", () => {
                 await expectForbidden(change("user"));
             });
 
-            it("ranks the branch's appointed 지점장 as admin even without a membership row: 403, not the ownership 409", async () => {
+            it("ranks the branch's appointed 지점장 as admin even without a membership row: 403, not the branch-admin 409", async () => {
                 arrange({
                     callerMembership: "admin",
                     targetMembership: null,
                     targetGlobal: "user",
-                    branchOwnerId: "target-1",
+                    branchAdminId: "target-1",
                 });
 
                 await expectForbidden(change("manager"));
@@ -2250,12 +2456,12 @@ describe("UserService", () => {
                 await expectForbidden(change("user"));
             });
 
-            it("treats the branch's appointed 지점장 as 지점장 and answers 403 before the ownership 409", async () => {
+            it("treats the branch's appointed 지점장 as 지점장 and answers 403 before the branch-admin 409", async () => {
                 arrange({
                     callerMembership: "admin",
                     targetMembership: "manager",
                     targetGlobal: "manager",
-                    branchOwnerId: "target-1",
+                    branchAdminId: "target-1",
                 });
 
                 await expectForbidden(change("user"));
@@ -2372,13 +2578,13 @@ describe("UserService", () => {
                 });
             });
 
-            it("keeps the ownership 409 for an owner caller", async () => {
+            it("keeps the branch-admin 409 for an owner caller", async () => {
                 arrange({
                     callerGlobal: "owner",
                     callerMembership: null,
                     targetMembership: "admin",
                     targetGlobal: "admin",
-                    branchOwnerId: "target-1",
+                    branchAdminId: "target-1",
                 });
 
                 await expect(change("manager")).rejects.toBeInstanceOf(ConflictException);
@@ -2424,23 +2630,23 @@ describe("UserService", () => {
                 await expectForbidden(remove());
             });
 
-            it("answers 403, not the ownership 409, when 지점장 removes the branch's appointed 지점장", async () => {
+            it("answers 403, not the branch-admin 409, when 지점장 removes the branch's appointed 지점장", async () => {
                 arrange({
                     callerMembership: "admin",
                     targetMembership: "admin",
                     targetGlobal: "admin",
-                    branchOwnerId: "target-1",
+                    branchAdminId: "target-1",
                 });
 
                 await expectForbidden(remove());
             });
 
-            it("ranks the branch's appointed 지점장 as admin even without a membership row: 403, not the ownership 409", async () => {
+            it("ranks the branch's appointed 지점장 as admin even without a membership row: 403, not the branch-admin 409", async () => {
                 arrange({
                     callerMembership: "admin",
                     targetMembership: null,
                     targetGlobal: "user",
-                    branchOwnerId: "target-1",
+                    branchAdminId: "target-1",
                 });
 
                 await expectForbidden(remove());
@@ -2511,13 +2717,13 @@ describe("UserService", () => {
                 expect(prismaService.user_branch.deleteMany).toHaveBeenCalledTimes(1);
             });
 
-            it("keeps the ownership 409 for an owner caller removing the appointed 지점장", async () => {
+            it("keeps the branch-admin 409 for an owner caller removing the appointed 지점장", async () => {
                 arrange({
                     callerGlobal: "owner",
                     callerMembership: null,
                     targetMembership: "admin",
                     targetGlobal: "admin",
-                    branchOwnerId: "target-1",
+                    branchAdminId: "target-1",
                 });
 
                 await expect(remove()).rejects.toBeInstanceOf(ConflictException);
@@ -2647,7 +2853,7 @@ describe("UserService", () => {
             client: ReturnType<typeof createMockPrismaService>,
             caller: Authority,
         ) => {
-            client.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: null, isActive: true });
+            client.branch.findUnique.mockResolvedValue({ id: BRANCH, adminId: null, isActive: true });
             client.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
                 if (where.id === "caller-1" || where.id === "owner-1") {
                     return caller.global === null ? null : { id: where.id, role: caller.global };
@@ -2884,8 +3090,8 @@ describe("UserService", () => {
                 /** Root client says ACTIVE (stale); the transaction client says INACTIVE. */
                 const arrangeInactive = (authority: Authority) => {
                     arrangeBoth(authority, authority);
-                    prismaService.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: true }));
-                    txClient.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: false }));
+                    prismaService.branch.findUnique.mockImplementation(projected({ id: BRANCH, adminId: null, isActive: true }));
+                    txClient.branch.findUnique.mockImplementation(projected({ id: BRANCH, adminId: null, isActive: false }));
                 };
                 const expectNoTargetLookup = () => {
                     const asked = txClient.user.findUnique.mock.calls.map(([args]: [{ where: { id: string } }]) => args.where.id);
@@ -2927,14 +3133,14 @@ describe("UserService", () => {
 
                 it("an ACTIVE branch in the transaction deletes even when the root client says INACTIVE; the columns are read through the transaction client", async () => {
                     arrangeBoth(stillManager, stillManager);
-                    prismaService.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: false }));
-                    txClient.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: true }));
+                    prismaService.branch.findUnique.mockImplementation(projected({ id: BRANCH, adminId: null, isActive: false }));
+                    txClient.branch.findUnique.mockImplementation(projected({ id: BRANCH, adminId: null, isActive: true }));
 
                     await service.delete(targetIds.ordinary, BRANCH, callerActor);
 
                     expect(txClient.branch.findUnique).toHaveBeenCalledWith({
                         where: { id: BRANCH },
-                        select: { ownerId: true, isActive: true },
+                        select: { adminId: true, isActive: true },
                     });
                     expect(prismaService.branch.findUnique).not.toHaveBeenCalled();
                     expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);

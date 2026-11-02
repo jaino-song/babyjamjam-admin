@@ -14,16 +14,14 @@
  * Flags are static for the page lifetime — toggling them requires a reload.
  */
 
-export type FeatureFlag = "headlessDispatch" | "eformsignDocumentJobs";
+export type FeatureFlag = "headlessDispatch";
 
 const ENABLE_VALUES: Record<FeatureFlag, string | undefined> = {
     headlessDispatch: process.env.NEXT_PUBLIC_FEATURE_HEADLESS_DISPATCH,
-    eformsignDocumentJobs: process.env.NEXT_PUBLIC_FEATURE_EFORMSIGN_DOCUMENT_JOBS,
 };
 
 const DISABLE_VALUES: Record<FeatureFlag, string | undefined> = {
     headlessDispatch: process.env.NEXT_PUBLIC_FEATURE_DISABLE_HEADLESS_DISPATCH,
-    eformsignDocumentJobs: process.env.NEXT_PUBLIC_FEATURE_DISABLE_EFORMSIGN_DOCUMENT_JOBS,
 };
 
 /**
@@ -35,7 +33,6 @@ const DISABLE_VALUES: Record<FeatureFlag, string | undefined> = {
  */
 const FLAG_DEFAULTS: Record<FeatureFlag, boolean> = {
     headlessDispatch: true,
-    eformsignDocumentJobs: false,
 };
 
 function parseFlagList(): Set<string> {

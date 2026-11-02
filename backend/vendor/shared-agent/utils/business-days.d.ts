@@ -26,6 +26,17 @@ export declare function getKoreanHolidays(year: number): ReadonlySet<string>;
 export declare function assertSupportedKoreanHolidayYear(year: number): void;
 export declare function isoDateInKorea(date?: Date): string;
 /**
+ * Which non-weekday days a client accepts service on. Every flag defaults to
+ * false: a plain business day (Mon-Fri, not a public holiday) is always a
+ * service day, and each flag opens up exactly one more kind of day.
+ */
+export interface ServiceDayPolicy {
+    saturday: boolean;
+    sunday: boolean;
+    holiday: boolean;
+}
+export declare const DEFAULT_SERVICE_DAY_POLICY: ServiceDayPolicy;
+/**
  * A business-day calendar bound to one holiday list. The backend serves many
  * branches from one process, so holiday-aware callers pass a calendar around
  * instead of relying on any module-global state.
@@ -43,6 +54,15 @@ export interface KrBusinessDayCalendar {
     countBusinessDays(startISO: string, endISO: string): number | null;
     diffBusinessDays(targetISO: string, baseISO?: string): number | null;
     nextBusinessDay(iso: string): string;
+    /**
+     * Returns this calendar's holidays and supported years under another
+     * service-day policy. The policy REPLACES any policy already applied (it
+     * never composes), and an all-false policy returns the policy-free calendar
+     * this one was derived from, so the default path keeps its identity and
+     * version. A non-default policy appends `+sd-<sat><sun><holiday>` to the
+     * version, which keeps preview signatures apart.
+     */
+    withServiceDays(policy: ServiceDayPolicy): KrBusinessDayCalendar;
 }
 export interface KrBusinessDayCalendarOptions {
     version?: string;
@@ -52,6 +72,8 @@ export interface KrBusinessDayCalendarOptions {
      * still fails closed.
      */
     supportedYears?: Iterable<number>;
+    /** Applied on top of the policy-free calendar; defaults to no extra service days. */
+    serviceDays?: ServiceDayPolicy;
 }
 export declare function createKrBusinessDayCalendar(holidayDates: Iterable<string>, opts?: KrBusinessDayCalendarOptions): KrBusinessDayCalendar;
 export declare const KR_BUILTIN_CALENDAR: KrBusinessDayCalendar;

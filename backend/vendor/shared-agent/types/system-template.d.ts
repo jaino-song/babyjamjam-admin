@@ -1,5 +1,5 @@
 import { z } from "zod";
-export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "THANKS", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
+export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "THANKS", "CONTRACT_REMINDER", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 /** Runtime key validation for system-template BFF route parameters. */
 export declare const systemTemplateKeySchema: z.ZodEnum<{
@@ -12,6 +12,7 @@ export declare const systemTemplateKeySchema: z.ZodEnum<{
     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
     GREETING: "GREETING";
+    CONTRACT_REMINDER: "CONTRACT_REMINDER";
 }>;
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES: readonly ["sms", "service-feedback-link", "receipt-link"];
 export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
@@ -24,6 +25,7 @@ export declare const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY: {
     PRICE_INFO: "sms";
     GREETING: "sms";
     THANKS: "sms";
+    CONTRACT_REMINDER: "sms";
     SURVEY: "sms";
     SERVICE_INFO: "sms";
     SERVICE_RECORD_LINK: "service-feedback-link";

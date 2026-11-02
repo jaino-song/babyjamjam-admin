@@ -43,6 +43,9 @@ export function serializeClientUpdateFields(form: ClientFormData): UpdateClientD
         serviceStatus: form.serviceStatus,
         areaId: form.areaId || null,
         smsAutomationEnabled: form.smsAutomationEnabled ?? true,
+        allowSaturdayService: form.allowSaturdayService ?? false,
+        allowSundayService: form.allowSundayService ?? false,
+        allowHolidayService: form.allowHolidayService ?? false,
     };
 }
 

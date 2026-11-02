@@ -4,6 +4,9 @@ import * as React from "react";
 
 const TOAST_LIMIT = 1;
 const TOAST_REMOVE_DELAY = 300;
+const TOAST_DURATION = 3000;
+// A toast that carries an action needs time to be read and tapped.
+const TOAST_ACTION_DURATION = 5000;
 
 type ToasterToast = {
   id: string;
@@ -165,7 +168,7 @@ function toast({ ...props }: Toast) {
 
   setTimeout(() => {
     dismiss();
-  }, 3000);
+  }, props.action ? TOAST_ACTION_DURATION : TOAST_DURATION);
 
   return {
     id: id,

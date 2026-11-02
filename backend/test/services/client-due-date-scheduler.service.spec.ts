@@ -34,6 +34,79 @@ describe("ClientDueDateSchedulerService", () => {
         jest.clearAllMocks();
     });
 
+    describe.each([false, true])("status recomputation (transactional=%s)", (transactional) => {
+        const today = new Date("2026-06-12T00:00:00.000Z");
+        const endDate = new Date("2026-06-19T00:00:00.000Z");
+        const confirmedAt = new Date("2026-06-01T00:00:00.000Z");
+
+        it.each([
+            ["waiting", confirmedAt, "active"],
+            ["terminated", confirmedAt, "terminated"],
+            ["replacement_requested", confirmedAt, "replacement_requested"],
+            ["pre_booking", null, "pre_booking"],
+        ])("recomputes %s with confirmation=%s to %s", async (stored, bookingConfirmedAt, expected) => {
+            const snapshot = { serviceStatus: stored, endDate, bookingConfirmedAt };
+            prismaService.client.findMany.mockResolvedValue([{
+                id: 7, branchId: "branch-1", dueDate: today, ...snapshot,
+            }]);
+            const intent = {
+                persistClientIntent: jest.fn(), fulfillClientIntent: jest.fn(),
+            };
+            const prisma = {
+                ...prismaService,
+                $transaction: jest.fn(async (work: (tx: typeof prismaService) => Promise<unknown>) => work(prismaService)),
+            };
+            const scheduler = new ClientDueDateSchedulerService(
+                prisma as unknown as PrismaService,
+                createSchedulerLeaseMock(),
+                undefined,
+                undefined,
+                transactional ? intent as unknown as MessageAutomationIntentService : undefined,
+            );
+
+            await expect(scheduler.copyUpcomingDueDatesToStartDates(today)).resolves.toBe(1);
+
+            expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 7, dueDate: today, startDate: null, ...snapshot },
+                data: { startDate: today, serviceStatus: expected },
+            });
+            expect(prisma.$transaction).toHaveBeenCalledTimes(transactional ? 1 : 0);
+        });
+
+        it("skips all side effects when the status-input compare-and-set loses", async () => {
+            prismaService.client.findMany.mockResolvedValue([{
+                id: 7, branchId: "branch-1", dueDate: today,
+                serviceStatus: "waiting", endDate, bookingConfirmedAt: confirmedAt,
+            }]);
+            prismaService.client.updateMany.mockResolvedValue({ count: 0 });
+            const intent = { persistClientIntent: jest.fn(), fulfillClientIntent: jest.fn() };
+            const prisma = {
+                ...prismaService,
+                $transaction: jest.fn(async (work: (tx: typeof prismaService) => Promise<unknown>) => work(prismaService)),
+            };
+            const scheduler = new ClientDueDateSchedulerService(
+                prisma as unknown as PrismaService,
+                createSchedulerLeaseMock(),
+                triggerService as unknown as MessageTriggerService,
+                undefined,
+                transactional ? intent as unknown as MessageAutomationIntentService : undefined,
+            );
+
+            await expect(scheduler.copyUpcomingDueDatesToStartDates(today)).resolves.toBe(0);
+
+            expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 7, dueDate: today, startDate: null,
+                    serviceStatus: "waiting", endDate, bookingConfirmedAt: confirmedAt,
+                },
+                data: { startDate: today, serviceStatus: "active" },
+            });
+            expect(intent.persistClientIntent).not.toHaveBeenCalled();
+            expect(intent.fulfillClientIntent).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+    });
+
     it("copies dueDate into startDate for clients within the catch-up window and without a startDate", async () => {
         prismaService.client.findMany.mockResolvedValue([
             { id: 7, branchId: "11111111-1111-1111-1111-111111111111", dueDate: new Date("2026-06-19T00:00:00.000Z") },
@@ -54,7 +127,7 @@ describe("ClientDueDateSchedulerService", () => {
                 },
                 startDate: null,
             },
-            select: { id: true, branchId: true, dueDate: true },
+            select: { id: true, branchId: true, dueDate: true, serviceStatus: true, endDate: true, bookingConfirmedAt: true },
         });
         expect(prismaService.client.updateMany).toHaveBeenCalledTimes(2);
         expect(prismaService.client.updateMany).toHaveBeenCalledWith({
@@ -62,8 +135,9 @@ describe("ClientDueDateSchedulerService", () => {
                 id: 7,
                 dueDate: new Date("2026-06-19T00:00:00.000Z"),
                 startDate: null,
+                serviceStatus: undefined, endDate: undefined, bookingConfirmedAt: undefined,
             },
-            data: { startDate: new Date("2026-06-19T00:00:00.000Z") },
+            data: { startDate: new Date("2026-06-19T00:00:00.000Z"), serviceStatus: "pre_booking" },
         });
     });
 
@@ -85,15 +159,16 @@ describe("ClientDueDateSchedulerService", () => {
                 },
                 startDate: null,
             },
-            select: { id: true, branchId: true, dueDate: true },
+            select: { id: true, branchId: true, dueDate: true, serviceStatus: true, endDate: true, bookingConfirmedAt: true },
         });
         expect(prismaService.client.updateMany).toHaveBeenCalledWith({
             where: {
                 id: 7,
                 dueDate: new Date("2026-06-20T00:00:00.000Z"),
                 startDate: null,
+                serviceStatus: undefined, endDate: undefined, bookingConfirmedAt: undefined,
             },
-            data: { startDate: new Date("2026-06-20T00:00:00.000Z") },
+            data: { startDate: new Date("2026-06-20T00:00:00.000Z"), serviceStatus: "pre_booking" },
         });
     });
 
@@ -114,8 +189,9 @@ describe("ClientDueDateSchedulerService", () => {
                 id: 9,
                 dueDate: new Date("2026-06-15T00:00:00.000Z"),
                 startDate: null,
+                serviceStatus: undefined, endDate: undefined, bookingConfirmedAt: undefined,
             },
-            data: { startDate: new Date("2026-06-15T00:00:00.000Z") },
+            data: { startDate: new Date("2026-06-15T00:00:00.000Z"), serviceStatus: "pre_booking" },
         });
         expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
             "33333333-3333-3333-3333-333333333333",
@@ -144,7 +220,7 @@ describe("ClientDueDateSchedulerService", () => {
                 },
                 startDate: null,
             },
-            select: { id: true, branchId: true, dueDate: true },
+            select: { id: true, branchId: true, dueDate: true, serviceStatus: true, endDate: true, bookingConfirmedAt: true },
         });
         expect(prismaService.client.updateMany).not.toHaveBeenCalled();
         expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
@@ -217,8 +293,9 @@ describe("ClientDueDateSchedulerService", () => {
                 id: 7,
                 dueDate: new Date("2026-06-19T00:00:00.000Z"),
                 startDate: null,
+                serviceStatus: undefined, endDate: undefined, bookingConfirmedAt: undefined,
             },
-            data: { startDate: new Date("2026-06-19T00:00:00.000Z") },
+            data: { startDate: new Date("2026-06-19T00:00:00.000Z"), serviceStatus: "pre_booking" },
         });
     });
 
@@ -263,8 +340,9 @@ describe("ClientDueDateSchedulerService", () => {
                 id: 17,
                 dueDate: new Date("2026-06-19T00:00:00.000Z"),
                 startDate: null,
+                serviceStatus: undefined, endDate: undefined, bookingConfirmedAt: undefined,
             },
-            data: { startDate: new Date("2026-06-19T00:00:00.000Z") },
+            data: { startDate: new Date("2026-06-19T00:00:00.000Z"), serviceStatus: "pre_booking" },
         });
         expect(intentService.persistClientIntent).toHaveBeenCalledWith(
             { client: txClient },
@@ -317,8 +395,9 @@ describe("ClientDueDateSchedulerService", () => {
                 id: 7,
                 dueDate: new Date("2026-06-19T00:00:00.000Z"),
                 startDate: null,
+                serviceStatus: undefined, endDate: undefined, bookingConfirmedAt: undefined,
             },
-            data: { startDate: new Date("2026-06-19T00:00:00.000Z") },
+            data: { startDate: new Date("2026-06-19T00:00:00.000Z"), serviceStatus: "pre_booking" },
         });
     });
 

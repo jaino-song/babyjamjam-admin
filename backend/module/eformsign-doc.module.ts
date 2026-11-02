@@ -70,6 +70,11 @@ import { EformsignAgentCapabilitiesProvider } from "application/usecases/eformsi
 import { ContractExternalAgentCapabilitiesProvider } from "application/usecases/eformsign-doc/contract-external-agent-capabilities.provider";
 import { FindClientByIdUsecase } from "application/usecases/client/find-client-by-id.usecase";
 import { CreateEmployeeUsecase } from "application/usecases/employee/create-employee.usecase";
+import {
+    CONTRACT_SUPERSEDE_REPOSITORY,
+} from "domain/repositories/contract-supersede.repository.interface";
+import { PrismaContractSupersedeRepository } from "infrastructure/database/repositories/prisma-contract-supersede.repository";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
 import {
@@ -184,6 +189,11 @@ import { HolidayModule } from "./holiday.module";
         EformsignMirrorReadinessService,
         EformsignAgentCapabilitiesProvider,
         ContractExternalAgentCapabilitiesProvider,
+        ContractSupersedeService,
+        {
+            provide: CONTRACT_SUPERSEDE_REPOSITORY,
+            useClass: PrismaContractSupersedeRepository,
+        },
         EformsignDocumentJobService,
         EformsignDocumentJobWorkerService,
         EformsignDocumentJobReconciliationService,
@@ -302,6 +312,7 @@ import { HolidayModule } from "./holiday.module";
         ReconcileCompletedMirroredEformsignDocUsecase,
         LinkMirroredEformsignDocByPhoneUsecase,
         GetContractClientCandidateUsecase,
+        ContractSupersedeService,
         EformsignDocumentJobService,
         EformsignDispatchBoundaryService,
         ServiceRecordRevisionDocumentCoordinator,

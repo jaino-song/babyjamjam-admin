@@ -1440,7 +1440,7 @@ describe("SbMessageTriggerJobRepository", () => {
         // Rule row first, then the source job row: rule -> job -> retry INSERT.
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
         const ruleLock = (transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql);
-        expect(ruleLock.sql.replace(/\s+/g, " ")).toContain('FROM "message_trigger_rule" WHERE id IN (?) ORDER BY id FOR UPDATE');
+        expect(ruleLock.sql.replace(/\s+/g, " ")).toContain('FROM "message_trigger_rule" WHERE id IN (?) AND deleted_at IS NULL ORDER BY id FOR UPDATE');
         expect(ruleLock.values).toEqual(["rule-1"]);
         expect((transaction.$queryRaw.mock.calls[1][0] as Prisma.Sql).sql).toContain('FROM "message_trigger_job"');
         expect(txJob.create).toHaveBeenCalledTimes(1);
@@ -1785,14 +1785,15 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
-    it("update pins branchId into the plain update where clause when there is no claim token", async () => {
+    it("update pins branchId and excludes terminal rows when there is no claim token", async () => {
         const job = createJob();
-        messageTriggerJobModel.update.mockResolvedValue(createRow());
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 1 });
+        messageTriggerJobModel.findUnique.mockResolvedValue(createRow());
 
         await repository.update(job);
 
-        expect(messageTriggerJobModel.update).toHaveBeenCalledWith({
-            where: { ...ordinaryAutomationJobWhere(), id: job.id, branchId: "branch-1" },
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: { ...ordinaryAutomationJobWhere(), id: job.id, branchId: "branch-1", status: { notIn: ["sent", "canceled"] } },
             data: expect.any(Object),
         });
     });
@@ -1801,12 +1802,13 @@ describe("SbMessageTriggerJobRepository", () => {
         const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         const job = createJob();
         job.branchId = null;
-        messageTriggerJobModel.update.mockResolvedValue(createRow({ branchId: null }));
+        messageTriggerJobModel.updateMany.mockResolvedValue({ count: 1 });
+        messageTriggerJobModel.findUnique.mockResolvedValue(createRow({ branchId: null }));
 
         await repository.update(job);
 
-        expect(messageTriggerJobModel.update).toHaveBeenCalledWith({
-            where: { ...ordinaryAutomationJobWhere(), id: job.id },
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: { ...ordinaryAutomationJobWhere(), id: job.id, status: { notIn: ["sent", "canceled"] } },
             data: expect.any(Object),
         });
         expect(warnSpy).toHaveBeenCalledWith(
@@ -2635,7 +2637,7 @@ describe("SbMessageTriggerJobRepository b5 cancel races (statement shape)", () =
         });
 
         it("a manual replace reads the token AFTER the job locks and writes nothing when it is revoked", async () => {
-            const { statements, prisma } = spyPrisma(() => []);
+            const { statements, prisma } = spyPrisma((sql) => sql.includes('FROM "message_trigger_rule"') ? [{ id: RULE_ID }] : []);
 
             const result = await new SbMessageTriggerJobRepository(prisma)
                 .replacePendingJobsUnlessInFlight(replacement(), "r", { requireActiveLinkToken: "efl_x" });

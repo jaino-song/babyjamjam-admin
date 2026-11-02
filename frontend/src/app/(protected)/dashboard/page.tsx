@@ -250,7 +250,7 @@ export default function DashboardPage() {
       <h1 className="sr-only">대시보드</h1>
       <Block name="desktop_dashboard_stats" className="shrink-0">
         <StatsBar
-          name="desktop_dashboard"
+          name="desktop_dashboard" showDocumentJobs="whenActive"
           isLoading={overviewLoading}
           density="responsive-square"
           items={DASHBOARD_STAT_KEYS.map((s) => ({

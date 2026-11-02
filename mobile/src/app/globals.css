@@ -367,6 +367,7 @@
   --animate-bounce-subtle: bounce-subtle 1s ease-in-out infinite;
   --animate-pulse-subtle: pulse-subtle 2s ease-in-out infinite;
   --animate-shimmer: shimmer 2s linear infinite;
+  --animate-indeterminate-bar: indeterminate-bar 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   --animate-icon-bounce: icon-bounce 0.3s ease-out;
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
@@ -487,6 +488,17 @@
 
   100% {
     background-position: 200% 0;
+  }
+}
+
+/* A 40%-wide progress fill that slides across its track while the amount of work is unknown. */
+@keyframes indeterminate-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(250%);
   }
 }
 

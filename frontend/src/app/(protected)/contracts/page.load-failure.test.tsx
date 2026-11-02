@@ -20,7 +20,10 @@ jest.mock("@/hooks/useEformsignDocsLiveStream", () => ({
 }));
 jest.mock("@/hooks/useInfiniteContracts", () => ({ useInfiniteContracts: jest.fn() }));
 jest.mock("@/hooks/useEformsignDocumentJobs", () => ({
-  useEformsignDocumentJobs: () => ({ data: undefined }),
+  useEformsignDocumentJobs: () => ({
+    data: undefined, summary: undefined, isLoading: false, error: null, refetch: jest.fn(),
+    summaryQuery: { error: null, isFetching: false, isLoading: false, refetch: jest.fn() },
+  }),
   useEnqueueEformsignDocumentFinalization: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/hooks/useEformsignDocuments", () => ({

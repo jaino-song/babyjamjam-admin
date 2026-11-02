@@ -64,6 +64,10 @@ export interface Client {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
+    /** 서비스일로 계산하는 주말·공휴일. 백엔드가 항상 내려주지만 옵션으로 읽어요(`?? false`). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     /**
      * When an admin pressed [예약 확정] (rule 고객-04), ISO string; null while the client is still
@@ -103,6 +107,9 @@ export interface CreateClientDto {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
     allowBusinessDayMismatch?: boolean;
@@ -131,6 +138,9 @@ export interface UpdateClientDto {
     careCenter?: boolean;
     voucherClient?: boolean;
     breastPump?: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
     allowBusinessDayMismatch?: boolean;
@@ -173,6 +183,16 @@ export const SERVICE_STATUS_OPTIONS = [
 ] as const;
 
 export type ServiceStatus = typeof SERVICE_STATUS_OPTIONS[number]["value"];
+
+/**
+ * Whether "제공기록지 일정 변경" can be offered for this client. The backend only creates a service-record case
+ * once the booking is confirmed, so for an effectively 예약 전 client the schedule load answers 404 and a retry can
+ * never succeed. `serviceStatus` in the client response already holds the effective status; null/undefined counts
+ * as 예약 전, matching the backend gate (service-record-lifecycle.service.ts) and the confirm-booking check.
+ */
+export function canEditServiceRecordSchedule(client: { serviceStatus?: ServiceStatus | null }): boolean {
+    return (client.serviceStatus ?? "pre_booking") !== "pre_booking";
+}
 
 // Legacy export for backwards compatibility (deprecated)
 /** @deprecated Use SERVICE_STATUS_OPTIONS instead */

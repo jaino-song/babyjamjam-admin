@@ -43,6 +43,9 @@ export interface ClientUpdateFormFields {
     careCenter: boolean;
     voucherClient: boolean;
     breastPump: boolean;
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     serviceStatus?: ServiceStatus | null;
     areaId?: string | null;
 }
@@ -77,6 +80,11 @@ export function serializeClientUpdateFields(form: ClientUpdateFormFields): Updat
         careCenter: form.careCenter,
         voucherClient: form.voucherClient,
         breastPump: form.breastPump,
+        // Optional on the form: a form that does not own the toggles (or a legacy client without
+        // them) sends nothing, and an unchanged value is dropped by the diff in buildClientUpdatePayload.
+        ...(form.allowSaturdayService !== undefined && { allowSaturdayService: form.allowSaturdayService }),
+        ...(form.allowSundayService !== undefined && { allowSundayService: form.allowSundayService }),
+        ...(form.allowHolidayService !== undefined && { allowHolidayService: form.allowHolidayService }),
         serviceStatus: form.serviceStatus,
         ...(form.areaId !== undefined && { areaId: form.areaId || null }),
     };

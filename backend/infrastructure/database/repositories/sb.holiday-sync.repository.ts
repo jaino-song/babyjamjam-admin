@@ -78,16 +78,18 @@ export class SbHolidaySyncRepository implements IHolidaySyncRepository {
                 const name = next.get(fromDbDate(row.date));
                 return name !== undefined && name !== row.name;
             });
-            // Same date set: refresh timestamps (and any renamed holiday). Business-day
-            // results cannot change, so there are no change events; but readers cache the
-            // calendar by revision, so a rename must still bump it or they never see it.
+            // Same date set: refresh the snapshot's validation time (and any renamed holiday).
+            // Business-day results cannot change, so there are no change events; but readers
+            // cache the calendar by revision, so a rename must still bump it or they never see it.
+            // The unchanged `public_holiday` rows are NOT rewritten: nothing reads their
+            // `fetchedAt` (the user-visible "last synced" is the snapshot's `validatedAt`), and a
+            // rewrite on every 04:00 run would announce a `holiday` change that did not happen.
             for (const row of renamed) {
                 await tx.public_holiday.update({
                     where: { date: row.date },
                     data: { name: next.get(fromDbDate(row.date)), fetchedAt: now },
                 });
             }
-            await tx.public_holiday.updateMany({ where: { date: yearRange }, data: { fetchedAt: now } });
             let revision: number | undefined;
             if (renamed.length > 0) {
                 const bumped = await tx.holiday_calendar_revision.update({

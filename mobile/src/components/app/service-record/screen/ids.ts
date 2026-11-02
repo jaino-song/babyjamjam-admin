@@ -145,7 +145,8 @@ export const PHONE_LABEL_ID = "service-record-phone-label";
 export const PHONE_PLACEHOLDER = "010-1234-5678";
 /** SRW:745 */
 export const PHONE_SUBMIT_LABEL = "확인하기";
-export const PHONE_SUBMIT_BUSY_LABEL = "확인 중…";
+/** Shown next to a spinner, so the label itself carries no ellipsis. */
+export const PHONE_SUBMIT_BUSY_LABEL = "확인 중";
 
 /** SRW:752-754 */
 export const SERVICE_TITLE = "서비스 기본정보";
@@ -155,8 +156,8 @@ export const EMPLOYEE_FALLBACK_NAME = "정보 없음";
 /** SRW:763, :766 */
 export const DELIVERY_TYPE_LABEL = "분만형태";
 export const DELIVERY_TYPE_OPTIONS = ["자연분만", "제왕절개"] as const;
-/** SRW:808 (non-admin branch) */
-export const SERVICE_SAVE_BUSY_LABEL = "저장 중…";
+/** SRW:808 (non-admin branch). Shown next to a spinner, so the label itself carries no ellipsis. */
+export const SERVICE_SAVE_BUSY_LABEL = "저장 중";
 
 /** SRW:815-816 (non-readonly branch) */
 export const OVERVIEW_TITLE = "제공기록표";

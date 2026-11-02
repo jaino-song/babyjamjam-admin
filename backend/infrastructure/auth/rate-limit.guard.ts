@@ -76,6 +76,12 @@ export class RateLimitGuard implements CanActivate, OnModuleDestroy {
                 connectTimeout: 2_000,
             })
             : null;
+        // ioredis dumps a raw stack to the console for every connection error when no 'error'
+        // listener is attached. Requests already fall back to PostgreSQL on a Valkey failure, so
+        // the listener only logs.
+        this.redis?.on("error", (error) => {
+            this.logger.warn(`Valkey client error: ${error instanceof Error ? error.message : "Unknown error"}`);
+        });
     }
 
     async onModuleDestroy(): Promise<void> {

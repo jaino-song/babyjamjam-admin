@@ -1,8 +1,10 @@
 import { Type } from "class-transformer";
 import {
     ArrayMaxSize,
+    ArrayMinSize,
     IsArray,
     IsBoolean,
+    IsDefined,
     IsInt,
     IsObject,
     IsOptional,
@@ -90,6 +92,33 @@ export class ServiceRecordEditDateMoveDto {
     shiftFollowing?: boolean;
 }
 
+/** The client's per-day-type service toggles; every key is required. */
+export class ServiceRecordEditServiceDaysDto {
+    @IsBoolean() saturday!: boolean;
+    @IsBoolean() sunday!: boolean;
+    @IsBoolean() holiday!: boolean;
+}
+
+/**
+ * Whole-set schedule replacement: one date per session plus the client's
+ * service-day toggles. The server derives the session count; a wrong length is
+ * rejected, never padded or truncated.
+ */
+export class ServiceRecordEditScheduleDto {
+    // ValidateNested alone passes a missing value.
+    @IsDefined()
+    @ValidateNested()
+    @Type(() => ServiceRecordEditServiceDaysDto)
+    serviceDays!: ServiceRecordEditServiceDaysDto;
+
+    @IsArray()
+    @ArrayMinSize(1)
+    @ArrayMaxSize(366)
+    @IsString({ each: true })
+    @Matches(/^\d{4}-\d{2}-\d{2}$/, { each: true })
+    dates!: string[];
+}
+
 export class UpdateServiceRecordEditDraftDto {
     @IsInt()
     @Min(1)
@@ -104,6 +133,12 @@ export class UpdateServiceRecordEditDraftDto {
     @ValidateNested()
     @Type(() => ServiceRecordEditDateMoveDto)
     dateMove?: ServiceRecordEditDateMoveDto;
+
+    /** Replaces every session date at once; mutually exclusive with `dateMove`. */
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ServiceRecordEditScheduleDto)
+    schedule?: ServiceRecordEditScheduleDto;
 }
 
 /** Body used for a read-only authoritative preview. */

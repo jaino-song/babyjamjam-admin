@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateMessageViews } from "@/lib/messages/invalidate-message-views";
 
 import {
     removeById,
@@ -322,17 +323,16 @@ export function useMessageHistory(limit = 500) {
     });
 }
 
-export function useRetryMessageHistory(clientId?: number) {
+export function useRetryMessageHistory(_clientId?: number) {
+    // Preserve the optional caller argument; the logs prefix now covers every client.
+    void _clientId;
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: (id: number) =>
             messageTriggersApi.retryHistory(id).then((response) => response.data),
         onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
-            if (clientId !== undefined) {
-                await queryClient.invalidateQueries({ queryKey: ["messages", "logs", "client", clientId] });
-            }
+            await invalidateMessageViews(queryClient);
         },
     });
 }
@@ -415,26 +415,19 @@ export function useCancelMessageTriggerJob() {
 
     return useMutation({
         mutationFn: (id: string) => messageTriggersApi.cancelJob(id).then((response) => response.data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
-            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
-        },
+        onSuccess: () => invalidateMessageViews(queryClient),
     });
 }
 
 // Re-sends a `needs_setup` job by hand after the cause was fixed. The job leaves
 // the upcoming list or stays flagged in history, so both queries need a refetch.
-export function useResendMessageTriggerJob(clientId?: number) {
+export function useResendMessageTriggerJob(_clientId?: number) {
+    // Preserve the optional caller argument; the logs prefix now covers every client.
+    void _clientId;
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: (jobId: string) => messageTriggersApi.resendJob(jobId).then((response) => response.data),
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
-            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
-            if (clientId !== undefined) {
-                await queryClient.invalidateQueries({ queryKey: ["messages", "logs", "client", clientId] });
-            }
-        },
+        onSuccess: () => invalidateMessageViews(queryClient),
     });
 }

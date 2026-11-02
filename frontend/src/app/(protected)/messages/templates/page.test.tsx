@@ -5,6 +5,37 @@ import TemplatesPage from "./page";
 const mockDeleteMutateAsync = jest.fn();
 const mockUpdateMutate = jest.fn();
 const mockToast = jest.fn();
+let mockDocumentJobsActive = false;
+
+jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {
+  const actual = jest.requireActual("@/features/document-jobs/DocumentJobsProvider");
+  return {
+    ...actual,
+    useDocumentJobs: () => ({
+      ...actual.useDocumentJobs(),
+      summary: { activeCount: mockDocumentJobsActive ? 1 : 0, unresolvedCount: 0 },
+      total: mockDocumentJobsActive ? 1 : 0,
+      unresolvedCount: 0,
+    }),
+  };
+});
+
+describe("templates jobs-only stats", () => {
+  it.each([false, true])("renders a first-child jobs row only when active: %s", (active) => {
+    mockDocumentJobsActive = active;
+    const { container, unmount } = render(<TemplatesPage />);
+    const row = container.querySelector('[data-component="desktop_messages_sections_templates_stats"]');
+    if (active) {
+      expect(row?.parentElement?.firstElementChild).toBe(row);
+      expect(row?.firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
+      expect(row?.children).toHaveLength(1);
+    } else {
+      expect(row).not.toBeInTheDocument();
+    }
+    unmount();
+    mockDocumentJobsActive = false;
+  });
+});
 
 jest.mock("@/features/message-templates/hooks/use-message-templates", () => ({
   useMessageTemplates: () => ({

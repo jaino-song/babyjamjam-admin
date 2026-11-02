@@ -19,6 +19,7 @@ describe("resolveSystemTemplateDeliveryMode", () => {
       "PRICE_INFO",
       "GREETING",
       "THANKS",
+      "CONTRACT_REMINDER",
       "SURVEY",
       "SERVICE_INFO",
       "SERVICE_RECORD_LINK",
@@ -37,6 +38,7 @@ describe("resolveSystemTemplateDeliveryMode", () => {
 
     expect(modes).toHaveLength(SYSTEM_TEMPLATE_KEYS.length);
     expect(modes).toEqual([
+      "sms",
       "sms",
       "sms",
       "sms",

@@ -38,6 +38,7 @@ import { ConsultationInquiryModule } from "module/consultation-inquiry.module";
 import { SystemAdminModule } from "module/system-admin.module";
 import { ServiceRecordEntryModule } from "module/service-record-entry.module";
 import { ReceiptLinkModule } from "module/receipt-link.module";
+import { RealtimeModule } from "module/realtime.module";
 import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 import { AgentModule } from "module/agent.module";
@@ -99,6 +100,7 @@ const ENV_FILE_PATHS = [
         SystemAdminModule,
         ServiceRecordEntryModule,
         ReceiptLinkModule,
+        RealtimeModule,
         HolidayModule,
         HolidaySyncModule,
         HolidayReviewModule,

@@ -18,6 +18,7 @@ import { OptionButtonGroup } from "@/components/app/v3/OptionButtonGroup";
 import { ServiceRecordItemLabel } from "@/components/app/v3/ServiceRecordItemLabel";
 import { StickyActionBar } from "@/components/app/v3/StickyActionBar";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { DEFAULT_PROVIDER_NAME } from "@/components/service-record/provider-info";
 
 import {
@@ -219,7 +220,7 @@ export function ServiceInfoStep({
                     disabled={busy}
                     onClick={handleSaveHeader}
                 >
-                    {busy ? SERVICE_SAVE_BUSY_LABEL : NEXT_LABEL}
+                    {busy ? <><Spinner size="sm" aria-hidden="true" />{SERVICE_SAVE_BUSY_LABEL}</> : NEXT_LABEL}
                 </Button>
             </StickyActionBar>
         </>

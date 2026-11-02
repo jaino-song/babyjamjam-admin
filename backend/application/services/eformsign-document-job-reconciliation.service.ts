@@ -31,6 +31,17 @@ export interface EformsignDocumentJobReconciliationResult {
     documentId?: string;
     reason?: string;
     recordedAttempts?: number | null;
+    /**
+     * Set for a completed creation: true only when this run still held the job's
+     * lease, so the completion is this run's to act on. Absent for other results.
+     */
+    completionRecorded?: boolean;
+    /**
+     * Set by a `requires_attention` result: the row this run moved, or null when
+     * the lease was lost and another process owns it. Undefined when nothing was
+     * attempted (no lease). Status alone is not proof of a transition.
+     */
+    transitioned?: EformsignDocumentJobEntity | null;
 }
 
 /**
@@ -147,8 +158,8 @@ export class EformsignDocumentJobReconciliationService {
         }
 
         if (!job.leaseToken) return this.requiresAttention(job, "MISSING_JOB_LEASE");
-        await this.repository.markCompleted(job.id, job.leaseToken, documentId);
-        return { status: "completed", documentId };
+        const completed = await this.repository.markCompleted(job.id, job.leaseToken, documentId);
+        return { status: "completed", documentId, completionRecorded: Boolean(completed) };
     }
 
     private async reconcileFinalization(
@@ -204,6 +215,7 @@ export class EformsignDocumentJobReconciliationService {
             status: "requires_attention",
             reason,
             recordedAttempts: transitioned?.autoFinalizeOutcomeAttempts ?? null,
+            transitioned,
         };
     }
 }

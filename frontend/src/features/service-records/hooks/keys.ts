@@ -9,4 +9,7 @@ export const serviceRecordKeys = {
     revisionChangeLists: () => [...serviceRecordKeys.all, "revision-changes"] as const,
     revisionChanges: (clientId: number | null, revisionId: string | null) =>
         [...serviceRecordKeys.revisionChangeLists(), clientId ?? "none", revisionId ?? "none"] as const,
+    caregiverEditChangeLists: () => [...serviceRecordKeys.all, "caregiver-edit-changes"] as const,
+    caregiverEditChanges: (clientId: number | null, editId: string | null) =>
+        [...serviceRecordKeys.caregiverEditChangeLists(), clientId ?? "none", editId ?? "none"] as const,
 };

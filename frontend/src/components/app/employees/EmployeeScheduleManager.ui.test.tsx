@@ -178,6 +178,8 @@ describe("EmployeeScheduleManager interactions", () => {
     it("selects a date without opening entry detail, then reveals detail only after an entry click", () => {
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
+        // The calendar shows the current month only; on its last day use yesterday instead.
+        if (tomorrow.getDate() === 1) tomorrow.setDate(tomorrow.getDate() - 2);
         const tomorrowKey = localDateKey(tomorrow);
         mockClients([makeClient({ startDate: tomorrowKey })]);
 

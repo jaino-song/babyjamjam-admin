@@ -63,19 +63,19 @@ const PUBLIC_BRANCHES = [
 ] as const;
 
 async function main(): Promise<void> {
-    const ownerEmail = process.env["BRANCH_SEED_OWNER_EMAIL"]?.trim().toLowerCase();
+    const adminEmail = process.env["BRANCH_SEED_OWNER_EMAIL"]?.trim().toLowerCase();
 
-    if (!ownerEmail) {
+    if (!adminEmail) {
         throw new Error("BRANCH_SEED_OWNER_EMAIL is required.");
     }
 
-    const owner = await prisma.user.findUnique({
-        where: { email: ownerEmail },
+    const admin = await prisma.user.findUnique({
+        where: { email: adminEmail },
         select: { id: true, email: true },
     });
 
-    if (!owner) {
-        throw new Error(`No owner user found for BRANCH_SEED_OWNER_EMAIL=${ownerEmail}.`);
+    if (!admin) {
+        throw new Error(`No admin user found for BRANCH_SEED_OWNER_EMAIL=${adminEmail}.`);
     }
 
     for (const branch of PUBLIC_BRANCHES) {
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
                 ...branch,
                 email: null,
                 isActive: true,
-                ownerId: owner.id,
+                adminId: admin.id,
             },
         });
     }
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
     // staff-operational branches and must stay active. They are intentionally
     // NOT deactivated here anymore.
     console.log(
-        `Seeded ${PUBLIC_BRANCHES.length} public branches for ${owner.email}.`,
+        `Seeded ${PUBLIC_BRANCHES.length} public branches for ${admin.email}.`,
     );
 }
 

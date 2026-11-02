@@ -10,6 +10,7 @@ readonly OPERATOR="$SCRIPT_ROOT/operator.sh"
 readonly IDENTITY_HELPER="$SCRIPT_ROOT/production-db-identity.sh"
 readonly IDENTITY_TEST="$SCRIPT_ROOT/production-db-identity.test.sh"
 readonly BEHAVIOR_TEST="$SCRIPT_ROOT/operator.behavior.test.sh"
+readonly VALKEY_RESTORE_TEST="$SCRIPT_ROOT/operator.valkey-restore.behavior.test.sh"
 readonly INSTALL_BEHAVIOR_TEST="$SCRIPT_ROOT/install.behavior.test.sh"
 readonly BACKUP_MAP_TEST="$SCRIPT_ROOT/install-backup-map.test.sh"
 readonly LIGHTNODE_TEST="$SCRIPT_ROOT/lightnode-preflight.test.sh"
@@ -39,6 +40,7 @@ assert_not_contains() {
 [[ -r "$IDENTITY_TEST" ]] || fail "missing Production DB identity tests"
 [[ -r "$BEHAVIOR_TEST" ]] || fail "missing temporary-active behavioral tests"
 [[ -r "$INSTALL_BEHAVIOR_TEST" ]] || fail "missing installer behavioral tests"
+[[ -r "$VALKEY_RESTORE_TEST" ]] || fail "missing fenced Valkey restore behavioral tests"
 assert_contains "$IDENTITY_HELPER" 'FALLBACK_PRODUCTION_DB_REF_SHA256' \
     "identity helper must reject the legacy in-environment digest"
 assert_contains "$IDENTITY_HELPER" 'PROJECT_REF_PATTERN' \
@@ -169,6 +171,17 @@ assert_not_contains "$OPERATOR" '(aws[[:space:]]|ssh[[:space:]]|cloudflared|verc
 assert_not_contains "$OPERATOR" 'prisma.*migrate|migrate.*deploy' \
     "Fallback Server deployment must not apply production migrations"
 
+assert_contains "$OPERATOR" 'valkey-restore\)' \
+    "operator must expose the fenced Valkey restore as its only restore path"
+assert_contains "$OPERATOR" '--confirm-fence' \
+    "the fenced Valkey restore must require an explicit confirmation flag"
+assert_contains "$OPERATOR" '--confirm-reopen' \
+    "reopening the backend after a Valkey restore must require its own confirmation flag"
+assert_contains "$OPERATOR" 'valkey-restore-fence' \
+    "the Valkey restore fence must be a durable marker in the state directory"
+assert_not_contains "$OPERATOR" 'DEBUG[[:space:]]+RELOAD|RESTORE[[:space:]]+[^ ]+[[:space:]]+[0-9]+[[:space:]]+.*REPLACE' \
+    "the operator must never restore Valkey keys into a running server"
+
 assert_contains "$INSTALLER" '/usr/local/libexec/babyjamjam-fallback-server' \
     "installer must use a fixed protected artifact directory"
 assert_contains "$INSTALLER" '/opt/babyjamjam-fallback-server' \
@@ -188,6 +201,7 @@ bash -n "$IDENTITY_HELPER"
 bash -n "$IDENTITY_TEST"
 bash "$IDENTITY_TEST"
 bash "$BEHAVIOR_TEST"
+bash "$VALKEY_RESTORE_TEST"
 bash "$INSTALL_BEHAVIOR_TEST"
 bash "$BACKUP_MAP_TEST"
 bash "$LIGHTNODE_TEST"

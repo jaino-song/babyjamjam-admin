@@ -12,7 +12,8 @@ import { normalizeApiError } from "@babyjamjam/shared";
 import { formatDateTimeKo } from "@babyjamjam/shared/utils/date";
 import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/service-record-schedule";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
-import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
+import type { KrBusinessDayCalendar, ServiceDayPolicy } from "@/lib/date/business-days";
+import { calendarWithServiceDays } from "@/lib/date/service-day-policy";
 
 import { DetailEmptyState, InfoCard, InfoRow } from "@/components/app/v3";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
@@ -23,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { describeScheduleBlockingReasons } from "@/components/app/service-record/service-record-blocking-reasons";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -73,6 +75,8 @@ interface ClientServiceRecordsTabProps {
         expectedGeneration: string,
     ) => Promise<void>;
     retryingDocumentKey?: string | null;
+    /** Days this client accepts service on besides plain business days; absent means none. */
+    serviceDays?: ServiceDayPolicy;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -145,6 +149,7 @@ function ClientServiceRecordsTabContent({
     onRefreshRevisionHistory,
     onRetryRevisionDocument,
     retryingDocumentKey = null,
+    serviceDays,
 }: Omit<ClientServiceRecordsTabProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const { toast } = useToast();
@@ -380,6 +385,7 @@ function ClientServiceRecordsTabContent({
                             sessions={record.sessions}
                             plannedSessions={hasAuthoritativeProjection ? projectionEntries : undefined}
                             hasAuthoritativeProjection={hasAuthoritativeProjection}
+                            serviceDays={serviceDays}
                             isTextRefreshing={isTextRefreshing}
                             isRefreshing={isRefreshing}
                             onRefresh={onRefresh}
@@ -432,6 +438,7 @@ function ClientServiceRecordsTabContent({
                                 ? projectionEntries.filter((entry) => entry.scheduleId === assignment.scheduleId)
                                 : undefined}
                             hasAuthoritativeProjection={hasAuthoritativeProjection}
+                            serviceDays={serviceDays}
                             isTextRefreshing={isTextRefreshing}
                             enableMissingRecordAlert={
                                 !assignment.replaced
@@ -597,8 +604,8 @@ function ScheduleProjectionAlert({ reasons }: { reasons: ServiceRecordEditPrevie
             <AlertTitle>예정 회차를 확인할 수 없습니다.</AlertTitle>
             <AlertDescription>
                 <ul className="list-disc space-y-1 pl-5">
-                    {reasons.map((reason, index) => (
-                        <li key={`${reason.code}-${reason.sessionIndex ?? "all"}-${index}`}>{reason.message}</li>
+                    {describeScheduleBlockingReasons(reasons).map((line) => (
+                        <li key={line.key} data-slot="schedule-projection-reason">{line.label}</li>
                     ))}
                 </ul>
             </AlertDescription>
@@ -1132,6 +1139,7 @@ function ServiceSessionsCard({
     sessions,
     plannedSessions,
     hasAuthoritativeProjection = false,
+    serviceDays,
     enableMissingRecordAlert = true,
     isTextRefreshing,
     isRefreshing,
@@ -1143,6 +1151,7 @@ function ServiceSessionsCard({
     sessions: ServiceRecordSession[];
     plannedSessions?: ReadonlyArray<ServiceRecordPlannedSession>;
     hasAuthoritativeProjection?: boolean;
+    serviceDays?: ServiceDayPolicy;
     enableMissingRecordAlert?: boolean;
     isTextRefreshing: boolean;
     isRefreshing: boolean;
@@ -1163,7 +1172,15 @@ function ServiceSessionsCard({
         }
         return [...years];
     }, [sessions, startDate]);
-    const { calendar } = useBusinessDayCalendar({ extraYears: calendarYears });
+    const { calendar: branchCalendar } = useBusinessDayCalendar({ extraYears: calendarYears });
+    // Fallback expected dates follow the days this client accepts service on.
+    const serviceSaturday = serviceDays?.saturday ?? false;
+    const serviceSunday = serviceDays?.sunday ?? false;
+    const serviceHoliday = serviceDays?.holiday ?? false;
+    const calendar = useMemo(
+        () => calendarWithServiceDays(branchCalendar, { saturday: serviceSaturday, sunday: serviceSunday, holiday: serviceHoliday }),
+        [branchCalendar, serviceSaturday, serviceSunday, serviceHoliday],
+    );
     const { activeSessions, outsideSessions } = useMemo(
         () => partitionSessionsByPeriod(
             startDate,

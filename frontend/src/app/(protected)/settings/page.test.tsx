@@ -8,6 +8,20 @@ import { settingsApi } from "@/services/api";
 
 import SettingsPage from "./page";
 
+let mockDocumentJobsActive = false;
+jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {
+  const actual = jest.requireActual("@/features/document-jobs/DocumentJobsProvider");
+  return {
+    ...actual,
+    useDocumentJobs: () => ({
+      ...actual.useDocumentJobs(),
+      summary: { activeCount: mockDocumentJobsActive ? 1 : 0, unresolvedCount: 0 },
+      total: mockDocumentJobsActive ? 1 : 0,
+      unresolvedCount: 0,
+    }),
+  };
+});
+
 jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: jest.fn() }));
 jest.mock("@/hooks/usePushNotification", () => ({
   usePushNotification: () => ({
@@ -66,6 +80,21 @@ describe("SettingsPage profile query states", () => {
     return { ...render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>), client };
   }
   beforeEach(() => refetch.mockClear());
+
+  it.each([false, true])("renders a first-child jobs-only row only when active: %s", (active) => {
+    mockDocumentJobsActive = active;
+    const { container, unmount } = renderProfile({ data: { id: "user-1", name: "테스터" } });
+    const row = container.querySelector('[data-component="desktop_settings_sections_stats"]');
+    if (active) {
+      expect(row?.parentElement?.firstElementChild).toBe(row);
+      expect(row?.firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
+      expect(row?.children).toHaveLength(1);
+    } else {
+      expect(row).not.toBeInTheDocument();
+    }
+    unmount();
+    mockDocumentJobsActive = false;
+  });
 
   it.each([
     { isLoading: true, isPending: true, status: "pending", isFetching: true, fetchStatus: "fetching" },

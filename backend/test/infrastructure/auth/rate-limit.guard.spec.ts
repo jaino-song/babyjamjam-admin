@@ -1,4 +1,6 @@
-import { HttpException, HttpStatus, ServiceUnavailableException } from "@nestjs/common";
+import { EventEmitter } from "events";
+
+import { HttpException, HttpStatus, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { ExecutionContext } from "@nestjs/common/interfaces";
 import { Request } from "express";
 import Redis from "ioredis";
@@ -108,6 +110,7 @@ describe("RateLimitGuard", () => {
             status: "ready",
             eval: jest.fn().mockResolvedValue([1, 300_000]),
             disconnect: jest.fn(),
+            on: jest.fn(),
         };
         jest.mocked(Redis).mockImplementation(() => redis as unknown as Redis);
         process.env["VALKEY_URL"] = "redis://127.0.0.1:6379";
@@ -128,6 +131,19 @@ describe("RateLimitGuard", () => {
         expect(prisma.$queryRaw).not.toHaveBeenCalled();
         await guard.onModuleDestroy();
         expect(redis.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("handles Valkey client error events instead of leaving them unhandled", () => {
+        const redis = new EventEmitter() as EventEmitter & { disconnect: jest.Mock };
+        redis.disconnect = jest.fn();
+        jest.mocked(Redis).mockImplementation(() => redis as unknown as Redis);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        process.env["VALKEY_URL"] = "redis://127.0.0.1:6379";
+        guard = new RateLimitGuard(prisma as unknown as PrismaService);
+
+        expect(redis.listenerCount("error")).toBeGreaterThan(0);
+        expect(() => redis.emit("error", new Error("connect ECONNREFUSED 127.0.0.1:6379"))).not.toThrow();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("connect ECONNREFUSED"));
     });
 
     describe("environment switches", () => {

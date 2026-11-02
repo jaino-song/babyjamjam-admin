@@ -260,6 +260,9 @@ model client {
   voucherClient          Boolean                   @map("voucher_client")
   birthday               String?                   @db.VarChar(10)
   breastPump             Boolean                   @default(false) @map("breast_pump")
+  allowSaturdayService   Boolean                   @default(false) @map("allow_saturday_service")
+  allowSundayService     Boolean                   @default(false) @map("allow_sunday_service")
+  allowHolidayService    Boolean                   @default(false) @map("allow_holiday_service")
   serviceStatus          String?                   @map("service_status")
   bookingConfirmedAt     DateTime?                 @map("booking_confirmed_at") @db.Timestamptz(6)
   serviceEndNoticeSentAt DateTime?                 @map("service_end_notice_sent_at") @db.Timestamptz(6)
@@ -624,7 +627,10 @@ model branch {
   smsSenderApprovalApprovedBy   String?                           @map("sms_sender_approval_approved_by") @db.Uuid
   createdAt                     DateTime?                         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime?                         @default(now()) @map("updated_at") @db.Timestamptz(6)
-  ownerId                       String?                           @map("owner_id") @db.Uuid
+  adminId                       String?                           @map("admin_id") @db.Uuid
+  /// Release-1 compatibility column kept in sync with admin_id by trigger `branch_sync_admin_owner`;
+  /// never read or write it in code; dropped in Release 2. No index and no relation on it.
+  legacyOwnerId                 String?                           @map("owner_id") @db.Uuid
   systemTemplateSnapshot        Json?                             @map("system_template_snapshot")
   areas                         area[]
   clients                       client[]
@@ -654,6 +660,7 @@ model branch {
   serviceRecordSnapshotChunks   service_record_snapshot_chunk[]
   serviceRecordEditDrafts       service_record_edit_draft[]
   serviceRecordRevisions         service_record_revision[]
+  serviceRecordDayEditLogs       service_record_day_edit_log[]
   serviceRecordRevisionDocumentStates service_record_revision_document_state[]
   scheduleChangeRequests        schedule_change_request[]
   authSessions                  auth_session[]
@@ -664,7 +671,7 @@ model branch {
   agentActions                  agent_action[]
   agentTraces                   agent_trace[]
   agentFeedback                 agent_feedback[]
-  owner                         user?                             @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin                         user?                             @relation(fields: [adminId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "branch_admin_id_fkey")
   userBranches                  user_branch[]
   chatSessions                  chat_session[]
   receiptLinkTokens             receipt_link_token[]
@@ -673,7 +680,7 @@ model branch {
   endDateReviewItems            end_date_review_item[]
 
   @@index([isActive], map: "idx_branch_is_active")
-  @@index([ownerId], map: "idx_branch_owner")
+  @@index([adminId], map: "idx_branch_admin")
   @@index([region], map: "idx_branch_region")
   @@index([smsSenderApprovalStatus], map: "idx_branch_sms_sender_approval_status")
   @@index([slug], map: "idx_branch_slug")
@@ -842,7 +849,7 @@ model user {
   agentTraces                   agent_trace[]
   agentFeedback                 agent_feedback[]
   notifications                 notification[]
-  ownedBranches                 branch[]
+  adminBranches                 branch[]
   pushSubscriptions             push_subscription[]
   userBranches                  user_branch[]
   authTokens                    auth_token[]
@@ -1091,8 +1098,8 @@ model message_log {
 }
 
 /// Database note: partial unique index `uniq_message_trigger_rule_default` on
-/// (branch_id, template_key) WHERE is_default = true exists in the database but
-/// cannot be expressed in Prisma (created via migration/patch SQL).
+/// (branch_id, template_key) WHERE is_default = true AND deleted_at IS NULL.
+/// It exists in the database but cannot be expressed in Prisma (migration/patch SQL).
 model message_trigger_rule {
   id            String                @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId      String?               @map("branch_id") @db.Uuid
@@ -1106,6 +1113,7 @@ model message_trigger_rule {
   templateKey   String                @map("template_key")
   isDefault     Boolean               @default(false) @map("is_default")
   jobsStale     Boolean               @default(false) @map("jobs_stale")
+  deletedAt     DateTime?             @map("deleted_at") @db.Timestamptz(6)
   /// 대상 고객 상태 (규칙 메시지-04): all | pre_booking | waiting | active.
   targetClientStatus String           @default("all") @map("target_client_status") @db.VarChar(20)
   /// 실패 시 재전송 (규칙 메시지-04): false면 일시 실패를 자동으로 다시 보내지 않는다.
@@ -1307,6 +1315,7 @@ model service_record_case {
   eformsignDocs         eformsign_doc[]
   editDrafts            service_record_edit_draft[]
   revisions             service_record_revision[]
+  dayEditLogs           service_record_day_edit_log[]
   revisionDocumentStates service_record_revision_document_state[]
 
   // Revision pointers are intentionally nullable. Existing cases and legacy
@@ -1383,6 +1392,30 @@ model service_record_revision {
   @@unique([branchId, serviceRecordCaseId, id], map: "uniq_service_record_revision_branch_case_id")
   @@unique([serviceRecordCaseId, revisionNumber], map: "uniq_service_record_revision_case_number")
   @@index([branchId, serviceRecordCaseId], map: "idx_service_record_revision_branch_case")
+}
+
+/// Append-only audit row written when a caregiver edits an already submitted
+/// (locked) service-record day before the case is finalized. It is deliberately
+/// not a service_record_revision: a revision moves the case off automatic
+/// document generation. `before`/`after` hold only the four editable fields
+/// plus the immutable service date; signature data is never stored here. The
+/// editor is a scalar snapshot (no employee FK) so deleting an employee never
+/// erases or blocks this history.
+model service_record_day_edit_log {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId             String              @map("branch_id") @db.Uuid
+  serviceRecordCaseId  String              @map("service_record_case_id") @db.Uuid
+  caseSessionIndex     Int                 @map("case_session_index")
+  serviceRecordDayId   String              @map("service_record_day_id") @db.Uuid
+  employeeId           Int                 @map("employee_id") @db.SmallInt
+  employeeNameSnapshot String              @map("employee_name_snapshot")
+  before               Json                @db.JsonB
+  after                Json                @db.JsonB
+  editedAt             DateTime            @default(now()) @map("edited_at") @db.Timestamptz(6)
+  branch               branch              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  serviceRecordCase    service_record_case @relation(fields: [branchId, serviceRecordCaseId], references: [branchId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_day_edit_log_case_branch_fkey")
+
+  @@index([branchId, serviceRecordCaseId, editedAt], map: "idx_service_record_day_edit_log_branch_case_edited")
 }
 
 /// Mutable per-operation state for one immutable service-record revision.

@@ -16,6 +16,7 @@ import userEvent from "@testing-library/user-event";
 import ServiceRecordPage from "@/app/(public)/service-record/[token]/page";
 import { DAILY_ITEMS } from "@babyjamjam/service-record-ui";
 import { FIELD_COPY } from "../../../packages/service-record-ui/src/field-messages";
+import { dismissServiceRecordGuide, queryServiceRecordGuide, SERVICE_RECORD_GUIDE_NAME } from "@/test-utils/service-record-guide";
 
 import {
     NOW,
@@ -50,8 +51,12 @@ jest.mock("@/components/app/service-record/SignaturePad", () => ({
 const PINNED_COPY = {
     /** Title of the invalid-link state (ServiceRecordWizard.tsx:822). */
     invalidLinkTitle: "링크를 사용할 수 없습니다",
+    /** Accessible name of the status region shown while the link is checked (the visible body is a skeleton). */
+    loading: "불러오는 중…",
     phoneLabel: "휴대폰 번호",
     phoneSubmit: "확인하기",
+    /** The phone submit button's label while POST /verify is in flight. */
+    phoneSubmitBusy: "확인 중",
     /** page.tsx:420 ends with a period; the current widget's own slot message does not. Either satisfies this. */
     phoneRequired: /휴대폰 번호를 입력해 주세요/,
     phoneMismatch: "휴대폰 번호가 일치하지 않아요",
@@ -292,6 +297,9 @@ async function fillDayUpToReview(user: User, feeding: FeedingCounts = { breast: 
     await screen.findByText(PINNED_COPY.reviewTitle);
 }
 
+/** The context's caregiver (makeContext employee id 7) submitted the first day. */
+const ownSubmittedFirstSession = () => ({ ...makeSubmittedFirstSession(), employeeId: 7 });
+
 describe("service-record page contract", () => {
     const originalFetch = global.fetch;
 
@@ -308,6 +316,40 @@ describe("service-record page contract", () => {
     });
 
     describe("link and phone verification", () => {
+        it("0. while the link is being checked the page shows a loading status, not the phone step", async () => {
+            await renderPage({ verified: false });
+
+            // Before the link check answers: a status region carries the loading state and nothing is asked yet.
+            expect(screen.getByRole("status", { name: PINNED_COPY.loading })).toBeInTheDocument();
+            expect(screen.queryByLabelText(PINNED_COPY.phoneLabel)).not.toBeInTheDocument();
+
+            await screen.findByLabelText(PINNED_COPY.phoneLabel);
+            expect(screen.queryByRole("status", { name: PINNED_COPY.loading })).not.toBeInTheDocument();
+        });
+
+        it("2. while the number is being verified the submit button reads 확인 중 and cannot be pressed again", async () => {
+            const { api, user } = await renderPage({ verified: false });
+            let releaseVerify!: () => void;
+            const routed = global.fetch;
+            global.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+                if (String(input).endsWith("/verify")) {
+                    return new Promise<Response>((resolve) => { releaseVerify = () => resolve(routed(input, init)); });
+                }
+                return routed(input, init);
+            }) as typeof fetch;
+            await user.type(await screen.findByLabelText(PINNED_COPY.phoneLabel), "01012345678");
+
+            await user.click(screen.getByRole("button", { name: PINNED_COPY.phoneSubmit }));
+
+            const busyButton = await screen.findByRole("button", { name: PINNED_COPY.phoneSubmitBusy });
+            expect(busyButton).toBeDisabled();
+            expect(screen.queryByRole("button", { name: PINNED_COPY.phoneSubmit })).not.toBeInTheDocument();
+
+            releaseVerify();
+            expect(await screen.findByLabelText(HEADER_LABELS.momName)).toBeInTheDocument();
+            expect(api.callsTo("POST", "/verify")).toHaveLength(1);
+        });
+
         it.each([
             ["1. an invalid or expired link shows the invalid state", { linkValid: false }],
             ["1. a link check that cannot reach the server shows the invalid state", { linkNetworkError: true }],
@@ -358,9 +400,27 @@ describe("service-record page contract", () => {
     });
 
     describe("basic information (header)", () => {
+        it("3. the how-to guide opens by itself over a first-time header step, and skipping it leaves the form usable", async () => {
+            const { api, user } = await renderPage();
+            const guide = await screen.findByRole("dialog", { name: SERVICE_RECORD_GUIDE_NAME });
+            expect(within(guide).getByRole("button", { name: "건너뛰기" })).toBeInTheDocument();
+
+            await dismissServiceRecordGuide(user);
+
+            expect(queryServiceRecordGuide()).toBeNull();
+            const momName = screen.getByRole("textbox", { name: HEADER_LABELS.momName });
+            await user.type(momName, SAVED_HEADER.momName);
+            expect(momName).toHaveValue(SAVED_HEADER.momName);
+            expect(screen.getByRole("radiogroup", { name: DELIVERY_LABEL })).toBeInTheDocument();
+            expect(api.callsTo("PUT", "/header")).toHaveLength(0);
+            // Dismissed for good: typing in the form does not bring it back.
+            expect(queryServiceRecordGuide()).toBeNull();
+        });
+
         it("3. pressing next on an empty form shows every required message and saves nothing", async () => {
             const { api, user } = await renderPage();
             await screen.findByLabelText(HEADER_LABELS.momName);
+            await dismissServiceRecordGuide(user);
 
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
 
@@ -375,6 +435,7 @@ describe("service-record page contract", () => {
         it("3. a partial birthday is flagged once the field is left, and digits are formatted as a date", async () => {
             const { user } = await renderPage();
             const birth = await screen.findByLabelText(HEADER_LABELS.momBirth);
+            await dismissServiceRecordGuide(user);
 
             await user.type(birth, "1999");
             await user.tab();
@@ -388,6 +449,7 @@ describe("service-record page contract", () => {
         it("3. a birthday in the future is rejected", async () => {
             const { user } = await renderPage();
             const birth = await screen.findByLabelText(HEADER_LABELS.momBirth);
+            await dismissServiceRecordGuide(user);
 
             await user.type(birth, "20270101");
             await user.tab();
@@ -397,7 +459,9 @@ describe("service-record page contract", () => {
 
         it("3. a valid header is sent to PUT /header with ISO dates and the session overview appears", async () => {
             const { api, user } = await renderPage();
-            await user.type(await screen.findByLabelText(HEADER_LABELS.momName), SAVED_HEADER.momName);
+            await screen.findByLabelText(HEADER_LABELS.momName);
+            await dismissServiceRecordGuide(user);
+            await user.type(screen.getByLabelText(HEADER_LABELS.momName), SAVED_HEADER.momName);
             await user.type(screen.getByLabelText(HEADER_LABELS.momBirth), "19940315");
             await user.type(screen.getByLabelText(HEADER_LABELS.babyName), SAVED_HEADER.babyName);
             await user.type(screen.getByLabelText(HEADER_LABELS.babyBirth), "20260910");
@@ -585,7 +649,7 @@ describe("service-record page contract", () => {
 
         it("6. a submitted day re-opens on the review with the answers the server holds", async () => {
             const { user } = await renderPage({
-                context: makeContext({ header: SAVED_HEADER, sessions: [makeSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
+                context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
 
             await user.click(await screen.findByRole("button", dayCard(1)));
@@ -594,9 +658,25 @@ describe("service-record page contract", () => {
             expectSubmittedReview();
         });
 
+        it("6. another caregiver's submitted day opens read-only: the note, no 수정, no submit", async () => {
+            const { user } = await renderPage({
+                context: makeContext({
+                    header: SAVED_HEADER,
+                    sessions: [{ ...makeSubmittedFirstSession(), employeeId: 99 }, makeSession(2), makeSession(3)],
+                }),
+            });
+
+            await user.click(await screen.findByRole("button", dayCard(1)));
+
+            expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(screen.getByText("다른 제공인력이 제출한 회차라 수정할 수 없어요.")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: /수정$/ })).toBeNull();
+            expect(screen.queryByRole("button", { name: PINNED_COPY.reviewSubmit })).toBeNull();
+        });
+
         it("6. re-submitting a re-opened day sends the server's answers unchanged and keeps the saved signature", async () => {
             const { api, user } = await renderPage({
-                context: makeContext({ header: SAVED_HEADER, sessions: [makeSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
+                context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
             await user.click(await screen.findByRole("button", dayCard(1)));
             await screen.findByText(PINNED_COPY.reviewTitle);
@@ -635,7 +715,7 @@ describe("service-record page contract", () => {
 
         it("6. 신생아 수정 on the review of a submitted day opens the 신생아 page, and a change made there is what gets re-submitted", async () => {
             const { api, user } = await renderPage({
-                context: makeContext({ header: SAVED_HEADER, sessions: [makeSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
+                context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
             await user.click(await screen.findByRole("button", dayCard(1)));
             await screen.findByText(PINNED_COPY.reviewTitle);

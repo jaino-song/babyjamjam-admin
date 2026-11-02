@@ -569,23 +569,31 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         this.ensureApprovedRecipient(context, recipient);
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
         const ruleId = `${AGENT_SMS_RULE_ID_PREFIX}${context.principal.branchId}`;
-        await this.prisma.message_trigger_rule.upsert({
-            where: { id: ruleId },
-            create: {
-                id: ruleId,
-                branchId: context.principal.branchId,
-                name: ruleName,
-                isActive: false,
-                eventType: "CLIENT_CREATED",
-                offsetType: "IMMEDIATE",
-                offsetDays: 0,
-                recipientType: MessageTriggerRecipientType.CLIENT,
-                templateKey: MessageTriggerTemplateKey.INFO,
-                isDefault: false,
-                jobsStale: false,
-            },
-            update: { isActive: false },
+        // The holder rule is created inactive and forced inactive on every enqueue. Writing it again
+        // when it already is inactive would only emit a realtime `message` hint for no change.
+        const holderRule = await this.prisma.message_trigger_rule.findFirst({
+            where: { id: ruleId, branchId: context.principal.branchId },
+            select: { isActive: true },
         });
+        if (!holderRule || holderRule.isActive) {
+            await this.prisma.message_trigger_rule.upsert({
+                where: { id: ruleId },
+                create: {
+                    id: ruleId,
+                    branchId: context.principal.branchId,
+                    name: ruleName,
+                    isActive: false,
+                    eventType: "CLIENT_CREATED",
+                    offsetType: "IMMEDIATE",
+                    offsetDays: 0,
+                    recipientType: MessageTriggerRecipientType.CLIENT,
+                    templateKey: MessageTriggerTemplateKey.INFO,
+                    isDefault: false,
+                    jobsStale: false,
+                },
+                update: { isActive: false },
+            });
+        }
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
         return this.jobRepository.upsertPending(MessageTriggerJobEntity.create({
             branchId: context.principal.branchId,

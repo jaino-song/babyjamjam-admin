@@ -75,6 +75,10 @@ export interface Client {
     areaId?: string | null;
     /** false이면 이 고객에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요. */
     smsAutomationEnabled?: boolean;
+    /** 토·일·공휴일에도 서비스하는 고객인지 (미지정이면 false). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
     /** ID of the same latest contract used for documentStatus. */
@@ -112,6 +116,10 @@ export interface CreateClientDto {
     applyMessageAutomation?: boolean;
     /** 명시하면 applyMessageAutomation보다 우선해요. */
     smsAutomationEnabled?: boolean;
+    /** 토·일·공휴일에도 서비스하는 고객인지 (미지정이면 false). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     areaId?: string | null;
     source?: "contract_auto_registration";
     reuseExistingClient?: boolean;
@@ -141,6 +149,10 @@ export interface UpdateClientDto {
     careCenter?: boolean | null;
     areaId?: string | null;
     smsAutomationEnabled?: boolean;
+    /** 토·일·공휴일에도 서비스하는 고객인지 (미지정이면 false). */
+    allowSaturdayService?: boolean;
+    allowSundayService?: boolean;
+    allowHolidayService?: boolean;
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
@@ -209,6 +221,16 @@ export const SERVICE_STATUS_OPTIONS = [
 ] as const;
 
 export type ServiceStatus = typeof SERVICE_STATUS_OPTIONS[number]["value"];
+
+/**
+ * Whether "제공기록지 일정 변경" can be offered for this client. The backend only creates a service-record case
+ * once the booking is confirmed, so for an effectively 예약 전 client the schedule load answers 404 and a retry can
+ * never succeed. `serviceStatus` in the client response already holds the effective status; null/undefined counts
+ * as 예약 전, matching the backend gate (service-record-lifecycle.service.ts) and the confirm-booking check.
+ */
+export function canEditServiceRecordSchedule(client: { serviceStatus?: ServiceStatus | null }): boolean {
+    return (client.serviceStatus ?? "pre_booking") !== "pre_booking";
+}
 
 // Legacy export for backwards compatibility (deprecated)
 /** @deprecated Use SERVICE_STATUS_OPTIONS instead */

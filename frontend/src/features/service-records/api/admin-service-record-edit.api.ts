@@ -1,6 +1,7 @@
 import type {
     ServiceRecordEditConfirmResponse,
     ServiceRecordEditContractStage,
+    ServiceRecordEditSchedule,
 } from "@babyjamjam/shared/types/service-record";
 
 import {
@@ -663,13 +664,17 @@ export const adminServiceRecordEditApi = {
         expectedDraftVersion: number,
         changes: AdminServiceRecordEditChanges,
         dateMove?: AdminServiceRecordEditDateMove,
+        schedule?: ServiceRecordEditSchedule,
     ): Promise<AdminServiceRecordEditState> {
+        // The server rejects the pair too; failing here keeps a wrong call from reaching it.
+        if (dateMove && schedule) throw new Error("dateMove and schedule cannot be sent together");
         const body = await request<unknown>(draftIdPath(draftId), {
             method: "PATCH",
             body: JSON.stringify({
                 expectedDraftVersion,
                 changes: stripServiceDateSnapshots(changes),
                 ...(dateMove ? { dateMove } : {}),
+                ...(schedule ? { schedule } : {}),
             }),
         });
         return normalizeAdminServiceRecordEditState(body);

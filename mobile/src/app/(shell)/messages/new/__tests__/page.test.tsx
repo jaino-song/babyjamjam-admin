@@ -1083,6 +1083,7 @@ describe("NewMessagePage", () => {
     expect(screen.getByRole("option", { name: "상담 후 리마인더" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "예약 완료" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "모니터링 설문" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "계약서 작성 요청" })).toBeInTheDocument();
   });
 
   it("includes the server-provided service end notice in the template dropdown", async () => {

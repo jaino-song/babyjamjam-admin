@@ -92,7 +92,7 @@ export async function proxySseStream({
 
     try {
         const upstreamHeaders = new Headers(headers);
-        // Backend replay is not supported yet; preserve the resume cursor for future support.
+        // The backend accepts the resume cursor from either this header or `?since=`.
         if (lastEventId) {
             upstreamHeaders.set("Last-Event-ID", lastEventId);
         }

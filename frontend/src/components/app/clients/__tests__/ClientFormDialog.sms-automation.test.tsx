@@ -105,8 +105,8 @@ describe("ClientFormDialog 메시지 자동 전송 switch in edit mode", () => {
 
     expect(screen.getByRole("switch", { name: "메시지 자동 전송" })).toBeChecked();
     expect(
-      screen.getByText("끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요."),
-    ).toBeInTheDocument();
+      screen.queryByText("끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요."),
+    ).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "인천시 연수구" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));

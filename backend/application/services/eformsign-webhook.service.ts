@@ -3,6 +3,7 @@ import { UpdateEformsignDocStatusUsecase } from "application/usecases/eformsign-
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
 import { MirrorUnassignedEformsignDocUsecase } from "application/usecases/eformsign-doc/mirror-unassigned-eformsign-doc.usecase";
 import {
+    isFinalContractCompletionStatus,
     UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE,
     UNASSIGNED_REVIEW_STAGE_STATUS_CODES,
     UNASSIGNED_TERMINAL_STATUS_CODES,
@@ -13,6 +14,10 @@ import {
 } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { ReconcileCompletedMirroredEformsignDocUsecase } from "application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import {
+    configuredServiceRecordTemplateIds,
+    isServiceRecordEformsignDocument,
+} from "application/utils/eformsign-document-kind";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
 import { EformsignDocsEventBus } from "./eformsign-docs-event-bus.service";
 import { NotificationService } from "./notification.service";
@@ -24,6 +29,7 @@ import {
 } from "domain/repositories/eformsign.client.interface";
 import {
     EFORMSIGN_DOC_REPOSITORY,
+    type EformsignCompletionHealMetadata,
     EformsignDocMappingError,
     EformsignDocOwnershipConflictError,
     EformsignDocStaleUpdateError,
@@ -386,6 +392,132 @@ export class EformsignWebhookService {
                 ? `pdf:${status}`
                 : `doc:${status}`;
         this.eventBus.emit({ branchId, documentId, reason });
+    }
+
+    /**
+     * Whether the stale-drop heal may claim terminal completion for this document from its
+     * stored detail, decided from the persisted local row and the detail together. Loads the
+     * row once, so the controller's pre-check and the claim itself share one rule.
+     *
+     * Eligible only when the row exists, is branch-owned (an unassigned row has no branch to
+     * key the claim by) and is not purge-requested, and the detail is a completion that the
+     * document's kind accepts: a contract must be at a FINAL completion, because 062
+     * (participant accepted) may still await the 제공기관 confirmation and a terminal 050
+     * would make the downgrade guard reject the later legitimate 070; a service-record
+     * snapshot completes at 062 and keeps the full completed set, as the completed-mirror
+     * reconciler treats it.
+     *
+     * The kind is classified exactly as the mirror linker classifies it
+     * (`isServiceRecordEformsignDocument`, with an explicit `contract` kind authoritative):
+     * the persisted `documentKind` first, the configured service-record templates only as the
+     * fallback, so a snapshot row on a since-retired template is still a snapshot.
+     */
+    async resolveCompletionHealEligibility(
+        documentId: string,
+        mirroredDocument: EformsignApiDocumentResponse,
+    ): Promise<
+        | { eligible: false }
+        | { eligible: true; branchId: string; serviceRecordSnapshot: boolean }
+    > {
+        const statusType = normalizeEformsignStatusCode(
+            mirroredDocument.current_status?.status_type,
+        );
+        if (!COMPLETED_STATUS_CODES.has(statusType)) {
+            return { eligible: false };
+        }
+        // Plain columns only: rebuilding the whole entity here would throw on a legacy row
+        // that violates an entity invariant (e.g. updatedDate before createdDate), and the
+        // claim writes straight to columns, so it never needs the entity either.
+        let row: EformsignCompletionHealMetadata | null;
+        try {
+            row = await this.eformsignDocRepository.findCompletionHealMetadata(documentId);
+        } catch (error) {
+            this.logger.warn(
+                `Failed to read completion-heal metadata for ${documentId}: ` +
+                sanitizeEformsignErrorMessage(error),
+            );
+            return { eligible: false };
+        }
+        // An unassigned row has no branch to key the claim by, and a purge-requested row
+        // is not claimable.
+        if (!row || row.branchId === null || row.permanentPurgeRequestedAt !== null) {
+            return { eligible: false };
+        }
+        const branchId = row.branchId;
+        const serviceRecordSnapshot = this.isServiceRecordSnapshotRow(
+            row,
+            mirroredDocument.template?.id,
+        );
+        return serviceRecordSnapshot || isFinalContractCompletionStatus(statusType)
+            ? { eligible: true, branchId, serviceRecordSnapshot }
+            : { eligible: false };
+    }
+
+    private isServiceRecordSnapshotRow(
+        row: Pick<EformsignCompletionHealMetadata, "documentKind" | "templateId">,
+        detailTemplateId?: string,
+    ): boolean {
+        // The explicit kind is authoritative for a contract, as in the linker.
+        if (row.documentKind === EFORMSIGN_DOCUMENT_KIND.CONTRACT) {
+            return false;
+        }
+        const configuredTemplateIds = configuredServiceRecordTemplateIds();
+        return [row.templateId, detailTemplateId].some((templateId) =>
+            isServiceRecordEformsignDocument(
+                {
+                    documentKind: row.documentKind,
+                    templateId,
+                },
+                configuredTemplateIds,
+            ),
+        );
+    }
+
+    /**
+     * Heal a branch-owned row whose last delivery was dropped as stale while the stored
+     * detail already shows the document completed.
+     *
+     * The non-completion webhook path syncs the detail with `skipBranchOwnedProjection`, so
+     * the summary columns are left to the webhook CAS. eformsign can auto-complete a
+     * document milliseconds after its last status webhook, which makes the freshly fetched
+     * detail newer than that webhook: the controller drops it as stale, no `doc_complete`
+     * ever follows, and nothing else projects the summary. This applies the same completion
+     * claim a `doc_complete` webhook would, sourced from the stored detail, with completion
+     * effects deferred because the mirror sync's detail-driven reconciler already ran them.
+     *
+     * Returns undefined when there is nothing to claim: the row is not eligible (see
+     * `resolveCompletionHealEligibility`: not a final completion for its kind, unassigned,
+     * purge-requested or missing).
+     */
+    async claimCompletionFromStoredDetail(
+        documentId: string,
+        mirroredDocument: EformsignApiDocumentResponse,
+    ): Promise<EformsignWebhookProcessResult | undefined> {
+        const eligibility = await this.resolveCompletionHealEligibility(
+            documentId,
+            mirroredDocument,
+        );
+        if (!eligibility.eligible) {
+            return undefined;
+        }
+        const { branchId, serviceRecordSnapshot } = eligibility;
+        const claimResult = await this.claimDocumentCompletion(
+            branchId,
+            documentId,
+            mirroredDocument,
+            "stored_detail",
+            mirroredDocument.document_name,
+            mirroredDocument.template?.name,
+            webhookSourceUpdatedDate(mirroredDocument.updated_date),
+        );
+        if (claimResult === "claimed") {
+            await this.reconcileDeferredServiceRecordSnapshotCompletion(
+                documentId,
+                mirroredDocument.template?.id,
+                serviceRecordSnapshot,
+            );
+        }
+        return { completionClaim: claimResult, completionBranchId: branchId };
     }
 
     async publishLocalDocumentChange(documentId: string): Promise<void> {
@@ -1068,8 +1200,9 @@ export class EformsignWebhookService {
     private async reconcileDeferredServiceRecordSnapshotCompletion(
         documentId: string,
         templateId?: string,
+        serviceRecordSnapshot: boolean = this.isServiceRecordTemplate(templateId),
     ): Promise<boolean> {
-        if (!this.isServiceRecordTemplate(templateId) || !this.completedMirrorReconciler) {
+        if (!serviceRecordSnapshot || !this.completedMirrorReconciler) {
             return false;
         }
         const lifecycleChanged = await this.completedMirrorReconciler

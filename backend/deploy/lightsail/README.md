@@ -1,5 +1,12 @@
 # Lightsail Backend Environments
 
+> **Chosen as production primary again (decision 2026-10-31; cutover pending).**
+> Production has run on the LightNode fallback since 2026-09-03 and **stays there
+> until the cutover in `docs/devops-deployment-rules.md` §4.1 completes**. After
+> it, LightNode stays on as a passive standby that gets every `main` release. The production env file
+> must carry `SCHEDULER_LEASE_MODE=required` and `SCHEDULER_LEASE_HOLDER_ID=lightsail`
+> (ADR-010; `ci-operator.sh` refuses otherwise).
+>
 > **Preview is retired here (2026-09-23, BJJ-341).** The preview backend runs on
 > Google Cloud Run (`backend/deploy/cloudrun/`, runbook
 > `docs/plans/2026-09-23-preview-cloud-run.md`). `resolve-deploy-target` never
@@ -7,9 +14,9 @@
 > are deleted. The preview paths below and in these scripts are inert and are
 > kept until they are removed separately.
 
-The Seoul Lightsail host runs production and preview as separate logical
-environments on one VM. This mirrors Railway's environment model without
-creating a second billable Lightsail instance.
+The Seoul Lightsail host runs production only. Preview moved to Google Cloud Run
+(BJJ-341, 2026-09-23), so the host's preview environment described below is
+historical and is not used.
 
 The environments have separate API containers, Valkey containers, persistent
 Valkey volumes, Compose project names, runtime environment files, deployment

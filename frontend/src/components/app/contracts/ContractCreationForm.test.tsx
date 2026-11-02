@@ -2,117 +2,25 @@ import fs from "node:fs";
 
 const source = fs.readFileSync(require.resolve("./ContractCreationForm"), "utf8");
 
-describe("ContractCreationForm compensation flows", () => {
-  it.each([
-    "template_workflow_config_invalid",
-    "template_workflow_unsupported",
-    "template_workflow_config_unavailable",
-  ])("handles %s before manual or unknown fallback", (reason) => {
-    const knownBranch = source.slice(
-      source.indexOf(`getKnownHeadlessProviderFailureMessage(headless.reason)`),
-      source.indexOf('headless.reason === "local_persist_failed"'),
-    );
-
-    expect(source).toContain(`case "${reason}"`);
-    expect(knownBranch).toContain("setAllowIframeFallback(false)");
-    expect(knownBranch).toContain("retryWithPersistedClientRef.current = true");
-    expect(knownBranch).not.toContain("openIframeFallback()");
-  });
-
-  it("should show the conflict error and stop before document creation when automatic registration is off", () => {
+describe("ContractCreationForm registration boundaries", () => {
+  it("keeps non-phone conflicts locally authored and provider authentication server-side", () => {
     expect(source).toContain('error.response?.status !== 409');
-    // The non-duplicate 409 surfaces the locally authored copy through the
-    // AuthoredSubmissionError catch boundary; the upstream body is never
-    // stringified into the rendered error.
     expect(source).toContain('throw new AuthoredSubmissionError("고객 자동 등록에 실패했어요.")');
-    expect(source).not.toContain('getApiErrorMessage');
-    // Provider authentication now runs exclusively inside the backend credential
-    // boundary; the browser must not call the provider directly.
+    expect(source).not.toContain("getApiErrorMessage");
     expect(source).not.toContain("eformsignApi.authenticate");
   });
 
-  it("should request approval and retry with reuseExistingClient for a phone conflict", () => {
+  it("requests approval before reusing a client with the same phone", () => {
     expect(source).toContain('requestConfirmation("이미 같은 전화번호의 고객이 있습니다. 기존 고객으로 계약을 진행할까요?")');
     expect(source).toContain("reuseExistingClient: true");
     expect(source).toContain('dataComponent="desktop_contracts_creation_confirmation"');
   });
 
-  it("should adopt a remotely created document without opening the iframe after local persistence fails", () => {
-    const branch = source.slice(
-      source.indexOf('headless.reason === "local_persist_failed"'),
-      source.indexOf('headless.reason === "remote_unconfirmed"'),
-    );
-    expect(branch).toContain("eformsignApi.adoptDocument");
-    expect(branch).not.toContain("openDocument(");
-  });
-
-  it("should not report adoption success while the local mirror is incomplete", () => {
-    const branch = source.slice(
-      source.indexOf('headless.reason === "local_persist_failed"'),
-      source.indexOf('headless.reason === "remote_unconfirmed"'),
-    );
-    expect(branch).toContain('adopted.warnings?.includes("mirror_sync_failed")');
-    expect(branch).toContain("전자문서와 PDF 동기화가 완료되지 않았습니다.");
-    expect(branch).toContain("markCreationProgressFailed()");
-    const warningBranch = branch.slice(
-      branch.indexOf('adopted.warnings?.includes("mirror_sync_failed")'),
-      branch.indexOf("markCreationProgressFailed()"),
-    );
-    expect(warningBranch).toContain(
-      "invalidateContractQueries(finalClientId)",
-    );
-    expect(branch.indexOf('adopted.warnings?.includes("mirror_sync_failed")'))
-      .toBeLessThan(branch.indexOf("setIsCreationSuccessOpen(true)"));
-  });
-
-  it("should request approval and retry duplicate pending documents with force true", () => {
-    const branch = source.slice(
-      source.indexOf('headless.reason === "duplicate_pending_document"'),
-      source.indexOf('console.warn(\n            "[contract-creation] headless dispatch returned ok=false"'),
-    );
-    expect(branch).toContain('requestConfirmation("최근 생성된 진행 중 문서가 있습니다. 그래도 새로 생성하시겠습니까?")');
-    expect(branch).toContain("progressId, true");
-  });
-
-  it("should keep manual iframe submission pending until the dialog closes", () => {
-    const handler = source.slice(
-      source.indexOf("const handleContractCreation"),
-      source.indexOf("const isStep1Valid"),
-    );
-    const dialogCloseHandler = source.slice(
-      source.indexOf("const handleDialogClose"),
-      source.indexOf("const resetCreationSession"),
-    );
-
-    expect(handler).toContain("let keepSubmittingUntilDialogCloses = false");
-    expect(handler).toContain("keepSubmittingUntilDialogCloses = true");
-    expect(handler).toContain("if (!keepSubmittingUntilDialogCloses)");
-    expect(handler).toContain("handleDialogClose()");
-    expect(dialogCloseHandler).toContain("setIsSubmitting(false)");
-  });
-});
-
-describe("ContractCreationForm headless failure copy", () => {
-  const helperSource = source.slice(
-    source.indexOf("function getSafeHeadlessFailureMessage"),
-    source.indexOf("export const ContractCreationForm"),
-  );
-
-  it("should map registered contract-send guard codes before the regex fallbacks", () => {
-    expect(helperSource).toContain('reason === "CLIENT_ASSIGNMENT_REQUIRED"');
-    expect(helperSource).toContain("고객의 제공인력 배정을 먼저 저장한 뒤 다시 시도해 주세요.");
-    expect(helperSource).toContain('reason === "DOCUMENT_PROVIDER_MISMATCH"');
-    expect(helperSource).toContain("전자문서의 제공인력과 고객 배정 정보가 일치하지 않아요. 배정을 확인해 주세요.");
-    expect(helperSource).toContain('reason === "CLIENT_SERVICE_TERMINATED"');
-    expect(helperSource).toContain("해지된 고객에게는 전자문서를 발송할 수 없어요.");
-    expect(helperSource.indexOf('reason === "CLIENT_ASSIGNMENT_REQUIRED"'))
-      .toBeLessThan(helperSource.indexOf("/timed out|timeout/i"));
-  });
-
-  it("should keep the existing fallback copy for unknown reasons", () => {
-    expect(helperSource).toContain("/timed out|timeout/i");
-    expect(helperSource).toContain("/chromium|browser|executable/i");
-    expect(helperSource).toContain("/missing document_id/i");
-    expect(helperSource).toContain("백엔드 자동 처리에 실패했어요. 재시도하거나 수동 입력을 사용해 주세요.");
+  it("has no manual (iframe) creation path left", () => {
+    expect(source).not.toContain("handleManualContractCreation");
+    expect(source).not.toContain("canCreateManually");
+    expect(source).not.toContain("eformsignApi.generateDocument");
+    expect(source).not.toContain("openDocument");
+    expect(source).not.toContain('id="eformsign_iframe"');
   });
 });

@@ -73,4 +73,12 @@ export const systemScopeImportAllowlist = [
     // columns, and select `content` only for the single artifact being served. The only writes in
     // the file go to the export's own snapshot/candidate tables, which are not tenant models.
     "infrastructure/database/repositories/sb.eformsign-backup-export.repository.ts",
+    // The automation-recovery marker rule (`MESSAGE_AUTOMATION_INTENT_RULE_ID`) is one fixed-id,
+    // branchless (branchId: null) row shared by every branch, created lazily on the first automation
+    // intent from inside a branch request. A null-branch row cannot satisfy `branch_mutation`, so under
+    // enforce the create would throw and roll the caller's transaction back. Only the marker's
+    // pre-read and its `createManyAndReturn` run in system scope, on the caller's transaction client;
+    // nothing else in either file uses the bypass.
+    "application/agent/agent-automation-record-store.service.ts",
+    "application/services/message-automation-intent-writer.ts",
 ];

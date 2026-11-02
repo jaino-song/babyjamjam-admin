@@ -84,4 +84,42 @@ describe("POST /api/admin/service-records/drafts/[draftId]/preview", () => {
             status: 409,
         });
     });
+
+    it("keeps a known scheduleCode and reduced blockingReasons on a 409, dropping other members", async () => {
+        const problem = createProblemDetails({
+            code: "REQUEST_CONFLICT",
+            requestId: "req-draft-preview-schedule",
+            outcome: "NOT_APPLIED",
+        });
+        mockPost.mockRejectedValue({
+            response: {
+                status: 409,
+                data: {
+                    ...problem,
+                    statusCode: problem.status,
+                    message: problem.detail,
+                    error: problem.detail,
+                    scheduleCode: "UNSUPPORTED_HOLIDAY_YEAR",
+                    blockingReasons: [{ code: "NON_SERVICE_DAY", sessionIndex: 4, message: "private" }],
+                    stack: "Error: secret",
+                },
+            },
+        });
+
+        const request = new NextRequest(
+            "http://localhost/api/admin/service-records/drafts/draft-1/preview",
+            {
+                method: "POST",
+                headers: { cookie: "auth_token=access-token", "content-type": "application/json" },
+                body: JSON.stringify({ expectedDraftVersion: 2 }),
+            },
+        );
+        const response = await POST(request, { params: Promise.resolve({ draftId: "draft-1" }) });
+
+        expect(response.status).toBe(409);
+        const body = await response.json();
+        expect(body).toMatchObject({ scheduleCode: "UNSUPPORTED_HOLIDAY_YEAR" });
+        expect(body.blockingReasons).toEqual([{ code: "NON_SERVICE_DAY", sessionIndex: 4 }]);
+        expect(body).not.toHaveProperty("stack");
+    });
 });

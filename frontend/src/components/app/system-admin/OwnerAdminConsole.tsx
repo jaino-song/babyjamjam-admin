@@ -1011,7 +1011,7 @@ export function OwnerAdminConsole({
       <h1 className="sr-only">관리자</h1>
 
       {activeSection.stats.length > 0 ? (
-        <StatsBar name="desktop_system-admin_sections_sections" items={activeSectionStats} />
+        <StatsBar name="desktop_system-admin_sections_sections" showDocumentJobs="whenActive" items={activeSectionStats} />
       ) : null}
 
       <div

@@ -75,7 +75,7 @@ async function createBranch(
     prisma: PrismaClient,
     name: string,
     isActive: boolean,
-    ownerId?: string,
+    adminId?: string,
 ): Promise<{ id: string }> {
     return prisma.branch.create({
         data: {
@@ -83,7 +83,7 @@ async function createBranch(
             name,
             slug: `service-record-http-${randomUUID()}`,
             isActive,
-            ...(ownerId ? { ownerId } : {}),
+            ...(adminId ? { adminId } : {}),
         },
         select: { id: true },
     });

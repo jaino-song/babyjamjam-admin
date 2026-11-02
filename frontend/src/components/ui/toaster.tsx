@@ -37,6 +37,7 @@ export function Toaster() {
       // has to exist before content lands in it to be announced reliably.
       role="status"
       aria-live="polite"
+      data-slot="toaster-viewport"
       className={cn(
         TOASTER_POSITION,
         TOASTER_LAYER,

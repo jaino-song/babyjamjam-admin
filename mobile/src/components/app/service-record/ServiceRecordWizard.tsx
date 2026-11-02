@@ -9,6 +9,8 @@ import { MobileServiceRecordScreen } from "./screen/MobileServiceRecordScreen";
 
 export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots"> & {
     slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature">;
+    /** Mobile-only muted line on the phone step, e.g. why the caregiver was sent back to verification. */
+    phoneNotice?: string | null;
 };
 
 // Rollback: render the package's `ServiceRecordWizard` here again, with the `provider` / `signature` slots (ProviderInfo / SignaturePad).

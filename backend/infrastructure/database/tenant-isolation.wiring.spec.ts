@@ -13,22 +13,36 @@ import { PrismaService } from "./prisma.service";
  */
 
 /** Narrow, structural view of the Prisma Client extension registry's internal shape. */
+interface ExtensionNode {
+    extension?: { name?: string };
+    previous?: ExtensionNode;
+}
 interface ExtendedClientShape {
-    _extensions?: { head?: { extension?: { name?: string } } };
+    _extensions?: { head?: ExtensionNode };
 }
 
-function extensionNameOf(service: PrismaService): string | undefined {
-    return (service as unknown as ExtendedClientShape)._extensions?.head?.extension?.name;
+/**
+ * Extension names newest first: `_extensions.head` is the most recent `$extends()`, and each node
+ * links to the one applied before it via `previous`.
+ */
+function extensionChainOf(service: PrismaService): string[] {
+    const names: string[] = [];
+    for (let node = (service as unknown as ExtendedClientShape)._extensions?.head; node; node = node.previous) {
+        names.push(node.extension?.name ?? "<unnamed>");
+    }
+    return names;
 }
+
+const EXPECTED_CHAIN = ["entity-change", "tenant-isolation"];
 
 describe("createExtendedPrismaService — the factory DatabaseModule wires up", () => {
-    it("returns a PrismaService carrying the tenant-isolation extension (fails if useFactory reverts to `return base`)", () => {
+    it("returns a PrismaService carrying the tenant-isolation then entity-change extensions (fails if useFactory reverts to `return base`)", () => {
         const service = createExtendedPrismaService();
         // A plain `new PrismaService()` has no `_extensions.head` at all (verified empirically
         // against @prisma/client 6.19.2) — only `$extends()` populates it, and it records the
         // extension's own registered name. Reverting `useFactory` to `return base` makes this
-        // assertion fail: `extensionNameOf(base)` is `undefined`, not `"tenant-isolation"`.
-        expect(extensionNameOf(service)).toBe("tenant-isolation");
+        // assertion fail: the chain of `base` is empty, not the two expected names.
+        expect(extensionChainOf(service)).toEqual(EXPECTED_CHAIN);
     });
 
     it("the extended instance is NOT `instanceof PrismaService` despite the `as unknown as PrismaService` cast", () => {
@@ -58,7 +72,7 @@ describe("createExtendedPrismaService — the factory DatabaseModule wires up", 
 });
 
 describe("DatabaseModule — DI wiring applies the same extended factory", () => {
-    it("app.get(PrismaService) resolves the tenant-isolation-extended instance, with no lifecycle hooks triggered by compile()", async () => {
+    it("app.get(PrismaService) resolves the tenant-isolation + entity-change extended instance, with no lifecycle hooks triggered by compile()", async () => {
         const onModuleInitSpy = jest.spyOn(PrismaService.prototype, "onModuleInit");
 
         const moduleRef = await Test.createTestingModule({ imports: [DatabaseModule] }).compile();
@@ -68,7 +82,7 @@ describe("DatabaseModule — DI wiring applies the same extended factory", () =>
             expect(onModuleInitSpy).not.toHaveBeenCalled();
 
             const service = moduleRef.get(PrismaService);
-            expect(extensionNameOf(service)).toBe("tenant-isolation");
+            expect(extensionChainOf(service)).toEqual(EXPECTED_CHAIN);
         } finally {
             onModuleInitSpy.mockRestore();
             await moduleRef.close();

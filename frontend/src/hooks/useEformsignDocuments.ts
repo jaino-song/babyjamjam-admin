@@ -8,6 +8,7 @@ import {
   EformsignDocument,
 } from "@/lib/eformsign/types";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import { clientKeys } from "@/features/clients/hooks/keys";
 
 // Re-export types for convenience
 export type { DocumentFilterType } from "@/lib/eformsign/status-codes";
@@ -156,6 +157,7 @@ export function useDeleteEformsignDocument() {
       await queryClient.invalidateQueries({
         queryKey: eformsignQueryKeys.documents(),
       });
+      await queryClient.invalidateQueries({ queryKey: clientKeys.all });
     },
     // A permanent purge can have already written a durable local tombstone
     // before its vendor request or local cleanup reports an error. Do not

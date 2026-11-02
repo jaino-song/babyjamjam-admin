@@ -13,7 +13,7 @@ describe("admin authority invariants and audit ledger", () => {
             providerToken: "token",
             accountNumber: "1234",
             phone: "010-0000-0000",
-            nested: { address: "private", ownerId: "user-1" },
+            nested: { address: "private", adminId: "user-1" },
         });
 
         expect(redacted).toEqual({
@@ -23,7 +23,7 @@ describe("admin authority invariants and audit ledger", () => {
             providerToken: "[REDACTED]",
             accountNumber: "[REDACTED]",
             phone: "[REDACTED]",
-            nested: { address: "[REDACTED]", ownerId: "user-1" },
+            nested: { address: "[REDACTED]", adminId: "user-1" },
         });
         expect(JSON.stringify(redacted)).not.toContain("hash");
         expect(JSON.stringify(redacted)).not.toContain("1234");
@@ -35,7 +35,7 @@ describe("admin authority invariants and audit ledger", () => {
                 id: "owner-1",
                 role: "owner",
                 approvalStatus: "approved",
-                ownedBranches: [],
+                adminBranches: [],
             },
             owners: [{ id: "owner-1" }],
         });
@@ -57,7 +57,7 @@ describe("admin authority invariants and audit ledger", () => {
                 id: "owner-1",
                 role: "owner",
                 approvalStatus: "approved",
-                ownedBranches: [],
+                adminBranches: [],
             },
             owners: [{ id: "owner-1" }, { id: "owner-2" }],
         });
@@ -80,7 +80,7 @@ describe("admin authority invariants and audit ledger", () => {
                 id: "owner-1",
                 role: "owner",
                 approvalStatus: "approved",
-                ownedBranches: [],
+                adminBranches: [],
             },
             owners: [{ id: "owner-1" }, { id: "owner-2" }],
         });
@@ -110,8 +110,8 @@ describe("admin authority invariants and audit ledger", () => {
         expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: "owner-1" } });
     });
 
-    it("refuses branch owner membership downgrade and removal", async () => {
-        const prisma = createMembershipPrisma({ ownerId: "owner-1", membershipRole: "admin", callerId: "owner-2" });
+    it("refuses branch admin membership downgrade and removal", async () => {
+        const prisma = createMembershipPrisma({ adminId: "owner-1", membershipRole: "admin", callerId: "owner-2" });
         const audit = { append: jest.fn() };
         const service = createUserService(prisma, audit);
         const actor = { userId: "owner-2", globalRole: "owner", branchRole: "admin" };
@@ -121,8 +121,8 @@ describe("admin authority invariants and audit ledger", () => {
             branchRole: "manager",
             callerRole: "owner",
             actor,
-        })).rejects.toThrow("소유권을 먼저");
-        await expect(service.delete("owner-1", "branch-1", actor)).rejects.toThrow("소유권을 먼저");
+        })).rejects.toThrow("지점장 지정을 먼저");
+        await expect(service.delete("owner-1", "branch-1", actor)).rejects.toThrow("지점장 지정을 먼저");
 
         expect(prisma.user_branch.updateMany).not.toHaveBeenCalled();
         expect(prisma.user_branch.deleteMany).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe("admin authority invariants and audit ledger", () => {
 
     it("couples an allowed branch membership role change to one audit event", async () => {
         const user = completeUserRow({ id: "member-1", role: "manager" });
-        const prisma = createMembershipPrisma({ ownerId: "owner-1", membershipRole: "manager", user, callerId: "owner-1" });
+        const prisma = createMembershipPrisma({ adminId: "owner-1", membershipRole: "manager", user, callerId: "owner-1" });
         const audit = { append: jest.fn().mockResolvedValue(undefined) };
         const service = createUserService(prisma, audit);
 
@@ -153,7 +153,7 @@ describe("admin authority invariants and audit ledger", () => {
     });
 
     it("fails the authority mutation when audit persistence fails", async () => {
-        const prisma = createMembershipPrisma({ ownerId: null, membershipRole: "manager", callerId: "owner-1" });
+        const prisma = createMembershipPrisma({ adminId: null, membershipRole: "manager", callerId: "owner-1" });
         const audit = { append: jest.fn().mockRejectedValue(new Error("audit unavailable")) };
         const service = createUserService(prisma, audit);
 
@@ -166,10 +166,10 @@ describe("admin authority invariants and audit ledger", () => {
         expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it("serializes branch owner replacement through a row-lock query and membership upsert", async () => {
+    it("serializes branch admin replacement through a row-lock query and membership upsert", async () => {
         const branch = {
             id: "branch-1",
-            ownerId: "owner-1",
+            adminId: "owner-1",
             isActive: true,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -178,16 +178,22 @@ describe("admin authority invariants and audit ledger", () => {
         const audit = { append: jest.fn().mockResolvedValue(undefined) };
         const service = new SystemAdminService(prisma, audit as never);
 
-        await service.updateBranch("branch-1", { ownerId: "owner-2" }, {
+        await service.updateBranch("branch-1", { adminId: "owner-2" }, {
             userId: "owner-1",
             globalRole: "owner",
         });
 
-        expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
-        const [lockQuery] = prisma.$queryRaw.mock.calls[0] ?? [];
-        expect(lockQuery.strings.join(" ")).toContain('SELECT "id" FROM "branch"');
-        expect(lockQuery.strings.join(" ")).toMatch(/WHERE "id" =\s*::uuid FOR UPDATE/);
-        expect(lockQuery.values).toEqual(["branch-1"]);
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
+        for (const [index, [table, id]] of [
+            ["user", "owner-1"],
+            ["user", "owner-2"],
+            ["branch", "branch-1"],
+        ].entries()) {
+            const [lockQuery] = prisma.$queryRaw.mock.calls[index] ?? [];
+            expect(lockQuery.strings.join(" ")).toContain(`SELECT "id" FROM "${table}"`);
+            expect(lockQuery.strings.join(" ")).toMatch(/WHERE "id" =\s*::uuid FOR UPDATE/);
+            expect(lockQuery.values).toEqual([id]);
+        }
         expect(prisma.user_branch.upsert).toHaveBeenCalledWith(expect.objectContaining({
             where: { userId_branchId: { userId: "owner-2", branchId: "branch-1" } },
             update: { role: "admin" },
@@ -248,7 +254,7 @@ function createUserPrisma(options: {
 }
 
 function createMembershipPrisma(options: {
-    ownerId: string | null;
+    adminId: string | null;
     membershipRole: string;
     user?: Record<string, unknown>;
     /** The acting user; 권한-04 re-reads their global role inside the transaction. */
@@ -256,7 +262,7 @@ function createMembershipPrisma(options: {
 }) {
     const prisma: any = {
         branch: {
-            findUnique: jest.fn().mockResolvedValue({ ownerId: options.ownerId, isActive: true }),
+            findUnique: jest.fn().mockResolvedValue({ adminId: options.adminId, isActive: true }),
         },
         user: {
             findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) =>
@@ -278,10 +284,10 @@ function createSystemAdminPrisma(branch: any) {
     const prisma: any = {
         branch: {
             findUnique: jest.fn()
-                .mockResolvedValueOnce({ ownerId: branch.ownerId })
+                .mockResolvedValueOnce({ adminId: branch.adminId })
                 .mockResolvedValue({
                     ...branch,
-                    owner: null,
+                    admin: null,
                     smsSenderApprovalStatus: "not_requested",
                     smsSenderApprovalRequestedAt: null,
                     smsSenderApprovalApprovedAt: null,

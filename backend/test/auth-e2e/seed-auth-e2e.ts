@@ -80,13 +80,13 @@ async function main(): Promise<void> {
     });
     await prisma.branch.upsert({
         where: { id: ids.branchA },
-        update: { name: "Auth E2E A", slug: "auth-e2e-a", ownerId: ids.owner, isActive: true },
-        create: { id: ids.branchA, name: "Auth E2E A", slug: "auth-e2e-a", ownerId: ids.owner, isActive: true },
+        update: { name: "Auth E2E A", slug: "auth-e2e-a", adminId: ids.owner, isActive: true },
+        create: { id: ids.branchA, name: "Auth E2E A", slug: "auth-e2e-a", adminId: ids.owner, isActive: true },
     });
     await prisma.branch.upsert({
         where: { id: ids.branchB },
-        update: { name: "Auth E2E B", slug: "auth-e2e-b", ownerId: ids.owner, isActive: true },
-        create: { id: ids.branchB, name: "Auth E2E B", slug: "auth-e2e-b", ownerId: ids.owner, isActive: true },
+        update: { name: "Auth E2E B", slug: "auth-e2e-b", adminId: ids.owner, isActive: true },
+        create: { id: ids.branchB, name: "Auth E2E B", slug: "auth-e2e-b", adminId: ids.owner, isActive: true },
     });
 
     await Promise.all([

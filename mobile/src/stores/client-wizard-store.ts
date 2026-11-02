@@ -21,6 +21,9 @@ interface ClientWizardFormData {
   careCenter: boolean;
   voucherClient: boolean;
   breastPump: boolean;
+  allowSaturdayService: boolean;
+  allowSundayService: boolean;
+  allowHolidayService: boolean;
   serviceStatus: ServiceStatus;
   areaId: string;
 }
@@ -56,6 +59,9 @@ const INITIAL_FORM: ClientWizardFormData = {
   careCenter: false,
   voucherClient: false,
   breastPump: false,
+  allowSaturdayService: false,
+  allowSundayService: false,
+  allowHolidayService: false,
   serviceStatus: "pre_booking",
   areaId: "",
 };

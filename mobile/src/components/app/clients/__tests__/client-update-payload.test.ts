@@ -182,3 +182,43 @@ describe("parity with the desktop client update payload", () => {
         expect(desktop.buildClientUpdatePayload(unchanged as never)).toEqual({});
     });
 });
+
+describe("mobile client update payload: service days", () => {
+    const withDays: ClientUpdateFormFields = {
+        ...stored,
+        allowSaturdayService: false,
+        allowSundayService: true,
+        allowHolidayService: false,
+    };
+
+    it("sends nothing when the flags are unchanged", () => {
+        expect(buildClientUpdatePayload({ baseline: withDays, current: { ...withDays } })).toEqual({});
+    });
+
+    it("sends only the flags that changed, and not as a period change", () => {
+        const current = { ...withDays, allowSaturdayService: true, allowSundayService: false };
+        expect(buildClientUpdatePayload({ baseline: withDays, current })).toEqual({
+            allowSaturdayService: true,
+            allowSundayService: false,
+        });
+        expect(hasServicePeriodChange(withDays, current)).toBe(false);
+    });
+
+    it("sends the whole period together with a flag when the end date moved with it", () => {
+        const current = { ...withDays, allowSaturdayService: true, endDate: "2026-11-12" };
+        expect(buildClientUpdatePayload({ baseline: withDays, current })).toEqual({
+            allowSaturdayService: true,
+            startDate: "2026-11-02",
+            endDate: "2026-11-12",
+            duration: 10,
+            expectedEndDate: "2026-11-13",
+        });
+    });
+
+    it("leaves the flags out when the form does not own them", () => {
+        const fields = serializeClientUpdateFields(stored);
+        expect(fields).not.toHaveProperty("allowSaturdayService");
+        expect(fields).not.toHaveProperty("allowSundayService");
+        expect(fields).not.toHaveProperty("allowHolidayService");
+    });
+});

@@ -16,6 +16,7 @@ const SYSTEM_TEMPLATE_KEYS = [
   "SERVICE_INFO",
   "SURVEY",
   "THANKS",
+  "CONTRACT_REMINDER",
 ] as const;
 
 type TemplateQuery = {

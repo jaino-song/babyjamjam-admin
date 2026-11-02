@@ -1,4 +1,4 @@
-import { expect, test, type FrameLocator, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 interface SmokeClient {
   id: number;
@@ -14,17 +14,39 @@ interface VoucherPriceInfo {
   duration: string;
 }
 
-interface CreateDocRecordBody {
-  documentId?: string;
+/** Body of POST /api/eformsign-docs/jobs/creation (EnqueueEformsignDocumentJobResponse in src/services/eformsign.ts). */
+interface EnqueuedJobBody {
+  jobId?: string;
+  status?: string;
+  existing?: boolean;
+}
+
+/** Subset of EformsignDocumentJobResponse (frontend/src/services/eformsign.ts) that the smoke test reads. */
+interface SmokeJob {
+  jobId: string;
+  status: string;
+  documentId: string | null;
+  lastErrorCode: string | null;
+}
+
+interface SmokeJobList {
+  active: SmokeJob[];
+  requiresAttention: SmokeJob[];
+  recent: SmokeJob[];
 }
 
 const REAL_TENANT_SKIP_MESSAGE = "Set RUN_SMOKE_TESTS=1 to run real-tenant smoke tests";
-const REAL_SEND_SUCCESS_TITLE = "계약서가 성공적으로 생성되었습니다.";
+// ContractCreationForm.tsx:1337 — the toast shown once the backend accepted the creation job.
+const CREATION_STARTED_TOAST = "전자문서 생성을 시작했어요";
+const JOB_CREATION_PATH = "/api/eformsign-docs/jobs/creation";
+const MISMATCH_DIALOG_NAME = "고객 정보와 다른 내용이 있어요";
+const KEEP_CLIENT_UNCHANGED_BUTTON = "계약서에만 반영";
+// The backend job drives a headless eformsign browser, so allow it more time than a plain request.
+const JOB_COMPLETION_TIMEOUT_MS = 120_000;
+const JOB_POLL_INTERVAL_MS = 2_000;
+const STEP_CONTENT = '[data-component="desktop_v3_stepped-wizard_step-content"]';
+const CREATION_FORM = '[data-component="desktop_contracts_creation_form"]';
 const CONTRACT_ROW_CONTENT = '[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_item_content"]';
-const EFORMSIGN_GATE_TIMEOUT_MS = 60_000;
-const EFORMSIGN_GATE_POLL_MS = 500;
-const EFORMSIGN_READY_TEXT = "필수 입력 항목을 모두 작성했습니다.";
-const REQUEST_SEND_DIALOG_SELECTOR = "#requestWithInputCommentPopup";
 
 let createdDocumentId: string | null = null;
 
@@ -96,27 +118,23 @@ async function cleanupCreatedDocument(page: Page, documentId: string): Promise<v
   expect(response.ok, `cleanup failed for ${documentId}: ${response.status} ${response.text}`).toBeTruthy();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function selectClient(page: Page, client: SmokeClient): Promise<void> {
-  const trigger = page.locator('[data-component="clients-autocomplete-input"]');
+  const trigger = page.getByRole("combobox", { name: "산모님 성함", exact: true });
   await trigger.click();
-
-  const dropdown = page.locator('[data-component="clients-autocomplete-dropdown"]');
-  await expect(dropdown).toBeVisible();
-
-  await dropdown.locator("input").fill(client.name);
-
-  const option = dropdown.getByText(client.name, { exact: true }).first();
-  await expect(option).toBeVisible();
-  await option.click();
-
+  await page.getByRole("combobox", { name: "산모님 성함 검색" }).fill(client.name);
+  await page.getByRole("option", { name: new RegExp(escapeRegExp(client.name)) }).first().click();
   await expect(trigger).toContainText(client.name);
 }
 
 async function selectFirstDocType(page: Page): Promise<string> {
-  const trigger = page.locator('[data-component="contract-creation-doc-type-trigger"]');
+  const trigger = page.getByRole("combobox", { name: "계약서 선택" });
   await trigger.click();
 
-  const firstOption = page.locator('[data-component="contract-creation-doc-type-option"]').first();
+  const firstOption = page.getByRole("option").first();
   await expect(firstOption).toBeVisible();
 
   const label = (await firstOption.textContent())?.trim();
@@ -131,17 +149,11 @@ async function selectFirstDocType(page: Page): Promise<string> {
 }
 
 async function selectEmployee(page: Page, employee: SmokeEmployee): Promise<void> {
-  const autocomplete = page.getByTestId("employee-autocomplete").first();
-  const trigger = autocomplete.locator('[data-component="employee-autocomplete-input"]');
+  const label = "제공인력 1 선택";
+  const trigger = page.getByRole("combobox", { name: label, exact: true });
   await trigger.click();
-
-  const dropdown = page.locator('[data-component="employee-autocomplete-dropdown"]');
-  await expect(dropdown).toBeVisible();
-
-  const option = dropdown.getByText(employee.name, { exact: true }).first();
-  await expect(option).toBeVisible();
-  await option.click();
-
+  await page.getByRole("combobox", { name: `${label} 검색` }).fill(employee.name);
+  await page.getByRole("option", { name: new RegExp(escapeRegExp(employee.name)) }).first().click();
   await expect(trigger).toContainText(employee.name);
 }
 
@@ -168,7 +180,7 @@ async function findVoucherYear(page: Page): Promise<number | null> {
 }
 
 async function fillVoucherStep(page: Page, voucherYear: number): Promise<void> {
-  const selects = page.locator('[data-component="stepped-wizard-step-content"] select');
+  const selects = page.locator(`${STEP_CONTENT} select`);
 
   await selects.nth(0).selectOption(String(voucherYear));
   await selects.nth(1).selectOption("A가1형");
@@ -200,156 +212,59 @@ async function waitForContractsListReady(page: Page): Promise<void> {
   );
 }
 
-async function findVisibleLocator(locator: Locator): Promise<Locator | null> {
-  const count = await locator.count();
+/**
+ * Submits the contract and, if the app asks whether to copy the contract's values to the client record,
+ * keeps the real dev-tenant client unchanged. Resolves with the POST /jobs/creation response.
+ */
+async function submitAndAwaitQueuedJob(page: Page): Promise<EnqueuedJobBody> {
+  const creationResponsePromise = page.waitForResponse(
+    (response) => response.request().method() === "POST" && new URL(response.url()).pathname === JOB_CREATION_PATH,
+    { timeout: 60_000 }
+  );
+  await page.getByTestId("contract-creation-submit").click();
 
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
-      return candidate;
-    }
+  const mismatchDialog = page.getByRole("dialog", { name: MISMATCH_DIALOG_NAME });
+  const outcome = await Promise.race([
+    creationResponsePromise.then((response) => ({ kind: "response" as const, response })),
+    mismatchDialog.waitFor({ state: "visible", timeout: 15_000 }).then(() => ({ kind: "dialog" as const })),
+  ]);
+  if (outcome.kind === "dialog") {
+    await mismatchDialog.getByRole("button", { name: KEEP_CLIENT_UNCHANGED_BUTTON }).click();
   }
 
-  return null;
+  const creationResponse = outcome.kind === "response" ? outcome.response : await creationResponsePromise;
+  expect(creationResponse.ok(), `POST ${JOB_CREATION_PATH} answered ${creationResponse.status()}`).toBeTruthy();
+  return (await creationResponse.json()) as EnqueuedJobBody;
 }
 
-async function getEformsignGateSnapshot(eformsignFrame: FrameLocator): Promise<{
-  visibleButtons: string[];
-  guideButtonLabel: string | null;
-  footerMessages: string[];
-  requestSendDialogVisible: boolean;
-}> {
-  return eformsignFrame.locator("body").evaluate(
-    (body, { readyText, requestDialogSelector }) => {
-      const normalize = (value: string | null | undefined): string =>
-        (value ?? "").replace(/\s+/g, " ").trim();
-
-      const isVisible = (element: Element | null): element is HTMLElement => {
-        if (!(element instanceof HTMLElement)) {
-          return false;
-        }
-
-        const style = window.getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-          return false;
-        }
-
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      };
-
-      const visibleButtons = Array.from(body.querySelectorAll<HTMLButtonElement>("button"))
-        .filter((button) => isVisible(button))
-        .map((button) => normalize(button.innerText))
-        .filter(Boolean);
-
-      const footerMessages = Array.from(body.querySelectorAll<HTMLElement>("*"))
-        .filter((element) => isVisible(element))
-        .map((element) => normalize(element.innerText))
-        .filter((text) => text.includes(readyText) || text.startsWith("필수 입력 항목("));
-
-      const guideButton = body.querySelector<HTMLElement>("#guideBtn");
-      const requestSendDialog = body.querySelector<HTMLElement>(requestDialogSelector);
-
-      return {
-        visibleButtons: Array.from(new Set(visibleButtons)),
-        guideButtonLabel: isVisible(guideButton) ? normalize(guideButton.innerText) : null,
-        footerMessages: Array.from(new Set(footerMessages)).slice(0, 5),
-        requestSendDialogVisible: isVisible(requestSendDialog),
-      };
-    },
-    {
-      readyText: EFORMSIGN_READY_TEXT,
-      requestDialogSelector: REQUEST_SEND_DIALOG_SELECTOR,
-    }
-  );
-}
-
-async function runEformsignCreationGates(
-  page: Page,
-  eformsignFrame: FrameLocator,
-  hasSeenSuccessModal: () => boolean
-): Promise<"success-modal" | "request-send-clicked"> {
-  const deadline = Date.now() + EFORMSIGN_GATE_TIMEOUT_MS;
-  let lastAction = "none";
+/** Polls the jobs list until the queued job finishes, then returns it. A failed job fails the test. */
+async function waitForCompletedJob(page: Page, jobId: string): Promise<SmokeJob> {
+  const deadline = Date.now() + JOB_COMPLETION_TIMEOUT_MS;
+  let lastSeen: SmokeJob | null = null;
 
   while (Date.now() < deadline) {
-    if (hasSeenSuccessModal()) {
-      return "success-modal";
+    const jobs = await fetchJson<SmokeJobList>(page, "/api/eformsign-docs/jobs");
+    const job = [...jobs.recent, ...jobs.requiresAttention, ...jobs.active].find((candidate) => candidate.jobId === jobId);
+    if (job) {
+      lastSeen = job;
+      if (job.status === "completed") {
+        return job;
+      }
+      if (job.status === "failed" || job.status === "requires_attention") {
+        throw new Error(`creation job ${jobId} ended as ${job.status} (${job.lastErrorCode ?? "no error code"})`);
+      }
     }
-
-    const requestSendDialog = eformsignFrame.locator(REQUEST_SEND_DIALOG_SELECTOR);
-    const confirmButton = await findVisibleLocator(eformsignFrame.getByRole("button", { name: "확인" }));
-    if (confirmButton) {
-      console.log("[smoke][eformsign] clicked 회사 도장 확인");
-      await confirmButton.click();
-      lastAction = "clicked 회사 도장 확인";
-      await page.waitForTimeout(250);
-      continue;
-    }
-
-    const requestSendButton = await findVisibleLocator(
-      requestSendDialog.getByRole("button", { name: "전송" })
-    );
-    if (requestSendButton) {
-      console.log("[smoke][eformsign] clicked 문서 전송 dialog 전송");
-      await requestSendButton.click();
-      return "request-send-clicked";
-    }
-
-    const requestSendDialogVisible = await requestSendDialog.isVisible().catch(() => false);
-    const topLevelSendButton = requestSendDialogVisible
-      ? null
-      : await findVisibleLocator(eformsignFrame.getByRole("button", { name: "전송" }));
-    if (topLevelSendButton) {
-      console.log("[smoke][eformsign] clicked top-level 전송");
-      await topLevelSendButton.click();
-      lastAction = "clicked top-level 전송";
-      await page.waitForTimeout(250);
-      continue;
-    }
-
-    const nextButton = await findVisibleLocator(eformsignFrame.getByRole("button", { name: "다음" }));
-    if (nextButton) {
-      console.log("[smoke][eformsign] clicked 다음");
-      await nextButton.click();
-      lastAction = "clicked 다음";
-      await page.waitForTimeout(250);
-      continue;
-    }
-
-    const startButton = await findVisibleLocator(
-      eformsignFrame.getByRole("button", { name: "입력 시작" })
-    );
-    if (startButton) {
-      console.log("[smoke][eformsign] clicked 입력 시작");
-      await startButton.click();
-      lastAction = "clicked 입력 시작";
-      await page.waitForTimeout(250);
-      continue;
-    }
-
-    const readyMessage = await findVisibleLocator(
-      eformsignFrame.getByText(EFORMSIGN_READY_TEXT, { exact: true })
-    );
-    if (readyMessage) {
-      await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
-      continue;
-    }
-
-    await page.waitForTimeout(EFORMSIGN_GATE_POLL_MS);
+    await page.waitForTimeout(JOB_POLL_INTERVAL_MS);
   }
 
-  const snapshot = await getEformsignGateSnapshot(eformsignFrame);
   throw new Error(
-    `Timed out after ${EFORMSIGN_GATE_TIMEOUT_MS}ms while advancing eformsign creation gates. ` +
-      `Last action: ${lastAction}. Snapshot: ${JSON.stringify(snapshot)}`
+    `creation job ${jobId} did not complete within ${JOB_COMPLETION_TIMEOUT_MS}ms; last seen: ${JSON.stringify(lastSeen)}`
   );
 }
 
 test.describe.serial("contract creation smoke (real tenant)", () => {
   test.skip(!process.env.RUN_SMOKE_TESTS, REAL_TENANT_SKIP_MESSAGE);
-  test.setTimeout(120_000);
+  test.setTimeout(240_000);
 
   test.afterEach(async ({ page }) => {
     if (!createdDocumentId) {
@@ -384,7 +299,7 @@ test.describe.serial("contract creation smoke (real tenant)", () => {
     const initialDocumentCount = await page.locator(CONTRACT_ROW_CONTENT).count();
 
     await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_header_send-contract"]').click();
-    await expect(page.locator('[data-component="contract-creation-form"]')).toBeVisible();
+    await expect(page.locator(CREATION_FORM)).toBeVisible();
 
     await selectClient(page, selectedClient);
     await selectFirstDocType(page);
@@ -399,58 +314,20 @@ test.describe.serial("contract creation smoke (real tenant)", () => {
     await fillContractDates(page);
     await expect(page.getByTestId("contract-creation-submit")).toBeEnabled();
 
-    const createDocRecordRequestPromise = page.waitForRequest(
-      (request) =>
-        request.method() === "POST" &&
-        request.url().includes("/api/eformsign-docs"),
-      { timeout: 60_000 }
-    );
-    let successModalSeen = false;
-    const successModal = page.locator('[data-component="contract-creation-success-notification"]');
-    const successModalPromise = expect(successModal)
-      .toBeVisible({ timeout: EFORMSIGN_GATE_TIMEOUT_MS })
-      .then(() => {
-        successModalSeen = true;
-      });
+    const enqueuedJob = await submitAndAwaitQueuedJob(page);
+    expect(enqueuedJob.existing, "the creation job must be new, not an already running one").toBe(false);
+    const jobId = enqueuedJob.jobId ?? "";
+    expect(jobId.length).toBeGreaterThan(0);
 
-    await page.getByTestId("contract-creation-submit").click();
+    // Accepted: the toast replaces the old success modal and the form closes; the backend job does the rest.
+    await expect(page.getByText(CREATION_STARTED_TOAST, { exact: true })).toBeVisible();
+    await expect(page.locator(CREATION_FORM)).toHaveCount(0);
 
-    await page.waitForFunction(
-      () => {
-        const frame = document.getElementById("eformsign_iframe");
-        return Boolean(
-          frame &&
-            frame instanceof HTMLIFrameElement &&
-            frame.src.startsWith("https://www.eformsign.com/")
-        );
-      },
-      null,
-      { timeout: 30_000 }
-    );
-
-    const iframeSrcBeforeSend = await page.locator("iframe#eformsign_iframe").getAttribute("src");
-    const eformsignFrame = page.frameLocator("iframe#eformsign_iframe");
-    const gateLoopPromise = runEformsignCreationGates(page, eformsignFrame, () => successModalSeen);
-    const firstResolved = await Promise.race([
-      successModalPromise.then(() => ({ type: "modal" as const })),
-      gateLoopPromise.then((terminalState) => ({ type: "gate" as const, terminalState })),
-    ]);
-    if (firstResolved.type === "gate") await successModalPromise;
-
-    await expect(successModal).toContainText(REAL_SEND_SUCCESS_TITLE);
-    await successModal.getByRole("button", { name: "확인" }).click();
-    await gateLoopPromise;
-
-    const createDocRecordRequest = await createDocRecordRequestPromise;
-    const createDocRecordBody = createDocRecordRequest.postDataJSON() as CreateDocRecordBody;
-    createdDocumentId = createDocRecordBody.documentId ?? null;
-
-    if (!createdDocumentId && iframeSrcBeforeSend) {
-      createdDocumentId = new URL(iframeSrcBeforeSend).searchParams.get("document_id");
-    }
+    const completedJob = await waitForCompletedJob(page, jobId);
+    createdDocumentId = completedJob.documentId;
 
     if (!createdDocumentId) {
-      throw new Error("contract creation succeeded but no documentId was captured for cleanup");
+      throw new Error("contract creation job completed but no documentId was captured for cleanup");
     }
 
     await expect

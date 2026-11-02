@@ -385,7 +385,7 @@ describe("SbUserRepository", () => {
                         },
                         {
                             OR: [
-                                { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                                { adminBranches: { some: { id: "branch-1", isActive: true } } },
                                 { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
                             ],
                         },
@@ -394,7 +394,7 @@ describe("SbUserRepository", () => {
             });
         });
 
-        it("still includes the branch owner when they are approved", async () => {
+        it("still includes the branch admin when they are approved", async () => {
             // Arrange
             const { findManyModel, findManyRepository } = setup();
             const ownerRow = createUserRow({ id: "owner-1", role: "owner" });
@@ -443,7 +443,7 @@ describe("SbUserRepository", () => {
                         {
                             OR: [
                                 { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
-                                { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                                { adminBranches: { some: { id: "branch-1", isActive: true } } },
                             ],
                         },
                     ],
@@ -477,8 +477,8 @@ describe("SbUserRepository", () => {
         });
     });
 
-    describe("clearBranchOwnerships", () => {
-        it("clears ownership and downgrades admin memberships for the owned branches", async () => {
+    describe("clearBranchAdminAssignments", () => {
+        it("clears the branch admin assignment and downgrades admin memberships for the administered branches", async () => {
             const branchModel = {
                 findMany: jest.fn().mockResolvedValue([
                     { id: "branch-1" },
@@ -499,14 +499,14 @@ describe("SbUserRepository", () => {
             } as unknown as PrismaService;
             const transactionRepository = new SbUserRepository(transactionPrisma);
 
-            await transactionRepository.clearBranchOwnerships("user-1", "manager");
+            await transactionRepository.clearBranchAdminAssignments("user-1", "manager");
 
             expect(branchModel.updateMany).toHaveBeenCalledWith({
                 where: {
                     id: { in: ["branch-1", "branch-2"] },
-                    ownerId: "user-1",
+                    adminId: "user-1",
                 },
-                data: { ownerId: null },
+                data: { adminId: null },
             });
             expect(userBranchModel.updateMany).toHaveBeenCalledWith({
                 where: {

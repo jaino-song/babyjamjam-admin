@@ -414,6 +414,8 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
             new SbEformsignDocRepository(prisma as unknown as PrismaService),
             new SbClientRepository(prisma as unknown as PrismaService),
             { holdsLease: () => true } as never,
+            { supersede: jest.fn() } as never,
+            { sendToBranchUsers: jest.fn() } as never,
         );
         await worker.processDueJobs();
         expect(dispatch.execute).not.toHaveBeenCalled();
@@ -468,6 +470,7 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
             forbidden as never, forbidden as never, forbidden as never,
             { recordTerminalFailure: jest.fn() } as never,
             forbidden as never, forbidden as never, { holdsLease: () => true } as never,
+            forbidden as never, forbidden as never,
         );
         await worker.processDueJobs();
         expect(external).not.toHaveBeenCalled();

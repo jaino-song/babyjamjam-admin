@@ -99,4 +99,26 @@ export default tseslint.config(
             ],
         },
     },
+    // The freeze block above is the LAST word for every application/ file, so it re-imposes the
+    // run-system-scope restriction even on a file the system-scope allowlist approved. Restore the
+    // prisma-only restriction for application/ files that are approved system-scope callers but are
+    // NOT grandfathered prisma importers; files in both lists are already unrestricted above.
+    {
+        files: systemScopeImportAllowlist.filter((entry) => entry.startsWith("application/") && !entry.includes("*")),
+        ignores: [...prismaServiceImportAllowlist],
+        rules: {
+            "no-restricted-imports": [
+                "error",
+                {
+                    patterns: [
+                        {
+                            group: ["**/infrastructure/database/prisma.service"],
+                            message:
+                                "application/ code must not import PrismaService directly. Use a domain repository instead. If this file genuinely needs grandfathering, add it to eslint.tenant-freeze.allowlist.mjs via explicit review.",
+                        },
+                    ],
+                },
+            ],
+        },
+    },
 );

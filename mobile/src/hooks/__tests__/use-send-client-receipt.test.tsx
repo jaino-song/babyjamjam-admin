@@ -1,4 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 import { eformsignApi } from "@/services/api";
 
@@ -28,9 +30,18 @@ const preparation = {
     expiresAt: "2026-10-16",
 };
 
+let queryClient: QueryClient;
+let invalidateSpy: jest.SpyInstance;
+
+function wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
 describe("useSendClientReceipt", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        queryClient = new QueryClient();
+        invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
         prepare.mockResolvedValue(preparation);
         send.mockResolvedValue({
             jobId: "job-1",
@@ -40,7 +51,7 @@ describe("useSendClientReceipt", () => {
     });
 
     it("prepares the clicked client and queues the receipt message with identity pins", async () => {
-        const { result } = renderHook(() => useSendClientReceipt());
+        const { result } = renderHook(() => useSendClientReceipt(), { wrapper });
 
         await act(async () => {
             await result.current.sendReceipt(117);
@@ -58,9 +69,31 @@ describe("useSendClientReceipt", () => {
         expect(result.current.isSending).toBe(false);
     });
 
+    it("refreshes the upcoming message jobs and this client's message history after a successful send", async () => {
+        const { result } = renderHook(() => useSendClientReceipt(), { wrapper });
+
+        await act(async () => {
+            await result.current.sendReceipt(117);
+        });
+
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["message-triggers", "upcoming", 200] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["messages", "logs", "client", 117] });
+    });
+
+    it("does not refresh anything when the send fails", async () => {
+        send.mockRejectedValueOnce(new Error("send failed"));
+        const { result } = renderHook(() => useSendClientReceipt(), { wrapper });
+
+        await act(async () => {
+            await result.current.sendReceipt(117);
+        });
+
+        expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
     it("does not send when preparation belongs to another client", async () => {
         prepare.mockResolvedValue({ ...preparation, clientId: 118 });
-        const { result } = renderHook(() => useSendClientReceipt());
+        const { result } = renderHook(() => useSendClientReceipt(), { wrapper });
 
         await act(async () => {
             await result.current.sendReceipt(117);
@@ -75,7 +108,7 @@ describe("useSendClientReceipt", () => {
         prepare.mockImplementationOnce(() => new Promise((done) => {
             resolve = done;
         }));
-        const { result } = renderHook(() => useSendClientReceipt());
+        const { result } = renderHook(() => useSendClientReceipt(), { wrapper });
         let pending!: Promise<void>;
 
         act(() => {
@@ -102,7 +135,7 @@ describe("useSendClientReceipt", () => {
 
     it("shows an eligibility error without sending and permits retry", async () => {
         prepare.mockRejectedValueOnce({ response: { data: { reason: "contract_not_signed" } } });
-        const { result } = renderHook(() => useSendClientReceipt());
+        const { result } = renderHook(() => useSendClientReceipt(), { wrapper });
 
         await act(async () => {
             await result.current.sendReceipt(117);

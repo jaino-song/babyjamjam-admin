@@ -45,6 +45,7 @@ export const MESSAGE_TEMPLATE_LABELS: Readonly<Record<string, string>> = {
   PRICE_INFO: "비용 안내",
   REMINDER: "리마인드",
   THANKS: "예약 완료(입금 확인)",
+  CONTRACT_REMINDER: "계약서 작성 요청",
   SURVEY: "모니터링 설문",
   INFO: "정보 요청",
   GREETING: "인사 메시지",
