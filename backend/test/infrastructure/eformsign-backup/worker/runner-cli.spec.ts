@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { exitCodeFor, runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
 import { WorkerRunner } from "infrastructure/eformsign-backup/worker/runner";
+import { DriveRootCandidatesError } from "infrastructure/eformsign-backup/worker/runner-recover";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
 import {
@@ -232,6 +233,24 @@ describe("worker CLI (argv, exit codes, output)", () => {
             await cli(["recover", "--config", h.configPath, "--installation-id", "abc"]);
             expect(recover.mock.calls[0]![0]).toEqual({ installationId: "abc", driveRootFolderId: "RootFolderId0000001" });
             expect(recover.mock.calls[1]![0]).toEqual({ installationId: "abc" });
+        });
+
+        it("should print only validated ids of the candidate roots when recover ends with several roots, and nothing else", async () => {
+            h = await createHarness({ docs: [] });
+            jest.spyOn(WorkerRunner.prototype, "recover").mockRejectedValue(new DriveRootCandidatesError([
+                { rootFolderId: "RootFolderId0000001", bindingId: "00000000-0000-4000-8000-000000000001" },
+                { rootFolderId: "RootFolderId0000002", bindingId: "not a uuid, https://x.example/?t=secret" },
+                { rootFolderId: "bad id with spaces", bindingId: null },
+            ]));
+            const result = await cli(["recover", "--config", h.configPath, "--installation-id", "abc"]);
+            expect(result).toMatchObject({ code: 69, stderr: ["drive-root-changed"] });
+            expect(lines(result)).toEqual([{
+                event: "recover_drive_root_ambiguous", reasonCode: "drive-root-changed",
+                candidates: [
+                    { rootFolderId: "RootFolderId0000001", bindingId: "00000000-0000-4000-8000-000000000001" },
+                    { rootFolderId: "RootFolderId0000002", bindingId: null },
+                ],
+            }]);
         });
 
         it("should refuse drive-setup before init with not-initialized (69) and without a drive block with drive-not-configured (78)", async () => {
