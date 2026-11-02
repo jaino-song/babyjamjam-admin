@@ -18,6 +18,7 @@ const REASON_PATTERN = /^[A-Za-z]{1,64}$/;
 const JSON_BODY_MAX_BYTES = 8 * 1024 * 1024;
 const ERROR_BODY_MAX_BYTES = 64 * 1024;
 const PAGE_SIZE = 1000;
+const CHUNK_GRANULARITY = 262144;
 const MAX_FIND_PAGES = 100;
 /** One call to `uploadResumable` starts at most this many sessions; a session that keeps expiring is not an outage to ride out. */
 const MAX_SESSIONS = 3;
@@ -185,7 +186,10 @@ export class DriveClient {
         this.tokens = options.tokens;
         this.fetchImpl = options.fetchImpl ?? fetch;
         this.timeoutMs = options.requestTimeoutMs;
-        if (!Number.isSafeInteger(options.chunkBytes) || options.chunkBytes < 1) throw new WorkerError("config-invalid");
+        // Drive takes every non-final chunk of a resumable upload in multiples of 256 KiB.
+        if (!Number.isSafeInteger(options.chunkBytes) || options.chunkBytes < CHUNK_GRANULARITY || options.chunkBytes % CHUNK_GRANULARITY !== 0) {
+            throw new WorkerError("config-invalid");
+        }
         this.chunkBytes = options.chunkBytes;
     }
 

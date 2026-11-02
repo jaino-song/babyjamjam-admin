@@ -7,8 +7,8 @@ import { DriveClient, DriveTransferError, type DriveFile, type DriveResult } fro
 import { driveFaults } from "./helpers/fake-drive-server";
 import { bytesFrom, makeDriveClient, startDriveFakes, type DriveHarness } from "./helpers/drive-support";
 
-const CHUNK = 4096;
-const SIZE = 10_000; // three chunks: 4096, 4096, 1808
+const CHUNK = 262144;
+const SIZE = 600_000; // three chunks: 262144, 262144, 75712
 const FILE_MIME = "application/pdf";
 
 function data(length: number): Buffer {
@@ -341,6 +341,79 @@ describe("DriveClient", () => {
         it("should still refuse a fresh id that generateIds never issued", async () => {
             expect(await client.createFolder({ id: "NeverGeneratedId0001", name: "x", parentId: h.drive.myDriveId }))
                 .toEqual({ ok: false, failure: { kind: "http", httpStatus: 400, reason: "invalid", retryAfterSeconds: null } });
+        });
+    });
+
+    describe("fake fidelity: chunk alignment and projections", () => {
+        const range = (start: number, end: number, total: number): string => `bytes ${start}-${end}/${total}`;
+
+        async function rawSession(total: number): Promise<{ put: (contentRange: string, bytes: Buffer) => Promise<Response> }> {
+            const { tokens } = makeDriveClient(h);
+            const token = expectOk(await tokens.get());
+            const id = await freshId();
+            const start = await fetch(`${h.drive.uploadBaseUrl}/upload/drive/v3/files?uploadType=resumable`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Upload-Content-Length": String(total) },
+                body: JSON.stringify({ id, name: "raw.bin", parents: [h.drive.myDriveId], mimeType: "application/octet-stream" }),
+            });
+            const location = start.headers.get("location")!;
+            return { put: (contentRange, bytes) => fetch(location, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Range": contentRange }, body: bytes as BodyInit }) };
+        }
+
+        it("should reject a non-final chunk that is not a multiple of 262144 bytes, and keep nothing of it", async () => {
+            const session = await rawSession(10_000);
+            const refused = await session.put(range(0, 4095, 10_000), data(4096));
+            expect(refused.status).toBe(400);
+            expect(h.drive.bytesReceived).toBe(0);
+        });
+
+        it("should accept an aligned non-final chunk and a short final chunk", async () => {
+            const aligned = await rawSession(CHUNK + 100);
+            const first = await aligned.put(range(0, CHUNK - 1, CHUNK + 100), data(CHUNK));
+            expect(first.status).toBe(308);
+            expect(first.headers.get("range")).toBe(`bytes=0-${CHUNK - 1}`);
+            expect((await aligned.put(range(CHUNK, CHUNK + 99, CHUNK + 100), data(100))).status).toBe(200);
+            const small = await rawSession(100);
+            expect((await small.put(range(0, 99, 100), data(100))).status).toBe(200);
+        });
+
+        it("should refuse a client whose chunkBytes is not a positive multiple of 262144", () => {
+            const build = (chunkBytes: number): DriveClient => makeDriveClient(h, { chunkBytes }).client;
+            for (const bad of [4096, 0, -262144, 262145, 1.5, Number.NaN]) {
+                expect(() => build(bad)).toThrow(expect.objectContaining({ reasonCode: "config-invalid" }));
+            }
+            expect(() => build(262144)).not.toThrow();
+            expect(() => build(8 * 262144)).not.toThrow();
+        });
+
+        it("should return only the requested top-level fields and sub-fields of a listing", async () => {
+            h.drive.pageSizeCap = 1;
+            const ids = expectOk(await client.generateIds(2));
+            for (const [index, id] of ids.entries()) expectOk(await client.createFolder({ id, name: `p${index}`, parentId: h.drive.myDriveId }));
+            const { tokens } = makeDriveClient(h);
+            const token = expectOk(await tokens.get());
+            const list = async (fields: string): Promise<Record<string, unknown>> => {
+                const q = encodeURIComponent(`'${h.drive.myDriveId}' in parents and trashed=false`);
+                const response = await fetch(`${h.drive.apiBaseUrl}/drive/v3/files?q=${q}&pageSize=1&fields=${encodeURIComponent(fields)}`, { headers: { Authorization: `Bearer ${token}` } });
+                return await response.json() as Record<string, unknown>;
+            };
+            const narrow = await list("files(id)");
+            expect(Object.keys(narrow)).toEqual(["files"]);
+            expect(narrow["files"]).toEqual([{ id: ids[0] }]);
+            const paged = await list("nextPageToken,files(id,name)");
+            expect(Object.keys(paged).sort()).toEqual(["files", "nextPageToken"]);
+            expect(paged["files"]).toEqual([{ id: ids[0], name: "p0" }]);
+            const noPaging = await list("kind,files(id)");
+            expect(Object.keys(noPaging).sort()).toEqual(["files", "kind"]);
+        });
+
+        it("should keep paginating through the client, which asks for nextPageToken", async () => {
+            h.drive.pageSizeCap = 1;
+            const ids = expectOk(await client.generateIds(3));
+            for (const [index, id] of ids.entries()) expectOk(await client.createFolder({ id, name: `q${index}`, parentId: h.drive.myDriveId }));
+            const page = expectOk(await client.listChildren(h.drive.myDriveId));
+            expect(page.files).toHaveLength(1);
+            expect(page.nextPageToken).not.toBeNull();
         });
     });
 

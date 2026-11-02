@@ -8,6 +8,8 @@ export const FAKE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 const API_PREFIX = "/api";
 const UPLOAD_PREFIX = "/up";
 const DEFAULT_FIELDS = ["id", "name", "mimeType"];
+/** Drive accepts non-final resumable chunks only in multiples of this many bytes. */
+export const CHUNK_GRANULARITY = 262144;
 
 export type DriveRoute = "generateIds" | "create" | "get" | "download" | "list" | "about" | "uploadStart" | "uploadPut" | "uploadProbe";
 
@@ -448,11 +450,39 @@ export class FakeDriveServer {
             start = Number(parsed[1]);
         }
         const page = matching.slice(start, start + size);
-        const fields = route.query.get("fields");
-        const inner = fields === null ? null : (/files\(([^)]*)\)/.exec(fields)?.[1] ?? null);
-        const json: Record<string, unknown> = { kind: "drive#fileList", incompleteSearch: false, files: page.map(node => this.project(node, inner)) };
-        if (start + size < matching.length) json["nextPageToken"] = `page-${start + size}`;
+        const requested = this.listFields(route.query.get("fields"));
+        const json: Record<string, unknown> = {};
+        if (requested.has("kind")) json["kind"] = "drive#fileList";
+        if (requested.has("incompleteSearch")) json["incompleteSearch"] = false;
+        if (requested.has("files")) json["files"] = page.map(node => this.project(node, requested.get("files") ?? null));
+        if (requested.has("nextPageToken") && start + size < matching.length) json["nextPageToken"] = `page-${start + size}`;
         return { status: 200, headers: {}, json };
+    }
+
+    /**
+     * The top-level fields of a list answer: a map from field name to the sub-field list of `files(...)` (null when the answer
+     * is not narrowed). Without `fields` everything is returned; with it, only what is named.
+     */
+    private listFields(fields: string | null): Map<string, string | null> {
+        const out = new Map<string, string | null>();
+        if (fields === null) {
+            for (const name of ["kind", "incompleteSearch", "nextPageToken", "files"]) out.set(name, null);
+            return out;
+        }
+        let depth = 0;
+        let current = "";
+        const parts: string[] = [];
+        for (const ch of fields) {
+            if (ch === "(") depth += 1;
+            if (ch === ")") depth -= 1;
+            if (ch === "," && depth === 0) { parts.push(current); current = ""; } else current += ch;
+        }
+        parts.push(current);
+        for (const part of parts.map(entry => entry.trim()).filter(entry => entry !== "")) {
+            const nested = /^(\w+)\((.*)\)$/.exec(part);
+            if (nested) out.set(nested[1]!, nested[2]!); else out.set(part, null);
+        }
+        return out;
     }
 
     /** The query subset the client sends; anything else is a 400 so a client drifting from it fails loudly. */
@@ -516,6 +546,8 @@ export class FakeDriveServer {
             const start = Number(chunk[1]);
             const end = Number(chunk[2]);
             if (end - start + 1 !== body.length) return errorReply(400, "invalid");
+            // Drive: every chunk but the last is a multiple of 256 KiB.
+            if (end + 1 < session.total && body.length % CHUNK_GRANULARITY !== 0) return errorReply(400, "invalid");
             if (start !== session.bytes.length) return this.incomplete(session);
             session.bytes = Buffer.concat([session.bytes, body]);
             this.bytesReceived += body.length;
