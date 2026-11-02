@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import { WorkerError, driveFileId, identifier, isoWithOffset, type WorkerReasonCode } from "domain/eformsign-backup/worker";
+import { UUID_V4_PATTERN, WorkerError, driveFileId, identifier, isoWithOffset, type WorkerReasonCode } from "domain/eformsign-backup/worker";
 import { loadWorkerConfig, isNormalAbsolutePath, resolveDriveConfig, type WorkerConfig } from "./config";
 import { DriveTokenSource } from "./drive-auth";
 import { DriveClient } from "./drive-client";
@@ -15,6 +15,7 @@ import { lockGuard, verifyLockHeld } from "./lock";
 import { LocalDestination } from "./local-destination";
 import { controlMarkerWriter } from "./runner-common";
 import { WorkerRunner } from "./runner";
+import { DriveRootCandidatesError } from "./runner-recover";
 import { RunEndedWithFailure } from "./runner-run";
 import { readSecretFile, readSecretJson } from "./secret-file";
 import type { ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
@@ -264,6 +265,8 @@ type LogLine = {
     event: string; runId?: string; reasonCode?: string; counts?: Record<string, number>;
     /** `drive_bound` only: the Drive root and the layout revision it was bound under (identifiers, never a secret). */
     rootFolderId?: string; destinationRevision?: string;
+    /** `recover_drive_root_ambiguous` only: the roots the operator can pick from, ids only. */
+    candidates?: Array<{ rootFolderId: string; bindingId: string | null }>;
 };
 
 async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: LogLine) => void): Promise<void> {
@@ -302,10 +305,25 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
             return;
         }
         case "recover": {
-            const summary = await runner.recover({
-                installationId: parsed.installationId!,
-                ...(parsed.driveRootFolderId === null ? {} : { driveRootFolderId: parsed.driveRootFolderId }),
-            });
+            let summary: RecoverSummary;
+            try {
+                summary = await runner.recover({
+                    installationId: parsed.installationId!,
+                    ...(parsed.driveRootFolderId === null ? {} : { driveRootFolderId: parsed.driveRootFolderId }),
+                });
+            } catch (error) {
+                // Several roots hold this archive's marker: the operator needs their ids to name one (A2.4). Ids only, validated.
+                if (error instanceof DriveRootCandidatesError) {
+                    emit({
+                        event: "recover_drive_root_ambiguous", reasonCode: error.reasonCode,
+                        candidates: error.candidates.filter((candidate) => driveFileId.safeParse(candidate.rootFolderId).success).map((candidate) => ({
+                            rootFolderId: candidate.rootFolderId,
+                            bindingId: candidate.bindingId !== null && UUID_V4_PATTERN.test(candidate.bindingId) ? candidate.bindingId : null,
+                        })),
+                    });
+                }
+                throw error;
+            }
             if (summary.outcome === "disabled") {
                 emit({ event: "disabled" });
                 return;
@@ -332,7 +350,7 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
 
 /**
  * The command line contract: stdout carries one JSON object per line with keys from {event, runId, reasonCode, counts,
- * rootFolderId, destinationRevision} (the last two on `drive_bound` only);
+ * rootFolderId, destinationRevision} (the last two on `drive_bound` only; `candidates` joins them on `recover_drive_root_ambiguous` only);
  * stderr carries a reason code and nothing else; the exit code follows `exitCodeFor`. On failure stderr is that reason
  * code only; stdout still carries the lines a command had ready (a run that ended in a deferred failure prints its own
  * `run_*` lines), all built from the fixed keys above, so a token or a path can never reach a log.

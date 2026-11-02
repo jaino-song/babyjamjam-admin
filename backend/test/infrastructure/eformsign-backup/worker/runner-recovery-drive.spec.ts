@@ -244,6 +244,37 @@ describe("T30 / BJJ-456 U6: recover and verify with Drive as the second destinat
             expect(fakes.drive.creates).toBe(before.creates);
         }, 240_000);
 
+        it("should print the candidate roots as one ids-only stdout line (A2.4), keep stderr to the reason code and exit 69, then succeed with --drive-root-folder-id", async () => {
+            await populate();
+            const second = await seedSecondRoot();
+            await loseLedger();
+            const run = async (extra: string[]) => {
+                const out: string[] = [];
+                const err: string[] = [];
+                const code = await runWorkerCli(
+                    ["recover", "--config", h.configPath, "--installation-id", installationId, ...extra],
+                    environmentFor(h, { out: (line) => out.push(line), err: (line) => err.push(line) }),
+                );
+                return { code, out, err };
+            };
+
+            const refused = await run([]);
+
+            expect(refused.code).toBe(69);
+            expect(refused.err).toEqual(["drive-root-changed"]);
+            const expected = [{ rootFolderId: rootId, bindingId: original["bindingId"] }, { rootFolderId: second, bindingId: NEW_BINDING }]
+                .sort((a, b) => (a.rootFolderId < b.rootFolderId ? -1 : 1));
+            expect(refused.out.map((line) => JSON.parse(line))).toEqual([{ event: "recover_drive_root_ambiguous", reasonCode: "drive-root-changed", candidates: expected }]);
+            const printed = refused.out.join("\n");
+            for (const secret of ["bjj-eformsign-backup", "127.0.0.1", "Bearer", fakes.oauth.refreshToken, fakes.oauth.clientSecret]) expect(printed).not.toContain(secret);
+
+            const chosen = await run(["--drive-root-folder-id", rootId]);
+
+            expect(chosen.code).toBe(0);
+            expect(chosen.err).toEqual([]);
+            expect((await records("drive_bound"))[0]!.body).toEqual(original);
+        }, 240_000);
+
         it("should refuse with drive-root-changed when the only root was trashed, and when the named id is not a root of this installation", async () => {
             await populate();
             fakes.drive.trash(rootId);
