@@ -295,6 +295,26 @@ queued again), and every unfinished run gets a late `run_finished` with
 `crashed`. Nothing is deleted at any point; damaged files get a `.corrupt-<runId>`
 suffix.
 
+## Manifest file names
+
+Each document revision is indexed by a manifest under
+`eformsign/<company>/<document>/manifests/`. The worker writes every manifest as
+`<metadataRevision>-<manifestSha256>.json`, where the suffix is the SHA-256 of the
+file's own bytes: the same artifact claims always give the same file, and a
+revision whose PDFs the source later offers with different bytes gets a second
+file beside the first. Files named `<metadataRevision>.json` (written by earlier
+builds) are still read and are never modified; both shapes can sit side by side.
+A file whose name does not match its bytes is treated as damaged. A manifest is
+written as soon as one artifact of the revision is verified, before its sibling
+arrives; only a completion means the whole pair is there.
+
+Rollback: an older build does not know the versioned names. Once this build has
+written to an archive, going back to older code alone leaves the restore script
+unable to read its completions (`--latest` reports `not-initialized`),
+`--allow-incomplete` silently leaves those documents out, and an older `recover`
+does not re-hash artifacts listed only in versioned manifests. Roll back the code
+only together with a plan for the archive, never on its own.
+
 ## Restore from the archive alone
 
     cd backend && NODE_PATH=. node -r ts-node/register/transpile-only \
@@ -322,7 +342,11 @@ aside) the partial one; do not use it as a restore. The
 report `restore-report.json` says `unverified-archive` (or `incomplete-archive`
 when restored from manifests with `--allow-incomplete`), lists the gaps recorded
 in the completion and the completions that were set aside; it never says the
-archive is complete.
+archive is complete. With `--allow-incomplete` and no usable completion, restore
+picks no winner between manifests: if any one document has manifests that list
+different artifact sets (for example an old and a new version of its audit trail),
+the whole restore refuses with `restore-conflict` (exit 65). Restore a snapshot
+that has a completion instead.
 
 ## When the ledger says `recovery-required`
 
@@ -353,6 +377,8 @@ installation. Nothing repairs this on its own. To decide:
    inode: move the `ledger.quarantine-*` directories out as well as `ledger/`. A
    directory that cannot be read, and a checkpoint or journal that cannot be read,
    also make it refuse with `control-unavailable`.
+   A torn last journal line is repaired only after all of these checks pass, so
+   a refused `recover` leaves `ledger/` byte-for-byte as it found it.
 4. After the checks, `recover` moves the damaged ledger aside as
    `ledger.quarantine-<runId>`, starts a new one that records the highest
    sequence found in the archive (so a sequence is never reused) and the gaps
