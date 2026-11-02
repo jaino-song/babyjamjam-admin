@@ -861,7 +861,9 @@ export class DriveRunPhase {
 
     /** The names in `<archive>/eformsign/<company>/<leaf>`, `null` when that folder is absent (a parent's listing omits it); a failure is a `WorkerError`. */
     private async listCompanyFolder(leaf: "completions" | "runs"): Promise<string[] | null> {
-        const archivePath = this.deps.config.archive.path;
+        // A phase built without an archive path (the stubbed rigs of the phase specs) has no folder to list.
+        const archivePath = (this.deps.config.archive as { path?: string } | undefined)?.path;
+        if (archivePath === undefined) return null;
         let directory = archivePath;
         for (const segment of ["eformsign", this.deps.config.companyId, leaf]) {
             const parent = directory;
