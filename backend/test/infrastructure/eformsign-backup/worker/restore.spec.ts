@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { WorkerError, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
+import { runRestoreCli } from "infrastructure/eformsign-backup/worker/cli-restore";
 import { restoreFromArchive, type RestoreReport } from "infrastructure/eformsign-backup/worker/restore";
 
 import { pdfjsPageCount } from "./helpers/pdfjs-open";
@@ -273,6 +274,84 @@ describe("T-WRK-12: restore from the archive alone (V13, T25)", () => {
 
             await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "restore-conflict" });
             expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+    });
+
+    /** PF1c: the manifest enumeration behind `--allow-incomplete` is complete-or-error, so an I/O failure is never a smaller (or empty) restore. */
+    describe("manifest enumeration failures (BJJ-456 PF1c)", () => {
+        afterEach(() => { jest.restoreAllMocks(); });
+        const manifestsDir = (doc: string): string => path.join(h.archive, "eformsign", COMPANY, doc, "manifests");
+        async function withoutCompletions(): Promise<void> {
+            h = await createHarness({ docs: m1() });
+            await initArchive(h);
+            await runOnce(h);
+            const dir = path.join(h.archive, "eformsign", COMPANY, "completions");
+            for (const name of await fs.readdir(dir)) await fs.rename(path.join(dir, name), path.join(h.base, `${name}.away`));
+            await freshOut();
+        }
+        function failListing(directory: string, code = "EIO"): void {
+            const real = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+            jest.spyOn(fs, "readdir").mockImplementation((async (target: unknown, ...rest: unknown[]) => {
+                if (String(target) === directory) throw Object.assign(new Error("synthetic"), { code });
+                return real(target, ...rest);
+            }) as never);
+        }
+        const cli = async (): Promise<{ code: number; stdout: string[]; stderr: string[] }> => {
+            const stdout: string[] = [];
+            const stderr: string[] = [];
+            const code = await runRestoreCli(
+                ["--archive", h.archive, "--company", COMPANY, "--latest", "--allow-incomplete", "--out", out],
+                { out: (line) => stdout.push(line), err: (line) => stderr.push(line) },
+            );
+            return { code, stdout, stderr };
+        };
+
+        it("should refuse with archive-unavailable and write no artifact and no report when a manifests directory cannot be listed", async () => {
+            await withoutCompletions();
+            failListing(manifestsDir("D002"));
+
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "archive-unavailable" });
+
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should refuse with archive-unavailable when the company directory cannot be listed, however a document listed earlier looked", async () => {
+            await withoutCompletions();
+            failListing(path.join(h.archive, "eformsign", COMPANY));
+
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "archive-unavailable" });
+
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should end the CLI with exit 69 and no output artifact or report on an enumeration I/O failure", async () => {
+            await withoutCompletions();
+            failListing(manifestsDir("D004"));
+
+            const result = await cli();
+
+            expect(result).toMatchObject({ code: 69, stdout: [], stderr: ["archive-unavailable"] });
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should keep the empty-input semantics: an archive with no manifests restores an empty incomplete archive", async () => {
+            h = await createHarness({ docs: [] });
+            await initArchive(h);
+            await freshOut();
+
+            const report = await restore({ latest: true }, { allowIncomplete: true });
+
+            expect(report).toMatchObject({ status: "incomplete-archive", snapshotId: null, sequence: null, documents: [] });
+            expect(await listFiles(out)).toEqual(["restore-report.json"]);
+        }, 120_000);
+
+        it("should keep restoring (CLI exit 0) when the enumeration completes", async () => {
+            await withoutCompletions();
+
+            const result = await cli();
+
+            expect(result.code).toBe(0);
+            expect(JSON.parse(result.stdout[0]!)).toMatchObject({ event: "restore_incomplete_archive", counts: { documents: 3 } });
         }, 120_000);
     });
 
