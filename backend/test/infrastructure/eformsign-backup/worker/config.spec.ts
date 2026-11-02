@@ -88,6 +88,82 @@ describe("loadWorkerConfig", () => {
         await expect(loadWorkerConfig(await write(variant(mutate)))).rejects.toMatchObject(refused);
     });
 
+    describe("the optional drive block (BJJ-456)", () => {
+        const driveBlock = () => ({ clientFile: path.join(base, "client.json"), refreshTokenFile: path.join(base, "refresh-token") });
+        const withDrive = (drive: Record<string, unknown>, mutate: (json: Record<string, any>) => void = () => undefined) =>
+            variant((json) => { json["drive"] = drive; mutate(json); });
+
+        it("should accept the block with only the two secret files and fill every default", async () => {
+            const config = await loadWorkerConfig(await write(withDrive(driveBlock())));
+            expect(config.drive).toEqual({
+                ...driveBlock(), tokenUrl: "https://oauth2.googleapis.com/token", apiBaseUrl: "https://www.googleapis.com",
+                uploadBaseUrl: "https://www.googleapis.com", rootFolderName: "bjj-eformsign-backup", chunkBytes: 8_388_608,
+            });
+            expect(Object.isFrozen(config.drive)).toBe(true);
+        });
+
+        it("should keep explicit values and accept http for loopback hosts only", async () => {
+            const block = {
+                ...driveBlock(), tokenUrl: "http://127.0.0.1:9/token", apiBaseUrl: "http://localhost:9/api", uploadBaseUrl: "http://[::1]:9/upload",
+                rootFolderName: "custom-root", chunkBytes: 262_144 * 3, requestTimeoutMs: 7000,
+            };
+            const config = await loadWorkerConfig(await write(withDrive(block)));
+            expect(config.drive).toEqual(block);
+        });
+
+        it("should leave a config without a drive block exactly as before", async () => {
+            const config = await loadWorkerConfig(await write(configJson(paths())));
+            expect(config.drive).toBeUndefined();
+            expect("drive" in config).toBe(false);
+        });
+
+        it.each([
+            ["http for a non-loopback token url", { tokenUrl: "http://oauth.example.test/token" }],
+            ["http for a non-loopback api url", { apiBaseUrl: "http://drive.example.test" }],
+            ["http for a non-loopback upload url", { uploadBaseUrl: "http://drive.example.test" }],
+            ["credentials in a url", { apiBaseUrl: "https://user:pw@drive.example.test" }],
+            ["a query in a url", { uploadBaseUrl: "https://drive.example.test/?x=1" }],
+            ["a url that is not a url", { tokenUrl: "not a url" }],
+            ["a relative client file", { clientFile: "client.json" }],
+            ["a relative refresh token file", { refreshTokenFile: "refresh-token" }],
+            ["a client file path with ..", { clientFile: "/secrets/../client.json" }],
+            ["an unknown key", { extra: true }],
+            ["an empty root folder name", { rootFolderName: "" }],
+            ["a 256 character root folder name", { rootFolderName: "r".repeat(256) }],
+            ["a root folder name with a control character", { rootFolderName: "bad\nname" }],
+            ["a chunk size that is not a multiple of 256 KiB", { chunkBytes: 262_144 + 1 }],
+            ["a chunk size of 0", { chunkBytes: 0 }],
+            ["a chunk size below 256 KiB", { chunkBytes: 131_072 }],
+            ["a fractional chunk size", { chunkBytes: 262_144.5 }],
+            ["a drive timeout of 0", { requestTimeoutMs: 0 }],
+            ["a drive timeout above ten minutes", { requestTimeoutMs: 10 * 60 * 1000 + 1 }],
+        ])("should refuse with config-invalid for %s", async (_name, extra) => {
+            await expect(loadWorkerConfig(await write(withDrive({ ...driveBlock(), ...extra })))).rejects.toMatchObject(refused);
+        });
+
+        it.each([
+            ["missing the client file", () => ({ refreshTokenFile: path.join(base, "refresh-token") })],
+            ["missing the refresh token file", () => ({ clientFile: path.join(base, "client.json") })],
+        ])("should refuse a drive block %s", async (_name, block) => {
+            await expect(loadWorkerConfig(await write(withDrive(block())))).rejects.toMatchObject(refused);
+        });
+
+        it.each([
+            ["the client file inside the archive", () => ({ clientFile: `${paths().archive}/client.json` })],
+            ["the refresh token file inside the archive", () => ({ refreshTokenFile: `${paths().archive}/sub/refresh-token` })],
+            ["the client file inside the control path", () => ({ clientFile: `${paths().control}/client.json` })],
+            ["the refresh token file inside the control path", () => ({ refreshTokenFile: `${paths().control}/ledger/refresh-token` })],
+            ["the client file at the archive path itself", () => ({ clientFile: paths().archive })],
+        ])("should refuse %s", async (_name, extra) => {
+            await expect(loadWorkerConfig(await write(withDrive({ ...driveBlock(), ...extra() })))).rejects.toMatchObject(refused);
+        });
+
+        it("should not mistake a sibling directory with a shared name prefix for the archive", async () => {
+            const block = { ...driveBlock(), clientFile: `${paths().archive}-secrets/client.json` };
+            await expect(loadWorkerConfig(await write(withDrive(block)))).resolves.toBeDefined();
+        });
+    });
+
     it("should refuse invalid JSON and an oversized file", async () => {
         await expect(loadWorkerConfig(await write("{not json"))).rejects.toMatchObject(refused);
         await expect(loadWorkerConfig(await write("[]"))).rejects.toMatchObject(refused);

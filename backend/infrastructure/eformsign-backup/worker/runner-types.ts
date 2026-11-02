@@ -6,7 +6,9 @@ import type { ArtifactRequest, CandidatePageView, SnapshotView } from "./export-
 import type { FsProbe } from "./fs-probe";
 import type { LedgerFaultPoint, LedgerStore } from "./ledger-store";
 import type { LocalDestination } from "./local-destination";
-import type { WorkerConfig } from "./config";
+import type { ResolvedDriveConfig, WorkerConfig } from "./config";
+import type { DriveClient } from "./drive-client";
+import type { DriveBinding as DriveDestinationBinding, DriveDestination } from "./drive-destination";
 
 /** Where a test can stop the runner (contract section 7, T-WRK-17). Production code never sets a hook. */
 export const RUNNER_FAULT_POINTS = [
@@ -20,6 +22,12 @@ export const RUNNER_FAULT_POINTS = [
     "after-completion-before-record",
     "recover-after-quarantine",
     "recover-after-first-recovered",
+    "drive-setup-after-bound",
+    "drive-setup-after-root",
+    "drive-after-reserved-before-create",
+    "drive-after-upload-before-verifying",
+    "drive-after-verified",
+    "drive-recover-after-first",
 ] as const;
 export type RunnerFaultPoint = typeof RUNNER_FAULT_POINTS[number];
 export type RunnerFault = (point: RunnerFaultPoint) => void | Promise<void>;
@@ -54,6 +62,10 @@ export interface RunnerDependencies {
     createDestination(identity: { dev: number; ino: number }): LocalDestination;
     /** `null` for every command except `run`. */
     exportClient: ExportPort | null;
+    /** The Drive client and settings, built only when the config has a `drive` block (and the command may use them); `null` otherwise. */
+    drive: { client: DriveClient; settings: ResolvedDriveConfig } | null;
+    /** The Drive side for a given binding. Throws `drive-not-configured` when `drive` is `null`. */
+    createDriveDestination(binding: DriveDestinationBinding): DriveDestination;
     compactionThreshold?: number;
     runnerFault?: RunnerFault;
     archiveFault?: (point: ArchiveFaultPoint) => void;
@@ -92,6 +104,11 @@ export interface InitSummary {
     installationId: string;
 }
 
+export interface DriveSetupSummary {
+    rootFolderId: string;
+    destinationRevision: string;
+}
+
 export interface InspectSummary {
     status: "ok" | "not_initialized" | "recovery_required";
     reasons: string[];
@@ -103,7 +120,9 @@ export interface WorkerRunnerPort {
     init(): Promise<InitSummary>;
     run(options?: { scheduledFor?: string | null }): Promise<RunSummary>;
     verify(options: { all: boolean }): Promise<VerifySummary>;
-    recover(options: { installationId: string }): Promise<RecoverSummary>;
+    recover(options: { installationId: string; driveRootFolderId?: string }): Promise<RecoverSummary>;
+    /** Binds (or resumes binding, or with `rebind` re-binds) the Google Drive root of this installation. */
+    driveSetup(options: { rebind: boolean }): Promise<DriveSetupSummary>;
     inspect(): InspectSummary;
 }
 
