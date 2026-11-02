@@ -10,6 +10,7 @@ import {
     isDayButtonDisabled,
     isServiceDateMismatch,
     legacyDefaultServiceDate,
+    normalizeServiceRecordLinkToken,
     serviceRecordCalendarYears,
 } from "@/lib/service-records/page-helpers";
 
@@ -177,5 +178,39 @@ describe("serviceRecordCalendarYears", () => {
 
     it("falls back to the three-year window without a context", () => {
         expect(serviceRecordCalendarYears(null, "2026-08-26")).toEqual([2025, 2026, 2027]);
+    });
+});
+
+describe("normalizeServiceRecordLinkToken", () => {
+    const CLEAN = "efl_zf9vPyJ8k4BV7GrsAUS604yYxXcR2JywbdxWj1VOuCg";
+
+    it("leaves a clean token unchanged", () => {
+        expect(CLEAN).toHaveLength(47);
+        expect(normalizeServiceRecordLinkToken(CLEAN)).toBe(CLEAN);
+    });
+
+    it("drops a percent-encoded Korean suffix", () => {
+        const raw = `${CLEAN}%ED%99%88%EA%B3%A0%EA%B0%9D%EB%A9%94%EC%8B%9C%EC%A7%80%EA%B3%84%EC%95%BD%EC%A0%84%EC%B2%B4`;
+        expect(normalizeServiceRecordLinkToken(raw)).toBe(CLEAN);
+    });
+
+    it("drops a raw (already decoded) suffix", () => {
+        expect(normalizeServiceRecordLinkToken(`${CLEAN}홈고객메시지계약전체`)).toBe(CLEAN);
+    });
+
+    it("does not alter a legacy token that does not start with efl_", () => {
+        const legacy = "AbCdEf0123456789-legacy_token%ED%99%88";
+        expect(normalizeServiceRecordLinkToken(legacy)).toBe(legacy);
+    });
+
+    it("does not alter a short or garbage efl_ value", () => {
+        expect(normalizeServiceRecordLinkToken("efl_x")).toBe("efl_x");
+        expect(normalizeServiceRecordLinkToken(`efl_${"a".repeat(42)}%ED%99%88`)).toBe(`efl_${"a".repeat(42)}%ED%99%88`);
+    });
+
+    it("falls back to the raw value when decoding fails", () => {
+        expect(normalizeServiceRecordLinkToken("efl_%E0%A4%A")).toBe("efl_%E0%A4%A");
+        // A malformed escape after a complete token still yields the clean token from the raw value.
+        expect(normalizeServiceRecordLinkToken(`${CLEAN}%E0%A4%A`)).toBe(CLEAN);
     });
 });
