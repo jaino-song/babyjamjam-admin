@@ -19,7 +19,7 @@ export function buildCallRefinementPrompt(input: {
 
     const roleInstruction = input.diarized
         ? `화자 역할 매핑 (diarized=true): 원시 화자 라벨(예: "1", "2")을 아래 닫힌 어휘로만 매핑하십시오. 이 목록 외의 문자열은 절대 사용하지 마십시오.
-  - 직원측: "아이미래로" 또는 "상담원"
+  - 기관측: "아이미래로" 또는 "상담원"
   - 고객측: "고객", "산모", 또는 "남편" — 발화 내용으로 판단하여 선택`
         : `화자 역할 매핑 (diarized=false): 화자를 추측하지 마십시오. 모든 턴의 speaker는 예외 없이 문자 그대로 "${NEUTRAL_SPEAKER}"로 설정하십시오.`;
 

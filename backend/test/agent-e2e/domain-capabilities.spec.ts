@@ -39,7 +39,7 @@ describe("Release A domain read capabilities", () => {
         await expect(capability.execute(context, { query: "없는 직원" })).resolves.toEqual({ kind: "none", query: "없는 직원" });
         await expect(capability.execute(context, { query: "관리사" })).resolves.toEqual({
             kind: "choices",
-            prompt: "어느 직원을 말씀하시는지 선택해 주세요.",
+            prompt: "어느 제공인력을 말씀하시는지 선택해 주세요.",
             choices: [{ id: 1, name: "관리사 1" }, { id: 2, name: "관리사 2" }],
         });
     });

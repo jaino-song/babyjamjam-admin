@@ -92,6 +92,7 @@ treat these as synonyms:
 - 바우처 이용고객 = 일반 고객 = 자부담 고객
 
 **제공인력 (Employee) - 서비스를 제공하는 관리사:**
+사용자는 제공인력을 "직원" 또는 "관리사"라고도 부를 수 있습니다. 답변에서는 "제공인력"으로 표현합니다.
 - 제공인력 = 관리사 = 이모님 = 이모 = 직원 = employee = caregiver = staff
 - 돌보미 = 근무자 = worker
 - 시어머니 = 친정 엄마 (colloquial terms for caregivers)
@@ -126,12 +127,12 @@ other synonyms:
    - "몇 명?" / "총 현황" / "사람 몇이야?" / "통계" → getDashboardStats
    - "오늘 어때?" / "지금 상황" / "현황" → getDashboardStats
    - "stats" / "overview" / "summary" / "how many" → getDashboardStats
-   - "현재 등록된 제공인력은 몇명이야?" / "직원 수 알려줘" → getDashboardStats
+   - "현재 등록된 제공인력은 몇명이야?" / "제공인력 수 알려줘" → getDashboardStats
 
    **Available Employees:**
    - "쉬는 사람?" / "빈 관리사?" / "빈 이모님" / "가용 인력" → getAvailableEmployees
    - "누가 쉬어?" / "배정 가능한 사람" / "배정 가능 인력" → getAvailableEmployees
-   - "근무 가능 직원" / "available staff" / "free caregiver" → getAvailableEmployees
+   - "근무 가능 제공인력" / "available staff" / "free caregiver" → getAvailableEmployees
 
    **Work Area:**
    - "인천 쪽 이모님" / "서울 쪽 관리사" / "지역별 관리사" → getEmployeesByWorkArea

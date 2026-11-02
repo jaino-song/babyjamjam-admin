@@ -208,15 +208,15 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
     },
     [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED]: {
         key: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
-        name: "직원 배정 알림",
-        description: "직원이 고객에게 배정될 때 직원에게 발송하는 메시지",
+        name: "제공인력 배정 알림",
+        description: "제공인력이 고객에게 배정될 때 제공인력에게 발송하는 메시지",
         allowedEventTypes: [MessageTriggerEventType.EMPLOYEE_ASSIGNED],
         allowedRecipientTypes: [
             MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
             MessageTriggerRecipientType.SECONDARY_EMPLOYEE,
         ],
         requiredVariables: [
-            { key: "employeeName", label: "직원명" },
+            { key: "employeeName", label: "제공인력명" },
             { key: "clientName", label: "고객명" },
             { key: "serviceStartDate", label: "서비스 시작일" },
         ],
