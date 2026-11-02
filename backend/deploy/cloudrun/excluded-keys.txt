@@ -5,8 +5,6 @@
 DEVELOPMENT_API_BASE_URL  # local dev only
 DEVELOPMENT_FRONTEND_URL  # local dev only
 DEVELOPMENT_MOBILE_FRONTEND_URL  # local dev only
-MOBILE_SERVICE_RECORD_BASE_URL  # env.tpl comment: local-only service record testing
-MOBILE_RECEIPT_BASE_URL  # local LAN value; unset falls back to https://m.admin.babyjamjam.com
 GEMINI_CHAT_MODEL  # optional; code default applies when unset (see gemini-chat.gateway.ts)
 GEMINI_CHAT_TEMPERATURE  # optional; code default applies when unset (see gemini-chat.gateway.ts)
 GEMINI_CHAT_MAX_OUTPUT_TOKENS  # optional; code default applies when unset (see gemini-chat.gateway.ts)
