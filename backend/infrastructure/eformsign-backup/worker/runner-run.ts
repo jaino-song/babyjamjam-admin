@@ -523,6 +523,9 @@ class RunExecution {
                 // Recorded blocked integrity-repeated, then healed from Drive if it holds a verified copy (processArtifact); else it stays so.
                 if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
                 await this.processArtifact(job, "carry");
+                // Still blocked after the attempt (Drive could not be asked, or the heal failed): reported like any carried artifact.
+                const after = this.dl.entryOf(job.artifactIdentity);
+                if (after?.state === "blocked" && !isTerminalReason(after.reasonCode)) this.carriedBlocked.add(job.artifactIdentity);
             } else {
                 const bytes: DriveHeal = recovered === null
                     ? (await this.stagedUsable(job) ? true : await this.healFromDrive(job))
@@ -679,7 +682,8 @@ class RunExecution {
         const state = entry?.state ?? null;
         if (entry !== undefined && state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
         let staged: boolean;
-        if (entry !== undefined && integrityExhausted(entry)) {
+        const exhausted = entry !== undefined && integrityExhausted(entry);
+        if (exhausted) {
             if (state === "integrity_error") await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
             // QF3 / V10: the export has failed this artifact for good, but a copy Drive holds verified still heals it, on every run, without
             // asking the export again. While Drive cannot be asked (or holds no usable copy) the entry stays blocked integrity-repeated.
@@ -715,6 +719,12 @@ class RunExecution {
         // A carried artifact is no longer in any snapshot, so no later run writes its manifest: it goes first.
         if (mode === "carry" && !(await this.manifestFirst(id, job.relativeKey))) return;
         if ((await this.transfer(job, !staged)) !== "staging-corrupt") return;
+        if (exhausted) {
+            // The copy healed from Drive was damaged on the way: the export is still not asked and nothing is given up. The entry goes back
+            // to blocked integrity-repeated, so the next run heals it from Drive again.
+            await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
+            return;
+        }
         // The staged copy did not match its own hash: it is set aside, so this artifact is now simply not staged.
         if (mode === "carry") {
             await this.dl.transition(id, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: job.relativeKey });

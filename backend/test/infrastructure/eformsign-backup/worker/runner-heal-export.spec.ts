@@ -110,6 +110,65 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         expect(h.api.artifactRequests()).toEqual([]);
     }, 240_000);
 
+    /** An exhausted entry (Drive down for three runs), then Drive answers; `after` says whether the next run's snapshot still lists the document. */
+    async function exhaustedWithDriveBack(carried: boolean): Promise<Awaited<ReturnType<typeof lostCopy>> & { gapsBefore: number }> {
+        const lost = await lostCopy(true);
+        fakes.drive.addFault({ route: "*", action: driveFaults.status(503, "backendError") });
+        for (let attempt = 0; attempt < 3; attempt += 1) await tryRun(h);
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        fakes.drive.clearFaults();
+        if (carried) h.api.docs = [];
+        h.api.clearRequests();
+        return { ...lost, gapsBefore: (await ledgerState()).gaps.length };
+    }
+    /** The staged copy a Drive heal just wrote is damaged before it is published (same length, other bytes). */
+    const corruptStagedOnce = (): (point: string) => Promise<void> => {
+        let done = false;
+        return async (point) => {
+            if (point !== "after-transferring" || done) return;
+            for (const file of await listFiles(h.control)) {
+                if (!file.endsWith(".bin")) continue;
+                const target = path.join(h.control, file);
+                const bytes = await fs.readFile(target);
+                bytes.writeUInt8((bytes.readUInt8(bytes.length - 2) + 1) % 256, bytes.length - 2);
+                await fs.writeFile(target, bytes);
+                done = true;
+            }
+        };
+    };
+
+    it.each([["snapshot", false], ["carry", true]] as const)(
+        "should keep an exhausted entry retryable, never ask the export and never record a gap, when the %s heal's staged copy is damaged (F1)",
+        async (_name, carried) => {
+            const lost = await exhaustedWithDriveBack(carried);
+
+            await runOnce(h, { runnerFault: corruptStagedOnce() });
+
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+            await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
+
+            await runOnce(h);
+
+            expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+            expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+        }, 240_000);
+
+    it("should count a carried exhausted entry whose Drive heal failed as blocked, and report its reason, like any carried artifact (F2)", async () => {
+        const lost = await exhaustedWithDriveBack(true);
+        fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+
+        const summary = await runOnce(h);
+
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(summary.counts!.blocked).toBe(1);
+        expect(summary.reasonCodes).toContain("integrity-repeated");
+        expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+    }, 240_000);
+
     it("should stay blocked integrity-repeated, asking the export no more, while Drive cannot be asked", async () => {
         await lostCopy(true);
         fakes.drive.addFault({ route: "*", action: driveFaults.status(503, "backendError") });
