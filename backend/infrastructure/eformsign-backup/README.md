@@ -747,9 +747,13 @@ adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError`
   A copy that only Drive can give back while Drive cannot be asked (unreachable, rate-limited, a
   secret file the worker cannot read, or no `drive` block in the configuration while the ledger
   still records a verified Drive copy) is never given up: its local entry stays `blocked` with
-  that Drive reason, is counted in `blocked` and listed in the run's reasons, and every later run
-  tries it again. Only a Drive that answers without a usable copy (the file is gone, or its bytes
-  fail the hash, size or PDF checks) leaves the local entry `exact-bytes-unavailable`.
+  the reason the copy could not be staged (Drive's reason, or `control-space` when the staging
+  area has no room for it), is counted in `blocked` and, unless the snapshot itself failed, listed
+  in the run's reasons, and every later run tries it again. Among copies Drive holds verified,
+  only a Drive that answers without a usable copy (the file is gone, or its bytes fail the hash,
+  size or PDF checks) leaves the local entry `exact-bytes-unavailable`. An artifact the worker
+  cannot place at all (no recorded details or key, or a recovered artifact whose length no
+  archive manifest names) is `exact-bytes-unavailable` without asking Drive.
 
 ## Checking Drive with `verify`
 
