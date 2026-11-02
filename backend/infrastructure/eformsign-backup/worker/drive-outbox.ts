@@ -7,7 +7,7 @@ import { publishBytesNoClobber } from "./atomic-file";
 /**
  * The Drive outbox (BJJ-456 A3.2): durable bytes for a Drive record (manifest, completion, run inventory) that the Drive phase
  * must publish but the local archive did not publish in the same run, so nothing else can rebuild it. Every file is
- * `<control>/drive-outbox/<sha256>.json`, written once and never replaced or removed (the no-unlink rule); a published record may
+ * `<control>/drive-outbox/<sha256>.json`, written once and never replaced or removed (the worker deletes nothing); a published record may
  * be removed by the operator by hand.
  */
 export const DRIVE_OUTBOX_DIR = "drive-outbox";
