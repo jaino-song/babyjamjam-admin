@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import {
   MESSAGE_JOB_CANCEL_COPY,
   MESSAGE_JOB_RESEND_COPY,
+  MESSAGE_FAILURE_REASON_FALLBACK,
   createProblemDetails,
 } from "@babyjamjam/shared";
 
@@ -175,6 +176,32 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     mockNoRetryMutation();
     mockNoResendMutation();
     mockToast.mockReset();
+  });
+
+  it("shows the Korean fallback in a failed history detail for an English provider reason", async () => {
+    mockUseMessageHistory.mockReturnValue({
+      data: [{ ...sentRecord, status: "failed", errorMessage: "Aligo SMS integration is not configured." }],
+      isLoading: false,
+      isError: false,
+    });
+    render(<MessagesHistoryPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /김문자/ }));
+    expect(screen.getByText("실패 사유")).toBeInTheDocument();
+    expect(screen.getByText(MESSAGE_FAILURE_REASON_FALLBACK)).toBeInTheDocument();
+    expect(screen.queryByText(".")).not.toBeInTheDocument();
+  });
+
+  it("keeps an English cancellation reason hidden without adding the failure fallback", async () => {
+    mockUseMessageHistory.mockReturnValue({
+      data: [{ ...canceledRecord, errorMessage: "Related client or schedule deleted" }],
+      isLoading: false,
+      isError: false,
+    });
+    render(<MessagesHistoryPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /취소 고객/ }));
+    expect(screen.queryByText("취소 정보")).not.toBeInTheDocument();
+    expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
+    expect(screen.queryByText(MESSAGE_FAILURE_REASON_FALLBACK)).not.toBeInTheDocument();
   });
 
   it.each(["checking", "exhausted"])("renders visible detail-header lookup %s while keeping the list failed", async historyLookup => {
