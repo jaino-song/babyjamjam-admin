@@ -77,6 +77,13 @@ spec:
             # would send preview logins to production mobile.
             - name: PRODUCTION_MOBILE_FRONTEND_URL
               value: "https://preview.m.admin.babyjamjam.com"
+            # Plain literals, not secrets: caregiver service-record links and receipt
+            # links are built from these. Unset, both fall back to production
+            # https://m.admin.babyjamjam.com, sending preview recipients to production.
+            - name: MOBILE_SERVICE_RECORD_BASE_URL
+              value: "https://preview.m.admin.babyjamjam.com"
+            - name: MOBILE_RECEIPT_BASE_URL
+              value: "https://preview.m.admin.babyjamjam.com"
             - name: SENTRY_ENVIRONMENT
               value: "preview"
             # Aligo disabled (operator decision 2026-09-23): Cloud Run has no
@@ -89,7 +96,7 @@ spec:
             - name: ALIGO_SENDER_PHONE
               value: ""
             # Secret env: Secret Manager secret id == env var name, version latest.
-            # Excluded (not deployed): DEVELOPMENT_API_BASE_URL, DEVELOPMENT_FRONTEND_URL, DEVELOPMENT_MOBILE_FRONTEND_URL, MOBILE_SERVICE_RECORD_BASE_URL, MOBILE_RECEIPT_BASE_URL, GEMINI_CHAT_MODEL, GEMINI_CHAT_TEMPERATURE, GEMINI_CHAT_MAX_OUTPUT_TOKENS, GEMINI_CHAT_TIMEOUT_MS, GEMINI_EXTRACTION_MODEL, NEXT_PUBLIC_API_BASE_URL, ALIGO_API_URL, ALIGO_SENDER_KEY, CHANNELTALK_API_URL.
+            # Excluded (not deployed): DEVELOPMENT_API_BASE_URL, DEVELOPMENT_FRONTEND_URL, DEVELOPMENT_MOBILE_FRONTEND_URL, GEMINI_CHAT_MODEL, GEMINI_CHAT_TEMPERATURE, GEMINI_CHAT_MAX_OUTPUT_TOKENS, GEMINI_CHAT_TIMEOUT_MS, GEMINI_EXTRACTION_MODEL, NEXT_PUBLIC_API_BASE_URL, ALIGO_API_URL, ALIGO_SENDER_KEY, CHANNELTALK_API_URL.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

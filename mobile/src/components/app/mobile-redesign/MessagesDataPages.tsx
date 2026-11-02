@@ -27,6 +27,7 @@ import {
   MESSAGE_RECORD_REASON_LABEL,
   MESSAGE_RECORD_STATUS_FILTER_LABELS,
   MESSAGE_RECORD_ZONE_LABELS,
+  formatFailedMessageReason,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
   getMessageTemplateLabel,
@@ -346,9 +347,10 @@ function MessageHistoryFilterPanel({
 }
 
 // UpcomingMessageTriggerJob has no separate "failure reason" field — cancelReason
-// is the only reason-shaped field it carries, so it doubles for both statuses.
+// serves both statuses; only failed jobs use the generic failure fallback.
 function getJobReasonText(job: UpcomingMessageTriggerJob): string {
-  if (job.status !== "failed" && job.status !== "canceled") return "";
+  if (job.status === "failed") return formatFailedMessageReason(job.cancelReason);
+  if (job.status !== "canceled") return "";
   return formatMessageFailureReason(job.cancelReason);
 }
 
@@ -356,7 +358,8 @@ function getJobReasonText(job: UpcomingMessageTriggerJob): string {
 // failed-only (it feeds ClientMessageHistoryDetail's existing "실패 사유" row).
 // Canceled records need their own reason lookup straight off errorMessage.
 function getRecordReasonText(record: MessageLogRecord): string {
-  if (record.status !== "failed" && record.status !== "canceled") return "";
+  if (record.status === "failed") return formatFailedMessageReason(record.errorMessage);
+  if (record.status !== "canceled") return "";
   return formatMessageFailureReason(record.errorMessage);
 }
 
