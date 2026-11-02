@@ -248,8 +248,9 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
 
 /**
  * The command line contract: stdout carries one JSON object per line with keys from {event, runId, reasonCode, counts};
- * stderr carries a reason code and nothing else; the exit code follows `exitCodeFor`. Nothing is printed on failure
- * except that reason code, so a token or a path can never reach a log.
+ * stderr carries a reason code and nothing else; the exit code follows `exitCodeFor`. On failure stderr is that reason
+ * code only; stdout still carries the lines a command had ready (a run that ended in a deferred failure prints its own
+ * `run_*` lines), all built from the fixed keys above, so a token or a path can never reach a log.
  */
 export async function runWorkerCli(args: readonly string[], environment: WorkerEnvironment = {}): Promise<number> {
     const out = environment.out ?? ((line: string) => { process.stdout.write(`${line}\n`); });

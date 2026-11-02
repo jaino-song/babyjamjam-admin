@@ -104,8 +104,9 @@ overlapping run", not as a failure.
 `flock` itself creates `<control>/worker.lock` when it is missing, with the process
 umask (a `0666` file minus the umask, so often group- and world-readable); the worker
 never creates it. What keeps other users away from it is the control directory, which
-must be `0700` (or at least not writable by group or others) and owned by the worker
-user. If the control directory does not exist, `flock` fails by itself with exit 66
+should be `0700` (owner only) and owned by the worker user. The worker enforces only that it is
+not writable by group or others, which still lets other users traverse it and read the lock
+file, so set `0700` yourself. If the control directory does not exist, `flock` fails by itself with exit 66
 (`EX_NOINPUT`) and a path on stderr before the worker runs; the worker's own
 `lock-not-held` (78) is what a worker started without `flock` reports.
 
@@ -143,10 +144,17 @@ conflicts, `ledger-inconsistent` when the ledger's evidence for it cannot be pro
 the refusal itself when its manifest could not be written, the check that blocked the
 candidate, or, while its pair is not complete, the reason the ledger holds for the
 artifact that is not verified (for example `export-unavailable`, `artifact-pending`,
-`artifact-integrity`). The gaps appear in `restore-report.json`, so `--latest` never
-leaves a document out silently. A document that is no longer in the snapshot is not
-a gap of it. A gap in an old completion stays in that completion; after `recover` it
-is a known gap of the rebuilt ledger.
+`artifact-integrity`). An included document the source offered with no artifacts at all
+is listed as `artifact-pending`. If every included document of a snapshot is omitted, the
+completion still gets published, with no entries and those gaps, so `restore --latest`
+selects it, reports the gaps and restores nothing. The gaps appear in
+`restore-report.json`, so `--latest` never leaves a document out silently. A document that
+is no longer in the snapshot is not a gap of it.
+
+Only permanent gaps (`source-removed`, `exact-bytes-unavailable`: the bytes are gone at the
+source) are historical coverage. `recover` brings back only those from the completions as
+known gaps; every other reason says why one snapshot lacked a document and a later run can
+still resolve it, so it stays in that completion and is not imported.
 
 ## worker.json
 

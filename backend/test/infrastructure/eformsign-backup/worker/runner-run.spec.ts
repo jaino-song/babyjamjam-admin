@@ -211,7 +211,11 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             const park = (await readLedgerRecords(h.control)).filter((record) => record.type === "destination_transition" && record.body["to"] === "retry_wait");
             expect(park).toHaveLength(1);
             expect(park[0]!.body).toMatchObject({ artifactIdentity: id, reasonCode: "rate-limited", attempts: 1, nextRetryAt: "2026-10-19T00:02:00.000Z" });
-            expect(await readCompletions(h.archive)).toHaveLength(0);
+            // Nothing is complete, but the omissions are on record: a completion with no entries lists both documents as gaps (FU-13-F1).
+            const parked = await readCompletions(h.archive);
+            expect(parked).toHaveLength(1);
+            expect(parked[0]!.value["entries"]).toEqual([]);
+            expect(parked[0]!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "rate-limited" }, { documentId: "D002", reasonCode: "artifact-pending" }]);
 
             h.clock.advance(121_000);
             const second = await runOnce(h);
@@ -1736,6 +1740,106 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             await runOnce(h);
             expect((await gapsOf()).pop()).toEqual({ documents: ["D001", "D002"], gaps: [] });
         }, 240_000);
+
+        describe("omission gaps stay truthful through recovery and cover every included document (BJJ-455 P2 FU-13-F1)", () => {
+            const audit503 = () => h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 503, code: "EXPORT_UNAVAILABLE", retryable: true } });
+            const loseLedgerAndRecover = async () => {
+                const installationId = (await readJsonFile(path.join(h.archive, ".bjj-backup", "installation.json")))["installationId"];
+                await fs.rm(path.join(h.control, "ledger"), { recursive: true });
+                return withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+            };
+            const restoreSelected = async (selector: { latest: true } | { snapshotId: string }) => {
+                const outDir = path.join(h.base, `restored-${Math.random().toString(36).slice(2)}`);
+                try {
+                    return await restoreFromArchive({ archivePath: h.archive, companyId: COMPANY, selector, outDir });
+                } finally {
+                    await fs.rm(outDir, { recursive: true, force: true });
+                }
+            };
+            const heal = (): void => {
+                h.api.clearFaults();
+                h.clock.set(new Date(Date.now() + 3_600_000).toISOString());
+            };
+
+            it("should not turn a transient omission into a permanent known gap on recover, and a healthy run afterwards lists the document without a stale gap", async () => {
+                h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+                audit503();
+                await initArchive(h);
+                await runOnce(h);
+                expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "export-unavailable" }]);
+
+                expect(await loseLedgerAndRecover()).toMatchObject({ knownGaps: 0 });
+                heal();
+                const summary = await runOnce(h);
+
+                const last = (await readCompletions(h.archive)).pop()!.value;
+                expect(last["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D001", "D002"]);
+                expect(last["gaps"]).toEqual([]);
+                expect(summary.historicalCoverage).toBe("unverified");
+            }, 240_000);
+
+            it("should not bring an old transient omission back when recover runs after a healthy completion", async () => {
+                h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+                audit503();
+                await initArchive(h);
+                await runOnce(h);
+                heal();
+                await runOnce(h);
+                expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([]);
+
+                expect(await loseLedgerAndRecover()).toMatchObject({ knownGaps: 0 });
+                const summary = await runOnce(h);
+
+                expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([]);
+                expect(summary.historicalCoverage).toBe("unverified");
+            }, 240_000);
+
+            it("should keep a permanent gap (the source removed the bytes) through recovery, as before", async () => {
+                h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+                h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 410, code: "SOURCE_REMOVED" } });
+                await initArchive(h);
+                await runOnce(h);
+                expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "source-removed" }]);
+
+                expect(await loseLedgerAndRecover()).toMatchObject({ knownGaps: 1 });
+                const summary = await runOnce(h);
+
+                expect(summary.historicalCoverage).toBe("known_gap");
+                expect((await readCompletions(h.archive)).pop()!.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "source-removed" }]);
+            }, 240_000);
+
+            it("should publish a gap-only completion when every included document is omitted, and restore it (latest and by snapshot) with its gaps and no documents", async () => {
+                h = await createHarness({ docs: [pairDoc("D002")] });
+                await initArchive(h);
+                await runOnce(h);
+                h.api.docs = [pairDoc("D001")];
+                audit503();
+
+                await runOnce(h);
+
+                const last = (await readCompletions(h.archive)).pop()!;
+                expect(last.value["entries"]).toEqual([]);
+                expect(last.value["gaps"]).toEqual([{ documentId: "D001", reasonCode: "export-unavailable" }]);
+                const latest = await restoreSelected({ latest: true });
+                expect(latest.documents).toEqual([]);
+                expect(latest.gaps).toEqual([{ documentId: "D001", reasonCode: "export-unavailable" }]);
+                const bySnapshot = await restoreSelected({ snapshotId: last.value["snapshotId"] });
+                expect(bySnapshot.documents).toEqual([]);
+                expect(bySnapshot.gaps).toEqual(latest.gaps);
+            }, 240_000);
+
+            it("should list an included document that has no artifacts at all as a gap (artifact-pending) next to a healthy one", async () => {
+                h = await createHarness({ docs: [{ ...pairDoc("D001"), artifacts: [] }, pairDoc("D002")] });
+                await initArchive(h);
+
+                await runOnce(h);
+
+                const last = (await readCompletions(h.archive)).pop()!.value;
+                expect(last["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D002"]);
+                expect(last["gaps"]).toEqual([{ documentId: "D001", reasonCode: "artifact-pending" }]);
+                expect((await restoreSelected({ latest: true })).gaps).toEqual([{ documentId: "D001", reasonCode: "artifact-pending" }]);
+            }, 240_000);
+        });
     });
 
     describe("preconditions", () => {

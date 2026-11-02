@@ -157,6 +157,8 @@ class RunExecution {
     /** Included documents whose manifest could not be written (the refusal), and included candidates the checks blocked: both stay out of the completion. */
     private readonly manifestRefusals = new Map<string, WorkerReasonCode>();
     private readonly blockedDocuments = new Map<string, WorkerReasonCode>();
+    /** Included candidates that arrived with no artifacts at all: nothing to download, so nothing to list; the completion says so. */
+    private readonly emptyDocuments = new Set<string>();
     /** The completion listing of this run, before this run writes any completion. */
     private completionListing: Awaited<ReturnType<LocalDestination["listCompletions"]>> | null = null;
     /** The archive's manifest files, listed once per run: the bound-manifest existence check and the index verdicts share it. */
@@ -437,6 +439,8 @@ class RunExecution {
             this.blockedCandidates.push(blocked);
             this.reasons.add(blocked);
             if (included && OPAQUE_ID.test(item.documentId)) this.blockedDocuments.set(item.documentId, blocked);
+        } else if (included && item.artifacts.length === 0) {
+            this.emptyDocuments.add(item.documentId);
         } else if (jobs.length > 0) {
             this.work.push({ documentId: item.documentId, metadataRevision: item.metadataRevision, artifacts: jobs });
         }
@@ -1137,6 +1141,8 @@ class RunExecution {
         const unproven = new Set([...this.ledgerEvidenceFailures].map(documentOf));
         const gaps: Array<{ documentId: string; reasonCode: WorkerReasonCode }> = [];
         for (const [documentId, reasonCode] of this.blockedDocuments) gaps.push({ documentId, reasonCode });
+        // The source offers the document but no file for it yet: the existing ARTIFACT_PENDING reason fits, and a later run can resolve it.
+        for (const documentId of this.emptyDocuments) if (!present.has(documentId)) gaps.push({ documentId, reasonCode: "artifact-pending" });
         for (const candidate of this.work) {
             if (present.has(candidate.documentId)) continue;
             const reasonCode = conflicted.has(candidate.documentId) ? "archive-conflict"
@@ -1178,14 +1184,16 @@ class RunExecution {
         }
         await this.republishMissingBound();
         await this.backfillManifests(publishedNow);
-        if (entries.length === 0 || !this.archiveOk) return;
+        // A snapshot whose included documents were all omitted still gets a (gap-only) completion: restore --latest must see it.
+        const omissions = this.omissionGaps(entries);
+        if (!this.archiveOk || (entries.length === 0 && omissions.length === 0)) return;
         const binding = this.state.snapshots.get(this.snapshotId);
         if (binding === undefined) throw new WorkerError("ledger-inconsistent");
         const completion = buildCompletion({
             companyId: this.companyId, sequence: binding.sequence, snapshotId: binding.snapshotId, runId: this.runId,
             scopeRevision: binding.scopeRevision, policyRevision: binding.policyRevision,
             destinationIdentity: this.dl.destinationIdentity, destinationRevision: this.dl.destinationRevision,
-            entries, gaps: [...this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })), ...this.omissionGaps(entries)],
+            entries, gaps: [...this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })), ...omissions],
         });
         const published = await this.archive.publishJson(completion.relativeKey, completion.bytes);
         if (!published.ok) {
