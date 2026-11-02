@@ -9,10 +9,11 @@ import { destinationKey, driveStateKey } from "domain/eformsign-backup/worker";
 import { assertLedgerRoom } from "infrastructure/eformsign-backup/worker/runner-common";
 import { readOutbox, writeOutbox } from "infrastructure/eformsign-backup/worker/drive-outbox";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
+import { DriveRunPhase } from "infrastructure/eformsign-backup/worker/runner-drive";
 import { DestinationLedger, controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runner-common";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
-import { hashOf, makePhaseRig, rigDoc, rigUuid, type PhaseRig } from "./helpers/drive-run-support";
+import { hashOf, makePhaseRig, rigDoc, rigUuid, type PhaseRig, type RigDoc } from "./helpers/drive-run-support";
 import {
     COMPLETION_KEY, JSON_KEY, MANIFEST_KEY, MIB, PDF_KEY, RUN_KEY, bindDrive, driveKeys, driveTree, probeWith, swapArchive, swapBack,
 } from "./helpers/drive-run-support";
@@ -731,6 +732,156 @@ describe("rebind completeness (BJJ-456 U5-F2), phase with a stubbed Drive", () =
         await rig.phase.publishRecords();
 
         expect(rig.recordUploads.filter((upload) => upload.key === doc.manifestKey)).toHaveLength(1); // only this run's own manifest
+    });
+});
+
+describe("history whose bytes are only staged (BJJ-456 PF2), phase with a stubbed Drive", () => {
+    let rig: PhaseRig;
+    afterEach(async () => { await rig.cleanup(); });
+    const oldRevision = `drive-layout-v1:${rigUuid(4)}`;
+    const AT = "2026-11-02T00:00:00.000Z";
+    type Setup = { local?: "verified" | "blocked" | "none"; localReason?: string; previousDrive?: boolean; knownLength?: boolean; staged?: "on-record" | "none" | "wrong-length" };
+
+    /** An artifact the snapshot no longer offers, the archive is down, and the ledger holds what an archive outage leaves behind. */
+    const stagedHistory = (doc: RigDoc, setup: Setup = {}): void => {
+        const { local = "blocked", localReason = "archive-unavailable", previousDrive = true, knownLength = true, staged = "on-record" } = setup;
+        const installation = rig.state().installation;
+        rig.knowArtifact(doc);
+        if (!knownLength) rig.state().artifacts.set(doc.job.artifactIdentity, { documentId: doc.documentId, artifactType: doc.job.artifactType, sha256: doc.job.sha256, byteLength: null });
+        if (local !== "none") {
+            rig.setEntry(doc, installation.destinationIdentity, installation.destinationRevision, local);
+            rig.state().destinations.get(destinationKey(doc.job.artifactIdentity, installation.destinationIdentity, installation.destinationRevision)).reasonCode = local === "blocked" ? localReason : null;
+        }
+        if (previousDrive) rig.setEntry(doc, "drive:rootFolder001", oldRevision, "verified");
+        if (staged !== "none") {
+            rig.state().staged.set(doc.job.artifactIdentity, { sha256: doc.job.sha256, byteLength: staged === "wrong-length" ? doc.pdf.length + 1 : doc.pdf.length, at: AT });
+        }
+    };
+    const currentEntry = (doc: RigDoc): { state: string } | undefined => rig.state().destinations.get(destinationKey(doc.job.artifactIdentity, rig.driveIdentity, rig.revision));
+    const queueManifest = async (doc: RigDoc): Promise<void> => {
+        await writeOutbox(rig.dir, doc.manifest.bytes);
+        await rig.deps.ledger.append("drive_record_pending", { destinationRevision: rig.revision, relativeKey: doc.manifestKey, sha256: doc.manifest.sha256 }, AT);
+    };
+    /** A phase over the same rig whose staged copy is exactly `bytes`. */
+    const phaseStagedAs = (bytes: Buffer): DriveRunPhase => DriveRunPhase.forRun(
+        rig.deps, rig.state().installation,
+        { readArchiveFile: async () => null, openStaged: () => (async function* () { yield bytes; })(), reverify: async () => "ok" } as never,
+        { path: rig.dir } as never, rig.host,
+    )!;
+
+    describe.each([
+        ["known length", true],
+        ["recovered, null length", false],
+    ])("%s", (_name, knownLength) => {
+        it.each<[string, Setup]>([
+            ["its local entry is blocked (non-terminal) and an earlier Drive revision had it", { local: "blocked", previousDrive: true }],
+            ["its local entry is blocked (non-terminal), no earlier Drive revision", { local: "blocked", previousDrive: false }],
+            ["no local entry at all, but an earlier Drive revision had it", { local: "none", previousDrive: true }],
+            ["its local entry is blocked on a transient reason and no earlier Drive revision had it", { local: "blocked", localReason: "network-timeout", previousDrive: false }],
+        ])("should upload it once to the new revision from the staged bytes, then publish the manifest it was waiting for, when %s", async (_case, setup) => {
+            rig = await makePhaseRig({ archiveOk: false });
+            const doc = rigDoc("D001");
+            stagedHistory(doc, { ...setup, knownLength });
+            await queueManifest(doc);
+
+            await rig.phase.processWork([]);
+
+            expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
+            expect(currentEntry(doc)?.state).toBe("verified");
+            expect(rig.phase.driveVerified(doc.job.artifactIdentity)).toBe(true);
+            // The manifest waited for the artifact and only now goes out, with the bytes the outbox kept.
+            expect(rig.recordUploads).toEqual([]);
+            await rig.phase.publishRecords();
+            expect(rig.recordUploads.map((upload) => upload.key)).toEqual([doc.manifestKey]);
+            expect(rig.recordUploads[0]!.bytes.equals(Buffer.from(doc.manifest.bytes))).toBe(true);
+            expect(rig.state().driveRecords.get(driveStateKey(rig.revision, doc.manifestKey))?.sha256).toBe(doc.manifest.sha256);
+            expect(rig.state().driveRecordsPending.has(driveStateKey(rig.revision, doc.manifestKey))).toBe(false);
+            // The earlier revision's verified entry is neither reused nor changed.
+            expect(rig.state().destinations.get(destinationKey(doc.job.artifactIdentity, "drive:rootFolder001", oldRevision))?.state).toBe(setup.previousDrive ? "verified" : undefined);
+        });
+
+        it("should keep the manifest pending while the artifact is not verified on the new revision", async () => {
+            rig = await makePhaseRig({ archiveOk: false });
+            const doc = rigDoc("D001");
+            stagedHistory(doc, { knownLength });
+            await queueManifest(doc);
+
+            await rig.phase.publishRecords();
+
+            expect(rig.recordUploads).toEqual([]);
+            expect(rig.state().driveRecordsPending.has(driveStateKey(rig.revision, doc.manifestKey))).toBe(true);
+        });
+
+        it.each<[string, Setup]>([
+            ["no staged copy is on record", { staged: "none" }],
+            ["the staged record names another length", { staged: "wrong-length" }],
+            ["its local entry is terminal and no earlier Drive revision had it", { local: "blocked", localReason: "exact-bytes-unavailable", previousDrive: false }],
+            ["there is neither a local entry nor an earlier Drive revision", { local: "none", previousDrive: false }],
+        ])("should select nothing when %s", async (_case, setup) => {
+            rig = await makePhaseRig({ archiveOk: false });
+            const doc = rigDoc("D001");
+            stagedHistory(doc, { ...setup, knownLength });
+
+            await expect(rig.phase.processWork([])).resolves.toBeUndefined();
+
+            expect(rig.artifactUploads).toEqual([]);
+            expect(currentEntry(doc)).toBeUndefined();
+        });
+
+        it.each([["not halted", false], ["halted by an earlier artifact", true]])("should make no upload, no entry and no crash when the staged bytes are missing or corrupt and the archive is unavailable (%s)", async (_label, halted) => {
+            rig = await makePhaseRig({ archiveOk: false });
+            const doc = rigDoc("D001");
+            stagedHistory(doc, { knownLength });
+            let setAside = 0;
+            rig.host.setStagingAside = async (job: { artifactIdentity: string }) => { if (job.artifactIdentity === doc.job.artifactIdentity) setAside += 1; };
+            let phase: DriveRunPhase = rig.phase;
+            let snapshot: Array<RigDoc["candidate"]> = [];
+            if (halted) {
+                const other = rigDoc("D002");
+                rig.knowArtifact(other);
+                snapshot = [other.candidate];
+                rig.destination.uploadArtifact = async () => ({ ok: false, failure: { kind: "http", httpStatus: 403, reason: "forbidden", retryAfterSeconds: null } });
+            }
+
+            for (const variant of ["missing", "corrupt"] as const) {
+                if (variant === "missing") rig.host.stagedUsable = async (job: { artifactIdentity: string }) => job.artifactIdentity !== doc.job.artifactIdentity;
+                else {
+                    rig.host.stagedUsable = async () => true;
+                    phase = phaseStagedAs(Buffer.from("%PDF-1.4\nnot the artifact\n%%EOF\n"));
+                }
+                await expect(phase.processWork(snapshot)).resolves.toBeUndefined();
+                expect(rig.artifactUploads).toEqual([]);
+                expect(currentEntry(doc)).toBeUndefined();
+                expect(setAside).toBe(0); // a corrupt staged copy found at discovery is left exactly as it is
+            }
+            if (halted) expect(rig.state().destinations.get(destinationKey(rigDoc("D002").job.artifactIdentity, rig.driveIdentity, rig.revision))?.state).toBe("blocked");
+        });
+    });
+
+    it("should upload a locally verified history artifact exactly once, even though it also has staged bytes and an earlier Drive revision", async () => {
+        rig = await makePhaseRig({ archiveOk: false });
+        const doc = rigDoc("D001");
+        stagedHistory(doc, { local: "verified", previousDrive: true });
+
+        await rig.phase.processWork([]);
+        await rig.phase.processWork([]);
+
+        expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
+        expect(currentEntry(doc)?.state).toBe("verified");
+    });
+
+    it("should still upload a locally verified artifact with no staged copy from the archive, as before", async () => {
+        rig = await makePhaseRig();
+        const doc = rigDoc("D001");
+        stagedHistory(doc, { local: "verified", previousDrive: false, staged: "none" });
+        rig.archiveFiles.set(doc.job.relativeKey, Buffer.from(doc.pdf));
+        let usable = false;
+        rig.host.stagedUsable = async () => usable;
+        rig.host.restage = async () => { usable = true; return { ok: true }; };
+
+        await rig.phase.processWork([]);
+
+        expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
     });
 });
 
