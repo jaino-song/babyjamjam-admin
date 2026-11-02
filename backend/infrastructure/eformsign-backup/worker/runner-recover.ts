@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import {
-    UUID_V4_PATTERN, WorkerError, completionContentDigest, completionSchema, decodeLedgerLine, judgeHistoricalCoverage,
+    UUID_V4_PATTERN, WorkerError, completionContentDigest, completionSchema, decodeLedgerLine, isPermanentGapReason, judgeHistoricalCoverage,
     parseCompletionName, type KnownGap, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { decodeCheckpoint } from "./ledger-checkpoint";
@@ -250,7 +250,8 @@ async function readCompletionFacts(archive: LocalDestination, companyId: string)
         if (!content.success || content.data.companyId !== companyId || content.data.sequence !== parsedName.sequence
             || completionContentDigest(content.data) !== parsedName.contentDigest) continue;
         valid.push(content.data);
-        for (const gap of content.data.gaps) gaps.set(`${gap.documentId}\u0000${gap.reasonCode}`, { documentId: gap.documentId, artifactIdentity: null, reasonCode: gap.reasonCode });
+        // Only permanent gaps are historical coverage; a transient omission says why one snapshot lacked a document (see ledger-state).
+        for (const gap of content.data.gaps.filter((candidate) => isPermanentGapReason(candidate.reasonCode))) gaps.set(`${gap.documentId}\u0000${gap.reasonCode}`, { documentId: gap.documentId, artifactIdentity: null, reasonCode: gap.reasonCode });
     }
     const known = [...gaps.values()].sort((a, b) => (a.documentId < b.documentId ? -1 : a.documentId > b.documentId ? 1 : a.reasonCode < b.reasonCode ? -1 : 1));
     return { floor, gaps: known, valid };

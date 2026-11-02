@@ -183,6 +183,23 @@ export function integrityErrorCount(entry: Pick<DestinationEntry, "history">): n
     return entry.history.filter((event) => event.to === "integrity_error").length;
 }
 
+/**
+ * The one classification of the reasons a gap can carry.
+ *
+ * PERMANENT: the bytes are gone at the source and no later run can fetch them (`source-removed`, `exact-bytes-unavailable`).
+ * These are the only reasons a destination transition turns into a known gap of the ledger, and the only completion gaps
+ * `recover` brings back as known gaps.
+ *
+ * TRANSIENT: every other code. A completion lists these for a document it omits (`export-unavailable`, `artifact-pending`,
+ * `artifact-integrity`, `archive-conflict`, `ledger-inconsistent`, `integrity-repeated`, ...): they say why that snapshot
+ * lacks the document, not that its bytes are gone, so they never become historical coverage. Most can resolve on a later
+ * run; `integrity-repeated` stays blocked until the source offers different bytes for the artifact.
+ */
+export const PERMANENT_GAP_REASONS = ["source-removed", "exact-bytes-unavailable"] as const;
+export function isPermanentGapReason(code: WorkerReasonCode | null): code is typeof PERMANENT_GAP_REASONS[number] {
+    return code !== null && (PERMANENT_GAP_REASONS as readonly string[]).includes(code);
+}
+
 function addGap(draft: LedgerState, gap: KnownGap): void {
     const exists = draft.gaps.some((known) => known.documentId === gap.documentId
         && known.artifactIdentity === gap.artifactIdentity && known.reasonCode === gap.reasonCode);
@@ -228,9 +245,7 @@ function applyTransition(draft: LedgerState, record: LedgerRecord & { type: "des
     const entry = draft.destinations.get(key);
     if ((entry?.state ?? null) !== body.from) fail("forbidden-transition");
     transitionDestination(body.from, body.to);
-    const gapCode = body.to === "blocked"
-        && (body.reasonCode === "source-removed" || body.reasonCode === "exact-bytes-unavailable")
-        ? body.reasonCode : null;
+    const gapCode = body.to === "blocked" && isPermanentGapReason(body.reasonCode) ? body.reasonCode : null;
     if (gapCode !== null) {
         const documentId = documentOf(draft, body.artifactIdentity, body.relativeKey ?? entry?.relativeKey ?? null);
         if (gapCode === "source-removed") draft.terminalUnavailable.add(body.artifactIdentity);

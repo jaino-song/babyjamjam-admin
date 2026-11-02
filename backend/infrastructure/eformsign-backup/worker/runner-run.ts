@@ -9,7 +9,7 @@ import {
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
-import { listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
+import { artifactIdentityDerives, listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
 import { readManifestHistory, type ManifestHistory, type ManifestSource } from "./runner-manifest-sources";
 import {
     ExportFailure, type CandidatePageView, type CandidateView, type SnapshotView,
@@ -78,6 +78,17 @@ export async function countDamagedBoundManifests(deps: RunnerDependencies, archi
     return damaged;
 }
 
+/**
+ * The failure a run ends with after everything else has been done and recorded (`ledger-inconsistent`, `archive-conflict`).
+ * It carries the run's summary, so the command line can still print the run's own lines before it exits.
+ */
+export class RunEndedWithFailure extends WorkerError {
+    constructor(reasonCode: WorkerReasonCode, readonly summary: RunSummary) {
+        super(reasonCode);
+        this.name = "RunEndedWithFailure";
+    }
+}
+
 /** A run that cannot get a usable snapshot ends as `failed` with this reason; it is an outcome, not an error. */
 class StageFailure extends Error {
     constructor(readonly reasonCode: WorkerReasonCode) {
@@ -143,6 +154,11 @@ class RunExecution {
     private readonly ledgerEvidenceFailures = new Set<string>();
     /** Verified artifacts a manifest on the archive contradicts: the file is left as it is and the run ends visibly. */
     private readonly indexConflicts = new Set<string>();
+    /** Included documents whose manifest could not be written (the refusal), and included candidates the checks blocked: both stay out of the completion. */
+    private readonly manifestRefusals = new Map<string, WorkerReasonCode>();
+    private readonly blockedDocuments = new Map<string, WorkerReasonCode>();
+    /** Included candidates that arrived with no artifacts at all: nothing to download, so nothing to list; the completion says so. */
+    private readonly emptyDocuments = new Set<string>();
     /** The completion listing of this run, before this run writes any completion. */
     private completionListing: Awaited<ReturnType<LocalDestination["listCompletions"]>> | null = null;
     /** The archive's manifest files, listed once per run: the bound-manifest existence check and the index verdicts share it. */
@@ -189,8 +205,8 @@ class RunExecution {
         }
         const summary = await this.finish();
         // Everything else has been done and recorded; the operator must still see that recovery would lose these artifacts.
-        if (this.ledgerEvidenceFailures.size > 0) throw new WorkerError("ledger-inconsistent");
-        if (this.indexConflicts.size > 0) throw new WorkerError("archive-conflict");
+        if (this.ledgerEvidenceFailures.size > 0) throw new RunEndedWithFailure("ledger-inconsistent", summary);
+        if (this.indexConflicts.size > 0) throw new RunEndedWithFailure("archive-conflict", summary);
         return summary;
     }
 
@@ -422,6 +438,9 @@ class RunExecution {
         if (blocked !== null) {
             this.blockedCandidates.push(blocked);
             this.reasons.add(blocked);
+            if (included && OPAQUE_ID.test(item.documentId)) this.blockedDocuments.set(item.documentId, blocked);
+        } else if (included && item.artifacts.length === 0) {
+            this.emptyDocuments.add(item.documentId);
         } else if (jobs.length > 0) {
             this.work.push({ documentId: item.documentId, metadataRevision: item.metadataRevision, artifacts: jobs });
         }
@@ -864,7 +883,7 @@ class RunExecution {
      * the artifact set it was built from by its digest: this snapshot's candidate or any set the retained journals saw for
      * exactly this revision, never "the latest" source.
      */
-    private manifestLevel(key: string, manifest: Manifest, digest: string, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" {
+    private manifestLevel(key: string, manifest: Manifest, digest: string, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" | "variant" {
         const named = completions.get(key);
         if (named !== undefined && [...named].some((expected) => expected !== digest)) return "bad";
         const builtDigest = (source: ManifestSource): string => this.manifestOf(source).manifest.sha256;
@@ -877,8 +896,28 @@ class RunExecution {
         const acknowledged = this.state.manifests.get(key);
         if (acknowledged !== undefined && acknowledged.sha256 !== digest) return matched ? "unproven" : "bad";
         if (matched) return "ok";
-        if (current === undefined && variants.length === 0) return "ok"; // nothing to compare the bytes with: the facts decide
-        return acknowledged !== undefined ? "unproven" : "bad";
+        if (acknowledged !== undefined && (current !== undefined || variants.length > 0)) return "unproven";
+        // Not the current candidate's file and not a set the retained journals saw: another variant, e.g. one published before an
+        // archive-only recovery. It is no contradiction of the current candidate (only the file whose digest it is can be compared
+        // with it); the retained evidence for its artifacts decides (variantLevel). A legacy name carries no digest, so it is
+        // judged the same way, by the digest of its raw bytes.
+        return "variant";
+    }
+
+    /**
+     * A variant no retained observation matches is `bad` when any artifact the ledger knows contradicts it (digest, type,
+     * keys, identity, length), whether or not that artifact is one the caller wants; artifacts the ledger never saw (an
+     * audit trail that was gone at the source) neither confirm nor contradict it.
+     */
+    private async variantLevel(manifest: Manifest, sizes: Map<string, number | null>): Promise<"ok" | "bad"> {
+        for (const artifact of manifest.artifacts) {
+            // Never skipped, whatever the ledger knows: an identity its own claims do not derive is false (the shared validator
+            // already refuses such a file; this keeps the variant judgement sound on its own).
+            if (!artifactIdentityDerives(this.companyId, manifest.documentId, artifact)) return "bad";
+            if (!this.state.artifacts.has(artifact.artifactIdentity)) continue;
+            if (await this.artifactFacts(manifest, artifact, sizes) === "bad") return "bad";
+        }
+        return "ok";
     }
 
     /** One artifact entry of a manifest against what the ledger retained for it. Length comes from the ledger, else from the stored file's size. */
@@ -966,7 +1005,8 @@ class RunExecution {
                     continue;
                 }
                 if (contradicts(file.key, parsed.sha256)) this.failIndexConflict(file.key);
-                const level = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
+                const judged = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
+                const level = judged === "variant" ? await this.variantLevel(parsed.manifest, sizes) : judged;
                 for (const artifact of parsed.manifest.artifacts) {
                     if (!wanted.has(artifact.artifactIdentity)) continue;
                     note(artifact.artifactIdentity, level === "ok" ? await this.artifactFacts(parsed.manifest, artifact, sizes) : level);
@@ -1109,6 +1149,41 @@ class RunExecution {
         }
     }
 
+    /**
+     * Every document this snapshot includes but the completion does not list is a gap of that completion, with the reason it
+     * is missing, so a restore from it never leaves a document out silently: a manifest or index conflict, a manifest that
+     * could not be written, a candidate the checks blocked, or (the pair is not complete) the reason the ledger holds for
+     * its first artifact that is not verified. Reason codes are the existing ones; nothing is invented.
+     */
+    private omissionGaps(listed: ReadonlyArray<{ documentId: string }>): Array<{ documentId: string; reasonCode: WorkerReasonCode }> {
+        const present = new Set(listed.map((entry) => entry.documentId));
+        const documentOf = (subject: string): string | undefined => parseManifestKey(subject)?.documentId ?? this.state.artifacts.get(subject)?.documentId;
+        const conflicted = new Set([...this.indexConflicts].map(documentOf));
+        const unproven = new Set([...this.ledgerEvidenceFailures].map(documentOf));
+        const gaps: Array<{ documentId: string; reasonCode: WorkerReasonCode }> = [];
+        for (const [documentId, reasonCode] of this.blockedDocuments) gaps.push({ documentId, reasonCode });
+        // The source offers the document but no file for it yet: the existing ARTIFACT_PENDING reason fits, and a later run can resolve it.
+        for (const documentId of this.emptyDocuments) if (!present.has(documentId)) gaps.push({ documentId, reasonCode: "artifact-pending" });
+        for (const candidate of this.work) {
+            if (present.has(candidate.documentId)) continue;
+            const reasonCode = conflicted.has(candidate.documentId) ? "archive-conflict"
+                : unproven.has(candidate.documentId) ? "ledger-inconsistent"
+                    : this.manifestRefusals.get(candidate.documentId) ?? this.pendingReason(candidate);
+            if (reasonCode !== null) gaps.push({ documentId: candidate.documentId, reasonCode });
+        }
+        return gaps;
+    }
+
+    /** What the ledger says about the first artifact of the candidate that is not verified; `null` when all are. */
+    private pendingReason(candidate: WorkCandidate): WorkerReasonCode | null {
+        for (const job of candidate.artifacts) {
+            const entry = this.dl.entryOf(job.artifactIdentity);
+            if (entry?.state === "verified") continue;
+            return entry?.reasonCode ?? (entry?.state === "integrity_error" ? "artifact-integrity" : "artifact-pending");
+        }
+        return null;
+    }
+
     private async publishRecords(): Promise<void> {
         if (this.snapshotId === null) return;
         const entries: Array<{ documentId: string; metadataRevision: string; manifestSha256: string; manifestKey: string }> = [];
@@ -1120,6 +1195,7 @@ class RunExecution {
             const written = await this.writeManifest(candidate);
             if (!written.ok) {
                 this.refuseManifest(written.reasonCode);
+                this.manifestRefusals.set(candidate.documentId, written.reasonCode);
                 continue;
             }
             await this.fault("after-manifest-before-record");
@@ -1129,14 +1205,16 @@ class RunExecution {
         }
         await this.republishMissingBound();
         await this.backfillManifests(publishedNow);
-        if (entries.length === 0 || !this.archiveOk) return;
+        // A snapshot whose included documents were all omitted still gets a (gap-only) completion: restore --latest must see it.
+        const omissions = this.omissionGaps(entries);
+        if (!this.archiveOk || (entries.length === 0 && omissions.length === 0)) return;
         const binding = this.state.snapshots.get(this.snapshotId);
         if (binding === undefined) throw new WorkerError("ledger-inconsistent");
         const completion = buildCompletion({
             companyId: this.companyId, sequence: binding.sequence, snapshotId: binding.snapshotId, runId: this.runId,
             scopeRevision: binding.scopeRevision, policyRevision: binding.policyRevision,
             destinationIdentity: this.dl.destinationIdentity, destinationRevision: this.dl.destinationRevision,
-            entries, gaps: this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })),
+            entries, gaps: [...this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })), ...omissions],
         });
         const published = await this.archive.publishJson(completion.relativeKey, completion.bytes);
         if (!published.ok) {

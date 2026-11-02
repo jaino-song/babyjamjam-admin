@@ -1,6 +1,6 @@
 import {
     WorkerError, applyLedgerRecord, applyLedgerRecords, destinationKey, emptyLedgerState,
-    integrityErrorCount, judgeHistoricalCoverage, ledgerStateFromJson, ledgerStateToJson, nextSnapshotSequence,
+    integrityErrorCount, isPermanentGapReason, judgeHistoricalCoverage, ledgerStateFromJson, ledgerStateToJson, nextSnapshotSequence,
     type LedgerBodies, type LedgerRecord, type LedgerRecordType, type LedgerState,
 } from "domain/eformsign-backup/worker";
 import { canonicalJson } from "domain/eformsign-backup/source-evidence";
@@ -374,5 +374,15 @@ describe("ledger state JSON (checkpoint)", () => {
         for (const broken of [{ ...json, extra: 1 }, { ...json, schemaVersion: 2 }, { ...json, lastSeq: -1 }, { ...json, runs: "x" }, null, 5, []]) {
             expect(reasonOf(() => ledgerStateFromJson(broken))).toBe("ledger-schema");
         }
+    });
+});
+
+describe("gap reason classification (BJJ-455 P2 FU-13-F1)", () => {
+    it("should call only the reasons that produce known gaps permanent, and every omission reason a completion can carry transient", () => {
+        expect(["source-removed", "exact-bytes-unavailable"].every((code) => isPermanentGapReason(code as never))).toBe(true);
+        for (const code of ["export-unavailable", "artifact-pending", "artifact-integrity", "archive-conflict", "ledger-inconsistent", "integrity-repeated"]) {
+            expect(isPermanentGapReason(code as never)).toBe(false);
+        }
+        expect(isPermanentGapReason(null)).toBe(false);
     });
 });

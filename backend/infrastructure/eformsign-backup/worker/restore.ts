@@ -5,6 +5,7 @@ import {
     WorkerError, isPathIdentifier, manifestSchema, parseManifestKey, parseManifestName, selectCompletion,
     type ArchiveArtifactType, type Completion, type Manifest, type QuarantinedEntry,
 } from "domain/eformsign-backup/worker";
+import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import { createRealFsProbe } from "./fs-probe";
 import { LocalDestination } from "./local-destination";
 import { sha256Hex } from "./runner-common";
@@ -103,6 +104,22 @@ function artifactSetOf(manifest: Manifest): string {
 }
 
 /**
+ * Whether a manifest artifact's identity is the one its own claims (owner, document, type, digest, length) derive, so no
+ * consumer ever takes a claimed identity on trust. Needs no ledger and no other file.
+ */
+export function artifactIdentityDerives(
+    companyId: string, documentId: string, artifact: { artifactType: ArchiveArtifactType; artifactIdentity: string; sha256: string; byteLength: number },
+): boolean {
+    try {
+        return artifactIdentity({
+            companyId, documentId, artifactKind: artifact.artifactType, contentSha256: artifact.sha256, byteLength: artifact.byteLength,
+        }) === artifact.artifactIdentity;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * The one validator of a manifest's bytes, shared by restore, recovery and the runner's indexing, so none of them can
  * accept what another refuses: the digest the caller expects (a completion entry), the digest a content-versioned name
  * carries (the name must be the raw file's own SHA-256), the schema, and the owner, document and revision. No second read.
@@ -124,6 +141,9 @@ export function parseManifestBytes(
     }
     if (!parsed.success || parsed.data.companyId !== expect.companyId || parsed.data.documentId !== expect.documentId
         || parsed.data.metadataRevision !== expect.metadataRevision) throw new WorkerError("artifact-integrity");
+    // Every claimed identity must derive from its own claims: a false one is an invalid file for every consumer (indexing,
+    // restore, recovery), exactly like a name that does not match the bytes.
+    if (!parsed.data.artifacts.every((artifact) => artifactIdentityDerives(expect.companyId, expect.documentId, artifact))) throw new WorkerError("artifact-integrity");
     return { manifest: parsed.data, sha256 };
 }
 

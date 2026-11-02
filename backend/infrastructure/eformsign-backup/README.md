@@ -101,6 +101,15 @@ itself, which the worker verifies against `/proc/locks`:
 `flock` exits 75 when another worker holds the lock; treat that as "skipped,
 overlapping run", not as a failure.
 
+`flock` itself creates `<control>/worker.lock` when it is missing, with the process
+umask (a `0666` file minus the umask, so often group- and world-readable); the worker
+never creates it. What keeps other users away from it is the control directory, which
+should be `0700` (owner only) and owned by the worker user. The worker enforces only that it is
+not writable by group or others, which still lets other users traverse it and read the lock
+file, so set `0700` yourself. If the control directory does not exist, `flock` fails by itself with exit 66
+(`EX_NOINPUT`) and a path on stderr before the worker runs; the worker's own
+`lock-not-held` (78) is what a worker started without `flock` reports.
+
 | command | what it does |
 | --- | --- |
 | `init` | first install only: archive marker, control marker, first ledger record |
@@ -128,6 +137,28 @@ an excluded one never changes the status. Documents gone at the source
 (`source-removed`, `exact-bytes-unavailable`) are gaps, reported as
 `known_gap` coverage, not as `blocked`. `failed` means no usable snapshot.
 Reason codes in the run record say why.
+
+A completion lists every document the snapshot includes but the completion does not
+contain as a gap, with the reason: `archive-conflict` when a manifest of the document
+conflicts, `ledger-inconsistent` when the ledger's evidence for it cannot be proven,
+the refusal itself when its manifest could not be written, the check that blocked the
+candidate (a candidate whose document id is not a valid id cannot be named in a
+completion; only the run record's reason codes report it), or, while its pair is not complete, the reason the ledger holds for the
+artifact that is not verified (for example `export-unavailable`, `artifact-pending`,
+`artifact-integrity`). An included document the source offered with no artifacts at all
+is listed as `artifact-pending`. If every included document of a snapshot is omitted, the
+completion still gets published, with no entries and those gaps, so `restore --latest`
+selects it, reports the gaps and restores nothing; to restore the documents an earlier
+completion holds, run restore with `--snapshot <that snapshot id>` instead. On a first
+run where no document has a complete pair yet, this gap-only completion also means
+`--allow-incomplete` does not apply (it is only used when no completion exists). The gaps appear in
+`restore-report.json`, so `--latest` never leaves a document out silently. A document that
+is no longer in the snapshot is not a gap of it.
+
+Only permanent gaps (`source-removed`, `exact-bytes-unavailable`: the bytes are gone at the
+source) are historical coverage. `recover` brings back only those from the completions as
+known gaps; every other reason says why one snapshot lacked a document and a later run can
+still resolve it, so it stays in that completion and is not imported.
 
 ## worker.json
 
@@ -218,7 +249,8 @@ Every refusal below is a reason code only; the path is never printed.
   `control-unavailable` (exit 74). The exception is a control directory that is
   missing altogether: `init`, `run`, `verify` and `recover` check the lock first, and a
   missing `<control>/worker.lock` is `lock-not-held` (exit 78), not
-  `control-unavailable`. Only `inspect`, which skips the lock check, reports a
+  `control-unavailable`. (Under the documented `flock -n -F -E 75 <control>/worker.lock`
+  form a missing control directory never gets that far: `flock` itself exits 66 first.) Only `inspect`, which skips the lock check, reports a
   missing control directory as `control-unavailable` (exit 74). Its ledger files are created 0600 and its
   directories 0700; `<control>/staging` is created 0700 and must be owned by the worker user and not
   writable by group or others.
@@ -241,7 +273,8 @@ Worker (`scripts/eformsign-backup-worker.ts`):
 
 | exit | meaning |
 | --- | --- |
-| 0 | ok. A `run` that ends `partial` or `blocked` is still 0; read the `run_*` event |
+| 0 | ok. A `run` that ends `partial` or `blocked` is still 0; read the `run_*` event. The exceptions are a run that ends in `archive-conflict` or `ledger-inconsistent` (both 69): it has done and recorded all its other work, and its `run_*` and `run_reason` lines are still printed on stdout before the exit |
+| 66 | not the worker's: `flock` exits 66 (`EX_NOINPUT`) when `<control>` does not exist, before the worker runs |
 | 69 | state or archive: `not-initialized`, `recovery-required`, `ledger-duplicate-install`, `ledger-inconsistent`, `archive-identity-mismatch`, `archive-marker-invalid`, `archive-unavailable`, `archive-conflict`, `archive-not-mount-point`, `archive-unsafe-path`, `archive-space` |
 | 70 | internal: any other reason code or an unexpected error |
 | 74 | control directory: `control-unavailable`, `control-space` |
@@ -304,7 +337,7 @@ file's own bytes: the same artifact claims always give the same file, and a
 revision whose PDFs the source later offers with different bytes gets a second
 file beside the first. Files named `<metadataRevision>.json` (written by earlier
 builds) are still read and are never modified; both shapes can sit side by side.
-A file whose name does not match its bytes is treated as damaged. A manifest is
+A file whose name does not match its bytes, or one that lists an artifact whose identity does not derive from its own claims, is treated as damaged (by `run`, `verify --all`, `recover` and restore alike). A manifest is
 written as soon as one artifact of the revision is verified, before its sibling
 arrives; only a completion means the whole pair is there.
 
@@ -316,6 +349,12 @@ written and the run ends in `archive-conflict` after its other work. The existen
 does not read present bound manifests (damage to one is found by `verify --all`), but
 `run` still reads the relevant present manifests of documents outside the snapshot while
 it backfills missing manifests.
+
+Remediation for a damaged bound manifest (reported by `verify --all`, or by a `run`
+that ends in `archive-conflict`): move the damaged file aside (rename it; do not delete
+it, it is the evidence). The next `run` then finds it missing and publishes it again
+byte for byte if it can rebuild it; if it cannot, put back an intact copy of the file
+from a backup instead. Then run `verify --all` and expect exit 0.
 
 Rollback: an older build does not know the versioned names. Once this build has
 written to an archive, going back to older code alone leaves the restore script
