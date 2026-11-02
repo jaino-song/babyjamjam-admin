@@ -266,6 +266,31 @@ describe("T-WRK-12/BJJ-456 U7: restore-drive, a verified mirror of the Drive arc
         expect(result.err).toEqual(["drive-conflict"]);
     }, 180_000);
 
+    for (const order of ["failing copy first", "verifying copy first"] as const) {
+        it(`should report a path two Drive files map to once, as drive-conflict, and not count it verified (${order})`, async () => {
+            const populated = await twoSnapshots();
+            const key = artifactKeyOf(populated, "D004", "document");
+            const originalId = populated.ids.get(key)!;
+            const original = dh.drive.node(originalId)!;
+            // The twin has the name but not the content: it fails verification (the digest in the name). Listing order is by file id.
+            const garbage = Buffer.from("not the document the name claims");
+            const twinId = order === "failing copy first" ? "-".repeat(12) : `${originalId}Z`;
+            dh.drive.seed({ id: twinId, name: original.name, mimeType: original.mimeType, parents: original.parents, bytes: garbage });
+            const mirror = outDir("mirror");
+
+            const result = await cli(restoreArgs(mirror));
+
+            const report = await readReport(mirror);
+            expect(report.failures).toEqual([{ relativeKey: key, reason: "drive-conflict" }]);
+            expect([report.verified, report.failed]).toEqual([populated.ids.size - 1, 1]);
+            expect(JSON.parse(result.out[0]!)).toMatchObject({ event: "restore_drive_failed", counts: { verified: populated.ids.size - 1, failed: 1 } });
+            expect(result.code).toBe(65);
+            expect(result.err).toEqual(["drive-conflict"]);
+            // A verified copy that was already linked stays in place.
+            expect((await fs.readFile(path.join(mirror, key))).equals(populated.bytes.get(key)!)).toBe(true);
+        }, 180_000);
+    }
+
     it("should not write a forged manifest, a completion whose name disagrees with its content, or a file that is not part of the archive", async () => {
         const populated = await twoSnapshots();
         const manifestKey = [...populated.ids.keys()].find((key) => key.includes("/D001/manifests/"))!;
@@ -431,6 +456,30 @@ describe("T-WRK-12/BJJ-456 U7: restore-drive, a verified mirror of the Drive arc
         // The same tree through the alias is as well refused, and an unrelated sibling is fine.
         const fine = await cli(["--config", driveConfigPath, "--out", path.join(real, "elsewhere")]);
         expect(fine.code).not.toBe(64);
+    });
+
+    it("should report a configured archive or control path that exists but cannot be resolved as config-invalid (78), before any request", async () => {
+        const real = path.join(h.base, "real-parent-2");
+        await fs.mkdir(real, { mode: 0o700 });
+        const dangling = path.join(h.base, "dangling-link");
+        await fs.symlink(path.join(h.base, "no-such-target"), dangling);
+        const loopA = path.join(h.base, "loop-a");
+        await fs.symlink(path.join(h.base, "loop-b"), loopA);
+        await fs.symlink(loopA, path.join(h.base, "loop-b"));
+        for (const tree of ["archive", "control"] as const) {
+            for (const broken of [dangling, loopA]) {
+                const configPath = path.join(h.base, `worker-${tree}-${path.basename(broken)}.json`);
+                const tree_ = { path: broken, reserveBytes: 64 * 1024 * 1024, reserveInodes: 1000 };
+                await fs.writeFile(configPath, JSON.stringify(configJson(h, { drive: dh.config, [tree]: tree_ } as never)), { mode: 0o600 });
+                const requests = dh.drive.requests.length;
+
+                const result = await cli(["--config", configPath, "--out", path.join(real, "out")]);
+
+                expect([result.code, result.err, result.out]).toEqual([78, ["config-invalid"], []]);
+                expect(dh.drive.requests.length).toBe(requests);
+                expect(await fs.readdir(real)).toEqual([]);
+            }
+        }
     });
 
     /** Seeds a one-document archive on Drive without a run: its artifact, manifest and completion are built here. */

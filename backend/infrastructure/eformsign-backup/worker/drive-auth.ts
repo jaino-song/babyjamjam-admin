@@ -107,8 +107,8 @@ export class DriveTokenSource implements DriveTokenProvider {
         if (!force && this.cached && this.options.now().getTime() < this.cached.validUntil) {
             return Promise.resolve(driveOk(this.cached.token));
         }
+        if (force) this.cached = null; // the token that was just refused must not be served again, whatever refresh answers
         if (this.inflight) return this.inflight;
-        if (force) this.cached = null; // the token that was just refused must not be served again if the refresh fails
         const pending = this.refresh().finally(() => { this.inflight = null; });
         this.inflight = pending;
         return pending;

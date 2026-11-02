@@ -95,8 +95,8 @@ async function openDrive(config: WorkerConfig, clock: Clock, fetchImpl: typeof f
 }
 
 /**
- * `drive-setup` is a Drive-only command: an unusable secret file ends it (78). `run` and `recover` have a local side that must not
- * depend on Drive (design 7.1), so for them the failure becomes a dependency of kind `unavailable` (A8).
+ * `drive-setup` is a Drive-only command: an unusable secret file ends it (78). `run`, `recover` and `verify` have a local side that
+ * must not depend on Drive (design 7.1), so for them the failure becomes a dependency of kind `unavailable` (A8).
  */
 async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock: Clock, fetchImpl: typeof fetch | undefined): Promise<DriveDependency | null> {
     try {
