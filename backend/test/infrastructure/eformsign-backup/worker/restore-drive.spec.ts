@@ -2,13 +2,15 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { DriveDestination, type DriveBinding, type DriveNodeLedger } from "infrastructure/eformsign-backup/worker/drive-destination";
+import { buildCompletion, buildManifest, manifestKey as manifestKeyOf } from "domain/eformsign-backup/worker";
+import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import { runRestoreDriveCli } from "infrastructure/eformsign-backup/worker/cli-restore-drive";
 import { restoreFromArchive } from "infrastructure/eformsign-backup/worker/restore";
 
 import { startDriveFakes, makeDriveClient, bytesFrom, type DriveHarness } from "./helpers/drive-support";
 import { driveFaults } from "./helpers/fake-drive-server";
 import {
-    ARCHIVE_ID, COMPANY, configJson, createHarness, destroyHarness, initArchive, listFiles, makeBase, pairDoc, readJsonFile, runOnce, sha256Of, singleDoc,
+    ARCHIVE_ID, COMPANY, configJson, createHarness, destroyHarness, initArchive, listFiles, makeBase, pairDoc, pdfOf, readJsonFile, runOnce, sha256Of, singleDoc,
     type Harness,
 } from "./helpers/runner-support";
 
@@ -405,4 +407,133 @@ describe("T-WRK-12/BJJ-456 U7: restore-drive, a verified mirror of the Drive arc
         const everything = JSON.stringify([result.out, result.err]);
         for (const secret of ["CANARY-SECRET-BODY-7f3a", dh.oauth.refreshToken, dh.oauth.clientSecret, "127.0.0.1", "Bearer"]) expect(everything).not.toContain(secret);
     }, 180_000);
+
+    it("should refuse an --out that reaches a missing archive or control tree through an existing symlink, before any request (64)", async () => {
+        const real = path.join(h.base, "real-parent");
+        const alias = path.join(h.base, "alias-parent");
+        await fs.mkdir(real, { mode: 0o700 });
+        await fs.symlink(real, alias);
+        for (const tree of ["archive", "control"] as const) {
+            const configPath = path.join(h.base, `worker-${tree}.json`);
+            const tree_ = { path: path.join(alias, tree), reserveBytes: 64 * 1024 * 1024, reserveInodes: 1000 };
+            await fs.writeFile(configPath, JSON.stringify(configJson(h, { drive: dh.config, [tree]: tree_ } as never)), { mode: 0o600 });
+            const requests = dh.drive.requests.length;
+            const tokens = dh.oauth.tokenRequests;
+
+            for (const target of [path.join(real, tree), path.join(real, tree, "inner")]) {
+                const result = await cli(["--config", configPath, "--out", target]);
+                expect([result.code, result.err, result.out]).toEqual([64, ["restore-output-invalid"], []]);
+            }
+            expect(dh.drive.requests.length).toBe(requests);
+            expect(dh.oauth.tokenRequests).toBe(tokens);
+            expect(await fs.readdir(real)).toEqual([]);
+        }
+        // The same tree through the alias is as well refused, and an unrelated sibling is fine.
+        const fine = await cli(["--config", driveConfigPath, "--out", path.join(real, "elsewhere")]);
+        expect(fine.code).not.toBe(64);
+    });
+
+    /** Seeds a one-document archive on Drive without a run: its artifact, manifest and completion are built here. */
+    async function seedOneDocument(options: { wrongReference?: boolean; wrongLength?: boolean }): Promise<{ rootId: string; artifactKey: string; manifestKey: string; completionKey: string }> {
+        const { rootId } = await createRoot(dh, "installation-seed");
+        const pdf = pdfOf("seeded document");
+        const sha256 = sha256Of(pdf);
+        const metadataRevision = "a".repeat(64);
+        const byteLength = pdf.length + (options.wrongLength ? 1 : 0);
+        const manifest = buildManifest({
+            companyId: COMPANY, documentId: "D001", metadataRevision,
+            artifacts: [{ artifactType: "document", sha256, byteLength, artifactIdentity: artifactIdentity({ companyId: COMPANY, documentId: "D001", artifactKind: "document", contentSha256: sha256, byteLength }) }],
+        });
+        const manifestKey = manifestKeyOf({ companyId: COMPANY, documentId: "D001", metadataRevision });
+        const completion = buildCompletion({
+            companyId: COMPANY, sequence: 1, snapshotId: "snapshot-seed", runId: "22222222-2222-4222-8222-222222222222", scopeRevision: "scope-seed",
+            policyRevision: "policy-seed", destinationIdentity: "local:seed", destinationRevision: "seed",
+            entries: [{ documentId: "D001", metadataRevision, manifestKey, manifestSha256: options.wrongReference ? "b".repeat(64) : sha256Of(manifest.bytes) }], gaps: [],
+        });
+        const artifactKey = manifest.value.artifacts[0]!.relativeKey;
+        const entries: Array<[string, Buffer]> = [[artifactKey, pdf], [manifestKey, Buffer.from(manifest.bytes)], [completion.relativeKey, Buffer.from(completion.bytes)]];
+        const dirs = new Map<string, string>([["", rootId]]);
+        let counter = 0;
+        for (const [key, bytes] of entries) {
+            const parts = key.split("/");
+            let prefix = "";
+            let parent = rootId;
+            for (const name of parts.slice(0, -1)) {
+                prefix = prefix === "" ? name : `${prefix}/${name}`;
+                if (!dirs.has(prefix)) {
+                    const id = `SeedFolder${String(++counter).padStart(8, "0")}`;
+                    dh.drive.seed({ id, name, parents: [parent] });
+                    dirs.set(prefix, id);
+                }
+                parent = dirs.get(prefix)!;
+            }
+            dh.drive.seed({ id: `SeedFile${String(++counter).padStart(10, "0")}`, name: parts[parts.length - 1]!, mimeType: key.endsWith(".pdf") ? "application/pdf" : "application/json", parents: [parent], bytes });
+        }
+        return { rootId, artifactKey, manifestKey, completionKey: completion.relativeKey };
+    }
+    const restoreLatest = (mirror: string): Promise<unknown> => fs.mkdir(path.join(outBase, "restored"), { mode: 0o700 })
+        .then(() => restoreFromArchive({ archivePath: mirror, companyId: COMPANY, selector: { latest: true }, outDir: path.join(outBase, "restored") }));
+
+    it("should write a consistent artifact, manifest and completion and restore them (the control of the two reference tests)", async () => {
+        const seeded = await seedOneDocument({});
+        const mirror = outDir("mirror");
+
+        const result = await cli(restoreArgs(mirror));
+
+        expect([result.code, result.err]).toEqual([0, []]);
+        expect(await restoreLatest(mirror)).toMatchObject({ documents: [{ documentId: "D001" }] });
+        expect(await exists(path.join(mirror, seeded.completionKey))).toBe(true);
+    });
+
+    it("should not write a completion whose manifest digest is not the digest of the verified manifest (exit 65)", async () => {
+        const seeded = await seedOneDocument({ wrongReference: true });
+        const mirror = outDir("mirror");
+
+        const result = await cli(restoreArgs(mirror));
+
+        expect([result.code, result.err]).toEqual([65, ["artifact-integrity"]]);
+        expect((await readReport(mirror)).failures).toEqual([{ relativeKey: seeded.completionKey, reason: "artifact-integrity" }]);
+        expect(await exists(path.join(mirror, seeded.completionKey))).toBe(false);
+        expect(await exists(path.join(mirror, seeded.manifestKey))).toBe(true);
+        expect(await exists(path.join(mirror, seeded.artifactKey))).toBe(true);
+    });
+
+    it("should not write a manifest that declares another length than its verified artifact has (exit 65)", async () => {
+        const seeded = await seedOneDocument({ wrongLength: true });
+        const mirror = outDir("mirror");
+
+        const result = await cli(restoreArgs(mirror));
+
+        expect([result.code, result.err]).toEqual([65, ["artifact-integrity"]]);
+        expect((await readReport(mirror)).failures).toEqual([{ relativeKey: seeded.manifestKey, reason: "artifact-integrity" }]);
+        expect(await exists(path.join(mirror, seeded.manifestKey))).toBe(false);
+        // The completion that names it is written as it is on Drive; the unchanged restore then fails loudly instead of passing.
+        expect(await exists(path.join(mirror, seeded.completionKey))).toBe(true);
+        await expect(restoreLatest(mirror)).rejects.toMatchObject({ reasonCode: "artifact-integrity" });
+    });
+
+    it("should leave no non-empty .part and no mirrored file behind when a transfer dies mid-body (69)", async () => {
+        const seeded = await seedOneDocument({});
+        const interrupted: typeof fetch = async (input, init) => {
+            const response = await fetch(input, init);
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (!url.includes("alt=media")) return response;
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            let sent = false;
+            return new Response(new ReadableStream({
+                pull(controller) {
+                    if (!sent) { sent = true; controller.enqueue(bytes.subarray(0, 32)); } else controller.error(new Error("synthetic transfer failure"));
+                },
+            }), { status: 200 });
+        };
+        const mirror = outDir("mirror");
+
+        const result = await cli(restoreArgs(mirror), { fetchImpl: interrupted });
+
+        expect([result.code, result.err]).toEqual([69, ["network-timeout"]]);
+        const parts = await fs.readdir(path.join(mirror, ".restore-drive-tmp"));
+        expect(parts.length).toBeGreaterThan(0);
+        for (const part of parts) expect((await fs.stat(path.join(mirror, ".restore-drive-tmp", part))).size).toBe(0);
+        expect(await exists(path.join(mirror, seeded.artifactKey))).toBe(false);
+    });
 });

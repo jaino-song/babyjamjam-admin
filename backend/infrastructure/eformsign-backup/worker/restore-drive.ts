@@ -64,11 +64,28 @@ function inside(parent: string, child: string): boolean {
     return child === parent || child.startsWith(`${parent}/`);
 }
 
-async function realOrSame(target: string): Promise<string> {
-    try {
-        return await fs.realpath(target);
-    } catch {
-        return target;
+/**
+ * The physical location of a path that may not exist yet: its nearest EXISTING ancestor resolved through every symlink, plus the
+ * missing lexical suffix. A dangling symlink, or any error other than "this suffix does not exist", is not resolved: fail closed.
+ */
+async function physicalPath(target: string): Promise<string> {
+    const suffix: string[] = [];
+    for (let existing = target; ;) {
+        try {
+            return path.join(await fs.realpath(existing), ...suffix.reverse());
+        } catch (error) {
+            if (!hasCode(error, "ENOENT")) throw new WorkerError("restore-output-invalid");
+        }
+        try {
+            await fs.lstat(existing);
+            throw new WorkerError("restore-output-invalid");
+        } catch (error) {
+            if (error instanceof WorkerError || !hasCode(error, "ENOENT")) throw new WorkerError("restore-output-invalid");
+        }
+        const parent = path.dirname(existing);
+        if (parent === existing) throw new WorkerError("restore-output-invalid");
+        suffix.push(path.basename(existing));
+        existing = parent;
     }
 }
 
@@ -105,7 +122,7 @@ async function checkOutput(outDir: string, forbidden: readonly string[]): Promis
         }
     }
     for (const tree of forbidden) {
-        for (const candidate of new Set([tree, await realOrSame(tree)])) {
+        for (const candidate of new Set([tree, await physicalPath(tree)])) {
             if (inside(candidate, resolved) || inside(resolved, candidate) || inside(candidate, outDir) || inside(outDir, candidate)) throw invalid();
         }
     }
@@ -169,7 +186,38 @@ function classify(key: string): Kind | null {
 
 interface Verified {
     manifest?: Manifest;
-    completionEntries?: readonly string[];
+    /** What a completion names: the manifest key and the digest it claims for it. */
+    completionEntries?: ReadonlyArray<{ manifestKey: string; manifestSha256: string }>;
+}
+
+/** The digest and length of a file that was verified and written. */
+interface Held {
+    sha256: string;
+    byteLength: number;
+}
+
+/**
+ * A verified record is only as good as what it names. A manifest holds if every artifact it names that was written has the declared
+ * length (the digest is bound to the key by the manifest schema); a completion holds if every manifest it names that was written has the
+ * digest the completion claims. A reference to something that was not written is not judged here: that file is already in the report,
+ * and the record is kept as Drive has it so the unchanged restore fails loudly on it instead of silently taking an older snapshot.
+ */
+function referencesHold(verified: Verified, held: ReadonlyMap<string, Held>): boolean {
+    for (const artifact of verified.manifest?.artifacts ?? []) {
+        const file = held.get(artifact.relativeKey);
+        if (file !== undefined && (file.sha256 !== artifact.sha256 || file.byteLength !== artifact.byteLength)) return false;
+    }
+    for (const entry of verified.completionEntries ?? []) {
+        const file = held.get(entry.manifestKey);
+        if (file !== undefined && file.sha256 !== entry.manifestSha256) return false;
+    }
+    return true;
+}
+
+/** Artifacts first, then the records that name them, then the completions that name those: a record is judged after what it names. */
+function rankOf(key: string): number {
+    const kind = classify(key);
+    return kind === null ? 1 : kind.kind === "artifact" ? 0 : kind.kind === "manifest" ? 2 : kind.kind === "completion" ? 3 : 1;
 }
 
 /** What a file held, once downloaded, against what its path claims. `null`: it does not hold up. */
@@ -195,7 +243,7 @@ async function verify(kind: Kind, key: string, tmpPath: string, sha256: string, 
             case "completion": {
                 const selection = selectCompletion([{ name: kind.name, content: JSON.parse(bytes.toString("utf8")) as unknown }], { companyId: kind.companyId, latest: true });
                 if (selection.kind !== "selected" || selection.entry.name !== kind.name) return null;
-                return { completionEntries: selection.entry.completion.entries.map((entry) => entry.manifestKey) };
+                return { completionEntries: selection.entry.completion.entries.map(({ manifestKey, manifestSha256 }) => ({ manifestKey, manifestSha256 })) };
             }
             case "run": {
                 const parsed = runInventorySchema.safeParse(JSON.parse(bytes.toString("utf8")));
@@ -230,7 +278,9 @@ function byKeyThenId(left: Listed, right: Listed): number {
  *
  * Verified bytes are first received in `<out>/.restore-drive-tmp/` and then linked, no-clobber, to their path: a path already
  * taken by another Drive file of the same name is a `drive-conflict`, never an overwrite. The worker removes no file, so the
- * tmp area stays: a file that failed is emptied, a verified one is the same inode as its mirrored file.
+ * tmp area stays: a file that failed verification, collided, or whose transfer was interrupted is truncated to zero bytes, and a
+ * verified one is the same inode as its mirrored file. Records are judged after what they name (artifacts, then manifests, then
+ * completions): one whose verified references disagree on digest or length is not written and is reported as `artifact-integrity`.
  */
 export async function restoreDrive(options: RestoreDriveOptions): Promise<RestoreDriveReport> {
     const { client, archiveId, outDir } = options;
@@ -264,7 +314,7 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
             }
         }
     }
-    listed.sort(byKeyThenId);
+    listed.sort((left, right) => rankOf(left.key) - rankOf(right.key) || byKeyThenId(left, right));
 
     // Pass 2: receive, verify, write.
     if (!output.exists) await fs.mkdir(outDir, { mode: 0o700 });
@@ -286,7 +336,7 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
         }
     };
 
-    const verifiedKeys = new Set<string>();
+    const held = new Map<string, Held>();
     const manifests = new Map<string, Manifest>();
     const completions = new Map<string, readonly string[]>();
     let counter = 0;
@@ -309,6 +359,7 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
         const hash = createHash("sha256");
         let received = 0;
         let tooLong = false;
+        let transferred = false;
         const tmp = await fs.open(tmpPath, "wx", 0o600);
         try {
             for await (const part of opened.value) {
@@ -317,15 +368,19 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
                 hash.update(part);
                 await tmp.writeFile(part);
             }
+            transferred = true;
         } catch (error) {
             if (error instanceof DriveTransferError) throw new WorkerError(driveReasonCode(error.failure));
             throw error;
         } finally {
             await tmp.close();
+            // An interrupted transfer must not leave the bytes it did receive behind.
+            if (!transferred) await fs.truncate(tmpPath, 0).catch(() => undefined);
         }
 
-        const verified = tooLong || (file.size !== null && file.size !== received) ? null : await verify(kind, key, tmpPath, hash.digest("hex"), archiveId);
-        if (verified === null) {
+        const sha256 = hash.digest("hex");
+        const verified = tooLong || (file.size !== null && file.size !== received) ? null : await verify(kind, key, tmpPath, sha256, archiveId);
+        if (verified === null || !referencesHold(verified, held)) {
             fail(key, "artifact-integrity");
             await fs.truncate(tmpPath, 0);
             continue;
@@ -340,21 +395,21 @@ export async function restoreDrive(options: RestoreDriveOptions): Promise<Restor
             await fs.truncate(tmpPath, 0);
             continue;
         }
-        verifiedKeys.add(key);
+        held.set(key, { sha256, byteLength: received });
         if (verified.manifest !== undefined) manifests.set(key, verified.manifest);
-        if (verified.completionEntries !== undefined) completions.set(key, verified.completionEntries);
+        if (verified.completionEntries !== undefined) completions.set(key, verified.completionEntries.map((entry) => entry.manifestKey));
     }
 
     // What a verified record names must be there: a manifest its artifacts, a completion its manifests.
     for (const manifest of manifests.values()) {
-        for (const artifact of manifest.artifacts) if (!verifiedKeys.has(artifact.relativeKey)) fail(artifact.relativeKey, "mirror-missing");
+        for (const artifact of manifest.artifacts) if (!held.has(artifact.relativeKey)) fail(artifact.relativeKey, "mirror-missing");
     }
     for (const manifestKeys of completions.values()) {
-        for (const manifestKey of manifestKeys) if (!verifiedKeys.has(manifestKey)) fail(manifestKey, "mirror-missing");
+        for (const manifestKey of manifestKeys) if (!held.has(manifestKey)) fail(manifestKey, "mirror-missing");
     }
 
     const report: RestoreDriveReport = {
-        schemaVersion: 1, rootFolderId: root.id, archiveId, verified: verifiedKeys.size, failed: failures.size,
+        schemaVersion: 1, rootFolderId: root.id, archiveId, verified: held.size, failed: failures.size,
         failures: [...failures].map(([relativeKey, reason]) => ({ relativeKey, reason })).sort((a, b) => (a.relativeKey < b.relativeKey ? -1 : 1)),
     };
     const out = await fs.open(path.join(outDir, RESTORE_DRIVE_REPORT_NAME), "wx", 0o600);
