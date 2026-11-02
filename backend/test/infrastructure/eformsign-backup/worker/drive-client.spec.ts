@@ -314,6 +314,36 @@ describe("DriveClient", () => {
         });
     });
 
+    describe("fake fidelity: creating nodes", () => {
+        it("should accept the root alias as the parent of a folder and of an upload", async () => {
+            const folderId = await freshId();
+            const folder = expectOk(await client.createFolder({ id: folderId, name: "under-root", parentId: "root" }));
+            expect(folder.parents).toEqual([h.drive.myDriveId]);
+            const bytes = data(SIZE);
+            const id = await freshId();
+            const file = expectOk(await client.uploadResumable({ id, name: "doc.pdf", parentId: "root", mimeType: FILE_MIME }, recording(bytes).open, SIZE));
+            expect(file.parents).toEqual([h.drive.myDriveId]);
+            expect(h.drive.children(h.drive.myDriveId).map(node => node.id).sort()).toEqual([folderId, id].sort());
+        });
+
+        it("should answer 409 for a taken id even when the id was never generated, on both create paths", async () => {
+            h.drive.seed({ id: "SeededTakenId000001", name: "seeded" });
+            const taken = { kind: "http", httpStatus: 409, reason: "duplicate", retryAfterSeconds: null };
+            expect(await client.createFolder({ id: "SeededTakenId000001", name: "again", parentId: h.drive.myDriveId })).toEqual({ ok: false, failure: taken });
+            const bytes = data(SIZE);
+            const upload = await client.uploadResumable(
+                { id: "SeededTakenId000001", name: "doc.pdf", parentId: h.drive.myDriveId, mimeType: FILE_MIME }, recording(bytes).open, SIZE);
+            expect(upload).toEqual({ ok: false, failure: taken });
+            expect(h.drive.sessionsStarted).toBe(0);
+            expect(h.drive.node("SeededTakenId000001")?.name).toBe("seeded");
+        });
+
+        it("should still refuse a fresh id that generateIds never issued", async () => {
+            expect(await client.createFolder({ id: "NeverGeneratedId0001", name: "x", parentId: h.drive.myDriveId }))
+                .toEqual({ ok: false, failure: { kind: "http", httpStatus: 400, reason: "invalid", retryAfterSeconds: null } });
+        });
+    });
+
     describe("T23: failure facts", () => {
         it("should carry Retry-After seconds on a 429", async () => {
             h.drive.addFault({ route: "get", times: 1, action: driveFaults.status(429, "rateLimitExceeded", 17) });

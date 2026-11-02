@@ -398,9 +398,9 @@ export class FakeDriveServer {
         }
         const id = typeof input.id === "string" ? input.id : null;
         if (id === null) return { error: errorReply(400, "invalid") };
-        if (this.strictIds && !this.generated.has(id)) return { error: errorReply(400, "invalid") };
         if (this.nodeMap.has(id)) return { error: errorReply(409, "duplicate") };
-        const parent = this.nodeMap.get(input.parents[0]);
+        if (this.strictIds && !this.generated.has(id)) return { error: errorReply(400, "invalid") };
+        const parent = this.nodeMap.get(input.parents[0] === "root" ? this.myDriveId : input.parents[0]);
         if (!parent) return { error: errorReply(404, "notFound") };
         if (parent.mimeType !== FAKE_FOLDER_MIME_TYPE) return { error: errorReply(400, "invalid") };
         const appProperties = typeof input.appProperties === "object" && input.appProperties !== null
