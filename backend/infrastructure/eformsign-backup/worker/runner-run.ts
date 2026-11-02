@@ -883,7 +883,7 @@ class RunExecution {
      * the artifact set it was built from by its digest: this snapshot's candidate or any set the retained journals saw for
      * exactly this revision, never "the latest" source.
      */
-    private manifestLevel(key: string, manifest: Manifest, digest: string, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" {
+    private manifestLevel(key: string, manifest: Manifest, digest: string, completions: Map<string, Set<string>>): "ok" | "bad" | "unproven" | "variant" {
         const named = completions.get(key);
         if (named !== undefined && [...named].some((expected) => expected !== digest)) return "bad";
         const builtDigest = (source: ManifestSource): string => this.manifestOf(source).manifest.sha256;
@@ -896,8 +896,25 @@ class RunExecution {
         const acknowledged = this.state.manifests.get(key);
         if (acknowledged !== undefined && acknowledged.sha256 !== digest) return matched ? "unproven" : "bad";
         if (matched) return "ok";
-        if (current === undefined && variants.length === 0) return "ok"; // nothing to compare the bytes with: the facts decide
-        return acknowledged !== undefined ? "unproven" : "bad";
+        if (acknowledged !== undefined && (current !== undefined || variants.length > 0)) return "unproven";
+        // Not the current candidate's file and not a set the retained journals saw: another variant, e.g. one published before an
+        // archive-only recovery. It is no contradiction of the current candidate (only the file whose digest it is can be compared
+        // with it); the retained evidence for its artifacts decides (variantLevel). A legacy name carries no digest, so it is
+        // judged the same way, by the digest of its raw bytes.
+        return "variant";
+    }
+
+    /**
+     * A variant no retained observation matches is `bad` when any artifact the ledger knows contradicts it (digest, type,
+     * keys, identity, length), whether or not that artifact is one the caller wants; artifacts the ledger never saw (an
+     * audit trail that was gone at the source) neither confirm nor contradict it.
+     */
+    private async variantLevel(manifest: Manifest, sizes: Map<string, number | null>): Promise<"ok" | "bad"> {
+        for (const artifact of manifest.artifacts) {
+            if (!this.state.artifacts.has(artifact.artifactIdentity)) continue;
+            if (await this.artifactFacts(manifest, artifact, sizes) === "bad") return "bad";
+        }
+        return "ok";
     }
 
     /** One artifact entry of a manifest against what the ledger retained for it. Length comes from the ledger, else from the stored file's size. */
@@ -985,7 +1002,8 @@ class RunExecution {
                     continue;
                 }
                 if (contradicts(file.key, parsed.sha256)) this.failIndexConflict(file.key);
-                const level = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
+                const judged = this.manifestLevel(file.key, parsed.manifest, parsed.sha256, completions);
+                const level = judged === "variant" ? await this.variantLevel(parsed.manifest, sizes) : judged;
                 for (const artifact of parsed.manifest.artifacts) {
                     if (!wanted.has(artifact.artifactIdentity)) continue;
                     note(artifact.artifactIdentity, level === "ok" ? await this.artifactFacts(parsed.manifest, artifact, sizes) : level);

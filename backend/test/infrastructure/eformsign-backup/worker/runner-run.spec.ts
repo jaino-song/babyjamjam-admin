@@ -1842,6 +1842,66 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
         });
     });
 
+    describe("an older valid manifest variant is no conflict after archive-only recovery (BJJ-455 P2 FU-14)", () => {
+        const loseLedgerAndRecover = async () => {
+            const installationId = (await readJsonFile(path.join(h.archive, ".bjj-backup", "installation.json")))["installationId"];
+            await fs.rm(path.join(h.control, "ledger"), { recursive: true });
+            return withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+        };
+        const manifestsOf = async (doc: string): Promise<string[]> => (await listFiles(h.archive)).filter((file) => file.includes(`/${doc}/manifests/`));
+        /**
+         * D001's audit trail is gone at the source in the first snapshot (a permanent gap, and an early manifest of the old set);
+         * the second snapshot offers other bytes for both PDFs under the same metadata revision (a second, valid manifest).
+         */
+        async function changedClaimsThenLostLedger(): Promise<void> {
+            h = await createHarness({ docs: [pairDoc("D001", "old"), pairDoc("D002")] });
+            h.api.addFault({ route: "artifact", times: 99, match: (info) => info.documentId === "D001" && info.fileType === "audit_trail", fault: { kind: "status", status: 410, code: "SOURCE_REMOVED" } });
+            await initArchive(h);
+            await runOnce(h);
+            h.api.clearFaults();
+            h.api.docs = [pairDoc("D001", "new"), pairDoc("D002")];
+            await runOnce(h);
+            expect(await manifestsOf("D001")).toHaveLength(2);
+            await loseLedgerAndRecover();
+        }
+
+        it("should index both variants, keep the permanent gap and write nothing on a repeat run", async () => {
+            await changedClaimsThenLostLedger();
+
+            const summary = await runOnce(h);
+
+            expect(summary.historicalCoverage).toBe("known_gap");
+            const last = (await readCompletions(h.archive)).pop()!.value;
+            expect(last["entries"].map((entry: { documentId: string }) => entry.documentId)).toEqual(["D001", "D002"]);
+            expect(last["gaps"]).toEqual([{ documentId: "D001", reasonCode: "source-removed" }]);
+            const before = await listFiles(h.archive);
+            const manifests = (await manifestsOf("D001")).length;
+            await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+            expect(await manifestsOf("D001")).toHaveLength(manifests);
+            expect((await listFiles(h.archive)).filter((file) => !file.includes("/completions/") && !file.includes("/runs/")))
+                .toEqual(before.filter((file) => !file.includes("/completions/") && !file.includes("/runs/")));
+        }, 240_000);
+
+        it("should still end in archive-conflict for an older variant whose length contradicts the recovered evidence", async () => {
+            await changedClaimsThenLostLedger();
+            const [first] = await manifestsOf("D001");
+            const files = await manifestsOf("D001");
+            const completion = (await readCompletions(h.archive)).pop()!.value["entries"].find((entry: { documentId: string }) => entry.documentId === "D001");
+            const older = files.find((file) => file !== completion.manifestKey) ?? first!;
+            const manifest = await readJsonFile(path.join(h.archive, older));
+            // The old PDF of the document exists and was recovered; the old audit trail never did.
+            (manifest["artifacts"] as Array<{ artifactType: string; byteLength: number }>).find((artifact) => artifact.artifactType === "document")!.byteLength += 1;
+            const forged = Buffer.from(JSON.stringify(manifest));
+            const forgedKey = older.replace(/-[0-9a-f]{64}\.json$/, `-${createHash("sha256").update(forged).digest("hex")}.json`);
+            await fs.writeFile(path.join(h.archive, forgedKey), forged, { mode: 0o600 });
+
+            await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+            expect((await fs.readFile(path.join(h.archive, forgedKey))).equals(forged)).toBe(true);
+            await fs.rm(path.join(h.archive, forgedKey));
+            await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+        }, 240_000);
+    });
+
     describe("preconditions", () => {
         it("should refuse run before init with not-initialized", async () => {
             h = await createHarness({ docs: mix() });
