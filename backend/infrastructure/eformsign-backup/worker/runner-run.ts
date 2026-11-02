@@ -9,7 +9,7 @@ import {
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
-import { listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
+import { artifactIdentityDerives, listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
 import { readManifestHistory, type ManifestHistory, type ManifestSource } from "./runner-manifest-sources";
 import {
     ExportFailure, type CandidatePageView, type CandidateView, type SnapshotView,
@@ -911,6 +911,9 @@ class RunExecution {
      */
     private async variantLevel(manifest: Manifest, sizes: Map<string, number | null>): Promise<"ok" | "bad"> {
         for (const artifact of manifest.artifacts) {
+            // Never skipped, whatever the ledger knows: an identity its own claims do not derive is false (the shared validator
+            // already refuses such a file; this keeps the variant judgement sound on its own).
+            if (!artifactIdentityDerives(this.companyId, manifest.documentId, artifact)) return "bad";
             if (!this.state.artifacts.has(artifact.artifactIdentity)) continue;
             if (await this.artifactFacts(manifest, artifact, sizes) === "bad") return "bad";
         }

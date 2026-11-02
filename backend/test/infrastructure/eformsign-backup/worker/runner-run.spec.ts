@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { WorkerError, buildCompletion, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
+import { WorkerError, bundleIdFor, buildCompletion, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 import { LocalDestination } from "infrastructure/eformsign-backup/worker/local-destination";
 import * as restoreModule from "infrastructure/eformsign-backup/worker/restore";
@@ -1899,6 +1899,70 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
             expect((await fs.readFile(path.join(h.archive, forgedKey))).equals(forged)).toBe(true);
             await fs.rm(path.join(h.archive, forgedKey));
             await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+        }, 240_000);
+    });
+
+    describe("a manifest's artifact identities must derive from its own claims (BJJ-455 P2 FU-14-F1)", () => {
+        const FAKE = "0".repeat(64);
+        /** D001's manifest with its audit trail's identity replaced; the bundle and the file name are made consistent, so only the identity is false. */
+        async function forgedSibling(legacy: boolean): Promise<{ key: string; bytes: Buffer }> {
+            const original = (await listFiles(h.archive)).find((file) => file.includes("/D001/manifests/"))!;
+            const manifest = await readJsonFile(path.join(h.archive, original));
+            (manifest["artifacts"] as Array<{ artifactType: string; artifactIdentity: string }>).find((artifact) => artifact.artifactType === "audit-trail")!.artifactIdentity = FAKE;
+            manifest["bundleId"] = bundleIdFor(manifest["companyId"] as string, manifest["documentId"] as string, manifest["metadataRevision"] as string, manifest["artifacts"] as never);
+            const bytes = Buffer.from(JSON.stringify(manifest));
+            const key = manifestKey({
+                companyId: COMPANY, documentId: "D001", metadataRevision: manifest["metadataRevision"] as string,
+                ...(legacy ? {} : { manifestSha256: createHash("sha256").update(bytes).digest("hex") }),
+            });
+            await fs.writeFile(path.join(h.archive, key), bytes, { mode: 0o600 });
+            return { key, bytes };
+        }
+        const loseLedgerAndRecover = async () => {
+            const installationId = (await readJsonFile(path.join(h.archive, ".bjj-backup", "installation.json")))["installationId"];
+            await fs.rm(path.join(h.control, "ledger"), { recursive: true });
+            return withWorker(h, "recover", (worker) => worker.runner.recover({ installationId }));
+        };
+
+        it.each([["a versioned", false], ["a legacy", true]] as const)(
+            "should treat %s manifest with a forged sibling identity as no manifest: no bogus recovered identity, verify --all checks the 4 real PDFs, later runs succeed",
+            async (_name, legacy) => {
+                h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+                await initArchive(h);
+                await runOnce(h);
+                const forged = await forgedSibling(legacy);
+                h.api.docs = [pairDoc("D002")];
+
+                await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                expect((await fs.readFile(path.join(h.archive, forged.key))).equals(forged.bytes)).toBe(true);
+
+                expect(await loseLedgerAndRecover()).toMatchObject({ recovered: 4 });
+                const recovered = (await readLedgerRecords(h.control)).filter((record) => record.type === "recovered_verified").map((record) => record.body["artifactIdentity"]);
+                expect(recovered).toHaveLength(4);
+                expect(recovered).not.toContain(FAKE);
+                await expect(withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }))).resolves.toMatchObject({ checked: 4, integrityErrors: 0 });
+                await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                await fs.rename(path.join(h.archive, forged.key), path.join(h.base, "forged-aside.json"));
+                await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+            }, 240_000);
+
+        it("should refuse to restore a snapshot whose completion names a manifest with a forged identity (artifact-integrity)", async () => {
+            h = await createHarness({ docs: [pairDoc("D001"), pairDoc("D002")] });
+            await initArchive(h);
+            await runOnce(h);
+            const forged = await forgedSibling(false);
+            const last = (await readCompletions(h.archive)).pop()!.value;
+            const entries = last["entries"].map((entry: { documentId: string; metadataRevision: string; manifestKey: string; manifestSha256: string }) =>
+                entry.documentId === "D001" ? { ...entry, manifestKey: forged.key, manifestSha256: createHash("sha256").update(forged.bytes).digest("hex") } : entry);
+            const completion = buildCompletion({
+                companyId: COMPANY, sequence: last["sequence"] + 1, snapshotId: "forged-snapshot", runId: last["runId"], scopeRevision: last["scopeRevision"],
+                policyRevision: last["policyRevision"], destinationIdentity: last["destinationIdentity"], destinationRevision: last["destinationRevision"], entries, gaps: [],
+            });
+            await fs.writeFile(path.join(h.archive, completion.relativeKey), completion.bytes, { mode: 0o600 });
+            const outDir = path.join(h.base, "restored-forged");
+
+            await expect(restoreFromArchive({ archivePath: h.archive, companyId: COMPANY, selector: { latest: true }, outDir })).rejects.toMatchObject({ reasonCode: "artifact-integrity" });
         }, 240_000);
     });
 

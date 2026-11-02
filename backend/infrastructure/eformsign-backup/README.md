@@ -333,7 +333,7 @@ file's own bytes: the same artifact claims always give the same file, and a
 revision whose PDFs the source later offers with different bytes gets a second
 file beside the first. Files named `<metadataRevision>.json` (written by earlier
 builds) are still read and are never modified; both shapes can sit side by side.
-A file whose name does not match its bytes is treated as damaged. A manifest is
+A file whose name does not match its bytes, or one that lists an artifact whose identity does not derive from its own claims, is treated as damaged (by `run`, `verify --all`, `recover` and restore alike). A manifest is
 written as soon as one artifact of the revision is verified, before its sibling
 arrives; only a completion means the whole pair is there.
 
