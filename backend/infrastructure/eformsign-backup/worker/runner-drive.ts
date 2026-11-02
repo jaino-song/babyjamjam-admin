@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
     WorkerError, artifactKey, buildCompletion, classifyDriveFailure, completionSchema, destinationKey, driveMimeOf, driveNameOf, driveStateKey,
-    integrityErrorCount, integrityRetryDecision, parseManifestKey,
+    integrityErrorCount, integrityRetryDecision, parseManifestKey, runInventorySchema, runKey,
     type ArchiveArtifactType, type DestinationEntry, type Installation, type LedgerState, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { readOutbox, writeOutbox } from "./drive-outbox";
@@ -354,6 +354,9 @@ export class DriveRunPhase {
     }
 
     private async restageFromLocal(job: DriveJob): Promise<boolean> {
+        // Design (BJJ-456 U5-P1, note 4): a copy is restaged only from the other destination's verified bytes. With the archive down, a
+        // locally verified artifact whose staging copy is missing and that Drive does not hold yet is therefore NOT fetched from the
+        // export again in this run; it stays unuploaded (reported as pending) and the first run after the archive returns heals it here.
         if (!this.host.archiveOk()) return false;
         const local = this.state.destinations.get(destinationKey(job.artifactIdentity, this.installation.destinationIdentity, this.installation.destinationRevision));
         if (local?.state !== "verified") return false;
@@ -547,6 +550,9 @@ export class DriveRunPhase {
         const { config } = this.deps;
         const handled = new Set<string>();
 
+        // 0. After a rebind: records an earlier revision still had queued are queued for this one too, from the same outbox bytes.
+        await this.requeueFromEarlierRevisions();
+
         // 1. Records that wait in the outbox from an earlier run.
         const prefix = `${this.revision}|`;
         for (const [stateKey, sha256] of [...this.state.driveRecordsPending]) {
@@ -645,6 +651,58 @@ export class DriveRunPhase {
                 if (this.halted !== null) break;
             }
         }
+
+        // 6. Run inventories the archive published and Drive does not have yet (an earlier run's refused upload, or every earlier run
+        // after a rebind), from the archive's own bytes. The ledger keeps no hash for them, so the bytes must be a run inventory of
+        // exactly that run; a run that never published one has no file and costs one failed lookup.
+        if (this.host.archiveOk()) {
+            for (const runId of [...this.state.runs.keys()]) {
+                if (this.halted !== null) break;
+                const key = runKey({ companyId: config.companyId, runId });
+                if (handled.has(key) || this.state.driveRecords.has(driveStateKey(this.revision, key))) continue;
+                let bytes: Buffer | null;
+                try {
+                    bytes = await this.archive.readArchiveFile(key);
+                } catch (error) {
+                    if (!(error instanceof WorkerError)) throw error;
+                    this.host.archiveLost();
+                    break;
+                }
+                if (bytes === null || !this.isInventoryOf(bytes, runId)) continue;
+                handled.add(key);
+                await this.push(key, bytes, false);
+            }
+        }
+    }
+
+    private isInventoryOf(bytes: Uint8Array, runId: string): boolean {
+        try {
+            const parsed = runInventorySchema.safeParse(JSON.parse(Buffer.from(bytes).toString("utf8")));
+            return parsed.success && parsed.data.runId === runId;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * A rebind starts a new revision with nothing pending. Bytes an earlier revision queued in the outbox (the archive was down, so no
+     * other copy exists) are queued again for this revision, from the outbox itself, so the next steps publish them under the new root.
+     */
+    private async requeueFromEarlierRevisions(): Promise<void> {
+        const prefix = `${this.revision}|`;
+        for (const [stateKey, sha256] of [...this.state.driveRecordsPending]) {
+            if (stateKey.startsWith(prefix)) continue;
+            const relativeKey = stateKey.slice(stateKey.indexOf("|") + 1);
+            if (this.state.driveRecordsPending.has(driveStateKey(this.revision, relativeKey)) || this.onDrive(relativeKey, sha256)) continue;
+            let bytes: Buffer | null;
+            try {
+                bytes = await readOutbox(this.deps.config.control.path, sha256);
+            } catch (error) {
+                if (!(error instanceof WorkerError) || error.reasonCode !== "artifact-integrity") throw error;
+                bytes = null;
+            }
+            if (bytes !== null) await this.queue(relativeKey, bytes);
+        }
     }
 
     /**
@@ -691,10 +749,12 @@ export class DriveRunPhase {
 
     /** The run inventory: queued first when the archive did not publish it, then sent; a failure here changes nothing the run reports. */
     async publishInventory(inventory: DriveBuiltRecord, locallyPublished: boolean): Promise<void> {
-        if (this.destination === null) {
-            return;
-        }
-        await this.push(inventory.key, inventory.bytes, !locallyPublished);
+        // Archive down: these bytes exist nowhere else, so they are made durable before Drive is asked. Archive up: the archive's file
+        // is the durable copy, and only a refusal queues the bytes (a crash in between is caught up from the archive next run).
+        // Either way an unusable Drive (no destination, closed gate, refusal) leaves the record pending for the next run.
+        if (!locallyPublished) await this.queue(inventory.key, inventory.bytes);
+        const pushed = this.destination === null ? { ok: false as const } : await this.push(inventory.key, inventory.bytes, false);
+        if (locallyPublished && !pushed.ok) await this.queue(inventory.key, inventory.bytes);
     }
 
     // ---- hook 6: what the run reports ------------------------------------------------------------------------------------

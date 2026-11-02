@@ -162,6 +162,52 @@ describe("runner Drive phase (BJJ-456 U5): the second, independent destination",
         });
     });
 
+    describe("T24: a run inventory that Drive refused is caught up", () => {
+        it("should queue the refused inventory and publish its original bytes next run, with no artifact upload", async () => {
+            await make([pairDoc("D001")]);
+            const base = fakes.drive.uploadsCompleted;
+            // 2 PDFs, the manifest and the completion are accepted; the fourth upload, the run inventory, is refused once.
+            fakes.drive.addFault({ route: "uploadStart", times: 1, match: () => fakes.drive.uploadsCompleted - base === 4, action: driveFaults.status(503) });
+
+            const first = await runOnce(h);
+
+            const tree1 = await driveTree(h, fakes);
+            expect(driveKeys(tree1, RUN_KEY)).toEqual([]);
+            expect(driveKeys(tree1, COMPLETION_KEY)).toHaveLength(1);
+            const pending = (await readLedgerRecords(h.control)).filter((record) => record.type === "drive_record_pending");
+            expect(pending.map((record) => record.body["relativeKey"])).toEqual([`eformsign/${COMPANY}/runs/${first.runId}.json`]);
+            const localInventory = await fs.readFile(path.join(h.archive, `eformsign/${COMPANY}/runs/${first.runId}.json`));
+            expect(pending[0]!.body["sha256"]).toBe(sha256Of(localInventory));
+            expect(await fs.readdir(path.join(h.control, DRIVE_OUTBOX_DIR))).toContain(`${sha256Of(localInventory)}.json`);
+            const pdfsBefore = driveKeys(tree1, PDF_KEY).length;
+            const pdfUploads = fakes.drive.uploadsCompleted;
+
+            const second = await runOnce(h);
+
+            const tree2 = await driveTree(h, fakes);
+            expect(tree2.get(`eformsign/${COMPANY}/runs/${first.runId}.json`)?.equals(localInventory)).toBe(true);
+            expect(tree2.get(`eformsign/${COMPANY}/runs/${second.runId}.json`)).toBeDefined();
+            expect(driveKeys(tree2, PDF_KEY)).toHaveLength(pdfsBefore);
+            // Only the earlier inventory, the second completion and the second inventory: no artifact, no manifest.
+            expect(fakes.drive.uploadsCompleted - pdfUploads).toBe(3);
+        });
+
+        it("should catch up, from the archive, an inventory whose Drive upload was dropped while the Drive gate was closed", async () => {
+            await make([singleDoc("D001")]);
+            fakes.drive.revokeAccess();
+            const first = await runOnce(h);
+            expect(first.reasonCodes).toContain("drive-token-invalid");
+            expect(driveKeys(await driveTree(h, fakes), RUN_KEY)).toEqual([]);
+            fakes.oauth.restore();
+
+            await runOnce(h);
+
+            const tree = await driveTree(h, fakes);
+            const mine = await fs.readFile(path.join(h.archive, `eformsign/${COMPANY}/runs/${first.runId}.json`));
+            expect(tree.get(`eformsign/${COMPANY}/runs/${first.runId}.json`)?.equals(mine)).toBe(true);
+        });
+    });
+
     describe("T29: the root moved or was trashed", () => {
         it("should stop with drive-root-changed and no upload, then re-upload everything under the new revision after a rebind", async () => {
             await make([pairDoc("D001")]);
@@ -182,10 +228,9 @@ describe("runner Drive phase (BJJ-456 U5): the second, independent destination",
             expect(rebound).toMatchObject({ counts: { verified: 2, driveVerified: 2 } });
             expect(rebound.reasonCodes).toEqual(["coverage-unverified"]);
             const tree = await driveTree(h, fakes);
-            // Everything a restore reads is on the new root; only the run inventories of the earlier runs (informational) are not caught up.
-            const notInventory = (key: string): boolean => !RUN_KEY.test(key);
-            expect([...tree.keys()].filter(notInventory).sort()).toEqual((await listFiles(h.archive)).filter(notInventory).sort());
-            expect(driveKeys(tree, RUN_KEY)).toEqual([`eformsign/${COMPANY}/runs/${rebound.runId}.json`]);
+            // The new root holds exactly what the archive holds, run inventories of the earlier runs included (from the archive's bytes).
+            expect([...tree.keys()].sort()).toEqual((await listFiles(h.archive)).sort());
+            expect(driveKeys(tree, RUN_KEY)).toHaveLength(3);
             expect(driveKeys(tree, COMPLETION_KEY)).toHaveLength((await readCompletions(h.archive)).length);
             // The old revision's verified entries are not current: the new revision walked its own path.
             const states = await driveStates();
@@ -294,6 +339,11 @@ describe("runner Drive phase (BJJ-456 U5): the second, independent destination",
             const originalSha = completionPending.body["sha256"] as string;
             expect(outbox).toContain(`${originalSha}.json`);
 
+            const inventoryPending = pending.find((record) => RUN_KEY.test(String(record.body["relativeKey"])))!;
+            expect(inventoryPending).toBeDefined();
+            const inventorySha = inventoryPending.body["sha256"] as string;
+            expect(outbox).toContain(`${inventorySha}.json`);
+
             fakes.drive.clearFaults();
             const pdfUploads = driveKeys(tree1, PDF_KEY).length;
             await runOnce(h);
@@ -301,9 +351,32 @@ describe("runner Drive phase (BJJ-456 U5): the second, independent destination",
             const tree2 = await driveTree(h, fakes);
             const published = driveKeys(tree2, COMPLETION_KEY).map((key) => sha256Of(tree2.get(key)!));
             expect(published).toContain(originalSha);
+            expect(driveKeys(tree2, RUN_KEY).map((key) => sha256Of(tree2.get(key)!))).toContain(inventorySha);
             expect(driveKeys(tree2, PDF_KEY)).toHaveLength(pdfUploads);
             expect(fakes.drive.requests.filter((request) => request.method === "POST" && request.path.includes("/upload/")).length).toBeGreaterThan(0);
             await swapBack(h, away);
+        }, 120_000);
+    });
+
+    describe("A3.3: outbox bytes follow a rebind", () => {
+        it("should publish a record that only the outbox holds under the new revision after a rebind", async () => {
+            await make([pairDoc("D001")]);
+            const away = await swapArchive(h);
+            const base = fakes.drive.uploadsCompleted;
+            fakes.drive.addFault({ route: "uploadStart", match: () => fakes.drive.uploadsCompleted - base >= 3, action: driveFaults.status(503) });
+            const first = await runOnce(h);
+            fakes.drive.clearFaults();
+            const inventoryKey = `eformsign/${COMPANY}/runs/${first.runId}.json`;
+            const pending = (await readLedgerRecords(h.control)).filter((record) => record.type === "drive_record_pending" && record.body["relativeKey"] === inventoryKey);
+            expect(pending).toHaveLength(1);
+            const sha = pending[0]!.body["sha256"] as string;
+            await swapBack(h, away);
+            await bindDrive(h, true);
+
+            await runOnce(h);
+
+            const tree = await driveTree(h, fakes);
+            expect(tree.get(inventoryKey) && sha256Of(tree.get(inventoryKey)!)).toBe(sha);
         }, 120_000);
     });
 
