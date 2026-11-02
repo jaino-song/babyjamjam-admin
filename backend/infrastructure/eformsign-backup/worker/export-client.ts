@@ -215,9 +215,16 @@ export class ExportClient {
         if (!HEX64.test(artifact.artifactIdentity) || !HEX64.test(artifact.sha256)
             || !Number.isSafeInteger(artifact.byteLength) || artifact.byteLength < 0) invalidResponse();
         if (artifact.byteLength > EXPORT_ARTIFACT_MAX_BYTES) throw new WorkerError("artifact-too-large");
-        const signal = AbortSignal.timeout(this.timeoutMs);
-        const response = await this.send("GET", `/snapshots/${segment}/artifacts/${artifact.artifactIdentity}`,
-            { "Accept-Encoding": "identity" }, undefined, signal);
+        // `requestTimeoutMs` bounds the response headers only; the body gets an idle timeout (see `readIdle`).
+        const controller = new AbortController();
+        const headerTimer = setTimeout(() => controller.abort(), this.timeoutMs);
+        let response: Response;
+        try {
+            response = await this.send("GET", `/snapshots/${segment}/artifacts/${artifact.artifactIdentity}`,
+                { "Accept-Encoding": "identity" }, undefined, controller.signal);
+        } finally {
+            clearTimeout(headerTimer);
+        }
         if (response.status !== 200) {
             await response.body?.cancel().catch(() => undefined);
             invalidResponse();
@@ -229,10 +236,27 @@ export class ExportClient {
             await response.body?.cancel().catch(() => undefined);
             throw new WorkerError("artifact-integrity");
         }
-        return this.stream(response, artifact);
+        return this.stream(response, artifact, controller);
     }
 
-    private async *stream(response: Response, artifact: ArtifactRequest): AsyncGenerator<Uint8Array> {
+    /**
+     * One body read under an idle timeout: armed only while the read is pending and cleared as soon as it settles, so the
+     * consumer's own time never counts. On expiry the request is aborted and the read is rejected even if the transport
+     * ignores the signal.
+     */
+    private async readIdle(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController): Promise<ReadableStreamReadResult<Uint8Array>> {
+        let timer: NodeJS.Timeout | undefined;
+        const idle = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => { controller.abort(); reject(new Error("idle-timeout")); }, this.timeoutMs);
+        });
+        try {
+            return await Promise.race([reader.read(), idle]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    private async *stream(response: Response, artifact: ArtifactRequest, controller: AbortController): AsyncGenerator<Uint8Array> {
         const reader = response.body?.getReader();
         if (!reader) throw new WorkerError("artifact-integrity");
         const hash = createHash("sha256");
@@ -242,7 +266,7 @@ export class ExportClient {
             while (true) {
                 let chunk: ReadableStreamReadResult<Uint8Array>;
                 try {
-                    chunk = await reader.read();
+                    chunk = await this.readIdle(reader, controller);
                 } catch {
                     // A reset, a premature close or our own timeout is a network failure (retry_wait), never an integrity error.
                     throw new ExportFailure(0, NETWORK, true, null);

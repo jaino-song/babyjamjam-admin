@@ -105,7 +105,7 @@ overlapping run", not as a failure.
 | --- | --- |
 | `init` | first install only: archive marker, control marker, first ledger record |
 | `run [--scheduled-for <ISO+offset>]` | finishes interrupted work, then one snapshot: download, publish, verify, manifests, completion |
-| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error` |
+| `verify [--all]` | re-hashes verified artifacts (default: older than 7 days); damaged ones are renamed aside and recorded as `integrity_error`. With `--all` it also reads every bound manifest (acknowledged by the ledger or named by a completion) and exits 69 `archive-conflict` if one is missing, is no valid manifest of its document, or has another digest than the ledger or a completion binds (the run's `run_finished` record carries `archive-conflict`). It never repairs or rewrites a manifest, but it still moves damaged PDFs aside and writes ledger records |
 | `recover --installation-id <id>` | rebuilds a damaged ledger from the archive; see below |
 | `inspect` | read-only report of the ledger; needs no lock |
 
@@ -114,11 +114,8 @@ With `"enabled": false` the commands `run`, `verify` and `recover` print
 
 stdout is one JSON object per line with keys from `event`, `runId`,
 `reasonCode`, `counts`. stderr is a reason code and nothing else, so no token, path
-or provider message reaches a log. Exit codes: 0 ok, 69 state or archive
-(`not-initialized`, `recovery-required`, `archive-*`, `ledger-*`), 70 internal,
-74 control directory (`control-unavailable`, `control-space`), 75 lock held
-elsewhere (from `flock`), 78 configuration (`config-invalid`,
-`token-file-invalid`, `lock-not-held`, `unsupported-filesystem`).
+or provider message reaches a log. The exit codes of the worker and of restore are
+listed under "Exit codes" below.
 
 A run ends as `partial` at best, because the archive can prove its own bytes but
 not that nothing is missing. `blocked` means the run could not take everything it
@@ -131,6 +128,156 @@ an excluded one never changes the status. Documents gone at the source
 (`source-removed`, `exact-bytes-unavailable`) are gaps, reported as
 `known_gap` coverage, not as `blocked`. `failed` means no usable snapshot.
 Reason codes in the run record say why.
+
+## worker.json
+
+One JSON file, passed as `--config <abs path>`, read once at start. It is strict:
+an unknown field (top level or inside `control` / `archive`), a wrong type or a
+missing required field is `config-invalid`. No environment variable is read. A
+disabled worker (`"enabled": false`) still has its file validated first.
+
+| field | type | constraint | default |
+| --- | --- | --- | --- |
+| `schemaVersion` | number | exactly `1` | required |
+| `enabled` | boolean | `false` turns `run`, `verify` and `recover` into no-ops | `false` |
+| `companyId` | string | one path segment: starts with a letter or digit, then letters, digits, `_` `.` `:` `-`; at most 256 characters and 255 UTF-8 bytes; not `.` or `..` | required |
+| `exportBaseUrl` | string | 1 to 2048 characters; `https:`, or `http:` only for host `127.0.0.1`, `localhost` or `[::1]`; no user name, password, query or fragment | required |
+| `tokenFile` | string | normal absolute path (see below); must not be inside `archive.path` | required |
+| `control.path` | string | normal absolute path | required |
+| `control.reserveBytes` | integer | 64 MiB (67108864) to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
+| `control.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
+| `archive.path` | string | normal absolute path | required |
+| `archive.archiveId` | string | lowercase UUID (`8-4-4-4-12` hex digits) | required |
+| `archive.reserveBytes` | integer | 64 MiB (67108864) to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
+| `archive.reserveInodes` | integer | 1000 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) | required |
+| `archive.requireMountPoint` | boolean | `true`: the archive root must be a mount point (its device differs from its parent's) | `true` |
+| `requestTimeoutMs` | integer | 1 to 600000 | `120000`; for the JSON requests (snapshot, candidates) a total deadline for the whole request; for an artifact download a deadline for the response headers plus an idle timeout for each body read, with no total deadline (see below) |
+
+`requestTimeoutMs` is not a limit on how long a run takes. Each JSON request (snapshot,
+candidates) must finish within it. For an artifact download it bounds only the wait for
+the response headers, and each single read of the body (the
+timer restarts after every chunk). The worker sets no total deadline for the body, so a
+server that keeps sending a few bytes inside each idle window can hold one download,
+and so the run and its `flock`, for a long time. While it does, every later scheduled
+run exits 75 (skipped, overlapping run). The worker does not bound the run itself.
+Recommendation for the BJJ-457 install: bound each run from outside, for example with
+a systemd service limit such as `RuntimeMaxSec=`. That is a recommendation for the
+installer, not something the worker enforces.
+
+A *normal absolute path* starts with `/`, is not `/` itself, is at most 4096
+characters, has no trailing slash and no empty, `.` or `..` segment, and contains no
+NUL. `control.path` and `archive.path` must not be equal or contain each other. The
+reserves are checked against the filesystem's free space (blocks available to
+non-root users) and free inodes, before a write:
+
+- Archive check or write (the incoming byte count is 0 for a plain check): the free bytes must be
+  at least the incoming bytes plus `archive.reserveBytes`, and the free inodes must be
+  strictly more than `archive.reserveInodes`. Otherwise `archive-space`.
+- Control staging (room for a download): the same test with the artifact size and the
+  full `control.reserveBytes` and `control.reserveInodes`. Otherwise the artifact is
+  recorded as blocked with `control-space`.
+- Control ledger (checked before each run and before each transfer): the free bytes
+  must be at least a quarter of `control.reserveBytes` (rounded down), and the free
+  inodes strictly more than a quarter of `control.reserveInodes` (rounded down).
+  Otherwise `control-space`. So the ledger is still allowed to write when the
+  control filesystem is below the full reserve, as long as that quarter is free;
+  staging stops first. The full reserve is not guaranteed to remain free after every
+  write.
+
+Minimal example (placeholder values only):
+
+    {
+      "schemaVersion": 1,
+      "enabled": true,
+      "companyId": "example-company",
+      "exportBaseUrl": "https://backup.example.test/internal/eformsign-backup/v1",
+      "tokenFile": "/path/to/secrets/export.token",
+      "control": { "path": "/path/to/control", "reserveBytes": 1073741824, "reserveInodes": 10000 },
+      "archive": {
+        "path": "/path/to/archive",
+        "archiveId": "00000000-0000-0000-0000-000000000000",
+        "reserveBytes": 1073741824,
+        "reserveInodes": 10000
+      }
+    }
+
+### Ownership and mode rules
+
+Every refusal below is a reason code only; the path is never printed.
+
+- **Config file** (`--config`): a regular file, not a symlink (it is opened without
+  following links), owned by the user running the worker, not writable by group or
+  others, at most 64 KiB. It does not have to be 0600: 0644 and 0400 are accepted.
+  Otherwise `config-invalid` (exit 78).
+- **Token file** (`tokenFile`, read by `run` only): a regular file, not a symlink,
+  mode exactly 0600, owned by the user running the worker, at most 256 bytes. The
+  content is `ebx_` followed by 43 characters from `A-Z a-z 0-9 _ -`, with at most
+  one trailing newline. Otherwise `token-file-invalid` (exit 78).
+- **Control directory**: must already exist, be a real directory (not a symlink),
+  owned by the user running the worker and not writable by group or others, else
+  `control-unavailable` (exit 74). The exception is a control directory that is
+  missing altogether: `init`, `run`, `verify` and `recover` check the lock first, and a
+  missing `<control>/worker.lock` is `lock-not-held` (exit 78), not
+  `control-unavailable`. Only `inspect`, which skips the lock check, reports a
+  missing control directory as `control-unavailable` (exit 74). Its ledger files are created 0600 and its
+  directories 0700; `<control>/staging` is created 0700 and must be owned by the worker user and not
+  writable by group or others.
+  `<control>/worker.lock` must be a regular file (not a symlink); a missing or
+  foreign lock is `lock-not-held` (exit 78).
+- **Archive directory**: must already exist (the worker never creates the root), be
+  a real directory whose path has no symlink in it (its real path equals
+  `archive.path`), have the device and inode the ledger recorded at install time, not be writable by
+  group or others, and be writable and searchable by the worker. Directories the
+  worker creates below it are 0700 and must be owned by the worker user and not
+  writable by group or others (`archive-unsafe-path`). Control and archive must
+  both be on ext4 or xfs (`unsupported-filesystem`).
+
+## Exit codes
+
+stderr carries the reason code; the exit code follows it. The two tools use
+different sets.
+
+Worker (`scripts/eformsign-backup-worker.ts`):
+
+| exit | meaning |
+| --- | --- |
+| 0 | ok. A `run` that ends `partial` or `blocked` is still 0; read the `run_*` event |
+| 69 | state or archive: `not-initialized`, `recovery-required`, `ledger-duplicate-install`, `ledger-inconsistent`, `archive-identity-mismatch`, `archive-marker-invalid`, `archive-unavailable`, `archive-conflict`, `archive-not-mount-point`, `archive-unsafe-path`, `archive-space` |
+| 70 | internal: any other reason code or an unexpected error |
+| 74 | control directory: `control-unavailable`, `control-space` |
+| 75 | another worker holds the lock. Returned by `flock -E 75`, never by the worker itself |
+| 78 | configuration: `config-invalid` (which includes any command line mistake), `token-file-invalid`, `export-base-url-invalid`, `lock-not-held`, `unsupported-filesystem` |
+
+Restore (`scripts/eformsign-backup-restore.ts`); it has no lock, so no 75 and no 74/78:
+
+| exit | meaning |
+| --- | --- |
+| 0 | ok |
+| 64 | usage (unknown, repeated or valueless flag, missing or doubled `--latest` / `--snapshot`, a relative `--archive`, a bad `--company`), or `restore-output-invalid` (bad `--out`), `invalid-path-segment` |
+| 65 | data is wrong: `restore-conflict`, `artifact-integrity`, `pdf-shape`. Usually nothing is written, but see "Restore from the archive alone": a failure found while copying may leave partial output in `--out` |
+| 66 | nothing to restore: `not-initialized` |
+| 69 | archive: `archive-unavailable`, `archive-unsafe-path`, `archive-identity-mismatch`, `archive-marker-invalid` |
+| 70 | internal: any other reason code or an unexpected error, including `artifact-too-large` (an archive file that has grown past the 128 MiB read limit; when it happens while copying, partial output may be left in `--out`) |
+
+## Never delete `worker.lock` while a run may be active
+
+Do not delete, rename or replace `<control>/worker.lock` while any worker command may
+be running. A deleted or replaced lock file lets a second worker lock a new file
+while the first still holds the old one, and two workers would then write the same
+ledger.
+
+The worker defends itself, but only partly. Once per composite ledger operation,
+immediately before its first destructive call (a journal append, the cut of a torn
+journal tail, the first write of `init`, the rename that quarantines a ledger, the
+write of a checkpoint), it re-checks that `/proc/locks` still lists this process
+on the lock inode it verified at start and that `<control>/worker.lock` still
+resolves to that same device and inode. If not, the active run stops with
+`lock-not-held` (exit 78) before its next ledger write.
+
+That check is not atomic with the write that follows it, so a small window remains:
+deleting the lock is still unsafe. The guard narrows the damage; it does not make
+deletion safe. A torn-tail repair that the check refused can leave a harmless
+`ledger/tail-<n>.quarantine` copy; the next open reuses it.
 
 ## Crash recovery
 
@@ -148,6 +295,35 @@ queued again), and every unfinished run gets a late `run_finished` with
 `crashed`. Nothing is deleted at any point; damaged files get a `.corrupt-<runId>`
 suffix.
 
+## Manifest file names
+
+Each document revision is indexed by a manifest under
+`eformsign/<company>/<document>/manifests/`. The worker writes every manifest as
+`<metadataRevision>-<manifestSha256>.json`, where the suffix is the SHA-256 of the
+file's own bytes: the same artifact claims always give the same file, and a
+revision whose PDFs the source later offers with different bytes gets a second
+file beside the first. Files named `<metadataRevision>.json` (written by earlier
+builds) are still read and are never modified; both shapes can sit side by side.
+A file whose name does not match its bytes is treated as damaged. A manifest is
+written as soon as one artifact of the revision is verified, before its sibling
+arrives; only a completion means the whole pair is there.
+
+A manifest the ledger acknowledged or a completion names is *bound*. `run` finds a bound
+manifest that has gone missing from the one manifest listing it already makes (the check
+itself reads nothing) and publishes it again, byte for byte, when it can be rebuilt from the current
+snapshot or from what the retained journals observed for that revision; if not, nothing is
+written and the run ends in `archive-conflict` after its other work. The existence check
+does not read present bound manifests (damage to one is found by `verify --all`), but
+`run` still reads the relevant present manifests of documents outside the snapshot while
+it backfills missing manifests.
+
+Rollback: an older build does not know the versioned names. Once this build has
+written to an archive, going back to older code alone leaves the restore script
+unable to read its completions (`--latest` reports `not-initialized`),
+`--allow-incomplete` silently leaves those documents out, and an older `recover`
+does not re-hash artifacts listed only in versioned manifests. Roll back the code
+only together with a plan for the archive, never on its own.
+
 ## Restore from the archive alone
 
     cd backend && NODE_PATH=. node -r ts-node/register/transpile-only \
@@ -157,13 +333,29 @@ suffix.
 Restore reads only the archive: not the control directory, not the ledger, not
 the database. The completion with the highest sequence in its file name is the
 latest one; `latest.json` and file times are ignored. Two completions that cannot
-both be right (`restore-conflict`, exit 65), a tampered or missing artifact or
-manifest (`artifact-integrity`, exit 65) stop the restore before anything is
-written. `--out` must be a new or empty real directory outside the archive. The
+both be right (`restore-conflict`, exit 65), and a tampered or missing artifact or
+manifest (`artifact-integrity`, exit 65) found by the up-front check stop the
+restore before anything is written. That check covers every artifact the restore
+will copy; a conflict or a bad manifest is found while planning, also before the
+first write. An artifact that changes or disappears after the check, while it is
+being copied, still fails the restore: an integrity failure ends with
+`artifact-integrity` (exit 65), and an artifact replaced by a symlink with
+`archive-unsafe-path` (exit 69); one that grows past the 128 MiB read limit
+(`READ_MAX_BYTES`) between the check and the copy ends with `artifact-too-large`
+(exit 70). Documents copied before the failure, if any, stay
+in `--out`; nothing is rolled back. `--out` must be a new
+or empty real directory outside the archive; running restore again into a
+non-empty `--out` is refused with `restore-output-invalid` (exit 64). After a failed
+copy, check the archive, then restore into a fresh empty `--out` and discard (or keep
+aside) the partial one; do not use it as a restore. The
 report `restore-report.json` says `unverified-archive` (or `incomplete-archive`
 when restored from manifests with `--allow-incomplete`), lists the gaps recorded
 in the completion and the completions that were set aside; it never says the
-archive is complete.
+archive is complete. With `--allow-incomplete` and no usable completion, restore
+picks no winner between manifests: if any one document has manifests that list
+different artifact sets (for example an old and a new version of its audit trail),
+the whole restore refuses with `restore-conflict` (exit 65). Restore a snapshot
+that has a completion instead.
 
 ## When the ledger says `recovery-required`
 
@@ -194,6 +386,8 @@ installation. Nothing repairs this on its own. To decide:
    inode: move the `ledger.quarantine-*` directories out as well as `ledger/`. A
    directory that cannot be read, and a checkpoint or journal that cannot be read,
    also make it refuse with `control-unavailable`.
+   A torn last journal line is repaired only after all of these checks pass, so
+   a refused `recover` leaves `ledger/` byte-for-byte as it found it.
 4. After the checks, `recover` moves the damaged ledger aside as
    `ledger.quarantine-<runId>`, starts a new one that records the highest
    sequence found in the archive (so a sequence is never reused) and the gaps
@@ -206,6 +400,20 @@ installation. Nothing repairs this on its own. To decide:
    overwritten, and neither is one that cannot be parsed. In both cases move
    `<control>/installation.json` aside by hand once you have decided the archive
    is right; `recover` then writes it again from the archive marker.
+6. Re-running `recover`. A `recover` that was interrupted (for example killed)
+   leaves an `ok` ledger that starts with `recovery_started` and holds only
+   some of the `recovered_verified` records. Run the same command again with the same
+   `--installation-id`: it resumes, skips every entry already `recovered_verified`,
+   re-hashes and appends only the rest, and appends nothing when everything is done.
+   It resumes only while all of these hold: the ledger's origin is
+   `recovery_started`; no `run_started` exists, meaning neither `run` nor `verify` has
+   run since (both append `run_started`); the id you give is the ledger's
+   installation id; and the archive root still has the device and inode the ledger
+   recorded, with a marker naming that id. After a `run` or `verify`, recover can no
+   longer resume and refuses with `ledger-inconsistent` (exit 69), as it does for any
+   other `ok` ledger. A wrong installation id or a swapped archive gives
+   `archive-identity-mismatch`, and a missing marker `archive-marker-invalid` (both
+   exit 69).
 
 ## Staging files the worker leaves behind
 

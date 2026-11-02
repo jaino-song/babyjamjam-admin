@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { WorkerError } from "domain/eformsign-backup/worker";
 import type { FsProbe } from "infrastructure/eformsign-backup/worker/fs-probe";
-import { assertLockHeld, decodeDevice, parseProcLocks } from "infrastructure/eformsign-backup/worker/lock";
+import { assertLockHeld, decodeDevice, lockGuard, parseProcLocks, verifyLockHeld } from "infrastructure/eformsign-backup/worker/lock";
 
 import { lockedProbe, makeBase } from "./helpers/runner-support";
 
@@ -101,5 +101,84 @@ describe("assertLockHeld", () => {
         const error = await assertLockHeld(lock, broken, 1).catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(WorkerError);
         expect((error as WorkerError).message).toBe("lock-not-held");
+    });
+});
+
+describe("lockGuard (the re-check before every ledger write)", () => {
+    let base: string;
+    beforeEach(async () => { base = await makeBase("bjj455-lockguard-"); });
+    afterEach(async () => { await fs.rm(base, { recursive: true, force: true }); });
+
+    const lockNotHeld = { reasonCode: "lock-not-held" };
+    async function lineFor(file: string, pid: number): Promise<string> {
+        const stat = await fs.stat(file);
+        const { major, minor } = decodeDevice(stat.dev);
+        return `1: FLOCK  ADVISORY  WRITE ${pid} ${major.toString(16).padStart(2, "0")}:${minor.toString(16).padStart(2, "0")}:${stat.ino} 0 EOF\n`;
+    }
+    const probeWith = (text: string): FsProbe => ({
+        statfs: async () => ({ type: 0xef53, bavail: 1, bsize: 1, ffree: 1 }),
+        readProcLocks: async () => text,
+    });
+
+    it("should resolve while the path is still the verified inode and /proc/locks still lists this pid on it", async () => {
+        const lock = path.join(base, "worker.lock");
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        const probe = probeWith(await lineFor(lock, 4242));
+        const held = await verifyLockHeld(lock, probe, 4242);
+        const stat = await fs.lstat(lock);
+        expect(held).toEqual({ dev: stat.dev, ino: stat.ino });
+        const guard = lockGuard(lock, probe, held, 4242);
+        await expect(guard()).resolves.toBeUndefined();
+        await expect(guard()).resolves.toBeUndefined();
+    });
+
+    it("should fail when the lock path was replaced by a new inode, even though /proc/locks still lists this pid on the old one", async () => {
+        const lock = path.join(base, "worker.lock");
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        const probe = probeWith(await lineFor(lock, 4242));
+        const guard = lockGuard(lock, probe, await verifyLockHeld(lock, probe, 4242), 4242);
+        // Keep the old inode alive under another name so the replacement cannot reuse its number.
+        await fs.rename(lock, path.join(base, "worker.lock.old"));
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        expect((await fs.stat(lock)).ino).not.toBe((await fs.stat(path.join(base, "worker.lock.old"))).ino);
+        await expect(guard()).rejects.toMatchObject(lockNotHeld);
+    });
+
+    it("should fail when the lock file was deleted", async () => {
+        const lock = path.join(base, "worker.lock");
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        const probe = probeWith(await lineFor(lock, 4242));
+        const guard = lockGuard(lock, probe, await verifyLockHeld(lock, probe, 4242), 4242);
+        await fs.rm(lock);
+        await expect(guard()).rejects.toMatchObject(lockNotHeld);
+    });
+
+    it("should fail when the path became a symlink to the verified inode", async () => {
+        const lock = path.join(base, "worker.lock");
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        const probe = probeWith(await lineFor(lock, 4242));
+        const guard = lockGuard(lock, probe, await verifyLockHeld(lock, probe, 4242), 4242);
+        await fs.rename(lock, path.join(base, "elsewhere.lock"));
+        await fs.symlink(path.join(base, "elsewhere.lock"), lock);
+        await expect(guard()).rejects.toMatchObject(lockNotHeld);
+    });
+
+    it("should fail when /proc/locks no longer lists this pid on the verified inode, and never leak the cause", async () => {
+        const lock = path.join(base, "worker.lock");
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        const held = await verifyLockHeld(lock, probeWith(await lineFor(lock, 4242)), 4242);
+        await expect(lockGuard(lock, probeWith(await lineFor(lock, 4243)), held, 4242)()).rejects.toMatchObject(lockNotHeld);
+        await expect(lockGuard(lock, probeWith(""), held, 4242)()).rejects.toMatchObject(lockNotHeld);
+        const broken: FsProbe = { statfs: probeWith("").statfs, readProcLocks: async () => { throw new Error(`EACCES ${lock}`); } };
+        const error = await lockGuard(lock, broken, held, 4242)().catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(WorkerError);
+        expect((error as WorkerError).message).toBe("lock-not-held");
+    });
+
+    it("verifyLockHeld should refuse exactly where assertLockHeld refuses", async () => {
+        const lock = path.join(base, "worker.lock");
+        await fs.writeFile(lock, "", { mode: 0o600 });
+        await expect(verifyLockHeld(lock, probeWith(""), 4242)).rejects.toMatchObject(lockNotHeld);
+        await expect(verifyLockHeld(path.join(base, "absent.lock"), probeWith(""), 1)).rejects.toMatchObject(lockNotHeld);
     });
 });

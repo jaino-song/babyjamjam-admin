@@ -9,6 +9,7 @@ import { decodeCheckpoint } from "./ledger-checkpoint";
 import { CHECKPOINT_NAME, LEDGER_DIR_NAME, MARKER_NAME, encodeMarker } from "./ledger-replay";
 import type { LocalDestination } from "./local-destination";
 import { listManifestFiles, readManifest } from "./restore";
+import { countDamagedBoundManifests } from "./runner-run";
 import {
     DestinationLedger, VERIFY_STALE_MS, assertSameInstallation, controlMarkerWriter, nowIso, parseMarker, readArchiveMarker,
     requireInstallation, sha256Hex,
@@ -80,6 +81,7 @@ export async function executeVerify(deps: RunnerDependencies, options: { all: bo
     const damaged: Array<{ artifactIdentity: string; relativeKey: string | null }> = [];
     let checked = 0;
     let archiveAvailable = true;
+    let damagedManifests = 0;
     for (const entry of due) {
         const info = deps.ledger.state.artifacts.get(entry.artifactIdentity);
         const relativeKey = entry.relativeKey;
@@ -95,6 +97,15 @@ export async function executeVerify(deps: RunnerDependencies, options: { all: bo
             if (!(error instanceof WorkerError)) throw error;
             archiveAvailable = false;
             break;
+        }
+    }
+    if (archiveAvailable && options.all) {
+        // Only `--all` also reads the bound manifests; plain verify keeps its PDF-only scope.
+        try {
+            damagedManifests = await countDamagedBoundManifests(deps, archive);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            archiveAvailable = false;
         }
     }
     if (!archiveAvailable) {
@@ -116,7 +127,9 @@ export async function executeVerify(deps: RunnerDependencies, options: { all: bo
         }
         await dl.transition(item.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey });
     }
-    await finish("partial", []);
+    await finish("partial", damagedManifests > 0 ? ["archive-conflict"] : []);
+    // The run is on record with its reason; the exit follows the unchanged mapping (archive-conflict is 69). Nothing is rewritten.
+    if (damagedManifests > 0) throw new WorkerError("archive-conflict");
     return { outcome: "finished", runId, checked, integrityErrors: damaged.length, archiveAvailable: true };
 }
 
@@ -246,11 +259,15 @@ async function readCompletionFacts(archive: LocalDestination, companyId: string)
 /**
  * `recover` (contract section 3): builds a new ledger from what the archive itself proves. It refuses, changing nothing,
  * unless the archive is the one that was installed and the operator named its installation id.
+ *
+ * A recover that was killed part way leaves an ok ledger that started with `recovery_started` and holds only some of the
+ * `recovered_verified` records. Running recover again then RESUMES: it re-hashes what is not yet recovered, appends only
+ * that, and starts nothing new. Resume is allowed only while no run has started since (`run` and `verify` both append
+ * `run_started`), so a ledger that has moved on is never rewritten.
  */
 export async function executeRecover(deps: RunnerDependencies, options: { installationId: string }): Promise<RecoverSummary> {
     const { config } = deps;
     const initialStatus = deps.ledger.status;
-    if (initialStatus === "ok") throw new WorkerError("ledger-inconsistent");
 
     // The archive root is compared with what the ledger recorded at install time. Marker-only proof is allowed only when no
     // directory anywhere (ledger/ or a quarantine dir) holds a record; otherwise the agreed prior is the expected identity.
@@ -273,6 +290,14 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
         throw new WorkerError("archive-identity-mismatch");
     }
 
+    // An ok ledger passes only as the resume of an interrupted recover; every other ok ledger refuses before anything is written.
+    const installed = deps.ledger.state.installation;
+    const resuming = initialStatus === "ok";
+    if (resuming && !(installed !== null && installed.origin === "recovery_started" && deps.ledger.state.runs.size === 0
+        && installed.installationId === options.installationId && installed.archiveDev === current.dev && installed.archiveIno === current.ino)) {
+        throw new WorkerError("ledger-inconsistent");
+    }
+
     const controlMarkerPath = path.join(config.control.path, MARKER_NAME);
     let controlMarkerBytes: Buffer | null = null;
     try {
@@ -285,28 +310,43 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
         if (control === null) throw new WorkerError("recovery-required");
         if (control.installationId !== marker.installationId || control.archiveId !== marker.archiveId) throw new WorkerError("archive-identity-mismatch");
     } else {
+        // The same ownership guard the ledger runs before its own writes: a worker whose lock file was replaced must not restore it.
+        await deps.ledger.guardExternalWrite();
         await controlMarkerWriter(config.control.path, MARKER_NAME, encodeMarker(marker));
         if (deps.reopenLedger === undefined) throw new WorkerError("internal");
         await deps.ledger.close();
         deps.ledger = await deps.reopenLedger();
-        if (deps.ledger.status === "ok") return { outcome: "finished", recovered: 0, unverified: 0, sequenceFloor: deps.ledger.state.lastSeq, knownGaps: 0 };
+        if (deps.ledger.status === "ok") {
+            await deps.ledger.repairPendingTail();
+            return { outcome: "finished", recovered: 0, unverified: 0, sequenceFloor: deps.ledger.state.lastSeq, knownGaps: 0 };
+        }
     }
-    if (deps.ledger.status !== "recovery_required") throw new WorkerError("ledger-inconsistent");
+    // Every refusal check has passed: only now may a torn tail of the ledger be repaired.
+    await deps.ledger.repairPendingTail();
+    if (!resuming && deps.ledger.status !== "recovery_required") throw new WorkerError("ledger-inconsistent");
 
     const facts = await readCompletionFacts(archive, config.companyId);
     const named = new Set(facts.valid.flatMap((completion) => completion.entries.map((entry) => entry.manifestKey)));
     const others = (await listManifestFiles(config.archive.path, config.companyId)).filter((file) => !named.has(file.key));
-    const runId = deps.uuid();
-    await deps.ledger.quarantineAndReset(runId);
-    await deps.runnerFault?.("recover-after-quarantine");
-    const at = nowIso(deps);
-    await deps.ledger.append("recovery_started", {
-        installationId: marker.installationId, archiveId: marker.archiveId, archiveDev: current.dev, archiveIno: current.ino,
-        destinationIdentity: localDestinationIdentity(marker.archiveId), destinationRevision: LOCAL_DESTINATION_REVISION,
-        priorLedgerName: resolved === null || resolved.source === LEDGER_DIR_NAME ? `${QUARANTINE_PREFIX}${runId}` : resolved.source,
-        sequenceFloor: facts.floor, knownGaps: facts.gaps,
-    }, at);
+    if (!resuming) {
+        const runId = deps.uuid();
+        await deps.ledger.quarantineAndReset(runId);
+        await deps.runnerFault?.("recover-after-quarantine");
+        const at = nowIso(deps);
+        await deps.ledger.append("recovery_started", {
+            installationId: marker.installationId, archiveId: marker.archiveId, archiveDev: current.dev, archiveIno: current.ino,
+            destinationIdentity: localDestinationIdentity(marker.archiveId), destinationRevision: LOCAL_DESTINATION_REVISION,
+            priorLedgerName: resolved === null || resolved.source === LEDGER_DIR_NAME ? `${QUARANTINE_PREFIX}${runId}` : resolved.source,
+            sequenceFloor: facts.floor, knownGaps: facts.gaps,
+        }, at);
+    }
+    // Resume keeps the floor and the gaps the interrupted pass already recorded.
+    const { sequenceFloor, knownGaps } = resuming
+        ? { sequenceFloor: deps.ledger.state.sequenceFloor, knownGaps: deps.ledger.state.gaps.length }
+        : { sequenceFloor: facts.floor, knownGaps: facts.gaps.length };
 
+    // Resume skips what the interrupted pass already proved: an entry verified for this installation's destination.
+    const done = resuming && installed !== null ? new DestinationLedger(deps, installed) : null;
     let recovered = 0;
     let unverified = 0;
     const seen = new Set<string>();
@@ -330,6 +370,7 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
         for (const artifact of manifest.artifacts) {
             if (seen.has(artifact.artifactIdentity)) continue;
             seen.add(artifact.artifactIdentity);
+            if (done?.entryOf(artifact.artifactIdentity)?.state === "verified") continue;
             let state: "ok" | "missing" | "mismatch" = "missing";
             try {
                 state = await archive.reverify(artifact.relativeKey, artifact.sha256, artifact.byteLength);
@@ -344,7 +385,8 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
                 artifactIdentity: artifact.artifactIdentity, relativeKey: artifact.relativeKey, sha256: artifact.sha256,
             }, nowIso(deps));
             recovered += 1;
+            if (recovered === 1) await deps.runnerFault?.("recover-after-first-recovered");
         }
     }
-    return { outcome: "finished", recovered, unverified, sequenceFloor: facts.floor, knownGaps: facts.gaps.length };
+    return { outcome: "finished", recovered, unverified, sequenceFloor, knownGaps };
 }

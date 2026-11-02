@@ -6,7 +6,7 @@ import { loadWorkerConfig, isNormalAbsolutePath, type WorkerConfig } from "./con
 import { ExportClient, readTokenFile } from "./export-client";
 import { assertSupportedFilesystem, createRealFsProbe, type FsProbe } from "./fs-probe";
 import { LedgerStore, type LedgerFaultPoint } from "./ledger-store";
-import { assertLockHeld } from "./lock";
+import { lockGuard, verifyLockHeld } from "./lock";
 import { LocalDestination } from "./local-destination";
 import { controlMarkerWriter } from "./runner-common";
 import { WorkerRunner } from "./runner";
@@ -68,7 +68,8 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
     const clock: Clock = environment.clock ?? { now: () => new Date() };
     const controlPath = config.control.path;
 
-    if (command !== "inspect") await assertLockHeld(path.join(controlPath, LOCK_NAME), probe);
+    const lockPath = path.join(controlPath, LOCK_NAME);
+    const held = command === "inspect" ? null : await verifyLockHeld(lockPath, probe);
     await assertSupportedFilesystem(probe, controlPath, "control-unavailable");
     if (command !== "inspect") {
         try {
@@ -87,9 +88,13 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
 
     const openLedger = (): Promise<LedgerStore> => LedgerStore.open(controlPath, {
         readOnly: command === "inspect",
+        // recover repairs a torn tail itself, after its read-only refusal checks; every other command repairs on open.
+        ...(command === "recover" ? { deferTornTailRepair: true } : {}),
         ...(environment.ledgerFault === undefined ? {} : { fault: environment.ledgerFault }),
         now: () => clock.now().toISOString(),
         writeMarker: controlMarkerWriter,
+        // Every ledger write re-proves the lock: the path must still be the inode verified above, still locked by this pid.
+        ...(held === null ? {} : { beforeWrite: lockGuard(lockPath, probe, held) }),
     });
     const deps: RunnerDependencies = {
         config,
