@@ -439,8 +439,8 @@ export async function executeRecover(deps: RunnerDependencies, options: { instal
                 artifactIdentity: artifact.artifactIdentity, relativeKey: artifact.relativeKey, sha256: artifact.sha256,
             }, nowIso(deps));
             recovered += 1;
-            await adoptStagedCopy(deps, archive, artifact);
             if (recovered === 1) await deps.runnerFault?.("recover-after-first-recovered");
+            await adoptStagedCopy(deps, archive, artifact);
         }
     }
     // The local ledger is rebuilt and kept whatever happens next; the Drive part adopts what Drive already holds and creates nothing.
