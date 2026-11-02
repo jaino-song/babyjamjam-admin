@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
+import { MESSAGE_FAILURE_REASON_FALLBACK } from "@babyjamjam/shared";
 
 import { ClientDetailContent } from "./client-detail";
 import type { Client } from "@/lib/client/types";
@@ -23,7 +24,7 @@ jest.mock("./contract-link-confirm-sheet", () => ({ ContractLinkConfirmSheet: ({
 jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
   DetailTabPills: () => null, MobileDetailActions: () => null, MobileDetailHeader: () => null,
   InfoCard: ({ title, children }: { title: string; children: ReactNode }) => <section><h2>{title}</h2>{children}</section>,
-  InfoRow: () => null,
+  InfoRow: ({ label, value }: { label: string; value: ReactNode }) => <div>{label}{value}</div>,
   MobileDetailPage: ({ children }: { children: ReactNode }) => <main>{children}</main>,
   MobileDetailTabPanel: ({ children, tabId, activeTab }: { children: ReactNode; tabId: string; activeTab: string }) => <div aria-hidden={tabId !== activeTab}>{children}</div>,
 }));
@@ -43,6 +44,40 @@ function mount(props: Partial<ComponentProps<typeof ClientDetailContent>> = {}) 
   return render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content" client={client} activeTab="contracts"
     onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} {...props} />);
 }
+
+it.each([
+  ["failed", "Aligo SMS integration is not configured.", MESSAGE_FAILURE_REASON_FALLBACK],
+  ["failed", "발송 실패: Aligo error.", MESSAGE_FAILURE_REASON_FALLBACK],
+  ["failed", "잔액 부족", "잔액 부족"],
+  ["failed", " \t ", null],
+  ["canceled", "Related client or schedule deleted", null],
+  ["needs_setup", "Aligo error.", null],
+])("formats only the failed client-message reason (%s, %s)", (status, errorMessage, expected) => {
+  const { container } = mount({ activeTab: "message", notificationLogs: [{
+    id: 1,
+    provider: "aligo_sms",
+    templateKey: "SERVICE_INFO",
+    receiver: "01012345678",
+    recipientName: "고객",
+    clientId: client.id,
+    status,
+    messageBody: "안녕하세요",
+    errorMessage,
+    createdAt: "2026-10-13T00:00:00Z",
+    ruleName: null,
+  }] });
+  fireEvent.click(container.querySelector('[data-component$="_history-card_log-row"]') as HTMLElement);
+  if (expected) {
+    expect(screen.getByText(expected, { exact: false })).toBeInTheDocument();
+  } else {
+    expect(screen.queryByText(MESSAGE_FAILURE_REASON_FALLBACK, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByText("실패 사유", { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByText("취소 사유", { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByText("추가 필요 정보", { exact: false })).not.toBeInTheDocument();
+  }
+  expect(screen.queryByText(".")).not.toBeInTheDocument();
+});
+
 it("renders every pending document, badge, count, differences and opens the selected sheet", () => {
   mount({ linkConfirmations: [entry, { ...entry, documentId: "doc-2", documentName: null, differences: ["name"] }], refetchLinkConfirmations: jest.fn() });
   expect(screen.getByText("확인 필요 계약서 2건")).toBeInTheDocument();

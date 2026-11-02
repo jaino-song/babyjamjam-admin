@@ -228,6 +228,8 @@ const EXPECTED_PLAIN_ENV = new Map([
     ["PREVIEW_FRONTEND_URL", "https://preview.admin.babyjamjam.com"],
     ["PRODUCTION_FRONTEND_URL", "https://preview.admin.babyjamjam.com"],
     ["PRODUCTION_MOBILE_FRONTEND_URL", "https://preview.m.admin.babyjamjam.com"],
+    ["MOBILE_SERVICE_RECORD_BASE_URL", "https://preview.m.admin.babyjamjam.com"],
+    ["MOBILE_RECEIPT_BASE_URL", "https://preview.m.admin.babyjamjam.com"],
     ["SENTRY_ENVIRONMENT", "preview"],
     ["ALIGO_API_KEY", ""],
     ["ALIGO_USER_ID", ""],

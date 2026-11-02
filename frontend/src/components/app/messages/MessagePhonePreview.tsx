@@ -35,8 +35,8 @@ export function MessagePhonePreview({
   const hasContent = content.trim().length > 0;
 
   return (
-    <div data-component={resolvedPanelDataComponent} className={cn("flex min-h-0 justify-center py-2", className)}>
-      <div data-component={component("preview-phone")} className="flex h-full min-h-0 w-[320px] shrink-0">
+    <div data-component={resolvedPanelDataComponent} className={cn("flex min-h-0 min-w-0 w-full max-w-[320px] justify-center py-2", className)}>
+      <div data-component={component("preview-phone")} className="flex h-full min-h-0 min-w-0 w-full max-w-[320px]">
         <div data-component={component("preview-shell")} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[44px] border-[3px] border-gray-800 bg-gray-800">
           <div data-component={component("preview-statusbar")} className="flex shrink-0 items-center justify-between bg-gray-800 px-6 pt-3 pb-2">
             <span className="text-[0.65rem] font-medium text-gray-400">{timeText}</span>

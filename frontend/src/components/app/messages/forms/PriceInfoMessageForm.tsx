@@ -6,7 +6,12 @@ import bankAccountJSON from "../templates/json/bank-account.json";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
-import { useBankAccountInfos, useVoucherPriceInfos, type VoucherPriceInfo } from "@/hooks";
+import {
+  useAvailableClientAreas,
+  useBankAccountInfos,
+  useVoucherPriceInfos,
+  type VoucherPriceInfo,
+} from "@/hooks";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { renderTemplate } from "@/lib/template-utils";
 import { NameInput } from "./form-components/NameInput";
@@ -171,6 +176,14 @@ export const PriceInfoMessageForm = ({
 
   // Bank account info query
   const { data: bankAccountInfos = [] } = useBankAccountInfos();
+  const { data: availableAreas = [] } = useAvailableClientAreas();
+
+  // Area label: API koreanName -> bank-account.json label -> raw area id.
+  // An area missing from the hard-coded JSON must never throw.
+  const getAreaLabel = (areaId: string) =>
+    availableAreas.find((a) => a.id === areaId)?.koreanName
+    || bankAccountJSON[areaId as keyof typeof bankAccountJSON]?.area
+    || areaId;
 
   // Voucher price info query (연도 필터 적용)
   const { data: voucherPriceInfos = [], isLoading: isVoucherPriceInfosLoading } = useVoucherPriceInfos(formData.type, voucherYear);
@@ -420,7 +433,7 @@ export const PriceInfoMessageForm = ({
           <SelectContent>
             {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
               <SelectItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
-                {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
+                {getAreaLabel(bankAccountInfo.area)}
               </SelectItem>
             ))}
           </SelectContent>

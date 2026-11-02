@@ -46,6 +46,7 @@ import {
   normalizeApiError,
   getMessageHistoryDetailStatusLabel,
   formatMessageDateTimeCompact,
+  formatFailedMessageReason,
   formatMessageFailureReason,
   getMessageChannelLabel,
   getMessageHistoryTitle,
@@ -1751,7 +1752,7 @@ export function ClientDetailContent({
                 ? selectedLog.messageBody
                 : "내용이 없습니다.",
               failureReason: selectedLog.status === "failed"
-                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                ? formatFailedMessageReason(selectedLog.errorMessage) || null
                 : null,
               cancelReason: selectedLog.status === "canceled"
                 ? formatMessageFailureReason(selectedLog.errorMessage) || null
