@@ -11,7 +11,7 @@ import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store
 import { DestinationLedger, controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runner-common";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
-import { makePhaseRig, rigDoc, rigUuid, type PhaseRig } from "./helpers/drive-run-support";
+import { hashOf, makePhaseRig, rigDoc, rigUuid, type PhaseRig } from "./helpers/drive-run-support";
 import {
     COMPLETION_KEY, JSON_KEY, MANIFEST_KEY, MIB, PDF_KEY, RUN_KEY, bindDrive, driveKeys, driveTree, probeWith, swapArchive, swapBack,
 } from "./helpers/drive-run-support";
@@ -554,5 +554,61 @@ describe("record publication integrity (BJJ-456 U5-F1), phase with a stubbed Dri
         const keys = rig.recordUploads.map((upload) => upload.key);
         expect(keys).toEqual([doc.manifestKey, pending[0]!.body.relativeKey]);
         expect(rig.recordUploads[1]!.bytes.equals(queued)).toBe(true);
+    });
+});
+
+describe("rebind completeness (BJJ-456 U5-F2), phase with a stubbed Drive", () => {
+    let rig: PhaseRig;
+    afterEach(async () => { await rig.cleanup(); });
+    const oldRevision = `drive-layout-v1:${rigUuid(4)}`;
+
+    it("should upload an artifact the snapshot no longer offers, from verified bytes, when the new revision lacks it, and then its manifest and completion from the archive", async () => {
+        rig = await makePhaseRig();
+        const doc = rigDoc("D001");
+        const completion = rig.completionOf(doc);
+        rig.knowArtifact(doc);
+        rig.setEntry(doc, rig.state().installation.destinationIdentity, rig.state().installation.destinationRevision, "verified");
+        rig.setEntry(doc, "drive:rootFolder001", oldRevision, "verified");
+        rig.state().manifests.set(doc.manifestKey, { sha256: doc.manifest.sha256, at: "2026-11-02T00:00:00.000Z" });
+        rig.state().completions.set(completion.relativeKey, { sha256: completion.sha256, at: "2026-11-02T00:00:00.000Z", sequence: 1 });
+        rig.archiveFiles.set(doc.manifestKey, Buffer.from(doc.manifest.bytes));
+        rig.archiveFiles.set(completion.relativeKey, Buffer.from(completion.bytes));
+
+        await rig.phase.processWork([]);
+        await rig.phase.publishRecords();
+
+        expect(rig.artifactUploads).toEqual([doc.job.relativeKey]);
+        expect(rig.phase.driveVerified(doc.job.artifactIdentity)).toBe(true);
+        expect(rig.recordUploads.map((upload) => upload.key)).toEqual([doc.manifestKey, completion.relativeKey]);
+    });
+
+    it("should copy records an earlier revision published from the outbox (archive down) to the new revision, manifest before completion, with the original bytes", async () => {
+        rig = await makePhaseRig({ archiveOk: false });
+        const doc = rigDoc("D001");
+        const completion = rig.completionOf(doc);
+        for (const [key, bytes] of [[doc.manifestKey, doc.manifest.bytes], [completion.relativeKey, completion.bytes]] as const) {
+            await writeOutbox(rig.dir, bytes);
+            rig.state().driveRecords.set(driveStateKey(oldRevision, key), { sha256: hashOf(bytes), fileId: "oldRecord001" });
+        }
+        rig.knowArtifact(doc);
+
+        await rig.phase.processWork([doc.candidate]);
+        await rig.phase.publishRecords();
+
+        expect(rig.recordUploads.map((upload) => upload.key)).toEqual([doc.manifestKey, completion.relativeKey]);
+        expect(rig.recordUploads[1]!.bytes.equals(Buffer.from(completion.bytes))).toBe(true);
+    });
+
+    it("should not copy an outbox record whose bytes do not match what the earlier revision published", async () => {
+        rig = await makePhaseRig({ archiveOk: false });
+        const doc = rigDoc("D001");
+        rig.knowArtifact(doc);
+        await writeOutbox(rig.dir, doc.manifest.bytes);
+        rig.state().driveRecords.set(driveStateKey(oldRevision, doc.manifestKey), { sha256: "f".repeat(64), fileId: "oldRecord001" });
+
+        await rig.phase.processWork([doc.candidate]);
+        await rig.phase.publishRecords();
+
+        expect(rig.recordUploads.filter((upload) => upload.key === doc.manifestKey)).toHaveLength(1); // only this run's own manifest
     });
 });

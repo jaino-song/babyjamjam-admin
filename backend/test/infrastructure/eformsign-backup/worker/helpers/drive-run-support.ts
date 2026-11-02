@@ -89,6 +89,7 @@ const METADATA_REVISION = "a".repeat(64);
 
 export interface RigDoc {
     documentId: string;
+    pdf: Buffer;
     job: { documentId: string; artifactType: "document"; fileType: "document"; sha256: string; byteLength: number; artifactIdentity: string; relativeKey: string };
     manifest: { bytes: Uint8Array; sha256: string };
     manifestKey: string;
@@ -102,7 +103,7 @@ export function rigDoc(documentId: string): RigDoc {
     const job = { ...base, artifactIdentity: identity, relativeKey: artifactKey({ companyId: "C001", ...base }) };
     const manifest = buildManifest({ companyId: "C001", documentId, metadataRevision: METADATA_REVISION, artifacts: [job] } as never);
     const key = manifestKey({ companyId: "C001", documentId, metadataRevision: METADATA_REVISION, manifestSha256: manifest.sha256 });
-    return { documentId, job, manifest, manifestKey: key, candidate: { documentId, metadataRevision: METADATA_REVISION, artifacts: [job] } };
+    return { documentId, pdf, job, manifest, manifestKey: key, candidate: { documentId, metadataRevision: METADATA_REVISION, artifacts: [job] } };
 }
 
 export interface PhaseRig {
@@ -190,7 +191,7 @@ export async function makePhaseRig(options: { archiveOk?: boolean } = {}): Promi
     const rigDocs = new Map<string, RigDoc>();
     const archive: any = {
         readArchiveFile: async (key: string) => archiveFiles.get(key) ?? null,
-        openStaged: () => (async function* () { yield Buffer.from("%PDF"); })(),
+        openStaged: (_root: unknown, identity: string) => (async function* () { yield [...rigDocs.values()].find((doc) => doc.job.artifactIdentity === identity)!.pdf; })(),
         reverify: async () => "ok",
     };
     const phase = DriveRunPhase.forRun(deps, state.installation, archive, { path: dir } as never, host)!;

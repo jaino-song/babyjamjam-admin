@@ -296,6 +296,35 @@ export class DriveRunPhase {
                 sha256: info.sha256, byteLength: info.byteLength, relativeKey,
             });
         }
+        await this.processHistorical(inSnapshot);
+    }
+
+    /**
+     * Artifacts the local destination holds verified and this Drive revision has no entry for at all (everything a rebind starts
+     * without, and anything no snapshot offers any more): they become Drive work like any other, uploaded from verified bytes
+     * (staging, else the local archive after a hash check) before their records. One pass over the ledger per run.
+     */
+    private async processHistorical(inSnapshot: ReadonlySet<string>): Promise<void> {
+        const local = this.installation;
+        const missing: string[] = [];
+        for (const entry of this.state.destinations.values()) {
+            if (entry.destinationIdentity !== local.destinationIdentity || entry.destinationRevision !== local.destinationRevision) continue;
+            if (entry.state !== "verified" || inSnapshot.has(entry.artifactIdentity) || this.dl.entryOf(entry.artifactIdentity) !== undefined) continue;
+            missing.push(entry.artifactIdentity);
+        }
+        for (const identity of missing.sort()) {
+            if (this.halted !== null) return;
+            const info = this.state.artifacts.get(identity);
+            if (info === undefined || info.byteLength === null) continue;
+            let relativeKey: string;
+            try {
+                relativeKey = artifactKey({ companyId: this.deps.config.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
+            } catch { continue; }
+            await this.processJob({
+                documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
+                artifactIdentity: identity, sha256: info.sha256, byteLength: info.byteLength, relativeKey,
+            });
+        }
     }
 
     private async processJob(job: DriveJob): Promise<void> {
@@ -701,15 +730,23 @@ export class DriveRunPhase {
     }
 
     /**
-     * A rebind starts a new revision with nothing pending. Bytes an earlier revision queued in the outbox (the archive was down, so no
-     * other copy exists) are queued again for this revision, from the outbox itself, so the next steps publish them under the new root.
+     * A rebind starts a new revision with nothing pending and nothing published. Records an earlier revision queued, or published from
+     * the outbox, still have their original bytes there (the outbox keeps every file). Each one that is valid, and that this revision
+     * neither has nor has pending, is queued again for this revision from those bytes, so the steps after this one publish it under the
+     * new root, behind the same guards as every record (a manifest needs its artifacts verified here, a completion its manifests).
      */
     private async requeueFromEarlierRevisions(): Promise<void> {
         const prefix = `${this.revision}|`;
-        for (const [stateKey, sha256] of [...this.state.driveRecordsPending]) {
-            if (stateKey.startsWith(prefix)) continue;
-            const relativeKey = stateKey.slice(stateKey.indexOf("|") + 1);
-            if (this.state.driveRecordsPending.has(driveStateKey(this.revision, relativeKey)) || this.onDrive(relativeKey, sha256)) continue;
+        const earlier = new Map<string, string>();
+        const note = (stateKey: string, sha256: string): void => {
+            if (stateKey.startsWith(prefix)) return;
+            earlier.set(`${stateKey.slice(stateKey.indexOf("|") + 1)}|${sha256}`, sha256);
+        };
+        for (const [stateKey, sha256] of this.state.driveRecordsPending) note(stateKey, sha256);
+        for (const [stateKey, record] of this.state.driveRecords) note(stateKey, record.sha256);
+        for (const [mapKey, sha256] of [...earlier].sort(([a], [b]) => (a < b ? -1 : 1))) {
+            const relativeKey = mapKey.slice(0, mapKey.lastIndexOf("|"));
+            if (this.state.driveRecordsPending.has(driveStateKey(this.revision, relativeKey)) || this.state.driveRecords.has(driveStateKey(this.revision, relativeKey))) continue;
             let bytes: Buffer | null;
             try {
                 bytes = await readOutbox(this.deps.config.control.path, sha256);
@@ -717,8 +754,28 @@ export class DriveRunPhase {
                 if (!(error instanceof WorkerError) || error.reasonCode !== "artifact-integrity") throw error;
                 bytes = null;
             }
-            if (bytes !== null) await this.queue(relativeKey, bytes);
+            if (bytes !== null && this.isRecordShape(relativeKey, bytes)) await this.queue(relativeKey, bytes);
         }
+    }
+
+    /** The bytes are a manifest, completion or run inventory that belongs under `relativeKey` (nothing else is ever queued). */
+    private isRecordShape(relativeKey: string, bytes: Buffer): boolean {
+        const manifest = parseManifestKey(relativeKey);
+        if (manifest !== null) {
+            if (manifest.companyId !== this.deps.config.companyId) return false;
+            try {
+                parseManifestBytes(bytes, relativeKey, { companyId: manifest.companyId, documentId: manifest.documentId, metadataRevision: manifest.metadataRevision });
+                return true;
+            } catch (error) {
+                if (!(error instanceof WorkerError)) throw error;
+                return false;
+            }
+        }
+        if (COMPLETION_KEY.test(relativeKey)) {
+            try { return completionSchema.safeParse(JSON.parse(bytes.toString("utf8"))).success; } catch { return false; }
+        }
+        const run = /\/runs\/([0-9a-f-]{36})\.json$/.exec(relativeKey);
+        return run !== null && this.isInventoryOf(bytes, run[1]!);
     }
 
     /**
