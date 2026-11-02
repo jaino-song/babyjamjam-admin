@@ -1081,6 +1081,7 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                 /** The first snapshot's manifest of D001: a bound file the later snapshot no longer names. */
                 const older = async (): Promise<string> =>
                     path.join(h.archive, (await readCompletions(h.archive))[0]!.value["entries"].find((e: { documentId: string }) => e.documentId === "D001").manifestKey);
+                const lastRunFinished = async () => (await readLedgerRecords(h.control)).filter((record) => record.type === "run_finished").pop()!;
                 const cliVerify = (extra: string[] = []) => spawnUnderFlock(h, ["verify", "--config", h.configPath, ...extra]);
 
                 it("A1: should republish a deleted, acknowledged and completion-named manifest byte for byte when it can be rebuilt, then write nothing more", async () => {
@@ -1151,6 +1152,22 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     expect((await fs.readFile(lost)).equals(original)).toBe(true);
                 }, 240_000);
 
+                it("F1: should run the ownership guard before republishing and write nothing when it refuses", async () => {
+                    await twoRevisions(false);
+                    const lost = await older();
+                    await fs.rm(lost);
+                    const guard = jest.spyOn(LedgerStore.prototype, "guardExternalWrite").mockRejectedValue(new WorkerError("lock-not-held"));
+                    try {
+                        await expect(runOnce(h)).rejects.toMatchObject({ reasonCode: "lock-not-held" });
+                        expect(guard).toHaveBeenCalled();
+                        expect(await fs.stat(lost).then(() => true, () => false)).toBe(false);
+                    } finally {
+                        guard.mockRestore();
+                    }
+                    await expect(runOnce(h)).resolves.toMatchObject({ outcome: "finished" });
+                    expect(await fs.stat(lost).then(() => true, () => false)).toBe(true);
+                }, 240_000);
+
                 it("B1: should leave run alone but make verify --all report an older bound manifest damaged after its document was fully published", async () => {
                     await twoRevisions(false);
                     const damagedFile = await older();
@@ -1164,6 +1181,8 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     expect((await fs.readFile(damagedFile)).equals(damaged)).toBe(true);
 
                     await expect(verifyAll()).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+                    // The ledger's record of that verify run carries the finding: it is not indistinguishable from a healthy one.
+                    expect((await lastRunFinished()).body["reasonCodes"]).toEqual(["archive-conflict"]);
                     const child = cliVerify(["--all"]);
                     expect(await child.exited).toEqual({ code: 69, signal: null });
                     expect(child.stderr().trim()).toBe("archive-conflict");
@@ -1173,6 +1192,7 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
 
                     await fs.writeFile(damagedFile, original);
                     await expect(verifyAll()).resolves.toMatchObject({ integrityErrors: 0 });
+                    expect((await lastRunFinished()).body["reasonCodes"]).toEqual([]);
                     expect(await cliVerify(["--all"]).exited).toEqual({ code: 0, signal: null });
                 }, 240_000);
 
@@ -1181,6 +1201,7 @@ describe("WorkerRunner.run (fake export server, synthetic archive)", () => {
                     const lost = await older();
                     await fs.rm(lost);
                     await expect(verifyAll()).rejects.toMatchObject({ reasonCode: "archive-conflict" });
+                    expect((await lastRunFinished()).body["reasonCodes"]).toEqual(["archive-conflict"]);
                     expect(await fs.stat(lost).then(() => true, () => false)).toBe(false);
                 }, 240_000);
 

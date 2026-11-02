@@ -46,6 +46,38 @@ export function completionBindings(
     return digests;
 }
 
+/**
+ * `verify --all`: how many bound manifests (acknowledged by the ledger or named by a valid completion) are missing from the
+ * archive, are no valid manifest of their document, or have another digest than the ledger or a completion binds. Each is
+ * read once; nothing is repaired or written. An archive-side refusal is rethrown: the archive itself is not usable, which
+ * is not the file's fault. Plain `verify` (no `--all`) does not run this check, so its scope stays PDF-only.
+ */
+export async function countDamagedBoundManifests(deps: RunnerDependencies, archive: LocalDestination): Promise<number> {
+    const { companyId } = deps.config;
+    const bound = new Map<string, Set<string>>();
+    const bind = (key: string, sha256: string): void => {
+        bound.set(key, (bound.get(key) ?? new Set<string>()).add(sha256));
+    };
+    for (const [key, acknowledged] of deps.ledger.state.manifests) bind(key, acknowledged.sha256);
+    for (const [key, digests] of completionBindings(await archive.listCompletions(companyId), companyId)) for (const sha256 of digests) bind(key, sha256);
+    let damaged = 0;
+    for (const [key, digests] of bound) {
+        const parts = parseManifestKey(key);
+        if (parts === null || parts.companyId !== companyId) continue;
+        try {
+            const bytes = await archive.readArchiveFile(key);
+            if (bytes === null) throw new WorkerError("artifact-integrity");
+            const { sha256 } = parseManifestBytes(bytes, key, { companyId, documentId: parts.documentId, metadataRevision: parts.metadataRevision });
+            if ([...digests].some((expected) => expected !== sha256)) throw new WorkerError("artifact-integrity");
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            if (isArchiveSide(error.reasonCode)) throw error;
+            damaged += 1;
+        }
+    }
+    return damaged;
+}
+
 /** A run that cannot get a usable snapshot ends as `failed` with this reason; it is an outcome, not an error. */
 class StageFailure extends Error {
     constructor(readonly reasonCode: WorkerReasonCode) {
@@ -982,6 +1014,8 @@ class RunExecution {
                 this.failIndexConflict(key);
                 continue;
             }
+            // An additive write the ledger does not make itself: held to the same ownership check, so a stale owner stops here.
+            await this.deps.ledger.guardExternalWrite();
             const published = await this.archive.publishJson(key, bytes);
             if (!published.ok) {
                 this.refuseManifest(published.reasonCode);

@@ -9,6 +9,7 @@ import { decodeCheckpoint } from "./ledger-checkpoint";
 import { CHECKPOINT_NAME, LEDGER_DIR_NAME, MARKER_NAME, encodeMarker } from "./ledger-replay";
 import type { LocalDestination } from "./local-destination";
 import { listManifestFiles, readManifest } from "./restore";
+import { countDamagedBoundManifests } from "./runner-run";
 import {
     DestinationLedger, VERIFY_STALE_MS, assertSameInstallation, controlMarkerWriter, nowIso, parseMarker, readArchiveMarker,
     requireInstallation, sha256Hex,
@@ -80,6 +81,7 @@ export async function executeVerify(deps: RunnerDependencies, options: { all: bo
     const damaged: Array<{ artifactIdentity: string; relativeKey: string | null }> = [];
     let checked = 0;
     let archiveAvailable = true;
+    let damagedManifests = 0;
     for (const entry of due) {
         const info = deps.ledger.state.artifacts.get(entry.artifactIdentity);
         const relativeKey = entry.relativeKey;
@@ -95,6 +97,15 @@ export async function executeVerify(deps: RunnerDependencies, options: { all: bo
             if (!(error instanceof WorkerError)) throw error;
             archiveAvailable = false;
             break;
+        }
+    }
+    if (archiveAvailable && options.all) {
+        // Only `--all` also reads the bound manifests; plain verify keeps its PDF-only scope.
+        try {
+            damagedManifests = await countDamagedBoundManifests(deps, archive);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            archiveAvailable = false;
         }
     }
     if (!archiveAvailable) {
@@ -116,7 +127,9 @@ export async function executeVerify(deps: RunnerDependencies, options: { all: bo
         }
         await dl.transition(item.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey });
     }
-    await finish("partial", []);
+    await finish("partial", damagedManifests > 0 ? ["archive-conflict"] : []);
+    // The run is on record with its reason; the exit follows the unchanged mapping (archive-conflict is 69). Nothing is rewritten.
+    if (damagedManifests > 0) throw new WorkerError("archive-conflict");
     return { outcome: "finished", runId, checked, integrityErrors: damaged.length, archiveAvailable: true };
 }
 
