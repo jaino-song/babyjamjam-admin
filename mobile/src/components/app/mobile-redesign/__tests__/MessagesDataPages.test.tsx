@@ -178,6 +178,41 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     mockToast.mockReset();
   });
 
+  it("shows the Korean fallback in a failed upcoming job for an English-only reason", () => {
+    const reason = "Aligo SMS integration is not configured.";
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({
+      data: [{ ...cancelableJob, status: "failed", cancelReason: reason }],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const row = container.querySelector('[data-component$="_body_zone-upcoming"]');
+
+    expect(row).toHaveTextContent("김고객");
+    expect(row?.querySelector('[data-component$="_reason"]')).toHaveTextContent(
+      "사유: 발송 중 오류가 발생했어요.",
+    );
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+  });
+
+  it("keeps an English-only cancellation reason hidden in an upcoming job", () => {
+    const reason = "Related client or schedule deleted";
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({
+      data: [{ ...cancelableJob, status: "canceled", cancelReason: reason }],
+      isLoading: false,
+      isError: false,
+    });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const row = container.querySelector('[data-component$="_body_zone-upcoming"]');
+
+    expect(row).toHaveTextContent("김고객");
+    expect(row?.querySelector('[data-component$="_reason"]')).toBeNull();
+    expect(row).not.toHaveTextContent(MESSAGE_FAILURE_REASON_FALLBACK);
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+  });
+
   it("shows the Korean fallback in a failed history detail for an English provider reason", async () => {
     mockUseMessageHistory.mockReturnValue({
       data: [{ ...sentRecord, status: "failed", errorMessage: "Aligo SMS integration is not configured." }],
