@@ -274,10 +274,10 @@ export function normalizeMessageHistoryRecord(
 
 // Shared with the upcoming-zone matcher in the desktop messages page
 // (matchesScheduledJobQuery): collapses PRIMARY_EMPLOYEE/SECONDARY_EMPLOYEE
-// down to "직원" so a "직원"/"고객" search matches the same way in both zones.
+// down to "제공인력" so a "제공인력"/"고객" search matches the same way in both zones.
 // Exported so both matchers reuse one mapping instead of drifting into two.
 export function getScheduledRecipientBadge(recipientType: TriggerRecipientType) {
-  return recipientType === "CLIENT" ? MESSAGE_RECIPIENT_LABELS.CLIENT : "직원";
+  return recipientType === "CLIENT" ? MESSAGE_RECIPIENT_LABELS.CLIENT : "제공인력";
 }
 
 export function matchesMessageHistoryQuery(record: MessageHistoryRecord, query: string) {

@@ -106,14 +106,14 @@ export function TwoButtonModal({
           <DialogTitle
             data-component={titleDataComponent ?? sub("title")}
             aria-label={titleAriaLabel}
-            className="text-center text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]"
+            className="break-keep [overflow-wrap:anywhere] text-center text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]"
           >
             {title}
           </DialogTitle>
           <DialogDescription
             data-component={descriptionDataComponent ?? sub("description")}
             className={cn(
-              "mt-0 text-[calc(14px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
+              "mt-0 break-keep [overflow-wrap:anywhere] text-[calc(14px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
               isDescriptionVisuallyHidden && "sr-only",
             )}
           >

@@ -167,7 +167,7 @@ export function EmployeesTable() {
                 <div data-component={`${EMPLOYEES_TABLE_BASE}_error`} className="p-3">
                     <Alert variant="destructive">
                         <AlertDescription>
-                            직원 목록을 불러오는데 실패했습니다: {errorMessage && getUserErrorMessage(errorMessage)}
+                            제공인력 목록을 불러오는데 실패했습니다: {errorMessage && getUserErrorMessage(errorMessage)}
                         </AlertDescription>
                     </Alert>
                 </div>
@@ -237,7 +237,7 @@ export function EmployeesTable() {
                         if (!open) setDeleteErrorMessage(null);
                     }}
                     data-component="mobile_employees_table_delete-error-notification"
-                    title="직원을 삭제하지 못했습니다."
+                    title="제공인력을 삭제하지 못했습니다."
                     description={deleteErrorMessage ?? ""}
                     isDescriptionVisuallyHidden={false}
                     onAcknowledge={() => setDeleteErrorMessage(null)}

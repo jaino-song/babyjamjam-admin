@@ -39,7 +39,7 @@ export const MESSAGE_TEMPLATE_LABELS: Readonly<Record<string, string>> = {
   SERVICE_START_REMINDER: "서비스 시작 알림",
   SERVICE_INFO: "서비스 안내",
   SERVICE_END_REMINDER: "서비스 종료 알림",
-  EMPLOYEE_ASSIGNED: "직원 배정 알림",
+  EMPLOYEE_ASSIGNED: "제공인력 배정 알림",
   SERVICE_RECORD_LINK: "제공기록지 작성 링크",
   CLIENT_GREETING: "인사 메시지",
   PRICE_INFO: "비용 안내",
@@ -288,13 +288,13 @@ export const MESSAGE_EVENT_LABELS: Readonly<Record<MessageTriggerEventType, stri
   CLIENT_CREATED: "고객 등록",
   SERVICE_START: "서비스 시작",
   SERVICE_END: "서비스 종료",
-  EMPLOYEE_ASSIGNED: "직원 배정",
+  EMPLOYEE_ASSIGNED: "제공인력 배정",
 };
 
 export const MESSAGE_RECIPIENT_LABELS: Readonly<Record<MessageTriggerRecipientType, string>> = {
   CLIENT: "고객",
-  PRIMARY_EMPLOYEE: "주 담당 직원",
-  SECONDARY_EMPLOYEE: "보조 직원",
+  PRIMARY_EMPLOYEE: "주 담당 제공인력",
+  SECONDARY_EMPLOYEE: "보조 제공인력",
 };
 
 const SMS_HISTORY_PROVIDERS = new Set(["aligo_sms", "sms"]);

@@ -8,7 +8,7 @@ const VOUCHER_DURATION = "10";
 const EMPLOYEES = [
   {
     id: 11,
-    name: "테스트직원",
+    name: "테스트제공인력",
     workArea: ["인천"],
     phone: "010-1111-1111",
     grade: "베스트",
@@ -18,7 +18,7 @@ const EMPLOYEES = [
   },
   {
     id: 12,
-    name: "보조직원",
+    name: "보조제공인력",
     workArea: ["인천"],
     phone: "010-2222-2222",
     grade: "프리미엄",

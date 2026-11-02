@@ -302,7 +302,7 @@ function AssignmentSheet({
                 <SheetHeader>
                     <SheetTitle>{assignment?.clientName ?? "고객 상세"}</SheetTitle>
                     <SheetDescription>
-                        {isHistory ? "직원의 이전 근무 내역" : "직원의 현재 담당 고객"}
+                        {isHistory ? "제공인력의 이전 근무 내역" : "제공인력의 현재 담당 고객"}
                     </SheetDescription>
                 </SheetHeader>
                 {assignment ? (
@@ -408,7 +408,7 @@ export function EmployeeDetailPanel({
                 trailing={(
                     canManage ? <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                            <Button type="button" variant="ghost" size="icon" aria-label="직원 작업 메뉴 열기">
+                            <Button type="button" variant="ghost" size="icon" aria-label="제공인력 작업 메뉴 열기">
                                 <MoreVertical className="h-5 w-5 text-v3-text-muted" aria-hidden="true" />
                             </Button>
                         </DropdownMenuTrigger>
@@ -431,7 +431,7 @@ export function EmployeeDetailPanel({
                         tabs={tabs}
                         activeTab={activeTab}
                         onTabChange={(nextTab) => setActiveTab(nextTab as DetailTabId)}
-                        ariaLabel="직원 상세 정보"
+                        ariaLabel="제공인력 상세 정보"
                         idPrefix="employee-detail"
                     />
                 )}
