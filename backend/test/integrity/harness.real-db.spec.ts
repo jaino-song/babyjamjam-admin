@@ -157,15 +157,15 @@ describeReal("state integrity harness (real PostgreSQL)", () => {
         expect(await raw.eformsign_doc.findUnique({ where: { id: docRow.id } })).toBeNull();
     });
 
-    it("deletes safely when a FK is set AFTER registration: branch owner assigned post-hoc", async () => {
+    it("deletes safely when a FK is set AFTER registration: branch admin assigned post-hoc", async () => {
         const { raw } = handle;
 
         const branchRow = await createBranch(raw, tracker);
         const userRow = await createUser(raw, tracker, {}, { membership: { branchId: branchRow.id, role: "admin" } });
-        // branch.owner_id → user is NoAction: with registration-order cleanup the
+        // branch.admin_id → user is NoAction: with registration-order cleanup the
         // user row was deleted first and this FK threw. The fixed model rank
         // (branch before user) must handle the late FK.
-        await raw.branch.update({ where: { id: branchRow.id }, data: { ownerId: userRow.id } });
+        await raw.branch.update({ where: { id: branchRow.id }, data: { adminId: userRow.id } });
 
         const tracked = tracker.size;
         const { deleted, leaked } = await tracker.cleanup(raw);

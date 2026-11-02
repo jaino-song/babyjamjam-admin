@@ -11,7 +11,7 @@ import { V3Sidebar } from "@/components/app/v3/V3Sidebar";
 import { Toaster } from "@/components/ui/toaster";
 import { OfflineNotice } from "@/components/app/ui/OfflineNotice";
 import { RealtimeInvalidation } from "@/components/app/realtime/RealtimeInvalidation";
-import { getCurrentUser } from "@/lib/auth/cookies";
+import { AuthServiceUnavailableError, getCurrentUser } from "@/lib/auth/cookies";
 import { LocaleProvider } from "@/providers/LocaleProvider";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { UserProvider } from "@/providers/UserProvider";
@@ -27,7 +27,15 @@ export async function MobileShellProviders({
   locale,
   userPromise,
 }: MobileShellProvidersProps) {
-  const user = await userPromise;
+  // This shell wraps every page, including /login, so an unavailable backend
+  // must not take it down: render it as signed out. Protected layouts do their
+  // own gating and surface the failure on the error boundary.
+  const user = await userPromise.catch((error: unknown) => {
+    if (error instanceof AuthServiceUnavailableError) {
+      return null;
+    }
+    throw error;
+  });
 
   return (
     <QueryProvider>

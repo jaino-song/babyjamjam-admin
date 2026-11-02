@@ -287,7 +287,7 @@ describe("BranchUserController re-checks the caller before answering about the t
                 : row;
 
     const makeClient = (caller: Caller, branchActive = true) => ({
-        branch: { findUnique: jest.fn().mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: branchActive })) },
+        branch: { findUnique: jest.fn().mockImplementation(projected({ id: BRANCH, adminId: null, isActive: branchActive })) },
         user: {
             findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) => {
                 if (where.id === "caller-1") return caller.global === null ? null : { id: "caller-1", role: caller.global };
@@ -464,7 +464,7 @@ describe("BranchUserController re-checks the caller before answering about the t
 
             expect(txClient.branch.findUnique).toHaveBeenCalledWith({
                 where: { id: BRANCH },
-                select: { ownerId: true, isActive: true },
+                select: { adminId: true, isActive: true },
             });
             expect(rootClient.branch.findUnique).not.toHaveBeenCalled();
         });

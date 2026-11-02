@@ -21,7 +21,7 @@ export class SbUserRepository implements IUserRepository {
                 id,
                 OR: [
                     { userBranches: { some: { branchId, branch: { isActive: true } } } },
-                    { ownedBranches: { some: { id: branchId, isActive: true } } },
+                    { adminBranches: { some: { id: branchId, isActive: true } } },
                 ],
             },
         });
@@ -48,7 +48,7 @@ export class SbUserRepository implements IUserRepository {
                     {
                         OR: [
                             { userBranches: { some: { branchId, branch: { isActive: true } } } },
-                            { ownedBranches: { some: { id: branchId, isActive: true } } },
+                            { adminBranches: { some: { id: branchId, isActive: true } } },
                         ],
                     },
                 ],
@@ -143,16 +143,16 @@ export class SbUserRepository implements IUserRepository {
         return deleted.count === 1;
     }
 
-    async clearBranchOwnerships(
+    async clearBranchAdminAssignments(
         userId: string,
         membershipRole: "admin" | "manager" | "user",
     ): Promise<void> {
         await this.prismaService.$transaction(async (tx) => {
-            const ownedBranches = await tx.branch.findMany({
-                where: { ownerId: userId },
+            const adminBranches = await tx.branch.findMany({
+                where: { adminId: userId },
                 select: { id: true },
             });
-            const branchIds = ownedBranches.map((branch) => branch.id);
+            const branchIds = adminBranches.map((branch) => branch.id);
             if (branchIds.length === 0) {
                 return;
             }
@@ -160,9 +160,9 @@ export class SbUserRepository implements IUserRepository {
             await tx.branch.updateMany({
                 where: {
                     id: { in: branchIds },
-                    ownerId: userId,
+                    adminId: userId,
                 },
-                data: { ownerId: null },
+                data: { adminId: null },
             });
             await tx.user_branch.updateMany({
                 where: {
@@ -204,7 +204,7 @@ export class SbUserRepository implements IUserRepository {
                     },
                     {
                         OR: [
-                            { ownedBranches: { some: { id: branchId, isActive: true } } },
+                            { adminBranches: { some: { id: branchId, isActive: true } } },
                             { userBranches: { some: { branchId, branch: { isActive: true } } } },
                         ],
                     },

@@ -218,8 +218,8 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
             this.prisma.branch.findUnique({
                 where: { id: branchId },
                 select: {
-                    ownerId: true,
-                    owner: { select: { name: true, phone: true, email: true } },
+                    adminId: true,
+                    admin: { select: { name: true, phone: true, email: true } },
                 },
             }),
             // Matches the login rule (auth.service.ts / auth-session.service.ts
@@ -241,14 +241,14 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                 email: membership.user.email,
             };
         }
-        if (branch?.ownerId !== userId || !branch.owner) return null;
+        if (branch?.adminId !== userId || !branch.admin) return null;
         return {
             membershipId: null,
             role: null,
             joinedAt: null,
-            name: branch.owner.name,
-            phone: branch.owner.phone,
-            email: branch.owner.email,
+            name: branch.admin.name,
+            phone: branch.admin.phone,
+            email: branch.admin.email,
         };
     }
 
@@ -301,8 +301,8 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                 transaction.branch.findUnique({
                     where: { id: context.principal.branchId },
                     select: {
-                        ownerId: true,
-                        owner: { select: { name: true, phone: true, email: true } },
+                        adminId: true,
+                        admin: { select: { name: true, phone: true, email: true } },
                     },
                 }),
                 transaction.user.findUnique({
@@ -331,14 +331,14 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                     phone: membership.user.phone,
                     email: membership.user.email,
                 }
-                : branch?.ownerId === userId && branch.owner
+                : branch?.adminId === userId && branch.admin
                     ? {
                         membershipId: null,
                         role: null,
                         joinedAt: null,
-                        name: branch.owner.name,
-                        phone: branch.owner.phone,
-                        email: branch.owner.email,
+                        name: branch.admin.name,
+                        phone: branch.admin.phone,
+                        email: branch.admin.email,
                     }
                     : null;
             const currentVersion = target

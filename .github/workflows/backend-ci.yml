@@ -706,8 +706,8 @@ jobs:
           [[ "$min_scale" == "0" ]] \
             || fail_check "minScale annotation must resolve to 0" "$min_scale"
           container_concurrency="$(jq -r '.spec.template.spec.containerConcurrency // -1' <<<"$service_json")"
-          [[ "$container_concurrency" == "8" ]] \
-            || fail_check "containerConcurrency must be 8" "$container_concurrency"
+          [[ "$container_concurrency" == "16" ]] \
+            || fail_check "containerConcurrency must be 16" "$container_concurrency"
 
           expected_service_account="babyjamjam-preview-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
           deployed_service_account="$(jq -r '.spec.template.spec.serviceAccountName // ""' <<<"$service_json")"

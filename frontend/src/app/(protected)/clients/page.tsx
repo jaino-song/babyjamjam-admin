@@ -42,7 +42,7 @@ import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { serviceDayPolicyOfClient } from "@/lib/date/service-day-policy";
-import type { ClientListTab } from "@/features/clients/types";
+import { canEditServiceRecordSchedule, type ClientListTab } from "@/features/clients/types";
 import {
     getClientBadgeAvatarClassName,
     getClientBadges,
@@ -1194,7 +1194,7 @@ export default function ClientsPage() {
                                                 </a>
                                             </DropdownMenuItem>
                                         )}
-                                        {canManageBranchFeatures && (
+                                        {canManageBranchFeatures && canEditServiceRecordSchedule(activeSelectedClient) && (
                                             <DropdownMenuItem
                                                 data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"
                                                 onClick={() => setServiceRecordScheduleClient(activeSelectedClient)}

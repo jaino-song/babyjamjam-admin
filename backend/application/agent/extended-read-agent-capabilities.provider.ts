@@ -656,13 +656,13 @@ export class ExtendedReadAgentCapabilitiesProvider implements AgentCapabilityPro
             },
             execute: async (context, rawInput) => {
                 const input = BranchInputSchema.parse(rawInput);
-                const existing = await this.prisma.branch.findUnique({ where: { slug: input.slug }, select: { id: true, ownerId: true, name: true } });
+                const existing = await this.prisma.branch.findUnique({ where: { slug: input.slug }, select: { id: true, adminId: true, name: true } });
                 if (existing) {
                     throw new AgentActionCertainFailureError("Branch slug is already in use");
                 }
                 const branch = await runAsAuthenticatedAgent(context, () => this.systemAdmin.createBranch({
                     ...input,
-                    ownerId: context.principal.userId,
+                    adminId: context.principal.userId,
                     isActive: true,
                 }, async (transaction, branchId) => {
                     await recordAgentActionEffect(transaction, context, "admin.createBranch", "branch", branchId, { status: "created", id: branchId });
@@ -675,7 +675,7 @@ export class ExtendedReadAgentCapabilitiesProvider implements AgentCapabilityPro
                 try {
                     const branch = await runAsAuthenticatedAgent(context, () => this.systemAdmin.createBranch({
                         ...input,
-                        ownerId: context.principal.userId,
+                        adminId: context.principal.userId,
                         isActive: true,
                     }, async (transaction, branchId) => {
                         await recordAgentActionEffect(transaction, context, "admin.createBranch", "branch", branchId, { status: "created", id: branchId });

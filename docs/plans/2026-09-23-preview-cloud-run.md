@@ -11,7 +11,7 @@
 
 | 결정 | 내용 | 이유 |
 |---|---|---|
-| preview 백엔드 → Cloud Run | `babyjamjam-api-preview`, region `asia-northeast3` (서울), min 0 / max 1 인스턴스, concurrency 8, timeout 300s, 1 vCPU / 2Gi | 2026-08-30부터 preview 배포(`preview` push → `deploy-lightsail`)가 AWS OIDC 오류(`PreviewDeployRole` not assumable)로 실패. `preview.api.babyjamjam.com`(54.116.205.74)은 타임아웃 |
+| preview 백엔드 → Cloud Run | `babyjamjam-api-preview`, region `asia-northeast3` (서울), min 0 / max 1 인스턴스, concurrency 16 (2026-11-01: 8 → 16), timeout 300s, 1 vCPU / 2Gi | 2026-08-30부터 preview 배포(`preview` push → `deploy-lightsail`)가 AWS OIDC 오류(`PreviewDeployRole` not assumable)로 실패. `preview.api.babyjamjam.com`(54.116.205.74)은 타임아웃 |
 | 커스텀 도메인 없음 | 백엔드는 `*.run.app` URL만 사용. `preview.api.babyjamjam.com` **은퇴** | Cloud Run domain mapping은 asia-northeast3 미지원(+ preview stage). global LB 대안은 유휴 ~$18/월 |
 | 데이터 호출 경로 | 같은 오리진 Vercel `/api` 경유. Next.js 서버가 `NEXT_PUBLIC_API_BASE_URL`로 백엔드 호출 (`frontend/src/lib/api/client.ts`) | 브라우저가 백엔드 도메인을 몰라도 되는 기존 구조 유지 |
 | 카카오 로그인 예외 | preview Vercel의 `NEXT_PUBLIC_API_BASE_URL`을 run.app URL로 직접 지정. `KAKAO_CALLBACK_URL` = `<run.app URL>/auth/kakao/callback` | `frontend/src/app/api/auth/kakao/route.ts`는 브라우저를 백엔드 호스트로 navigate하고, 백엔드가 host-only `kakao_oauth_nonce` 쿠키를 심며(`backend/interface/controllers/auth.controller.ts`), 카카오가 **같은 백엔드 호스트**로 콜백해야 함. 프록시 도메인을 섞으면 nonce 쿠키가 유실됨 |
@@ -29,7 +29,7 @@
               │  (NEXT_PUBLIC_API_BASE_URL = <SERVICE_URL>, frontend/src/lib/api/client.ts)
               ▼
    Cloud Run babyjamjam-api-preview  <SERVICE_URL>  (asia-northeast3)
-     min 0 / max 1 · concurrency 8 · timeout 300s · 1 vCPU / 2Gi
+     min 0 / max 1 · concurrency 16 · timeout 300s · 1 vCPU / 2Gi
               │  Prisma → Supabase pooler (ap-northeast-2, 같은 광역권)
               ▼
    Supabase 공유 DB (preview = prod 데이터, devops-deployment-rules.md §1-4)
@@ -285,7 +285,7 @@ push**가 트리거다 (이전 커밋의 CI 런을 재실행하면 그 커밋 �
 digest로 `gcloud run services replace` 배포한 뒤 다음을 검증한다:
 
 - ready revision과 배포 digest 일치
-- maxScale 1 / minScale 0 / concurrency 8 / runtime SA 일치
+- maxScale 1 / minScale 0 / concurrency 16 / runtime SA 일치
 - `SCHEDULERS_ENABLED=false`, `SCHEDULER_LEASE_MODE=off`
 - run.app URL의 `/health/ready` 200 (cold start 감안 ≈90초 재시도)
 

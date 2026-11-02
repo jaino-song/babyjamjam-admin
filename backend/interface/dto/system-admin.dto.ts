@@ -30,6 +30,11 @@ export class CreateSystemAdminBranchDto {
 
     @IsOptional()
     @IsUUID()
+    adminId?: string | null;
+
+    /** @deprecated use adminId — removed in Release 2 */
+    @IsOptional()
+    @IsUUID()
     ownerId?: string | null;
 
     @IsOptional()
@@ -81,6 +86,11 @@ export class UpdateSystemAdminBranchDto {
     @MaxLength(100)
     slug?: string;
 
+    @IsOptional()
+    @IsUUID()
+    adminId?: string | null;
+
+    /** @deprecated use adminId — removed in Release 2 */
     @IsOptional()
     @IsUUID()
     ownerId?: string | null;
@@ -147,6 +157,8 @@ export interface SystemAdminBranchRequestDto {
     isActive: boolean;
     createdAt: string | null;
     updatedAt: string | null;
+    admin: SystemAdminBranchUserDto | null;
+    /** @deprecated use admin — removed in Release 2 */
     owner: SystemAdminBranchUserDto | null;
     messageSenderApproval: SystemAdminBranchMessageSenderApprovalDto;
 }

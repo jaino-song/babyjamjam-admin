@@ -627,7 +627,10 @@ model branch {
   smsSenderApprovalApprovedBy   String?                           @map("sms_sender_approval_approved_by") @db.Uuid
   createdAt                     DateTime?                         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                     DateTime?                         @default(now()) @map("updated_at") @db.Timestamptz(6)
-  ownerId                       String?                           @map("owner_id") @db.Uuid
+  adminId                       String?                           @map("admin_id") @db.Uuid
+  /// Release-1 compatibility column kept in sync with admin_id by trigger `branch_sync_admin_owner`;
+  /// never read or write it in code; dropped in Release 2. No index and no relation on it.
+  legacyOwnerId                 String?                           @map("owner_id") @db.Uuid
   systemTemplateSnapshot        Json?                             @map("system_template_snapshot")
   areas                         area[]
   clients                       client[]
@@ -668,7 +671,7 @@ model branch {
   agentActions                  agent_action[]
   agentTraces                   agent_trace[]
   agentFeedback                 agent_feedback[]
-  owner                         user?                             @relation(fields: [ownerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin                         user?                             @relation(fields: [adminId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "branch_admin_id_fkey")
   userBranches                  user_branch[]
   chatSessions                  chat_session[]
   receiptLinkTokens             receipt_link_token[]
@@ -677,7 +680,7 @@ model branch {
   endDateReviewItems            end_date_review_item[]
 
   @@index([isActive], map: "idx_branch_is_active")
-  @@index([ownerId], map: "idx_branch_owner")
+  @@index([adminId], map: "idx_branch_admin")
   @@index([region], map: "idx_branch_region")
   @@index([smsSenderApprovalStatus], map: "idx_branch_sms_sender_approval_status")
   @@index([slug], map: "idx_branch_slug")
@@ -846,7 +849,7 @@ model user {
   agentTraces                   agent_trace[]
   agentFeedback                 agent_feedback[]
   notifications                 notification[]
-  ownedBranches                 branch[]
+  adminBranches                 branch[]
   pushSubscriptions             push_subscription[]
   userBranches                  user_branch[]
   authTokens                    auth_token[]

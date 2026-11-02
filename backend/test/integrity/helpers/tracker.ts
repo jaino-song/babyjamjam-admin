@@ -58,7 +58,7 @@ type SweepModel =
  *   (SetNull) and `client.e_doc_id` → eformsign_doc (SetNull); employee_schedule
  *   → client (Cascade), branch (NoAction!), primary employee (Restrict!).
  * - group 4 (in this exact order): employee → branch (NoAction!), client →
- *   branch (NoAction!), branch.owner_id → user (NoAction!), user (leaf).
+ *   branch (NoAction!), branch.admin_id → user (NoAction!), user (leaf).
  */
 const MODEL_RANK: Record<TrackedModel, number> = {
     auth_refresh_token: 0,
@@ -228,7 +228,7 @@ export class RowTracker {
      * 2. **Ranked tracked deletes.** Deletes tracked rows by {@link MODEL_RANK}
      *    — children before parents — keeping reverse registration order within
      *    one model. Because the rank is fixed, a foreign key set AFTER
-     *    registration (e.g. `branch.owner_id`, `employee_schedule.primary_employee_id`)
+     *    registration (e.g. `branch.admin_id`, `employee_schedule.primary_employee_id`)
      *    is still deleted safely; registration order only breaks ties within
      *    one model.
      *

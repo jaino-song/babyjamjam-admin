@@ -65,7 +65,7 @@ current invariant titles: [clients](clients/FINDINGS.md),
 | SI-USER-01 | INTENDED (operator decision 2026-10-31) — rejecting approved users | — |
 | SI-USER-02 | INTENDED (operator decision 2026-10-31) — re-approving rejected users | — |
 | SI-USER-03 | REFUTED | — |
-| SI-USER-04 | OPEN — one flake with unknown cause; ownership/stored-role diagnostics now in place | — |
+| SI-USER-04 | OPEN — one flake with unknown cause; branch-admin/stored-role diagnostics now in place | — |
 | SI-USER-05 | REFUTED | — |
 | SI-USER-06 | REFUTED | — |
 | SI-USER-07 | REFUTED | — |
@@ -219,7 +219,7 @@ Rules:
   deletes tracked rows by a fixed FK-safe model rank derived from
   `prisma/schema.prisma` (children before parents; reverse registration order
   only breaks ties within one model), so a foreign key set AFTER registration
-  — e.g. `branch.update({ ownerId })` or re-pointing
+  — e.g. `branch.update({ adminId })` or re-pointing
   `employee_schedule.primary_employee_id` — is still deleted safely.
   `cleanup` does not throw when a test already deleted a row itself.
 - **App-created rows are swept.** A service under test can create rows in

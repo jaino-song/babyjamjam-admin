@@ -1,9 +1,9 @@
 import { api } from "@/lib/api/client";
-import { createSystemAdminBranch, updateSystemAdminBranch } from "../system-admin";
+import { approveSystemAdminUser, createSystemAdminBranch, updateSystemAdminBranch } from "../system-admin";
 
 jest.mock("@/lib/api/client", () => ({ api: { post: jest.fn(), patch: jest.fn() } }));
 
-const input = { name: "QA 지점", slug: "qa-test", ownerId: null, isActive: false };
+const input = { name: "QA 지점", slug: "qa-test", adminId: null, isActive: false };
 
 describe("system admin branch email", () => {
   beforeEach(() => {
@@ -30,5 +30,19 @@ describe("system admin branch email", () => {
   it("preserves an omitted email", async () => {
     await updateSystemAdminBranch("qa-branch", input);
     expect(api.patch).toHaveBeenCalledWith("/system-admin/branches/qa-branch", input);
+  });
+
+  it("sends adminBranchId (not the retired owner-named field) when approving a branch admin", async () => {
+    await approveSystemAdminUser("user/1", "admin", "branch-1", "branch-2");
+    expect(api.post).toHaveBeenCalledWith("/users/user%2F1/approve", {
+      role: "admin",
+      branchId: "branch-1",
+      adminBranchId: "branch-2",
+    });
+  });
+
+  it("omits adminBranchId when no branch is designated", async () => {
+    await approveSystemAdminUser("user/1", "manager", "branch-1");
+    expect(api.post).toHaveBeenCalledWith("/users/user%2F1/approve", { role: "manager", branchId: "branch-1" });
   });
 });

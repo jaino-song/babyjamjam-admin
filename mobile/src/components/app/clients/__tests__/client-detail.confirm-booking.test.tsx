@@ -212,6 +212,26 @@ describe("ClientDetailContent 예약 확정 (rule 고객-04)", () => {
       expect(mockMutateAsync).toHaveBeenCalledTimes(1);
     });
 
+    it("offers 제공기록지 일정 변경 only once the booking is confirmed, without a reload", async () => {
+      mockMutateAsync.mockResolvedValue({ id: 7, serviceStatus: "waiting", bookingConfirmedAt: "2026-10-13T01:00:00.000Z" });
+      const user = userEvent.setup();
+      renderDetail();
+      const menuLabels = () => screen.getAllByRole("menuitem").map((item) => item.textContent);
+
+      // 예약 전: no service-record case exists yet, so the schedule change can never load.
+      await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+      expect(menuLabels()).toContain("제공기록지 링크 재설정");
+      expect(menuLabels()).not.toContain("제공기록지 일정 변경");
+      await user.keyboard("{Escape}");
+
+      await user.click(screen.getByRole("button", CONFIRM_BUTTON));
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "예약 확정" }));
+      await waitFor(() => expect(screen.queryByRole("button", CONFIRM_BUTTON)).not.toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+      expect(menuLabels()).toContain("제공기록지 일정 변경");
+    });
+
     it("shows the authored sentence, never the server's, and keeps the button when the server refuses", async () => {
       mockMutateAsync.mockRejectedValue({
         response: { status: 400, data: { message: "RAW SERVER MESSAGE", code: "VALIDATION_FAILED" } },

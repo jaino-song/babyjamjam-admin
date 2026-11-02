@@ -990,8 +990,8 @@
     },
     "mobile/src/app/(shell)/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "23:27-23:68|visualTailwindInPage",
-        "26:26-26:62|visualTailwindInPage"
+        "24:27-24:68|visualTailwindInPage",
+        "27:26-27:62|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/prices/page.tsx": {
