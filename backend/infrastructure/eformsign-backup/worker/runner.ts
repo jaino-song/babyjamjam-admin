@@ -9,7 +9,7 @@ import type { DriveClient } from "./drive-client";
 import { DriveDestination, driveReasonCode, type DriveBinding as DriveDestinationBinding, type DriveStep } from "./drive-destination";
 import { executeRecover, executeVerify } from "./runner-recover";
 import {
-    ARCHIVE_MARKER_FILE, controlMarkerWriter, ledgerDriveNodes, nowIso, parseMarker, readArchiveMarker, requireInstallation,
+    ARCHIVE_MARKER_FILE, controlMarkerWriter, isTerminalReason, ledgerDriveNodes, nowIso, parseMarker, readArchiveMarker, requireInstallation,
 } from "./runner-common";
 import { executeRun } from "./runner-run";
 import {
@@ -136,14 +136,22 @@ export class WorkerRunner implements WorkerRunnerPort {
         const { ledger } = this.deps;
         const counts: Record<string, number> = {
             verified: 0, blocked: 0, retryWait: 0, integrityError: 0, pending: 0, transferring: 0, verifying: 0,
-            terminalUnavailable: ledger.state.terminalUnavailable.size, runs: ledger.state.runs.size, openRuns: 0,
+            terminalUnavailable: 0, runs: ledger.state.runs.size, openRuns: 0,
         };
+        // Like the run line: a gap that can never be fetched again (source-removed, or a local entry blocked with a terminal reason) is
+        // terminalUnavailable, once per artifact, and is not also counted as blocked.
+        const terminal = new Set(ledger.state.terminalUnavailable);
         // The top-level counts are the local archive's; Drive entries (any revision) are counted separately below.
         for (const entry of ledger.state.destinations.values()) {
             if (isDriveDestinationIdentity(entry.destinationIdentity)) continue;
+            if (entry.state === "blocked" && isTerminalReason(entry.reasonCode)) {
+                terminal.add(entry.artifactIdentity);
+                continue;
+            }
             const key = entry.state === "retry_wait" ? "retryWait" : entry.state === "integrity_error" ? "integrityError" : entry.state;
             if (key in counts) counts[key] = (counts[key] ?? 0) + 1;
         }
+        counts["terminalUnavailable"] = terminal.size;
         for (const run of ledger.state.runs.values()) if (run.status === "open") counts["openRuns"] = (counts["openRuns"] ?? 0) + 1;
         const installation = ledger.state.installation;
         if (installation?.drive != null) Object.assign(counts, this.driveCounts(installation, installation.drive));

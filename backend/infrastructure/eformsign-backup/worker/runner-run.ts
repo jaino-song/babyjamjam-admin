@@ -118,11 +118,14 @@ function sortedUnique(codes: Iterable<WorkerReasonCode>): WorkerReasonCode[] {
     return [...new Set(codes)].sort();
 }
 
-/** The export has failed this artifact for good: `integrity_error` past the retry limit, or already `blocked integrity-repeated`. */
+/**
+ * The export has failed this artifact for good: its ledger history holds integrity errors up to the retry limit and it is not verified.
+ * A property of the history, not of the entry's current state or reason, so it survives every intermediate state (archive-unavailable,
+ * a Drive reason, retry_wait) and every ledger reopen; only reaching `verified` (or a terminal gap) ends it.
+ */
 function integrityExhausted(entry: DestinationEntry): boolean {
-    return entry.state === "integrity_error"
-        ? integrityRetryDecision(integrityErrorCount(entry)).to === "blocked"
-        : entry.state === "blocked" && entry.reasonCode === "integrity-repeated";
+    if (entry.state === "verified" || (entry.state === "blocked" && isTerminalReason(entry.reasonCode))) return false;
+    return integrityRetryDecision(integrityErrorCount(entry)).to === "blocked";
 }
 
 /** An entry that still has work to do: not verified, not in flight, and not blocked for good (terminal or integrity-repeated). */
@@ -684,10 +687,12 @@ class RunExecution {
         let staged: boolean;
         const exhausted = entry !== undefined && integrityExhausted(entry);
         if (exhausted) {
+            if (state === "transferring" || state === "verifying") return;
             if (state === "integrity_error") await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
             // QF3 / V10: the export has failed this artifact for good, but a copy Drive holds verified still heals it, on every run, without
-            // asking the export again. While Drive cannot be asked (or holds no usable copy) the entry stays blocked integrity-repeated.
-            if ((await this.healFromDrive(job)) !== true) return;
+            // asking the export again. A staged copy that is still usable (healed earlier, not yet published) is used as it is; only
+            // without one is Drive asked. While Drive cannot be asked (or holds no usable copy) the entry stays as it is.
+            if (!(await this.stagedUsable(job)) && (await this.healFromDrive(job)) !== true) return;
             staged = true;
         } else {
             staged = await this.stagedUsable(job);

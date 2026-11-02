@@ -4,7 +4,7 @@ import path from "node:path";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
-import { PDF_KEY, bindDrive } from "./helpers/drive-run-support";
+import { PDF_KEY, bindDrive, swapArchive, swapBack } from "./helpers/drive-run-support";
 import { driveFaults } from "./helpers/fake-drive-server";
 import { createHarness, destroyHarness, initArchive, listFiles, readLedgerRecords, runOnce, singleDoc, tryRun, type Harness } from "./helpers/runner-support";
 
@@ -156,6 +156,80 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
             expect(h.api.artifactRequests()).toEqual([]);
             expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
         }, 240_000);
+
+    /**
+     * QF4 / M1: the entry is exhausted, heals from Drive into staging, and the archive goes away before the copy is published: the local
+     * entry is now blocked archive-unavailable. The archive then comes back. Exhaustion is a property of the entry's history, not of its
+     * current reason, so it must survive this intermediate state (and the ledger reopen every run does).
+     */
+    async function exhaustedThenArchiveOutage(carried: boolean): Promise<Awaited<ReturnType<typeof exhaustedWithDriveBack>>> {
+        const lost = await exhaustedWithDriveBack(carried);
+        let away: string | null = null;
+        const outage = await tryRun(h, { runnerFault: async (point) => {
+            if (point === "after-transferring" && away === null) away = await swapArchive(h);
+        } });
+        expect(outage).toMatchObject({ reasonCodes: expect.arrayContaining(["archive-unavailable"]) });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+        expect(await driveState()).toBe("verified");
+        await swapBack(h, away!);
+        h.api.clearRequests();
+        return lost;
+    }
+    const stagedBins = async (): Promise<string[]> => (await listFiles(h.control)).filter((file) => file.endsWith(".bin"));
+
+    it("should keep an exhausted entry from asking the export after an archive outage, when its staged copy is lost and Drive cannot be asked (QF4 M1, snapshot)", async () => {
+        const lost = await exhaustedThenArchiveOutage(false);
+        for (const file of await stagedBins()) await fs.rm(path.join(h.control, file));
+        const outage = fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+
+        await tryRun(h);
+        await tryRun(h);
+
+        expect(outage.hits).toBeGreaterThanOrEqual(1);
+        expect(h.api.artifactRequests()).toEqual([]);
+        expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+        expect((await localState()).state).toBe("blocked");
+        fakes.drive.clearFaults();
+
+        await runOnce(h);
+
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+        expect(h.api.artifactRequests()).toEqual([]);
+        expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+    }, 240_000);
+
+    it("should keep a carried exhausted entry retryable, never terminal and never a gap, when its staged copy is damaged after an archive outage (QF4 M1, carry)", async () => {
+        const lost = await exhaustedThenArchiveOutage(true);
+
+        await runOnce(h, { runnerFault: corruptStagedOnce() });
+
+        expect(await localState()).toMatchObject({ state: "blocked" });
+        expect((await localState()).reasonCode).not.toBe("exact-bytes-unavailable");
+        expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+        expect(h.api.artifactRequests()).toEqual([]);
+
+        await runOnce(h);
+
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+        expect(h.api.artifactRequests()).toEqual([]);
+        expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+    }, 240_000);
+
+    it("should publish an exhausted entry's usable staged copy without downloading it from Drive again (QF4 L1)", async () => {
+        const lost = await exhaustedThenArchiveOutage(false);
+        expect(await stagedBins()).toHaveLength(1);
+        const downloadsBefore = fakes.drive.downloads;
+
+        const summary = await runOnce(h);
+
+        expect(summary.outcome).toBe("finished");
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+        expect(fakes.drive.downloads).toBe(downloadsBefore);
+        expect(h.api.artifactRequests()).toEqual([]);
+    }, 240_000);
 
     it("should count a carried exhausted entry whose Drive heal failed as blocked, and report its reason, like any carried artifact (F2)", async () => {
         const lost = await exhaustedWithDriveBack(true);
