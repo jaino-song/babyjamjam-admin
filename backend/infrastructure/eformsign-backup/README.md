@@ -674,7 +674,10 @@ everything in it untouched (nothing is deleted or reused) and starts a new revis
 uploaded. The following `run` commands then upload everything again under the new root:
 the artifacts the archive holds verified (from the staged copy, else from the archive after a
 hash check; this includes artifacts `recover` adopted from the archive, whose length the
-ledger does not hold: it is taken from the archive bytes once they match the recorded hash), then the manifests, completions and run inventories, from the archive or, for
+ledger does not hold: it is taken from the archive bytes once they match the recorded hash), and
+the artifacts whose only proven copy is the staged one (a local entry that is not verified and not
+terminal, or an entry under an earlier Drive revision), uploaded only after the staged bytes match
+the recorded hash and length; then the manifests, completions and run inventories, from the archive or, for
 records only the Drive outbox held, from the outbox bytes. The first run after a rebind can
 therefore take as long as the whole archive needs to upload; the run is resumable, so a killed
 run continues from the ledger. `inspect` counts only the current revision. Because the old and

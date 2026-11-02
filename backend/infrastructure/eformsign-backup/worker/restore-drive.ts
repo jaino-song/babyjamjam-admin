@@ -86,7 +86,7 @@ async function physicalPath(target: string): Promise<string> {
         }
         if (present) throw new WorkerError("config-invalid");
         const parent = path.dirname(existing);
-        if (parent === existing) throw new WorkerError("restore-output-invalid");
+        if (parent === existing) throw new WorkerError("config-invalid");
         suffix.push(path.basename(existing));
         existing = parent;
     }
