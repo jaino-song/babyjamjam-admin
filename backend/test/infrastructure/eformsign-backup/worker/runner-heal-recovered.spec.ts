@@ -5,7 +5,7 @@ import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store
 import { RunEndedWithFailure } from "infrastructure/eformsign-backup/worker/runner-run";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
-import { MANIFEST_KEY, PDF_KEY, RUN_KEY, bindDrive, driveKeys, driveTree } from "./helpers/drive-run-support";
+import { MANIFEST_KEY, PDF_KEY, RUN_KEY, bindDrive, driveKeys, driveTree, swapArchive, swapBack } from "./helpers/drive-run-support";
 import { driveFaults } from "./helpers/fake-drive-server";
 import {
     COMPANY, createHarness, destroyHarness, initArchive, listFiles, readLedgerRecords, runOnce, sha256Of, singleDoc, withWorker, type Harness,
@@ -176,6 +176,271 @@ describe("BJJ-456 PF1: a recovered (length-less) artifact heals from its verifie
         expect(await localState()).toEqual({ state: "blocked", reasonCode: "exact-bytes-unavailable" });
         await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
     }, 240_000);
+
+    const localVerifiedCount = async (): Promise<number> =>
+        (await records("destination_transition")).filter((record) => !isDrive(record) && record.body["to"] === "verified").length;
+    const drivePdfCount = (): number => fakes.drive.nodes().filter((node) => node.bytes !== null && node.name.endsWith(".pdf")).length;
+
+    /**
+     * PF1b: a temporary archive outage must not make the length-less artifact terminal. Phase audit scenario: the heal from Drive was
+     * interrupted after staging (before the local publication), Drive was rebound, and the next run (empty snapshot) found the archive gone.
+     */
+    it("should record archive-unavailable, not the terminal exact-bytes-unavailable, during an archive outage, and heal once the archive is back", async () => {
+        const lost = await lostLocalCopy();
+        await expect(runOnce(h, { runnerFault: async (point) => { if (point === "after-transferring") throw new Error("interrupted-after-staging"); } }))
+            .rejects.toThrow("interrupted-after-staging");
+        expect((await localState()).state).toBe("transferring");
+        await bindDrive(h, true);
+        const gapsBefore = (await ledgerState()).gaps.length;
+        const localBefore = await localVerifiedCount();
+        const away = await swapArchive(h);
+
+        const outage = await runOnce(h);
+
+        expect(outage.reasonCodes).toContain("archive-unavailable");
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+        expect(await driveState()).toBe("verified");
+        const pdfsAfterOutage = drivePdfCount();
+
+        await swapBack(h, away);
+        const downloadsBefore = fakes.drive.downloads;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const summary = await runOnce(h);
+            expect(summary.outcome).toBe("finished");
+            expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        }
+
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+        expect(sha256Of(await fs.readFile(path.join(h.archive, lost.localKey)))).toBe(sha256Of(lost.pdf));
+        expect(await fs.readFile(path.join(h.archive, lost.manifestKey))).toEqual(lost.manifestBytes);
+        expect((await ledgerState()).manifests.get(lost.manifestKey)?.sha256).toBe(sha256Of(lost.manifestBytes));
+        expect((await ledgerState()).gaps.length).toBe(gapsBefore);
+        expect(await localVerifiedCount() - localBefore).toBe(1);
+        expect(fakes.drive.downloads).toBe(downloadsBefore);
+        expect(drivePdfCount()).toBe(pdfsAfterOutage);
+        expect(await driveState()).toBe("verified");
+    }, 240_000);
+
+    it("should record archive-unavailable, not exact-bytes-unavailable, when the archive is lost while the manifests are being read", async () => {
+        const lost = await lostLocalCopy();
+        const manifestPath = path.join(h.archive, lost.manifestKey);
+        await fs.chmod(manifestPath, 0o000);
+        try {
+            const outage = await runOnce(h).then((summary) => summary, (error: unknown) => error);
+
+            expect(outage).not.toBeInstanceOf(Error);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+        } finally {
+            await fs.chmod(manifestPath, 0o600);
+        }
+
+        const summary = await runOnce(h);
+
+        expect(summary.outcome).toBe("finished");
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+    }, 240_000);
+
+    /**
+     * PF1c: the manifest listing that decides "no manifest lists this artifact" is complete-or-error, and the decision is taken against a
+     * freshly checked archive. Faults are injected at the filesystem boundary; the runner, ledger, staging and publication are the real ones.
+     */
+    describe("PF1c: a negative manifest lookup needs a completed observation and a fresh archive check", () => {
+        afterEach(() => { jest.restoreAllMocks(); });
+
+        type Lost = Awaited<ReturnType<typeof lostLocalCopy>>;
+        const manifestsDirOf = (lost: Lost): string => path.join(h.archive, path.dirname(lost.manifestKey));
+
+        /** The directory's real listing is taken, `after` runs once (the archive changes), and the listing is handed back. */
+        function afterListing(directory: string, after: () => Promise<void>): { listed: () => number } {
+            const real = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+            let listed = 0;
+            jest.spyOn(fs, "readdir").mockImplementation((async (target: unknown, ...rest: unknown[]) => {
+                const names = await real(target, ...rest);
+                if (String(target) === directory && listed === 0) {
+                    listed += 1;
+                    await after();
+                }
+                return names;
+            }) as never);
+            return { listed: () => listed };
+        }
+        /** Every listing of `directory` fails with EIO while the fault is on; the archive root itself stays healthy. */
+        function failListing(directory: string): { off: () => void; refused: () => number } {
+            const real = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+            let refused = 0;
+            let on = true;
+            jest.spyOn(fs, "readdir").mockImplementation((async (target: unknown, ...rest: unknown[]) => {
+                if (on && String(target) === directory) {
+                    refused += 1;
+                    throw Object.assign(new Error("synthetic manifest-directory EIO"), { code: "EIO" });
+                }
+                return real(target, ...rest);
+            }) as never);
+            return { off: () => { on = false; }, refused: () => refused };
+        }
+        const settled = async (): Promise<unknown> => runOnce(h).then((summary) => summary, (error: unknown) => error);
+
+        /** The artifact is healed exactly once from Drive: right bytes, the manifest untouched, no new gap, Drive evidence as it was. */
+        async function expectHealed(lost: Lost, baseline: { gaps: number; localVerified: number; downloads: number; drivePdfs: number }): Promise<void> {
+            expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+            const healed = await fs.readFile(path.join(h.archive, lost.localKey));
+            expect(healed.length).toBe(lost.pdf.length);
+            expect(sha256Of(healed)).toBe(sha256Of(lost.pdf));
+            expect(await fs.readFile(path.join(h.archive, lost.manifestKey))).toEqual(lost.manifestBytes);
+            expect((await ledgerState()).manifests.get(lost.manifestKey)?.sha256).toBe(sha256Of(lost.manifestBytes));
+            expect((await ledgerState()).gaps.length).toBe(baseline.gaps);
+            expect(await localVerifiedCount() - baseline.localVerified).toBe(1);
+            expect(fakes.drive.downloads - baseline.downloads).toBe(1);
+            expect(drivePdfCount()).toBe(baseline.drivePdfs);
+            expect(await driveState()).toBe("verified");
+        }
+        const baselineOf = async () => ({ gaps: (await ledgerState()).gaps.length, localVerified: await localVerifiedCount(), downloads: fakes.drive.downloads, drivePdfs: drivePdfCount() });
+
+        it("should record a retryable archive-unavailable when the archive disappears after the preflight and before the manifest listing, then heal (reviewer probe: mid-list)", async () => {
+            const lost = await lostLocalCopy();
+            const baseline = await baselineOf();
+            const away = `${h.archive}.away`;
+            let moved = false;
+            const fetchImpl: typeof fetch = async (input, init) => {
+                const response = await fetch(input, init);
+                const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+                if (!moved && url.includes("/candidates")) {
+                    moved = true;
+                    await fs.rename(h.archive, away);
+                }
+                return response;
+            };
+
+            const outage = await runOnce(h, { fetchImpl }).then((summary) => summary, (error: unknown) => error);
+
+            expect(moved).toBe(true);
+            expect(outage).toBeDefined();
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            expect(fakes.drive.downloads).toBe(baseline.downloads);
+            await fs.rename(away, h.archive);
+
+            const summary = await runOnce(h);
+
+            expect(summary.outcome).toBe("finished");
+            await expectHealed(lost, baseline);
+        }, 240_000);
+
+        it("should record no terminal transition and no gap when the manifests directory cannot be listed while every root check succeeds, then heal (reviewer probe: directory I/O)", async () => {
+            const lost = await lostLocalCopy();
+            const baseline = await baselineOf();
+            const fault = failListing(manifestsDirOf(lost));
+
+            const outage = await settled();
+
+            expect(fault.refused()).toBeGreaterThanOrEqual(1);
+            expect(outage).toBeDefined();
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            expect((await ledgerState()).gaps.length).toBe(baseline.gaps);
+            expect((await records("destination_transition")).filter((record) => !isDrive(record) && record.body["reasonCode"] === "exact-bytes-unavailable")).toHaveLength(0);
+            expect(fakes.drive.downloads).toBe(baseline.downloads);
+
+            fault.off();
+            const summary = await runOnce(h);
+
+            expect(summary.outcome).toBe("finished");
+            await expectHealed(lost, baseline);
+        }, 240_000);
+
+        it("should stay retryable when the enumeration ends negatively and the archive is lost just before the decision, then establish the absence on a stable archive", async () => {
+            const lost = await lostLocalCopy();
+            await fs.rm(path.join(h.archive, lost.manifestKey));
+            const away = `${h.archive}.away`;
+            // The enumeration lists D001, then the company's completions and runs directories: it is complete (and negative) after the last one.
+            const spy = afterListing(path.join(h.archive, "eformsign", COMPANY, "runs"), async () => { await fs.rename(h.archive, away); });
+
+            await settled();
+
+            expect(spy.listed()).toBe(1);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            await fs.rename(away, h.archive);
+            await settled();
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "exact-bytes-unavailable" });
+        }, 240_000);
+
+        it("should stay retryable for this run when a listed manifest is gone before it is read, and heal on the next stable run", async () => {
+            const lost = await lostLocalCopy();
+            const baseline = await baselineOf();
+            const manifestPath = path.join(h.archive, lost.manifestKey);
+            const spy = afterListing(manifestsDirOf(lost), async () => { await fs.rm(manifestPath); });
+
+            await settled();
+
+            expect(spy.listed()).toBe(1);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            expect(fakes.drive.downloads).toBe(baseline.downloads);
+            await fs.writeFile(manifestPath, lost.manifestBytes, { mode: 0o600 });
+
+            const summary = await runOnce(h);
+
+            expect(summary.outcome).toBe("finished");
+            await expectHealed(lost, baseline);
+        }, 240_000);
+
+        /** The one local destination transition into blocked/archive-unavailable per artifact, however many runs the outage lasts. */
+        const outageTransitions = async (): Promise<number> =>
+            (await records("destination_transition")).filter((record) => !isDrive(record) && record.body["to"] === "blocked" && record.body["reasonCode"] === "archive-unavailable").length;
+        const localTransitions = async (): Promise<number> => (await records("destination_transition")).filter((record) => !isDrive(record)).length;
+
+        it("should write one unchanged outage transition over four outage runs (the ledger reopened each time), then heal", async () => {
+            const lost = await lostLocalCopy();
+            const baseline = await baselineOf();
+            const before = await localTransitions();
+            const away = await swapArchive(h);
+
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+                const outage = await runOnce(h);
+                expect(outage.reasonCodes).toContain("archive-unavailable");
+            }
+
+            expect(await outageTransitions()).toBe(1);
+            expect(await localTransitions() - before).toBe(1);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            expect((await ledgerState()).gaps.length).toBe(baseline.gaps);
+            const entry = [...(await ledgerState()).destinations.values()].find((candidate) => !String(candidate.destinationIdentity).startsWith("drive:"))!;
+            expect(entry).toMatchObject({ state: "blocked", reasonCode: "archive-unavailable", attempts: 0, nextRetryAt: null });
+
+            await swapBack(h, away);
+            const summary = await runOnce(h);
+
+            expect(summary.outcome).toBe("finished");
+            await expectHealed(lost, baseline);
+        }, 240_000);
+
+        /** The outage transition as another retry timestamp would leave it, written by hand into the ledger. */
+        async function appendOutageTransitionWithRetryAt(nextRetryAt: string): Promise<void> {
+            const store = await LedgerStore.open(h.control, { deferTornTailRepair: true });
+            try {
+                const entry = [...store.state.destinations.values()].find((candidate) => !String(candidate.destinationIdentity).startsWith("drive:"))!;
+                await store.append("destination_transition", {
+                    artifactIdentity: entry.artifactIdentity, destinationIdentity: entry.destinationIdentity, destinationRevision: entry.destinationRevision,
+                    from: "blocked", to: "blocked", reasonCode: "archive-unavailable", attempts: entry.attempts, nextRetryAt, relativeKey: entry.relativeKey,
+                } as never, new Date().toISOString());
+            } finally {
+                await store.close();
+            }
+        }
+
+        it("should not suppress the outage transition while the live entry carries another retry timestamp, and suppress it again once it is written", async () => {
+            await lostLocalCopy();
+            const away = await swapArchive(h);
+            await runOnce(h);
+            expect(await outageTransitions()).toBe(1);
+
+            await appendOutageTransitionWithRetryAt("2099-01-01T00:00:00.000Z");
+            expect(await outageTransitions()).toBe(2);
+            await runOnce(h);
+            expect(await outageTransitions()).toBe(3);
+            await runOnce(h);
+            expect(await outageTransitions()).toBe(3);
+            await swapBack(h, away);
+        }, 240_000);
+    });
 });
 
 describe("BJJ-456 PF1: the run's reasons carry the Drive reason of an inventory-only refusal", () => {
@@ -206,5 +471,114 @@ describe("BJJ-456 PF1: the run's reasons carry the Drive reason of an inventory-
         expect(finished.body["snapshotStatus"]).toBe("partial");
         const inventory = JSON.parse(await fs.readFile(path.join(h.archive, `eformsign/${COMPANY}/runs/${summary.runId}.json`), "utf8"));
         expect(inventory.reasonCodes).not.toContain("drive-unavailable");
+    }, 240_000);
+});
+
+/**
+ * PF1b follow-up: the same outage rule for an artifact whose length the ledger knows. Its staged copy is gone and the verified Drive copy
+ * cannot be used while the archive is down: that is a temporary state (archive-unavailable), never the terminal exact-bytes-unavailable.
+ */
+describe("BJJ-456 PF1b: a known-length artifact is not made terminal by an archive outage", () => {
+    let h: Harness;
+    let fakes: DriveHarness;
+
+    beforeEach(async () => { fakes = await startDriveFakes(); });
+    afterEach(async () => {
+        await destroyHarness(h);
+        await fakes.close();
+    });
+
+    const records = async (type?: string) => (await readLedgerRecords(h.control)).filter((record) => type === undefined || record.type === type);
+    const localState = async (): Promise<{ state: string; reasonCode: unknown }> => {
+        let last: { state: string; reasonCode: unknown } = { state: "none", reasonCode: null };
+        for (const record of await records("destination_transition")) {
+            if (!isDrive(record)) last = { state: String(record.body["to"]), reasonCode: record.body["reasonCode"] ?? null };
+        }
+        return last;
+    };
+    const gapCount = async (): Promise<number> => {
+        const store = await LedgerStore.open(h.control, { deferTornTailRepair: true });
+        try {
+            return store.state.gaps.length;
+        } finally {
+            await store.close();
+        }
+    };
+
+    /** One document verified locally (and on Drive when configured); the local PDF and every staged copy are lost; `verify --all` makes the local entry integrity_error; the next snapshot is empty. */
+    async function lostCopy(withDrive: boolean): Promise<{ localKey: string; pdf: Buffer }> {
+        h = await createHarness({ docs: [singleDoc("D001")], ...(withDrive ? { config: { drive: fakes.config } as never } : {}) });
+        await initArchive(h);
+        if (withDrive) await bindDrive(h);
+        await runOnce(h);
+        const localKey = (await listFiles(h.archive)).find((file) => PDF_KEY.test(`/${file}`))!;
+        const pdf = await fs.readFile(path.join(h.archive, localKey));
+        await fs.rm(path.join(h.archive, localKey));
+        for (const file of await listFiles(h.control)) if (file.endsWith(".bin")) await fs.rm(path.join(h.control, file));
+        const summary = await withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }));
+        expect(summary.integrityErrors).toBeGreaterThanOrEqual(1);
+        expect((await localState()).state).toBe("integrity_error");
+        h.api.docs = [];
+        return { localKey, pdf };
+    }
+
+    it("should record archive-unavailable during an archive outage and heal once from the verified Drive copy when the archive is back", async () => {
+        const lost = await lostCopy(true);
+        const gapsBefore = await gapCount();
+        const away = await swapArchive(h);
+
+        const outage = await runOnce(h);
+
+        expect(outage.reasonCodes).toContain("archive-unavailable");
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+
+        await swapBack(h, away);
+        const downloadsBefore = fakes.drive.downloads;
+        const summary = await runOnce(h);
+
+        expect(summary.outcome).toBe("finished");
+        expect(fakes.drive.downloads - downloadsBefore).toBe(1);
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+        expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+        expect(await gapCount()).toBe(gapsBefore);
+    }, 240_000);
+
+    /**
+     * PF1c: the archive is reachable at the preflight and lost while the verified Drive copy is being fetched (the fetch fails): the
+     * no-copy decision for a known-length artifact must not be the terminal exact-bytes-unavailable.
+     */
+    it("should record archive-unavailable, not exact-bytes-unavailable, when the archive is lost between the copy lookup and the terminal decision", async () => {
+        await lostCopy(true);
+        const away = `${h.archive}.away`;
+        let moved = false;
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (!moved && url.includes("alt=media")) {
+                moved = true;
+                await fs.rename(h.archive, away);
+                return new Response(null, { status: 503 });
+            }
+            return fetch(input, init);
+        };
+
+        const settled = await runOnce(h, { fetchImpl }).then((summary) => summary, (error: unknown) => error);
+
+        expect(settled).toBeDefined();
+        expect(moved).toBe(true);
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+        await fs.rename(away, h.archive);
+        const next = await runOnce(h);
+        expect(next.outcome).toBe("finished");
+        expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+    }, 240_000);
+
+    it("should still record exact-bytes-unavailable when the archive is reachable and Drive holds no verified copy", async () => {
+        const lost = await lostCopy(false);
+
+        const summary = await runOnce(h);
+
+        expect(summary.outcome).toBe("finished");
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "exact-bytes-unavailable" });
+        await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
     }, 240_000);
 });

@@ -491,7 +491,13 @@ class RunExecution {
                 continue;
             }
             // `recover` records an artifact without a length. Its length then comes from a manifest on the archive that lists it, never a guess.
-            const recovered = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
+            const lookup = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
+            if (lookup !== null && lookup.status === "archive-unavailable") {
+                // A temporary archive outage is not proof that no manifest exists: stay retryable (never the terminal exact-bytes-unavailable).
+                await this.carryArchiveUnavailable(entry.artifactIdentity, relativeKey);
+                continue;
+            }
+            const recovered = lookup !== null && lookup.status === "found" ? lookup : null;
             const byteLength = info.byteLength ?? recovered?.byteLength ?? null;
             if (byteLength === null) {
                 await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
@@ -506,22 +512,47 @@ class RunExecution {
             } else if (recovered === null ? await this.stagedUsable(job) || await this.healFromDrive(job) : await this.recoveredBytesStaged(job)) {
                 if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
                 await this.processArtifact(job, "carry");
+            } else if (!this.archiveOk || !(await this.archiveStillUsable())) {
+                // The archive is down, so the verified Drive copy cannot be used (or went away while it was being staged): retry later, never terminal.
+                // The terminal outcome below needs an archive that is reachable now, not only at the start of the run.
+                await this.carryArchiveUnavailable(job.artifactIdentity, relativeKey);
             } else {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
             }
         }
     }
 
+    /** The archive passes its own check right now (the run's first check may be long past); a failure latches the archive as lost. */
+    private async archiveStillUsable(): Promise<boolean> {
+        const check = await this.archive.checkArchive(0);
+        if (!check.ok) this.archiveLost();
+        return check.ok;
+    }
+
+    /**
+     * Records `blocked/archive-unavailable` for a carried artifact and latches the outage for the run. A live entry that already says exactly
+     * that (same state, reason, key and retry timestamp; the attempts are carried over unchanged) is a no-op, so an outage of many runs
+     * writes one transition per artifact, not one per run.
+     */
+    private async carryArchiveUnavailable(artifactIdentity: string, relativeKey: string): Promise<void> {
+        this.archiveLost();
+        const live = this.dl.entryOf(artifactIdentity);
+        if (live !== undefined && live.state === "blocked" && live.reasonCode === "archive-unavailable" && live.relativeKey === relativeKey && live.nextRetryAt === null) return;
+        await this.dl.transition(artifactIdentity, "blocked", { reasonCode: "archive-unavailable", relativeKey });
+    }
+
     /**
      * The archive manifest that proves a recovered artifact's length: one that parses as a manifest of its document, is not contradicted by
      * the ledger's or a valid completion's digest for its key, and lists this artifact with the recorded sha256, type and key. All such
-     * manifests must agree on one length; none, or a disagreement, is `null` (nothing is built or guessed). Listed afresh: the run's shared
-     * listing is taken later, after this run's own manifests exist.
+     * manifests must agree on one length; none, or a disagreement, is `none` (nothing is built or guessed). `none` is negative evidence, so it
+     * needs a completed observation: a listing that fails, a listed manifest that is gone before it is read, and an archive that does not pass
+     * a fresh check once the listing is done are all `archive-unavailable`, which says nothing about the manifests. Listed afresh: the
+     * run's shared listing is taken later, after this run's own manifests exist.
      */
     private async recoveredManifestFor(
         artifactIdentity: string, info: { documentId: string; artifactType: ArchiveArtifactType; sha256: string }, relativeKey: string,
-    ): Promise<{ key: string; sha256: string; byteLength: number } | null> {
-        if (!this.archiveOk) return null;
+    ): Promise<{ status: "found"; key: string; sha256: string; byteLength: number } | { status: "none" } | { status: "archive-unavailable" }> {
+        if (!this.archiveOk) return { status: "archive-unavailable" };
         const found: Array<{ key: string; sha256: string; byteLength: number }> = [];
         try {
             const completions = await this.completionDigests();
@@ -533,7 +564,8 @@ class RunExecution {
                     if (error instanceof WorkerError && !isArchiveSide(error.reasonCode)) continue; // not a readable manifest: it lists nothing
                     throw error;
                 }
-                if (bytes === null) continue;
+                // Listed a moment ago and gone now: the archive changed under the lookup, so nothing is established for this run.
+                if (bytes === null) throw new WorkerError("archive-unavailable");
                 let parsed: { manifest: Manifest; sha256: string };
                 try {
                     parsed = parseManifestBytes(bytes, file.key, { companyId: this.companyId, documentId: file.documentId, metadataRevision: file.metadataRevision });
@@ -558,10 +590,12 @@ class RunExecution {
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
             this.archiveLost();
-            return null;
+            return { status: "archive-unavailable" };
         }
-        if (found.length === 0 || new Set(found.map((candidate) => candidate.byteLength)).size !== 1) return null;
-        return found[0]!;
+        if (found.length === 0 || new Set(found.map((candidate) => candidate.byteLength)).size !== 1) {
+            return await this.archiveStillUsable() ? { status: "none" } : { status: "archive-unavailable" };
+        }
+        return { status: "found", ...found[0]! };
     }
 
     /**
