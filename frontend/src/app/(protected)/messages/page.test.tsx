@@ -553,10 +553,10 @@ describe("MessagesPage template send responsive layout", () => {
 
     const { root, track, details } = tabElements();
     expect(root).toHaveClass("overflow-hidden", "flex", "max-xl:flex-none", "xl:min-h-0", "xl:flex-1");
-    expect(track).toHaveClass("xl:min-h-0", "xl:flex-1");
+    expect(track).toHaveClass("min-w-0", "flex-1", "xl:min-h-0");
     expect(details).toHaveClass("min-w-0", "xl:h-full", "xl:min-h-0");
     for (const element of [root, track, details]) {
-      for (const className of ["h-full", "min-h-0", "flex-1"]) {
+      for (const className of ["h-full", "min-h-0"]) {
         expect(element).not.toHaveClass(className);
       }
     }

@@ -2281,7 +2281,7 @@ export default function MessagesPage() {
                       }
                       trackClassName={
                         templateDetailTab === "preview" || activeSection === "send"
-                          ? templateDetailTab === "preview" ? "min-h-0 flex-1" : "xl:min-h-0 xl:flex-1"
+                          ? templateDetailTab === "preview" ? "min-h-0 flex-1" : "min-w-0 flex-1 xl:min-h-0"
                           : "min-h-0"
                       }
                       panelClassName={
