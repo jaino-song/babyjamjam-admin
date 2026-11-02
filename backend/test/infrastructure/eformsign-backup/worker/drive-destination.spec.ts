@@ -250,6 +250,44 @@ describe("DriveDestination", () => {
             expect(h.drive.creates).toBe(2 + 1); // root + two folders
         });
 
+        /** A destination whose client changes the folder behind its back right before the lookup that follows a create. */
+        function destinationRenamingBeforeLookup(): DriveDestination {
+            const spied = Object.create(client) as DriveClient;
+            spied.getFile = async (id: string) => {
+                if (h.drive.node(id) !== undefined && h.drive.node(id)!.name === "eformsign") h.drive.rename(id, "renamed-in-between");
+                return client.getFile(id);
+            };
+            return new DriveDestination(spied, binding());
+        }
+
+        it("U3-F1: after an ok create it looks the folder up and compares what Drive holds, not the create answer", async () => {
+            const lookups = () => h.drive.requests.filter(request => request.method === "GET" && /\/drive\/v3\/files\/(?!generateIds$)[^/]+$/.test(request.path)).length;
+            const before = lookups();
+            expectStep(await dest.ensureFolderChain("eformsign/a.json", ledger));
+            expect(lookups() - before).toBe(1);
+        });
+
+        it("U3-F1: a folder that no longer matches when it is looked up after an ok create is a conflict and is not recorded as created", async () => {
+            const result = await destinationRenamingBeforeLookup().ensureFolderChain("eformsign/a.json", ledger);
+            expect(result).toEqual({ ok: false, conflict: "mismatch" });
+            expect(ledger.current("eformsign")?.status).toBe("reserved");
+            expect(ledger.events).not.toContain("created:eformsign");
+        });
+
+        it("U3-F1: a failed lookup after an ok create keeps the reservation, and the next call resumes the same id without a second create", async () => {
+            h.drive.addFault({ route: "get", times: 1, action: driveFaults.status(503) });
+            const first = await dest.ensureFolderChain("eformsign/a.json", ledger);
+            expect(first).toMatchObject({ ok: false, failure: { kind: "http", httpStatus: 503 } });
+            const reserved = ledger.current("eformsign")!;
+            expect(reserved.status).toBe("reserved");
+            const creates = h.drive.creates;
+
+            expect(expectStep(await dest.ensureFolderChain("eformsign/a.json", ledger))).toBe(reserved.fileId);
+            expect(h.drive.creates).toBe(creates);
+            expect(h.drive.children(rootId).filter(node => node.name === "eformsign")).toHaveLength(1);
+            expect(ledger.current("eformsign")?.status).toBe("created");
+        });
+
         it("T17: a lost folder create leaves no duplicate", async () => {
             h.drive.addFault({ route: "create", times: 1, action: driveFaults.lostResponse() });
             const parent = expectStep(await dest.ensureFolderChain("eformsign/co-1/a.json", ledger));

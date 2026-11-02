@@ -236,18 +236,15 @@ export class DriveDestination {
             id = reserved.value;
         }
         const created = await this.client.createFolder({ id, name, parentId });
-        let file: DriveFile;
-        if (created.ok) {
-            file = created.value;
-        } else if (isDoubt(created.failure)) {
-            const found = await this.client.getFile(id);
-            if (!found.ok) return failed(found.failure);
-            if (found.value === null) return failed(created.failure);
-            file = found.value;
-        } else {
-            return failed(created.failure);
+        if (!created.ok && !isDoubt(created.failure)) return failed(created.failure);
+        // After an answer, a 409 or a lost answer alike, what Drive holds under the id is what counts: look it up and compare.
+        const found = await this.client.getFile(id);
+        if (!found.ok) return failed(found.failure);
+        if (found.value === null) {
+            // A create that answered ok but whose folder cannot be found is a transient upstream fault; the reservation stays.
+            return failed(created.ok ? { kind: "http", httpStatus: 502, reason: null, retryAfterSeconds: null } : created.failure);
         }
-        const same = sameFolder(file, name, parentId);
+        const same = sameFolder(found.value, name, parentId);
         if (!same.ok) return same;
         await ledger.created(nodeKey, id);
         return step(id);
