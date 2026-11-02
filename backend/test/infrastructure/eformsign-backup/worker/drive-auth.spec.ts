@@ -65,6 +65,44 @@ describe("DriveTokenSource", () => {
         expect(h.oauth.tokenRequests).toBe(3);
     });
 
+    describe("a forced get while another refresh is in flight", () => {
+        /** The first grant is `refused` (3600 s); the second request is held until `finish` and then fails with 503; later ones succeed. */
+        async function scenario(options: { withInflight: boolean; rollback: boolean }): Promise<{ requests: number; refusedServedAgain: boolean }> {
+            let requests = 0;
+            let finish: () => void = () => undefined;
+            const tokens = source({
+                fetchImpl: (async () => {
+                    requests++;
+                    if (requests === 2) return new Promise<Response>((resolve) => { finish = () => resolve(new Response("{}", { status: 503 })); });
+                    return Response.json({ access_token: requests === 1 ? "synthetic-refused" : "synthetic-new", expires_in: 3600 });
+                }) as typeof fetch,
+            });
+            const first = await tokens.get();
+            expect(first.ok).toBe(true);
+            nowMs += 3_540_001; // just past the 60 s margin: a normal refresh starts
+            const nonForced = options.withInflight ? tokens.get() : null;
+            const forced = tokens.get(true);
+            if (nonForced !== null) expect(forced).toBe(nonForced);
+            finish();
+            expect((await forced).ok).toBe(false);
+            if (options.rollback) nowMs -= 1_001; // a wall clock can step back (NTP), across the cache threshold
+            const after = await tokens.get();
+            return { requests, refusedServedAgain: after.ok && first.ok && after.value === first.value };
+        }
+
+        it("should not serve the refused token again when the joined refresh fails and the clock steps back", async () => {
+            expect((await scenario({ withInflight: true, rollback: true })).refusedServedAgain).toBe(false);
+        });
+
+        it("should keep the same outcome without a joined refresh (control)", async () => {
+            expect((await scenario({ withInflight: false, rollback: true })).refusedServedAgain).toBe(false);
+        });
+
+        it("should keep the same outcome without a clock step back (control)", async () => {
+            expect((await scenario({ withInflight: true, rollback: false })).refusedServedAgain).toBe(false);
+        });
+    });
+
     it("should report a revoked refresh token as token-rejected with the OAuth error only", async () => {
         h.oauth.revoke();
         expect(await source().get()).toEqual({
