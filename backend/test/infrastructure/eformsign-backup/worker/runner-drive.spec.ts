@@ -133,6 +133,35 @@ describe("runner Drive phase (BJJ-456 U5): the second, independent destination",
         });
     });
 
+    describe("T24: a completion never reaches Drive before the manifests it names", () => {
+        it("should hold the completion back when only the manifest upload is refused, although Drive would take the completion, and publish both next run", async () => {
+            await make([pairDoc("D001")]);
+            const base = fakes.drive.uploadsCompleted;
+            // Exactly one refusal: the third upload of the run, which is the manifest (after the two PDFs).
+            fakes.drive.addFault({ route: "uploadStart", times: 1, match: () => fakes.drive.uploadsCompleted - base === 2, action: driveFaults.status(503) });
+
+            const first = await runOnce(h);
+
+            expect(first.reasonCodes).toContain("drive-unavailable");
+            const tree1 = await driveTree(h, fakes);
+            expect(driveKeys(tree1, PDF_KEY)).toHaveLength(2);
+            expect(driveKeys(tree1, MANIFEST_KEY)).toEqual([]);
+            expect(driveKeys(tree1, COMPLETION_KEY)).toEqual([]);
+
+            const second = await runOnce(h);
+
+            expect(second.reasonCodes).toEqual(["coverage-unverified"]);
+            const tree2 = await driveTree(h, fakes);
+            expect(driveKeys(tree2, MANIFEST_KEY)).toHaveLength(1);
+            const local = await readCompletions(h.archive);
+            expect(driveKeys(tree2, COMPLETION_KEY)).toHaveLength(local.length);
+            for (const completion of local) {
+                const key = `eformsign/${COMPANY}/completions/${completion.name}`;
+                expect(tree2.get(key)?.equals(await fs.readFile(path.join(h.archive, key)))).toBe(true);
+            }
+        });
+    });
+
     describe("T29: the root moved or was trashed", () => {
         it("should stop with drive-root-changed and no upload, then re-upload everything under the new revision after a rebind", async () => {
             await make([pairDoc("D001")]);
