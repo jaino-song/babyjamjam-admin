@@ -277,6 +277,52 @@ describe("T30 / BJJ-456 U6: recover and verify with Drive as the second destinat
         }, 240_000);
     });
 
+    describe("a collision is judged before anything is filtered out (U6-F2)", () => {
+        const NATIVE_DOC = "application/vnd.google-apps.document";
+        const FOLDER = "application/vnd.google-apps.folder";
+
+        for (const [label, mimeType] of [["a folder", FOLDER], ["a Google-native document", NATIVE_DOC]] as const) {
+            it(`should refuse ${label} that shares a layout file's parent and name as drive-conflict, binding nothing and writing no Drive record`, async () => {
+                await populate();
+                const key = pdfKeyOf("D001", "document");
+                const layoutFile = fakes.drive.node(driveIds().files.get(key)!)!;
+                fakes.drive.seed({ id: "SameNameNonFile00001", name: layoutFile.name, mimeType, parents: layoutFile.parents });
+                await loseLedger();
+                const before = counters();
+
+                await expect(recover()).rejects.toMatchObject({ reasonCode: "drive-conflict" });
+
+                expect((await records()).filter((record) => record.type.startsWith("drive_"))).toEqual([]);
+                expect((await records("recovered_verified")).length).toBe(PDFS);
+                expect(fakes.drive.creates).toBe(before.creates);
+                expect(fakes.drive.uploadsCompleted).toBe(before.uploads);
+            }, 180_000);
+        }
+
+        it("should refuse a Google-native document that shares a layout folder's parent and name", async () => {
+            await populate();
+            const folderKey = [...driveIds().folders.keys()].find((key) => key.endsWith("/manifests"))!;
+            const folder = fakes.drive.node(driveIds().folders.get(folderKey)!)!;
+            fakes.drive.seed({ id: "NativeBesideFolder001", name: folder.name, mimeType: NATIVE_DOC, parents: folder.parents });
+            await loseLedger();
+
+            await expect(recover()).rejects.toMatchObject({ reasonCode: "drive-conflict" });
+
+            expect((await records()).filter((record) => record.type.startsWith("drive_"))).toEqual([]);
+        }, 180_000);
+
+        it("should still ignore a Google-native document whose name is not a layout path", async () => {
+            await populate();
+            fakes.drive.seed({ id: "UnrelatedNativeDoc001", name: "meeting-notes", mimeType: NATIVE_DOC, parents: [rootId] });
+            await loseLedger();
+
+            await recover();
+
+            expect(await records("drive_ready")).toHaveLength(1);
+            expect(await driveRecovered()).toHaveLength(PDFS);
+        }, 180_000);
+    });
+
     describe("conflicts are refused, the local result is kept", () => {
         it("should refuse two roots of the same installation with drive-root-changed, then take the one the operator names", async () => {
             await populate();

@@ -582,10 +582,14 @@ interface TreeFile extends TreeEntry {
     file: DriveFile;
 }
 
-/** Every untrashed folder and file under the root, by mirrored path. Reads only; a failed page ends the recover with its reason code. */
-async function walkTree(deps: RunnerDependencies, destination: DriveDestination, root: DriveFile): Promise<{ folders: TreeEntry[]; files: TreeFile[] }> {
+/**
+ * Every untrashed object under the root, by mirrored path: folders, files, and Google-native documents (`natives`, never adopted but
+ * still occupying their path). Reads only; a failed page ends the recover with its reason code.
+ */
+async function walkTree(deps: RunnerDependencies, destination: DriveDestination, root: DriveFile): Promise<{ folders: TreeEntry[]; files: TreeFile[]; natives: TreeEntry[] }> {
     const folders: TreeEntry[] = [];
     const files: TreeFile[] = [];
+    const natives: TreeEntry[] = [];
     const visited = new Set<string>([root.id]);
     const pending: Array<{ id: string; prefix: string }> = [{ id: root.id, prefix: "" }];
     for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
@@ -598,13 +602,15 @@ async function walkTree(deps: RunnerDependencies, destination: DriveDestination,
                 visited.add(child.id);
                 folders.push({ key, id: child.id, parentId: next.id });
                 pending.push({ id: child.id, prefix: key });
-            } else if (!child.mimeType.startsWith(NATIVE_GOOGLE_MIME_PREFIX)) {
+            } else if (child.mimeType.startsWith(NATIVE_GOOGLE_MIME_PREFIX)) {
+                natives.push({ key, id: child.id, parentId: next.id });
+            } else {
                 files.push({ key, id: child.id, parentId: next.id, file: child });
             }
         }
     }
     const byKey = (a: TreeEntry, b: TreeEntry): number => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-    return { folders: folders.sort(byKey), files: files.sort(byKey) };
+    return { folders: folders.sort(byKey), files: files.sort(byKey), natives: natives.sort(byKey) };
 }
 
 /** A node of the tree becomes a ledger node of the revision: reserved, then created, each step only if it is not already there. */
@@ -683,13 +689,17 @@ async function recoverDrive(deps: RunnerDependencies, archive: LocalDestination,
     const destination = destinationOf(deps, root, installation);
 
     // 2. The tree and the records, read and judged in memory.
-    const { folders, files } = await walkTree(deps, destination, root);
+    const { folders, files, natives } = await walkTree(deps, destination, root);
     const layout = files.filter((entry) => layoutKind(entry.key, deps.config.companyId) !== null);
     const needed = new Set(layout.flatMap((entry) => driveFolderChain(entry.key)));
     const layoutFolders = folders.filter((entry) => needed.has(entry.key) || isLayoutFolder(entry.key, deps.config.companyId));
+    // Two Drive objects of ANY kind (folder, file, Google-native document) at one mirrored path of the layout cannot be told apart:
+    // judged over everything the walk saw, before a mime or adoption filter drops one of them, and before anything is written.
+    const layoutPaths = new Set<string>([...layoutFolders.map((entry) => entry.key), ...layout.map((entry) => entry.key), ...needed]);
     const occupied = new Map<string, number>();
-    for (const entry of [...layoutFolders, ...layout, ...files.filter((entry) => needed.has(entry.key))]) occupied.set(entry.key, (occupied.get(entry.key) ?? 0) + 1);
-    // Two Drive objects at one mirrored path cannot be told apart: nothing is adopted until the operator removes one.
+    for (const entry of [...folders, ...files, ...natives]) {
+        if (layoutPaths.has(entry.key)) occupied.set(entry.key, (occupied.get(entry.key) ?? 0) + 1);
+    }
     if ([...occupied.values()].some((count) => count > 1)) throw new WorkerError("drive-conflict");
 
     const records: Array<{ key: string; fileId: string; sha256: string }> = [];
