@@ -1,12 +1,12 @@
 <div align="center">
   <img src="./frontend/public/assets/icon-512.png" alt="BabyJamJam logo" width="104" />
 
-  <h1>BabyJamJam Operations Platform</h1>
+  <h1>BabyJamJam — AI-powered Postpartum Care Operations Platform</h1>
 
-  <p><strong>아가잼잼 산모·신생아 건강관리 운영 플랫폼</strong></p>
+  <p><strong>AI 기반 산모·신생아 건강관리 운영 플랫폼</strong></p>
 
   <p>
-    A branch aware operations platform for maternal and newborn home care providers in South Korea.
+    Built for postpartum and newborn care providers in South Korea, with branch-scoped workflows.
     It brings client intake, workforce coordination, contracts, service records, pricing,
     communications, document workflows, and AI assisted administration into one product system.
   </p>
@@ -45,8 +45,8 @@
 
 ## Platform overview
 
-BabyJamJam is the operational system of record for organizations that coordinate maternal and
-newborn home care services. The platform supports the complete service lifecycle from the first
+BabyJamJam is an AI-powered Postpartum Care Operations Platform and operational system of record
+for organizations coordinating in-home postpartum and newborn care. It supports the complete service lifecycle from the first
 consultation through client registration, caregiver assignment, contract execution, service record
 collection, communications, and administrative follow up.
 
