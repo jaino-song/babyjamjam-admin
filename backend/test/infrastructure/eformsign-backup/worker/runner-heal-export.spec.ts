@@ -243,6 +243,49 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
     }, 240_000);
 
+    /**
+     * QF5 / R6: the exhausted entry heals from Drive into staging and the run stops at after-transferring; the staged copy then disappears
+     * and Drive cannot be asked. Interruption recovery moves the entry back to pending, so the failed attempt must be recorded and reported
+     * (blocked with the Drive reason), not left as an unreported pending entry. The export is still never asked and no gap is recorded.
+     */
+    it.each([["snapshot", false], ["carry", true]] as const)(
+        "should record and report an interrupted exhausted entry that cannot be restaged while Drive is down, then heal it when Drive answers (QF5, %s)",
+        async (_name, carried) => {
+            const lost = await exhaustedWithDriveBack(carried);
+            const crash = new Error("synthetic interruption");
+            await expect(runOnce(h, { runnerFault: async (point) => { if (point === "after-transferring") throw crash; } })).rejects.toBe(crash);
+            expect(await localState()).toMatchObject({ state: "transferring" });
+            for (const file of await stagedBins()) await fs.rm(path.join(h.control, file));
+            const outage = fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+            h.api.clearRequests();
+
+            const summary = await runOnce(h);
+
+            expect(outage.hits).toBeGreaterThanOrEqual(1);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
+            expect(summary.counts!.blocked).toBe(1);
+            expect(summary.reasonCodes).toContain("drive-unavailable");
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+
+            // The same outage on the next run changes nothing it has already recorded.
+            const recorded = async (): Promise<number> => (await records("destination_transition"))
+                .filter((record) => !isDrive(record) && record.body["reasonCode"] === "drive-unavailable").length;
+            const before = await recorded();
+            const again = await runOnce(h);
+            expect(await recorded()).toBe(before);
+            expect(again.counts!.blocked).toBe(1);
+            expect(again.reasonCodes).toContain("drive-unavailable");
+
+            fakes.drive.clearFaults();
+            await runOnce(h);
+
+            expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+            expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+        }, 240_000);
+
     it("should stay blocked integrity-repeated, asking the export no more, while Drive cannot be asked", async () => {
         await lostCopy(true);
         fakes.drive.addFault({ route: "*", action: driveFaults.status(503, "backendError") });
