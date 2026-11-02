@@ -19,7 +19,7 @@ jest.mock("@/lib/api/system-admin", () => ({
 }));
 
 const branch = {
-  id: "qa-branch", name: "QA 지점", slug: "qa-test", owner: null,
+  id: "qa-branch", name: "QA 지점", slug: "qa-test", admin: null,
   region: null, district: null, address: null, phone: null, email: null,
   isActive: false, createdAt: null, updatedAt: null,
   messageSenderApproval: { approvalStatus: "not_requested" as const, requestedAt: null, approvedAt: null, requestedBy: null },
