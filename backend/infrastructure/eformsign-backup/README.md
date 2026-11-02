@@ -142,12 +142,16 @@ A completion lists every document the snapshot includes but the completion does 
 contain as a gap, with the reason: `archive-conflict` when a manifest of the document
 conflicts, `ledger-inconsistent` when the ledger's evidence for it cannot be proven,
 the refusal itself when its manifest could not be written, the check that blocked the
-candidate, or, while its pair is not complete, the reason the ledger holds for the
+candidate (a candidate whose document id is not a valid id cannot be named in a
+completion; only the run record's reason codes report it), or, while its pair is not complete, the reason the ledger holds for the
 artifact that is not verified (for example `export-unavailable`, `artifact-pending`,
 `artifact-integrity`). An included document the source offered with no artifacts at all
 is listed as `artifact-pending`. If every included document of a snapshot is omitted, the
 completion still gets published, with no entries and those gaps, so `restore --latest`
-selects it, reports the gaps and restores nothing. The gaps appear in
+selects it, reports the gaps and restores nothing; to restore the documents an earlier
+completion holds, run restore with `--snapshot <that snapshot id>` instead. On a first
+run where no document has a complete pair yet, this gap-only completion also means
+`--allow-incomplete` does not apply (it is only used when no completion exists). The gaps appear in
 `restore-report.json`, so `--latest` never leaves a document out silently. A document that
 is no longer in the snapshot is not a gap of it.
 

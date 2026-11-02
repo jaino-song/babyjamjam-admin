@@ -192,7 +192,8 @@ export function integrityErrorCount(entry: Pick<DestinationEntry, "history">): n
  *
  * TRANSIENT: every other code. A completion lists these for a document it omits (`export-unavailable`, `artifact-pending`,
  * `artifact-integrity`, `archive-conflict`, `ledger-inconsistent`, `integrity-repeated`, ...): they say why that snapshot
- * lacks the document, and a later run can still resolve them, so they never become historical coverage.
+ * lacks the document, not that its bytes are gone, so they never become historical coverage. Most can resolve on a later
+ * run; `integrity-repeated` stays blocked until the source offers different bytes for the artifact.
  */
 export const PERMANENT_GAP_REASONS = ["source-removed", "exact-bytes-unavailable"] as const;
 export function isPermanentGapReason(code: WorkerReasonCode | null): code is typeof PERMANENT_GAP_REASONS[number] {
