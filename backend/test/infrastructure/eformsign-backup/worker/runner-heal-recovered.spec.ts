@@ -8,8 +8,9 @@ import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
 import { MANIFEST_KEY, PDF_KEY, RUN_KEY, bindDrive, driveKeys, driveTree, swapArchive, swapBack } from "./helpers/drive-run-support";
 import { driveFaults } from "./helpers/fake-drive-server";
 import {
-    COMPANY, createHarness, destroyHarness, initArchive, listFiles, readLedgerRecords, runOnce, sha256Of, singleDoc, withWorker, type Harness,
+    COMPANY, createHarness, destroyHarness, initArchive, listFiles, readLedgerRecords, rewriteConfig, runOnce, sha256Of, singleDoc, withWorker, type Harness,
 } from "./helpers/runner-support";
+import type { RunSummary } from "infrastructure/eformsign-backup/worker/runner-types";
 
 const isDrive = (record: { body: Record<string, unknown> }): boolean => String(record.body["destinationIdentity"]).startsWith("drive:");
 
@@ -642,6 +643,14 @@ describe("BJJ-456 PB1: a Drive that could not be asked does not make a lost loca
     };
     const terminalTransitions = async (): Promise<number> =>
         (await localTransitions()).filter((record) => record.body["reasonCode"] === "exact-bytes-unavailable").length;
+    const gapCount = async (): Promise<number> => {
+        const store = await LedgerStore.open(h.control, { deferTornTailRepair: true });
+        try {
+            return store.state.gaps.length;
+        } finally {
+            await store.close();
+        }
+    };
 
     /** One document verified locally and on Drive; the local PDF and every staged copy are lost; `verify --all` makes the local entry integrity_error; the next snapshot is empty. */
     async function lostCopy(): Promise<{ localKey: string; pdf: Buffer }> {
@@ -684,6 +693,9 @@ describe("BJJ-456 PB1: a Drive that could not be asked does not make a lost loca
         expect(await terminalTransitions()).toBe(0);
         expect(await driveState()).toBe("verified");
         await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
+        // PB1-F2: the carried entry left blocked is reported, not lost from the run's counts and reasons.
+        expect((outage as RunSummary).counts!.blocked).toBe(1);
+        expect((outage as RunSummary).reasonCodes).toContain("drive-unavailable");
 
         await expectHealed(lost);
     }, 240_000);
@@ -711,7 +723,11 @@ describe("BJJ-456 PB1: a Drive that could not be asked does not make a lost loca
         const before = (await localTransitions()).length;
         fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
 
-        for (let attempt = 0; attempt < 3; attempt += 1) await runOnce(h).then((summary) => summary, (error: unknown) => error);
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const outage = (await runOnce(h).then((summary) => summary, (error: unknown) => error)) as RunSummary;
+            expect(outage.counts!.blocked).toBe(1);
+            expect(outage.reasonCodes).toContain("drive-unavailable");
+        }
 
         expect((await localTransitions()).length - before).toBe(1);
         expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
@@ -725,5 +741,56 @@ describe("BJJ-456 PB1: a Drive that could not be asked does not make a lost loca
         }
 
         await expectHealed(lost);
+    }, 240_000);
+    /** PB1-F1: Drive cannot be asked because its configuration is unusable, not because it answered. */
+    it("should keep the local entry retryable while the Drive secret file is unusable (token-file-invalid), then heal once it is fixed (PB1 F1 secret)", async () => {
+        const lost = await lostCopy();
+        const gapsBefore = (await gapCount());
+        const downloadsBefore = fakes.drive.downloads;
+        await fs.chmod(fakes.refreshTokenFile, 0o644);
+
+        const outage = (await runOnce(h).then((summary) => summary, (error: unknown) => error)) as RunSummary;
+
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "token-file-invalid" });
+        expect(await terminalTransitions()).toBe(0);
+        expect(await gapCount()).toBe(gapsBefore);
+        expect(await driveState()).toBe("verified");
+        expect(outage.counts!.blocked).toBe(1);
+        expect(fakes.drive.downloads).toBe(downloadsBefore);
+
+        await fs.chmod(fakes.refreshTokenFile, 0o600);
+        await expectHealed(lost);
+    }, 240_000);
+
+    it("should keep the local entry retryable while the config has no drive block but the ledger holds a verified Drive copy, then heal when it is back (PB1 F1 no drive block)", async () => {
+        const lost = await lostCopy();
+        const gapsBefore = (await gapCount());
+        await rewriteConfig(h, {});
+
+        const outage = (await runOnce(h).then((summary) => summary, (error: unknown) => error)) as RunSummary;
+
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-not-configured" });
+        expect(await terminalTransitions()).toBe(0);
+        expect(await gapCount()).toBe(gapsBefore);
+        expect(outage.counts!.blocked).toBe(1);
+        expect(outage.reasonCodes).toContain("drive-not-configured");
+
+        await rewriteConfig(h, { drive: fakes.config } as never);
+        await expectHealed(lost);
+    }, 240_000);
+
+    it("should still end terminal when there is no Drive block and the ledger holds no verified Drive copy (PB1 F1 control)", async () => {
+        h = await createHarness({ docs: [singleDoc("D001")] });
+        await initArchive(h);
+        await runOnce(h);
+        const localKey = (await listFiles(h.archive)).find((file) => PDF_KEY.test(`/${file}`))!;
+        await fs.rm(path.join(h.archive, localKey));
+        for (const file of await listFiles(h.control)) if (file.endsWith(".bin")) await fs.rm(path.join(h.control, file));
+        await withWorker(h, "verify", (worker) => worker.runner.verify({ all: true }));
+        h.api.docs = [];
+
+        await runOnce(h);
+
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "exact-bytes-unavailable" });
     }, 240_000);
 });

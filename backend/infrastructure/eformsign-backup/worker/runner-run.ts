@@ -6,7 +6,7 @@ import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import {
     WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, completionContentDigest,
     completionSchema, integrityErrorCount, integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey,
-    nextRetryAt, nextSnapshotSequence, parseCompletionName, parseManifestKey, runKey, toArchiveArtifactType,
+    destinationKey, driveStateKey, nextRetryAt, nextSnapshotSequence, parseCompletionName, parseManifestKey, runKey, toArchiveArtifactType,
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
@@ -148,6 +148,8 @@ class RunExecution {
     private blockRun: WorkerReasonCode | null = null;
     private snapshotFailure: WorkerReasonCode | null = null;
     private readonly reasons = new Set<WorkerReasonCode>();
+    /** Carried artifacts this run left `blocked` with a retryable reason (PB1): historical work, but reported by this run. */
+    private readonly carriedBlocked = new Set<string>();
     private readonly blockedCandidates: WorkerReasonCode[] = [];
     private readonly work: WorkCandidate[] = [];
     /** Manifest sources rebuilt from the retained journals once per run, before anything of this run is written. */
@@ -553,6 +555,7 @@ class RunExecution {
      */
     private async carryRetryable(artifactIdentity: string, relativeKey: string, wanted: WorkerReasonCode): Promise<void> {
         const reasonCode: WorkerReasonCode = isTerminalReason(wanted) ? "drive-unavailable" : wanted;
+        this.carriedBlocked.add(artifactIdentity);
         const live = this.dl.entryOf(artifactIdentity);
         if (live !== undefined && live.state === "blocked" && live.reasonCode === reasonCode && live.relativeKey === relativeKey && live.nextRetryAt === null) return;
         await this.dl.transition(artifactIdentity, "blocked", { reasonCode, relativeKey });
@@ -932,8 +935,23 @@ class RunExecution {
 
     /** V10: the artifact's staged bytes are gone and Drive holds it verified: stage it again from there, before downloading. */
     private async healFromDrive(job: ArtifactJob): Promise<DriveHeal> {
-        if (this.drive === null || !this.archiveOk || !this.drive.driveVerified(job.artifactIdentity)) return false;
+        if (!this.archiveOk) return false;
+        if (this.drive === null) {
+            // No Drive phase this run (no `drive` block in the config, or the binding is not ready). A verified Drive copy the ledger still
+            // holds for the installation's binding was not asked about: that is not an answer, so the local entry stays retryable.
+            return this.holdsVerifiedDriveCopy(job) ? { unavailable: "drive-not-configured" } : false;
+        }
+        if (!this.drive.driveVerified(job.artifactIdentity)) return false;
         return this.drive.restageFromDrive(job);
+    }
+
+    /** The ledger records the artifact verified on the installation's Drive binding, with the file node that holds it. */
+    private holdsVerifiedDriveCopy(job: ArtifactJob): boolean {
+        const binding = this.dl.installation.drive;
+        if (binding === null) return false;
+        const entry = this.state.destinations.get(destinationKey(job.artifactIdentity, binding.destinationIdentity, binding.destinationRevision));
+        if (entry?.state !== "verified") return false;
+        return this.state.driveNodes.get(driveStateKey(binding.destinationRevision, job.relativeKey))?.kind === "file";
     }
 
     /**
@@ -1463,6 +1481,13 @@ class RunExecution {
             if (entry.state === "blocked" && isTerminalReason(entry.reasonCode)) terminalUnavailable += 1;
             else if (entry.state === "integrity_error") consider(entry);
         }
+        // A carried entry left retryably blocked is counted (never twice) but not fed to the snapshot judgement: it is not this snapshot's work.
+        for (const artifactIdentity of this.carriedBlocked) {
+            const entry = this.dl.entryOf(artifactIdentity);
+            if (entry === undefined || seen.has(artifactIdentity) || entry.state !== "blocked" || isTerminalReason(entry.reasonCode)) continue;
+            seen.add(artifactIdentity);
+            blocked += 1;
+        }
         return {
             counts: {
                 candidates: this.totalCandidates, included: this.includedCandidates, verified, blocked, retryWait, integrityError,
@@ -1492,6 +1517,10 @@ class RunExecution {
         for (const code of driveReasons) extras.add(code);
         if (this.drive?.phaseFailure != null) extras.add(this.drive.phaseFailure);
         for (const entry of entries) if (entry.state === "retry_wait" && entry.reasonCode !== null) extras.add(entry.reasonCode);
+        for (const artifactIdentity of this.carriedBlocked) {
+            const entry = this.dl.entryOf(artifactIdentity);
+            if (entry?.state === "blocked" && entry.reasonCode !== null && !isTerminalReason(entry.reasonCode)) extras.add(entry.reasonCode);
+        }
         for (const entry of this.state.destinations.values()) {
             if (entry.state === "blocked" && isTerminalReason(entry.reasonCode) && entry.reasonCode !== null) extras.add(entry.reasonCode);
         }

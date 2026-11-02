@@ -580,12 +580,14 @@ export class DriveRunPhase {
      * of the Drive entry.
      */
     async restageFromDrive(job: DriveJob): Promise<DriveHeal> {
-        if (!this.driveVerified(job.artifactIdentity) || this.destination === null) return false;
+        if (!this.driveVerified(job.artifactIdentity)) return false;
         const node = this.state.driveNodes.get(driveStateKey(this.revision, job.relativeKey));
         if (node === undefined || node.kind !== "file") return false;
-        // From here on Drive holds a verified copy: a failure that is not Drive's own answer ("no usable copy") means it could not be asked.
-        if (!(await this.ready())) return { unavailable: this.halted?.code ?? this.closedAs?.code ?? "drive-unavailable" };
-        const got = await this.destination.download(node.fileId);
+        // From here on the ledger says Drive holds a verified copy: anything but Drive's own answer ("no usable copy") means it could not be
+        // asked, including a phase with no usable destination at all (unreadable secret files, A8).
+        const destination = this.destination;
+        if (destination === null || !(await this.ready())) return { unavailable: this.halted?.code ?? this.closedAs?.code ?? this.phaseFailure ?? "drive-unavailable" };
+        const got = await destination.download(node.fileId);
         if (!got.ok) {
             if (!("failure" in got)) return { unavailable: "drive-conflict" };
             if (this.classifyAbsent(got.failure)) {
