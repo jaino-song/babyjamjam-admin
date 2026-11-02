@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import { EXPORT_ARTIFACT_MAX_BYTES } from "domain/eformsign-backup/export/constants";
@@ -171,6 +172,8 @@ class RunExecution {
     /** The archive keys (manifests, completion) this run wrote locally, and the completion it built; the Drive phase reads them (A2.6). */
     private readonly localPublished = new Set<string>();
     private localCompletion: DriveBuiltRecord | null = null;
+    /** A recovered artifact's (no ledger length) manifest, validated on the archive: it stands in for the manifest-first step of its carry. */
+    private readonly recoveredManifests = new Map<string, { key: string; sha256: string }>();
 
     constructor(
         private readonly deps: RunnerDependencies,
@@ -476,7 +479,7 @@ class RunExecution {
             if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
             if (!carryable(entry) || inSnapshot.has(entry.artifactIdentity)) continue;
             const info = this.state.artifacts.get(entry.artifactIdentity);
-            if (info === undefined || info.byteLength === null) {
+            if (info === undefined) {
                 await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
                 continue;
             }
@@ -487,18 +490,100 @@ class RunExecution {
                 await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
                 continue;
             }
+            // `recover` records an artifact without a length. Its length then comes from a manifest on the archive that lists it, never a guess.
+            const recovered = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
+            const byteLength = info.byteLength ?? recovered?.byteLength ?? null;
+            if (byteLength === null) {
+                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
+                continue;
+            }
             const job: ArtifactJob = {
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
-                artifactIdentity: entry.artifactIdentity, sha256: info.sha256, byteLength: info.byteLength, relativeKey,
+                artifactIdentity: entry.artifactIdentity, sha256: info.sha256, byteLength, relativeKey,
             };
             if (entry.state === "integrity_error" && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "integrity-repeated", relativeKey });
-            } else if (await this.stagedUsable(job) || await this.healFromDrive(job)) {
+            } else if (recovered === null ? await this.stagedUsable(job) || await this.healFromDrive(job) : await this.recoveredBytesStaged(job)) {
+                if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
                 await this.processArtifact(job, "carry");
             } else {
                 await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
             }
         }
+    }
+
+    /**
+     * The archive manifest that proves a recovered artifact's length: one that parses as a manifest of its document, is not contradicted by
+     * the ledger's or a valid completion's digest for its key, and lists this artifact with the recorded sha256, type and key. All such
+     * manifests must agree on one length; none, or a disagreement, is `null` (nothing is built or guessed). Listed afresh: the run's shared
+     * listing is taken later, after this run's own manifests exist.
+     */
+    private async recoveredManifestFor(
+        artifactIdentity: string, info: { documentId: string; artifactType: ArchiveArtifactType; sha256: string }, relativeKey: string,
+    ): Promise<{ key: string; sha256: string; byteLength: number } | null> {
+        if (!this.archiveOk) return null;
+        const found: Array<{ key: string; sha256: string; byteLength: number }> = [];
+        try {
+            const completions = await this.completionDigests();
+            for (const file of (await listManifestFiles(this.deps.config.archive.path, this.companyId)).filter((candidate) => candidate.documentId === info.documentId)) {
+                let bytes: Buffer | null;
+                try {
+                    bytes = await this.archive.readArchiveFile(file.key);
+                } catch (error) {
+                    if (error instanceof WorkerError && !isArchiveSide(error.reasonCode)) continue; // not a readable manifest: it lists nothing
+                    throw error;
+                }
+                if (bytes === null) continue;
+                let parsed: { manifest: Manifest; sha256: string };
+                try {
+                    parsed = parseManifestBytes(bytes, file.key, { companyId: this.companyId, documentId: file.documentId, metadataRevision: file.metadataRevision });
+                } catch (error) {
+                    if (!(error instanceof WorkerError)) throw error;
+                    continue;
+                }
+                const acknowledged = this.state.manifests.get(file.key);
+                if ((acknowledged !== undefined && acknowledged.sha256 !== parsed.sha256)
+                    || [...(completions.get(file.key) ?? [])].some((expected) => expected !== parsed.sha256)) continue;
+                for (const artifact of parsed.manifest.artifacts) {
+                    if (artifact.artifactIdentity !== artifactIdentity || artifact.sha256 !== info.sha256 || artifact.artifactType !== info.artifactType) continue;
+                    let derived: string;
+                    try {
+                        derived = artifactKey({ companyId: this.companyId, documentId: info.documentId, artifactType: artifact.artifactType, sha256: artifact.sha256 });
+                    } catch {
+                        continue;
+                    }
+                    if (derived === relativeKey) found.push({ key: file.key, sha256: parsed.sha256, byteLength: artifact.byteLength });
+                }
+            }
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.archiveLost();
+            return null;
+        }
+        if (found.length === 0 || new Set(found.map((candidate) => candidate.byteLength)).size !== 1) return null;
+        return found[0]!;
+    }
+
+    /**
+     * A recovered artifact's bytes, staged, with the length its archive manifest names: a staged copy on record that hashes to the artifact
+     * (one that does not is set aside), else the verified Drive copy, which `restage` proves again by hash and size.
+     */
+    private async recoveredBytesStaged(job: ArtifactJob): Promise<boolean> {
+        if (await this.stagedUsable(job)) {
+            if (await this.stagedHashes(job)) return true;
+            await this.setStagingAside(job);
+        }
+        return this.healFromDrive(job);
+    }
+
+    private async stagedHashes(job: ArtifactJob): Promise<boolean> {
+        const hash = createHash("sha256");
+        let seen = 0;
+        for await (const chunk of this.archive.openStaged(this.staging, job.artifactIdentity)) {
+            hash.update(chunk);
+            seen += chunk.byteLength;
+        }
+        return seen === job.byteLength && hash.digest("hex") === job.sha256;
     }
 
     private async stagedUsable(job: ArtifactJob): Promise<boolean> {
@@ -907,6 +992,13 @@ class RunExecution {
      * it cannot be written the artifact is blocked and nothing is published for it. `false`: the caller stops.
      */
     private async manifestFirst(artifactIdentity: string, relativeKey: string | null): Promise<boolean> {
+        // A recovered artifact has no observed source: the manifest already on the archive, validated, is the one that lists it.
+        const recovered = this.recoveredManifests.get(artifactIdentity);
+        if (recovered !== undefined) {
+            await this.fault("after-manifest-first-before-record");
+            await this.recordManifest(recovered);
+            return true;
+        }
         const source = this.manifestSourceFor(artifactIdentity);
         const written = await this.writeManifest(source);
         if (!written.ok) {
@@ -1365,12 +1457,14 @@ class RunExecution {
             const local = this.archiveOk ? (await this.archive.publishJson(key, inventory.bytes)).ok : false;
             await this.drive?.publishInventory({ key, bytes: inventory.bytes, sha256: inventory.sha256 }, local);
         }
+        // What the inventory upload itself ran into is known only now: it is reported, but the inventory (already written) keeps the reasons it had.
+        const reported = this.snapshotFailure !== null ? reasonCodes : sortedUnique([...reasonCodes, ...(this.drive?.entryReasons() ?? []), ...(this.drive?.phaseFailure == null ? [] : [this.drive.phaseFailure])]);
         await this.deps.ledger.append("run_finished", {
-            runId: this.runId, finishedAt, snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes, counts,
+            runId: this.runId, finishedAt, snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes: reported, counts,
         }, finishedAt);
         return {
             outcome: "finished", runId: this.runId, snapshotId: this.snapshotId, sequence: binding?.sequence ?? null,
-            snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes, counts,
+            snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes: reported, counts,
         };
     }
 }
