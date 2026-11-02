@@ -195,6 +195,62 @@ describe("DetailPanel", () => {
     expect(inlineStepper.parentElement?.parentElement).toHaveClass("md:flex-row", "md:items-center");
   });
 
+  describe("header layout below md when trailing is set without a stepper", () => {
+    const MD_UP_HEADER_CLASSES = ["flex", "justify-between", "gap-[calc(16px*var(--glint-ui-scale,1))]", "items-center"];
+
+    function headerParts(container: HTMLElement) {
+      const header = container.querySelector('header[data-slot="detail-panel-header"]');
+      const headerLayout = header?.firstElementChild as HTMLElement;
+      const trailingRow = headerLayout.lastElementChild as HTMLElement;
+      return { headerLayout, trailingRow };
+    }
+
+    const mdUpTokens = (element: HTMLElement) =>
+      element.className.split(/\s+/).filter((token) => token && !token.startsWith("max-md:"));
+
+    it("stacks the trailing area under the title below md and keeps the md and up classes", () => {
+      const { container } = render(
+        <DetailPanel data-component="desktop_v3_tests_split-layout_detail-panel-10"
+          title="계약서 작성 요청"
+          subtitle="고객에게 계약서 작성을 요청합니다"
+          trailing={<button type="button">즉시 발송</button>}
+        >
+          {null}
+        </DetailPanel>,
+      );
+
+      const { headerLayout, trailingRow } = headerParts(container);
+      expect(headerLayout).toHaveClass("max-md:flex-col", "max-md:items-stretch");
+      expect(trailingRow).toHaveClass("max-md:flex-wrap", "max-md:justify-end");
+      expect(mdUpTokens(headerLayout)).toEqual(MD_UP_HEADER_CLASSES);
+      expect(mdUpTokens(trailingRow)).toEqual(["flex", "shrink-0", "items-center", "gap-[calc(8px*var(--glint-ui-scale,1))]"]);
+    });
+
+    it("leaves the header untouched without trailing or when a stepper is present", () => {
+      const { container, rerender } = render(
+        <DetailPanel data-component="desktop_v3_tests_split-layout_detail-panel-11" title="계약서 작성 요청">
+          {null}
+        </DetailPanel>,
+      );
+      const header = container.querySelector('header[data-slot="detail-panel-header"]');
+      expect((header?.firstElementChild as HTMLElement).className).not.toContain("max-md:");
+
+      rerender(
+        <DetailPanel data-component="desktop_v3_tests_split-layout_detail-panel-11"
+          title="계약서 작성 요청"
+          stepper={<div>1 / 5</div>}
+          trailing={<button type="button">즉시 발송</button>}
+        >
+          {null}
+        </DetailPanel>,
+      );
+      const { headerLayout, trailingRow } = headerParts(container);
+      expect(headerLayout.className).not.toContain("max-md:");
+      expect(trailingRow.className).not.toContain("max-md:");
+      expect(headerLayout).toHaveClass("flex-col", "items-stretch", "md:flex-row", "md:items-center");
+    });
+  });
+
   it("keeps the panel mounted while loading and skeletonizes only text chrome", () => {
     const onTabChange = jest.fn();
     const { container } = render(

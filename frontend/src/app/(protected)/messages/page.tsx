@@ -2035,7 +2035,7 @@ export default function MessagesPage() {
     ) : undefined;
 
   return (
-    <PageSection name="desktop_messages_sections">
+    <PageSection name="desktop_messages_sections"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
       <StatsBar
         name="desktop_messages_sections"
         showDocumentJobs="whenActive"
@@ -2050,7 +2050,7 @@ export default function MessagesPage() {
       />
       <div
         data-slot="page-sections"
-        className="flex flex-1 min-h-0 flex-col gap-4 lg:flex-row lg:items-stretch"
+        className="flex flex-1 min-h-0 flex-col gap-4 max-md:min-h-[calc(100vh-calc(160px*var(--glint-ui-scale,1)))] lg:flex-row lg:items-stretch"
       >
         <SectionNav
           data-component="desktop_messages_sections_section-nav"
@@ -2386,6 +2386,6 @@ export default function MessagesPage() {
           )}
         </div>
       </div>
-    </PageSection>
+    </div></PageSection>
   );
 }
