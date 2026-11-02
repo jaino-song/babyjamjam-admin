@@ -11,7 +11,7 @@ jest.mock("@tanstack/react-query", () => ({
   ...jest.requireActual("@tanstack/react-query"), useQuery: jest.fn(),
 }));
 jest.mock("@/hooks/useGetAuthUser", () => ({
-  useGetAuthUser: () => ({ data: { name: "제공인력", role: "user" }, isLoading: false }),
+  useGetAuthUser: () => ({ data: { name: "직원", role: "user" }, isLoading: false }),
 }));
 jest.mock("@/hooks/usePushNotification", () => ({
   usePushNotification: () => ({ isSupported: false, isLoading: false }),

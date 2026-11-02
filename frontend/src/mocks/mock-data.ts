@@ -112,7 +112,7 @@ export const mockUsers: User[] = [
     id: 'user_01HWXYZ1234567890USER01',
     kakaoId: '3456789012',
     email: 'staff1@imirae-care.co.kr',
-    name: '박제공인력',
+    name: '박직원',
     profileImage: null,
     role: 'user',
     createdAt: '2024-03-01T00:00:00.000Z',

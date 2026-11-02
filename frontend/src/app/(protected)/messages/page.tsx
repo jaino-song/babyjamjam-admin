@@ -388,7 +388,7 @@ const MESSAGE_HISTORY_MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => {
 // Top-level status tabs for the merged 발송 기록 list. "all" shows both zones;
 // "upcoming" shows only the upcoming zone; the rest filter zone 2 (past sends) to
 // that status. There's deliberately no dedicated tab for the old scheduled
-// section's 고객/직원 recipient-type filter — see matchesScheduledJobQuery and
+// section's 고객/제공인력 recipient-type filter — see matchesScheduledJobQuery and
 // matchesHistoryQuery, which both fold the recipient badge into the free-text
 // search, so a second row of tabs isn't needed on top of these (ListPanel only
 // supports one tab row anyway).

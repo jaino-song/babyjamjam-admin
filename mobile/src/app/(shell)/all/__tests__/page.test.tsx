@@ -79,7 +79,7 @@ describe("AllMenuPage 설정 group", () => {
   });
 
   it("hides 공휴일 for a branch member", () => {
-    mockAuthUser = { id: "u4", name: "제공인력", role: "staff", branchRole: "member" };
+    mockAuthUser = { id: "u4", name: "직원", role: "staff", branchRole: "member" };
     render(<AllMenuPage />);
 
     expect(within(settingsGroup()).getByText("알림 설정")).toBeInTheDocument();

@@ -25,7 +25,7 @@ export function SendNotificationBranchRequired() {
           <div data-component={`${DATA_COMPONENT}_header_title-group`} className="flex-1 min-w-0">
             <h2 className="text-lg font-bold text-foreground">알림 보내기</h2>
             <p className="text-sm text-muted-foreground">
-              알림은 지점 제공인력에게 보내집니다. 상단에서 지점을 먼저 선택해 주세요.
+              알림은 지점 직원에게 보내집니다. 상단에서 지점을 먼저 선택해 주세요.
             </p>
           </div>
         </div>
