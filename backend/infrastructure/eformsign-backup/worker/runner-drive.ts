@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
-    WorkerError, artifactKey, buildCompletion, classifyDriveFailure, completionSchema, destinationKey, driveMimeOf, driveNameOf, driveStateKey,
+    WorkerError, artifactKey, buildCompletion, classifyDriveFailure, completionSchema, destinationKey, driveMimeOf, driveNameOf, driveStateKey, isDriveDestinationIdentity,
     integrityErrorCount, integrityRetryDecision, parseManifestKey, runInventorySchema, runKey,
     type ArchiveArtifactType, type DestinationEntry, type Installation, type LedgerState, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
@@ -341,7 +341,7 @@ export class DriveRunPhase {
             if (entry.destinationIdentity === local.destinationIdentity && entry.destinationRevision === local.destinationRevision) {
                 if (entry.state === "verified") verifiedLocally.add(id);
                 else if (!isTerminalReason(entry.reasonCode)) stagedOnly.add(id);
-            } else if (entry.destinationIdentity.startsWith("drive:") && entry.destinationRevision !== this.revision) {
+            } else if (isDriveDestinationIdentity(entry.destinationIdentity) && entry.destinationRevision !== this.revision) {
                 stagedOnly.add(id);
             }
         }
