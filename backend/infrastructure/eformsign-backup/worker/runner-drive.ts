@@ -482,6 +482,19 @@ export class DriveRunPhase {
         return this.state.driveRecords.get(driveStateKey(this.revision, relativeKey))?.sha256 === sha256;
     }
 
+    /** The manifest at `key` parses as that document's manifest and every artifact it names is Drive-verified on the current revision. */
+    private manifestArtifactsVerified(key: string, bytes: Buffer): boolean {
+        const parts = parseManifestKey(key);
+        if (parts === null || parts.companyId !== this.deps.config.companyId) return false;
+        try {
+            const { manifest } = parseManifestBytes(bytes, key, { companyId: parts.companyId, documentId: parts.documentId, metadataRevision: parts.metadataRevision });
+            return this.allVerified(manifest.artifacts);
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            return false;
+        }
+    }
+
     private allVerified(artifacts: ReadonlyArray<{ artifactIdentity: string }>): boolean {
         return artifacts.every((artifact) => this.dl.entryOf(artifact.artifactIdentity)?.state === "verified");
     }
@@ -555,8 +568,12 @@ export class DriveRunPhase {
 
         // 1. Records that wait in the outbox from an earlier run.
         const prefix = `${this.revision}|`;
-        for (const [stateKey, sha256] of [...this.state.driveRecordsPending]) {
-            if (!stateKey.startsWith(prefix)) continue;
+        // Manifests first, then completions (which name them), then everything else, whatever order they were queued in.
+        const kindRank = (key: string): number => (parseManifestKey(key) !== null ? 0 : COMPLETION_KEY.test(key) ? 1 : 2);
+        const waiting = [...this.state.driveRecordsPending]
+            .filter(([stateKey]) => stateKey.startsWith(prefix))
+            .sort(([a], [b]) => kindRank(a.slice(prefix.length)) - kindRank(b.slice(prefix.length)));
+        for (const [stateKey, sha256] of waiting) {
             const relativeKey = stateKey.slice(prefix.length);
             handled.add(relativeKey);
             if (!(await this.ready())) break;
@@ -573,6 +590,9 @@ export class DriveRunPhase {
                 continue;
             }
             if (COMPLETION_KEY.test(relativeKey) && !this.completionReady(bytes)) continue;
+            // A manifest is only as good as the artifacts it names: they must be verified on THIS revision (a queued manifest may
+            // come from an earlier revision), whatever route the manifest took here. Until then it stays pending.
+            if (parseManifestKey(relativeKey) !== null && !this.manifestArtifactsVerified(relativeKey, bytes)) continue;
             await this.push(relativeKey, bytes, false);
         }
 
@@ -603,34 +623,30 @@ export class DriveRunPhase {
                     break;
                 }
                 if (bytes === null || sha256Of(bytes) !== acknowledged.sha256) continue;
-                let artifacts: ReadonlyArray<{ artifactIdentity: string }>;
-                try {
-                    artifacts = parseManifestBytes(bytes, key, { companyId: config.companyId, documentId: parts.documentId, metadataRevision: parts.metadataRevision }).manifest.artifacts;
-                } catch (error) {
-                    if (!(error instanceof WorkerError)) throw error;
-                    continue;
-                }
-                if (!this.allVerified(artifacts)) continue;
+                if (!this.manifestArtifactsVerified(key, bytes)) continue;
                 const pushed = await this.push(key, bytes, false);
                 if (!pushed.ok) this.manifestFailures.set(parts.documentId, pushed.reasonCode);
                 if (this.halted !== null) break;
             }
         }
 
-        // 4. The completion of this run's snapshot.
+        // 4. The completion of this run's snapshot. Bytes the archive did not publish are queued first (they exist nowhere else) and
+        // go out only when every manifest they name is on Drive; a completion is built once and never rebuilt to leave a document out.
         const local = this.host.localCompletion();
         if (local !== null) {
             const locallyPublished = this.host.locallyPublished(local.key);
             if (!(locallyPublished && this.host.archiveOk())) {
                 handled.add(local.key);
-                if (this.completionReady(local.bytes)) await this.push(local.key, local.bytes, !locallyPublished);
+                if (!locallyPublished) await this.queue(local.key, local.bytes);
+                if (this.completionReady(local.bytes)) await this.push(local.key, local.bytes, false);
             }
         } else if (!this.host.archiveOk()) {
             const context = this.host.completionContext();
             const built = context === null ? null : this.driveOnlyCompletion(context);
             if (built !== null) {
                 handled.add(built.key);
-                await this.push(built.key, built.bytes, true);
+                await this.queue(built.key, built.bytes);
+                if (this.completionReady(built.bytes)) await this.push(built.key, built.bytes, false);
             }
         }
 
@@ -706,8 +722,8 @@ export class DriveRunPhase {
     }
 
     /**
-     * The completion of a snapshot whose local one could not be written: the documents whose artifacts are all on Drive and whose manifest
-     * is there too, and a gap with its reason for every other document the snapshot includes (the local rules). `null` when there is
+     * The completion of a snapshot whose local one could not be written: the documents whose artifacts are all on Drive (their manifests are
+     * published first, and the completion is withheld until they are), and a gap with its reason for every other document the snapshot includes (the local rules). `null` when there is
      * nothing to say.
      */
     private driveOnlyCompletion(context: DriveCompletionContext): DriveBuiltRecord | null {
@@ -715,9 +731,7 @@ export class DriveRunPhase {
         for (const candidate of this.work) {
             if (!this.allVerified(candidate.artifacts)) continue;
             const manifest = this.host.manifestOf(candidate);
-            if (this.onDrive(manifest.key, manifest.sha256)) {
-                entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: manifest.sha256, manifestKey: manifest.key });
-            }
+            entries.push({ documentId: candidate.documentId, metadataRevision: candidate.metadataRevision, manifestSha256: manifest.sha256, manifestKey: manifest.key });
         }
         const present = new Set(entries.map((entry) => entry.documentId));
         const omissions: Array<{ documentId: string; reasonCode: WorkerReasonCode }> = [];

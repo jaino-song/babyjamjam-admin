@@ -5,10 +5,13 @@ import { runRestoreDriveCli } from "infrastructure/eformsign-backup/worker/cli-r
 import { runWorkerCli } from "infrastructure/eformsign-backup/worker/cli";
 import { restoreFromArchive } from "infrastructure/eformsign-backup/worker/restore";
 import { DRIVE_OUTBOX_DIR } from "infrastructure/eformsign-backup/worker/drive-outbox";
+import { driveStateKey } from "domain/eformsign-backup/worker";
+import { readOutbox, writeOutbox } from "infrastructure/eformsign-backup/worker/drive-outbox";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 import { DestinationLedger, controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runner-common";
 
 import { startDriveFakes, type DriveHarness } from "./helpers/drive-support";
+import { makePhaseRig, rigDoc, rigUuid, type PhaseRig } from "./helpers/drive-run-support";
 import {
     COMPLETION_KEY, JSON_KEY, MANIFEST_KEY, MIB, PDF_KEY, RUN_KEY, bindDrive, driveKeys, driveTree, probeWith, swapArchive, swapBack,
 } from "./helpers/drive-run-support";
@@ -493,5 +496,63 @@ describe("runner Drive phase (BJJ-456 U5): the second, independent destination",
             expect(fakes.drive.uploadsCompleted - uploads).toBeLessThanOrEqual(2);
             expect(new Set(driveKeys(await driveTree(h, fakes), COMPLETION_KEY).map((key) => key.split("/").pop()!.slice(0, 12))).size).toBe((await readCompletions(h.archive)).length);
         });
+    });
+});
+
+describe("record publication integrity (BJJ-456 U5-F1), phase with a stubbed Drive", () => {
+    let rig: PhaseRig;
+    afterEach(async () => { await rig.cleanup(); });
+    const refuse503 = { ok: false, failure: { kind: "http", httpStatus: 503, reason: null, retryAfterSeconds: null } };
+
+    it("should not publish a pending manifest after a rebind until every artifact it names is verified on the current revision", async () => {
+        rig = await makePhaseRig({ archiveOk: false });
+        const doc = rigDoc("D001");
+        const oldRevision = `drive-layout-v1:${rigUuid(4)}`;
+        rig.knowArtifact(doc);
+        rig.setEntry(doc, "drive:rootFolder001", oldRevision, "verified");
+        rig.host.stagedUsable = async () => false;
+        await writeOutbox(rig.dir, doc.manifest.bytes);
+        rig.state().driveRecordsPending.set(driveStateKey(oldRevision, doc.manifestKey), doc.manifest.sha256);
+
+        await rig.phase.processWork([]);
+        await rig.phase.publishRecords();
+
+        expect(rig.recordUploads.map((upload) => upload.key)).toEqual([]);
+        expect(rig.artifactUploads).toEqual([]);
+
+        rig.setEntry(doc, rig.driveIdentity, rig.revision, "verified");
+        await rig.phase.publishRecords();
+
+        expect(rig.recordUploads.map((upload) => upload.key)).toEqual([doc.manifestKey]);
+        expect(rig.recordUploads[0]!.bytes.equals(Buffer.from(doc.manifest.bytes))).toBe(true);
+    });
+
+    it("should withhold a Drive-only completion while a manifest it names is refused, queue its original bytes, and publish them next run after the manifest", async () => {
+        rig = await makePhaseRig({ archiveOk: false });
+        const doc = rigDoc("D001");
+        rig.knowArtifact(doc);
+        rig.setEntry(doc, rig.driveIdentity, rig.revision, "verified");
+        rig.host.completionContext = rig.completionContext;
+        const publish = rig.destination.publishJson;
+        rig.destination.publishJson = async (key: string, bytes: Uint8Array, nodes: unknown) => (key === doc.manifestKey ? refuse503 : publish(key, bytes, nodes));
+
+        await rig.phase.processWork([doc.candidate]);
+        await rig.phase.publishRecords();
+
+        expect(rig.recordUploads.filter((upload) => upload.key.includes("/completions/"))).toEqual([]);
+        const pending = rig.ledgerRecords.filter((record) => record.type === "drive_record_pending" && String(record.body.relativeKey).includes("/completions/"));
+        expect(pending).toHaveLength(1);
+        const queued = (await readOutbox(rig.dir, pending[0]!.body.sha256 as string))!;
+        expect(JSON.parse(queued.toString("utf8")).entries.map((entry: { documentId: string }) => entry.documentId)).toEqual(["D001"]);
+
+        rig.destination.publishJson = publish;
+        rig.host.completionContext = () => null;
+        const next = rig.newPhase();
+        await next.processWork([]);
+        await next.publishRecords();
+
+        const keys = rig.recordUploads.map((upload) => upload.key);
+        expect(keys).toEqual([doc.manifestKey, pending[0]!.body.relativeKey]);
+        expect(rig.recordUploads[1]!.bytes.equals(queued)).toBe(true);
     });
 });
