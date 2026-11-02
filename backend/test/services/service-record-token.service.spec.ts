@@ -211,6 +211,20 @@ describe("ServiceRecordTokenService", () => {
         });
     });
 
+    it("reports whether a token row exists for the exact link token, whatever its state", async () => {
+        const { prisma, svc } = setup();
+        const { linkToken } = await svc.issueLink({
+            branchId: "b1", scheduleId: 10, employeeId: 7, expectedPhone: "010-1111-2222", expiresAt: future(),
+        });
+        expect(await svc.linkTokenExists(linkToken)).toBe(true);
+        expect(await svc.linkTokenExists(`${linkToken}junk`)).toBe(false);
+
+        prisma.__rows[0].active = false;
+        prisma.__rows[0].expiresAt = new Date(Date.now() - 1000);
+        expect(await svc.resolveLink(linkToken)).toBeNull();
+        expect(await svc.linkTokenExists(linkToken)).toBe(true);
+    });
+
     it("does not reactivate finalized tokens when preparing the composer", async () => {
         const { prisma, svc } = setup();
         const params = { branchId: "b1", scheduleId: 10, employeeId: 7,

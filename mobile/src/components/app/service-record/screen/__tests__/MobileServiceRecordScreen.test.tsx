@@ -53,6 +53,19 @@ describe("MobileServiceRecordScreen", () => {
             expect(screen.getByText("만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.")).toBeInTheDocument();
         });
 
+        it("shows the wrong-link copy when the link matches no record", () => {
+            render(<MobileServiceRecordScreen {...makeProps({ screen: "invalid", context: null, invalidReason: "not_found" })} />);
+            expect(q("body_invalid-center_title")).toHaveTextContent("링크를 사용할 수 없습니다");
+            expect(screen.getByText("잘못된 링크입니다. 다시 확인해 주세요.")).toBeInTheDocument();
+            expect(screen.queryByText("만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.")).not.toBeInTheDocument();
+        });
+
+        it("keeps the expired copy for an unavailable link", () => {
+            render(<MobileServiceRecordScreen {...makeProps({ screen: "invalid", context: null, invalidReason: "unavailable" })} />);
+            expect(screen.getByText("만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.")).toBeInTheDocument();
+            expect(screen.queryByText("잘못된 링크입니다. 다시 확인해 주세요.")).not.toBeInTheDocument();
+        });
+
         it("shows the completion state with the final crumb and a full progress bar", () => {
             render(<MobileServiceRecordScreen {...makeProps({ screen: "done" })} />);
             expect(screen.getByRole("heading", { name: "제공기록지 제출이 완료되었습니다." })).toBeInTheDocument();

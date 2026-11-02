@@ -215,6 +215,41 @@ describe("ServiceRecordPage authentication restoration", () => {
         );
     });
 
+    it("shows the wrong-link copy when the backend reports the link does not exist", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse({ valid: false, reason: "not_found" }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("잘못된 링크입니다. 다시 확인해 주세요.")).toBeInTheDocument();
+    });
+
+    it("shows the expired copy when the backend reports the link is unavailable", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse({ valid: false, reason: "unavailable" }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.")).toBeInTheDocument();
+    });
+
+    it("uses the clean token for API calls and the URL when the pasted link has trailing text", async () => {
+        const clean = "efl_zf9vPyJ8k4BV7GrsAUS604yYxXcR2JywbdxWj1VOuCg";
+        const dirty = `${clean}%ED%99%88%EA%B3%A0%EA%B0%9D`;
+        mockUseParams.mockReturnValue({ token: dirty });
+        window.history.replaceState(null, "", `/service-record/${dirty}?step=phone`);
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse(serviceRecordContext));
+
+        render(<ServiceRecordPage />);
+
+        await waitFor(() => {
+            expect(document.querySelector('[data-component="mobile_service-record_wizard_body_service-title"]'))
+                .toBeInTheDocument();
+        });
+        expect(fetchMock).toHaveBeenNthCalledWith(1, `/api/service-record/${clean}/link`);
+        expect(window.location.pathname).toBe(`/service-record/${clean}`);
+    });
+
     it("shows completion when every service session has been submitted", async () => {
         fetchMock
             .mockResolvedValueOnce(jsonResponse({ valid: true }))

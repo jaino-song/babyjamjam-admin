@@ -214,6 +214,10 @@ function plannedSessionDateUnavailable(): ConflictException {
     return new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
 }
 
+export type ServiceRecordLinkStatus =
+    | { valid: true }
+    | { valid: false; reason: "not_found" | "unavailable" };
+
 /**
  * No-login 제공기록지 capture (BJJ-247). The phone challenge is public (link token);
  * everything else runs behind ServiceRecordGuard, which supplies the assignment context.
@@ -230,8 +234,11 @@ export class ServiceRecordEntryService {
     ) {}
 
     /** Is this SMS link still usable (before asking for the phone number)? No PII returned. */
-    async linkStatus(linkToken: string): Promise<{ valid: boolean }> {
-        return { valid: Boolean(await this.tokenService.resolveLink(linkToken)) };
+    async linkStatus(linkToken: string): Promise<ServiceRecordLinkStatus> {
+        if (await this.tokenService.resolveLink(linkToken)) return { valid: true };
+        // not_found: no row for this exact token (mistyped/garbled link); unavailable: a row exists but is unusable.
+        const exists = await this.tokenService.linkTokenExists(linkToken);
+        return { valid: false, reason: exists ? "unavailable" : "not_found" };
     }
 
     /** Phone challenge → mint access token (or report wrong/locked). */
