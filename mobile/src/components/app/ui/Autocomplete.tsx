@@ -97,7 +97,6 @@ export function Autocomplete<T>({
     const [highlightedIndex, setHighlightedIndex] = useState(-1);
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    const suppressedClickTokenRef = useRef<string | null>(null);
     const selectedInputValue = value ? getItemLabel(value) : "";
     const currentInputValue = controlledInputValue ?? uncontrolledInputValue;
     const isInputControlled = controlledInputValue !== undefined;
@@ -174,24 +173,6 @@ export function Autocomplete<T>({
         setIsFocused(false);
         setIsToggledOpen(false);
         setTimeout(() => manualEntry?.onSelect(query), 100);
-    };
-
-    const markSuppressedClick = (token: string) => {
-        suppressedClickTokenRef.current = token;
-        window.setTimeout(() => {
-            if (suppressedClickTokenRef.current === token) {
-                suppressedClickTokenRef.current = null;
-            }
-        }, 0);
-    };
-
-    const shouldSkipClick = (token: string) => {
-        if (suppressedClickTokenRef.current !== token) {
-            return false;
-        }
-
-        suppressedClickTokenRef.current = null;
-        return true;
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -373,15 +354,11 @@ export function Autocomplete<T>({
                                             key={getItemKey(item)}
                                             data-component={sub(`option-${index + 1}`)}
                                             onPointerDown={(e) => {
-                                                e.preventDefault();
-                                                markSuppressedClick(`item:${getItemKey(item)}`);
-                                                handleSelect(item);
+                                                // Keep mouse focus without blocking native touch/pen scrolling.
+                                                if (e.pointerType === "mouse") e.preventDefault();
                                             }}
                                             onClick={(e) => {
                                                 e.preventDefault();
-                                                if (shouldSkipClick(`item:${getItemKey(item)}`)) {
-                                                    return;
-                                                }
                                                 handleSelect(item);
                                             }}
                                             onMouseEnter={() => setHighlightedIndex(index)}
@@ -431,15 +408,10 @@ export function Autocomplete<T>({
                                 <div data-component={sub("manual-divider")} className="h-px bg-v3-border" />
                                 <div
                                     onPointerDown={(e) => {
-                                        e.preventDefault();
-                                        markSuppressedClick("manual-entry");
-                                        handleManualEntry();
+                                        if (e.pointerType === "mouse") e.preventDefault();
                                     }}
                                     onClick={(e) => {
                                         e.preventDefault();
-                                        if (shouldSkipClick("manual-entry")) {
-                                            return;
-                                        }
                                         handleManualEntry();
                                     }}
                                     onMouseEnter={() =>
