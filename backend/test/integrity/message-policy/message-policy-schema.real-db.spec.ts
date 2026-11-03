@@ -113,6 +113,32 @@ describeReal("DB-1 message policy additive migration (real PostgreSQL)", () => {
                     WHERE schemaname = ${schema} AND tablename = 'message_trigger_rule' AND indexdef LIKE '%WHERE%'
                     ORDER BY indexname
                 `;
+                async function assertLegacySingletonChildren() {
+                    const groups = await prisma.message_trigger_rule_group.findMany({
+                        where: { id: { startsWith: "legacy-rule:" } },
+                        select: {
+                            id: true,
+                            rules: { select: { id: true, groupId: true, recipientType: true }, orderBy: { id: "asc" } },
+                        },
+                        orderBy: { id: "asc" },
+                    });
+                    // Literal child sets prove the backfill attached exactly one
+                    // eligible rule per parent, independently of rerun snapshots.
+                    expect(groups).toEqual(scenario === "empty" ? [] : [
+                        {
+                            id: "legacy-rule:custom-client",
+                            rules: [{ id: "custom-client", groupId: "legacy-rule:custom-client", recipientType: "CLIENT" }],
+                        },
+                        {
+                            id: "legacy-rule:custom-primary",
+                            rules: [{ id: "custom-primary", groupId: "legacy-rule:custom-primary", recipientType: "PRIMARY_EMPLOYEE" }],
+                        },
+                        {
+                            id: "legacy-rule:custom-secondary",
+                            rules: [{ id: "custom-secondary", groupId: "legacy-rule:custom-secondary", recipientType: "SECONDARY_EMPLOYEE" }],
+                        },
+                    ]);
+                }
                 function executeMigration() {
                     // Uses only the already-guarded local throwaway URL, with a
                     // generated search schema. Never inherits a remote datasource.
@@ -157,6 +183,7 @@ describeReal("DB-1 message policy additive migration (real PostgreSQL)", () => {
                     { id: "legacy-rule:custom-primary", recipientMode: "PRIMARY_EMPLOYEE" },
                     { id: "legacy-rule:custom-secondary", recipientMode: "SECONDARY_EMPLOYEE" },
                 ]);
+                await assertLegacySingletonChildren();
                 if (scenario === "legacy") {
                     for (const id of ["system:reserved", "agent-sms:reserved", "global", "default", "deleted"]) {
                         expect((await prisma.message_trigger_rule.findUniqueOrThrow({ where: { id } })).groupId).toBeNull();
@@ -188,6 +215,7 @@ describeReal("DB-1 message policy additive migration (real PostgreSQL)", () => {
                 // A second CLI execution of the entire file must preserve new
                 // and backfilled identities, modes, child counts, and snapshots.
                 executeMigration();
+                await assertLegacySingletonChildren();
                 expect(await groupState()).toEqual(firstGroups);
                 expect(await prisma.message_trigger_job.findMany({ select: { id: true, processingDeadlineAt: true }, orderBy: { id: "asc" } })).toEqual(firstDeadlines);
                 expect((await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: "custom-deadline" } })).processingDeadlineAt).toEqual(customDeadline);
