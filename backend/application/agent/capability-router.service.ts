@@ -33,7 +33,7 @@ export const DOMAIN_TERMS: Record<string, RegExp> = {
     admin: /(관리자|지점 생성|admin|branch creation)/i,
 };
 
-// Keep explicitly named, enabled domains in the incumbent routed domain list.
+// Keep explicitly named, enabled domains in accepted routed domain lists.
 // Their capabilities remain subject to the max cap in registry order.
 export const CLASSIFIER_STICKY_DOMAINS = ["service-records"] as const;
 const SERVICE_RECORD_NAMING_TERMS = /(제공기록|서비스 기록|service[ -]?record|회차|기록지)/i;
@@ -206,9 +206,10 @@ export class CapabilityRouterService {
             // default "clients" fallback.
             return { domains: [], capabilities: [], disposition: "clarify" };
         }
+        const domains = this.appendStickyDomains(selection, matched, text);
         return {
-            domains: selection,
-            capabilities: this.offerCapabilitiesWithCoreReads(selection, enabledCapabilities, max),
+            domains,
+            capabilities: this.offerCapabilitiesWithCoreReads(domains, enabledCapabilities, max),
             disposition: "selected",
         };
     }
@@ -223,14 +224,15 @@ export class CapabilityRouterService {
         const classifierDomains = matched.length === 1
             ? matched
             : await this.classifyAmbiguous(text, [...enabledDomains], protectedValues);
+        const routedDomains = this.appendStickyDomains(classifierDomains.length > 0 ? classifierDomains : matched, matched, text);
+        return routedDomains.length > 0 ? routedDomains : (enabledDomains.has("clients") ? ["clients"] : []);
+    }
+
+    private appendStickyDomains(selection: readonly string[], matched: readonly string[], text: string): string[] {
         const stickyDomains = CLASSIFIER_STICKY_DOMAINS.filter((domain) => (
             matched.includes(domain) && SERVICE_RECORD_NAMING_TERMS.test(text)
         ));
-        const routedDomains = [...new Set([
-            ...(classifierDomains.length > 0 ? classifierDomains : matched),
-            ...stickyDomains,
-        ])];
-        return routedDomains.length > 0 ? routedDomains : (enabledDomains.has("clients") ? ["clients"] : []);
+        return [...new Set([...selection, ...stickyDomains])];
     }
 
     /** Facade input; `baseline` is always the deterministic keyword fallback. */
