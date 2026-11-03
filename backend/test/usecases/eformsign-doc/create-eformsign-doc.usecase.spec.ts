@@ -1,3 +1,5 @@
+import { Logger } from "@nestjs/common";
+import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { CreateEformsignDocParams, CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EformsignDocOwnershipConflictError } from "domain/repositories/eformsign-doc.repository.interface";
@@ -61,16 +63,83 @@ describe("CreateEformsignDocUsecase", () => {
         findByPhone: jest.fn(),
         update: jest.fn(),
     };
+    const documentSnapshotService = { bumpVersion: jest.fn() };
 
     let usecase: CreateEformsignDocUsecase;
 
     beforeEach(() => {
         jest.clearAllMocks();
         clientRepository.update.mockReset();
+        documentSnapshotService.bumpVersion.mockReset().mockResolvedValue(1);
         usecase = new CreateEformsignDocUsecase(
             eformsignDocRepository as never,
             clientRepository as never, createHolidayCalendarStub(),
+            documentSnapshotService as unknown as EformsignDocumentSnapshotService,
         );
+    });
+
+    it.each([true, false])("bumps the branch snapshot once after saving (linkToClient=%s)", async (linkToClient) => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "010-1234-5678"));
+
+        const result = await usecase.execute(branchId, createParams({ linkToClient }));
+
+        expect(result).toBe(await eformsignDocRepository.upsertByDocumentId.mock.results[0]?.value);
+        expect(result.warnings).toBeUndefined();
+        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
+    });
+
+    it("does not bump the snapshot when the document write throws", async () => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "010-1234-5678"));
+        const error = new Error("document write failed");
+        eformsignDocRepository.upsertByDocumentId.mockRejectedValueOnce(error);
+
+        await expect(usecase.execute(branchId, createParams())).rejects.toBe(error);
+
+        expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+    });
+
+    it("keeps the saved result unchanged when snapshot invalidation rejects", async () => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "010-1234-5678"));
+        documentSnapshotService.bumpVersion.mockRejectedValueOnce(new Error("private cache connection details"));
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+        try {
+            const result = await usecase.execute(branchId, createParams());
+
+            expect(result).toBe(await eformsignDocRepository.upsertByDocumentId.mock.results[0]?.value);
+            expect(result.warnings).toBeUndefined();
+            expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+            expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(warn).toHaveBeenCalledWith("Failed to invalidate document snapshot after document creation");
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("creates the document when the optional snapshot service is absent", async () => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "010-1234-5678"));
+        const usecaseWithoutSnapshot = new CreateEformsignDocUsecase(
+            eformsignDocRepository as never,
+            clientRepository as never,
+            createHolidayCalendarStub(),
+        );
+
+        const result = await usecaseWithoutSnapshot.execute(branchId, createParams());
+
+        expect(result).toBe(await eformsignDocRepository.upsertByDocumentId.mock.results[0]?.value);
+        expect(result.warnings).toBeUndefined();
+        expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+    });
+
+    it("skips snapshot invalidation when the branch id is empty", async () => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "010-1234-5678"));
+
+        const result = await usecase.execute("", createParams());
+
+        expect(result.documentId).toBe(documentId);
+        expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
     });
 
     it.each([true, false])("rejects a foreign client before saving (linkToClient=%s)", async (linkToClient) => {
@@ -86,6 +155,7 @@ describe("CreateEformsignDocUsecase", () => {
         expect(clientRepository.findById).toHaveBeenCalledWith(branchId, 999);
         expect(eformsignDocRepository.upsertByDocumentId).not.toHaveBeenCalled();
         expect(clientRepository.update).not.toHaveBeenCalled();
+        expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
     });
 
     it("links the explicit client when recipient phone matches that client", async () => {
@@ -199,6 +269,8 @@ describe("CreateEformsignDocUsecase", () => {
         expect(result.documentId).toBe(documentId);
         expect(result.warnings).toEqual(["client_link_failed"]);
         expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledTimes(1);
+        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
     });
 
     it("keeps an existing ready projection intact while adoption assigns ownership", async () => {
