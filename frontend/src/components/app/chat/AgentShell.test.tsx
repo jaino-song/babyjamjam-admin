@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AgentShell } from "./AgentShell";
@@ -409,6 +411,33 @@ describe("AgentShell input composition", () => {
         expect(mockStop).toHaveBeenCalledTimes(1);
         fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
         expect(mockRegenerate).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps normal Agent user/assistant prose readable without flattening rich cards or markdown", () => {
+        const css = readFileSync(resolve(__dirname, "../../../app/globals.css"), "utf8");
+        const marker = "/* Chat workspace normal conversation text; rich registry cards and widgets retain their typography. */";
+        expect(css).toContain(marker);
+        const style = document.createElement("style");
+        style.textContent = 'p, li { font-size: 12.8px; line-height: 21.76px; } .markdown-content h1 { font-size: 24px; line-height: 40.8px; } .markdown-content code { font-size: 14px; line-height: 20px; }' + css.slice(css.indexOf(marker));
+        document.head.appendChild(style);
+        try {
+            mockAgentChatState.messages = [
+                { id: "readable-user", role: "user", parts: [{ type: "text", text: "사용자 본문" }] },
+                { id: "readable-assistant", role: "assistant", parts: [
+                    { type: "text", text: "# 마크다운 제목\n\nAI 본문\n\n- 목록 항목\n\n`inline`" },
+                    { type: "data-action-proposal", data: { actionId: "readable-card", capability: "clients.update", title: "카드 제목", summary: "카드 설명", expiresAt: "2099-01-01T00:00:00.000Z", expectedRevision: "r1", changes: { phone: "••••5678" } } },
+                ] },
+            ] as never;
+            render(<AgentShell />);
+            for (const text of ["사용자 본문", "AI 본문", "목록 항목"]) {
+                expect(getComputedStyle(screen.getByText(text)).fontSize).toBe("16px");
+                expect(getComputedStyle(screen.getByText(text)).lineHeight).toBe("28px");
+            }
+            expect(getComputedStyle(screen.getByRole("heading", { name: "마크다운 제목" })).fontSize).toBe("24px");
+            expect(getComputedStyle(screen.getByText("inline")).fontSize).toBe("14px");
+            expect(getComputedStyle(screen.getByText("카드 설명")).fontSize).toBe("12.8px");
+            expect(screen.getByRole("button", { name: "승인하고 실행" })).toBeInTheDocument();
+        } finally { style.remove(); }
     });
 
 });

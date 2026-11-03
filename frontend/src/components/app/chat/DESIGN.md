@@ -77,3 +77,17 @@ widget/fullscreen consumers outside the workspace keep their original styling.
 Tests apply the actual scoped CSS over the measured scaled baseline and check
 both native input types, send/header/list buttons and default-widget isolation.
 Main must recheck real 375×812 and 1280×900 geometry after the larger minimums.
+
+## Normal conversation typography (C6)
+
+The prototype keeps assistant body text at 16px/28px without desktop scaling.
+Main measured live desktop Legacy user text at 12.8px/19.2px and assistant text
+at 12.8px/21.76px; mobile was already 16px/27.2px. Workspace normal conversation
+paragraphs and list items now use 16px/28px at both sizes. Agent styling reaches
+only direct text parts of the message registry. Legacy uses a user-text slot and
+a workspace-only assistant prose wrapper; wizard content never enters that wrapper.
+Markdown heading sizes, code styling, rich proposals/forms/task parts and default
+widget/fullscreen consumers retain their existing styles. No callbacks or transport
+behavior change. Tests render both real controllers with actual scoped CSS and
+check body/list sizing plus heading/code/card/widget isolation; real browser computed
+styles and final geometry remain Main's acceptance check.

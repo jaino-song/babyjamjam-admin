@@ -1753,3 +1753,15 @@ body {
   min-height: 44px;
   min-width: 44px;
 }
+
+/* Chat workspace normal conversation text; rich registry cards and widgets retain their typography. */
+.chat-workspace [data-slot="chat-workspace-agent-message"] > div > [data-slot="text"],
+.chat-workspace [data-slot="chat-workspace-assistant-prose"] {
+  font-size: 16px;
+}
+.chat-workspace [data-slot="chat-workspace-agent-message"] > div > [data-slot="text"] :is(p, li),
+.chat-workspace [data-slot="chat-workspace-user-text"],
+.chat-workspace [data-slot="chat-workspace-assistant-prose"] :is(p, li) {
+  font-size: 16px;
+  line-height: 28px;
+}

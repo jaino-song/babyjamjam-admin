@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { hydrateRoot, type Root } from "react-dom/client";
 import type { ChatMessage, ChatState } from "@/hooks/useChatStream";
+import { AssistantMessage } from "./AssistantMessage";
 import { LegacyChatPage } from "./LegacyChatPage";
 
 const { renderToString } = jest.requireActual<typeof import("react-dom/server")>("react-dom/server.node");
@@ -149,6 +152,31 @@ describe("LegacyChatPage workspace preservation", () => {
             container.remove();
             window.localStorage.removeItem("ai_chat_session_id");
         }
+    });
+
+    it("sizes only Legacy workspace prose while retaining heading/code semantics and default widget text", () => {
+        const css = readFileSync(resolve(__dirname, "../../../app/globals.css"), "utf8");
+        const marker = "/* Chat workspace normal conversation text; rich registry cards and widgets retain their typography. */";
+        expect(css).toContain(marker);
+        const style = document.createElement("style");
+        style.textContent = 'p, li { font-size: 12.8px; line-height: 21.76px; } .markdown-content h1 { font-size: 24px; line-height: 40.8px; } .markdown-content code { font-size: 14px; line-height: 20px; }' + css.slice(css.indexOf(marker));
+        document.head.appendChild(style);
+        try {
+            mockState.messages = [message("사용자 본문", "user"), message("# 마크다운 제목\n\nAI 본문\n\n- 목록 항목\n\n`inline`")];
+            const { container } = render(<>
+                <LegacyChatPage />
+                <div data-testid="widget-prose"><AssistantMessage message={message("위젯 본문")} messageIndex={0} sessionId="widget-session" onSubmitFeedback={jest.fn()} /></div>
+            </>);
+            for (const text of ["사용자 본문", "AI 본문", "목록 항목"]) {
+                expect(getComputedStyle(screen.getByText(text)).fontSize).toBe("16px");
+                expect(getComputedStyle(screen.getByText(text)).lineHeight).toBe("28px");
+            }
+            expect(getComputedStyle(screen.getByRole("heading", { name: "마크다운 제목" })).fontSize).toBe("24px");
+            expect(getComputedStyle(screen.getByText("inline")).fontSize).toBe("14px");
+            expect(getComputedStyle(screen.getByText("위젯 본문")).fontSize).toBe("12.8px");
+            expect(screen.getByTestId("widget-prose").querySelector('[data-slot="chat-workspace-assistant-prose"]')).not.toBeInTheDocument();
+            expect(container.querySelector('[data-slot="chat-workspace-user-text"]')).toHaveTextContent("사용자 본문");
+        } finally { style.remove(); }
     });
 
 });

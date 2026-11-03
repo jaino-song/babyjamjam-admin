@@ -21,7 +21,7 @@ function UserMessage({ message }: { message: ChatMessage }) {
     return (
         <div data-component="desktop_chat_page_message-user-row" className="flex justify-end mb-4">
             <div data-component="desktop_chat_page_message-user-row_bubble" className="max-w-[80%] px-4 py-3 rounded-lg bg-v3-primary-light text-v3-primary">
-                <p className="text-base whitespace-pre-wrap break-words">{message.content}</p>
+                <p data-component="desktop_chat_page_message-user-row_bubble_text" data-slot="chat-workspace-user-text" className="text-base whitespace-pre-wrap break-words">{message.content}</p>
             </div>
         </div>
     );

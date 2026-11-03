@@ -100,21 +100,7 @@ export function AssistantMessage({
         }
     }, [message.ui?.registrationDraft, wizardType, createdClient, contractSendDone, contractStatus]);
 
-    return (
-        <div data-component="desktop_chat_page_message-assistant" className="flex gap-4 mb-6 w-full">
-            {variant !== "workspace" && <Avatar className="w-8 h-8 shrink-0 mt-1">
-                <AvatarImage src="/assets/icon-72.png" alt="AI" />
-                <AvatarFallback>AI</AvatarFallback>
-            </Avatar>}
-
-            <div className="flex-1 min-w-0">
-                {isToolExecuting && message.isStreaming && (
-                    <ToolIndicator toolName={currentTool || null} isExecuting={true} />
-                )}
-                <MarkdownContent data-component="desktop_chat_page_markdown">
-                    {wizardContent ? (
-                        wizardContent
-                    ) : (
+    const prose = (
                         <>
                             <ChatMarkdown
                                 components={{
@@ -144,6 +130,26 @@ export function AssistantMessage({
                                 <span className="inline-block w-2 h-4 bg-foreground ml-1 animate-blink" />
                             )}
                         </>
+    );
+
+    return (
+        <div data-component="desktop_chat_page_message-assistant" className="flex gap-4 mb-6 w-full">
+            {variant !== "workspace" && <Avatar className="w-8 h-8 shrink-0 mt-1">
+                <AvatarImage src="/assets/icon-72.png" alt="AI" />
+                <AvatarFallback>AI</AvatarFallback>
+            </Avatar>}
+
+            <div className="flex-1 min-w-0">
+                {isToolExecuting && message.isStreaming && (
+                    <ToolIndicator toolName={currentTool || null} isExecuting={true} />
+                )}
+                <MarkdownContent data-component="desktop_chat_page_markdown">
+                    {wizardContent ? (
+                        wizardContent
+                    ) : (
+                        variant === "workspace"
+                            ? <div data-component="desktop_chat_page_markdown_prose" data-slot="chat-workspace-assistant-prose">{prose}</div>
+                            : prose
                     )}
                 </MarkdownContent>
                 {!wizardContent && !message.isStreaming && (
