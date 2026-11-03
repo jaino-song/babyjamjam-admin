@@ -51,6 +51,35 @@ describe("useAgentChat", () => {
         jest.resetAllMocks();
     });
 
+    it.each(["approve", "reject"] as const)("retains resolved proposal parts after %s refresh and reload", async (operation) => {
+        window.sessionStorage.setItem("agent_session_id", "session-card");
+        let resolved = false;
+        const messages = [{ id: "agent-action-result:action-card", role: "assistant", parts: [
+            { type: "data-action-proposal", data: { actionId: "action-card", capability: "clients.update", title: "수정 제안", summary: "변경 확인", expiresAt: "2099-01-01T00:00:00.000Z", expectedRevision: "r1", changes: { phone: "••••5678" } } },
+            { type: "data-action-result", data: { actionId: "action-card", status: operation === "approve" ? "succeeded" : "rejected", summary: "처리됨" } },
+        ] }];
+        const setMessages = jest.fn();
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages, sendMessage: jest.fn(), regenerate: jest.fn(), stop: jest.fn(), status: "ready" });
+        global.fetch = jest.fn().mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input);
+            if (url.endsWith(`/${operation}`)) { resolved = true; return { ok: true, json: async () => ({ status: "ok" }) } as Response; }
+            if (url.endsWith("/sessions/session-card")) return { ok: true, json: async () => ({ id: "session-card", messages: resolved ? messages : [] }) } as Response;
+            return { ok: true, json: async () => [] } as Response;
+        });
+        const { result, unmount } = renderHook(() => useAgentChat());
+        await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining("/sessions/session-card"), expect.anything()));
+        await act(async () => {
+            if (operation === "approve") await result.current.approveAction("action-card", "r1");
+            else await result.current.rejectAction("action-card");
+        });
+        expect(setMessages).toHaveBeenLastCalledWith(messages);
+        unmount();
+        setMessages.mockClear();
+        const restored = renderHook(() => useAgentChat());
+        await waitFor(() => expect(setMessages).toHaveBeenCalledWith(messages));
+        restored.unmount();
+    });
+
     it("restores messages for the persisted owned session", async () => {
         const setMessages = jest.fn();
         (useChat as jest.Mock).mockReturnValue({

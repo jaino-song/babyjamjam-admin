@@ -20,6 +20,15 @@ const defaultProps = {
 };
 
 describe("AgentActionApprovalCard", () => {
+    it("retains resolved before/after preview tables without acknowledgement controls", () => {
+        render(<AgentActionApprovalCard {...defaultProps} terminal risk="external-side-effect"
+            preview={{ sections: [{ title: "일정 변경", rows: [{ label: "종료일", before: "2026-10-01", after: "2026-10-14", note: "변경 확인" }] }] }} />);
+        expect(screen.getByRole("table")).toHaveTextContent("2026-10-01");
+        expect(screen.getByRole("table")).toHaveTextContent("2026-10-14");
+        expect(screen.getByRole("note")).toHaveTextContent("변경 확인");
+        expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
+
     it("renders the optional contact directly below the summary", () => {
         const { container } = render(<AgentActionApprovalCard {...defaultProps} contact={<p>연락처 카드</p>} />);
         expect(container.querySelector('[data-slot="summary"]')?.nextElementSibling).toHaveTextContent("연락처 카드");
@@ -84,7 +93,7 @@ describe("AgentActionApprovalCard", () => {
         expect(onReject).toHaveBeenCalledWith("action-1");
     });
 
-    it("disables both actions after the action is terminal", () => {
+    it("renders terminal proposals as read-only without action controls", () => {
         render(
             <AgentActionApprovalCard
                 {...defaultProps}
@@ -94,7 +103,8 @@ describe("AgentActionApprovalCard", () => {
             />,
         );
 
-        expect(screen.getByRole("button", { name: "승인하고 실행" })).toBeDisabled();
-        expect(screen.getByRole("button", { name: "거절" })).toBeDisabled();
+        expect(screen.getByLabelText("처리된 작업 제안")).toHaveTextContent("읽기 전용");
+        expect(screen.queryByRole("button", { name: "승인하고 실행" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "거절" })).not.toBeInTheDocument();
     });
 });

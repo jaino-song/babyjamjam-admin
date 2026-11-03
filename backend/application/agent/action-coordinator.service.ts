@@ -19,6 +19,7 @@ import { AGENT_ACTION_REPOSITORY, type IAgentActionRepository } from "domain/rep
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
+import { buildActionProposalPresentation } from "./action-proposal-presentation";
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { AgentFlagsService } from "./agent-flags.service";
 import { AgentActionSweepLockService } from "infrastructure/locking/agent-action-sweep-lock.service";
@@ -1072,18 +1073,22 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         const message = {
             id: `agent-action-result:${actionId}`,
             role: "assistant",
-            parts: [{
-                type: "data-action-result",
-                data: {
-                    actionId,
-                    status,
-                    summary,
-                    completedAt: new Date().toISOString(),
-                    ...(!action.taskId && action.result && typeof action.result === "object" && !Array.isArray(action.result)
-                        ? { result: action.result }
-                        : {}),
+            parts: [
+                // Task actions use task snapshots instead of standalone approval cards.
+                ...(!action.taskId ? [{ type: "data-action-proposal", data: buildActionProposalPresentation(action) }] : []),
+                {
+                    type: "data-action-result",
+                    data: {
+                        actionId,
+                        status,
+                        summary,
+                        completedAt: new Date().toISOString(),
+                        ...(!action.taskId && action.result && typeof action.result === "object" && !Array.isArray(action.result)
+                            ? { result: action.result }
+                            : {}),
+                    },
                 },
-            }],
+            ],
         } as unknown as BjjUIMessage;
         const owner = { userId: action.userId, branchId: action.branchId };
         const persisted = await this.sessions.upsertActionResultMessage(action.sessionId, owner, message);

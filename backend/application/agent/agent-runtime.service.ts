@@ -11,12 +11,13 @@ import {
     type UIMessageStreamOptions,
 } from "ai";
 
-import { AgentActionPreviewSchema, AgentEntitySelectPartSchema, AgentFormSubmitPartSchema, CLIENT_WRITE_FIELD_NAMES, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
-import type { AgentActionPreview, BjjUIMessage } from "@babyjamjam/shared";
+import { AgentEntitySelectPartSchema, AgentFormSubmitPartSchema, CLIENT_WRITE_FIELD_NAMES, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
+import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentTaskDisplayedChoiceHint } from "@babyjamjam/shared";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { AgentModelFactory } from "infrastructure/agent/agent-model.factory";
 import { codeOnlyProblemBody, uncertainProblemBody } from "application/utils/problem-bodies";
+import { buildActionProposalPresentation } from "./action-proposal-presentation";
 import { buildAgentSystemPrompt } from "./agent-system-prompt";
 import { AgentFlagsService } from "./agent-flags.service";
 import { AgentSessionService } from "./agent-session.service";
@@ -108,19 +109,6 @@ function taskSnapshotPart(task: Parameters<typeof projectTaskForSafeChat>[0]) {
     };
 }
 
-function redactApprovalValue(value: unknown, key = ""): unknown {
-    if (Array.isArray(value)) return value.map((item) => redactApprovalValue(item, key));
-    if (value && typeof value === "object") {
-        return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-            .filter(([nestedKey]) => !/(?:token|secret|password|signedurl|documentcontent|storageurl)/i.test(nestedKey.replace(/[^a-z0-9]/gi, "")))
-            .map(([nestedKey, nestedValue]) => [nestedKey, redactApprovalValue(nestedValue, nestedKey)]));
-    }
-    if (typeof value === "string" && /(?:phone|mobile|receiver|account|accnum)/i.test(key.replace(/[^a-z0-9]/gi, ""))) {
-        const digits = value.replace(/\D/g, "");
-        return digits.length >= 4 ? `••••${digits.slice(-4)}` : "[masked]";
-    }
-    return value;
-}
 
 /**
  * Client lookup memory is a protected task reference once conversation task
@@ -385,16 +373,6 @@ export class AgentRuntimeService {
             if (!oldest.done) this.clarificationAskedRevisions.delete(oldest.value);
         }
         this.clarificationAskedRevisions.set(key, revision);
-    }
-
-    /** Stored previews were validated on propose; re-check defensively and never drop one silently. */
-    private storedPreviewPart(action: { id: string; capability: string; proposal: Record<string, unknown> }): { preview?: AgentActionPreview } {
-        const stored = action.proposal["preview"];
-        if (stored === undefined) return {};
-        const parsed = AgentActionPreviewSchema.safeParse(stored);
-        if (parsed.success) return { preview: parsed.data };
-        this.logger.warn(`agent action ${action.id} (${action.capability}) has a stored approval preview that failed validation; omitting it from the proposal part`);
-        return {};
     }
 
     async stream(input: {
@@ -1036,22 +1014,10 @@ export class AgentRuntimeService {
                         if (!action.taskId) writeDataChunk({
                             type: "data-action-proposal",
                             data: {
-                                actionId: action.id,
-                                capability: action.capability,
-                                title: typeof action.proposal["title"] === "string" ? action.proposal["title"] : capability.meta.description,
-                                summary: typeof action.proposal["summary"] === "string" ? action.proposal["summary"] : capability.meta.description,
-                                expiresAt: action.expiresAt.toISOString(),
-                                expectedRevision: action.proposalRevision,
-                                risk: action.risk,
-                                branchId: action.branchId,
-                                ...(action.targetSnapshot ? { target: redactModelValue(action.targetSnapshot) as Record<string, unknown> } : {}),
-                                changes: redactApprovalValue(action.proposal["input"]) as Record<string, unknown>,
-                                ...(typeof action.proposal["provider"] === "string" ? { provider: action.proposal["provider"] } : {}),
-                                ...(typeof action.proposal["estimatedCost"] === "string" ? { estimatedCost: action.proposal["estimatedCost"] } : {}),
+                                ...buildActionProposalPresentation(action, capability.meta.description, (warning) => this.logger.warn(warning)),
                                 ...(capability.meta.approvalPolicy === "strong"
                                     ? { acknowledgementToken: this.actions.strongAcknowledgementToken(action) }
                                     : {}),
-                                ...this.storedPreviewPart(action),
                             },
                         });
                         return {

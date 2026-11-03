@@ -41,6 +41,19 @@ describe("PrismaAgentSessionRepository", () => {
         });
     });
 
+    it("restores a persisted resolved proposal above its result without altering presentation parts", async () => {
+        const parts = [
+            { type: "data-action-proposal", data: { actionId: "action-a", capability: "clients.update", title: "수정 제안", summary: "변경 확인", expiresAt: "2026-10-01T00:00:00.000Z", expectedRevision: "r1", changes: { phone: "••••5678" } } },
+            { type: "data-action-result", data: { actionId: "action-a", status: "rejected", summary: "거절됨" } },
+        ];
+        const prisma = { agent_session: { findFirst: jest.fn().mockResolvedValue({
+            id: "session-a", ...owner, selectedEntities: {}, messages: [{ id: "agent-action-result:action-a", role: "assistant", parts, createdAt: new Date() }],
+        }) } };
+        const repository = new PrismaAgentSessionRepository(prisma as never);
+        const restored = await repository.findOwnedForRestore("session-a", owner);
+        expect(restored?.messages).toEqual([{ id: "agent-action-result:action-a", role: "assistant", parts }]);
+    });
+
     it("blocks physical deletion while a nonterminal action exists", async () => {
         const prisma = {
             agent_session: {
@@ -338,7 +351,10 @@ describe("PrismaAgentSessionRepository", () => {
         const message = {
             id: "agent-action-result:action-a",
             role: "assistant",
-            parts: [{ type: "data-action-result", data: { actionId: "action-a", status: "succeeded" } }],
+            parts: [
+                { type: "data-action-proposal", data: { actionId: "action-a", capability: "clients.update", title: "수정 제안", summary: "변경 확인", expiresAt: "2026-10-01T00:00:00.000Z", expectedRevision: "r1", changes: { phone: "••••5678" } } },
+                { type: "data-action-result", data: { actionId: "action-a", status: "succeeded", summary: "완료" } },
+            ],
         } as BjjUIMessage;
         const prisma = {
             agent_session: {
