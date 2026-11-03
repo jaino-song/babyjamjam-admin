@@ -295,6 +295,11 @@ export class ServiceRecordTokenService {
         return record;
     }
 
+    /** Does a token row exist for this exact link token (any state)? Lets the UI tell a wrong link from an unusable one. */
+    async linkTokenExists(linkToken: string): Promise<boolean> {
+        return Boolean(await this.findByLinkToken(linkToken, this.prismaService));
+    }
+
     /** Resolve form links by their plaintext database value. */
     private async findByLinkToken(linkToken: string, client: Prisma.TransactionClient | PrismaService) {
         return runSystemScope(async () => await client.service_record_token.findUnique({

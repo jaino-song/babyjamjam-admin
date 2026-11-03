@@ -89,7 +89,7 @@ describe("EmployeeAgentCapabilitiesProvider", () => {
 
         await expect(search.execute(context, { query: "길동" })).resolves.toEqual({
             kind: "choices",
-            prompt: "어느 직원을 말씀하시는지 선택해 주세요.",
+            prompt: "어느 제공인력을 말씀하시는지 선택해 주세요.",
             choices: [{ id: 7, name: "홍길동" }, { id: 8, name: "김길동" }],
         });
     });

@@ -44,12 +44,12 @@ describe("getApiErrorMessage", () => {
       response: {
         status: 409,
         data: {
-          message: "진행 중인 배정이 있는 직원은 삭제할 수 없습니다.",
+          message: "진행 중인 배정이 있는 제공인력은 삭제할 수 없습니다.",
           error: "Conflict",
         },
       },
     })).toEqual({
-      message: "진행 중인 배정이 있는 직원은 삭제할 수 없어요.",
+      message: "진행 중인 배정이 있는 제공인력은 삭제할 수 없어요.",
     });
   });
 });

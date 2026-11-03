@@ -104,3 +104,28 @@ interface DayButtonState {
 export function isDayButtonDisabled({ done, open, isRecordFinalized }: DayButtonState): boolean {
     return (!done && !open) || isRecordFinalized;
 }
+
+export type ServiceRecordLinkInvalidReason = "not_found" | "unavailable";
+
+const LINK_TOKEN_PREFIX = "efl_";
+// `efl_` + base64url of 32 random bytes (43 chars, see service-record-token.service.ts persistLink).
+const LINK_TOKEN_PATTERN = /^efl_[A-Za-z0-9_-]{43}/;
+const LINK_TOKEN_LENGTH = 47;
+
+/**
+ * A pasted link can carry trailing junk after the token (e.g. the percent-encoded bottom-nav text of
+ * a messenger). Keep only the 47-character `efl_` token; anything else (legacy formats, garbage) is
+ * returned unchanged so the backend stays the single judge of validity.
+ */
+export function normalizeServiceRecordLinkToken(raw: string): string {
+    let decoded = raw;
+    try {
+        decoded = decodeURIComponent(raw);
+    } catch {
+        // Malformed escape sequence: fall back to the raw value.
+    }
+    if (decoded.startsWith(LINK_TOKEN_PREFIX) && LINK_TOKEN_PATTERN.test(decoded)) {
+        return decoded.slice(0, LINK_TOKEN_LENGTH);
+    }
+    return raw;
+}

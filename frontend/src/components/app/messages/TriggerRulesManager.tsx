@@ -108,7 +108,7 @@ const EVENT_OPTIONS: Array<{ value: TriggerEventType; label: string; icon: typeo
   { value: "CLIENT_CREATED", label: "고객 등록", icon: UserPlus },
   { value: "SERVICE_START", label: "서비스 시작", icon: CalendarClock },
   { value: "SERVICE_END", label: "서비스 종료", icon: CalendarRange },
-  { value: "EMPLOYEE_ASSIGNED", label: "직원 배정", icon: Users },
+  { value: "EMPLOYEE_ASSIGNED", label: "제공인력 배정", icon: Users },
 ];
 
 const OFFSET_OPTIONS: Record<TriggerEventType, Array<{ value: TriggerOffsetType; label: string }>> = {
@@ -133,8 +133,8 @@ const OFFSET_OPTIONS: Record<TriggerEventType, Array<{ value: TriggerOffsetType;
 // labels). Which recipients are valid for an event is derived from the template catalog.
 const RECIPIENT_LABELS: Record<TriggerRecipientType, string> = {
   CLIENT: "고객",
-  PRIMARY_EMPLOYEE: "주 담당 직원",
-  SECONDARY_EMPLOYEE: "보조 직원",
+  PRIMARY_EMPLOYEE: "주 담당 제공인력",
+  SECONDARY_EMPLOYEE: "보조 제공인력",
 };
 
 const RECIPIENT_TYPE_ORDER = Object.keys(RECIPIENT_LABELS) as TriggerRecipientType[];
@@ -802,7 +802,7 @@ export function TriggerRulesManager({
       id: rule.id,
       title: rule.name,
       subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${rule.id === SERVICE_RECORD_LINK_RULE_ID
-        ? "서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송 · 주 담당 직원"
+        ? "서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송 · 주 담당 제공인력"
         : getRuleSummary(toFormState(rule))}`,
       active: isTriggerDispatchOff ? false : rule.isActive,
       icon: getRuleIcon(rule.eventType),

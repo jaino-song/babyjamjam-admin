@@ -4,6 +4,7 @@ import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 import { EmployeeDirectoryManager } from "@/components/app/employees/EmployeeDirectoryManager";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import type { Employee } from "@/hooks/useEmployees";
+import { t } from "@/lib/i18n/translations";
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
@@ -38,9 +39,11 @@ jest.mock("@/components/app/employees/EmployeeDetailPanel", () => ({
   EmployeeDetailPanel: ({
     employee,
     onEdit,
+    onDelete,
   }: {
     employee: Employee;
     onEdit: (employee: Employee) => void;
+    onDelete: (id: number) => void;
   }) => (
     <section data-testid="employee-detail">
       <h2>{employee.name}</h2>
@@ -49,7 +52,10 @@ jest.mock("@/components/app/employees/EmployeeDetailPanel", () => ({
         {employee.openToNextWork ? "available" : "unavailable"}
       </p>
       <button type="button" onClick={() => onEdit(employee)}>
-        직원 수정
+        제공인력 수정
+      </button>
+      <button type="button" onClick={() => onDelete(employee.id)}>
+        제공인력 삭제
       </button>
     </section>
   ),
@@ -85,7 +91,7 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
           onClose();
         }}
       >
-        직원 저장
+        제공인력 저장
       </button>
     );
   },
@@ -119,7 +125,7 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
             type="button"
             onClick={() => onSuccess?.({
               id: 2,
-              name: "신규 직원",
+              name: "신규 제공인력",
               workArea: ["gangnam"],
               phone: "01022223333",
               grade: "A",
@@ -128,7 +134,7 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
               status: "unavailable",
             })}
           >
-            직원 저장
+            제공인력 저장
           </button>
         </>
       ),
@@ -141,18 +147,21 @@ jest.mock("@/components/app/ui/TwoButtonModal", () => ({
   TwoButtonModal: ({
     open,
     title,
+    description,
     approvalLabel,
     onApprove,
     onOpenChange,
   }: {
     open: boolean;
     title: string;
+    description: string;
     approvalLabel: string;
     onApprove: () => void;
     onOpenChange: (open: boolean) => void;
   }) => open ? (
     <div role="dialog">
       <h2>{title}</h2>
+      <p>{description}</p>
       <button type="button" onClick={() => onOpenChange(false)}>취소</button>
       <button type="button" onClick={onApprove}>{approvalLabel}</button>
     </div>
@@ -252,7 +261,7 @@ jest.mock("@/components/app/v3", () => ({
   }) => (
     <div>
       {hasSelection ? (
-        <button type="button" onClick={onBack}>직원 목록으로 돌아가기</button>
+        <button type="button" onClick={onBack}>제공인력 목록으로 돌아가기</button>
       ) : null}
       {children}
     </div>
@@ -300,6 +309,28 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     mockedUseInfiniteEmployees.mockReturnValue(makeQueryResult());
   });
 
+  it("shows the operator copy in the employee delete confirmation", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 삭제" }));
+
+    expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "제공인력을 삭제하시겠어요?" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "삭제한 제공인력은 목록에서 사라져요.",
+    );
+  });
+
+  it.each([
+    ["ko", "제공인력을 삭제하시겠어요?", "삭제한 제공인력은 목록에서 사라져요."],
+    ["en", "Delete this provider?", "Deleted providers are removed from the list."],
+  ] as const)("uses the %s operator delete copy", (locale, title, message) => {
+    expect(t(locale, "employees.delete-confirm.title")).toBe(title);
+    expect(t(locale, "employees.delete-confirm.message")).toBe(message);
+  });
+
   it("updates the selected detail after an edit without reselecting or reloading", () => {
     render(
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
@@ -310,8 +341,8 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     expect(within(detail).getByRole("heading", { name: "홍길동" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01012345678");
 
-    fireEvent.click(within(detail).getByRole("button", { name: "직원 수정" }));
-    fireEvent.click(screen.getByRole("button", { name: "직원 저장" }));
+    fireEvent.click(within(detail).getByRole("button", { name: "제공인력 수정" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 저장" }));
 
     expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
@@ -330,7 +361,7 @@ describe("EmployeeDirectoryManager edit refresh", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "배정 불가" }));
     expect(screen.queryByTestId("employee-detail")).not.toBeInTheDocument();
-    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+    expect(screen.getByText("제공인력을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
   });
 
   it("keeps a dirty create draft on cancel and discards it with the tab change", () => {
@@ -338,15 +369,15 @@ describe("EmployeeDirectoryManager edit refresh", () => {
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
     const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
-    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.change(draftInput, { target: { value: "임시 제공인력" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "배정 불가" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 제공인력 정보를 버리시겠습니까?");
 
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
-    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 제공인력");
     expect(screen.getByRole("tab", { name: "전체" })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.click(screen.getByRole("tab", { name: "배정 불가" }));
@@ -354,22 +385,22 @@ describe("EmployeeDirectoryManager edit refresh", () => {
 
     expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "배정 불가" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+    expect(screen.getByText("제공인력을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
   });
 
-  it("keeps a dirty create draft when 직원 추가 is clicked again", () => {
+  it("keeps a dirty create draft when 제공인력 추가 is clicked again", () => {
     render(
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
     const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
-    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.change(draftInput, { target: { value: "임시 제공인력" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 제공인력");
   });
 
   it("guards a dirty create draft before selecting another employee", () => {
@@ -377,16 +408,16 @@ describe("EmployeeDirectoryManager edit refresh", () => {
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
     const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
-    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.change(draftInput, { target: { value: "임시 제공인력" } });
     fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
-    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 제공인력 정보를 버리시겠습니까?");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 제공인력");
 
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
-    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 제공인력");
     expect(screen.queryByTestId("employee-detail")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
@@ -402,20 +433,20 @@ describe("EmployeeDirectoryManager edit refresh", () => {
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
     const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
-    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
-    fireEvent.click(screen.getByRole("button", { name: "직원 목록으로 돌아가기" }));
+    fireEvent.change(draftInput, { target: { value: "임시 제공인력" } });
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 목록으로 돌아가기" }));
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 제공인력 정보를 버리시겠습니까?");
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
-    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 제공인력");
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 목록으로 돌아가기" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 목록으로 돌아가기" }));
     fireEvent.click(screen.getByRole("button", { name: "버리기" }));
 
     expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
-    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+    expect(screen.getByText("제공인력을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
   });
 
   it("guards a dirty create draft before the panel close action", () => {
@@ -423,20 +454,20 @@ describe("EmployeeDirectoryManager edit refresh", () => {
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
     const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
-    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.change(draftInput, { target: { value: "임시 제공인력" } });
     fireEvent.click(screen.getByRole("button", { name: "패널 닫기" }));
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 제공인력 정보를 버리시겠습니까?");
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
-    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 제공인력");
 
     fireEvent.click(screen.getByRole("button", { name: "패널 닫기" }));
     fireEvent.click(screen.getByRole("button", { name: "버리기" }));
 
     expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
-    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+    expect(screen.getByText("제공인력을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
   });
 
   it("keeps saved availability through a stale or failed refetch before live reconciliation", () => {
@@ -445,8 +476,8 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
-    fireEvent.click(screen.getByRole("button", { name: "직원 수정" }));
-    fireEvent.click(screen.getByRole("button", { name: "직원 저장" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 수정" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 저장" }));
 
     const detail = screen.getByTestId("employee-detail");
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
@@ -583,11 +614,11 @@ describe("EmployeeDirectoryManager edit refresh", () => {
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
-    fireEvent.click(screen.getByRole("button", { name: "직원 저장" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 저장" }));
 
     const detail = screen.getByTestId("employee-detail");
-    expect(within(detail).getByRole("heading", { name: "신규 직원" })).toBeInTheDocument();
+    expect(within(detail).getByRole("heading", { name: "신규 제공인력" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
 
     mockedUseInfiniteEmployees.mockReturnValue(
@@ -602,11 +633,11 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     rerender(
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
-    expect(within(detail).getByRole("heading", { name: "신규 직원" })).toBeInTheDocument();
+    expect(within(detail).getByRole("heading", { name: "신규 제공인력" })).toBeInTheDocument();
 
     const createdEmployee: Employee = {
       id: 2,
-      name: "신규 직원",
+      name: "신규 제공인력",
       workArea: ["gangnam"],
       phone: "01022223333",
       grade: "A",
@@ -625,7 +656,7 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     rerender(
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
-    expect(within(detail).getByRole("heading", { name: "신규 직원" })).toBeInTheDocument();
+    expect(within(detail).getByRole("heading", { name: "신규 제공인력" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
 
     const externalEmployee: Employee = {

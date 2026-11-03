@@ -36,7 +36,7 @@ const branchFormSchema = z.object({
     .min(1, "영문 지점 코드를 입력해 주세요.")
     .max(100)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "영문 소문자, 숫자, 하이픈만 사용할 수 있어요."),
-  ownerId: z.string().transform((value) => (value ? value : null)),
+  adminId: z.string().transform((value) => (value ? value : null)),
   region: z.string().trim().max(100).optional(),
   district: z.string().trim().max(100).optional(),
   address: z.string().trim().max(255).optional(),
@@ -78,7 +78,7 @@ export function SystemAdminBranchForm({
     const result = branchFormSchema.safeParse({
       name: String(formData.get("name") ?? ""),
       slug: String(formData.get("slug") ?? ""),
-      ownerId: String(formData.get("ownerId") ?? ""),
+      adminId: String(formData.get("adminId") ?? ""),
       region: optionalValue(formData, "region"),
       district: branch?.district ?? undefined,
       address: optionalValue(formData, "address"),
@@ -152,25 +152,25 @@ export function SystemAdminBranchForm({
           </Label>
           <FormNativeSelect
             id="system-admin-branch-manager"
-            name="ownerId"
+            name="adminId"
             selectDataComponent="desktop_system-admin_sections_branch-form_manager-select"
-            defaultValue={branch?.owner?.id ?? ""}
+            defaultValue={branch?.admin?.id ?? ""}
             disabled={isSubmitting || managerOptions.length === 0}
-            aria-invalid={Boolean(errors.ownerId)}
-            aria-describedby={errors.ownerId ? "system-admin-branch-manager-error" : undefined}
+            aria-invalid={Boolean(errors.adminId)}
+            aria-describedby={errors.adminId ? "system-admin-branch-manager-error" : undefined}
             options={[
               { value: "", label: "지정 안함" },
               ...managerOptions.map((manager) => ({ value: manager.id, label: manager.label })),
             ]}
           />
-          {errors.ownerId ? (
+          {errors.adminId ? (
             <p
               id="system-admin-branch-manager-error"
               data-component="desktop_system-admin_sections_branch-form_manager_error"
               className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-destructive"
               role="alert"
             >
-              {errors.ownerId}
+              {errors.adminId}
             </p>
           ) : null}
         </div>

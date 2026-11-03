@@ -388,7 +388,7 @@ export default function NewEmployeePage() {
           type="button"
           onClick={handleExit}
           disabled={isBusy}
-          aria-label={returnTo ? "이전 화면으로 돌아가기" : "직원 목록으로 돌아가기"}
+          aria-label={returnTo ? "이전 화면으로 돌아가기" : "제공인력 목록으로 돌아가기"}
         >
           <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.5} />
         </button>

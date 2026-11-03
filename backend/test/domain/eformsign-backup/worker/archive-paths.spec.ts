@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
     WorkerError, artifactKey, completionKey, completionName, manifestKey, markerKey, parseArtifactKey,
-    parseCompletionName, runKey, sequence12,
+    parseCompletionName, parseManifestKey, parseManifestName, runKey, sequence12,
 } from "domain/eformsign-backup/worker";
 
 const SHA = "a".repeat(64);
@@ -125,5 +125,35 @@ describe("archive path builders (T-WRK-02)", () => {
         expect(parseArtifactKey(`eformsign/c1/runs/artifacts/document/${SHA}.pdf`)).toBeNull();
         expect(parseArtifactKey(`eformsign/c1/../artifacts/document/${SHA}.pdf`)).toBeNull();
         expect(parseArtifactKey("nonsense")).toBeNull();
+    });
+});
+
+describe("content-versioned manifest keys (BJJ-455 P2 FU-10-F5)", () => {
+    const VERSION = "c".repeat(64);
+    const parts = { companyId: "company-1", documentId: "D001", metadataRevision: REV };
+
+    it("builds the legacy and the versioned key and parses both back", () => {
+        const legacy = manifestKey(parts);
+        const versioned = manifestKey({ ...parts, manifestSha256: VERSION });
+        expect(legacy).toBe(`eformsign/company-1/D001/manifests/${REV}.json`);
+        expect(versioned).toBe(`eformsign/company-1/D001/manifests/${REV}-${VERSION}.json`);
+        expect(manifestKey({ ...parts, manifestSha256: null })).toBe(legacy);
+        expect(parseManifestKey(legacy)).toEqual({ ...parts, manifestSha256: null });
+        expect(parseManifestKey(versioned)).toEqual({ ...parts, manifestSha256: VERSION });
+        expect(parseManifestName(`${REV}-${VERSION}.json`)).toEqual({ metadataRevision: REV, manifestSha256: VERSION });
+        expect(parseManifestName(`${REV}.json`)).toEqual({ metadataRevision: REV, manifestSha256: null });
+    });
+
+    it("rejects a malformed suffix, a look-alike name and a key of another shape", () => {
+        for (const name of [`${REV}-${"C".repeat(64)}.json`, `${REV}-${"c".repeat(63)}.json`, `${REV}-${"c".repeat(65)}.json`, `${REV}-.json`,
+            `${REV}-${VERSION}-${VERSION}.json`, `${REV}_${VERSION}.json`, `${REV}-${VERSION}.json.bak`, `${REV}-${VERSION}`, `${"b".repeat(63)}-${VERSION}.json`,
+            `../${REV}-${VERSION}.json`, `${REV}.json/${VERSION}.json`, ""]) {
+            expect(parseManifestName(name)).toBeNull();
+            expect(parseManifestKey(`eformsign/company-1/D001/manifests/${name}`)).toBeNull();
+        }
+        expect(parseManifestKey(`eformsign/company-1/completions/manifests/${REV}-${VERSION}.json`)).toBeNull();
+        expect(parseManifestKey(`eformsign/company-1/D001/artifacts/document/${SHA}.pdf`)).toBeNull();
+        expect(reason(() => manifestKey({ ...parts, manifestSha256: "nope" }))).toBe("invalid-path-segment");
+        expect(reason(() => manifestKey({ ...parts, manifestSha256: VERSION.toUpperCase() }))).toBe("invalid-path-segment");
     });
 });

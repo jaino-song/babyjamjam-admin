@@ -75,7 +75,7 @@ jest.mock("@/components/app/v3", () => ({
   }) => (
     <div>
       {isLoading ? (
-        <div role="status" aria-label="직원 목록 로딩 중">
+        <div role="status" aria-label="제공인력 목록 로딩 중">
           로딩 중
         </div>
       ) : (
@@ -161,14 +161,14 @@ describe("EmployeeDirectoryManager employee list query states", () => {
 
     const { rerender } = render(<EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />);
 
-    expect(screen.getByRole("status", { name: "직원 목록 로딩 중" })).toBeInTheDocument();
-    expect(screen.queryByText("등록된 직원이 없습니다")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "제공인력 목록 로딩 중" })).toBeInTheDocument();
+    expect(screen.queryByText("등록된 제공인력이 없습니다")).not.toBeInTheDocument();
 
     mockedUseInfiniteEmployees.mockReturnValue(makeQueryResult());
     rerender(<EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />);
 
-    expect(screen.getByText("등록된 직원이 없습니다")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "직원 목록 다시 시도" })).not.toBeInTheDocument();
+    expect(screen.getByText("등록된 제공인력이 없습니다")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "제공인력 목록 다시 시도" })).not.toBeInTheDocument();
   });
 
   it("renders populated results without the empty or error state", () => {
@@ -179,8 +179,8 @@ describe("EmployeeDirectoryManager employee list query states", () => {
     render(<EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />);
 
     expect(screen.getByText("홍길동")).toBeInTheDocument();
-    expect(screen.queryByText("등록된 직원이 없습니다")).not.toBeInTheDocument();
-    expect(screen.queryByText("직원 목록을 불러오지 못했습니다")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 제공인력이 없습니다")).not.toBeInTheDocument();
+    expect(screen.queryByText("제공인력 목록을 불러오지 못했습니다")).not.toBeInTheDocument();
   });
 
   it("keeps cached rows visible when a background refetch fails", () => {
@@ -201,12 +201,12 @@ describe("EmployeeDirectoryManager employee list query states", () => {
       "desktop_employees_sections_section-content_directory_manager_split-layout_list-panel_cached-data-error",
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "현재 저장된 직원 목록을 표시하고 있습니다.",
+      "현재 저장된 제공인력 목록을 표시하고 있습니다.",
     );
-    expect(screen.getByRole("button", { name: "직원 목록 다시 시도" })).toBeInTheDocument();
-    expect(screen.queryByText("등록된 직원이 없습니다")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "제공인력 목록 다시 시도" })).toBeInTheDocument();
+    expect(screen.queryByText("등록된 제공인력이 없습니다")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 목록 다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 목록 다시 시도" }));
 
     expect(mockRefetch).toHaveBeenCalledTimes(1);
   });
@@ -250,7 +250,7 @@ describe("EmployeeDirectoryManager employee list query states", () => {
     );
     const { rerender } = render(<EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 목록 다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 목록 다시 시도" }));
     expect(mockRefetch).toHaveBeenCalledTimes(1);
 
     mockedUseInfiniteEmployees.mockReturnValue(
@@ -264,7 +264,7 @@ describe("EmployeeDirectoryManager employee list query states", () => {
 
     expect(screen.getByText("홍길동")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "직원 목록 다시 시도" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "제공인력 목록 다시 시도" })).not.toBeInTheDocument();
   });
 
   it("renders a localized unknown value when registration date is unavailable", () => {
@@ -301,13 +301,13 @@ describe("EmployeeDirectoryManager employee list query states", () => {
       "data-component",
       "desktop_employees_sections_section-content_directory_manager_split-layout_list-panel_error",
     );
-    expect(screen.getByText("직원 목록을 불러오지 못했습니다")).toBeInTheDocument();
+    expect(screen.getByText("제공인력 목록을 불러오지 못했습니다")).toBeInTheDocument();
     expect(screen.getByText("잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "직원 목록 다시 시도" })).toBeInTheDocument();
-    expect(screen.queryByText("등록된 직원이 없습니다")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "제공인력 목록 다시 시도" })).toBeInTheDocument();
+    expect(screen.queryByText("등록된 제공인력이 없습니다")).not.toBeInTheDocument();
     expect(screen.queryByText("database password leaked")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "직원 목록 다시 시도" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력 목록 다시 시도" }));
 
     expect(mockRefetch).toHaveBeenCalledTimes(1);
   });

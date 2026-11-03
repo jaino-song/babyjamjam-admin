@@ -6,11 +6,14 @@ import type {
 } from "@babyjamjam/service-record-ui";
 
 import { MobileServiceRecordScreen } from "./screen/MobileServiceRecordScreen";
+import type { ServiceRecordLinkInvalidReason } from "@/lib/service-records/page-helpers";
 
 export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots"> & {
     slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature">;
     /** Mobile-only muted line on the phone step, e.g. why the caregiver was sent back to verification. */
     phoneNotice?: string | null;
+    /** Mobile-only: why the link is unusable; `not_found` shows the wrong-link copy instead of the expired one. */
+    invalidReason?: ServiceRecordLinkInvalidReason | null;
 };
 
 // Rollback: render the package's `ServiceRecordWizard` here again, with the `provider` / `signature` slots (ProviderInfo / SignaturePad).

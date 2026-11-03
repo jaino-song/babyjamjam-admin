@@ -25,6 +25,8 @@ describe("MobileTwoButtonModal", () => {
 
     expect(screen.getByTestId("mobile-two-button-modal-header")).toHaveClass("gap-1", "text-left");
     expect(screen.getByText("서비스 일정 변경")).toHaveClass("text-base");
+    expect(screen.getByText("서비스 일정 변경")).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
+    expect(screen.getByText("3회차 서비스 제공 날짜를 조정합니다.")).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(screen.getByText("3회차 서비스 제공 날짜를 조정합니다.")).toHaveClass("text-sm", "leading-5");
     expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");

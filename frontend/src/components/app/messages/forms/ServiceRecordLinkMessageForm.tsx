@@ -439,7 +439,7 @@ export const ServiceRecordLinkMessageForm = ({
           value={employeeId}
           onChange={handleEmployeeChange}
           label="관리사님 성함"
-          placeholder="새로 입력 또는 기존 직원 선택"
+          placeholder="새로 입력 또는 기존 제공인력 선택"
           allowManualInput
           manualValue={employeeName}
           onManualInputChange={handleEmployeeManualNameChange}

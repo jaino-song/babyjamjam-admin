@@ -135,8 +135,8 @@ describe("MobileAgentPartRegistry", () => {
                 type: "data-entity-choice",
                 data: {
                     entityType: "employees",
-                    prompt: "직원 선택",
-                    choices: [{ id: "employee-1", label: "김직원" }, { id: "employee-2", label: "이직원" }],
+                    prompt: "제공인력 선택",
+                    choices: [{ id: "employee-1", label: "김제공인력" }, { id: "employee-2", label: "이제공인력" }],
                 },
             }}
             onEntitySelect={onEntitySelect}
@@ -145,7 +145,7 @@ describe("MobileAgentPartRegistry", () => {
             onSubmitForm={jest.fn()}
         />);
 
-        fireEvent.click(screen.getByRole("button", { name: "김직원" }));
+        fireEvent.click(screen.getByRole("button", { name: "김제공인력" }));
         expect(onEntitySelect).toHaveBeenCalledWith("employee-1", "employees");
     });
 
@@ -357,7 +357,7 @@ describe("MobileAgentPartRegistry", () => {
                 type: "data-form",
                 data: {
                     formId: "employee-create",
-                    title: "직원 등록",
+                    title: "제공인력 등록",
                     schemaVersion: "1",
                     fields: [
                         { name: "birthday", label: "생년월일", type: "date", inputMode: "numeric", placeholder: "YYYY-MM-DD", maxLength: 10 },

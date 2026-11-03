@@ -2542,3 +2542,39 @@ describe("caregiver access token re-check inside the write transaction", () => {
         });
     });
 });
+
+describe("ServiceRecordEntryService.linkStatus", () => {
+    function createLinkStatusService(resolved: object | null, exists: boolean) {
+        const tokenService = {
+            resolveLink: jest.fn().mockResolvedValue(resolved),
+            linkTokenExists: jest.fn().mockResolvedValue(exists),
+        };
+        const service = new ServiceRecordEntryService(
+            {} as PrismaService,
+            tokenService as unknown as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+            createHolidayCalendarStub(),
+        );
+        return { service, tokenService };
+    }
+
+    it("reports a usable link as valid without an existence lookup", async () => {
+        const { service, tokenService } = createLinkStatusService(createToken(), true);
+
+        await expect(service.linkStatus("efl_token")).resolves.toEqual({ valid: true });
+        expect(tokenService.linkTokenExists).not.toHaveBeenCalled();
+    });
+
+    it("reports not_found when no token row exists for the link", async () => {
+        const { service, tokenService } = createLinkStatusService(null, false);
+
+        await expect(service.linkStatus("efl_missing")).resolves.toEqual({ valid: false, reason: "not_found" });
+        expect(tokenService.linkTokenExists).toHaveBeenCalledWith("efl_missing");
+    });
+
+    it("reports unavailable when the row exists but resolveLink rejects it", async () => {
+        const { service } = createLinkStatusService(null, true);
+
+        await expect(service.linkStatus("efl_expired")).resolves.toEqual({ valid: false, reason: "unavailable" });
+    });
+});

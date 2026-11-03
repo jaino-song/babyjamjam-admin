@@ -22,6 +22,7 @@ import {
     LOADING_COPY,
     PLANNED_DATE_ERROR_COPY,
     SCREEN_TITLE,
+    WRONG_LINK_COPY,
 } from "./ids";
 import { OverviewStep } from "./OverviewStep";
 import { PhoneStep } from "./PhoneStep";
@@ -125,6 +126,7 @@ export function MobileServiceRecordScreen({
     onOpenSubmitModal,
     onEditSection,
     slots,
+    invalidReason,
 }: MobileServiceRecordScreenProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     // The how-to guide opens by itself over a first-time service-info step (no saved header on the
@@ -195,7 +197,7 @@ export function MobileServiceRecordScreen({
                         <div data-component={child("body_invalid-center_title")} className="text-lg font-bold text-v3-dark">
                             {INVALID_TITLE}
                         </div>
-                        <p className="text-sm text-v3-text-muted">{INVALID_COPY}</p>
+                        <p className="text-sm text-v3-text-muted">{invalidReason === "not_found" ? WRONG_LINK_COPY : INVALID_COPY}</p>
                     </div>
                 </StatusBody>
             )}

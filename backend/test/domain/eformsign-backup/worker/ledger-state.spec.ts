@@ -1,6 +1,6 @@
 import {
     WorkerError, applyLedgerRecord, applyLedgerRecords, destinationKey, emptyLedgerState,
-    integrityErrorCount, judgeHistoricalCoverage, ledgerStateFromJson, ledgerStateToJson, nextSnapshotSequence,
+    integrityErrorCount, isPermanentGapReason, judgeHistoricalCoverage, ledgerStateFromJson, ledgerStateToJson, nextSnapshotSequence,
     type LedgerBodies, type LedgerRecord, type LedgerRecordType, type LedgerState,
 } from "domain/eformsign-backup/worker";
 import { canonicalJson } from "domain/eformsign-backup/source-evidence";
@@ -43,7 +43,7 @@ const transition = (
 const finished = (runId = RUN1) => rec("run_finished", {
     runId, finishedAt: clock(50), snapshotStatus: "partial", historicalCoverage: "unverified",
     reasonCodes: ["coverage-unverified", "drive-not-configured"],
-    counts: { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+    counts: { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
 });
 
 function build(make: () => LedgerRecord[]): LedgerState {
@@ -374,5 +374,15 @@ describe("ledger state JSON (checkpoint)", () => {
         for (const broken of [{ ...json, extra: 1 }, { ...json, schemaVersion: 2 }, { ...json, lastSeq: -1 }, { ...json, runs: "x" }, null, 5, []]) {
             expect(reasonOf(() => ledgerStateFromJson(broken))).toBe("ledger-schema");
         }
+    });
+});
+
+describe("gap reason classification (BJJ-455 P2 FU-13-F1)", () => {
+    it("should call only the reasons that produce known gaps permanent, and every omission reason a completion can carry transient", () => {
+        expect(["source-removed", "exact-bytes-unavailable"].every((code) => isPermanentGapReason(code as never))).toBe(true);
+        for (const code of ["export-unavailable", "artifact-pending", "artifact-integrity", "archive-conflict", "ledger-inconsistent", "integrity-repeated"]) {
+            expect(isPermanentGapReason(code as never)).toBe(false);
+        }
+        expect(isPermanentGapReason(null)).toBe(false);
     });
 });

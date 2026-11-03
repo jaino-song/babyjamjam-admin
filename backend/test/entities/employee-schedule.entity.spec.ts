@@ -54,6 +54,6 @@ describe("EmployeeScheduleEntity invariants", () => {
             "서울",
             validDates.start,
             validDates.end,
-        )).toThrow("주담당과 부담당은 같은 직원일 수 없어요.");
+        )).toThrow("주담당과 부담당은 같은 제공인력일 수 없어요.");
     });
 });

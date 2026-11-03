@@ -59,6 +59,18 @@ describe("readTokenFile", () => {
         expect(dump).not.toContain(TOKEN);
         expect(dump).not.toContain(base);
     });
+    it("should reject a token file owned by another user", async () => {
+        const file = await tokenFile("other-owner", TOKEN);
+        expect(await readTokenFile(file)).toBe(TOKEN);
+        const spy = jest.spyOn(process, "getuid").mockReturnValue((process.getuid?.() ?? 0) + 1);
+        try {
+            const error = await readTokenFile(file).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(WorkerError);
+            expect((error as WorkerError).reasonCode).toBe("token-file-invalid");
+        } finally {
+            spy.mockRestore();
+        }
+    });
     it("should reject a symlink, a directory, a relative path and a missing file", async () => {
         const real = await tokenFile("real", TOKEN);
         await fs.symlink(real, path.join(base, "link"));
@@ -381,6 +393,82 @@ describe("ExportClient stream limits with an injected fetch", () => {
         const chunks: Buffer[] = [];
         for await (const chunk of iterable) chunks.push(Buffer.from(chunk));
         expect(Buffer.concat(chunks).equals(body)).toBe(true);
+    });
+});
+
+describe("ExportClient artifact timeouts with an injected fetch", () => {
+    const TIMEOUT_MS = 100;
+    const body = Buffer.from("0123456789".repeat(40));
+    const request = { artifactIdentity: IDENTITY, sha256: createHash("sha256").update(body).digest("hex"), byteLength: body.length };
+    const responseHeaders = {
+        "Content-Length": String(body.length), "X-Artifact-Identity": IDENTITY, "X-Content-Sha256": request.sha256,
+    };
+
+    function clientWith(fetchImpl: (init: RequestInit) => Promise<Response>): ExportClient {
+        return new ExportClient({
+            baseUrl: "http://127.0.0.1:1/x", token: TOKEN, companyId: "C001", requestTimeoutMs: TIMEOUT_MS,
+            fetchImpl: ((_url: string, init: RequestInit) => fetchImpl(init)) as unknown as typeof fetch,
+        });
+    }
+    const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+    /** `plan` lists the delay before each chunk; a `null` chunk never arrives. `honorSignal` errors the body on abort. */
+    function slowBody(chunks: Array<Buffer | null>, delaysMs: number[], init: RequestInit, honorSignal: boolean): ReadableStream<Uint8Array> {
+        let index = 0;
+        return new ReadableStream<Uint8Array>({
+            start(controller) {
+                if (honorSignal) init.signal?.addEventListener("abort", () => { try { controller.error(new Error("aborted")); } catch { /* closed */ } });
+            },
+            async pull(controller) {
+                if (index >= chunks.length) { controller.close(); return; }
+                const chunk = chunks[index];
+                const delay = delaysMs[index] ?? 0;
+                index += 1;
+                if (chunk === null) return new Promise<void>(() => undefined);
+                await sleep(delay);
+                controller.enqueue(chunk);
+            },
+        });
+    }
+    async function drain(iterable: AsyncIterable<Uint8Array>): Promise<Buffer> {
+        const out: Buffer[] = [];
+        for await (const chunk of iterable) out.push(Buffer.from(chunk));
+        return Buffer.concat(out);
+    }
+    const quarter = body.length / 4;
+    const quarters = [0, 1, 2, 3].map(i => body.subarray(i * quarter, (i + 1) * quarter));
+
+    it.each([[true], [false]])("should not cut off a slow body whose chunks keep arriving (signal honored: %s)", async honorSignal => {
+        const client = clientWith(async init => new Response(slowBody(quarters, [60, 60, 60, 60], init, honorSignal), { status: 200, headers: responseHeaders }));
+        const started = Date.now();
+        const bytes = await drain(await client.openArtifact(SNAPSHOT_ID, request));
+        expect(Date.now() - started).toBeGreaterThan(TIMEOUT_MS); // the body took longer than one timeout window
+        expect(bytes.equals(body)).toBe(true);
+    });
+    it.each([[true], [false]])("should fail a stalled body as a retryable NETWORK failure (signal honored: %s)", async honorSignal => {
+        const client = clientWith(async init => new Response(slowBody([quarters[0]!, null], [10, 0], init, honorSignal), { status: 200, headers: responseHeaders }));
+        const iterable = await client.openArtifact(SNAPSHOT_ID, request);
+        const error = await drain(iterable).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ExportFailure);
+        expect(error).toMatchObject({ httpStatus: 0, code: "NETWORK", retryable: true, retryAfterSeconds: null });
+    });
+    it("should not count the consumer's own time against the idle timeout", async () => {
+        const client = clientWith(async init => new Response(slowBody(quarters, [5, 5, 5, 5], init, true), { status: 200, headers: responseHeaders }));
+        const out: Buffer[] = [];
+        for await (const chunk of await client.openArtifact(SNAPSHOT_ID, request)) {
+            out.push(Buffer.from(chunk));
+            await sleep(TIMEOUT_MS + 50); // writing to staging is slower than the idle window
+        }
+        expect(Buffer.concat(out).equals(body)).toBe(true);
+    });
+    it("should still time out when the response headers never arrive", async () => {
+        const client = clientWith(init => new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }));
+        const started = Date.now();
+        const error = await client.openArtifact(SNAPSHOT_ID, request).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ExportFailure);
+        expect(error).toMatchObject({ httpStatus: 0, code: "NETWORK", retryable: true });
+        expect(Date.now() - started).toBeLessThan(TIMEOUT_MS * 20);
     });
 });
 

@@ -174,7 +174,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await autocompleteInput.click();
     await expect(page.locator(selector(`${phase3Selectors.primaryAutocomplete}_dropdown`))).toBeVisible();
     await phase3EmployeeOption(page, 1).click();
-    await expect(autocompleteInput).toHaveValue("테스트직원");
+    await expect(autocompleteInput).toHaveValue("테스트제공인력");
     const requestsAfterSelect = employeeRequests;
 
     // Reopening is the user path that used to lose the selected id. The
@@ -183,7 +183,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
     await autocompleteInput.focus();
     await autocompleteInput.click();
     await expect(page.locator(selector(`${phase3Selectors.primaryAutocomplete}_dropdown`))).toBeVisible();
-    await expect(autocompleteInput).toHaveValue("테스트직원");
+    await expect(autocompleteInput).toHaveValue("테스트제공인력");
     await expect.poll(() => employeeRequests, { timeout: 5_000 }).toBeGreaterThanOrEqual(requestsAfterSelect);
     await expect.poll(() => employeeRequests, { timeout: 5_000 }).toBeLessThanOrEqual(requestsAfterSelect + 3);
   });
@@ -196,7 +196,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       dueDate: "2026-09-15",
       address: "인천시 동구 송현로 100",
       phone: "010-9641-1878",
-      primaryEmployee: { id: 11, name: "테스트직원" },
+      primaryEmployee: { id: 11, name: "테스트제공인력" },
       secondaryEmployee: null,
       type: "A통합3형",
       duration: 20,

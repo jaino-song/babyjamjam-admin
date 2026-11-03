@@ -34,19 +34,51 @@ export function decodeDevice(dev: number | bigint): { major: number; minor: numb
     return { major: Number(major), minor: Number(minor) };
 }
 
+/** The lock file as it was when the worker verified it: the device and inode every later re-check must still find at the path. */
+export interface HeldLock {
+    dev: number;
+    ino: number;
+}
+
+function holdsLock(entries: ProcLockEntry[], held: HeldLock, pid: number): boolean {
+    const { major, minor } = decodeDevice(held.dev);
+    return entries.some((entry) => entry.pid === pid && entry.major === major && entry.minor === minor && entry.inode === held.ino);
+}
+
 /**
  * Contract W3: the process must itself hold an exclusive flock on the lock file (`flock -F` leaves the lock with node).
  * Anything else, including an unreadable `/proc/locks`, is `lock-not-held`; the cause never reaches the error.
+ * Resolves with the device and inode that was verified, for `lockGuard`.
  */
-export async function assertLockHeld(lockPath: string, probe: FsProbe, pid: number = process.pid): Promise<void> {
+export async function verifyLockHeld(lockPath: string, probe: FsProbe, pid: number = process.pid): Promise<HeldLock> {
     try {
         const stat = await fs.lstat(lockPath);
         if (!stat.isFile()) throw new WorkerError("lock-not-held");
-        const { major, minor } = decodeDevice(stat.dev);
-        const held = parseProcLocks(await probe.readProcLocks())
-            .some((entry) => entry.pid === pid && entry.major === major && entry.minor === minor && entry.inode === stat.ino);
-        if (!held) throw new WorkerError("lock-not-held");
+        const held: HeldLock = { dev: stat.dev, ino: stat.ino };
+        if (!holdsLock(parseProcLocks(await probe.readProcLocks()), held, pid)) throw new WorkerError("lock-not-held");
+        return held;
     } catch {
         throw new WorkerError("lock-not-held");
     }
+}
+
+export async function assertLockHeld(lockPath: string, probe: FsProbe, pid: number = process.pid): Promise<void> {
+    await verifyLockHeld(lockPath, probe, pid);
+}
+
+/**
+ * A re-check for the moment just before a write. The lock path must still resolve to the inode that was verified at start
+ * (a deleted or replaced lock file lets a second worker lock a new inode while this one still holds the old one), and
+ * `/proc/locks` must still list this pid on that inode. Any failure is `lock-not-held`.
+ */
+export function lockGuard(lockPath: string, probe: FsProbe, held: HeldLock, pid: number = process.pid): () => Promise<void> {
+    return async () => {
+        try {
+            const stat = await fs.lstat(lockPath);
+            if (!stat.isFile() || stat.dev !== held.dev || stat.ino !== held.ino) throw new WorkerError("lock-not-held");
+            if (!holdsLock(parseProcLocks(await probe.readProcLocks()), held, pid)) throw new WorkerError("lock-not-held");
+        } catch {
+            throw new WorkerError("lock-not-held");
+        }
+    };
 }

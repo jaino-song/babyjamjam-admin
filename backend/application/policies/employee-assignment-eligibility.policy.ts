@@ -53,7 +53,7 @@ export function assertEmployeeAssignmentShape(
         throw new BadRequestException(problemBody("VALIDATION_FAILED", {
             pointer: pointers.secondary,
             code: "INVALID_FORMAT",
-            detail: "주담당과 부담당은 같은 직원일 수 없어요.",
+            detail: "주담당과 부담당은 같은 제공인력일 수 없어요.",
             location: "body",
         }));
     }

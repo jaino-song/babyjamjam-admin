@@ -131,6 +131,8 @@ export const PLANNED_DATE_ERROR_COPY = "서버 일정 정보를 확인할 수 �
 /** SRW:711-712 */
 export const INVALID_TITLE = "링크를 사용할 수 없습니다";
 export const INVALID_COPY = "만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.";
+/** Mobile-only: the link matches no record at all (mistyped or garbled), unlike an expired one. */
+export const WRONG_LINK_COPY = "잘못된 링크입니다. 다시 확인해 주세요.";
 /** SRW:1044 */
 export const DONE_TITLE = "제공기록지 제출이 완료되었습니다.";
 

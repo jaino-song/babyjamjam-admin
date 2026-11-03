@@ -894,7 +894,7 @@ describe("messages page — server system-template catalog", () => {
         buildSystemTemplate({ templateKey: "CLIENT_WELCOME", name: "고객 등록 안내" }),
         buildSystemTemplate({ templateKey: "SERVICE_START_REMINDER", name: "서비스 시작 알림" }),
         buildSystemTemplate({ templateKey: "SERVICE_END_REMINDER", name: "서비스 종료 알림" }),
-        buildSystemTemplate({ templateKey: "EMPLOYEE_ASSIGNED", name: "직원 배정 알림" }),
+        buildSystemTemplate({ templateKey: "EMPLOYEE_ASSIGNED", name: "제공인력 배정 알림" }),
         buildSystemTemplate({ templateKey: "GREETING", name: "인사(소개)" }),
       ],
       isLoading: false,
@@ -906,7 +906,7 @@ describe("messages page — server system-template catalog", () => {
     expect(screen.getByText("고객 등록 안내")).toBeInTheDocument();
     expect(screen.getByText("서비스 시작 알림")).toBeInTheDocument();
     expect(screen.getByText("서비스 종료 알림")).toBeInTheDocument();
-    expect(screen.getByText("직원 배정 알림")).toBeInTheDocument();
+    expect(screen.getByText("제공인력 배정 알림")).toBeInTheDocument();
     expect(screen.getByText("인사(소개)")).toBeInTheDocument();
   });
 
@@ -1193,7 +1193,7 @@ describe("messages page — merged 발송 기록 section", () => {
     render(<MessagesPage />);
     goToHistorySection();
 
-    fireEvent.change(screen.getByLabelText("검색어"), { target: { value: "직원" } });
+    fireEvent.change(screen.getByLabelText("검색어"), { target: { value: "제공인력" } });
 
     const upcomingZone = getZoneContainer("upcoming");
     const pastZone = getZoneContainer("past");
