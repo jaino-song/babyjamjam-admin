@@ -109,7 +109,7 @@ describeE2E("contract completion event ownership fence (real disposable PostgreS
                 stepRecipientType: "group",
                 stepRecipientName: "Synthetic provider",
                 stepRecipientSms: "",
-                syncStatus: "synced",
+                syncStatus: "ready",
             },
         });
     }

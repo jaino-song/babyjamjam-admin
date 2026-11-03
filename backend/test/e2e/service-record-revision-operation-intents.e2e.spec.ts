@@ -51,7 +51,7 @@ describeE2E("revision operation intent readiness (disposable PostgreSQL)", () =>
             documentKind: "contract", createdDate: new Date(), updatedDate: new Date(),
             expiredDate: new Date("2027-12-31T00:00:00Z"), statusType: "070", statusDetail: "synthetic",
             stepType: "06", stepIndex: "3", stepName: "synthetic review", stepRecipientType: "",
-            stepRecipientName: "", stepRecipientSms: "", syncStatus: "synced",
+            stepRecipientName: "", stepRecipientSms: "", syncStatus: "ready",
         } });
         await prisma.client.update({ where: { id: fixture.client.id }, data: { eDocId: document.documentId } });
         return document;
