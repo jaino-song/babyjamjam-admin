@@ -37,10 +37,15 @@ describe("legacy chat truthful model output and offered tools", () => {
     it.each(["수정되었습니다", "변경됐어요", "정정 완료", "등록되었습니다", "삭제됐습니다", "저장 완료", "반영이 완료되었습니다"])(
         "replaces a model-only write claim (%s) before any text is streamed or stored",
         async claim => {
-            const text = `제공기록지가 ${claim}.`;
+            const neutralSentence = "산모님 정보 확인했습니다. ";
+            const prefix = neutralSentence.repeat(20);
+            // Exceed the redactor's 192-character holdback so resumed live
+            // yielding would leak neutral text before the claim is checked.
+            expect(prefix.length).toBeGreaterThan(250);
+            const text = `${prefix}제공기록지가 ${claim}.`;
             const { service, session } = createService([
-                { type: "text", content: text.slice(0, 8) },
-                { type: "text", content: text.slice(8) },
+                { type: "text", content: text.slice(0, 250) },
+                { type: "text", content: text.slice(250) },
                 { type: "done" },
             ]);
             const events = await collect(service.chatStream(undefined, "user-1", "제공기록지 정정해줘", "branch-1", undefined, undefined, MANAGER));
@@ -49,6 +54,7 @@ describe("legacy chat truthful model output and offered tools", () => {
             expect(output).toContain("에이전트 채팅");
             expect(output).toContain("제공기록지 편집");
             expect(output).not.toContain(text);
+            expect(output).not.toContain(neutralSentence);
             expect(events.filter(event => event.type === "chunk")).toHaveLength(1);
             expect(session.messages.filter(message => message.role === "assistant").map(message => message.content)).toEqual([output]);
             expect(session.messages.find(message => message.role === "user")?.content).toBe("제공기록지 정정해줘");
