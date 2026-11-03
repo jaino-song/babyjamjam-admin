@@ -177,6 +177,90 @@ describe("Autocomplete manual-entry activation", () => {
   });
 });
 
+describe("Autocomplete optional empty-dropdown hiding", () => {
+  it.each([
+    { description: "a query with no matches", availableItems: items, query: "없는 이름" },
+    { description: "an empty item list", availableItems: [], query: "" },
+  ])("omits the dropdown and empty node for $description", ({ availableItems, query }) => {
+    const onChange = jest.fn();
+    const { container } = renderAutocomplete({ hideEmptyDropdown: true, items: availableItems, onChange });
+    const input = screen.getByLabelText("산모");
+    fireEvent.focus(input);
+    if (query) fireEvent.change(input, { target: { value: query } });
+
+    expect(screen.queryByTestId("test_autocomplete_dropdown")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="test_autocomplete_empty"]')).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("data-state", "closed");
+    expect(input).toHaveValue(query);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue(query);
+  });
+
+  it("reopens for a matching query and selects only after the completed click", () => {
+    const onChange = jest.fn();
+    renderAutocomplete({ hideEmptyDropdown: true, onChange });
+    const input = screen.getByLabelText("산모");
+    fireEvent.change(input, { target: { value: "없는 이름" } });
+    expect(screen.queryByTestId("test_autocomplete_dropdown")).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "김" } });
+    expect(screen.getByTestId("test_autocomplete_dropdown")).toBeVisible();
+    expect(input).toHaveAttribute("data-state", "open");
+    const option = screen.getByText("김산모");
+    fireEvent.pointerDown(option, { pointerType: "touch" });
+    fireEvent.pointerUp(option, { pointerType: "touch" });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(option);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(items[0]);
+    expect(input).toHaveValue("김산모");
+    expect(screen.queryByTestId("test_autocomplete_dropdown")).not.toBeInTheDocument();
+  });
+
+  it.each([{ availableItems: items }, { availableItems: [] }])("retains the default empty dropdown and message", ({ availableItems }) => {
+    renderAutocomplete({ items: availableItems, emptyMessage: "검색 결과 없음" });
+    const input = screen.getByLabelText("산모");
+    fireEvent.change(input, { target: { value: "없는 이름" } });
+
+    expect(screen.getByTestId("test_autocomplete_dropdown")).toBeVisible();
+    expect(screen.getByText("검색 결과 없음")).toBeVisible();
+    expect(input).toHaveAttribute("data-state", "open");
+  });
+
+  it("keeps the loading dropdown visible when opted in", () => {
+    const { container } = renderAutocomplete({ hideEmptyDropdown: true, items: [], isLoading: true });
+    const input = screen.getByLabelText("산모");
+    fireEvent.focus(input);
+
+    expect(screen.getByTestId("test_autocomplete_dropdown")).toBeVisible();
+    expect(container.querySelector('[data-component="test_autocomplete_loading"]')).toBeVisible();
+    expect(input).toHaveAttribute("data-state", "open");
+  });
+
+  it("keeps manual entry actionable with the existing delay when opted in", () => {
+    jest.useFakeTimers();
+    try {
+      const onSelect = jest.fn();
+      renderAutocomplete({ hideEmptyDropdown: true, manualEntry: { label: "직접 입력", onSelect } });
+      fireEvent.change(screen.getByLabelText("산모"), { target: { value: "새 수신자" } });
+
+      expect(screen.getByTestId("test_autocomplete_dropdown")).toBeVisible();
+      fireEvent.click(screen.getByText("직접 입력"));
+      expect(screen.queryByTestId("test_autocomplete_dropdown")).not.toBeInTheDocument();
+      act(() => jest.advanceTimersByTime(99));
+      expect(onSelect).not.toHaveBeenCalled();
+      act(() => jest.advanceTimersByTime(1));
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith("새 수신자");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe("Autocomplete label-row slot", () => {
   it("shows an empty polite slot when nothing applies", () => {
     renderAutocomplete();
