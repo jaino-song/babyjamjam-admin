@@ -157,7 +157,9 @@ Resources:
               timeoutSeconds: "600"
               runCommand:
                 - |
-                  set -euo pipefail
+                  # aws:runShellScript runs this with /bin/sh (dash): write the bash body to a file and run it with bash.
+                  upgrade_script="$(/usr/bin/mktemp /var/tmp/babyjamjam-operator-upgrade-script.XXXXXX)" || exit 1
+                  /bin/cat >"$upgrade_script" <<'BJJ_OPERATOR_UPGRADE'
                   readonly repository_url="https://github.com/jaino-song/babyjamjam-admin.git"
                   readonly expected_sha="{{ CommitSha }}"
                   upgrade_root="$(/usr/bin/mktemp -d /var/tmp/babyjamjam-operator-upgrade.XXXXXX)"
@@ -175,6 +177,11 @@ Resources:
                   "$upgrade_root/repository/backend/deploy/lightsail/install-ci-operator.sh" install --replace
                   "$upgrade_root/repository/backend/deploy/lightsail/install-ci-operator.sh" check
                   printf '%s\n' 'operator_upgrade=ok'
+                  BJJ_OPERATOR_UPGRADE
+                  /bin/bash -euo pipefail "$upgrade_script"
+                  upgrade_status=$?
+                  /bin/rm -f "$upgrade_script"
+                  exit "$upgrade_status"
 
   ProductionDiagnosticsDocument:
     Type: AWS::SSM::Document
