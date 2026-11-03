@@ -70,7 +70,8 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
             }) };
     }
 
-    function dispatcher(jobs: SbMessageTriggerJobRepository, delivery: unknown) {
+    function dispatcher(jobs: SbMessageTriggerJobRepository, delivery: unknown,
+        beforePreparation?: () => Promise<void>) {
         const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected external collaborator"); } });
         const branchLock = new MessageAutomationBranchLockService(prisma as never);
         const activation = new MessageAutomationActivationService(prisma as never, branchLock, forbidden as never);
@@ -79,6 +80,16 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
             forbidden as never, rules, jobs, forbidden as never, forbidden as never, forbidden as never,
             undefined, undefined, activation, branchLock, undefined,
             createLegacyAutomationDeliveryGate(prisma as never, branchLock));
+        if (beforePreparation) {
+            const preparationService = service as unknown as {
+                authorizeClaimedJobBeforePreparation(job: MessageTriggerJobEntity): Promise<{ kind: string }>;
+            };
+            const authorize = preparationService.authorizeClaimedJobBeforePreparation.bind(service);
+            preparationService.authorizeClaimedJobBeforePreparation = async (job) => {
+                await beforePreparation();
+                return authorize(job);
+            };
+        }
         return (job: MessageTriggerJobEntity, branchId: string) => (service as unknown as {
             dispatchClaimedJob(job: MessageTriggerJobEntity, sent: ReadonlySet<string>, approved: ReadonlySet<string>): Promise<void>;
         }).dispatchClaimedJob(job, new Set(), new Set([branchId]));
@@ -174,21 +185,18 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
         const { fixture, jobs, job, confirm } = await setup();
         const claimed = serviceRecordConfirmBarrier();
         const resume = serviceRecordConfirmBarrier();
-        const pausedJobs = new Proxy(jobs, { get(target, property, receiver) {
-            if (property === "claimPendingWithRuleFence") {
-                return async (...args: Parameters<SbMessageTriggerJobRepository["claimPendingWithRuleFence"]>) => {
-                    const token = await target.claimPendingWithRuleFence(...args);
-                    claimed.release();
-                    await resume.entered;
-                    return token;
-                };
-            }
-            const value: unknown = Reflect.get(target, property, receiver);
-            return typeof value === "function" ? value.bind(target) : value;
-        } });
         const prepareJob = jest.fn(async () => ({ snapshot: Object.freeze({}), serializedSnapshot: "synthetic" }));
         const sendPreparedJob = jest.fn(async () => true);
-        const dispatch = dispatcher(pausedJobs, { prepareJob, sendPreparedJob })(job, fixture.branch.id)
+        // dispatchClaimedJob awaits runExclusive's claim transaction before
+        // this fence entry. Pausing inside the repository claim instead would
+        // keep its job-row lock held and deadlock the confirming transaction.
+        const dispatch = dispatcher(jobs, { prepareJob, sendPreparedJob }, async () => {
+            const storedClaim = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } });
+            expect(job.claimToken).not.toBeNull();
+            expect(storedClaim).toMatchObject({ status: "processing", claimToken: job.claimToken });
+            claimed.release();
+            await resume.entered;
+        })(job, fixture.branch.id)
             .then(() => undefined, (error: unknown) => error);
         try {
             await reached(claimed.entered, dispatch);
