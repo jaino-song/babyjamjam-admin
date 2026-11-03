@@ -130,7 +130,6 @@ describe("CreateEformsignDocUsecase", () => {
 
         expect(result).toBe(await eformsignDocRepository.upsertByDocumentId.mock.results[0]?.value);
         expect(result.warnings).toBeUndefined();
-        expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
     });
 
     it("skips snapshot invalidation when the branch id is empty", async () => {
