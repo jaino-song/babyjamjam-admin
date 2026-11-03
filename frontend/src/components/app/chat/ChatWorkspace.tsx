@@ -39,7 +39,7 @@ export function ChatWorkspace({ "data-component": base, stats, list, header, chi
 
     return (
         <Sheet open={compact && drawerOpen} onOpenChange={setDrawerOpen}>
-            <section data-component={base} data-source-component="ChatWorkspace" data-slot="chat-workspace" inert={compact && drawerOpen} className="chat-workspace flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
+            <section data-component={base} data-source-component="ChatWorkspace" data-slot="chat-workspace" data-chat-workspace-controls="" inert={compact && drawerOpen} className="chat-workspace flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
                 {stats}
                 <div data-slot="chat-workspace-panels" className="flex min-h-0 min-w-0 flex-1 gap-4 overflow-hidden">
                     {!compact && desktopOpen && <aside id={`${base}-sidebar`} className="w-[30%] min-w-60 max-w-80 shrink-0">{list(close)}</aside>}
@@ -48,7 +48,7 @@ export function ChatWorkspace({ "data-component": base, stats, list, header, chi
                     </div>
                 </div>
             </section>
-            {compact && <SheetContent side="left" id={`${base}-sidebar`} data-component={`${base}_sidebar-drawer`} data-source-component="ChatWorkspace" aria-describedby={undefined} className="gap-0 p-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))]" onCloseAutoFocus={(event) => { event.preventDefault(); menuRef.current?.focus(); }}>
+            {compact && <SheetContent side="left" id={`${base}-sidebar`} data-component={`${base}_sidebar-drawer`} data-source-component="ChatWorkspace" data-chat-workspace-controls="" aria-describedby={undefined} className="gap-0 p-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))]" onCloseAutoFocus={(event) => { event.preventDefault(); menuRef.current?.focus(); }}>
                 <div data-component={`${base}_sidebar-drawer_header`} className="flex shrink-0 items-center justify-between px-3 py-2">
                     <SheetTitle data-component={`${base}_sidebar-drawer_header_title`}>대화 목록</SheetTitle>
                     <Button data-component={`${base}_sidebar-drawer_header_close`} type="button" variant="ghost" size="icon" aria-label="사이드바 닫기" onClick={close}><X className="h-4 w-4" /></Button>

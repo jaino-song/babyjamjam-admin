@@ -1742,3 +1742,14 @@ body {
 .chat-workspace-thread > [data-slot="detail-panel"] > [data-slot="detail-panel-main"] > [data-slot="detail-panel-bottom-spacer"] {
   display: none;
 }
+
+/* Chat workspace controls retain readable type and 44px targets under Glint scaling. */
+[data-chat-workspace-controls] :is(input, textarea) {
+  min-height: 44px;
+  font-size: 16px;
+  line-height: 26px;
+}
+[data-chat-workspace-controls] [data-slot="button"] {
+  min-height: 44px;
+  min-width: 44px;
+}

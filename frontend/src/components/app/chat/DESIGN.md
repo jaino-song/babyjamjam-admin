@@ -61,3 +61,19 @@ callbacks/history/IME, confirmed-title races and query isolation. jsdom cannot e
 pixel geometry, actual mobile chrome layering or provider acceptance. Main owns real
 Chrome screenshot/DOM/computed-style checks at 1280×900 and 375×812 and independent review.
 No Storybook exists; manifest registration is checked by the existing architecture gate.
+
+## Workspace control sizing (C3)
+
+The approved mockup uses a 16px composer font (26px line height), with 44px mobile
+send/suggestion targets. Main measured the live input at 14px/40px on mobile and
+11.2px/32px on desktop with Glint 0.8. The workspace and its portal list now mark
+their control scope with `data-chat-workspace-controls`. Scoped CSS keeps native
+input/textarea text at 16px/26px, input minimum height at 44px and design-system
+button targets at least 44px in both axes. Pixel minimums deliberately survive
+Glint scaling; surrounding admin tokens, spacing and surfaces remain shared.
+This includes real Agent/Legacy controls and drawer actions. Default ChatInput
+widget/fullscreen consumers outside the workspace keep their original styling.
+
+Tests apply the actual scoped CSS over the measured scaled baseline and check
+both native input types, send/header/list buttons and default-widget isolation.
+Main must recheck real 375×812 and 1280×900 geometry after the larger minimums.
