@@ -139,7 +139,7 @@ describe('EmployeesTable', () => {
       render(<EmployeesTable />);
 
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(screen.getByText(/직원 목록을 불러오는데 실패했습니다/)).toBeInTheDocument();
+      expect(screen.getByText(/제공인력 목록을 불러오는데 실패했습니다/)).toBeInTheDocument();
     });
   });
 
@@ -356,6 +356,29 @@ describe('EmployeesTable', () => {
       render(<EmployeesTable />);
 
       expect(screen.getByTestId('ContentPaper')).toBeInTheDocument();
+    });
+  });
+
+  describe('Delete confirmation', () => {
+    it.each([
+      ['ko', '제공인력을 삭제하시겠어요?', '삭제한 제공인력은 목록에서 사라져요.'],
+      ['en', 'Delete this provider?', 'Deleted providers are removed from the list.'],
+    ] as const)('shows the operator delete copy in %s', async (locale, title, message) => {
+      mockUseLocale.mockReturnValue(locale);
+      mockUseEmployees.mockReturnValue({
+        data: mockEmployees,
+        isLoading: false,
+        error: null,
+      } as unknown as ReturnType<typeof useEmployees>);
+      const user = userEvent.setup();
+      render(<EmployeesTable />);
+
+      await user.click(screen.getByText('김철수').closest('tr')!);
+      await user.click(await screen.findByRole('button', { name: '삭제 요청' }));
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: title })).toBeInTheDocument();
+      expect(mockDeleteMutation.mutateAsync).not.toHaveBeenCalled();
     });
   });
 

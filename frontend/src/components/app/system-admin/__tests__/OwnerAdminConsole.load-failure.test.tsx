@@ -13,7 +13,7 @@ const branch = {
   id: "branch-1", name: "테스트 지점", slug: "test", region: "서울", district: "강남구",
   address: null, phone: null, email: null, isActive: true,
   createdAt: "2026-06-01T00:00:00.000Z", updatedAt: "2026-06-01T00:00:00.000Z",
-  owner: null,
+  admin: null,
   messageSenderApproval: {
     approvalStatus: "not_requested", requestedAt: null, approvedAt: null, requestedBy: null,
   },

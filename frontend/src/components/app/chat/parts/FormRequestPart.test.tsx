@@ -10,7 +10,7 @@ describe("FormRequestPart", () => {
             <FormRequestPart
                 data-component={dataComponent}
                 formId="employee-create"
-                title="직원 등록"
+                title="제공인력 등록"
                 fields={[
                     { name: "birthday", label: "생년월일", type: "date", inputMode: "numeric", placeholder: "YYYY-MM-DD", maxLength: 10 },
                     { name: "notes", label: "메모", type: "textarea", placeholder: "간단한 메모", maxLength: 120 },
@@ -30,7 +30,7 @@ describe("FormRequestPart", () => {
         expect(notes).toHaveAttribute("maxlength", "120");
         expect(notes).toHaveAttribute("data-component", `${dataComponent}_field_control`);
 
-        const form = screen.getByRole("heading", { name: "직원 등록" }).closest("form");
+        const form = screen.getByRole("heading", { name: "제공인력 등록" }).closest("form");
         expect(form).toHaveAttribute("data-component", dataComponent);
         expect(form).toHaveAttribute("data-source-component", "FormRequestPart");
     });

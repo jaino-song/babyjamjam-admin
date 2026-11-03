@@ -31,6 +31,8 @@ import {
     isServiceDateMismatch,
     legacyDefaultServiceDate,
     serviceRecordCalendarYears,
+    normalizeServiceRecordLinkToken,
+    type ServiceRecordLinkInvalidReason,
 } from "@/lib/service-records/page-helpers";
 import {
     captureServiceRecordError,
@@ -185,7 +187,16 @@ function readWizardHistory(): WizardHistoryTarget | null {
 
 export default function ServiceRecordPage() {
     const params = useParams<{ token: string }>();
-    const token = params?.token ?? "";
+    const rawToken = params?.token ?? "";
+    const token = useMemo(() => normalizeServiceRecordLinkToken(rawToken), [rawToken]);
+    const [invalidReason, setInvalidReason] = useState<ServiceRecordLinkInvalidReason | null>(null);
+
+    // A pasted link with trailing junk resolves to the clean token: show the clean URL so a reload or share uses it.
+    useEffect(() => {
+        if (!token || token === rawToken) return;
+        const { search, hash } = window.location;
+        window.history.replaceState(window.history.state, "", `/service-record/${encodeURIComponent(token)}${search}${hash}`);
+    }, [rawToken, token]);
 
     const [screen, setScreen] = useState<Screen>("loading");
     const [phone, setPhone] = useState("");
@@ -324,6 +335,7 @@ export default function ServiceRecordPage() {
                 const data = await res.json();
                 if (!alive) return;
                 if (!data?.valid) {
+                    setInvalidReason(data?.reason === "not_found" ? "not_found" : "unavailable");
                     navigateTo("invalid", { mode: "replace" });
                     return;
                 }
@@ -740,6 +752,7 @@ export default function ServiceRecordPage() {
             phoneError={phoneError}
             phoneFieldError={phoneFieldError}
             phoneNotice={phoneNotice}
+            invalidReason={invalidReason}
             context={ctx}
             header={header}
             day={day}

@@ -4,7 +4,7 @@ import {
 } from "domain/eformsign-backup/source-evidence";
 import {
     WorkerError, buildCompletion, buildManifest, buildRunInventory, bundleIdFor, completionContentDigest,
-    completionSchema, manifestSchema, parseCompletionName, runInventorySchema, toArchiveArtifactType,
+    completionSchema, manifestKey, manifestSchema, parseCompletionName, runInventorySchema, toArchiveArtifactType,
 } from "domain/eformsign-backup/worker";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -152,7 +152,7 @@ describe("buildRunInventory", () => {
             runId: RUN, scheduledFor: "2026-10-19T10:00:00+09:00", startedAt: "2026-10-19T01:00:00.000Z",
             finishedAt: "2026-10-19T01:05:00.000Z", snapshotId: "snap-0002", sequence: 2, snapshotStatus: "partial" as const,
             historicalCoverage: "unverified" as const, reasonCodes: ["coverage-unverified" as const, "drive-not-configured" as const],
-            counts: { candidates: 4, included: 3, verified: 3, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+            counts: { candidates: 4, included: 3, verified: 3, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
         };
         const built = buildRunInventory(input);
         expect(built.value).toEqual({ schemaVersion: 1, ...input });
@@ -263,5 +263,71 @@ describe("completionSchema binds every manifestKey and orders entries (D1, D2)",
             expect(accepts({ ...good(), gaps: [{ documentId, reasonCode: "source-removed" }] })).toBe(false);
         }
         expect(accepts({ ...good(), gaps: [{ documentId: "Dé", reasonCode: "source-removed" }] })).toBe(true);
+    });
+});
+
+describe("completion entries may name a content-versioned manifest (BJJ-455 P2 FU-10-F5)", () => {
+    const base = {
+        companyId: COMPANY, sequence: 2, snapshotId: "snap-0002", runId: RUN, scopeRevision: "2026-10-19-company-all-docs",
+        policyRevision: "2026-10-18-completed-pdf-audit", destinationIdentity: "local:arch-1", destinationRevision: "local-layout-v1",
+        gaps: [],
+    };
+    const revision = sha("m-D001");
+    const digest = sha("f-D001");
+    const versioned = manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: revision, manifestSha256: digest });
+    const entry = { documentId: "D001", metadataRevision: revision, manifestSha256: digest };
+    const accepts = (value: unknown) => completionSchema.safeParse(value).success;
+
+    it("keeps the exact key it is given and accepts it only when the suffix is the entry's manifest digest", () => {
+        const built = buildCompletion({ ...base, entries: [{ ...entry, manifestKey: versioned }] });
+        expect(built.value.entries[0]!.manifestKey).toBe(versioned);
+        expect(accepts(built.value)).toBe(true);
+        const arbitrary = structuredClone(built.value);
+        arbitrary.entries[0]!.manifestKey = manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: revision, manifestSha256: sha("another") });
+        expect(accepts(arbitrary)).toBe(false);
+        expect(() => buildCompletion({ ...base, entries: [{ ...entry, manifestKey: arbitrary.entries[0]!.manifestKey }] })).toThrow();
+    });
+
+    it("still accepts the legacy metadata-only key, which is also the default", () => {
+        const legacy = buildCompletion({ ...base, entries: [entry] });
+        expect(legacy.value.entries[0]!.manifestKey).toBe(manifestKey({ companyId: COMPANY, documentId: "D001", metadataRevision: revision }));
+        expect(accepts(legacy.value)).toBe(true);
+    });
+
+    it("rejects a versioned key of another document, another revision or another company", () => {
+        const wrong = (key: string) => accepts({ ...buildCompletion({ ...base, entries: [entry] }).value, entries: [{ ...entry, manifestKey: key }] });
+        expect(wrong(versioned.replace("/D001/", "/D002/"))).toBe(false);
+        expect(wrong(versioned.replace(revision, sha("m-other")))).toBe(false);
+        expect(wrong(versioned.replace(`/${COMPANY}/`, "/company-2/"))).toBe(false);
+        expect(wrong(versioned)).toBe(true);
+    });
+});
+
+describe("run inventory written before the Drive counters existed (BJJ-456 U1-F1)", () => {
+    const LEGACY = {
+        schemaVersion: 1, runId: "11111111-1111-4111-8111-111111111111", scheduledFor: null, startedAt: "2026-10-19T00:00:00.000Z",
+        finishedAt: "2026-10-19T00:01:00.000Z", snapshotId: null, sequence: null, snapshotStatus: "partial", historicalCoverage: "unverified",
+        reasonCodes: ["coverage-unverified", "drive-not-configured"],
+        counts: { candidates: 4, included: 3, verified: 3, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+    };
+
+    it("accepts a legacy inventory and normalizes the Drive counters to zero", () => {
+        const parsed = runInventorySchema.safeParse(LEGACY);
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.counts).toEqual({ ...LEGACY.counts, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 });
+    });
+
+    it("stays strict about the Drive counters and unknown keys", () => {
+        for (const counts of [{ ...LEGACY.counts, driveVerified: "1" }, { ...LEGACY.counts, driveBlocked: -1 }, { ...LEGACY.counts, driveRetryWait: 0.5 }, { ...LEGACY.counts, other: 1 }]) {
+            expect(runInventorySchema.safeParse({ ...LEGACY, counts }).success).toBe(false);
+        }
+    });
+
+    it("builds an inventory with all four Drive counters", () => {
+        const input = Object.fromEntries(Object.entries(LEGACY).filter(([name]) => name !== "schemaVersion"));
+        const built = buildRunInventory({
+            ...input, counts: { ...LEGACY.counts, driveVerified: 2, driveBlocked: 0, driveRetryWait: 1, driveIntegrityError: 0 },
+        } as Parameters<typeof buildRunInventory>[0]);
+        expect(JSON.parse(Buffer.from(built.bytes).toString("utf8")).counts).toMatchObject({ driveVerified: 2, driveRetryWait: 1, driveBlocked: 0, driveIntegrityError: 0 });
     });
 });

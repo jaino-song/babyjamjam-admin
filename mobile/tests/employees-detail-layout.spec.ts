@@ -127,7 +127,7 @@ test.describe("employees mobile detail layout", () => {
 
     await page.getByRole("button", { name: /^배정 불가/ }).click();
     await expect(rows).toHaveCount(1);
-    await search.fill("존재하지않는직원");
+    await search.fill("존재하지않는제공인력");
     await expect(rows).toHaveCount(0);
     await expect(page.getByText("조건에 맞는 제공인력이 없습니다.")).toBeVisible();
 

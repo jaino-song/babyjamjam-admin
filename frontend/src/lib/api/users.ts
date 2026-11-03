@@ -39,13 +39,13 @@ export async function approveUser(
   id: string,
   role: string,
   branchId: string,
-  ownerBranchId?: string,
+  adminBranchId?: string,
   smsAutomationEnabled?: boolean,
 ): Promise<void> {
   await api.post(`/users/${id}/approve`, {
     role,
     branchId,
-    ...(ownerBranchId ? { ownerBranchId } : {}),
+    ...(adminBranchId ? { adminBranchId } : {}),
     ...(smsAutomationEnabled !== undefined ? { smsAutomationEnabled } : {}),
   });
 }

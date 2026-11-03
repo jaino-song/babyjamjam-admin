@@ -14,7 +14,7 @@ const PRIMARY_AUTOCOMPLETE = `${EMPLOYEE_CARD}_primary-field_autocomplete`;
 const EMPLOYEES = [
   {
     id: 11,
-    name: '테스트직원',
+    name: '테스트제공인력',
     workArea: ['인천'],
     phone: '010-1111-1111',
     grade: '베스트',
@@ -24,7 +24,7 @@ const EMPLOYEES = [
   },
   {
     id: 12,
-    name: '보조직원',
+    name: '보조제공인력',
     workArea: ['인천'],
     phone: '010-2222-2222',
     grade: '프리미엄',
@@ -137,7 +137,7 @@ test.describe('EmployeeAutocomplete', () => {
 
   test('opens the employee dialog with the typed name prefilled', async ({ page }) => {
     const autocompleteInput = page.locator(`[data-component="${PRIMARY_AUTOCOMPLETE}_input"]`);
-    const typedName = '신규직원';
+    const typedName = '신규제공인력';
 
     await autocompleteInput.click();
     await expect(page.locator(`[data-component="${PRIMARY_AUTOCOMPLETE}_dropdown"]`)).toBeVisible({

@@ -6,7 +6,7 @@ export const getDashboardStatsSchema: FunctionDeclaration = {
 
 USE THIS TOOL when user asks about:
 - Client counts: "산모 몇 명", "이용자 수", "고객 수", "엄마 몇 분", "등록된 산모"
-- Employee/caregiver counts: "제공인력 몇 명", "관리사 수", "이모님 몇 분", "직원 수", "등록된 직원"
+- Employee/caregiver counts: "제공인력 몇 명", "관리사 수", "이모님 몇 분", "직원 수", "제공인력 수", "등록된 직원", "등록된 제공인력"
 - How many clients/customers are registered in the system
 - How many employees/caregivers are registered in the system
 - Dashboard overview, summary, or statistics (대시보드, 현황, 통계)

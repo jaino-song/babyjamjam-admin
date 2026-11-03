@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { WorkerError } from "domain/eformsign-backup/worker";
+import { WorkerError, buildManifest, manifestKey } from "domain/eformsign-backup/worker";
+import { runRestoreCli } from "infrastructure/eformsign-backup/worker/cli-restore";
 import { restoreFromArchive, type RestoreReport } from "infrastructure/eformsign-backup/worker/restore";
 
 import { pdfjsPageCount } from "./helpers/pdfjs-open";
@@ -195,6 +196,163 @@ describe("T-WRK-12: restore from the archive alone (V13, T25)", () => {
         expect(JSON.stringify(report)).not.toContain("\"complete\"");
         const text = await fs.readFile(path.join(out, "restore-report.json"), "utf8");
         expect(text).not.toContain("\"complete\"");
+    });
+
+    describe("content-versioned manifest names (BJJ-455 P2 FU-10-F5)", () => {
+        const manifestsDir = (doc: string): string => path.join(h.archive, "eformsign", COMPANY, doc, "manifests");
+        async function withoutCompletions(): Promise<void> {
+            h = await createHarness({ docs: m1() });
+            await initArchive(h);
+            await runOnce(h);
+            const dir = path.join(h.archive, "eformsign", COMPANY, "completions");
+            for (const name of await fs.readdir(dir)) await fs.rename(path.join(dir, name), path.join(h.base, `${name}.away`));
+            await freshOut();
+        }
+        const only = async (doc: string): Promise<string> => (await fs.readdir(manifestsDir(doc)))[0]!;
+
+        it("should write versioned names whose suffix is the SHA-256 of the file", async () => {
+            await withoutCompletions();
+            const name = await only("D004");
+            expect(name).toMatch(/^[0-9a-f]{64}-[0-9a-f]{64}\.json$/);
+            expect(name.slice(65, 129)).toBe(sha256Of(await fs.readFile(path.join(manifestsDir("D004"), name))));
+            const report = await restore({ latest: true }, { allowIncomplete: true });
+            expect(report.documents.map((doc) => doc.documentId)).toEqual(["D001", "D002", "D004"]);
+        }, 120_000);
+
+        it("should refuse a manifest whose name carries another digest than its bytes, and ignore a malformed suffix", async () => {
+            await withoutCompletions();
+            const name = await only("D004");
+            const file = path.join(manifestsDir("D004"), name);
+            const wrong = `${name.slice(0, 65)}${"0".repeat(64)}.json`;
+            await fs.rename(file, path.join(manifestsDir("D004"), wrong));
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "artifact-integrity" });
+            expect(await listFiles(out)).toEqual([]);
+
+            await fs.rename(path.join(manifestsDir("D004"), wrong), path.join(manifestsDir("D004"), `${name.slice(0, 65)}zz.json`));
+            const report = await restore({ latest: true }, { allowIncomplete: true });
+            expect(report.documents.map((doc) => doc.documentId)).toEqual(["D001", "D002"]);
+        }, 120_000);
+
+        it("should refuse a manifest transplanted to another document or revision, though its name matches its bytes", async () => {
+            await withoutCompletions();
+            const name = await only("D004");
+            const bytes = await fs.readFile(path.join(manifestsDir("D004"), name));
+            await fs.writeFile(path.join(manifestsDir("D002"), name), bytes, { mode: 0o600 });
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "artifact-integrity" });
+            await fs.rm(path.join(manifestsDir("D002"), name));
+
+            const other = "1".repeat(64);
+            await fs.writeFile(path.join(manifestsDir("D004"), `${other}-${sha256Of(bytes)}.json`), bytes, { mode: 0o600 });
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "artifact-integrity" });
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should read an archive that mixes legacy and versioned manifest names", async () => {
+            await withoutCompletions();
+            const name = await only("D004");
+            const revision = name.slice(0, 64);
+            await fs.rename(path.join(manifestsDir("D004"), name), path.join(manifestsDir("D004"), `${revision}.json`));
+            expect(await fs.readdir(manifestsDir("D004"))).toEqual([`${revision}.json`]);
+            expect(await only("D001")).toContain("-");
+
+            const report = await restore({ latest: true }, { allowIncomplete: true });
+
+            expect(report.documents.map((doc) => doc.documentId)).toEqual(["D001", "D002", "D004"]);
+        }, 120_000);
+
+        it("should still call two different artifact sets of one document a conflict when no completion decides", async () => {
+            await withoutCompletions();
+            const name = await only("D001");
+            const value = await readJsonFile(path.join(manifestsDir("D001"), name));
+            const document = (value["artifacts"] as Array<{ artifactType: "document" | "audit-trail"; artifactIdentity: string; sha256: string; byteLength: number }>)
+                .filter((artifact) => artifact.artifactType === "document")
+                .map(({ artifactType, artifactIdentity, sha256, byteLength }) => ({ artifactType, artifactIdentity, sha256, byteLength }));
+            const partial = buildManifest({ companyId: COMPANY, documentId: "D001", metadataRevision: value["metadataRevision"] as string, artifacts: document });
+            await fs.writeFile(path.join(h.archive, manifestKey({
+                companyId: COMPANY, documentId: "D001", metadataRevision: value["metadataRevision"] as string, manifestSha256: partial.sha256,
+            })), partial.bytes, { mode: 0o600 });
+
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "restore-conflict" });
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+    });
+
+    /** PF1c: the manifest enumeration behind `--allow-incomplete` is complete-or-error, so an I/O failure is never a smaller (or empty) restore. */
+    describe("manifest enumeration failures (BJJ-456 PF1c)", () => {
+        afterEach(() => { jest.restoreAllMocks(); });
+        const manifestsDir = (doc: string): string => path.join(h.archive, "eformsign", COMPANY, doc, "manifests");
+        async function withoutCompletions(): Promise<void> {
+            h = await createHarness({ docs: m1() });
+            await initArchive(h);
+            await runOnce(h);
+            const dir = path.join(h.archive, "eformsign", COMPANY, "completions");
+            for (const name of await fs.readdir(dir)) await fs.rename(path.join(dir, name), path.join(h.base, `${name}.away`));
+            await freshOut();
+        }
+        function failListing(directory: string, code = "EIO"): void {
+            const real = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+            jest.spyOn(fs, "readdir").mockImplementation((async (target: unknown, ...rest: unknown[]) => {
+                if (String(target) === directory) throw Object.assign(new Error("synthetic"), { code });
+                return real(target, ...rest);
+            }) as never);
+        }
+        const cli = async (): Promise<{ code: number; stdout: string[]; stderr: string[] }> => {
+            const stdout: string[] = [];
+            const stderr: string[] = [];
+            const code = await runRestoreCli(
+                ["--archive", h.archive, "--company", COMPANY, "--latest", "--allow-incomplete", "--out", out],
+                { out: (line) => stdout.push(line), err: (line) => stderr.push(line) },
+            );
+            return { code, stdout, stderr };
+        };
+
+        it("should refuse with archive-unavailable and write no artifact and no report when a manifests directory cannot be listed", async () => {
+            await withoutCompletions();
+            failListing(manifestsDir("D002"));
+
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "archive-unavailable" });
+
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should refuse with archive-unavailable when the company directory cannot be listed, however a document listed earlier looked", async () => {
+            await withoutCompletions();
+            failListing(path.join(h.archive, "eformsign", COMPANY));
+
+            await expect(restore({ latest: true }, { allowIncomplete: true })).rejects.toMatchObject({ reasonCode: "archive-unavailable" });
+
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should end the CLI with exit 69 and no output artifact or report on an enumeration I/O failure", async () => {
+            await withoutCompletions();
+            failListing(manifestsDir("D004"));
+
+            const result = await cli();
+
+            expect(result).toMatchObject({ code: 69, stdout: [], stderr: ["archive-unavailable"] });
+            expect(await listFiles(out)).toEqual([]);
+        }, 120_000);
+
+        it("should keep the empty-input semantics: an archive with no manifests restores an empty incomplete archive", async () => {
+            h = await createHarness({ docs: [] });
+            await initArchive(h);
+            await freshOut();
+
+            const report = await restore({ latest: true }, { allowIncomplete: true });
+
+            expect(report).toMatchObject({ status: "incomplete-archive", snapshotId: null, sequence: null, documents: [] });
+            expect(await listFiles(out)).toEqual(["restore-report.json"]);
+        }, 120_000);
+
+        it("should keep restoring (CLI exit 0) when the enumeration completes", async () => {
+            await withoutCompletions();
+
+            const result = await cli();
+
+            expect(result.code).toBe(0);
+            expect(JSON.parse(result.stdout[0]!)).toMatchObject({ event: "restore_incomplete_archive", counts: { documents: 3 } });
+        }, 120_000);
     });
 
     describe("output directory", () => {

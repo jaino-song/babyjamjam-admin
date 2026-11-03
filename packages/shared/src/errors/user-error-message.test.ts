@@ -15,7 +15,7 @@ describe('getUserErrorMessage', () => {
     expect(message).not.toBe('현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.');
   });
   it('prefers the actual business reason over a bare HTTP label', () => {
-    expect(getUserErrorMessage(response(400, { message: '주담당과 부담당은 같은 직원일 수 없습니다.', error: 'Bad Request' }))).toBe('주담당과 부담당은 같은 직원일 수 없어요.');
+    expect(getUserErrorMessage(response(400, { message: '주담당과 부담당은 같은 제공인력일 수 없습니다.', error: 'Bad Request' }))).toBe('주담당과 부담당은 같은 제공인력일 수 없어요.');
     expect(getUserErrorMessage(response(404, { message: 'Assignment not found' }))).toBe('서비스 배정 정보를 찾을 수 없어요.');
   });
   it('distinguishes network failures, response timeouts and access refusal', () => {

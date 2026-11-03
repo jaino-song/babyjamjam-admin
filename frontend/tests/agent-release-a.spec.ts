@@ -172,7 +172,7 @@ test.describe("Release A flag coexistence", () => {
 
         if (!shellEnabled) {
             await expect(page.getByText("AI 어시스턴트")).toBeVisible();
-            await expect(page.getByText("고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.")).toBeVisible();
+            await expect(page.getByText("고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.")).toBeVisible();
             return;
         }
 

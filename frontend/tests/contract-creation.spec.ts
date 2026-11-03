@@ -29,7 +29,7 @@ const MOCK_CLIENT = {
 const MOCK_EMPLOYEES = [
   {
     id: 1,
-    name: "테스트직원",
+    name: "테스트제공인력",
     workArea: ["남동구"],
     phone: "01000000000",
     grade: "A",
@@ -39,7 +39,7 @@ const MOCK_EMPLOYEES = [
   },
   {
     id: 2,
-    name: "보조직원",
+    name: "보조제공인력",
     workArea: ["남동구"],
     phone: "01000000001",
     grade: "A",

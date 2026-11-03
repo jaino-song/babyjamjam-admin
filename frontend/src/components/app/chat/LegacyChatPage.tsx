@@ -142,7 +142,7 @@ export function LegacyChatPage() {
                     <div data-component="desktop_chat_page_messages_empty" className="flex flex-col items-center justify-center h-full text-center text-muted-foreground animate-fade-in">
                         <Sparkles className="w-12 h-12 mb-4 opacity-50" />
                         <h2 className="text-lg font-semibold mb-2">무엇을 도와드릴까요?</h2>
-                        <p className="text-sm">고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.</p>
+                        <p className="text-sm">고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.</p>
                     </div>
                 ) : (
                     <>

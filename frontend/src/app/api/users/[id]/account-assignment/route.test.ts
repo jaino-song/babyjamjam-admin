@@ -37,9 +37,9 @@ describe("PATCH /api/users/[id]/account-assignment", () => {
   it("forwards the authenticated account-assignment update", async () => {
     const input = {
       role: "admin",
-      branchIds: ["branch-admin-owned", "branch-songdo"],
+      branchIds: ["branch-admin-assigned", "branch-songdo"],
       expectedRole: "admin",
-      expectedBranchIds: ["branch-admin-owned"],
+      expectedBranchIds: ["branch-admin-assigned"],
     };
     mockPatch.mockResolvedValue({ data: { id: "approved-admin" }, status: 200 });
 

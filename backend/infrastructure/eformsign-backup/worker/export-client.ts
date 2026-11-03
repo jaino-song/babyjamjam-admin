@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { constants, promises as fs } from "node:fs";
 
 import { z } from "zod";
 
 import { EXPORT_ARTIFACT_MAX_BYTES, EXPORT_POLICY_REVISION, EXPORT_SCOPE_REVISION } from "domain/eformsign-backup/export/constants";
 import { WorkerError } from "domain/eformsign-backup/worker";
+
+import { readSecretFile } from "./secret-file";
 
 /** Contract W6: `ebx_` plus 43 base64url characters; one trailing newline is tolerated. */
 const TOKEN_PATTERN = /^ebx_[A-Za-z0-9_-]{43}$/;
@@ -21,30 +22,7 @@ const RETRY_AFTER_MAX_SECONDS = 7 * 24 * 60 * 60;
 
 /** Reads the token file (contract W6). Every refusal is `token-file-invalid`; no path or content reaches the error. */
 export async function readTokenFile(tokenPath: string): Promise<string> {
-    if (typeof tokenPath !== "string" || !tokenPath.startsWith("/")) throw new WorkerError("token-file-invalid");
-    let file: import("node:fs/promises").FileHandle | undefined;
-    try {
-        file = await fs.open(tokenPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-        const stat = await file.stat();
-        if (!stat.isFile() || (stat.mode & 0o777) !== 0o600 || stat.uid !== process.getuid?.() || stat.size > TOKEN_FILE_MAX_BYTES) {
-            throw new WorkerError("token-file-invalid");
-        }
-        const buffer = Buffer.alloc(stat.size);
-        let filled = 0;
-        while (filled < buffer.length) {
-            const { bytesRead } = await file.read(buffer, filled, buffer.length - filled, filled);
-            if (bytesRead === 0) break;
-            filled += bytesRead;
-        }
-        const text = buffer.subarray(0, filled).toString("utf8");
-        const token = text.endsWith("\n") ? text.slice(0, -1) : text;
-        if (!TOKEN_PATTERN.test(token)) throw new WorkerError("token-file-invalid");
-        return token;
-    } catch {
-        throw new WorkerError("token-file-invalid");
-    } finally {
-        try { await file?.close(); } catch { /* nothing left to report */ }
-    }
+    return readSecretFile(tokenPath, { pattern: TOKEN_PATTERN, maxBytes: TOKEN_FILE_MAX_BYTES, reasonCode: "token-file-invalid" });
 }
 
 /** `https:` only; `http:` solely for a loopback host (contract W6). No credentials, query or fragment. Returns the base without a trailing slash. */
@@ -215,9 +193,16 @@ export class ExportClient {
         if (!HEX64.test(artifact.artifactIdentity) || !HEX64.test(artifact.sha256)
             || !Number.isSafeInteger(artifact.byteLength) || artifact.byteLength < 0) invalidResponse();
         if (artifact.byteLength > EXPORT_ARTIFACT_MAX_BYTES) throw new WorkerError("artifact-too-large");
-        const signal = AbortSignal.timeout(this.timeoutMs);
-        const response = await this.send("GET", `/snapshots/${segment}/artifacts/${artifact.artifactIdentity}`,
-            { "Accept-Encoding": "identity" }, undefined, signal);
+        // `requestTimeoutMs` bounds the response headers only; the body gets an idle timeout (see `readIdle`).
+        const controller = new AbortController();
+        const headerTimer = setTimeout(() => controller.abort(), this.timeoutMs);
+        let response: Response;
+        try {
+            response = await this.send("GET", `/snapshots/${segment}/artifacts/${artifact.artifactIdentity}`,
+                { "Accept-Encoding": "identity" }, undefined, controller.signal);
+        } finally {
+            clearTimeout(headerTimer);
+        }
         if (response.status !== 200) {
             await response.body?.cancel().catch(() => undefined);
             invalidResponse();
@@ -229,10 +214,27 @@ export class ExportClient {
             await response.body?.cancel().catch(() => undefined);
             throw new WorkerError("artifact-integrity");
         }
-        return this.stream(response, artifact);
+        return this.stream(response, artifact, controller);
     }
 
-    private async *stream(response: Response, artifact: ArtifactRequest): AsyncGenerator<Uint8Array> {
+    /**
+     * One body read under an idle timeout: armed only while the read is pending and cleared as soon as it settles, so the
+     * consumer's own time never counts. On expiry the request is aborted and the read is rejected even if the transport
+     * ignores the signal.
+     */
+    private async readIdle(reader: ReadableStreamDefaultReader<Uint8Array>, controller: AbortController): Promise<ReadableStreamReadResult<Uint8Array>> {
+        let timer: NodeJS.Timeout | undefined;
+        const idle = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => { controller.abort(); reject(new Error("idle-timeout")); }, this.timeoutMs);
+        });
+        try {
+            return await Promise.race([reader.read(), idle]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    private async *stream(response: Response, artifact: ArtifactRequest, controller: AbortController): AsyncGenerator<Uint8Array> {
         const reader = response.body?.getReader();
         if (!reader) throw new WorkerError("artifact-integrity");
         const hash = createHash("sha256");
@@ -242,7 +244,7 @@ export class ExportClient {
             while (true) {
                 let chunk: ReadableStreamReadResult<Uint8Array>;
                 try {
-                    chunk = await reader.read();
+                    chunk = await this.readIdle(reader, controller);
                 } catch {
                     // A reset, a premature close or our own timeout is a network failure (retry_wait), never an integrity error.
                     throw new ExportFailure(0, NETWORK, true, null);

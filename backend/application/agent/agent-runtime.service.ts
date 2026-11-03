@@ -1137,7 +1137,7 @@ export class AgentRuntimeService {
                                 type: "data-entity-choice",
                                 data: {
                                     entityType: capability.meta.domain,
-                                    prompt: "어느 직원을 말씀하시는지 선택해 주세요.",
+                                    prompt: "어느 제공인력을 말씀하시는지 선택해 주세요.",
                                     choices: employees.map((employee) => ({ id: String(employee.id), label: employee.name, ...(employee.status ? { description: employee.status } : {}) })),
                                 },
                             });

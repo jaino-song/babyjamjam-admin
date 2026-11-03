@@ -17,7 +17,7 @@ export type {
 export interface SystemAdminBranchInput {
   name: string;
   slug: string;
-  ownerId: string | null;
+  adminId: string | null;
   region?: string;
   district?: string;
   address?: string;
@@ -104,12 +104,12 @@ export async function approveSystemAdminUser(
   id: string,
   role: string,
   branchId: string,
-  ownerBranchId?: string,
+  adminBranchId?: string,
 ): Promise<void> {
   await api.post(`/users/${encodeURIComponent(id)}/approve`, {
     role,
     branchId,
-    ...(ownerBranchId ? { ownerBranchId } : {}),
+    ...(adminBranchId ? { adminBranchId } : {}),
   });
 }
 

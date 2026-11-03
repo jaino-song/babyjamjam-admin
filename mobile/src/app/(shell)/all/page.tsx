@@ -249,7 +249,7 @@ export default function AllMenuPage() {
             aria-live="polite"
             data-component="mobile_all_page_employees-read-error"
           >
-            <AlertTitle>직원 수를 새로 불러오지 못했어요</AlertTitle>
+            <AlertTitle>제공인력 수를 새로 불러오지 못했어요</AlertTitle>
             <AlertDescription>
               <p>{employeesNormalizedError?.message}</p>
               <Button

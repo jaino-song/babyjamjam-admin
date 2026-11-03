@@ -16,7 +16,7 @@ export const TEMPLATE_DATA_SOURCES: TemplateDataSource[] = [
   },
   {
     id: "employees",
-    label: "직원 목록",
+    label: "제공인력 목록",
     endpoint: "/employees",
     valueField: "name",
     labelField: "name",

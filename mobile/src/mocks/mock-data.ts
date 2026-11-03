@@ -19,7 +19,7 @@ export interface Branch {
   email: string | null;
   phone: string | null;
   address: string | null;
-  ownerId: string;
+  adminId: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -34,7 +34,7 @@ export const mockBranches: Branch[] = [
     email: 'dong@imirae-care.co.kr',
     phone: '032-123-4567',
     address: '인천광역시 동구 송림로 123',
-    ownerId: 'user_01HWXYZ1234567890ADMIN1',
+    adminId: 'user_01HWXYZ1234567890ADMIN1',
     isActive: true,
     createdAt: '2024-01-15T09:00:00.000Z',
     updatedAt: '2024-06-01T14:30:00.000Z',
@@ -47,7 +47,7 @@ export const mockBranches: Branch[] = [
     email: 'namdong@imirae-care.co.kr',
     phone: '032-234-5678',
     address: '인천광역시 남동구 인주대로 456',
-    ownerId: 'user_01HWXYZ1234567890ADMIN2',
+    adminId: 'user_01HWXYZ1234567890ADMIN2',
     isActive: true,
     createdAt: '2024-02-01T09:00:00.000Z',
     updatedAt: '2024-06-15T10:00:00.000Z',
@@ -60,7 +60,7 @@ export const mockBranches: Branch[] = [
     email: 'yeonsu@imirae-care.co.kr',
     phone: '032-345-6789',
     address: '인천광역시 연수구 센트럴로 789',
-    ownerId: 'user_01HWXYZ1234567890ADMIN3',
+    adminId: 'user_01HWXYZ1234567890ADMIN3',
     isActive: false,
     createdAt: '2024-03-10T09:00:00.000Z',
     updatedAt: '2024-07-01T16:45:00.000Z',
@@ -756,8 +756,8 @@ export const mockMessages: Message[] = [
   {
     id: 4,
     branchId: 'org_01HWXYZ1234567890BCDEFG',
-    title: '남동구 센터 직원 교육 일정',
-    text: '9월 10일(화) 오후 2시에 직원 교육이 진행됩니다. 참석 부탁드립니다.',
+    title: '남동구 센터 제공인력 교육 일정',
+    text: '9월 10일(화) 오후 2시에 제공인력 교육이 진행됩니다. 참석 부탁드립니다.',
     createdAt: '2024-09-03T11:00:00.000Z',
     editedAt: null,
   },
@@ -1295,7 +1295,7 @@ export const mockDocuments: Document[] = [
     id: 'doc_01HWXYZ005',
     branchId: 'org_01HWXYZ1234567890ABCDEF',
     categoryId: 'cat_custom_001',
-    name: '신입직원_교육자료_v2.pdf',
+    name: '신입제공인력_교육자료_v2.pdf',
     description: '신입 제공인력 교육용 자료',
     tags: ['교육', '신입', '매뉴얼'],
     mimeType: 'application/pdf',

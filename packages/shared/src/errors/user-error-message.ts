@@ -8,7 +8,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   phone: '연락처', email: '이메일', name: '이름', address: '주소', birthday: '생년월일',
   startDate: '시작일', endDate: '종료일', serviceDate: '서비스 날짜',
   start_date: '시작일', end_date: '종료일', service_date: '서비스 날짜',
-  clientId: '고객', client_id: '고객', employeeId: '직원', employee_id: '직원',
+  clientId: '고객', client_id: '고객', employeeId: '제공인력', employee_id: '제공인력',
   branchId: '지점', branch_id: '지점', document_id: '문서', work_area: '근무 지역',
   password: '비밀번호', title: '제목', content: '내용', amount: '금액',
   limit: '조회 개수', offset: '목록 시작 위치', page: '페이지', duration: '서비스 기간',

@@ -299,7 +299,7 @@ export class CapabilityRouterService {
         try {
             const result = await generateText({
                 model: this.models.create(),
-                system: `Classify the request into at most two domains from: ${enabledDomains.join(", ")}. Return JSON only: {"domains":["domain"]}. Never include personal data.`,
+                system: `Classify the request into at most two domains from: ${enabledDomains.join(", ")}. employees = 제공인력; users may also say 직원 or 관리사. Return JSON only: {"domains":["domain"]}. Never include personal data.`,
                 prompt,
                 maxOutputTokens: 64,
             });
