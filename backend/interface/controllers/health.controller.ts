@@ -11,7 +11,7 @@ import {
 import { Prisma } from "@prisma/client";
 import type { Response } from "express";
 
-import { SchedulerLeaseMode, SchedulerLeaseService } from "application/services/scheduler-lease.service";
+import { type SchedulerLeaseSnapshot, SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ReadinessService } from "infrastructure/health/readiness.service";
 import {
@@ -41,11 +41,8 @@ interface SchemaCheckResult {
 const SCHEMA_CACHE_TTL_MS = 60_000;
 const SCHEMA_LOG_COLUMN_LIMIT = 50;
 
-interface LeaseResponse {
-    mode: SchedulerLeaseMode;
-    holderId: string;
-    held: boolean;
-}
+type LeaseResponse = Pick<SchedulerLeaseSnapshot,
+    "mode" | "holderId" | "held" | "provider" | "eligible" | "eligibilityReason">;
 
 @Controller()
 export class HealthController {
@@ -174,6 +171,13 @@ export class HealthController {
     getLease(@Res({ passthrough: true }) response: Response): LeaseResponse {
         response.setHeader("Cache-Control", "no-store");
         const snapshot = this.schedulerLease.snapshot();
-        return { mode: snapshot.mode, holderId: snapshot.holderId, held: snapshot.held };
+        return {
+            mode: snapshot.mode,
+            holderId: snapshot.holderId,
+            held: snapshot.held,
+            provider: snapshot.provider,
+            eligible: snapshot.eligible,
+            eligibilityReason: snapshot.eligibilityReason,
+        };
     }
 }

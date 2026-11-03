@@ -22,6 +22,9 @@ function createResponse(): MockResponse {
 
 function createLease(overrides: Partial<SchedulerLeaseSnapshot> = {}): SchedulerLeaseService {
     const snapshot: SchedulerLeaseSnapshot = {
+        provider: "lightnode",
+        eligible: true,
+        eligibilityReason: "provider_match",
         mode: "required",
         holderId: "lightnode",
         instanceId: "instance-1",
@@ -135,6 +138,9 @@ describe("HealthController", () => {
             mode: "required",
             holderId: "lightnode",
             held: true,
+            provider: "lightnode",
+            eligible: true,
+            eligibilityReason: "provider_match",
         });
         expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
         expect(response.status).not.toHaveBeenCalled();
@@ -144,14 +150,26 @@ describe("HealthController", () => {
         const controller = new HealthController(
             undefined,
             new ReadinessService(),
-            createLease({ mode: "standby", held: false, lastRenewOkAgoMs: null }),
+            createLease({ mode: "standby", held: false, lastRenewOkAgoMs: null, eligible: false, eligibilityReason: "schedulers_disabled" }),
         );
 
         expect(controller.getLease(createResponse() as never)).toEqual({
             mode: "standby",
             holderId: "lightnode",
             held: false,
+            provider: "lightnode",
+            eligible: false,
+            eligibilityReason: "schedulers_disabled",
         });
+    });
+
+    it("projects fail-closed ownership as flat JSON with only bounded diagnostics", () => {
+        const controller = new HealthController(undefined, new ReadinessService(), createLease({
+            provider: null, eligible: false, eligibilityReason: "provider_invalid", held: false,
+        }));
+        expect(JSON.stringify(controller.getLease(createResponse() as never))).toBe(
+            '{"mode":"required","holderId":"lightnode","held":false,"provider":null,"eligible":false,"eligibilityReason":"provider_invalid"}',
+        );
     });
 
     describe("getSchema", () => {

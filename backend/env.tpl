@@ -63,6 +63,8 @@ EFORMSIGN_RECONCILE_ALLOW_UNLOCKED="true"
 # `off` so a laptop can never take the production lease.
 SCHEDULER_LEASE_MODE="off"
 SCHEDULER_LEASE_HOLDER_ID="local"
+# Production: same desired owner on both hosts; missing/none/invalid disables ownership.
+PRODUCTION_DEPLOYMENT_PROVIDER=none
 ALIGO_API_URL="https://kakaoapi.aligo.in"
 ALIGO_API_KEY=
 ALIGO_USER_ID="forchildrenbys"
