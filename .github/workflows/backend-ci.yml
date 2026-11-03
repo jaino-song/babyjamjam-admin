@@ -1181,8 +1181,8 @@ jobs:
     # release, the LightNode Fallback Server is brought to the same immutable
     # release in passive mode (schedulers and document jobs off, Aligo blanked).
     # Nothing depends on this job, so a failure here never affects Lightsail.
-    # (These comments sit inside the job, and no blank line precedes it, so the
-    # preceding deploy-lightnode block stays byte-identical to its base.)
+    # Keep standby comments inside this job; frozen deploy-lightnode comparisons
+    # separately account for the approved production provider verifier.
     name: deploy LightNode standby backend
     if: >-
       always() &&
