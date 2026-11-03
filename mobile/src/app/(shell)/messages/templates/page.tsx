@@ -11,6 +11,7 @@ import { useMessageTemplates } from "@/hooks/use-message-templates";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import {
   ListCard,
+  SectionedList,
   ListLoadMoreSentinel,
 } from "@/components/app/mobile-redesign/primitives";
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
@@ -36,6 +37,8 @@ interface TemplateRow {
   displayId: string;
   kind: TemplateKind;
   name: string;
+  group?: string;
+  groupLabel?: string;
   eventLabel: string;
   updatedLabel: string;
   icon: TemplateIconName;
@@ -134,6 +137,8 @@ export default function TemplatesPage() {
       displayId: template.templateKey,
       kind: "system",
       name: template.name,
+      group: template.group,
+      groupLabel: template.groupLabel,
       eventLabel: template.description || "기본 템플릿",
       updatedLabel: formatMessageDateTimeCompact(template.updatedAt),
       icon: TEMPLATE_ICONS[index % TEMPLATE_ICONS.length] ?? "message",
@@ -295,19 +300,23 @@ export default function TemplatesPage() {
               />
             ) : null}
             {systemRows.length > 0 && (
-              <TemplateSection
-                title={systemTitle}
-                rows={systemRows}
-                onOpen={openTemplate}
-                onKeyDown={handleRowKeyDown}
+              <SectionedList<TemplateRow>
+                data-component="mobile_messages_templates_page_content_list-card_body_system-sections"
+                sections={systemRows.reduce<{ title: string; rows: TemplateRow[] }[]>((sections, row) => {
+                  const title = row.group && row.groupLabel ? row.groupLabel : systemTitle;
+                  const last = sections.at(-1);
+                  if (last?.title === title) last.rows.push(row);
+                  else sections.push({ title, rows: [row] });
+                  return sections;
+                }, [])}
+                renderRow={(row, _index, dataComponent) => <TemplateListRow dataComponent={dataComponent} row={row} onOpen={openTemplate} onKeyDown={handleRowKeyDown} />}
               />
             )}
             {userRows.length > 0 && (
-              <TemplateSection
-                title={userTitle}
-                rows={userRows}
-                onOpen={openTemplate}
-                onKeyDown={handleRowKeyDown}
+              <SectionedList<TemplateRow>
+                data-component="mobile_messages_templates_page_content_list-card_body_user-sections"
+                sections={[{ title: userTitle, rows: userRows }]}
+                renderRow={(row, _index, dataComponent) => <TemplateListRow dataComponent={dataComponent} row={row} onOpen={openTemplate} onKeyDown={handleRowKeyDown} />}
               />
             )}
             {!isLoading && !initialReadError && visibleRows.length === 0 ? (
@@ -327,39 +336,13 @@ export default function TemplatesPage() {
   );
 }
 
-function TemplateSection({
-  title,
-  rows,
-  onOpen,
-  onKeyDown,
-}: {
-  title: string;
-  rows: TemplateRow[];
-  onOpen: (row: TemplateRow) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLDivElement>, row: TemplateRow) => void;
-}) {
-  return (
-    <div className="section-block" data-component="mobile_messages_templates_page_content_list-card_body_section">
-      <div className="section-header" data-component="mobile_messages_templates_page_content_list-card_body_section_header">
-        {title}
-      </div>
-      {rows.map((row) => (
-        <TemplateListRow
-          key={row.id}
-          row={row}
-          onOpen={onOpen}
-          onKeyDown={onKeyDown}
-        />
-      ))}
-    </div>
-  );
-}
-
 function TemplateListRow({
+  dataComponent,
   row,
   onOpen,
   onKeyDown,
 }: {
+  dataComponent: string;
   row: TemplateRow;
   onOpen: (row: TemplateRow) => void;
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>, row: TemplateRow) => void;
@@ -367,7 +350,7 @@ function TemplateListRow({
   return (
     <div
       className="list-item"
-      data-component="mobile_messages_templates_page_content_list-card_body_section_row"
+      data-component={dataComponent}
       role="button"
       tabIndex={0}
       onClick={() => onOpen(row)}
@@ -375,18 +358,18 @@ function TemplateListRow({
     >
       <div
         className={`${styles.templateIcon} ${styles.templateIconSms}`}
-        data-component="mobile_messages_templates_page_content_list-card_body_section_row_icon"
+        data-component={`${dataComponent}_icon`}
       >
         <MockupIcon name={row.icon} size={18} />
       </div>
-      <div className="list-info" data-component="mobile_messages_templates_page_content_list-card_body_section_row_info">
-        <div className="list-name" data-component="mobile_messages_templates_page_content_list-card_body_section_row_info_name">
+      <div className="list-info" data-component={`${dataComponent}_info`}>
+        <div className="list-name" data-component={`${dataComponent}_info_name`}>
           {row.name}
           <span className={`${styles.channel} ${styles.channelSms}`}>
             SMS
           </span>
         </div>
-        <div className={styles.templateMeta} data-component="mobile_messages_templates_page_content_list-card_body_section_row_info_meta">
+        <div className={styles.templateMeta} data-component={`${dataComponent}_info_meta`}>
           {row.eventLabel} <span className={styles.metaSeparator}>·</span> {row.updatedLabel}
         </div>
       </div>

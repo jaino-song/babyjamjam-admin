@@ -193,6 +193,8 @@ interface TemplateListItem {
   icon: typeof MessageCircle;
   source: "system" | "branch";
   templateKey?: string;
+  group?: SystemTemplateCatalogItem["group"];
+  groupLabel?: string;
   description?: string;
   content?: string;
   customVariables?: SystemTemplateCatalogItem["customVariables"];
@@ -2168,6 +2170,10 @@ export default function MessagesPage() {
                   {isTemplateListLoading || visibleItems.length > 0 ? (
                     <div data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list" className="space-y-2 pb-2">
                       <AnimatedSlotList<TemplateListItem>
+                        data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots"
+                        getItemGroup={(item) => item.source === "system" && item.group && item.groupLabel
+                          ? { id: item.group, label: item.groupLabel }
+                          : undefined}
                         items={visibleItems}
                         isLoading={isTemplateListLoading}
                         className="space-y-2"
@@ -2181,12 +2187,12 @@ export default function MessagesPage() {
                             return (
                               <>
                                 <div
-                                  data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_template-skeleton-icon"
+                                  data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots_template-skeleton-icon"
                                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
                                 >
                                   <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
                                 </div>
-                                <div data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_template-skeleton-copy" className="min-w-0 flex-1">
+                                <div data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots_template-skeleton-copy" className="min-w-0 flex-1">
                                   <Skeleton className="h-4 w-32 bg-v3-dim-white" />
                                 </div>
                               </>
@@ -2197,14 +2203,14 @@ export default function MessagesPage() {
 
                           return (
                             <AnimatedSlotListItemContent
-                              dataComponent="desktop_messages_sections_template-item"
+                              dataComponent="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots_template-item"
                               icon={item.icon}
                               title={item.label}
                               subtitle={item.source === "system" ? item.description : undefined}
                               status={
                                 item.source === "system" && item.manualSendAvailability === "disabled" ? (
                                   <StatusBadge
-                                    data-component="desktop_messages_sections_template-item_status_badge"
+                                    data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots_template-item_status_badge"
                                     variant="neutral"
                                     size="sm"
                                   >

@@ -16,16 +16,20 @@ describe("resolveSystemTemplateDeliveryMode", () => {
   it("mirrors every key in the backend system-template registry", () => {
     expect(Object.keys(SYSTEM_TEMPLATE_REGISTRY).sort()).toEqual([...SYSTEM_TEMPLATE_KEYS].sort());
     expect(SYSTEM_TEMPLATE_KEYS).toEqual([
-      "PRICE_INFO",
       "GREETING",
-      "THANKS",
-      "CONTRACT_REMINDER",
-      "SURVEY",
       "SERVICE_INFO",
-      "SERVICE_RECORD_LINK",
-      "SERVICE_END_NOTICE",
+      "PRICE_INFO",
       "REMINDER",
+      "THANKS",
       "INFO",
+      "CONTRACT_GUIDE",
+      "CONTRACT_REMINDER",
+      "MATERNAL_NOTICE",
+      "SERVICE_END_NOTICE",
+      "SURVEY",
+      "PROVIDER_NOTICE",
+      "SERVICE_RECORD_LINK",
+      "SERVICE_RECORD_REMINDER",
     ]);
   });
 
@@ -44,9 +48,13 @@ describe("resolveSystemTemplateDeliveryMode", () => {
       "sms",
       "sms",
       "sms",
-      "service-feedback-link",
+      "sms",
+      "sms",
+      "sms",
       "receipt-link",
       "sms",
+      "sms",
+      "service-feedback-link",
       "sms",
     ] satisfies SystemTemplateDeliveryMode[]);
   });

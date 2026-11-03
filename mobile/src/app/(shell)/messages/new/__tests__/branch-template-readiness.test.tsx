@@ -6,6 +6,7 @@ import { api } from "@/lib/api/client";
 
 const mockUseSystemTemplate = jest.fn();
 const mockUseMessageTemplates = jest.fn();
+const mockUseSystemTemplates = jest.fn();
 let mockSearchParams = new URLSearchParams();
 
 const SYSTEM_TEMPLATE_KEYS = [
@@ -116,13 +117,7 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
-  useSystemTemplates: () => ({
-    data: [],
-    isError: false,
-    isFetching: false,
-    isLoading: false,
-    isSuccess: true,
-  }),
+  useSystemTemplates: () => mockUseSystemTemplates(),
 }));
 
 jest.mock("@/hooks/use-message-templates", () => ({
@@ -187,6 +182,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockSearchParams = new URLSearchParams();
   mockUseMessageTemplates.mockReturnValue({ data: [] });
+  mockUseSystemTemplates.mockReturnValue({ data: [], isSuccess: true, isLoading: false, isFetching: false, isError: false });
   SYSTEM_TEMPLATE_KEYS.forEach((key) => {
     templateQueries[key] = readyTemplate(key, `${key} 기본 문구`);
   });
@@ -197,6 +193,32 @@ beforeEach(() => {
 });
 
 describe("messages/new branch template readiness", () => {
+  it.each(["CONTRACT_GUIDE", "MATERNAL_NOTICE", "PROVIDER_NOTICE", "SERVICE_RECORD_REMINDER", "UNKNOWN_TEMPLATE"])(
+    "does not turn unsupported %s deep links into direct composing", (key) => {
+      mockSearchParams = new URLSearchParams({ template: key, body: "deep link body" });
+      renderPage();
+      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+      submitForm();
+      expect(api.post).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses the server names, order and groups in the compose selector and disables create-only entries", async () => {
+    mockUseSystemTemplates.mockReturnValue({ data: [
+      { templateKey: "GREETING", name: "첫 인사", group: "mother", groupLabel: "산모 대상", content: "stored" },
+      { templateKey: "CONTRACT_GUIDE", name: "계약서 작성 안내", group: "mother", groupLabel: "산모 대상", content: "" },
+      { templateKey: "PROVIDER_NOTICE", name: "제공인력 안내문", group: "provider", groupLabel: "제공인력 대상", content: "" },
+    ], isSuccess: true });
+    renderPage();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: /템플릿 선택/ }), { key: "ArrowDown" });
+    await waitFor(() => expect(screen.getByRole("option", { name: "첫 인사" })).toBeInTheDocument());
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["첫 인사", "계약서 작성 안내", "제공인력 안내문", "직접 작성"]);
+    expect(screen.getByRole("option", { name: "계약서 작성 안내" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "제공인력 안내문" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("산모 대상")).toBeInTheDocument();
+    expect(screen.getByText("제공인력 대상")).toBeInTheDocument();
+  });
+
   it("blocks sending until the current branch template query resolves", async () => {
     templateQueries.GREETING = pendingTemplate();
     const view = renderPage();

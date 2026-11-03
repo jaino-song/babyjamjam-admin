@@ -882,7 +882,7 @@ describe("messages page — server system-template catalog", () => {
 
     const { container } = render(<MessagesPage />);
     const badge = container.querySelector(
-      '[data-component="desktop_messages_sections_template-item_status_badge"]',
+      '[data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots_template-item_status_badge"]',
     );
 
     expect(badge).toHaveTextContent("직접 발송 불가");

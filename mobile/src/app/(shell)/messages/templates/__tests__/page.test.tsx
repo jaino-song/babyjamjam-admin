@@ -67,6 +67,31 @@ describe("TemplatesPage", () => {
     expect(screen.queryByRole("link", { name: "메시지" })).not.toBeInTheDocument();
   });
 
+  it("renders server group headings in response order with an ungrouped legacy fallback", () => {
+    mockUseSystemTemplates.mockReturnValue({ data: [
+      { templateKey: "GREETING", name: "첫 인사", group: "mother", groupLabel: "산모 대상" },
+      { templateKey: "CONTRACT_GUIDE", name: "계약서 작성 안내", group: "mother", groupLabel: "산모 대상" },
+      { templateKey: "PROVIDER_NOTICE", name: "제공인력 안내문", group: "provider", groupLabel: "제공인력 대상" },
+      { templateKey: "FUTURE", name: "미래 서버 템플릿" },
+    ], isLoading: false });
+    const { container } = render(<TemplatesPage />);
+    expect(Array.from(container.querySelectorAll('[data-slot="section-header"]')).map((node) => node.textContent))
+      .toEqual(["산모 대상", "제공인력 대상", "기본 템플릿 · 4개"]);
+    expect(Array.from(container.querySelectorAll('[data-component$="_info_name"]')).map((node) => node.textContent))
+      .toEqual(["첫 인사SMS", "계약서 작성 안내SMS", "제공인력 안내문SMS", "미래 서버 템플릿SMS"]);
+  });
+
+  it("does not invent recipient groups on an absent or failed response", () => {
+    mockUseSystemTemplates.mockReturnValue({ data: undefined, isLoading: true });
+    const view = render(<TemplatesPage />);
+    expect(screen.queryByText("산모 대상")).not.toBeInTheDocument();
+    expect(screen.queryByText("제공인력 대상")).not.toBeInTheDocument();
+    mockUseSystemTemplates.mockReturnValue({ data: undefined, isError: true, isLoading: false });
+    view.rerender(<TemplatesPage />);
+    expect(screen.queryByText("산모 대상")).not.toBeInTheDocument();
+    expect(screen.queryByText("제공인력 대상")).not.toBeInTheDocument();
+  });
+
   it("renders the successful backend template list without a mobile-only visibility filter", () => {
     mockUseSystemTemplates.mockReturnValue({
       data: [

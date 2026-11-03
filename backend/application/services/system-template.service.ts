@@ -114,6 +114,8 @@ export class SystemTemplateService {
             templateKey: entity.templateKey,
             name: registryEntry?.name ?? entity.templateKey,
             description: registryEntry?.description ?? "",
+            group: registryEntry.group,
+            groupLabel: registryEntry.groupLabel,
             content: entity.content,
             requiredVariables: registryEntry?.requiredVariables ?? [],
             customVariables: entity.customVariables ?? [],
