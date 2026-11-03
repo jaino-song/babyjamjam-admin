@@ -1,10 +1,11 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import DashboardPage from "../page";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import type { Client } from "@/lib/client/types";
 import { createKrBusinessDayCalendar, getKoreanHolidays, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 
@@ -22,7 +23,7 @@ jest.mock("@/hooks/useClients", () => ({
 jest.mock("@/hooks/useInfiniteClients", () => ({ useInfiniteClients: jest.fn() }));
 jest.mock("@/hooks/useDashboardAnalytics", () => ({ useDashboardAnalytics: jest.fn() }));
 jest.mock("@/hooks/useClientMessageHistory", () => ({ useClientMessageHistory: () => ({ notificationLogs: [] }) }));
-jest.mock("@/hooks/useListInfiniteScroll", () => ({ useListInfiniteScroll: () => ({ visibleCount: 8, isInitialLoad: true, hasMore: false }) }));
+jest.mock("@/hooks/useListInfiniteScroll", () => ({ useListInfiniteScroll: jest.fn() }));
 jest.mock("@/hooks/use-toast", () => ({ toast: jest.fn() }));
 jest.mock("@/components/app/clients/ClientFormDialog", () => ({ ClientFormDialog: () => null }));
 jest.mock("@/components/app/clients/client-detail", () => ({ ClientDetailContent: () => null }));
@@ -33,6 +34,7 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 
 const clientsQuery = jest.mocked(useInfiniteClients);
 const analyticsQuery = jest.mocked(useDashboardAnalytics);
+const listScrollHook = jest.mocked(useListInfiniteScroll);
 const NOW = new Date("2026-06-10T12:00:00+09:00");
 
 const plannedClient: Client = {
@@ -72,6 +74,7 @@ beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(NOW);
   jest.clearAllMocks();
+  listScrollHook.mockReturnValue({ visibleCount: 8, isInitialLoad: true, hasMore: false } as ReturnType<typeof useListInfiniteScroll>);
   clientsQuery.mockReturnValue({
     allClients: [plannedClient, plannedClientOnPageTwo],
     isLoading: false,
@@ -103,6 +106,74 @@ it("includes an eligible page-two pre-booking client in the upcoming filter coun
   expect(screen.getByText("QA 예정 고객")).toBeInTheDocument();
   expect(screen.getByText("QA 2페이지 예정 고객")).toBeInTheDocument();
   expect(clientsQuery).toHaveBeenCalledWith({ staleTime: 60_000 });
+});
+
+it("keeps all dashboard records reachable through the sentinel with the manual footer hidden", () => {
+  const originalIntersection = Object.getOwnPropertyDescriptor(globalThis, "IntersectionObserver");
+  const originalResize = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  const observers: Array<{ notify: (isIntersecting: boolean) => void; observe: jest.Mock }> = [];
+  Object.defineProperty(globalThis, "IntersectionObserver", {
+    configurable: true,
+    value: jest.fn().mockImplementation((callback: IntersectionObserverCallback) => {
+      const observer = {
+        notify: (isIntersecting: boolean) => callback(
+          [{ isIntersecting } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        ),
+        observe: jest.fn(),
+        disconnect: jest.fn(),
+      };
+      observers.push(observer);
+      return observer;
+    }),
+  });
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: jest.fn().mockImplementation(() => ({ observe: jest.fn(), disconnect: jest.fn() })),
+  });
+  jest.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(250);
+  jest.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(100);
+  listScrollHook.mockImplementation(jest.requireActual("@/hooks/useListInfiniteScroll").useListInfiniteScroll);
+  const clients = Array.from({ length: 15 }, (_, index) => ({
+    ...plannedClient,
+    id: 200 + index,
+    name: `자동 스크롤 고객 ${index + 1}`,
+  }));
+  clientsQuery.mockReturnValue({
+    ...clientsQuery(),
+    allClients: clients,
+  } as ReturnType<typeof useInfiniteClients>);
+
+  try {
+    const { container } = render(<DashboardPage />);
+    const sentinelSelector = '[data-component="mobile_dashboard_page_content_list-card_body_load-sentinel"]';
+    expect(container.querySelector('[data-component="mobile_dashboard_page_content_list-card_load-more"]')).not.toBeInTheDocument();
+    expect(screen.getByText("자동 스크롤 고객 1")).toBeInTheDocument();
+    expect(screen.queryByText("자동 스크롤 고객 15")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".list-item")).toHaveLength(3);
+    expect(container.querySelector(sentinelSelector)).toBeInTheDocument();
+    expect(observers[0]?.observe).toHaveBeenCalledWith(container.querySelector(sentinelSelector));
+
+    act(() => observers[observers.length - 1].notify(false));
+    expect(container.querySelectorAll(".list-item")).toHaveLength(3);
+    act(() => observers[observers.length - 1].notify(true));
+    expect(container.querySelectorAll(".list-item")).toHaveLength(9);
+    act(() => observers[observers.length - 1].notify(true));
+
+    for (const client of clients) expect(screen.getByText(client.name)).toBeInTheDocument();
+    expect(container.querySelectorAll(".list-item")).toHaveLength(15);
+    expect(container.querySelector(sentinelSelector)).not.toBeInTheDocument();
+  } finally {
+    cleanup();
+    jest.restoreAllMocks();
+    for (const [name, descriptor] of [
+      ["IntersectionObserver", originalIntersection],
+      ["ResizeObserver", originalResize],
+    ] as const) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
 });
 
 describe("due labels on the branch calendar", () => {

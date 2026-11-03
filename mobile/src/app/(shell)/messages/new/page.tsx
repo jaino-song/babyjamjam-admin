@@ -2075,7 +2075,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                       />
                       <ClientAutocomplete
                         data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
-                        inputId="recipient-name"
+                        inputId="recipient-name" hideEmptyDropdown
                         value={null}
                         onChange={handleClientRecipientSelect}
                         inputValue={recipientNameInputValue}

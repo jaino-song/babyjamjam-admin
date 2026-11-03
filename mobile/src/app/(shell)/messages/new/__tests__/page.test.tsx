@@ -1423,6 +1423,35 @@ describe("NewMessagePage", () => {
     });
   });
 
+  it("omits the whole name-search dropdown for a nonmatch while preserving template interpolation", async () => {
+    const { container } = renderPage();
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "예약 완료" }));
+    const input = screen.getByLabelText(/산모님 성함/);
+    const autocomplete = `${FORM_CARD_CONTENT}_recipient_name-row_autocomplete`;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "등록되지 않은 산모" } });
+
+    expect(container.querySelector(`[data-component="${autocomplete}_dropdown"]`)).not.toBeInTheDocument();
+    expect(container.querySelector(`[data-component="${autocomplete}_empty"]`)).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("data-state", "closed");
+    expect(input).toHaveValue("등록되지 않은 산모");
+    expect((screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value).toContain("등록되지 않은 산모 산모님");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByRole("button", { name: /수신자 제거/ })).not.toBeInTheDocument();
+    expect(input).toHaveValue("등록되지 않은 산모");
+
+    fireEvent.change(input, { target: { value: "박" } });
+    expect(container.querySelector(`[data-component="${autocomplete}_dropdown"]`)).toBeVisible();
+    expect(input).toHaveAttribute("data-state", "open");
+    fireEvent.click(await screen.findByText("박서연"));
+
+    expect(screen.getAllByRole("button", { name: "박서연 수신자 제거" })).toHaveLength(1);
+    expect((screen.getByLabelText("메시지 본문") as HTMLTextAreaElement).value).toContain("박서연 산모님");
+    expect(container.querySelector(`[data-component="${autocomplete}_dropdown"]`)).not.toBeInTheDocument();
+  });
+
   it("loads a frontend fallback template that requires the client name variable", async () => {
     renderPage();
 
