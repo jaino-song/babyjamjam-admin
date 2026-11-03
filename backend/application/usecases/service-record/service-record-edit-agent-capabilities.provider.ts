@@ -24,10 +24,7 @@ import type {
     ServiceRecordEditDraft,
     ServiceRecordEditSource,
 } from "domain/repositories/service-record-edit.repository.interface";
-import {
-    getServiceRecordFinalizationDueAt,
-    getServiceRecordTokenExpiresAt,
-} from "domain/constants/service-record-link-message";
+import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { UpdateServiceRecordEditDraftDto } from "interface/dto/admin-service-record-edit.dto";
 
@@ -340,7 +337,8 @@ function periodRows(view: SnapshotView, plan: ServiceRecordEditConfirmPlan): Car
  * revision). Mirrors service-record-edit.repository.ts `confirmDraftWithClient`:
  *  1. `plan.clientServiceDays` -> `client.updateMany` of the three toggles;
  *  2. with `plan.materializedPlannedSessions` (legacy case): the vector is stored, `service_record_case.endDate`
- *     moves when `materialized.endDate !== source.endDate`, `client.endDate` moves when it differs from
+ *     moves with its planned finalization deadline when `materialized.endDate !== source.endDate`,
+ *     `client.endDate` moves when it differs from
  *     `source.client.endDate`, and the active tokens' expiry is written exact for the materialized end ONLY when one of
  *     those end dates moves (a toggle that keeps the dates leaves every link alone);
  *  3. `tokenExpiryMode === "raise_only"` with `plan.endDate` -> the active token expiry is raised.
@@ -377,6 +375,9 @@ function buildNoChangesCard(
         if (caseEndMoves) infoRows.push(cardRow("서비스 종료일", view.endDate, materializedEnd));
         if (clientEndMoves && (!caseEndMoves || view.clientEndDate !== view.endDate)) {
             infoRows.push(cardRow("고객 정보의 서비스 종료일", view.clientEndDate, materializedEnd));
+        }
+        if (caseEndMoves && plan.finalizationDueAt && view.finalizationDueAt !== plan.finalizationDueAt) {
+            infoRows.push(cardRow("최종 확정 마감", formatKstFromIso(view.finalizationDueAt), formatKstFromIso(plan.finalizationDueAt)));
         }
         if (caseEndMoves || clientEndMoves) {
             // The dry run does not load token expiry, so "before" is unknown. Every active link is
@@ -457,9 +458,9 @@ function buildApprovalCard(
     const endChanged = !sameDisplay(view.endDate, preview.after.endDate);
     if (endChanged) infoRows.push(cardRow("서비스 종료일", view.endDate, preview.after.endDate));
     const resumes = operations.some((operation) => operation.kind === "resumeReplan");
-    if (resumes && preview.after.endDate) {
-        // Same function the confirm uses for the due time (resume replan only).
-        const dueAfter = getServiceRecordFinalizationDueAt(new Date(`${preview.after.endDate}T00:00:00.000Z`)).toISOString();
+    if (plan.finalizationDueAt) {
+        // Show exactly the deadline the confirm plan writes, including ordinary end-date changes.
+        const dueAfter = plan.finalizationDueAt;
         if (view.finalizationDueAt !== dueAfter) {
             infoRows.push(cardRow("최종 확정 마감", formatKstFromIso(view.finalizationDueAt), formatKstFromIso(dueAfter)));
         }

@@ -730,6 +730,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         title: "서비스 기간·마감",
                         rows: [
                             row("서비스 종료일", "2026-10-23", "2026-10-26"),
+                            row("최종 확정 마감", "2026-10-23 20:00 KST", "2026-10-26 20:00 KST"),
                             row("제공기록 링크 만료", "2026-10-24 00:00 KST", "2026-10-27 00:00 KST", "새 종료일 기준으로 맞춰요"),
                         ],
                     },
@@ -737,6 +738,16 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                 ],
             });
             expect(activeDrafts(harness)).toEqual([]);
+        });
+
+        it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])("does not show a deadline write for a finalized %s case", async (status) => {
+            const source = goldenSource();
+            source.caseLifecycle = { ...source.caseLifecycle, status };
+            const { inspection } = await propose(createHarness(source), {
+                clientId: CLIENT_ID,
+                operations: [{ kind: "dateMove", sessionIndex: 15, toDate: "2026-10-26", shiftFollowing: false }],
+            });
+            expect(JSON.stringify(inspection.preview)).not.toContain("최종 확정 마감");
         });
 
         it("shows B's period write for a plain date move, and binds it into the approval", async () => {
@@ -773,6 +784,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         title: "서비스 기간·마감",
                         rows: [
                             row("서비스 종료일", "2026-09-03", "2026-09-05"),
+                            row("최종 확정 마감", null, "2026-09-05 20:00 KST"),
                             row("제공기록 링크 만료", "2026-09-04 00:00 KST", "2026-09-06 00:00 KST", "새 종료일 기준으로 맞춰요"),
                         ],
                     },
@@ -830,6 +842,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         title: "서비스 기간·마감",
                         rows: [
                             row("서비스 종료일", "2026-09-03", "2026-09-04"),
+                            row("최종 확정 마감", null, "2026-09-04 20:00 KST"),
                             row("제공기록 링크 만료", "2026-09-04 00:00 KST", "2026-09-05 00:00 KST", "새 종료일 기준으로 맞춰요"),
                         ],
                     },
@@ -1197,6 +1210,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
             expect(harness.state.source.endDate).toBe("2026-09-15");
             expect(harness.state.source.client).toMatchObject({ endDate: "2026-09-15", allowSaturdayService: true });
             expect(harness.state.tokenWrites).toEqual([]);
+            expect(harness.state.confirmed[0]!.plan.finalizationDueAt).toBeUndefined();
         });
 
         it("occurrence 2: a no-op content patch beside the toggle adds no content row, and no content is written", async () => {
@@ -1225,6 +1239,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
             expect(sectionRows(inspection, "서비스 기간·마감").map((entry) => [entry.label, entry.before, entry.after])).toEqual([
                 ["서비스 종료일", "2026-09-15", "2026-09-03"],
                 ["고객 정보의 서비스 종료일", "2026-09-10", "2026-09-03"],
+                ["최종 확정 마감", null, "2026-09-03 20:00 KST"],
                 ["제공기록 링크 만료", null, "2026-09-04 00:00 KST"],
             ]);
             await (await approve(harness, parsed, inspection)).run();
@@ -1244,6 +1259,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
             expect(confirmed.status).toBe("no_changes");
             // The plan's vector (what is stored) has the kept dates and the end the card shows.
             expect(confirmed.materializedPlannedSessions?.endDate).toBe("2026-09-03");
+            expect(confirmed.finalizationDueAt).toBe("2026-09-03T11:00:00.000Z");
             expect((confirmed.materializedPlannedSessions?.plannedSessions as unknown as Array<{ serviceDate: string }>).map((entry) => entry.serviceDate))
                 .toEqual(KEEP_DATES);
             const stored = harness.state.source.plannedSessions as unknown as Array<{ sessionIndex: number; serviceDate: string }>;

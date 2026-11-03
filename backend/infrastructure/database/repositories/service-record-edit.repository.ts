@@ -3412,7 +3412,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     data: {
                         plannedSessions: toPrismaJson(materialized.plannedSessions),
                         ...(materializedEnd && materialized.endDate !== source.endDate
-                            ? { endDate: materializedEnd }
+                            ? {
+                                endDate: materializedEnd,
+                                ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
+                            }
                             : {}),
                         version: { increment: 1 },
                     },

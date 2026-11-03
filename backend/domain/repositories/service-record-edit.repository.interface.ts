@@ -493,8 +493,8 @@ export interface ServiceRecordEditConfirmPlan {
      */
     materializedPlannedSessions?: { plannedSessions: ServiceRecordEditJsonValue; endDate: string | null };
     /**
-     * When the case must be due for finalization, as an ISO instant. Set only by a resume
-     * replan (which moves the end date); the confirm never writes the column otherwise.
+     * When the case must be due for finalization, as an ISO instant. Set by a resume
+     * replan or an end-date change; immutable finalized cases retain their stored deadline.
      */
     finalizationDueAt?: string;
     /**

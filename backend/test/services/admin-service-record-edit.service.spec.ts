@@ -3505,6 +3505,17 @@ describe("AdminServiceRecordEditService service-day schedule replacement", () =>
             expect(plan.startDate).toBe("2026-09-03");
         });
 
+        it("recomputes the deadline when legacy materialization corrects the stored end date", async () => {
+            const source = { ...legacySource(), endDate: "2026-09-10" };
+            const changes = await savedScheduleChanges(source, { serviceDays: saturdayOn, dates: LEGACY_DATES });
+            const { prepare } = await previewAndPrepare({ source, changes });
+            const plan = prepare();
+            expect(plan.status).toBe("no_changes");
+            expect(plan.materializedPlannedSessions?.endDate).toBe("2026-09-07");
+            expect(plan.finalizationDueAt).toBe("2026-09-07T11:00:00.000Z");
+            expect("tokenExpiryMode" in plan).toBe(false);
+        });
+
         it("keeps a legacy case with unchanged toggles at no_changes without a vector", async () => {
             const source = legacySource();
             const changes = await savedScheduleChanges(source, { serviceDays: off, dates: LEGACY_DATES });
@@ -4573,8 +4584,36 @@ describe("AdminServiceRecordEditService resume replan", () => {
             ]);
         });
 
-        it("leaves finalizationDueAt, the token mode and the preview keys off every other change kind", async () => {
-            const source = previewSourceSnapshot();
+        it.each(["2026-10-23", "2026-10-27"])("recomputes the deadline when moving the last session from %s without changing token mode", async (oldEndDate) => {
+            const base = goldenSource();
+            const source = {
+                ...base,
+                endDate: oldEndDate,
+                client: { ...base.client, endDate: oldEndDate },
+                sessions: base.sessions.map((session) => session.sessionIndex === 15 ? { ...session, serviceDate: oldEndDate } : session),
+                plannedSessions: (base.plannedSessions as Array<Record<string, unknown>>).map((session) => session["sessionIndex"] === 15 ? { ...session, serviceDate: oldEndDate } : session),
+            } as ServiceRecordEditSource;
+            const endDate = "2026-10-26";
+            const sessions = [{ sessionIndex: 15, serviceDate: endDate }];
+            const { prepare } = await previewAndConfirm(source, { sessions });
+            const plan = prepare();
+            expect(plan.endDate).toBe(endDate);
+            expect(plan.finalizationDueAt).toBe(`${endDate}T11:00:00.000Z`);
+            expect("tokenExpiryMode" in plan).toBe(false);
+        });
+
+        it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])("preserves the deadline for a plain date move in %s", async (status) => {
+            const source = goldenSource(status);
+            const { prepare } = await previewAndConfirm(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-26" }] });
+            const plan = prepare();
+            expect(plan.endDate).toBe("2026-10-26");
+            expect("finalizationDueAt" in plan).toBe(false);
+            expect("tokenExpiryMode" in plan).toBe(false);
+        });
+
+        it("leaves finalizationDueAt, the token mode and the preview keys off changes that keep the end date", async () => {
+            const base = previewSourceSnapshot();
+            const source = { ...base, caseLifecycle: { ...base.caseLifecycle, finalizationDueAt: "2026-09-03T10:00:00.000Z" } };
             for (const changes of [
                 { header: { momName: "수정 산모" } },
                 { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-01", notes: "메모" }] },

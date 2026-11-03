@@ -8,6 +8,7 @@ import {
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
+import { IMMUTABLE_FINALIZATION_STATUSES } from "application/services/service-record-lifecycle.service";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
@@ -1144,13 +1145,15 @@ export class AdminServiceRecordEditService {
         // A resume replan can have work left even when the session dates already match: an assignment
         // boundary that still has to move, a handover of planned owners, a due time that is not yet
         // the one for the new end date. Each of them is a write the preview showed.
-        const resumeFinalizationDueAt = resumePlan
-            ? getServiceRecordFinalizationDueAt(new Date(`${resumePlan.endDate}T00:00:00.000Z`)).toISOString()
+        const endDateChanged = provisional.after.endDate !== source.endDate;
+        const finalizationDueAt = !IMMUTABLE_FINALIZATION_STATUSES.has(source.caseLifecycle.status)
+            && provisional.after.endDate && (resumePlan !== null || endDateChanged)
+            ? getServiceRecordFinalizationDueAt(new Date(`${provisional.after.endDate}T00:00:00.000Z`)).toISOString()
             : null;
         const resumeWritesPending = resumePlan !== null && (
             resumePlan.assignmentWrites.some((write) => write.datesChanged === true)
             || hasPlannedOwnerDifference(provisional.before.sessions, provisional.after.sessions)
-            || !sameInstant(source.caseLifecycle.finalizationDueAt, resumeFinalizationDueAt)
+            || !sameInstant(source.caseLifecycle.finalizationDueAt, finalizationDueAt)
         );
         const changed = provisional.contentChanges.headerChanged
             || contentChanged
@@ -1459,12 +1462,8 @@ export class AdminServiceRecordEditService {
             receiptOperation,
             ...(clientServiceDays ? { clientServiceDays } : {}),
             ...(materializedPlannedSessions ? { materializedPlannedSessions } : {}),
-            ...(resumeFinalizationDueAt
-                ? {
-                    finalizationDueAt: resumeFinalizationDueAt,
-                    tokenExpiryMode: "raise_only" as const,
-                }
-                : {}),
+            ...(finalizationDueAt && (changed || resumePlan || materializedPlannedSessions) ? { finalizationDueAt } : {}),
+            ...(resumePlan ? { tokenExpiryMode: "raise_only" as const } : {}),
         };
     }
 
