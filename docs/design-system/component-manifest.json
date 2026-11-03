@@ -323,6 +323,21 @@
         "note": "In app forms prefer FormField + FormNativeSelect or Select composition."
       },
       {
+        "name": "SelectableItemRecipe",
+        "layer": "tokens",
+        "import": "@/components/ui/selectable-item",
+        "file": "frontend/src/components/ui/selectable-item.tsx",
+        "exports": [
+          "selectableItemVariants"
+        ],
+        "replaces": [
+          "duplicated selectable card and chip border/background/focus styles"
+        ],
+        "requiredFor": [
+          "selectable list cards and chip frames"
+        ]
+      },
+      {
         "name": "Separator",
         "layer": "atom",
         "import": "@/components/ui/separator",

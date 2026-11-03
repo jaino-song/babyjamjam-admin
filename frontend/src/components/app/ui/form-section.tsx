@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { AppContentCard } from "@/components/ui/app-surface";
+import { selectableItemVariants } from "@/components/ui/selectable-item";
 
 export const APP_FORM_CONTROL_CLASS_NAME =
   "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-v3-dark shadow-none outline-none transition-all focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
@@ -383,10 +384,13 @@ function FormChip({
       type={type}
       {...props}
       data-component={dataComponent}
+      data-slot="form-chip"
       data-source-component={FORM_CHIP_SOURCE_COMPONENT}
+      data-selected={selected}
       className={cn(
-        "min-h-[calc(34px*var(--glint-ui-scale,1))] rounded-full border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none text-v3-text-muted transition-colors disabled:cursor-not-allowed disabled:opacity-55",
-        selected && "border-v3-primary/40 bg-v3-primary-light text-v3-primary",
+        selectableItemVariants({ isSelected: selected, isInteractive: true }),
+        "min-h-[calc(34px*var(--glint-ui-scale,1))] rounded-full px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none text-v3-text-muted disabled:cursor-not-allowed disabled:opacity-55",
+        selected && "text-v3-primary",
         className,
       )}
       aria-pressed={selected}

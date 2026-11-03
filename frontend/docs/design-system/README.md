@@ -79,6 +79,21 @@ default는 가장 자주 쓰는 시각 구조를 가져야 한다.
 
 ## Atomic Design 적용 방식
 
+### 선택 가능한 카드와 chip 프레임
+
+`@/components/ui/selectable-item`의 `selectableItemVariants`는 목록 카드, `FormChip`,
+checkbox/radio 카드의 공통 프레임 recipe다. 크기·배치·모서리는 소비 컴포넌트가 소유한다.
+기본/비선택 hover는 2px `v3-selectable-border`(light `214 16% 82%`, dark `214 16% 42%`),
+선택/선택 hover는 `v3-primary` 테두리와 `v3-primary-light` 배경이다. 기존 `v3-border`는 유지한다.
+
+`isSelected`와 소비자의 `data-selected`/ARIA 상태는 같은 값에서 계산한다.
+버튼은 `aria-pressed`, checkbox/radio는 해당 checked 의미를 유지하며, recipe가 role을 부여하지 않는다.
+`isInteractive`는 테두리와 별도의 focus-visible ring과 offset을 제공한다.
+label로 감싼 native checkbox/radio는 실제 focus 대상에서 ring이 보이도록 구성한다.
+`AnimatedSlotList`의 `unstyled`에는 recipe를 적용하지 않는다.
+탭·메뉴·input 자체·표 행·달력 cell·경고 ring에는 적용하지 않으며,
+전역 ARIA 또는 `data-component` selector로 선택 스타일을 덮어쓰지 않는다.
+
 ### Atoms
 
 atom은 직접적인 시각 토큰 소비자다.
