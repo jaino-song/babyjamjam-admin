@@ -1806,6 +1806,30 @@ async function findClientOwnedLegacyDocumentIds(
         .filter((documentId): documentId is string => typeof documentId === "string");
 }
 
+/**
+ * Moves the case's active link tokens to the expiry for `endDate`. `raise_only` keeps a token whose
+ * stored expiry is already later: it never shortens a link a caregiver may still be using.
+ */
+async function writeActiveTokenExpiry(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    serviceRecordCaseId: string,
+    endDate: string,
+    mode: ServiceRecordEditConfirmPlan["tokenExpiryMode"],
+): Promise<void> {
+    const expiresAt = getServiceRecordTokenExpiresAt(dateValue(endDate)!);
+    await tx.service_record_token.updateMany({
+        where: {
+            branchId,
+            serviceRecordCaseId,
+            active: true,
+            revokedAt: null,
+            ...(mode === "raise_only" ? { expiresAt: { lt: expiresAt } } : {}),
+        },
+        data: { expiresAt },
+    });
+}
+
 function jsonValueForConfirmation(response: ServiceRecordEditConfirmResponse): ServiceRecordEditJsonValue {
     return response as unknown as ServiceRecordEditJsonValue;
 }
@@ -1881,6 +1905,39 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
     }
 
+    async createDraftIfNoneActive(input: CreateServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft | null> {
+        // Same case lock and ownership check as createOrResumeDraft; the difference is that an
+        // existing ACTIVE draft is never handed back, so the caller owns exactly what it created.
+        try {
+            return await this.prisma.$transaction(async (tx) => {
+                await this.assertCaseBelongsToBranchWithClient(tx, input.branchId, input.serviceRecordCaseId);
+
+                const existing = await this.findActiveDraftWithClient(tx, input.branchId, input.serviceRecordCaseId);
+                if (existing) return null;
+
+                const created = await tx.service_record_edit_draft.create({
+                    data: {
+                        branchId: input.branchId,
+                        serviceRecordCaseId: input.serviceRecordCaseId,
+                        createdByUserId: input.actorUserId,
+                        updatedByUserId: input.actorUserId,
+                        sourceCaseVersion: input.sourceCaseVersion,
+                        sourceFingerprint: input.sourceFingerprint,
+                        sourceSnapshot: toPrismaJson(input.sourceSnapshot),
+                        changes: toPrismaJson(input.changes ?? {}),
+                        draftVersion: 1,
+                        status: "ACTIVE",
+                    },
+                });
+                return toDraft(created);
+            });
+        } catch (error) {
+            // Someone else created the active draft concurrently: it is theirs, not ours.
+            if (isUniqueConstraintError(error)) return null;
+            throw error;
+        }
+    }
+
     async findActiveDraft(branchId: string, serviceRecordCaseId: string): Promise<ServiceRecordEditDraft | null> {
         return this.findActiveDraftWithClient(this.prisma, branchId, serviceRecordCaseId);
     }
@@ -1932,6 +1989,23 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return row ? toDraft(row) : null;
     }
 
+    async findConfirmedDraftByIdempotencyKey(
+        branchId: string,
+        confirmedByUserId: string,
+        idempotencyKey: string,
+    ): Promise<{ confirmationResponse: ServiceRecordEditJsonValue | null } | null> {
+        const row = await this.prisma.service_record_edit_draft.findFirst({
+            where: { branchId, confirmedByUserId, confirmationIdempotencyKey: idempotencyKey, status: "CONFIRMED" },
+            select: { confirmationResponse: true },
+        });
+        if (!row) return null;
+        return {
+            confirmationResponse: row.confirmationResponse === null
+                ? null
+                : row.confirmationResponse as unknown as ServiceRecordEditJsonValue,
+        };
+    }
+
     private async findDraftByIdWithClient(
         client: DraftClient,
         branchId: string,
@@ -1941,6 +2015,23 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             where: { id: draftId, branchId },
         });
         return row ? toDraft(row) : null;
+    }
+
+    async loadConfirmSnapshot(
+        branchId: string,
+        draftId: string,
+        serviceRecordTemplateIds: readonly string[] = [],
+    ): Promise<ServiceRecordEditConfirmSnapshot | null> {
+        // The reads of confirmDraftWithClient (draft, source for the draft's case, revision facts),
+        // in one repeatable-read snapshot and with none of its locks or writes.
+        return this.prisma.$transaction(async (tx) => {
+            const draft = await this.findDraftByIdWithClient(tx, branchId, draftId);
+            if (!draft) return null;
+            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId });
+            if (!source) return null;
+            const revisionFactsSource = await loadRevisionFactsSource(tx, branchId, source, new Set(serviceRecordTemplateIds));
+            return { draft, source, revisionFactsSource };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     }
 
     async loadDraftWithSource(
@@ -3329,25 +3420,39 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 });
                 caseVersion = materializedCase.version;
                 if (materializedEnd) {
-                    if (materialized.endDate !== source.client.endDate) {
+                    const caseEndMoves = materialized.endDate !== source.endDate;
+                    const clientEndMoves = materialized.endDate !== source.client.endDate;
+                    if (clientEndMoves) {
                         await tx.client.updateMany({
                             where: { id: source.client.id, branchId: input.branchId },
                             data: { endDate: materializedEnd },
                         });
                     }
-                    const expiresAt = getServiceRecordTokenExpiresAt(materializedEnd);
-                    await tx.service_record_token.updateMany({
-                        where: {
-                            branchId: input.branchId,
-                            serviceRecordCaseId: source.caseId,
-                            active: true,
-                            revokedAt: null,
-                            expiresAt: { not: expiresAt },
-                        },
-                        data: { expiresAt },
-                    });
+                    // Reset the link expiry only when an end date really moves. A toggle that keeps
+                    // the dates must not lower a link that was re-sent later and already expires
+                    // further out (never claw a later-reissued token back).
+                    if (caseEndMoves || clientEndMoves) {
+                        const expiresAt = getServiceRecordTokenExpiresAt(materializedEnd);
+                        await tx.service_record_token.updateMany({
+                            where: {
+                                branchId: input.branchId,
+                                serviceRecordCaseId: source.caseId,
+                                active: true,
+                                revokedAt: null,
+                                expiresAt: { not: expiresAt },
+                            },
+                            data: { expiresAt },
+                        });
+                    }
                 }
             }
+        }
+        if (plan.status === "no_changes" && plan.tokenExpiryMode === "raise_only" && plan.endDate) {
+            // A resume replan can find every date, owner and due time already right while the incoming
+            // caregiver's link still expires on the old end date. The raise is idempotent (it only
+            // matches a token that expires earlier) and is not a business change: no revision, no
+            // document, no case version bump. It shares this transaction with the draft closure.
+            await writeActiveTokenExpiry(tx, input.branchId, source.caseId, plan.endDate, "raise_only");
         }
         if (plan.status === "confirmed") {
             if (plan.revision) {
@@ -3366,6 +3471,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     babyBirth: plan.header.babyBirth,
                     deliveryType: plan.header.deliveryType,
                     babyWeight: plan.header.babyWeight,
+                    ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
                     ...(revision ? { currentRevisionId: revision.id } : {}),
                     version: { increment: 1 },
                 },
@@ -3445,10 +3551,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 }
             }
             if (plan.endDate) {
-                await tx.service_record_token.updateMany({
-                    where: { branchId: input.branchId, serviceRecordCaseId: source.caseId, active: true, revokedAt: null },
-                    data: { expiresAt: getServiceRecordTokenExpiresAt(dateValue(plan.endDate)!) },
-                });
+                await writeActiveTokenExpiry(tx, input.branchId, source.caseId, plan.endDate, plan.tokenExpiryMode);
             }
             if (plan.documentJob) {
                 // The planner emits an explicit boolean.  Only an observed

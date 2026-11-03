@@ -11,8 +11,8 @@ import {
     type UIMessageStreamOptions,
 } from "ai";
 
-import { AgentEntitySelectPartSchema, AgentFormSubmitPartSchema, CLIENT_WRITE_FIELD_NAMES, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
-import type { BjjUIMessage } from "@babyjamjam/shared";
+import { AgentActionPreviewSchema, AgentEntitySelectPartSchema, AgentFormSubmitPartSchema, CLIENT_WRITE_FIELD_NAMES, ClientModelTaskOperationsSchema, ClientWriteFieldSchema, projectTaskForSafeChat, type ClientWriteField } from "@babyjamjam/shared";
+import type { AgentActionPreview, BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentTaskDisplayedChoiceHint } from "@babyjamjam/shared";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { AgentModelFactory } from "infrastructure/agent/agent-model.factory";
@@ -23,7 +23,7 @@ import { AgentSessionService } from "./agent-session.service";
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { CapabilityRouterService, type CapabilityRouteResult } from "./capability-router.service";
 import { AgentTraceService } from "./agent-trace.service";
-import { ActionCoordinatorService } from "./action-coordinator.service";
+import { ActionCoordinatorService, AgentActionQuestionError } from "./action-coordinator.service";
 import { AgentIntelligenceService, AgentSessionSummarySchema, LegacyAgentSessionSummarySchema } from "./agent-intelligence.service";
 import { redactFreeText, redactKnownValues, redactModelValue } from "./agent-model-redaction";
 import { ConversationContextAssemblerService, safeSummary, type ConversationContext } from "./conversation-context-assembler.service";
@@ -385,6 +385,16 @@ export class AgentRuntimeService {
             if (!oldest.done) this.clarificationAskedRevisions.delete(oldest.value);
         }
         this.clarificationAskedRevisions.set(key, revision);
+    }
+
+    /** Stored previews were validated on propose; re-check defensively and never drop one silently. */
+    private storedPreviewPart(action: { id: string; capability: string; proposal: Record<string, unknown> }): { preview?: AgentActionPreview } {
+        const stored = action.proposal["preview"];
+        if (stored === undefined) return {};
+        const parsed = AgentActionPreviewSchema.safeParse(stored);
+        if (parsed.success) return { preview: parsed.data };
+        this.logger.warn(`agent action ${action.id} (${action.capability}) has a stored approval preview that failed validation; omitting it from the proposal part`);
+        return {};
     }
 
     async stream(input: {
@@ -1011,6 +1021,9 @@ export class AgentRuntimeService {
                                 summary: capability.meta.description,
                             });
                         } catch (error) {
+                            if (error instanceof AgentActionQuestionError) {
+                                return { kind: "needs-input" as const, code: error.code, message: error.message, candidates: error.candidates };
+                            }
                             if (error instanceof Error && error.name === "ZodError") {
                                 writeDataChunk({
                                     type: "data-form",
@@ -1038,6 +1051,7 @@ export class AgentRuntimeService {
                                 ...(capability.meta.approvalPolicy === "strong"
                                     ? { acknowledgementToken: this.actions.strongAcknowledgementToken(action) }
                                     : {}),
+                                ...this.storedPreviewPart(action),
                             },
                         });
                         return {
@@ -1222,7 +1236,10 @@ export class AgentRuntimeService {
             tools,
             stopWhen: [
                 stepCountIs(6),
-                ({ steps }) => steps.some((step) => step.toolCalls.some((call) => writeToolNames.has(call.toolName))),
+                ({ steps }) => steps.some((step) => step.toolCalls.some((call) => writeToolNames.has(call.toolName)
+                    && !step.toolResults.some((result) => result.toolCallId === call.toolCallId
+                        && typeof result.output === "object" && result.output !== null
+                        && "kind" in result.output && result.output.kind === "needs-input"))),
             ],
             prepareStep: () => ({ system: buildSystemPrompt() }),
             providerOptions: this.models.providerOptions(),

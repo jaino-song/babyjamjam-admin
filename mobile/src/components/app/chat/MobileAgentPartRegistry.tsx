@@ -140,6 +140,9 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
     if (part.type === "data-action-proposal") {
         const parsed = AgentActionProposalPartSchema.safeParse(part.data);
         if (!parsed.success) return <Fallback />;
+        if (parsed.data.capability === "service-records.edit") {
+            return <p data-component={dataComponent} data-slot="desktop-approval-note" data-source-component="MobileAgentPartRegistry" className="text-sm text-muted-foreground">제공기록지 정정은 PC 관리자 화면에서 승인해 주세요.</p>;
+        }
         const candidates = [
             { clientId: contactId(parsed.data.target?.clientId) },
             { employeeId: contactId(parsed.data.target?.employeeId) },

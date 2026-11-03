@@ -16,13 +16,19 @@ import {
     validateServiceRecordEditText,
 } from "application/policies/service-record-answer-validation.policy";
 import {
+    assignmentWrites,
     buildServiceRecordEditPreview,
+    confirmAssignmentWrites,
+    draftResumeReplan,
     draftServiceDays,
     normalizeServiceRecordEditChanges,
+    resolveResumeReplan,
     sameServiceDays,
+    ServiceRecordResumeAssignmentError,
     ServiceRecordScheduleValidationError,
     storedServiceDays,
     type ServiceRecordEditDateMove,
+    type ServiceRecordEditResumeReplan,
     type ServiceRecordEditScheduleReplacement,
 } from "application/policies/service-record-edit-preview.policy";
 import {
@@ -45,7 +51,6 @@ import {
     type CreateServiceRecordEditDraftInput,
     type IServiceRecordEditRepository,
     type ServiceRecordEditDraft,
-    type ServiceRecordEditConfirmAssignmentUpdate,
     type ServiceRecordEditConfirmPlan,
     type ServiceRecordEditConfirmOperationPlan,
     type ServiceRecordEditConfirmNewSession,
@@ -72,6 +77,10 @@ import type {
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
+import { getServiceRecordFinalizationDueAt } from "domain/constants/service-record-link-message";
+
+// The schedule realignment service reuses the confirm's outer-edge rule from here.
+export { assignmentWrites };
 
 const EDITABLE_HEADER_KEYS = new Set([
     "momName",
@@ -339,161 +348,16 @@ function hasPlannedDateDifference(
     return after.some((entry) => before.find((candidate) => candidate.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
 }
 
-/**
- * Dates written to service_record_assignment and employee_schedule on confirm.
- *
- * An assignment period is a record only: it never gates who may write the service
- * record, and a session dated outside every period never blocks the confirm. The
- * confirm keeps that record as accurate as it safely can, so only the two outer
- * edges follow the planned session dates; an inner handover boundary (outgoing
- * end == incoming start) is owned by the caregiver replacement flow, which
- * deliberately stores it that way, so every stored assignment keeps its dates
- * except those two outer edges. The outer edges follow the assignments, not who
- * wrote the sessions: an unwritten service record does not mean the caregiver did
- * not work, so a replaced caregiver whose period covers a day worked it even when
- * a successor backfilled that day's record. The earliest active assignment
- * (replaced ones are candidates; a terminated schedule is one only when it owns a
- * session, so a case ended early still follows its session dates) therefore
- * starts on the first planned session and the latest active one ends on the last
- * one, regardless of which caregiver owns the sessions (ownership in the records
- * and documents stays with the writer). That also keeps a single caregiver's
- * schedule following moved session dates. An outer edge never crosses into a
- * session-less terminated assignment's stored period: when an assignment sorting
- * before the earliest active one stored an end after the new start, or one sorting
- * after the latest active one stored a start before the new end, the stored date
- * is kept, since taking the session date would move that boundary. Every stored
- * assignment is still emitted so the repository re-evaluates each schedule's
- * message automation as before, but only the ones whose service_record_assignment
- * or employee_schedule dates differ from the computed ones are flagged
- * `datesChanged`; those are re-synced in both tables.
- *
- * An edge also stays put when a neighbour merely touches it (a neighbour's stored
- * end equal to the edge's stored start, or the mirror), so a shared boundary is
- * never pulled apart. A terminated edge candidate keeps its contracted period: its
- * start may only move earlier and its end only later, never shrink.
- *
- * The one exception is a single session-less terminated zero-length placeholder (a
- * caregiver replaced before the service started, stored as a one-day period) whose
- * date equals the edge's stored start (or end) and which sits directly before the
- * earliest (after the latest) active assignment: it is no real boundary, only a
- * marker of the same day, so when the edge moves earlier (later) the placeholder
- * moves with it and stays on the edge's date, which keeps the handover invariant
- * (its end == the edge's start). With several such placeholders none moves: the ordinary neighbour
- * guard is what keeps them all in place.
- *
- * Moving an outer edge across any other neighbour's stored boundary cannot be done
- * without moving that boundary, so the stored date is kept silently; changing
- * boundaries belongs to the caregiver replacement flow. An edge candidate that
- * owns no session and whose new edge would fall outside its own period keeps
- * its stored dates and no other assignment takes the edge. Only a session-owning
- * candidate whose computed start falls after its end is refused as a conflict.
- */
-export function assignmentWrites(
-    source: Pick<ServiceRecordEditSource, "assignments">,
-    startDate: string | null,
-    endDate: string | null,
-    ownerAssignmentIds: ReadonlySet<string>,
-): ServiceRecordEditConfirmAssignmentUpdate[] {
-    const sessionlessTerminatedRank = (assignment: (typeof source.assignments)[number]) =>
-        assignment.scheduleTerminatedAt && !(assignment.id !== null && ownerAssignmentIds.has(assignment.id)) ? 0 : 1;
-    const stored = source.assignments
-        .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
-        .map((assignment) => {
-            const storedStart = assignment.startDate || assignment.scheduleStartDate;
-            const storedEnd = assignment.endDate || assignment.scheduleEndDate;
-            return {
-                assignment,
-                storedStart,
-                storedEnd,
-                startDate: storedStart,
-                endDate: storedEnd,
-            };
-        })
-        .sort((left, right) =>
-            left.storedStart.localeCompare(right.storedStart)
-            || left.storedEnd.localeCompare(right.storedEnd)
-            // Identical one-day stored periods: a terminated session-less placeholder sorts before an
-            // active one, so it is deterministically on the head side whatever the source order. Longer
-            // identical periods keep source order.
-            || (left.storedStart === left.storedEnd
-                ? sessionlessTerminatedRank(left.assignment) - sessionlessTerminatedRank(right.assignment)
-                : 0));
-    if (stored.length === 0) return [];
-    const ownsSession = (item: (typeof stored)[number]) =>
-        item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id);
-    const isTerminated = (item: (typeof stored)[number]) => Boolean(item.assignment.scheduleTerminatedAt);
-    const activeIndexes = stored
-        .map((item, index) => (
-            !isTerminated(item) || ownsSession(item) ? index : -1
-        ))
-        .filter((index) => index >= 0);
-    if (activeIndexes.length > 0) {
-        const head = stored[activeIndexes[0]!]!;
-        const tail = stored[activeIndexes[activeIndexes.length - 1]!]!;
-        const first = activeIndexes[0]!;
-        const last = activeIndexes[activeIndexes.length - 1]!;
-        // A single session-less terminated zero-length placeholder on the edge's own stored date is no
-        // boundary: it moves with the edge (see the doc comment). Anything else stays a blocking neighbour.
-        const isPlaceholderAt = (item: (typeof stored)[number], date: string) =>
-            isTerminated(item) && !ownsSession(item) && item.storedStart === date && item.storedEnd === date;
-        const headPlaceholders = stored.slice(0, first).filter((item) => isPlaceholderAt(item, head.storedStart));
-        const headPlaceholder = headPlaceholders.length === 1 && stored[first - 1] === headPlaceholders[0]
-            ? headPlaceholders[0]
-            : undefined;
-        const tailPlaceholders = stored.slice(last + 1).filter((item) => isPlaceholderAt(item, tail.storedEnd));
-        const tailPlaceholder = tailPlaceholders.length === 1 && stored[last + 1] === tailPlaceholders[0]
-            ? tailPlaceholders[0]
-            : undefined;
-        // A candidate that owns no session (a caregiver replaced before the contract start is stored
-        // as a zero-length period) cannot take an edge date beyond its own stored period: keep it.
-        // Only a candidate that owns sessions may produce the start-after-end conflict below.
-        if (
-            startDate
-            && stored.slice(0, first).every((item) =>
-                (item === headPlaceholder && startDate < head.storedStart)
-                || (item.storedEnd < head.storedStart && item.storedEnd <= startDate))
-            && (ownsSession(head) || startDate <= head.storedEnd)
-            && (!isTerminated(head) || startDate < head.storedStart)
-        ) {
-            head.startDate = startDate;
-            if (headPlaceholder) {
-                headPlaceholder.startDate = startDate;
-                headPlaceholder.endDate = startDate;
-            }
-        }
-        if (
-            endDate
-            && stored.slice(last + 1).every((item) =>
-                (item === tailPlaceholder && endDate > tail.storedEnd)
-                || (item.storedStart > tail.storedEnd && item.storedStart >= endDate))
-            && (ownsSession(tail) || endDate >= tail.storedStart)
-            && (!isTerminated(tail) || endDate > tail.storedEnd)
-        ) {
-            tail.endDate = endDate;
-            if (tailPlaceholder) {
-                tailPlaceholder.startDate = endDate;
-                tailPlaceholder.endDate = endDate;
-            }
-        }
-    }
-    return stored.map((item) => {
-        if (!item.startDate || !item.endDate || item.startDate > item.endDate) {
-            throw new ServiceRecordEditConflictError(
-                `Assignment ${item.assignment.id} would be written with its start after its end`,
-            );
-        }
-        return {
-            assignmentId: item.assignment.id,
-            scheduleId: item.assignment.scheduleId,
-            startDate: item.startDate,
-            endDate: item.endDate,
-            // Both tables must already hold the computed dates, else they are re-synced.
-            datesChanged: item.startDate !== item.assignment.startDate
-                || item.startDate !== item.assignment.scheduleStartDate
-                || item.endDate !== item.assignment.endDate
-                || item.endDate !== item.assignment.scheduleEndDate,
-        };
-    });
+function hasPlannedOwnerDifference(
+    before: Array<{ sessionIndex: number; assignmentId: string }>,
+    after: Array<{ sessionIndex: number; assignmentId: string }>,
+): boolean {
+    return after.some((entry) => before.find((candidate) => candidate.sessionIndex === entry.sessionIndex)?.assignmentId !== entry.assignmentId);
+}
+
+function sameInstant(left: string | null, right: string | null): boolean {
+    if (left === null || right === null) return left === right;
+    return new Date(left).getTime() === new Date(right).getTime();
 }
 
 function buildFutureContentSession(
@@ -703,10 +567,57 @@ export class AdminServiceRecordEditService {
         return this.state(draft, loaded);
     }
 
+    /**
+     * Like `startDraft`, but only ever returns a draft this call created. When the case already
+     * has an ACTIVE draft (including one created a moment ago by the same person) it answers 409
+     * REQUEST_CONFLICT and touches nothing, so a caller that updates or discards what it started
+     * can never act on somebody else's draft.
+     */
+    async startOwnDraft(
+        branchId: string,
+        clientId: number,
+        actorUserId: string,
+        dto: CreateServiceRecordEditDraftDto = {},
+    ): Promise<AdminServiceRecordEditStateDto> {
+        const loaded = await this.loadSource(branchId, { clientId });
+        const changes = this.validateChanges(dto.changes, loaded.source);
+        const input: CreateServiceRecordEditDraftInput = {
+            branchId,
+            serviceRecordCaseId: loaded.source.caseId,
+            actorUserId,
+            sourceCaseVersion: loaded.source.caseVersion,
+            sourceFingerprint: loaded.fingerprint,
+            sourceSnapshot: jsonValue({ ...loaded.source, caseVersion: loaded.source.caseVersion }),
+            ...(changes ? { changes } : {}),
+        };
+        let draft: ServiceRecordEditDraft | null;
+        try {
+            draft = await this.repository.createDraftIfNoneActive(input);
+        } catch (error) {
+            this.throwRepositoryNotFound(error);
+        }
+        if (!draft) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        return this.state(draft, loaded);
+    }
+
     async getDraft(branchId: string, clientId: number): Promise<AdminServiceRecordEditStateDto> {
         const loaded = await this.loadSource(branchId, { clientId });
         const draft = await this.repository.findActiveDraft(branchId, loaded.source.caseId);
         return this.state(draft, loaded);
+    }
+
+    /**
+     * Read-only lookup of a confirmed draft's stored response by the idempotency key the caller
+     * confirmed with. Lets a caller that lost the confirm response find out whether it landed,
+     * without confirming again.
+     */
+    async findConfirmedResponseByIdempotencyKey(
+        branchId: string,
+        actorUserId: string,
+        idempotencyKey: string,
+    ): Promise<unknown | null> {
+        const found = await this.repository.findConfirmedDraftByIdempotencyKey(branchId, actorUserId, idempotencyKey);
+        return found?.confirmationResponse ?? null;
     }
 
     async updateDraft(
@@ -722,9 +633,17 @@ export class AdminServiceRecordEditService {
                 "일정 전체 변경과 단일 날짜 이동은 함께 요청할 수 없어요.",
             );
         }
+        if (dto.resumeReplan !== undefined && (dto.schedule !== undefined || dto.dateMove !== undefined)) {
+            throw this.scheduleRejection(
+                "RESUME_REPLAN_COMBINATION",
+                "/resumeReplan",
+                "재개 일정 재배치는 일정 전체 변경이나 단일 날짜 이동과 함께 요청할 수 없어요.",
+            );
+        }
         const target = await this.resolveDraftTarget(branchId, draftId);
         const validatedChanges = this.validateChanges(dto.changes, target.loaded.source);
         const schedule = dto.schedule === undefined ? undefined : this.validateSchedule(dto.schedule);
+        const resumeReplan = dto.resumeReplan === undefined ? undefined : this.validateResumeReplan(dto.resumeReplan);
         if (schedule && this.changesCarryServiceDate(validatedChanges)) {
             throw this.scheduleRejection(
                 "SCHEDULE_WITH_DATE_MOVE",
@@ -751,6 +670,7 @@ export class AdminServiceRecordEditService {
                 calendar,
                 dto.dateMove as ServiceRecordEditDateMove | undefined,
                 schedule,
+                resumeReplan,
             ).changes;
         } catch (error) {
             if (error instanceof ServiceRecordScheduleValidationError) {
@@ -767,6 +687,8 @@ export class AdminServiceRecordEditService {
                     message: error.message,
                     sessionIndex: error.sessionIndex,
                     scheduleCode: error.code,
+                    // The chat agent asks the operator and retries with an explicit incomingAssignmentId.
+                    ...(error instanceof ServiceRecordResumeAssignmentError ? { candidates: error.candidates } : {}),
                 });
             }
             if (error instanceof UnsupportedKoreanHolidayYearError) {
@@ -937,6 +859,57 @@ export class AdminServiceRecordEditService {
         return confirmed;
     }
 
+    /**
+     * Read-only dry run of the confirm: the plan `confirmDraft` would build for this draft and
+     * preview right now, from the same `buildConfirmPlan` with the same inputs (draft, source,
+     * private revision facts, fresh branch calendar). It writes nothing and takes no lock, so a
+     * concurrent writer can still change the answer before a real confirm; the confirm remains
+     * the authority. Errors are mapped exactly as the confirm maps them.
+     */
+    async planConfirmDryRun(
+        branchId: string,
+        draftId: string,
+        actorUserId: string,
+        previewId: string,
+    ): Promise<ServiceRecordEditConfirmPlan> {
+        if (!UUID_PATTERN.test(draftId)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        if (typeof previewId !== "string" || !/^srp_[0-9a-f]{64}$/i.test(previewId)) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/previewId",
+                code: "INVALID_FORMAT",
+                detail: "미리보기 식별자가 올바르지 않아요.",
+                location: "body",
+            }));
+        }
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        try {
+            const snapshot = await this.repository.loadConfirmSnapshot(
+                branchId,
+                draftId,
+                [...configuredServiceRecordTemplateIds(this.configService)],
+            );
+            if (!snapshot) throw new ServiceRecordEditNotFoundError();
+            return this.buildConfirmPlan({
+                draft: snapshot.draft,
+                source: snapshot.source,
+                ...(snapshot.revisionFactsSource ? { revisionFactsSource: snapshot.revisionFactsSource } : {}),
+                branchId,
+                draftId,
+                actorUserId,
+                previewId,
+                calendar,
+            });
+        } catch (error) {
+            if (error instanceof ServiceRecordEditNotFoundError) this.throwRepositoryNotFound(error);
+            if (error instanceof ServiceRecordEditConflictError) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
+            throw error;
+        }
+    }
+
     /** Tell open editors the case changed; a bus failure must never fail the confirm. */
     private emitCaseChanged(branchId: string, confirmed: ServiceRecordEditConfirmResponse): void {
         if (!this.caseEventBus) return;
@@ -986,13 +959,16 @@ export class AdminServiceRecordEditService {
         // would otherwise hide it behind the generic write-target response. A dateMove draft
         // is not held to it.
         const isScheduleDraft = draftServiceDays(draft.changes) !== null;
-        let provisional = isScheduleDraft ? buildProvisional() : null;
+        const isResumeDraft = draftResumeReplan(draft.changes) !== null;
+        let provisional = isScheduleDraft || isResumeDraft ? buildProvisional() : null;
         if (provisional) {
-            const lockedReasons = provisional.blockingReasons.filter((entry) => entry.code === "LOCKED_SESSION_DATE_CHANGED");
-            if (lockedReasons.length > 0) {
+            // A resume replan is likewise refused outright once the case is finalized, whatever the preview said.
+            const hardStops = provisional.blockingReasons.filter((entry) =>
+                entry.code === "LOCKED_SESSION_DATE_CHANGED" || entry.code === "CASE_FINALIZED");
+            if (hardStops.length > 0) {
                 throw new ConflictException({
                     ...codeOnlyProblemBody("REQUEST_CONFLICT"),
-                    blockingReasons: lockedReasons,
+                    blockingReasons: hardStops,
                 });
             }
         }
@@ -1043,6 +1019,12 @@ export class AdminServiceRecordEditService {
                 const value = headerChanges[key];
                 if (typeof value === "string") header[key as keyof typeof header] = value;
             }
+        }
+
+        // The boundary writes come from the same plan the preview's assignmentPeriods showed.
+        const resumePlan = isResumeDraft ? resolveResumeReplan(source, draft.changes, calendar)?.plan ?? null : null;
+        if (isResumeDraft && !resumePlan) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
         const bySession = sessionChangeMap(sourceChanges?.["sessions"]);
@@ -1159,9 +1141,21 @@ export class AdminServiceRecordEditService {
                 ? hasExistingContentDifference(sourceDay, patch)
                 : hasEffectiveFutureContent(patch);
         });
+        // A resume replan can have work left even when the session dates already match: an assignment
+        // boundary that still has to move, a handover of planned owners, a due time that is not yet
+        // the one for the new end date. Each of them is a write the preview showed.
+        const resumeFinalizationDueAt = resumePlan
+            ? getServiceRecordFinalizationDueAt(new Date(`${resumePlan.endDate}T00:00:00.000Z`)).toISOString()
+            : null;
+        const resumeWritesPending = resumePlan !== null && (
+            resumePlan.assignmentWrites.some((write) => write.datesChanged === true)
+            || hasPlannedOwnerDifference(provisional.before.sessions, provisional.after.sessions)
+            || !sameInstant(source.caseLifecycle.finalizationDueAt, resumeFinalizationDueAt)
+        );
         const changed = provisional.contentChanges.headerChanged
             || contentChanged
-            || hasPlannedDateDifference(provisional.before.sessions, provisional.after.sessions);
+            || hasPlannedDateDifference(provisional.before.sessions, provisional.after.sessions)
+            || resumeWritesPending;
         const periodChanged = provisional.after.startDate !== source.startDate
             || provisional.after.endDate !== source.endDate;
         const documentStatus = completeness === "partial"
@@ -1423,12 +1417,11 @@ export class AdminServiceRecordEditService {
             plannedSessions,
             sessions,
             newSessions,
-            assignments: assignmentWrites(
-                source,
-                provisional.after.startDate,
-                provisional.after.endDate,
-                new Set(provisional.provenance.map((range) => range.assignmentId)),
-            ),
+            // A resume replan writes the boundary the preview showed (same function); every
+            // other change keeps the outer-edge rule.
+            assignments: resumePlan
+                ? resumePlan.assignmentWrites
+                : confirmAssignmentWrites(source, provisional.after.sessions),
             revision: changed
                 ? {
                     branchId,
@@ -1466,6 +1459,12 @@ export class AdminServiceRecordEditService {
             receiptOperation,
             ...(clientServiceDays ? { clientServiceDays } : {}),
             ...(materializedPlannedSessions ? { materializedPlannedSessions } : {}),
+            ...(resumeFinalizationDueAt
+                ? {
+                    finalizationDueAt: resumeFinalizationDueAt,
+                    tokenExpiryMode: "raise_only" as const,
+                }
+                : {}),
         };
     }
 
@@ -1637,6 +1636,45 @@ export class AdminServiceRecordEditService {
                 holiday: serviceDays["holiday"] as boolean,
             },
             dates: dates as string[],
+        };
+    }
+
+    /** Shape of a resume replan; the dates are judged against the case by the schedule policy. */
+    private validateResumeReplan(raw: unknown): ServiceRecordEditResumeReplan {
+        const invalid = (pointer: string, code: "REQUIRED" | "INVALID_FORMAT", detail: string) =>
+            new BadRequestException(problemBody("VALIDATION_FAILED", { pointer, code, detail, location: "body" }));
+        if (!isPlainRecord(raw)) {
+            throw invalid("/resumeReplan", "INVALID_FORMAT", "재개 일정 재배치는 객체여야 해요.");
+        }
+        const fromSessionIndex = raw["fromSessionIndex"];
+        if (typeof fromSessionIndex !== "number" || !Number.isInteger(fromSessionIndex) || fromSessionIndex < 1) {
+            throw invalid("/resumeReplan/fromSessionIndex", "INVALID_FORMAT", "시작 회차는 1 이상의 정수여야 해요.");
+        }
+        const resumeDate = raw["resumeDate"];
+        if (typeof resumeDate !== "string" || !DATE_ONLY_PATTERN.test(resumeDate)) {
+            throw invalid("/resumeReplan/resumeDate", "INVALID_FORMAT", "재개일은 YYYY-MM-DD 형식이어야 해요.");
+        }
+        const outgoing = raw["outgoingLastServedDate"];
+        if (outgoing !== undefined && (typeof outgoing !== "string" || !DATE_ONLY_PATTERN.test(outgoing))) {
+            throw invalid(
+                "/resumeReplan/outgoingLastServedDate",
+                "INVALID_FORMAT",
+                "이전 관리사의 마지막 제공일은 YYYY-MM-DD 형식이어야 해요.",
+            );
+        }
+        const incoming = raw["incomingAssignmentId"];
+        if (incoming !== undefined && (typeof incoming !== "string" || incoming.length === 0 || incoming.length > 64)) {
+            throw invalid(
+                "/resumeReplan/incomingAssignmentId",
+                "INVALID_FORMAT",
+                "새로 맡는 관리사 배정 ID가 올바르지 않아요.",
+            );
+        }
+        return {
+            fromSessionIndex,
+            resumeDate,
+            ...(outgoing === undefined ? {} : { outgoingLastServedDate: outgoing as string }),
+            ...(incoming === undefined ? {} : { incomingAssignmentId: incoming as string }),
         };
     }
 

@@ -492,6 +492,18 @@ export interface ServiceRecordEditConfirmPlan {
      * a document or a start-date change.
      */
     materializedPlannedSessions?: { plannedSessions: ServiceRecordEditJsonValue; endDate: string | null };
+    /**
+     * When the case must be due for finalization, as an ISO instant. Set only by a resume
+     * replan (which moves the end date); the confirm never writes the column otherwise.
+     */
+    finalizationDueAt?: string;
+    /**
+     * `raise_only` keeps an active link token's later expiry: the confirm may only extend it.
+     * It applies to a `no_changes` plan too (with `endDate`): the raise still runs in the confirm
+     * transaction, without a revision. Absent keeps the unconditional write every other change
+     * kind uses, and a `no_changes` plan without it writes no token.
+     */
+    tokenExpiryMode?: "raise_only";
 }
 
 export interface ServiceRecordEditConfirmInput {
@@ -519,10 +531,35 @@ export interface ServiceRecordEditTransactionContext {
 export interface IServiceRecordEditRepository {
     /** Return the one active draft, creating it atomically when absent. */
     createOrResumeDraft(input: CreateServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft>;
+    /**
+     * Create the case's draft only when no ACTIVE draft exists, deciding that under the same case
+     * lock as `createOrResumeDraft`. Returns null (and creates nothing) when one exists, including
+     * one a concurrent writer just created; it never returns a draft this call did not create.
+     */
+    createDraftIfNoneActive(input: CreateServiceRecordEditDraftInput): Promise<ServiceRecordEditDraft | null>;
     findActiveDraft(branchId: string, serviceRecordCaseId: string): Promise<ServiceRecordEditDraft | null>;
     findDraft(branchId: string, serviceRecordCaseId: string, draftId: string): Promise<ServiceRecordEditDraft | null>;
     /** Find a draft by id without exposing whether another branch owns it. */
     findDraftById(branchId: string, draftId: string): Promise<ServiceRecordEditDraft | null>;
+    /**
+     * Read-only: the stored confirmation response of the CONFIRMED draft that `confirmedByUserId`
+     * confirmed with `idempotencyKey` in this branch, or null. Never confirms or mutates anything.
+     */
+    findConfirmedDraftByIdempotencyKey(
+        branchId: string,
+        confirmedByUserId: string,
+        idempotencyKey: string,
+    ): Promise<{ confirmationResponse: ServiceRecordEditJsonValue | null } | null>;
+    /**
+     * Read-only: the snapshot the confirm hands its `prepare` callback (draft, branch-owned source,
+     * private revision facts), loaded with the same readers but without taking the confirm's locks
+     * or writing anything. Null when the draft or its case is not in the branch.
+     */
+    loadConfirmSnapshot(
+        branchId: string,
+        draftId: string,
+        serviceRecordTemplateIds?: readonly string[],
+    ): Promise<ServiceRecordEditConfirmSnapshot | null>;
     /** Capture a draft and its branch-owned source in one repeatable-read operation. */
     loadDraftWithSource(
         branchId: string,

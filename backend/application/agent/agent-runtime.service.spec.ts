@@ -1,8 +1,10 @@
+import { Logger } from "@nestjs/common";
 import { z } from "zod";
 
 import { AgentEntitySelectPartSchema, CLIENT_WRITE_FIELD_NAMES, type AgentTask } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
 import { AgentRuntimeService, buildAuthoritativeModelMessages, buildWriteToolInputSchema, deriveMissingFields, describeAgentStreamError, redactModelValue } from "./agent-runtime.service";
+import { AgentActionCertainFailureError, AgentActionQuestionError } from "./action-coordinator.service";
 import { DECISION_KINDS, DECISION_MODES } from "./decision/decision-contracts";
 import { createDecisionTraceCollector } from "./decision/decision-trace";
 
@@ -1571,6 +1573,113 @@ describe("AgentRuntimeService", () => {
         });
     });
 
+    it.each(["question", "failure", "proposal"] as const)("handles a write %s without changing other stop behaviour", async (outcome) => {
+        const capability = {
+            ...buildEntityCapability("service-records.edit", "service-records", jest.fn()),
+            meta: { ...buildEntityCapability("service-records.edit", "service-records", jest.fn()).meta,
+                risk: "reversible-write" as const, sideEffect: true, renderer: "action-proposal" as const,
+                approvalPolicy: "structured" as const, idempotencyPolicy: "action-id" as const },
+        };
+        const candidates = [{ employeeId: 188, employeeName: "QA관리사B" }];
+        const message = "재개 후 일할 관리사를 정해야 해요. 누구인지 물어보세요.";
+        const actions = { propose: jest.fn().mockImplementation(async () => {
+            if (outcome === "question") throw new AgentActionQuestionError("INCOMING_ASSIGNMENT_REQUIRED", message, candidates);
+            if (outcome === "failure") throw new AgentActionCertainFailureError("실제 실패");
+            return { id: "action-1", capability: "service-records.edit", proposal: {}, expiresAt: new Date("2027-01-01"),
+                proposalRevision: "revision", risk: "reversible-write", branchId: "branch-a" };
+        }) };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-question", selectedEntities: {}, messages: [] }),
+            update: jest.fn(), appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const model = new DeterministicAgentLanguageModel([
+            { type: "tool-call", toolName: "service-records_edit", input: {} },
+            { type: "text", text: "어느 관리사님이 맡으시나요?" },
+        ]);
+        const streamSpy = jest.spyOn(model, "doStream");
+        const runtime = new AgentRuntimeService(
+            {} as never, { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never, sessions as never,
+            { modelId: model.modelId, providerOptions: () => ({}), create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["service-records"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-question", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            actions as never,
+        );
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" }, locale: "ko",
+            messages: [{ id: "message-question", role: "user", parts: [{ type: "text", text: "제공기록지를 정정해줘" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) { const next = await reader.read(); if (next.done) break; chunks.push(next.value); }
+        expect(actions.propose).toHaveBeenCalledTimes(1);
+        expect(streamSpy).toHaveBeenCalledTimes(outcome === "question" ? 2 : 1);
+        if (outcome === "question") {
+            const output = { kind: "needs-input", code: "INCOMING_ASSIGNMENT_REQUIRED", message, candidates };
+            expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-output-available", output }));
+            expect(JSON.stringify(streamSpy.mock.calls[1])).toContain(message);
+            expect(JSON.stringify(sessions.appendMessages.mock.calls)).toContain("어느 관리사님이 맡으시나요?");
+        }
+        expect(chunks.some((chunk) => (chunk as { type: string }).type === "data-action-proposal")).toBe(outcome === "proposal");
+        if (outcome === "failure") {
+            expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-output-error", errorText: "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요." }));
+        }
+    });
+
+    it("stops when one of two write calls needs input and the other proposes in the same step", async () => {
+        const base = buildEntityCapability("service-records.edit", "service-records", jest.fn());
+        const capability = {
+            ...base,
+            meta: { ...base.meta, risk: "reversible-write" as const, sideEffect: true, renderer: "action-proposal" as const,
+                approvalPolicy: "structured" as const, idempotencyPolicy: "action-id" as const },
+            inputSchema: z.object({ incomingEmployeeId: z.number().optional() }),
+        };
+        const question = new AgentActionQuestionError("INCOMING_ASSIGNMENT_REQUIRED", "어느 관리사님이 맡으시나요?");
+        const actions = { propose: jest.fn().mockImplementation(async ({ input }: { input: { incomingEmployeeId?: number } }) => {
+            if (input.incomingEmployeeId === undefined) throw question;
+            return { id: "action-mixed", capability: "service-records.edit", proposal: {}, expiresAt: new Date("2027-01-01"),
+                proposalRevision: "revision", risk: "reversible-write", branchId: "branch-a" };
+        }) };
+        const sessions = {
+            create: jest.fn().mockResolvedValue({ id: "session-mixed", selectedEntities: {}, messages: [] }),
+            update: jest.fn(), appendMessages: jest.fn().mockResolvedValue(undefined),
+        };
+        const model = new DeterministicAgentLanguageModel([{ type: "text", text: "이 단계는 실행되면 안 됩니다." }]);
+        const streamSpy = jest.spyOn(model, "doStream").mockImplementationOnce(async () => ({
+            stream: new ReadableStream({
+                start(controller) {
+                    const parts = [
+                        { type: "stream-start", warnings: [] },
+                        { type: "tool-call", toolCallId: "mixed-question", toolName: "service-records_edit", input: "{}" },
+                        { type: "tool-call", toolCallId: "mixed-proposal", toolName: "service-records_edit", input: JSON.stringify({ incomingEmployeeId: 188 }) },
+                        { type: "finish", usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } }, finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+                    ];
+                    for (const part of parts) controller.enqueue(part);
+                    controller.close();
+                },
+            }),
+        }));
+        const runtime = new AgentRuntimeService(
+            {} as never, { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never, sessions as never,
+            { modelId: model.modelId, providerOptions: () => ({}), create: () => model } as never,
+            { route: jest.fn().mockResolvedValue({ domains: ["service-records"], capabilities: [capability] }) } as never,
+            { start: jest.fn().mockResolvedValue({ id: "trace-mixed", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+            actions as never,
+        );
+        const result = await runtime.stream({
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" }, locale: "ko",
+            messages: [{ id: "message-mixed", role: "user", parts: [{ type: "text", text: "제공기록지를 정정해줘" }] }] as never,
+        });
+        const chunks: unknown[] = [];
+        const reader = result.stream.getReader();
+        while (true) { const next = await reader.read(); if (next.done) break; chunks.push(next.value); }
+
+        expect(actions.propose).toHaveBeenCalledTimes(2);
+        expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-output-available", toolCallId: "mixed-question",
+            output: expect.objectContaining({ kind: "needs-input", code: question.code }) }));
+        expect(chunks).toContainEqual(expect.objectContaining({ type: "data-action-proposal", data: expect.objectContaining({ actionId: "action-mixed" }) }));
+        expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("emits a recovery form when a write tool omits canonical required input", async () => {
         const capability = {
             meta: {
@@ -1700,6 +1809,86 @@ describe("AgentRuntimeService", () => {
             }),
         ]));
         expect(chunks).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "data-form" })]));
+    });
+
+    describe("action proposal preview", () => {
+        const preview = { sections: [{ title: "회차 날짜", rows: [{ label: "1회차", before: "2026-08-03", after: "2026-08-04", note: "휴일입니다" }] }] };
+
+        async function proposalDataFor(proposalExtras: Record<string, unknown>) {
+            const capability = {
+                meta: {
+                    name: "clients.update", domain: "clients", version: "1.0.0", description: "Update client",
+                    risk: "reversible-write" as const, requiredRoles: ["admin"], renderer: "action-proposal" as const,
+                    flagKey: "agent.capability.clients.update", sideEffect: true,
+                    approvalPolicy: "structured" as const, idempotencyPolicy: "action-id" as const,
+                },
+                inputSchema: z.object({ id: z.number() }),
+                outputSchema: z.object({ status: z.string() }),
+                execute: jest.fn(),
+            };
+            const actions = {
+                propose: jest.fn().mockResolvedValue({
+                    id: "action-preview", capability: "clients.update",
+                    proposal: { title: "Update client", summary: "Update client", input: { id: 3 }, ...proposalExtras },
+                    targetSnapshot: null, expiresAt: new Date("2026-08-03T01:00:00.000Z"), proposalRevision: "revision-preview",
+                    risk: "reversible-write", branchId: "branch-a", status: "proposed",
+                }),
+            };
+            const sessions = {
+                create: jest.fn().mockResolvedValue({ id: "session-preview", selectedEntities: {}, messages: [] }),
+                update: jest.fn(),
+                appendMessages: jest.fn().mockResolvedValue(undefined),
+            };
+            const runtime = new AgentRuntimeService(
+                {} as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                sessions as never,
+                { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => new DeterministicAgentLanguageModel([{ type: "tool-call", toolName: "clients_update", input: { id: 3 } }]) } as never,
+                { route: jest.fn().mockResolvedValue({ domains: ["clients"], capabilities: [capability] }) } as never,
+                { start: jest.fn().mockResolvedValue({ id: "trace-preview", startedAt: Date.now() }), finish: jest.fn().mockResolvedValue(undefined) } as never,
+                actions as never,
+            );
+            const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+            try {
+                const result = await runtime.stream({
+                    principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+                    locale: "ko",
+                    messages: [{ id: "message-preview", role: "user", parts: [{ type: "text", text: "수정해줘" }] }] as never,
+                });
+                const chunks: Array<{ type?: string; data?: Record<string, unknown> }> = [];
+                const reader = result.stream.getReader();
+                while (true) {
+                    const next = await reader.read();
+                    if (next.done) break;
+                    chunks.push(next.value as never);
+                }
+                const part = chunks.find((chunk) => chunk.type === "data-action-proposal");
+                const previewWarnings = warn.mock.calls.filter(([message]) => typeof message === "string" && message.includes("approval preview"));
+                return { data: part?.data, previewWarnings };
+            } finally {
+                warn.mockRestore();
+            }
+        }
+
+        it("includes a valid stored preview in the proposal part without warning", async () => {
+            const { data, previewWarnings } = await proposalDataFor({ preview });
+            expect(data?.["preview"]).toEqual(preview);
+            expect(previewWarnings).toHaveLength(0);
+        });
+
+        it("omits the preview key when the proposal has none", async () => {
+            const { data, previewWarnings } = await proposalDataFor({});
+            expect(data).toBeDefined();
+            expect(data && "preview" in data).toBe(false);
+            expect(previewWarnings).toHaveLength(0);
+        });
+
+        it("omits an invalid stored preview and logs a warning instead of dropping it silently", async () => {
+            const { data, previewWarnings } = await proposalDataFor({ preview: { sections: [{ title: "x", rows: [{ label: "a", before: 1, after: null }] }] } });
+            expect(data).toBeDefined();
+            expect(data && "preview" in data).toBe(false);
+            expect(previewWarnings).toHaveLength(1);
+        });
     });
 
     it("binds structured form values server-side without exposing them to model tool input", async () => {

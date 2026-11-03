@@ -95,6 +95,43 @@ describe("AgentShell input composition", () => {
         });
     });
 
+    it("bounds the thread and scroll viewport while keeping the header and composer outside the scroll area", () => {
+        const { container } = render(<AgentShell />);
+        const shell = screen.getByRole("main");
+        const thread = container.querySelector('[data-component="desktop_chat_agent-shell_thread"]');
+        const scrollArea = container.querySelector('[data-slot="scroll-area"]');
+        const viewport = container.querySelector('[data-radix-scroll-area-viewport]');
+
+        // jsdom cannot measure overflow; the browser reproduction verifies actual scrolling.
+        expect(shell).toHaveClass("fixed", "inset-0", "grid", "grid-rows-[minmax(0,1fr)]");
+        expect(thread).toHaveClass("flex", "min-h-0", "flex-col");
+        expect(scrollArea).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+        expect(viewport).toHaveClass("h-full", "w-full");
+        expect(scrollArea?.parentElement).toBe(thread);
+        expect(container.querySelector('[data-component="desktop_chat_agent-shell_thread_header"]')?.parentElement).toBe(thread);
+        expect(container.querySelector('[data-component="desktop_chat_agent-shell_thread_composer"]')?.parentElement).toBe(thread);
+    });
+
+    it("keeps the mobile sidebar as a dismissible overlay", () => {
+        Object.defineProperty(window, "matchMedia", {
+            configurable: true,
+            value: jest.fn(() => ({ matches: true, addEventListener: jest.fn(), removeEventListener: jest.fn() })),
+        });
+        const { container } = render(<AgentShell />);
+        const menu = screen.getByRole("button", { name: "사이드바 열기" });
+        const sidebar = container.querySelector('[data-component="desktop_chat_agent-shell_sidebar"]');
+
+        expect(menu).toHaveAttribute("aria-expanded", "false");
+        expect(sidebar).toHaveClass("fixed", "inset-y-0", "md:static", "-translate-x-full");
+        fireEvent.click(menu);
+        expect(menu).toHaveAttribute("aria-expanded", "true");
+        expect(sidebar).toHaveFocus();
+        expect(screen.getByRole("button", { name: "사이드바 닫기" })).toHaveClass("fixed", "md:hidden");
+        fireEvent.keyDown(window, { key: "Escape" });
+        expect(menu).toHaveAttribute("aria-expanded", "false");
+        expect(menu).toHaveFocus();
+    });
+
     it("does not submit the composer while Korean IME is composing", () => {
         render(<AgentShell />);
         const composer = screen.getByRole("textbox", { name: "질문 입력" });

@@ -8,7 +8,8 @@ import {
 } from "@babyjamjam/shared/utils/service-record-schedule";
 
 import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
-import { assignmentWrites } from "application/services/admin-service-record-edit.service";
+import { confirmAssignmentWrites } from "application/policies/service-record-edit-preview.policy";
+import type { PeriodOwnershipDay } from "application/policies/service-record-period-ownership.policy";
 import {
     persistClientMessageAutomationIntent,
     persistScheduleMessageAutomationIntent,
@@ -336,12 +337,17 @@ export class ServiceRecordScheduleRealignmentService {
         }
         const schedules = await this.loadSchedules(tx, branchId, clientId);
         const storedAssignments = this.sourceAssignments(schedules);
-        const ownerAssignmentIds = new Set(entries.map((entry) => entry.assignmentId));
 
-        // Same rule the admin edit confirm uses: the outer edges follow the first and last planned dates.
-        let writes: ReturnType<typeof assignmentWrites>;
+        // Same rule the admin edit confirm uses: the outer edges follow the first and last planned dates
+        // of the assignments that bear a period. An assignment whose only sessions are kept writer slots
+        // (a replaced or terminated caregiver's row, dated outside her stored period) is no period: it
+        // keeps its stored dates and is never an edge. Every owner of the vector stays an owner.
+        let writes: ReturnType<typeof confirmAssignmentWrites>;
         try {
-            writes = assignmentWrites({ assignments: storedAssignments }, entries[0]!.serviceDate, endDate, ownerAssignmentIds);
+            writes = confirmAssignmentWrites(
+                { assignments: storedAssignments, sessions: this.dayEvidence(days) },
+                entries,
+            );
         } catch (error) {
             if (error instanceof ServiceRecordEditConflictError) throw manualScheduleConflict();
             throw error;
@@ -549,7 +555,7 @@ export class ServiceRecordScheduleRealignmentService {
         });
     }
 
-    /** The assignment view `assignmentWrites` expects; built the way the edit source builds it. */
+    /** The assignment view `confirmAssignmentWrites` expects; built the way the edit source builds it. */
     private sourceAssignments(schedules: readonly ScheduleRow[]): ServiceRecordEditSourceAssignment[] {
         return schedules.map((schedule) => ({
             id: schedule.serviceRecordAssignment?.id ?? null,
@@ -571,6 +577,29 @@ export class ServiceRecordScheduleRealignmentService {
     }
 
     /**
+     * The day rows as writer evidence for the period-ownership rule: who wrote each row, and whether
+     * several rows share one session index (a duplicate is evidence, never read as a writer).
+     */
+    private dayEvidence(
+        days: readonly Prisma.service_record_dayGetPayload<Prisma.service_record_dayDefaultArgs>[],
+    ): PeriodOwnershipDay[] {
+        const counts = new Map<number, number>();
+        for (const day of days) {
+            const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
+            counts.set(sessionIndex, (counts.get(sessionIndex) ?? 0) + 1);
+        }
+        return days.map((day) => {
+            const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
+            return {
+                sessionIndex,
+                scheduleId: day.scheduleId ?? null,
+                employeeId: day.employeeId ?? null,
+                ambiguous: (counts.get(sessionIndex) ?? 0) > 1,
+            };
+        });
+    }
+
+    /**
      * A re-laid session that stood inside its own assignment's period must still
      * stand inside it afterwards. Moving it across a handover boundary would hand
      * the session to the other caregiver's period; that is the admin's call.
@@ -580,7 +609,7 @@ export class ServiceRecordScheduleRealignmentService {
         after: readonly ServiceRecordPlannedSession[],
         movedIndexes: readonly number[],
         stored: readonly ServiceRecordEditSourceAssignment[],
-        writes: ReturnType<typeof assignmentWrites>,
+        writes: ReturnType<typeof confirmAssignmentWrites>,
     ): void {
         for (const sessionIndex of movedIndexes) {
             const entry = after[sessionIndex - 1]!;

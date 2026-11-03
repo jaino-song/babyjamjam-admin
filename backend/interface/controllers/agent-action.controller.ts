@@ -1,4 +1,5 @@
 import { Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { agentPrincipalForHeaders, type AgentPrincipal } from "application/agent/agent-client-surface";
 import type { Request } from "express";
 
 import { ActionCoordinatorService } from "application/agent/action-coordinator.service";
@@ -57,10 +58,10 @@ export class AgentActionController {
         return { userId: principal.userId, branchId: principal.branchId };
     }
 
-    private principal(request: AgentActionRequest): VerifiedTenantPrincipal {
+    private principal(request: AgentActionRequest): AgentPrincipal {
         if (!request.tenant?.userId || !request.tenant.branchId) {
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
-        return request.tenant;
+        return agentPrincipalForHeaders(request.tenant, request.headers ?? {});
     }
 }

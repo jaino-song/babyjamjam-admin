@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { AgentFlagsService } from "./agent-flags.service";
@@ -8,7 +9,7 @@ import { AgentActionSweepLockService } from "infrastructure/locking/agent-action
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { AgentSessionService } from "./agent-session.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { ActionCoordinatorService, AgentActionCertainFailureError } from "./action-coordinator.service";
+import { ActionCoordinatorService, AgentActionCertainFailureError, AgentActionQuestionError } from "./action-coordinator.service";
 import { AGENT_ACTION_REPOSITORY } from "domain/repositories/agent-action.repository.interface";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease.mock";
@@ -105,6 +106,23 @@ describe("ActionCoordinatorService", () => {
         }).compile()).rejects.toThrow(new RegExp(expectedMissingDependency));
     });
 
+    it("propagates an answerable inspection refusal without creating an action", async () => {
+        const question = new AgentActionQuestionError("INCOMING_ASSIGNMENT_REQUIRED", "관리사를 골라 주세요.", [{ employeeId: 188, employeeName: "관리사B" }]);
+        expect(question).toBeInstanceOf(AgentActionCertainFailureError);
+        const definition = { ...capability(), inspect: jest.fn().mockRejectedValue(question) };
+        const prisma = { agent_action: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() } };
+        const repository = actionPersistence(prisma);
+        const service = new ActionCoordinatorService(
+            prisma as never, { get: () => definition } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never, {} as never,
+            sessionPersistence() as never, repository as never, createSchedulerLeaseMock(),
+        );
+        await expect(service.propose({ sessionId: "session-a", principal, capability: "clients.update", input: { id: 3 }, locale: "ko" })).rejects.toBe(question);
+        expect(repository.createInActiveSession).not.toHaveBeenCalled();
+        expect(prisma.agent_action.create).not.toHaveBeenCalled();
+        expect(definition.execute).not.toHaveBeenCalled();
+    });
+
     it("creates a random action identity with a bounded request dedupe key", async () => {
         const definition = capability();
         const sessions = sessionPersistence();
@@ -191,6 +209,66 @@ describe("ActionCoordinatorService", () => {
         expect(first.requestDedupeKey).toBe(duplicate.requestDedupeKey);
         expect(prisma.agent_action.create).toHaveBeenCalledTimes(1);
         expect(definition.canonicalizeInput).toHaveBeenCalledTimes(2);
+    });
+
+    describe("approval preview", () => {
+        const validPreview = {
+            sections: [{
+                title: "회차 날짜",
+                rows: [
+                    { label: "1회차", before: "2026-08-03", after: "2026-08-04" },
+                    { label: "2회차", before: null, after: "2026-08-05", note: "휴일입니다" },
+                ],
+            }],
+        };
+
+        function previewService(inspection: Record<string, unknown> | undefined) {
+            const definition = { ...capability(), ...(inspection ? { inspect: jest.fn().mockResolvedValue(inspection) } : {}) };
+            const prisma = { agent_action: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockImplementation(async ({ data }) => ({ ...data, createdAt: new Date(), updatedAt: new Date(), approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null, result: null, error: null, executedAt: null, resultPartPersistedAt: null, targetSnapshot: null })),
+            } };
+            const service = new ActionCoordinatorService(
+                prisma as never,
+                { get: jest.fn().mockReturnValue(definition) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence(prisma) as never,
+                createSchedulerLeaseMock(),
+            );
+            return { service, prisma };
+        }
+        const proposeInput = { sessionId: "session-a", principal, capability: "clients.update", input: { id: 3 }, locale: "ko" };
+
+        it("stores a valid inspect preview on the proposal", async () => {
+            const { service } = previewService({ preview: validPreview });
+            const action = await service.propose(proposeInput);
+            expect(action.proposal["preview"]).toEqual(validPreview);
+        });
+
+        it("fails closed without creating a proposal when the inspect preview is invalid", async () => {
+            const { service, prisma } = previewService({ preview: { sections: [{ title: "x", rows: [{ label: "a", before: "x".repeat(201), after: null }] }] } });
+            await expect(service.propose(proposeInput)).rejects.toThrow(/invalid approval preview/);
+            expect(prisma.agent_action.create).not.toHaveBeenCalled();
+        });
+
+        it("keeps the revision of a preview-less proposal byte-identical to the pre-preview shape", async () => {
+            const { service } = previewService({ title: "Update client", summary: "Apply" });
+            const action = await service.propose(proposeInput);
+            expect("preview" in action.proposal).toBe(false);
+            const legacyRevision = createHash("sha256").update(
+                // Hand-built stableJson of the pre-preview proposal (keys sorted).
+                `{"capability":"clients.update","capabilityVersion":"1.0.0","proposal":{"capability":"clients.update","estimatedCost":null,"input":{"id":3},"locale":"ko","provider":null,"summary":"Apply","targetSnapshot":null,"targetVersion":null,"title":"Update client"},"risk":"reversible-write"}`,
+            ).digest("hex");
+            expect(action.proposalRevision).toBe(legacyRevision);
+        });
+
+        it("changes the revision when a preview is attached", async () => {
+            const plain = await previewService({ title: "Update client", summary: "Apply" }).service.propose(proposeInput);
+            const withPreview = await previewService({ title: "Update client", summary: "Apply", preview: validPreview }).service.propose(proposeInput);
+            expect(withPreview.proposalRevision).not.toBe(plain.proposalRevision);
+        });
     });
 
     it("does not create an action for an archived or expired session", async () => {

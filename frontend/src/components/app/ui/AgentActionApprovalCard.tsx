@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { AgentActionPreview } from "@babyjamjam/shared";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -18,6 +19,8 @@ export type AgentActionApprovalCardProps = {
     branchId?: string;
     target?: Record<string, unknown>;
     changes: Record<string, unknown>;
+    /** Optional BEFORE -> AFTER tables rendered above the raw `changes`. */
+    preview?: AgentActionPreview;
     provider?: string;
     estimatedCost?: string;
     acknowledgementToken?: string;
@@ -38,7 +41,53 @@ export function omitMaskedContactKeys<T extends Record<string, unknown>>(value: 
     ) as Partial<T>;
 }
 
-export function AgentActionApprovalCard({ "data-component": dataComponent, actionId, capability, title, summary, expiresAt, expectedRevision, risk, branchId, target, changes, provider, estimatedCost, acknowledgementToken, terminal = false, contact, onApprove, onReject }: AgentActionApprovalCardProps) {
+const PREVIEW_EMPTY_VALUE = "—";
+
+function AgentActionPreviewTables({ "data-component": dataComponent, preview }: { "data-component": string; preview: AgentActionPreview }) {
+    return (
+        <div data-component={dataComponent} data-slot="preview" className="flex flex-col gap-3">
+            {preview.sections.map((section, sectionIndex) => (
+                <section key={sectionIndex} data-component={`${dataComponent}_section`} data-slot="preview-section" className="flex flex-col gap-1">
+                    <h4 data-component={`${dataComponent}_section_title`} className="text-xs font-semibold">{section.title}</h4>
+                    <div data-component={`${dataComponent}_section_scroll`} className="overflow-x-auto rounded border border-amber-300 bg-white/60">
+                        <table data-component={`${dataComponent}_section_table`} data-slot="preview-table" className="w-full text-xs">
+                            <thead data-component={`${dataComponent}_section_table_head`}>
+                                <tr data-component={`${dataComponent}_section_table_head_row`} className="border-b border-amber-300 text-left text-amber-800/70">
+                                    <th data-component={`${dataComponent}_section_table_head_label`} scope="col" className="px-2 py-1 font-medium">항목</th>
+                                    <th data-component={`${dataComponent}_section_table_head_before`} scope="col" className="px-2 py-1 font-medium">변경 전</th>
+                                    <th data-component={`${dataComponent}_section_table_head_after`} scope="col" className="px-2 py-1 font-medium">변경 후</th>
+                                </tr>
+                            </thead>
+                            <tbody data-component={`${dataComponent}_section_table_body`}>
+                                {section.rows.map((row, rowIndex) => {
+                                    const changed = row.before !== row.after;
+                                    return (
+                                        <tr
+                                            key={rowIndex}
+                                            data-component={`${dataComponent}_section_table_row`}
+                                            data-slot="preview-row"
+                                            data-changed={changed ? "true" : "false"}
+                                            className={changed ? "border-b border-amber-200 bg-amber-200/60 font-semibold last:border-b-0" : "border-b border-amber-200 last:border-b-0"}
+                                        >
+                                            <th data-component={`${dataComponent}_section_table_row_label`} scope="row" className="px-2 py-1 text-left font-medium">{row.label}</th>
+                                            <td data-component={`${dataComponent}_section_table_row_before`} className="px-2 py-1">{row.before ?? PREVIEW_EMPTY_VALUE}</td>
+                                            <td data-component={`${dataComponent}_section_table_row_after`} className="px-2 py-1">
+                                                {row.after ?? PREVIEW_EMPTY_VALUE}
+                                                {row.note && <p data-component={`${dataComponent}_section_table_row_note`} data-slot="preview-note" role="note" className="mt-0.5 font-medium text-red-700">{row.note}</p>}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            ))}
+        </div>
+    );
+}
+
+export function AgentActionApprovalCard({ "data-component": dataComponent, actionId, capability, title, summary, expiresAt, expectedRevision, risk, branchId, target, changes, preview, provider, estimatedCost, acknowledgementToken, terminal = false, contact, onApprove, onReject }: AgentActionApprovalCardProps) {
     const [now, setNow] = useState(0);
     const [acknowledged, setAcknowledged] = useState(false);
     useEffect(() => {
@@ -57,6 +106,7 @@ export function AgentActionApprovalCard({ "data-component": dataComponent, actio
                 <div data-component={`${dataComponent}_content_header`} data-slot="header" className="flex items-start justify-between gap-3"><div data-component={`${dataComponent}_content_header_identity`}><p data-component={`${dataComponent}_content_header_title`} className="text-sm font-semibold">{title}</p><p data-component={`${dataComponent}_content_header_capability`} className="text-xs opacity-75">{capability}</p></div><span data-component={`${dataComponent}_content_header_expiry`} data-slot="expiry" className="text-xs">{expired ? "만료됨" : `만료 ${new Date(expiresAt).toLocaleString()}`}</span></div>
                 <p data-component={`${dataComponent}_content_summary`} data-slot="summary" className="whitespace-pre-wrap text-sm">{summary}</p>
                 {contact}
+                {preview && <AgentActionPreviewTables data-component={`${dataComponent}_content_preview`} preview={preview} />}
                 <dl data-component={`${dataComponent}_content_details`} data-slot="details" className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                     {risk && <><dt data-component={`${dataComponent}_content_details_risk-label`} className="text-amber-800/70">위험도</dt><dd data-component={`${dataComponent}_content_details_risk-value`}>{risk}</dd></>}
                     {branchId && <><dt data-component={`${dataComponent}_content_details_branch-label`} className="text-amber-800/70">지점</dt><dd data-component={`${dataComponent}_content_details_branch-value`} className="truncate">{branchId}</dd></>}

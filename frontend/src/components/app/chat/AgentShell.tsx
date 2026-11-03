@@ -133,7 +133,7 @@ export function AgentShell() {
     };
 
     return (
-        <main data-component="desktop_chat_agent-shell" data-source-component="AgentShell" className="fixed inset-0 z-[1200] grid grid-cols-[auto_1fr] bg-background">
+        <main data-component="desktop_chat_agent-shell" data-source-component="AgentShell" className="fixed inset-0 z-[1200] grid grid-cols-[auto_1fr] grid-rows-[minmax(0,1fr)] bg-background">
             {sidebarOpen && <Button type="button" variant="ghost" aria-label="사이드바 닫기" onClick={() => setMobileSidebarOpen(false)} className="fixed inset-y-0 left-64 right-0 z-10 h-auto w-auto rounded-none bg-black/20 p-0 hover:bg-black/20 md:hidden" />}
             <aside ref={sidebarRef} tabIndex={-1} aria-hidden={!sidebarOpen} inert={!sidebarOpen} data-component="desktop_chat_agent-shell_sidebar" id="agent-shell-sidebar" className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full md:w-0 md:overflow-hidden"} fixed inset-y-0 left-0 z-20 w-64 border-r bg-card transition-[width,transform] duration-200 md:static md:block md:translate-x-0`}>
                 <div data-component="desktop_chat_agent-shell_sidebar_header" className="flex items-center justify-between p-4"><span className="font-semibold">대화</span><Button type="button" variant="ghost" size="icon" aria-label="새 대화" onClick={() => { resetBranch(); closeSidebarOnMobile(); }}><Plus className="h-4 w-4" /></Button></div>
@@ -152,7 +152,7 @@ export function AgentShell() {
                 </div>
                 <div data-slot="sidebar-description" className="p-4 text-sm text-muted-foreground">권한에 따라 조회와 승인 작업을 지원합니다.</div>
             </aside>
-            <section data-component="desktop_chat_agent-shell_thread" className="flex min-w-0 flex-col">
+            <section data-component="desktop_chat_agent-shell_thread" className="flex min-h-0 min-w-0 flex-col">
                 <header data-component="desktop_chat_agent-shell_thread_header" className="flex items-center gap-2 border-b bg-card px-4 py-3">
                     <Button ref={menuButtonRef} type="button" variant="ghost" size="icon" aria-label="사이드바 열기" aria-expanded={sidebarOpen} aria-controls="agent-shell-sidebar" onClick={toggleSidebar}><Menu className="h-4 w-4" /></Button>
                     <Button type="button" variant="ghost" size="icon" aria-label="기존 채팅으로 돌아가기" onClick={() => window.history.back()}><ArrowLeft className="h-4 w-4" /></Button>

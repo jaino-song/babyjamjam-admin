@@ -16,6 +16,7 @@ import { ScheduleChangeService } from "application/services/schedule-change.serv
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
+import { ServiceRecordEditAgentCapabilitiesProvider } from "application/usecases/service-record/service-record-edit-agent-capabilities.provider";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { ServiceRecordFinalizationSchedulerService } from "application/services/service-record-finalization-scheduler.service";
@@ -55,6 +56,7 @@ import { HolidayModule } from "./holiday.module";
         OwnerOrAdminGuard,
         BranchManagerGuard,
         ServiceRecordGuard,
+        ServiceRecordEditAgentCapabilitiesProvider,
         { provide: SERVICE_RECORD_EDIT_REPOSITORY, useClass: ServiceRecordEditRepository },
     ],
     exports: [

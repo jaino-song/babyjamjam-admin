@@ -18,6 +18,7 @@ import type {
     ServiceRecordEditSource,
     ServiceRecordEditConfirmPlan,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import { mapHttpProblem } from "infrastructure/filters/problem-response";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 import type { Request, Response } from "express";
@@ -2118,9 +2119,9 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         id: "aaaaaaaa-0000-4000-8000-00000000000a",
         scheduleId: 701,
         employeeId: 31,
-        employeeName: "공혜순",
+        employeeName: "가상관리사갑",
         primaryEmployeeId: 31,
-        primaryEmployeeName: "공혜순",
+        primaryEmployeeName: "가상관리사갑",
         startDate: "2026-10-01",
         endDate: "2026-10-14",
         scheduleStartDate: "2026-10-01",
@@ -2132,9 +2133,9 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         id: "bbbbbbbb-0000-4000-8000-00000000000b",
         scheduleId: 702,
         employeeId: 32,
-        employeeName: "임선녀",
+        employeeName: "가상관리사을",
         primaryEmployeeId: 32,
-        primaryEmployeeName: "임선녀",
+        primaryEmployeeName: "가상관리사을",
         startDate: "2026-10-14",
         endDate: "2026-10-23",
         scheduleStartDate: "2026-10-14",
@@ -3612,6 +3613,979 @@ describe("AdminServiceRecordEditService service-day schedule replacement", () =>
                     response: expect.objectContaining({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED", sourceChanged: true }),
                 }),
             );
+        });
+    });
+});
+
+describe("AdminServiceRecordEditService resume replan", () => {
+    // The real incident with synthetic ids: A served 10-01, was replaced when service resumed on 10-14 with B.
+    const A_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const B_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const OLD_DATES = [
+        "2026-10-01", "2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-12", "2026-10-13",
+        "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23",
+    ];
+    // Written down by hand from the calendar, not computed with the code under test.
+    const NEW_DATES = [
+        "2026-10-01", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21",
+        "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-11-02",
+    ];
+    const golden = { fromSessionIndex: 2, resumeDate: "2026-10-14" };
+
+    function goldenSource(status = "IN_PROGRESS"): ServiceRecordEditSource {
+        const base = previewSourceSnapshot();
+        const row = (index: number) => ({
+            ...base.sessions[0]!,
+            id: `day-${index}`,
+            sourceRowId: `day-${index}`,
+            scheduleId: index === 1 ? 55 : 56,
+            sessionIndex: index,
+            rawCaseSessionIndex: index,
+            rawSessionIndex: index,
+            serviceDate: OLD_DATES[index - 1]!,
+            answers: { bath: "실시" },
+            notes: `메모 ${index}`,
+            momApproval: "approved",
+            clientSignature: "signature",
+            clientSignedAt: `${NEW_DATES[index - 1]}T09:00:00.000Z`,
+            locked: true,
+            // 18:00 KST on the date the session is about to get, so the golden case has no warnings.
+            submittedAt: `${NEW_DATES[index - 1]}T09:00:00.000Z`,
+            employeeId: index === 1 ? 9 : 10,
+            employeeNameSnapshot: index === 1 ? "관리사A" : "관리사B",
+        });
+        const assignmentA = {
+            ...base.assignments[0]!,
+            id: A_ID, scheduleId: 55, employeeId: 9, employeeName: "관리사A", primaryEmployeeId: 9, primaryEmployeeName: "관리사A",
+            startDate: "2026-10-01", endDate: "2026-10-14", scheduleStartDate: "2026-10-01", scheduleEndDate: "2026-10-14", replaced: true,
+        };
+        const assignmentB = {
+            ...assignmentA,
+            id: B_ID, scheduleId: 56, employeeId: 10, employeeName: "관리사B", primaryEmployeeId: 10, primaryEmployeeName: "관리사B",
+            startDate: "2026-10-14", endDate: "2026-10-23", scheduleStartDate: "2026-10-14", scheduleEndDate: "2026-10-23", replaced: false,
+        };
+        return {
+            ...base,
+            caseLifecycle: { ...base.caseLifecycle, status, finalizationDueAt: "2026-10-23T11:00:00.000Z" },
+            requiredSessionCount: OLD_DATES.length,
+            startDate: OLD_DATES[0]!,
+            endDate: OLD_DATES.at(-1)!,
+            client: { ...base.client, startDate: OLD_DATES[0]!, endDate: OLD_DATES.at(-1)! },
+            sessions: OLD_DATES.map((_date, offset) => row(offset + 1)),
+            assignments: [assignmentA, assignmentB],
+            plannedSessions: OLD_DATES.map((serviceDate, offset) => ({
+                sessionIndex: offset + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: offset === 0 ? A_ID : B_ID,
+                scheduleId: offset === 0 ? 55 : 56,
+                employeeId: offset === 0 ? 9 : 10,
+                provenanceVersion: "case-7",
+            })),
+        } as ServiceRecordEditSource;
+    }
+
+    /**
+     * Resume day: only session 1 is written (by A) and the persisted vector still gives every session
+     * to A, because the replacement flow never rewrites it. B took over on 10-14 and is active.
+     */
+    function resumeDaySource(): ServiceRecordEditSource {
+        const base = goldenSource();
+        return {
+            ...base,
+            sessions: base.sessions.slice(0, 1),
+            plannedSessions: OLD_DATES.map((serviceDate, offset) => ({
+                sessionIndex: offset + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: A_ID,
+                scheduleId: 55,
+                employeeId: 9,
+                provenanceVersion: "case-7",
+            })),
+        } as ServiceRecordEditSource;
+    }
+
+    /** The golden incident after its dates were already corrected by hand, but not its assignment boundary. */
+    function datesOnlyCorrectedSource(overrides: { aEnd?: string; dueAt?: string } = {}): ServiceRecordEditSource {
+        const base = goldenSource();
+        return {
+            ...base,
+            caseLifecycle: { ...base.caseLifecycle, finalizationDueAt: overrides.dueAt ?? "2026-11-02T11:00:00.000Z" },
+            endDate: "2026-11-02",
+            client: { ...base.client, endDate: "2026-11-02" },
+            sessions: base.sessions.map((session) => ({ ...session, serviceDate: NEW_DATES[session.sessionIndex - 1]! })),
+            assignments: base.assignments.map((assignment) => (assignment.id === A_ID
+                ? { ...assignment, endDate: overrides.aEnd ?? "2026-10-14", scheduleEndDate: overrides.aEnd ?? "2026-10-14" }
+                : { ...assignment, endDate: "2026-11-02", scheduleEndDate: "2026-11-02" })),
+            plannedSessions: (base.plannedSessions as Array<Record<string, unknown>>).map((entry) => ({
+                ...entry,
+                serviceDate: NEW_DATES[(entry["sessionIndex"] as number) - 1],
+            })),
+        } as ServiceRecordEditSource;
+    }
+
+    async function rejection(run: () => Promise<unknown>): Promise<BadRequestException> {
+        try {
+            await run();
+        } catch (error) {
+            if (error instanceof BadRequestException) return error;
+            throw error;
+        }
+        throw new Error("expected a BadRequestException");
+    }
+
+    function patch(harness: ReturnType<typeof createHarness>, dto: Record<string, unknown>) {
+        return harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, { expectedDraftVersion: 1, changes: {}, ...dto } as never);
+    }
+
+    function savedChanges(harness: ReturnType<typeof createHarness>) {
+        return (harness.repository.updateDraft.mock.calls.at(-1)?.[0] as { changes: Record<string, unknown> }).changes;
+    }
+
+    async function conflictBody(run: () => Promise<unknown>): Promise<Record<string, unknown>> {
+        try {
+            await run();
+        } catch (error) {
+            if (error instanceof ConflictException) return error.getResponse() as Record<string, unknown>;
+            throw error;
+        }
+        throw new Error("expected a ConflictException");
+    }
+
+    /** Previews a stored draft, confirms it with that preview id and returns the plan `prepare` builds. */
+    async function previewAndConfirm(
+        source: ServiceRecordEditSource,
+        changes: Record<string, unknown>,
+        confirmSource: ServiceRecordEditSource = source,
+    ) {
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = { ...started.draft, changes };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            prepare: (snapshot: { draft: unknown; source: ServiceRecordEditSource }) => ServiceRecordEditConfirmPlan;
+        };
+        return {
+            harness,
+            preview,
+            activeDraft,
+            prepare: () => input.prepare({ draft: activeDraft, source: confirmSource }),
+        };
+    }
+
+    async function goldenChanges(source = goldenSource()) {
+        const harness = createHarness({ source });
+        await patch(harness, { resumeReplan: golden });
+        return savedChanges(harness);
+    }
+
+    describe("PATCH", () => {
+        it("stores the marker and the re-planned dates, and never serviceDays", async () => {
+            const harness = createHarness({ source: goldenSource() });
+            await patch(harness, { resumeReplan: golden });
+            expect(savedChanges(harness)).toEqual({
+                resumeReplan: golden,
+                sessions: NEW_DATES.slice(1).map((serviceDate, offset) => ({ sessionIndex: offset + 2, serviceDate })),
+            });
+        });
+
+        it("still requires a changes object next to a resumeReplan", async () => {
+            const harness = createHarness({ source: goldenSource() });
+            await expect(harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: 1,
+                resumeReplan: golden,
+            } as never)).rejects.toBeInstanceOf(BadRequestException);
+        });
+
+        it.each([
+            ["a Saturday resume date", { fromSessionIndex: 2, resumeDate: "2026-10-17" }, "RESUME_DATE_NOT_BUSINESS_DAY"],
+            ["a resume date on the last kept session", { fromSessionIndex: 2, resumeDate: "2026-10-01" }, "INVALID_DATE"],
+            ["an impossible resume date", { fromSessionIndex: 2, resumeDate: "2026-02-30" }, "INVALID_DATE"],
+            ["a session index past N", { fromSessionIndex: 16, resumeDate: "2026-10-14" }, "INVALID_SESSION_INDEX"],
+            ["an out-of-range last served date", { ...golden, outgoingLastServedDate: "2026-10-14" }, "OUTGOING_LAST_SERVED_OUT_OF_RANGE"],
+            ["a last served date from session 1", { fromSessionIndex: 1, resumeDate: "2026-10-02", outgoingLastServedDate: "2026-10-01" }, "OUTGOING_LAST_SERVED_OUT_OF_RANGE"],
+            ["a date in an unpopulated holiday year", { fromSessionIndex: 2, resumeDate: "2029-01-03" }, "UNSUPPORTED_HOLIDAY_YEAR"],
+        ])("answers %s with 400 and the scheduleCode %s", async (_label, resumeReplan, scheduleCode) => {
+            const harness = createHarness({ source: goldenSource() });
+            const error = await rejection(() => patch(harness, { resumeReplan }));
+            expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        });
+
+        it("rejects an outgoing last served date when one caregiver owns every session", async () => {
+            const source = goldenSource();
+            source.plannedSessions = (source.plannedSessions as Array<Record<string, unknown>>)
+                .map((entry) => ({ ...entry, assignmentId: B_ID, scheduleId: 56, employeeId: 10 }));
+            source.sessions = source.sessions.map((session) => ({ ...session, scheduleId: 56, employeeId: 10 }));
+            const harness = createHarness({ source });
+            const error = await rejection(() => patch(harness, { resumeReplan: { ...golden, outgoingLastServedDate: "2026-10-08" } }));
+            expect(error.getResponse()).toMatchObject({ scheduleCode: "OUTGOING_LAST_SERVED_OUT_OF_RANGE" });
+        });
+
+        it("stores the incoming assignment in the marker and carries it through a header-only save", async () => {
+            const input = { ...golden, incomingAssignmentId: B_ID };
+            const harness = createHarness({ source: resumeDaySource() });
+            await patch(harness, { resumeReplan: input });
+            const stored = savedChanges(harness);
+            expect(stored["resumeReplan"]).toEqual(input);
+            expect(stored["sessions"]).toEqual(NEW_DATES.slice(1).map((serviceDate, offset) => ({ sessionIndex: offset + 2, serviceDate })));
+            harness.repository.findDraftById.mockResolvedValue(draft({ changes: stored }));
+            await patch(harness, { changes: { header: { momName: "수정" } } });
+            expect(savedChanges(harness)["resumeReplan"]).toEqual(input);
+        });
+
+        it("hands the sessions over on resume day without an explicit caregiver", async () => {
+            const harness = createHarness({ source: resumeDaySource() });
+            await patch(harness, { resumeReplan: golden });
+            expect(savedChanges(harness)["resumeReplan"]).toEqual(golden);
+        });
+
+        it.each([
+            ["the outgoing assignment", A_ID],
+            ["an unknown assignment", "ffffffff-ffff-4fff-8fff-ffffffffffff"],
+        ])("answers %s as incomingAssignmentId with INCOMING_ASSIGNMENT_INVALID", async (_label, incomingAssignmentId) => {
+            const harness = createHarness({ source: resumeDaySource() });
+            const error = await rejection(() => patch(harness, { resumeReplan: { ...golden, incomingAssignmentId } }));
+            expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode: "INCOMING_ASSIGNMENT_INVALID" });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        });
+
+        it("rejects a replaced assignment as the incoming caregiver", async () => {
+            const source = resumeDaySource();
+            source.assignments = source.assignments.map((assignment) => (assignment.id === B_ID ? { ...assignment, replaced: true } : assignment));
+            const harness = createHarness({ source });
+            const error = await rejection(() => patch(harness, { resumeReplan: { ...golden, incomingAssignmentId: B_ID } }));
+            expect(error.getResponse()).toMatchObject({ scheduleCode: "INCOMING_ASSIGNMENT_INVALID" });
+        });
+
+        it("lists the candidates when two live caregivers follow, and accepts an explicit choice", async () => {
+            const C_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+            const source = resumeDaySource();
+            source.assignments = [...source.assignments, {
+                ...source.assignments[1]!, id: C_ID, scheduleId: 57, employeeId: 11, employeeName: "관리사C", primaryEmployeeId: 11,
+                primaryEmployeeName: "관리사C",
+            }];
+            const harness = createHarness({ source });
+            const error = await rejection(() => patch(harness, { resumeReplan: golden }));
+            expect(error.getResponse()).toMatchObject({
+                code: "VALIDATION_FAILED",
+                scheduleCode: "INCOMING_ASSIGNMENT_REQUIRED",
+                candidates: [
+                    { assignmentId: B_ID, employeeName: "관리사B" },
+                    { assignmentId: C_ID, employeeName: "관리사C" },
+                ],
+            });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+            await patch(harness, { resumeReplan: { ...golden, incomingAssignmentId: C_ID } });
+            expect(savedChanges(harness)["resumeReplan"]).toEqual({ ...golden, incomingAssignmentId: C_ID });
+        });
+
+        it.each([
+            ["a numeric id", { ...golden, incomingAssignmentId: 5 }],
+            ["an empty id", { ...golden, incomingAssignmentId: "" }],
+        ])("refuses %s before reaching the policy", async (_label, resumeReplan) => {
+            const harness = createHarness({ source: resumeDaySource() });
+            const error = await rejection(() => patch(harness, { resumeReplan }));
+            expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED" });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        });
+
+        it("serializes the new codes onto the problem body", async () => {
+            const harness = createHarness({ source: goldenSource() });
+            const error = await rejection(() => patch(harness, { resumeReplan: { fromSessionIndex: 2, resumeDate: "2026-10-17" } }));
+            expect(mapHttpProblem(error, { method: "PATCH" } as Request, { locals: {} } as unknown as Response))
+                .toMatchObject({ code: "VALIDATION_FAILED", status: 400, scheduleCode: "RESUME_DATE_NOT_BUSINESS_DAY" });
+        });
+
+        it.each([
+            ["a malformed session index", { fromSessionIndex: "2", resumeDate: "2026-10-14" }],
+            ["a fractional session index", { fromSessionIndex: 2.5, resumeDate: "2026-10-14" }],
+            ["a missing resume date", { fromSessionIndex: 2 }],
+            ["a malformed resume date", { fromSessionIndex: 2, resumeDate: "10/14" }],
+            ["a malformed last served date", { fromSessionIndex: 2, resumeDate: "2026-10-14", outgoingLastServedDate: "x" }],
+        ])("refuses %s before reaching the policy", async (_label, resumeReplan) => {
+            const harness = createHarness({ source: goldenSource() });
+            const error = await rejection(() => patch(harness, { resumeReplan }));
+            expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED" });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        });
+
+        it("rejects a dateMove or a schedule in the same request", async () => {
+            const harness = createHarness({ source: goldenSource() });
+            for (const extra of [
+                { dateMove: { sessionIndex: 15, toDate: "2026-10-26" } },
+                { schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: OLD_DATES } },
+            ]) {
+                const error = await rejection(() => patch(harness, { resumeReplan: golden, ...extra }));
+                expect(error.getResponse()).toMatchObject({ scheduleCode: "RESUME_REPLAN_COMBINATION" });
+            }
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        });
+
+        it("rejects a resume replan on a draft that already carries a dateMove", async () => {
+            const source = goldenSource();
+            const first = createHarness({ source });
+            await patch(first, { dateMove: { sessionIndex: 15, toDate: "2026-10-26", shiftFollowing: false } });
+            const moved = savedChanges(first);
+            expect(moved["resumeReplan"]).toBeUndefined();
+            const harness = createHarness({ source });
+            harness.repository.findDraftById.mockResolvedValue(draft({ changes: moved }));
+            const error = await rejection(() => patch(harness, { resumeReplan: golden }));
+            expect(error.getResponse()).toMatchObject({ scheduleCode: "RESUME_REPLAN_COMBINATION" });
+        });
+
+        it("rejects a resume replan on a draft that already carries a schedule replacement", async () => {
+            const harness = createHarness({ source: goldenSource() });
+            harness.repository.findDraftById.mockResolvedValue(draft({
+                changes: { serviceDays: { saturday: false, sunday: false, holiday: false } },
+            }));
+            const error = await rejection(() => patch(harness, { resumeReplan: golden }));
+            expect(error.getResponse()).toMatchObject({ scheduleCode: "RESUME_REPLAN_COMBINATION" });
+        });
+
+        it.each([
+            ["a dateMove", { dateMove: { sessionIndex: 15, toDate: "2026-11-03" } }],
+            ["a schedule", { schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: NEW_DATES } }],
+            ["a serviceDate edit", { changes: { sessions: [{ sessionIndex: 3, serviceDate: "2026-10-20" }] } }],
+        ])("rejects %s after the marker", async (_label, extra) => {
+            const source = goldenSource();
+            const stored = await goldenChanges(source);
+            const harness = createHarness({ source });
+            harness.repository.findDraftById.mockResolvedValue(draft({ changes: stored }));
+            const error = await rejection(() => patch(harness, extra));
+            expect(error.getResponse()).toMatchObject({ scheduleCode: "RESUME_REPLAN_COMBINATION" });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        });
+
+        it("keeps the marker through a header-only save and a memo save", async () => {
+            const source = goldenSource();
+            const stored = await goldenChanges(source);
+            const harness = createHarness({ source });
+            harness.repository.findDraftById.mockResolvedValue(draft({ changes: stored }));
+            await patch(harness, { changes: { header: { momName: "수정" } } });
+            expect(savedChanges(harness)).toEqual({ ...stored, header: { momName: "수정" } });
+            await patch(harness, { changes: { sessions: [{ sessionIndex: 3, notes: "수정 메모" }] } });
+            expect(savedChanges(harness)).toMatchObject({
+                resumeReplan: golden,
+                sessions: expect.arrayContaining([{ sessionIndex: 3, serviceDate: NEW_DATES[2], notes: "수정 메모" }]),
+            });
+        });
+
+        it("replaces the first marker with a second resume replan computed from the source", async () => {
+            const source = goldenSource();
+            const stored = await goldenChanges(source);
+            const harness = createHarness({ source });
+            harness.repository.findDraftById.mockResolvedValue(draft({ changes: stored }));
+            const second = { fromSessionIndex: 3, resumeDate: "2026-10-15" };
+            await patch(harness, { resumeReplan: second });
+            const saved = savedChanges(harness);
+            expect(saved["resumeReplan"]).toEqual(second);
+            expect((saved["sessions"] as Array<Record<string, unknown>>)[0]).toEqual({ sessionIndex: 3, serviceDate: "2026-10-15" });
+            expect((saved["sessions"] as Array<Record<string, unknown>>).some((session) => session["sessionIndex"] === 2)).toBe(false);
+        });
+
+        it("never accepts the marker from the client under changes", async () => {
+            const harness = createHarness({ source: goldenSource() });
+            const error = await rejection(() => patch(harness, { changes: { resumeReplan: golden } }));
+            expect(error.getResponse()).toMatchObject({
+                errors: [expect.objectContaining({ pointer: "/changes/resumeReplan", code: "UNEXPECTED_FIELD" })],
+            });
+            await expect(harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+                changes: { resumeReplan: golden } as never,
+            })).rejects.toBeInstanceOf(BadRequestException);
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+            expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("preview and confirm", () => {
+        it("confirms the golden incident with every write the preview showed", async () => {
+            const source = goldenSource();
+            const { preview, prepare } = await previewAndConfirm(source, await goldenChanges(source));
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.warnings).toEqual([]);
+            expect(preview.assignmentPeriods).toEqual([
+                {
+                    assignmentId: A_ID,
+                    employeeName: "관리사A",
+                    before: { startDate: "2026-10-01", endDate: "2026-10-14" },
+                    after: { startDate: "2026-10-01", endDate: "2026-10-01" },
+                },
+                {
+                    assignmentId: B_ID,
+                    employeeName: "관리사B",
+                    before: { startDate: "2026-10-14", endDate: "2026-10-23" },
+                    after: { startDate: "2026-10-14", endDate: "2026-11-02" },
+                },
+            ]);
+
+            const plan = prepare();
+            expect(plan.status).toBe("confirmed");
+            expect(plan.startDate).toBe("2026-10-01");
+            expect(plan.endDate).toBe("2026-11-02");
+            expect(plan.finalizationDueAt).toBe("2026-11-02T11:00:00.000Z");
+            expect(plan.tokenExpiryMode).toBe("raise_only");
+            // Day rows get only a new date; content stays as read.
+            expect(plan.sessions.map((session) => session.serviceDate)).toEqual(NEW_DATES);
+            for (const [offset, session] of plan.sessions.entries()) {
+                expect(session).toMatchObject({
+                    sourceRowId: `day-${offset + 1}`,
+                    answers: { bath: "실시" },
+                    notes: `메모 ${offset + 1}`,
+                    paymentConfirmed: false,
+                });
+            }
+            expect(plan.newSessions).toEqual([]);
+            // originalDate stays on every planned session.
+            expect((plan.plannedSessions as Array<Record<string, unknown>>).map((entry) => entry["originalDate"])).toEqual(OLD_DATES);
+            expect((plan.plannedSessions as Array<Record<string, unknown>>).map((entry) => entry["serviceDate"])).toEqual(NEW_DATES);
+            expect(plan.assignments).toEqual([
+                { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: true },
+                { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-14", endDate: "2026-11-02", datesChanged: true },
+            ]);
+            // The writes are exactly what the approved preview showed.
+            expect(preview.assignmentPeriods?.map((period) => [period.assignmentId, period.after])).toEqual(
+                plan.assignments.map((write) => [write.assignmentId, { startDate: write.startDate, endDate: write.endDate }]),
+            );
+            expect(plan.revision).not.toBeNull();
+        });
+
+        it("confirms the resume-day handover: B owns sessions 2..15, A ends where it stopped", async () => {
+            const source = resumeDaySource();
+            const harness = createHarness({ source });
+            await patch(harness, { resumeReplan: golden });
+            const { preview, prepare } = await previewAndConfirm(source, savedChanges(harness));
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.warnings).toEqual([]);
+            expect(preview.assignmentPeriods).toEqual([
+                {
+                    assignmentId: A_ID,
+                    employeeName: "관리사A",
+                    before: { startDate: "2026-10-01", endDate: "2026-10-14" },
+                    after: { startDate: "2026-10-01", endDate: "2026-10-01" },
+                },
+                {
+                    assignmentId: B_ID,
+                    employeeName: "관리사B",
+                    before: { startDate: "2026-10-14", endDate: "2026-10-23" },
+                    after: { startDate: "2026-10-14", endDate: "2026-11-02" },
+                },
+            ]);
+            expect(preview.after.sessions.map((entry) => entry.assignmentId)).toEqual([A_ID, ...Array<string>(14).fill(B_ID)]);
+
+            const plan = prepare();
+            expect(plan.status).toBe("confirmed");
+            expect(plan.endDate).toBe("2026-11-02");
+            expect(plan.finalizationDueAt).toBe("2026-11-02T11:00:00.000Z");
+            expect(plan.tokenExpiryMode).toBe("raise_only");
+            const planned = plan.plannedSessions as Array<Record<string, unknown>>;
+            expect(planned.map((entry) => entry["serviceDate"])).toEqual(NEW_DATES);
+            expect(planned.map((entry) => entry["originalDate"])).toEqual(OLD_DATES);
+            expect(planned.map((entry) => entry["assignmentId"])).toEqual([A_ID, ...Array<string>(14).fill(B_ID)]);
+            expect(planned.slice(1).map((entry) => [entry["scheduleId"], entry["employeeId"]])).toEqual(
+                Array.from({ length: 14 }, () => [56, 10]),
+            );
+            expect(plan.assignments).toEqual([
+                { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: true },
+                { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-14", endDate: "2026-11-02", datesChanged: true },
+            ]);
+            // The one written row keeps its content and its writer.
+            expect(plan.sessions).toHaveLength(1);
+            expect(plan.sessions[0]).toMatchObject({ sourceRowId: "day-1", serviceDate: "2026-10-01" });
+        });
+
+        it("confirms the same resume-day handover with an explicit incomingAssignmentId", async () => {
+            const source = resumeDaySource();
+            const harness = createHarness({ source });
+            await patch(harness, { resumeReplan: { ...golden, incomingAssignmentId: B_ID } });
+            const { prepare } = await previewAndConfirm(source, savedChanges(harness));
+            expect(prepare().assignments).toEqual([
+                { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: true },
+                { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-14", endDate: "2026-11-02", datesChanged: true },
+            ]);
+        });
+
+        describe("a boundary-only correction", () => {
+            async function confirmPlanOf(source: ServiceRecordEditSource) {
+                const harness = createHarness({ source });
+                await patch(harness, { resumeReplan: golden });
+                return (await previewAndConfirm(source, savedChanges(harness))).prepare();
+            }
+
+            it("is confirmed, not skipped, when only an assignment end still has to move", async () => {
+                const source = datesOnlyCorrectedSource();
+                // The dates are already the corrected ones: nothing about the sessions differs.
+                expect((source.plannedSessions as Array<Record<string, unknown>>).map((entry) => entry["serviceDate"])).toEqual(NEW_DATES);
+                const plan = await confirmPlanOf(source);
+                expect(plan.status).toBe("confirmed");
+                expect(plan.revision).not.toBeNull();
+                expect(plan.assignments).toEqual([
+                    { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: true },
+                    { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-14", endDate: "2026-11-02", datesChanged: false },
+                ]);
+                expect(plan.finalizationDueAt).toBe("2026-11-02T11:00:00.000Z");
+            });
+
+            it("is confirmed when only the finalization due time is stale", async () => {
+                const plan = await confirmPlanOf(datesOnlyCorrectedSource({ aEnd: "2026-10-01", dueAt: "2026-10-23T11:00:00.000Z" }));
+                expect(plan.status).toBe("confirmed");
+                expect(plan.finalizationDueAt).toBe("2026-11-02T11:00:00.000Z");
+                expect(plan.assignments.every((write) => write.datesChanged === false)).toBe(true);
+            });
+
+            it("is confirmed when only the planned owners still have to be handed over", async () => {
+                const base = resumeDaySource();
+                const source = {
+                    ...base,
+                    endDate: "2026-11-02",
+                    caseLifecycle: { ...base.caseLifecycle, finalizationDueAt: "2026-11-02T11:00:00.000Z" },
+                    client: { ...base.client, endDate: "2026-11-02" },
+                    plannedSessions: (base.plannedSessions as Array<Record<string, unknown>>).map((entry) => ({
+                        ...entry,
+                        serviceDate: NEW_DATES[(entry["sessionIndex"] as number) - 1],
+                    })),
+                    assignments: base.assignments.map((assignment) => (assignment.id === A_ID
+                        ? { ...assignment, endDate: "2026-10-01", scheduleEndDate: "2026-10-01" }
+                        : { ...assignment, endDate: "2026-11-02", scheduleEndDate: "2026-11-02" })),
+                } as ServiceRecordEditSource;
+                const plan = await confirmPlanOf(source);
+                expect(plan.status).toBe("confirmed");
+                expect(plan.assignments.every((write) => write.datesChanged === false)).toBe(true);
+                expect((plan.plannedSessions as Array<Record<string, unknown>>).map((entry) => entry["assignmentId"]))
+                    .toEqual([A_ID, ...Array<string>(14).fill(B_ID)]);
+            });
+
+            it("plans no_changes with the raise-only token mode and the new end date when only the link is behind", async () => {
+                const plan = await confirmPlanOf(datesOnlyCorrectedSource({ aEnd: "2026-10-01" }));
+                expect(plan.status).toBe("no_changes");
+                expect(plan.endDate).toBe("2026-11-02");
+                expect(plan.tokenExpiryMode).toBe("raise_only");
+            });
+
+            it("raises the incoming caregiver's token through the real repository and closes the draft", async () => {
+                // Every derived value already matches; the token still expires 2026-10-23T15:00Z.
+                const source = datesOnlyCorrectedSource({ aEnd: "2026-10-01" });
+                const { activeDraft, harness } = await previewAndConfirm(source, await goldenChanges(source));
+                const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as Parameters<
+                    ServiceRecordEditRepository["confirmDraft"]
+                >[0];
+                const tokenUpdate = jest.fn().mockResolvedValue({ count: 1 });
+                const draftUpdate = jest.fn().mockResolvedValue({ count: 1 });
+                const tx = {
+                    $queryRaw: jest.fn().mockResolvedValue([]),
+                    service_record_edit_draft: {
+                        findFirst: jest.fn().mockResolvedValue(activeDraft),
+                        updateMany: draftUpdate,
+                    },
+                    service_record_case: { update: jest.fn() },
+                    client: { updateMany: jest.fn() },
+                    service_record_token: { updateMany: tokenUpdate },
+                };
+                const repository = new ServiceRecordEditRepository({
+                    $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+                } as never);
+                const internals = repository as unknown as {
+                    findDraftByIdWithClient: jest.Mock;
+                    loadSourceWithClient: jest.Mock;
+                };
+                jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+                jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+
+                const response = await repository.confirmDraft(input);
+
+                expect(response).toMatchObject({ status: "no_changes", revisionId: null });
+                expect(tokenUpdate).toHaveBeenCalledTimes(1);
+                expect(tokenUpdate).toHaveBeenCalledWith({
+                    where: {
+                        branchId: BRANCH_ID,
+                        serviceRecordCaseId: CASE_ID,
+                        active: true,
+                        revokedAt: null,
+                        expiresAt: { lt: new Date("2026-11-02T15:00:00.000Z") },
+                    },
+                    data: { expiresAt: new Date("2026-11-02T15:00:00.000Z") },
+                });
+                expect(tx.service_record_case.update).not.toHaveBeenCalled();
+                expect(draftUpdate).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ status: "CONFIRMED" }),
+                }));
+            });
+
+            it("stays no_changes when there truly is nothing to write", async () => {
+                const plan = await confirmPlanOf(datesOnlyCorrectedSource({ aEnd: "2026-10-01" }));
+                expect(plan.status).toBe("no_changes");
+                expect(plan.revision).toBeNull();
+            });
+        });
+
+        describe("a session kept by its writer", () => {
+            /** Resume day plus an A-written draft row for session 3, while session 2 has no row yet. */
+            function sparseWriterSource(): ServiceRecordEditSource {
+                const base = resumeDaySource();
+                return {
+                    ...base,
+                    sessions: [
+                        ...base.sessions,
+                        {
+                            ...goldenSource().sessions[2]!, scheduleId: 55, employeeId: 9, employeeNameSnapshot: "관리사A",
+                            locked: false, submittedAt: null, clientSignature: null, clientSignedAt: null,
+                        },
+                    ],
+                } as ServiceRecordEditSource;
+            }
+            const interleaved = [A_ID, B_ID, A_ID, ...Array<string>(12).fill(B_ID)];
+
+            it("confirms the explicit handover: A keeps session 3 on its new date, B takes the rest, nothing blocks", async () => {
+                const source = sparseWriterSource();
+                const harness = createHarness({ source });
+                await patch(harness, { resumeReplan: { ...golden, incomingAssignmentId: B_ID } });
+                const { preview, prepare } = await previewAndConfirm(source, savedChanges(harness));
+                expect(preview.blockingReasons).toEqual([]);
+                expect(preview.warnings?.map(({ code, sessionIndex, assignmentId }) => [code, sessionIndex, assignmentId]))
+                    .toEqual([["ASSIGNMENT_MISMATCH", 3, A_ID]]);
+
+                const plan = prepare();
+                expect(plan.status).toBe("confirmed");
+                const planned = plan.plannedSessions as Array<Record<string, unknown>>;
+                expect(planned.map((entry) => entry["assignmentId"])).toEqual(interleaved);
+                expect(planned.map((entry) => entry["serviceDate"])).toEqual(NEW_DATES);
+                expect(planned.map((entry) => entry["originalDate"])).toEqual(OLD_DATES);
+                // The row A wrote keeps its content and gets only the new date.
+                expect(plan.sessions.map(({ sourceRowId, serviceDate }) => [sourceRowId, serviceDate])).toEqual([
+                    ["day-1", "2026-10-01"],
+                    ["day-3", "2026-10-15"],
+                ]);
+                expect(plan.assignments).toEqual([
+                    { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: true },
+                    { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-14", endDate: "2026-11-02", datesChanged: true },
+                ]);
+                expect(plan.finalizationDueAt).toBe("2026-11-02T11:00:00.000Z");
+                expect(plan.tokenExpiryMode).toBe("raise_only");
+                expect(preview.assignmentPeriods?.map((period) => [period.assignmentId, period.after])).toEqual(
+                    plan.assignments.map((write) => [write.assignmentId, { startDate: write.startDate, endDate: write.endDate }]),
+                );
+            });
+
+            it("previews and confirms a header-only correction of the state that confirm leaves behind", async () => {
+                const base = sparseWriterSource();
+                // As written by the confirm above: dates re-planned, A ends on its last served day, B runs to 11-02.
+                const after = {
+                    ...base,
+                    endDate: "2026-11-02",
+                    caseLifecycle: { ...base.caseLifecycle, finalizationDueAt: "2026-11-02T11:00:00.000Z" },
+                    client: { ...base.client, endDate: "2026-11-02" },
+                    sessions: base.sessions.map((session) => ({ ...session, serviceDate: NEW_DATES[session.sessionIndex - 1]! })),
+                    assignments: base.assignments.map((assignment) => (assignment.id === A_ID
+                        ? { ...assignment, endDate: "2026-10-01", scheduleEndDate: "2026-10-01" }
+                        : { ...assignment, endDate: "2026-11-02", scheduleEndDate: "2026-11-02" })),
+                    plannedSessions: NEW_DATES.map((serviceDate, offset) => ({
+                        sessionIndex: offset + 1,
+                        serviceDate,
+                        originalDate: OLD_DATES[offset]!,
+                        assignmentId: interleaved[offset]!,
+                        scheduleId: interleaved[offset] === A_ID ? 55 : 56,
+                        employeeId: interleaved[offset] === A_ID ? 9 : 10,
+                        provenanceVersion: "case-7",
+                    })),
+                } as ServiceRecordEditSource;
+                const { preview, prepare } = await previewAndConfirm(after, { header: { momName: "수정 산모" } });
+                expect(preview.blockingReasons).toEqual([]);
+                expect(prepare().status).toBe("confirmed");
+            });
+        });
+
+        describe("a correction from session 1 that leaves the replaced writer's row on her", () => {
+            /** Three sessions: A (replaced, stored [10-01, 10-01]) wrote session 1 on 10-01; B (live) owns 2 and 3. */
+            function threeSessionSource(): ServiceRecordEditSource {
+                const base = goldenSource();
+                const dates3 = ["2026-10-01", "2026-10-02", "2026-10-06"];
+                const ownerOf = (index: number) => (index === 1
+                    ? { id: A_ID, scheduleId: 55, employeeId: 9 }
+                    : { id: B_ID, scheduleId: 56, employeeId: 10 });
+                return {
+                    ...base,
+                    requiredSessionCount: 3,
+                    endDate: "2026-10-06",
+                    client: { ...base.client, endDate: "2026-10-06" },
+                    sessions: base.sessions.slice(0, 1),
+                    assignments: [
+                        { ...base.assignments[0]!, endDate: "2026-10-01", scheduleEndDate: "2026-10-01" },
+                        { ...base.assignments[1]!, startDate: "2026-10-02", scheduleStartDate: "2026-10-02", endDate: "2026-10-06", scheduleEndDate: "2026-10-06" },
+                    ],
+                    plannedSessions: dates3.map((serviceDate, offset) => ({
+                        sessionIndex: offset + 1,
+                        serviceDate,
+                        originalDate: serviceDate,
+                        assignmentId: ownerOf(offset + 1).id,
+                        scheduleId: ownerOf(offset + 1).scheduleId,
+                        employeeId: ownerOf(offset + 1).employeeId,
+                        provenanceVersion: "case-7",
+                    })),
+                } as ServiceRecordEditSource;
+            }
+            const fromOne = { fromSessionIndex: 1, resumeDate: "2026-10-14" };
+            const periods = (assignments: Array<{ assignmentId?: string | null; id?: string | null; startDate: string; endDate: string }>) =>
+                assignments.map((assignment) => [assignment.assignmentId ?? assignment.id, assignment.startDate, assignment.endDate]);
+
+            /** The case as the confirm leaves it, read from the plan that confirm wrote (not from a hand-made copy). */
+            function afterConfirm(source: ServiceRecordEditSource, plan: ServiceRecordEditConfirmPlan): ServiceRecordEditSource {
+                const dateOfRow = new Map(plan.sessions.map((session) => [session.sourceRowId, session.serviceDate]));
+                const writeOf = (assignmentId: string | null) => plan.assignments.find((write) => write.assignmentId === assignmentId)!;
+                return {
+                    ...source,
+                    startDate: plan.startDate,
+                    endDate: plan.endDate,
+                    client: { ...source.client, endDate: plan.endDate },
+                    sessions: source.sessions.map((session) => ({ ...session, serviceDate: dateOfRow.get(session.sourceRowId) ?? session.serviceDate })),
+                    assignments: source.assignments.map((assignment) => {
+                        const write = writeOf(assignment.id);
+                        return {
+                            ...assignment,
+                            startDate: write.startDate,
+                            endDate: write.endDate,
+                            scheduleStartDate: write.startDate,
+                            scheduleEndDate: write.endDate,
+                        };
+                    }),
+                    plannedSessions: plan.plannedSessions as ServiceRecordEditSource["plannedSessions"],
+                };
+            }
+
+            async function firstConfirm() {
+                const source = threeSessionSource();
+                const harness = createHarness({ source });
+                await patch(harness, { resumeReplan: fromOne });
+                const { preview, prepare } = await previewAndConfirm(source, savedChanges(harness));
+                return { source, preview, plan: prepare() };
+            }
+
+            it("confirms A, B, B on 10-14, 10-15, 10-16 with A unchanged and B starting on its first owned session", async () => {
+                const { preview, plan } = await firstConfirm();
+                expect(preview.blockingReasons).toEqual([]);
+                expect(plan.status).toBe("confirmed");
+                const planned = plan.plannedSessions as Array<Record<string, unknown>>;
+                expect(planned.map((entry) => entry["assignmentId"])).toEqual([A_ID, B_ID, B_ID]);
+                // Wed 10-14, Thu 10-15, Fri 10-16.
+                expect(planned.map((entry) => entry["serviceDate"])).toEqual(["2026-10-14", "2026-10-15", "2026-10-16"]);
+                // The row A wrote keeps its content and gets only the new date.
+                expect(plan.sessions.map(({ sourceRowId, serviceDate }) => [sourceRowId, serviceDate])).toEqual([["day-1", "2026-10-14"]]);
+                expect(plan.assignments).toEqual([
+                    { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false },
+                    { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-15", endDate: "2026-10-16", datesChanged: true },
+                ]);
+            });
+
+            it("previews and confirms a header-only edit of the state that confirm leaves, moving no boundary", async () => {
+                const { source, plan } = await firstConfirm();
+                const state = afterConfirm(source, plan);
+                expect(periods(state.assignments)).toEqual([
+                    [A_ID, "2026-10-01", "2026-10-01"],
+                    [B_ID, "2026-10-15", "2026-10-16"],
+                ]);
+                // A's only session is on 10-14, outside [10-01, 10-01]: a kept writer slot, not a period.
+                const { preview, prepare } = await previewAndConfirm(state, { header: { momName: "수정 산모" } });
+                expect(preview.blockingReasons).toEqual([]);
+                expect(preview.provenance.map(({ assignmentId, startDate, endDate }) => [assignmentId, startDate, endDate]))
+                    .toEqual([[B_ID, "2026-10-15", "2026-10-16"]]);
+                const headerOnly = prepare();
+                expect(headerOnly.status).toBe("confirmed");
+                expect(headerOnly.assignments).toEqual([
+                    { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false },
+                    { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-15", endDate: "2026-10-16", datesChanged: false },
+                ]);
+            });
+
+            it("resumes again from session 2 without using A as the last served caregiver or extending her", async () => {
+                const { source, plan } = await firstConfirm();
+                const state = afterConfirm(source, plan);
+                const harness = createHarness({ source: state });
+                // Tue 10-20 and Wed 10-21.
+                await patch(harness, { resumeReplan: { fromSessionIndex: 2, resumeDate: "2026-10-20" } });
+                const second = await previewAndConfirm(state, savedChanges(harness));
+                expect(second.preview.blockingReasons).toEqual([]);
+                const next = second.prepare();
+                expect((next.plannedSessions as Array<Record<string, unknown>>).map((entry) => [entry["assignmentId"], entry["serviceDate"]])).toEqual([
+                    [A_ID, "2026-10-14"],
+                    [B_ID, "2026-10-20"],
+                    [B_ID, "2026-10-21"],
+                ]);
+                expect(next.assignments).toEqual([
+                    { assignmentId: A_ID, scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false },
+                    { assignmentId: B_ID, scheduleId: 56, startDate: "2026-10-20", endDate: "2026-10-21", datesChanged: true },
+                ]);
+            });
+        });
+
+        it("confirms the same incident at READY_TO_FINALIZE", async () => {
+            const source = goldenSource("READY_TO_FINALIZE");
+            const { preview, prepare } = await previewAndConfirm(source, await goldenChanges(source));
+            expect(preview.blockingReasons).toEqual([]);
+            expect(prepare().endDate).toBe("2026-11-02");
+        });
+
+        it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+            "previews a %s case as CASE_FINALIZED and refuses to confirm it with REQUEST_CONFLICT",
+            async (status) => {
+                const source = goldenSource(status);
+                const harness = createHarness({ source });
+                const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+                const activeDraft = { ...started.draft!, changes: await goldenChanges(goldenSource()) };
+                harness.repository.findDraftById.mockResolvedValue(activeDraft);
+                const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                    expectedDraftVersion: activeDraft.draftVersion,
+                });
+                expect(preview.blockingReasons.map(({ code }) => code)).toEqual(["CASE_FINALIZED"]);
+                harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+                await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                    expectedDraftVersion: activeDraft.draftVersion,
+                    previewId: preview.previewId,
+                    idempotencyKey: "11111111-1111-4111-8111-111111111111",
+                });
+                const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                    prepare: (snapshot: { draft: unknown; source: ServiceRecordEditSource }) => unknown;
+                };
+                const body = await conflictBody(async () => input.prepare({ draft: activeDraft, source }));
+                expect(body).toMatchObject({ code: "REQUEST_CONFLICT", blockingReasons: [expect.objectContaining({ code: "CASE_FINALIZED" })] });
+            },
+        );
+
+        it("refuses with REQUEST_CONFLICT, not a stale preview, when the case is finalized after the preview", async () => {
+            const open = goldenSource();
+            const { prepare } = await previewAndConfirm(open, await goldenChanges(open), goldenSource("FINALIZING"));
+            const body = await conflictBody(async () => prepare());
+            expect(body).toMatchObject({ code: "REQUEST_CONFLICT", blockingReasons: [expect.objectContaining({ code: "CASE_FINALIZED" })] });
+        });
+
+        it("warns about a late submission and a stored owner without blocking the confirm", async () => {
+            const source = goldenSource();
+            source.sessions = source.sessions.map((session) => (session.sessionIndex === 2
+                ? { ...session, submittedAt: "2026-10-02T09:00:00.000Z" }
+                : session));
+            const { preview, prepare } = await previewAndConfirm(source, await goldenChanges(source));
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.warnings?.map(({ code, sessionIndex }) => [code, sessionIndex])).toEqual([["SUBMITTED_BEFORE_NEW_DATE", 2]]);
+            expect(prepare().endDate).toBe("2026-11-02");
+
+            // From session 1 a persisted split between two live caregivers keeps its owners and only the
+            // outer edges move, so B keeps sessions 2..6 dated before its start.
+            const liveSplit = () => {
+                const split = goldenSource();
+                split.assignments = split.assignments.map((assignment) => ({ ...assignment, replaced: false }));
+                return split;
+            };
+            const fromOne = createHarness({ source: liveSplit() });
+            await patch(fromOne, { resumeReplan: { fromSessionIndex: 1, resumeDate: "2026-10-02" } });
+            const second = await previewAndConfirm(liveSplit(), savedChanges(fromOne));
+            expect(second.preview.blockingReasons).toEqual([]);
+            expect(second.preview.warnings?.filter(({ code }) => code === "ASSIGNMENT_MISMATCH").map(({ sessionIndex }) => sessionIndex))
+                .toEqual([2, 3, 4, 5, 6]);
+            expect(second.prepare().assignments).toEqual([
+                expect.objectContaining({ assignmentId: A_ID, startDate: "2026-10-02", endDate: "2026-10-14" }),
+                expect.objectContaining({ assignmentId: B_ID, startDate: "2026-10-14", endDate: "2026-10-26" }),
+            ]);
+        });
+
+        it("planConfirmDryRun returns the plan the following confirm builds, and writes nothing", async () => {
+            const source = goldenSource();
+            const harness = createHarness({ source });
+            await patch(harness, { dateMove: { sessionIndex: 15, toDate: "2026-10-26", shiftFollowing: false } });
+            const changes = savedChanges(harness);
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            const activeDraft = { ...started.draft!, changes };
+            harness.repository.findDraftById.mockResolvedValue(activeDraft);
+            const loadConfirmSnapshot = jest.fn().mockResolvedValue({ draft: activeDraft, source });
+            (harness.repository as unknown as { loadConfirmSnapshot: jest.Mock }).loadConfirmSnapshot = loadConfirmSnapshot;
+            const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, { expectedDraftVersion: activeDraft.draftVersion });
+
+            const writeCalls = () => [
+                harness.repository.createOrResumeDraft, harness.repository.updateDraft,
+                harness.repository.discardDraft, harness.repository.confirmDraft,
+            ].map((mock) => mock.mock.calls.length);
+            const before = writeCalls();
+            const dry = await harness.service.planConfirmDryRun(BRANCH_ID, DRAFT_ID, ACTOR_ID, preview.previewId);
+            expect(writeCalls()).toEqual(before);
+            expect(loadConfirmSnapshot).toHaveBeenCalledWith(BRANCH_ID, DRAFT_ID, expect.any(Array));
+
+            harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+            await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: preview.previewId,
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            });
+            const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => ServiceRecordEditConfirmPlan;
+            };
+            const real = input.prepare({ draft: activeDraft, source });
+            const withoutRandomIds = (plan: ServiceRecordEditConfirmPlan) => JSON.parse(JSON.stringify(plan, (key, value) => (key === "sourceRowId" ? "id" : value)));
+            expect(withoutRandomIds(dry)).toEqual(withoutRandomIds(real));
+            expect(dry.status).toBe("confirmed");
+            expect(dry.assignments.filter((write) => write.datesChanged !== false)).toEqual([
+                expect.objectContaining({ assignmentId: B_ID, startDate: "2026-10-14", endDate: "2026-10-26" }),
+            ]);
+        });
+
+        it("planConfirmDryRun refuses a stale preview id exactly like the confirm", async () => {
+            const source = goldenSource();
+            const harness = createHarness({ source });
+            await patch(harness, { dateMove: { sessionIndex: 15, toDate: "2026-10-26", shiftFollowing: false } });
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            const activeDraft = { ...started.draft!, changes: savedChanges(harness) };
+            (harness.repository as unknown as { loadConfirmSnapshot: jest.Mock }).loadConfirmSnapshot = jest.fn().mockResolvedValue({ draft: activeDraft, source });
+            await expect(harness.service.planConfirmDryRun(BRANCH_ID, DRAFT_ID, ACTOR_ID, `srp_${"0".repeat(64)}`))
+                .rejects.toBeInstanceOf(ConflictException);
+            await expect(harness.service.planConfirmDryRun(BRANCH_ID, DRAFT_ID, ACTOR_ID, "nope")).rejects.toBeInstanceOf(BadRequestException);
+            (harness.repository as unknown as { loadConfirmSnapshot: jest.Mock }).loadConfirmSnapshot = jest.fn().mockResolvedValue(null);
+            await expect(harness.service.planConfirmDryRun(BRANCH_ID, DRAFT_ID, ACTOR_ID, `srp_${"0".repeat(64)}`))
+                .rejects.toBeInstanceOf(NotFoundException);
+        });
+
+        it("binds the assignment boundary into the preview id", async () => {
+            const source = goldenSource();
+            const plain = await previewAndConfirm(source, await goldenChanges(source));
+            const harness = createHarness({ source });
+            await patch(harness, { resumeReplan: { ...golden, outgoingLastServedDate: "2026-10-08" } });
+            const withOutgoing = await previewAndConfirm(source, savedChanges(harness));
+            expect(withOutgoing.preview.previewId).not.toBe(plain.preview.previewId);
+            expect(withOutgoing.prepare().assignments[0]).toMatchObject({ assignmentId: A_ID, endDate: "2026-10-08" });
+        });
+
+        it("keeps the marker's boundary write after a header-only save", async () => {
+            const source = goldenSource();
+            const stored = await goldenChanges(source);
+            const harness = createHarness({ source });
+            harness.repository.findDraftById.mockResolvedValue(draft({ changes: stored }));
+            await patch(harness, { changes: { header: { momName: "수정" } } });
+            const { prepare } = await previewAndConfirm(source, savedChanges(harness));
+            expect(prepare().assignments).toEqual([
+                expect.objectContaining({ assignmentId: A_ID, endDate: "2026-10-01" }),
+                expect.objectContaining({ assignmentId: B_ID, startDate: "2026-10-14", endDate: "2026-11-02" }),
+            ]);
+        });
+
+        it("leaves finalizationDueAt, the token mode and the preview keys off every other change kind", async () => {
+            const source = previewSourceSnapshot();
+            for (const changes of [
+                { header: { momName: "수정 산모" } },
+                { sessions: [{ sessionIndex: 1, serviceDate: "2026-09-01", notes: "메모" }] },
+            ]) {
+                const { preview, prepare } = await previewAndConfirm(source, changes);
+                const plan = prepare();
+                expect("finalizationDueAt" in plan).toBe(false);
+                expect("tokenExpiryMode" in plan).toBe(false);
+                expect("warnings" in preview).toBe(false);
+                expect("assignmentPeriods" in preview).toBe(false);
+            }
         });
     });
 });

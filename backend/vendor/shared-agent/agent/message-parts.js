@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentTaskPatchPartSchema = exports.AgentEntitySelectPartSchema = exports.AgentTaskSnapshotPartSchema = exports.AgentFeedbackPartSchema = exports.AgentFormSubmitPartSchema = exports.AgentFormPartSchema = exports.AgentFormFieldSchema = exports.AgentAttachmentPartSchema = exports.AgentErrorPartSchema = exports.AgentNavigationPartSchema = exports.AgentActionResultPartSchema = exports.AgentActionProposalPartSchema = exports.AgentEntityChoicePartSchema = exports.AgentActivityPartSchema = exports.AgentMessageMetadataSchema = exports.AgentRendererNameSchema = void 0;
+exports.AgentTaskPatchPartSchema = exports.AgentEntitySelectPartSchema = exports.AgentTaskSnapshotPartSchema = exports.AgentFeedbackPartSchema = exports.AgentFormSubmitPartSchema = exports.AgentFormPartSchema = exports.AgentFormFieldSchema = exports.AgentAttachmentPartSchema = exports.AgentErrorPartSchema = exports.AgentNavigationPartSchema = exports.AgentActionResultPartSchema = exports.AgentActionProposalPartSchema = exports.AgentActionPreviewSchema = exports.AgentActionPreviewRowSchema = exports.AgentEntityChoicePartSchema = exports.AgentActivityPartSchema = exports.AgentMessageMetadataSchema = exports.AgentRendererNameSchema = void 0;
 const zod_1 = require("zod");
 const task_types_1 = require("./task-types");
 const client_input_policy_1 = require("./client-input-policy");
@@ -42,6 +42,21 @@ exports.AgentEntityChoicePartSchema = zod_1.z.object({
         metadata: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()).optional(),
     })).min(2),
 });
+const PREVIEW_TEXT_MAX = 200;
+const PREVIEW_LABEL_MAX = 80;
+/** One BEFORE -> AFTER row of a human-readable change preview. `note` is a per-row warning. */
+exports.AgentActionPreviewRowSchema = zod_1.z.object({
+    label: zod_1.z.string().min(1).max(PREVIEW_LABEL_MAX),
+    before: zod_1.z.string().max(PREVIEW_TEXT_MAX).nullable(),
+    after: zod_1.z.string().max(PREVIEW_TEXT_MAX).nullable(),
+    note: zod_1.z.string().max(PREVIEW_TEXT_MAX).optional(),
+});
+exports.AgentActionPreviewSchema = zod_1.z.object({
+    sections: zod_1.z.array(zod_1.z.object({
+        title: zod_1.z.string().min(1).max(PREVIEW_LABEL_MAX),
+        rows: zod_1.z.array(exports.AgentActionPreviewRowSchema).max(60),
+    })).max(10),
+});
 exports.AgentActionProposalPartSchema = zod_1.z.object({
     actionId: zod_1.z.string().min(1),
     capability: zod_1.z.string().min(1),
@@ -56,6 +71,7 @@ exports.AgentActionProposalPartSchema = zod_1.z.object({
     provider: zod_1.z.string().min(1).optional(),
     estimatedCost: zod_1.z.string().min(1).optional(),
     acknowledgementToken: zod_1.z.string().min(1).optional(),
+    preview: exports.AgentActionPreviewSchema.optional(),
 });
 exports.AgentActionResultPartSchema = zod_1.z.object({
     actionId: zod_1.z.string().min(1),

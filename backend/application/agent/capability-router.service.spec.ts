@@ -52,6 +52,25 @@ describe("CapabilityRouterService", () => {
         expect(flags.isCapabilityEnabledFromSnapshot).toHaveBeenCalledTimes(2);
     });
 
+    it.each([
+        "가상산모 산모, 10/2–10/13 중단, 10/14부터 가상관리사을로 재개",
+        "가상산모 산모 3회차 날짜 10/5로 바꿔줘",
+        "가상산모 제공기록지 수정해줘",
+    ])("routes a 제공기록지 correction request to service-records: %s", async (text) => {
+        const registry = {
+            list: () => [
+                { meta: { name: "clients.search", domain: "clients" } },
+                { meta: { name: "service-records.edit", domain: "service-records" } },
+                { meta: { name: "employees.search", domain: "employees" } },
+            ],
+        };
+        const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+        const result = await router.route(text, principal);
+
+        expect(result.domains).toContain("service-records");
+        expect(result.capabilities.map((item) => item.meta.name)).toContain("service-records.edit");
+    });
+
     it("caps the bundle", async () => {
         const capabilities = Array.from({ length: 20 }, (_, index) => ({
             meta: { name: `clients.read${index}`, domain: "clients" },
@@ -169,6 +188,108 @@ describe("CapabilityRouterService", () => {
             if (previousClassifierFlag === undefined) delete process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"];
             else process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] = previousClassifierFlag;
         }
+    });
+
+    describe("named service-record routing", () => {
+        let previousClassifierFlag: string | undefined;
+
+        beforeEach(() => {
+            previousClassifierFlag = process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"];
+            process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] = "true";
+        });
+
+        afterEach(() => {
+            if (previousClassifierFlag === undefined) delete process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"];
+            else process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] = previousClassifierFlag;
+        });
+
+        function registry() {
+            return {
+                list: () => [
+                    { meta: { name: "clients.search", domain: "clients" } },
+                    { meta: { name: "employees.search", domain: "employees" } },
+                    { meta: { name: "schedules.list", domain: "schedules" } },
+                    { meta: { name: "automation.list", domain: "automation" } },
+                    { meta: { name: "service-records.edit", domain: "service-records" } },
+                ],
+            };
+        }
+
+        function router(flags = enabledFlags()) {
+            return new CapabilityRouterService(
+                registry() as never,
+                flags as never,
+                { create: jest.fn().mockReturnValue({}) } as never,
+            );
+        }
+
+        it("keeps service-records after classifier domains for a 회차 date move", async () => {
+            mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["schedules","clients"]}' } as never);
+
+            const result = await router().route("QA산모 산모님 10회차 날짜를 11월 16일로 옮겨 주세요", principal);
+
+            expect(mockedGenerateText).toHaveBeenCalledTimes(1);
+            expect(result.domains).toEqual(["schedules", "clients", "service-records"]);
+            expect(result.capabilities.map((item) => item.meta.name)).toContain("service-records.edit");
+        });
+
+        it("still narrows clients and employees to the classifier's clients selection", async () => {
+            mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["clients"]}' } as never);
+
+            const result = await router().route("고객 직원", principal);
+
+            expect(mockedGenerateText).toHaveBeenCalledTimes(1);
+            expect(result.domains).toEqual(["clients"]);
+        });
+
+        it.each(["중단", "재개", "교체"])("does not keep service-records for the generic verb %s", async (verb) => {
+            mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["automation"]}' } as never);
+
+            const result = await router().route(`고객 자동화 ${verb}해줘`, principal);
+
+            expect(mockedGenerateText).toHaveBeenCalledTimes(1);
+            expect(result.domains).toEqual(["automation"]);
+            expect(result.capabilities.map((item) => item.meta.name)).not.toContain("service-records.edit");
+        });
+
+        it("does not add service-records when disabled for the principal", async () => {
+            mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["clients"]}' } as never);
+            const flags = enabledFlags();
+            flags.isCapabilityEnabledFromSnapshot.mockImplementation((meta: { domain: string }) => meta.domain !== "service-records");
+
+            const result = await router(flags).route("고객 직원 회차 날짜 옮겨줘", principal);
+
+            expect(mockedGenerateText).toHaveBeenCalledTimes(1);
+            expect(result.domains).toEqual(["clients"]);
+            expect(result.capabilities.map((item) => item.meta.name)).not.toContain("service-records.edit");
+        });
+
+        it.each([true, false])("includes the service-records hint only when enabled: %s", async (enabled) => {
+            mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["clients"]}' } as never);
+            const flags = enabledFlags();
+            flags.isCapabilityEnabledFromSnapshot.mockImplementation((meta: { domain: string }) => enabled || meta.domain !== "service-records");
+
+            await router(flags).route("고객 직원 회차 날짜 옮겨줘", principal);
+
+            expect(mockedGenerateText).toHaveBeenCalledTimes(1);
+            const system = mockedGenerateText.mock.calls[0]?.[0]?.system;
+            if (enabled) {
+                expect(system).toContain("service-records = 제공기록지:");
+                expect(system).toContain("moving a 회차 date belongs here, not schedules");
+            } else {
+                expect(system).not.toContain("service-records");
+                expect(system).not.toContain("제공기록지");
+            }
+        });
+
+        it("keeps classifier order without duplicating service-records", async () => {
+            mockedGenerateText.mockResolvedValueOnce({ text: '{"domains":["service-records","clients"]}' } as never);
+
+            const result = await router().route("고객 직원 회차 날짜 옮겨줘", principal);
+
+            expect(mockedGenerateText).toHaveBeenCalledTimes(1);
+            expect(result.domains).toEqual(["service-records", "clients"]);
+        });
     });
 
     it("defaults to clients only when neither lexical nor classifier routing has a result", async () => {

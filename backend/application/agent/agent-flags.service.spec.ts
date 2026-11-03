@@ -24,6 +24,25 @@ describe("AgentFlagsService", () => {
         jest.clearAllMocks();
     });
 
+    it("only removes service-records.edit for mobile and preserves every other gate", async () => {
+        const service = new AgentFlagsService(new ConfigService({ NODE_ENV: "development", AGENT_WRITE_ENABLED: "true" }), getSetting, updateSetting);
+        jest.spyOn(getSetting, "execute").mockResolvedValue(null);
+        const principal = { userId: "user-1", branchId: "branch-1", globalRole: "admin", branchRole: "admin" } as const;
+        const mobile = { ...principal, clientSurface: "mobile" as const };
+        const edit = { ...capability, name: "service-records.edit", domain: "service-records", risk: "reversible-write" as const };
+        const other = { ...edit, name: "clients.update", domain: "clients" };
+        const snapshot = await service.getSnapshot();
+        expect(service.isCapabilityEnabledFromSnapshot(edit, mobile, snapshot)).toBe(false);
+        expect(service.isCapabilityEnabledFromSnapshot(edit, principal, snapshot)).toBe(true);
+        expect(service.isCapabilityEnabledFromSnapshot(other, mobile, snapshot)).toBe(true);
+        expect(service.isCapabilityEnabledFromSnapshot(other, principal, snapshot)).toBe(true);
+        expect(service.isCapabilityEnabledFromSnapshot(other, mobile, { ...snapshot, emergencyDisabled: true })).toBe(false);
+        expect(service.isCapabilityEnabledFromSnapshot(other, mobile, { ...snapshot, config: { ...snapshot.config, enabled: false } })).toBe(false);
+        expect(service.isCapabilityEnabledFromSnapshot(other, mobile, { ...snapshot, config: { ...snapshot.config, capabilities: { "clients.update": false } } })).toBe(false);
+        const spoofed = { ...principal, clientSurface: "desktop" };
+        expect(service.isCapabilityEnabledFromSnapshot(edit, spoofed as typeof principal, { ...snapshot, config: { ...snapshot.config, enabled: false } })).toBe(false);
+    });
+
     it("should enable reads in non-production by default", async () => {
         const config = new ConfigService({ NODE_ENV: "development" });
         jest.spyOn(getSetting, "execute").mockResolvedValue(null);
