@@ -257,7 +257,19 @@ test.describe("Chat quick actions", () => {
       });
     });
 
+    // The SSR header can appear while loadHistory(0) is still in flight. Its
+    // empty response replaces messages, so settle it before opening a local wizard.
+    const initialHistory = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET"
+        && url.pathname === "/api/ai/chat/history"
+        && url.searchParams.get("offset") === "0";
+    });
     await page.goto("/chat");
+    const historyResponse = await initialHistory;
+    expect(historyResponse.status()).toBe(200);
+    await historyResponse.finished();
+    await page.waitForLoadState("networkidle");
     await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible({ timeout: 15000 });
 
     await page.getByRole("button", { name: "산모 등록" }).click();
