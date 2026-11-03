@@ -643,6 +643,7 @@ model branch {
   messageTemplates              message_template[]
   messageLogs                   message_log[]
   messageTriggerRules           message_trigger_rule[]
+  messageTriggerRuleGroups      message_trigger_rule_group[]
   messageTriggerRuleBranchOverrides message_trigger_rule_branch_override[]
   messageTriggerJobs            message_trigger_job[]
   notifications                 notification[]
@@ -1100,6 +1101,22 @@ model message_log {
 /// Database note: partial unique index `uniq_message_trigger_rule_default` on
 /// (branch_id, template_key) WHERE is_default = true AND deleted_at IS NULL.
 /// It exists in the database but cannot be expressed in Prisma (migration/patch SQL).
+model message_trigger_rule_group {
+  id            String                 @id @default(dbgenerated("(gen_random_uuid())::text"))
+  branchId      String                 @map("branch_id") @db.Uuid
+  name          String
+  recipientMode String                 @map("recipient_mode") @db.VarChar(32)
+  version       Int                    @default(1)
+  createdAt     DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt     DateTime?              @map("deleted_at") @db.Timestamptz(6)
+  branch        branch                 @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rules         message_trigger_rule[]
+
+  @@unique([id, branchId], map: "message_trigger_rule_group_id_branch_id_key")
+  @@index([branchId, deletedAt], map: "idx_message_trigger_rule_group_branch_deleted")
+}
+
 model message_trigger_rule {
   id            String                @id @default(dbgenerated("(gen_random_uuid())::text"))
   branchId      String?               @map("branch_id") @db.Uuid
@@ -1121,12 +1138,16 @@ model message_trigger_rule {
   createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch        branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  groupId       String?               @map("group_id")
+  group         message_trigger_rule_group? @relation(fields: [groupId, branchId], references: [id, branchId], onDelete: NoAction, onUpdate: NoAction)
   jobs          message_trigger_job[]
   branchOverrides message_trigger_rule_branch_override[]
 
   @@index([branchId], map: "idx_message_trigger_rule_branch")
   @@index([branchId, isActive], map: "idx_message_trigger_rule_active")
   @@index([eventType], map: "idx_message_trigger_rule_event_type")
+  @@index([groupId], map: "idx_message_trigger_rule_group")
+  @@unique([groupId, recipientType], map: "message_trigger_rule_group_id_recipient_type_key")
 }
 
 model message_trigger_rule_branch_override {
@@ -1151,6 +1172,7 @@ model message_trigger_job {
   attempts           Int                  @default(0)
   nextAttemptAt      DateTime?            @map("next_attempt_at") @db.Timestamptz(6)
   claimToken         String?              @map("claim_token")
+  processingDeadlineAt DateTime?            @map("processing_deadline_at") @db.Timestamptz(6)
   sentAt             DateTime?            @map("sent_at") @db.Timestamptz(6)
   canceledAt         DateTime?            @map("canceled_at") @db.Timestamptz(6)
   cancelReason       String?              @map("cancel_reason")
@@ -1173,6 +1195,7 @@ model message_trigger_job {
   @@index([branchId], map: "idx_message_trigger_job_branch")
   @@index([ruleId], map: "idx_message_trigger_job_rule_id")
   @@index([status, scheduledFor], map: "idx_message_trigger_job_status_scheduled_for")
+  @@index([status, processingDeadlineAt], map: "idx_message_trigger_job_status_processing_deadline")
   @@index([clientId], map: "idx_message_trigger_job_client_id")
   @@index([employeeScheduleId], map: "idx_message_trigger_job_employee_schedule_id")
 }

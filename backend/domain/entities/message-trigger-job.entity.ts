@@ -89,6 +89,8 @@ export class MessageTriggerJobEntity {
         public updatedAt: Date,
         /** Immutable token for the currently claimed processing attempt. */
         public claimToken: string | null = null,
+        /** Policy snapshot stored with a processing claim; legacy rows may be null. */
+        public processingDeadlineAt: Date | null = null,
     ) {}
 
     static create(params: {
@@ -149,6 +151,7 @@ export class MessageTriggerJobEntity {
         attempts = 0,
         nextAttemptAt: Date | null = null,
         claimToken: string | null = null,
+        processingDeadlineAt: Date | null = null,
     ): MessageTriggerJobEntity {
         return new MessageTriggerJobEntity(
             id,
@@ -171,6 +174,7 @@ export class MessageTriggerJobEntity {
             createdAt,
             updatedAt,
             claimToken,
+            processingDeadlineAt,
         );
     }
 
@@ -260,7 +264,7 @@ export class MessageTriggerJobEntity {
             this.id, this.branchId, this.ruleId, this.status, this.scheduledFor, this.sentAt, this.canceledAt,
             this.cancelReason, this.clientId, this.employeeScheduleId, this.recipientType, this.recipientPhone,
             this.templateKey, this.dedupeKey, { ...this.payload, ...overrides }, this.createdAt, this.updatedAt,
-            this.attempts, this.nextAttemptAt, this.claimToken,
+            this.attempts, this.nextAttemptAt, this.claimToken, this.processingDeadlineAt,
         );
     }
 }

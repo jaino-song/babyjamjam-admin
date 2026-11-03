@@ -7,6 +7,19 @@ export declare const MESSAGE_TRIGGER_OFFSET_TYPES: readonly ["IMMEDIATE", "SAME_
 export type MessageTriggerOffsetType = (typeof MESSAGE_TRIGGER_OFFSET_TYPES)[number];
 export declare const MESSAGE_TRIGGER_RECIPIENT_TYPES: readonly ["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"];
 export type MessageTriggerRecipientType = (typeof MESSAGE_TRIGGER_RECIPIENT_TYPES)[number];
+/** UI group mode; each projected child/job still has a single recipient type. */
+export declare const MESSAGE_TRIGGER_RECIPIENT_MODES: readonly ["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"];
+export type MessageTriggerRecipientMode = (typeof MESSAGE_TRIGGER_RECIPIENT_MODES)[number];
+export interface MessageTriggerRuleGroup {
+    id: string;
+    branchId: string;
+    name: string;
+    recipientMode: MessageTriggerRecipientMode;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+}
 export declare const MESSAGE_TRIGGER_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_INFO", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO", "SERVICE_END_NOTICE"];
 export type MessageTriggerTemplateKey = (typeof MESSAGE_TRIGGER_TEMPLATE_KEYS)[number];
 /**
@@ -34,6 +47,12 @@ export declare const messageTriggerRecipientTypeSchema: z.ZodEnum<{
     CLIENT: "CLIENT";
     PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
     SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
+}>;
+export declare const messageTriggerRecipientModeSchema: z.ZodEnum<{
+    CLIENT: "CLIENT";
+    PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
+    SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
+    BOTH_EMPLOYEES: "BOTH_EMPLOYEES";
 }>;
 export declare const messageTriggerTemplateKeySchema: z.ZodEnum<{
     SERVICE_INFO: "SERVICE_INFO";
@@ -84,6 +103,8 @@ export interface MessageTriggerTemplateCatalogItem {
 }
 export interface MessageTriggerRule {
     id: string;
+    /** Nullable for system/default rules; absent on older servers. */
+    groupId?: string | null;
     branchId: string | null;
     name: string;
     /**
@@ -436,6 +457,8 @@ export interface UpcomingMessageTriggerJobPayload {
 }
 export interface UpcomingMessageTriggerJob {
     id: string;
+    /** Claim policy snapshot; absent on older servers or null before claiming. */
+    processingDeadlineAt?: string | null;
     ruleId: string;
     ruleName: string;
     eventType: MessageTriggerEventType | null;
