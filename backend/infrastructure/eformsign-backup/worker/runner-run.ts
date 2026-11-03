@@ -694,8 +694,8 @@ class RunExecution {
             if (live?.state === "blocked" && live.reasonCode === "archive-unavailable" && !this.archiveOk) return;
             // QF3 / V10: the export has failed this artifact for good, but a copy Drive holds verified still heals it, on every run, without
             // asking the export again. A staged copy that is still usable (healed earlier, not yet published) is used as it is; only
-            // without one is Drive asked. While Drive cannot be asked (or holds no usable copy) the entry stays as it is, and a failed
-            // attempt is on record (below) so it is reported like any carried artifact.
+            // without one is Drive asked. While Drive cannot be asked (or holds no usable copy), record the current blocker below
+            // so it is reported like any carried artifact; an unchanged blocker writes nothing.
             if (!(await this.stagedUsable(job))) {
                 const heal = await this.healFromDrive(job);
                 if (heal !== true) {
@@ -750,14 +750,13 @@ class RunExecution {
     }
 
     /**
-     * A due exhausted entry whose copy could not be staged again from Drive (Drive could not be asked, or holds no usable copy). An entry that
-     * is already blocked keeps the reason it carries. Any other (an interrupted heal that recovery moved back to pending, a due retry_wait)
-     * is recorded as a non-terminal `blocked` with the Drive reason (else integrity-repeated), so it is counted and its reason reported;
-     * the next run heals it from Drive again. The export is not asked and nothing is given up.
+     * A due exhausted entry whose copy could not be staged again records the current blocker, even when already blocked. Archive outage
+     * takes precedence; otherwise use the Drive reason, or integrity-repeated when no usable copy is available. An unchanged blocker is
+     * a no-op. The next run tries Drive again; the export is not asked and nothing is given up.
      */
     private async exhaustedNotRestaged(job: ArtifactJob, heal: Exclude<DriveHeal, true>): Promise<void> {
-        if (this.dl.entryOf(job.artifactIdentity)?.state === "blocked") return;
-        await this.carryRetryable(job.artifactIdentity, job.relativeKey, heal === false ? "integrity-repeated" : heal.unavailable);
+        const reasonCode = !this.archiveOk ? "archive-unavailable" : heal === false ? "integrity-repeated" : heal.unavailable;
+        await this.carryRetryable(job.artifactIdentity, job.relativeKey, reasonCode);
     }
 
     /** pending -> transferring -> (download) -> publish. `staging-corrupt`: the staged bytes failed their hash, the artifact waits in retry_wait. */
