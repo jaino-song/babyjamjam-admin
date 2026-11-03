@@ -138,8 +138,8 @@ export class WorkerRunner implements WorkerRunnerPort {
             verified: 0, blocked: 0, retryWait: 0, integrityError: 0, pending: 0, transferring: 0, verifying: 0,
             terminalUnavailable: 0, runs: ledger.state.runs.size, openRuns: 0,
         };
-        // Like the run line: a gap that can never be fetched again (source-removed, or a local entry blocked with a terminal reason) is
-        // terminalUnavailable, once per artifact, and is not also counted as blocked.
+        // The run line's rule (a local entry blocked with a terminal reason is terminalUnavailable, once per artifact, and is not also counted
+        // as blocked), plus the ledger's known gaps (source-removed, which can never be fetched again).
         const terminal = new Set(ledger.state.terminalUnavailable);
         // The top-level counts are the local archive's; Drive entries (any revision) are counted separately below.
         for (const entry of ledger.state.destinations.values()) {

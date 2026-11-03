@@ -755,7 +755,8 @@ adds `driveVerified`, `driveBlocked`, `driveRetryWait` and `driveIntegrityError`
   area has no room for it), is counted in `blocked` and, unless the snapshot itself failed, listed
   in the run's reasons, and every later run tries it again. Among carried copies (artifacts no
   longer in the snapshot), only a Drive that answers without a usable copy (the file is gone, or
-  its bytes fail the hash, size or PDF checks) leaves the local entry `exact-bytes-unavailable`;
+  its bytes fail the hash, size or PDF checks), or the absence of any verified Drive copy, leaves
+  the local entry `exact-bytes-unavailable`;
   an exhausted entry (one the export has failed three times) whose Drive copy turns out damaged
   is never made `exact-bytes-unavailable`: it stays `blocked` with the reason it already carries
   (`integrity-repeated`, or an earlier one such as `archive-unavailable`), and the export is still
