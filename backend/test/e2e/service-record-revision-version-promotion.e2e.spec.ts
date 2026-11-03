@@ -51,7 +51,7 @@ describeE2E("revision document version allocation and all-chunk promotion (dispo
             documentKind: "service_record_snapshot", snapshotVersion: version, snapshotChunkIndex: index, revisionId,
             createdDate: new Date(), updatedDate: new Date(), expiredDate: new Date("2027-12-31T00:00:00Z"),
             statusType, statusDetail: "synthetic", stepType: "03", stepIndex: "3", stepName: "synthetic",
-            stepRecipientType: "", stepRecipientName: "", stepRecipientSms: "", syncStatus: "synced",
+            stepRecipientType: "", stepRecipientName: "", stepRecipientSms: "", syncStatus: "ready",
         } });
     }
 
