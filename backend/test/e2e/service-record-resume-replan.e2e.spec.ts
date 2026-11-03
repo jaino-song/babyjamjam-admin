@@ -439,12 +439,12 @@ describeE2E("service-record resume replan (real disposable PostgreSQL)", () => {
 
         // Step 2: reload and edit only the header. It confirms as a new revision with no boundary change.
         const before = await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } });
-        const header = await cycle({ changes: { header: { momName: "Resume Replan Client (edited)" } } });
+        const header = await cycle({ changes: { header: { momName: "ResumeReplanClient(edited)" } } });
         expect(header.confirmed.status).toBe("confirmed");
         expect(header.confirmed.revisionNumber).toBe((resumed.confirmed.revisionNumber ?? 0) + 1);
         expect(await boundaries()).toEqual(corrected);
         const after = await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } });
-        expect(after.momName).toBe("Resume Replan Client (edited)");
+        expect(after.momName).toBe("ResumeReplanClient(edited)");
         expect(after.version).toBe(before.version + 1);
         expect(after.endDate?.toISOString().slice(0, 10)).toBe("2026-11-02");
         expect(after.finalizationDueAt?.toISOString()).toBe("2026-11-02T11:00:00.000Z");
