@@ -9,6 +9,9 @@ import {
     assertQaDatabase, assertLocalSocketArguments, backendEnvironment, parseLocalEnv, parseQaOptions, type QaOptions,
 } from "./bjj494-browser-qa.config";
 
+/** Synthetic profile used only in the disposable QA database. */
+export const QA_USER_PROFILE = { phone: "01000000494", birthDate: "1990-01-01" };
+
 /** Keep signal handlers installed throughout asynchronous shutdown. */
 export function installQaShutdownHandlers(requestStop: () => void): () => void {
     // A terminal signal and a forwarding wrapper can both deliver SIGINT.
@@ -111,6 +114,7 @@ async function startBackend(options: QaOptions, root: string): Promise<void> {
     const branchName = local["LOCAL_AUTO_LOGIN_BRANCH_NAME"]?.trim();
     if (!email || !password || !branchName) throw new Error("Three existing local auto-login values are required");
     const user = await prisma.user.create({ data: {
+        ...QA_USER_PROFILE,
         email, passwordHash: await bcrypt.hash(password, 12), name: "QA-BJJ494", role: "user", authProvider: "email",
         emailVerified: true, emailVerifiedAt: new Date(), approvalStatus: "approved", approvedAt: new Date(), tokenVersion: 0,
     } });

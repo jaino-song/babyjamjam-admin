@@ -6,7 +6,9 @@ import {
     APPROVED_ENV_PATHS, QA_BACKEND_ORIGIN, QA_DATABASE_URL,
     createQaEnvAdapter, parseQaOptions, assertQaDatabase, assertLocalSocketArguments, loopbackOrigin, backendEnvKeys, backendEnvironment,
 } from "../../scripts/agent/bjj494-browser-qa.config";
-import { withQaLifecycle } from "../../scripts/agent/bjj494-browser-qa";
+import { withQaLifecycle, QA_USER_PROFILE } from "../../scripts/agent/bjj494-browser-qa";
+import { AuthService } from "application/services/auth.service";
+import bcrypt from "bcrypt";
 
 const LOGICAL = APPROVED_ENV_PATHS[0]!;
 const ORIGINAL_URL = "http://localhost:3001";
@@ -105,6 +107,21 @@ describe("BJJ494 private local URL adapter (real temporary files only)", () => {
 });
 
 describe("BJJ494 fail-closed configuration", () => {
+    it.each(["admin", "user"])("provides a complete synthetic profile accepted by the real login validator for branch %s", async branchRole => {
+        const user = {
+            id: "qa-user", email: "qa@example.test", name: "QA-BJJ494", profileImage: null,
+            role: "user", approvalStatus: "approved", emailVerified: true, tokenVersion: 0,
+            passwordHash: await bcrypt.hash(FAKE_SECRET, 4), ...QA_USER_PROFILE,
+        };
+        const issueSession = jest.fn().mockResolvedValue({ accessToken: "synthetic-access", refreshToken: "synthetic-refresh" });
+        const auth = new AuthService({
+            user: { findUnique: jest.fn().mockResolvedValue(user) },
+            user_branch: { findMany: jest.fn().mockResolvedValue([{ branchId: "qa-branch", role: branchRole, branch: { slug: "bjj494-qa-fixture", isActive: true } }]) },
+        } as never, {} as never, {} as never, {} as never, { issueSession } as never, {} as never);
+        await expect(auth.validateEmailPassword(user.email, FAKE_SECRET)).resolves.toMatchObject({ user: user.id });
+        expect(issueSession).toHaveBeenCalledWith(user, { branchId: "qa-branch", branchRole });
+    });
+
     it("requires both exact disposable DB URLs", () => {
         expect(() => assertQaDatabase(QA_DATABASE_URL, QA_DATABASE_URL)).not.toThrow();
         for (const wrong of [undefined, "", `${QA_DATABASE_URL}?x=1`, "postgresql://localhost/other"]) {
