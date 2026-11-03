@@ -130,7 +130,7 @@ describe("LedgerStore.open / initialize / append", () => {
         const size = (await fsp.stat(journalPath(control))).size;
         await expect(store.append("run_finished", {
             runId: runIdOf(99), finishedAt: fixedAt(9), snapshotStatus: "partial", historicalCoverage: "unverified",
-            reasonCodes: [], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+            reasonCodes: [], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
         }, fixedAt(9))).rejects.toMatchObject({ reasonCode: "ledger-inconsistent" });
         await expect(store.append("run_started", runStartedBody(2), "not-a-time")).rejects.toMatchObject({ reasonCode: "ledger-schema" });
         expect((await fsp.stat(journalPath(control))).size).toBe(size);
@@ -1209,5 +1209,27 @@ describe("worker runtime file rules", () => {
             expect(source).not.toMatch(/process\.env/);
             expect(source).not.toMatch(/(BadRequest|NotFound|Conflict|Forbidden|Unauthorized|InternalServerError|ServiceUnavailable|BadGateway|Http)Exception/);
         }
+    });
+});
+
+describe("a ledger written before the Drive counters existed (BJJ-456 U1-F1)", () => {
+    it("opens ok and normalizes the counters of a legacy run_finished line, then keeps appending", async () => {
+        const control = await seeded(3);
+        const body = {
+            runId: runIdOf(2), finishedAt: fixedAt(4), snapshotStatus: "partial", historicalCoverage: "unverified",
+            reasonCodes: ["coverage-unverified", "drive-not-configured"],
+            counts: { candidates: 1, included: 1, verified: 1, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+        };
+        const envelope = { v: 1, seq: 4, type: "run_finished", at: fixedAt(4), body };
+        await fsp.appendFile(journalPath(control), `${JSON.stringify({ ...envelope, sum: ledgerChecksum(envelope) })}\n`);
+        const store = await openWritable(control);
+        expect(store.status).toBe("ok");
+        expect(store.lastSeq).toBe(4);
+        expect(store.state.runs.get(runIdOf(2))?.counts).toEqual({
+            ...body.counts, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0,
+        });
+        await store.append("run_started", runStartedBody(5), fixedAt(5));
+        await store.close();
+        expect((await statusOf(control)).status).toBe("ok");
     });
 });

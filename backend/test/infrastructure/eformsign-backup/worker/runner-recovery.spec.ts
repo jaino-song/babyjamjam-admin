@@ -298,6 +298,36 @@ describe("recover (contract section 3) and the marker carry-overs", () => {
         expect((await readLedgerRecords(h.control)).filter((record) => record.type === "recovered_verified")).toHaveLength(4);
     });
 
+    /** PF1c: recovery lists the manifests before it quarantines and resets the ledger, so a failed listing refuses with nothing changed. */
+    describe("manifest enumeration failure (BJJ-456 PF1c)", () => {
+        afterEach(() => { jest.restoreAllMocks(); });
+
+        it.each([
+            ["a manifests directory cannot be listed", (h0: Harness) => path.join(h0.archive, "eformsign", COMPANY, "D002", "manifests")],
+            ["the company directory cannot be listed", (h0: Harness) => path.join(h0.archive, "eformsign", COMPANY)],
+        ])("should refuse with archive-unavailable before the quarantine and the reset when %s, and recover normally once it is repaired", async (_name, pick) => {
+            await history();
+            await corruptLedger();
+            expect(await tryRun(h)).toMatchObject({ reasonCode: "recovery-required" });
+            const id = await installationOf();
+            const control = await treeSignature(h.control);
+            const directory = pick(h);
+            const real = fs.readdir.bind(fs) as (...args: unknown[]) => Promise<unknown>;
+            const spy = jest.spyOn(fs, "readdir").mockImplementation((async (target: unknown, ...rest: unknown[]) => {
+                if (String(target) === directory) throw Object.assign(new Error("synthetic"), { code: "EIO" });
+                return real(target, ...rest);
+            }) as never);
+
+            await expect(recover(id)).rejects.toMatchObject({ reasonCode: "archive-unavailable" });
+
+            expect(await treeSignature(h.control)).toBe(control);
+            expect((await fs.readdir(h.control)).filter((name) => name.startsWith("ledger.quarantine-"))).toEqual([]);
+            spy.mockRestore();
+            expect(await recover(id)).toMatchObject({ recovered: 4, unverified: 0, sequenceFloor: 2 });
+            expect((await fs.readdir(h.control)).filter((name) => name.startsWith("ledger.quarantine-"))).toHaveLength(1);
+        });
+    });
+
     it("should refuse recover while the ledger is healthy", async () => {
         await history();
         const before = await treeSignature(h.control);

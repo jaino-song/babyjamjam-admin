@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import { EXPORT_ARTIFACT_MAX_BYTES } from "domain/eformsign-backup/export/constants";
@@ -5,7 +6,7 @@ import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import {
     WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, completionContentDigest,
     completionSchema, integrityErrorCount, integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey,
-    nextRetryAt, nextSnapshotSequence, parseCompletionName, parseManifestKey, runKey, toArchiveArtifactType,
+    destinationKey, driveStateKey, nextRetryAt, nextSnapshotSequence, parseCompletionName, parseManifestKey, runKey, toArchiveArtifactType,
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
@@ -19,6 +20,7 @@ import {
     DestinationLedger, SNAPSHOT_POLL_LIMIT, SNAPSHOT_POLL_MS, TRANSIENT_STOP, assertLedgerRoom, assertSameInstallation,
     controlHasStagingRoom, countOrphanTemps, isArchiveSide, isTerminalReason, nowIso, requireInstallation,
 } from "./runner-common";
+import { DriveRunPhase, type DriveBuiltRecord, type DriveCompletionContext, type DriveHeal, type DriveRunHost } from "./runner-drive";
 import { type RunSummary, type RunnerDependencies } from "./runner-types";
 
 const OPAQUE_ID = /^[^\u0000-\u001f\u007f]{1,512}$/u;
@@ -116,6 +118,16 @@ function sortedUnique(codes: Iterable<WorkerReasonCode>): WorkerReasonCode[] {
     return [...new Set(codes)].sort();
 }
 
+/**
+ * The export has failed this artifact for good: its ledger history holds integrity errors up to the retry limit and it is not verified.
+ * A property of the history, not of the entry's current state or reason, so it survives every intermediate state (archive-unavailable,
+ * a Drive reason, retry_wait) and every ledger reopen; only reaching `verified` (or a terminal gap) ends it.
+ */
+function integrityExhausted(entry: DestinationEntry): boolean {
+    if (entry.state === "verified" || (entry.state === "blocked" && isTerminalReason(entry.reasonCode))) return false;
+    return integrityRetryDecision(integrityErrorCount(entry)).to === "blocked";
+}
+
 /** An entry that still has work to do: not verified, not in flight, and not blocked for good (terminal or integrity-repeated). */
 function carryable(entry: DestinationEntry): boolean {
     switch (entry.state) {
@@ -146,6 +158,8 @@ class RunExecution {
     private blockRun: WorkerReasonCode | null = null;
     private snapshotFailure: WorkerReasonCode | null = null;
     private readonly reasons = new Set<WorkerReasonCode>();
+    /** Carried artifacts this run left `blocked` with a retryable reason (PB1): historical work, but reported by this run. */
+    private readonly carriedBlocked = new Set<string>();
     private readonly blockedCandidates: WorkerReasonCode[] = [];
     private readonly work: WorkCandidate[] = [];
     /** Manifest sources rebuilt from the retained journals once per run, before anything of this run is written. */
@@ -165,6 +179,13 @@ class RunExecution {
     private manifestListing: ManifestFile[] | null = null;
     private totalCandidates = 0;
     private includedCandidates = 0;
+    /** The Google Drive destination of this run; `null` without a `drive` block or a ready binding (the run is then exactly the local one). */
+    private readonly drive: DriveRunPhase | null;
+    /** The archive keys (manifests, completion) this run wrote locally, and the completion it built; the Drive phase reads them (A2.6). */
+    private readonly localPublished = new Set<string>();
+    private localCompletion: DriveBuiltRecord | null = null;
+    /** A recovered artifact's (no ledger length) manifest, validated on the archive: it stands in for the manifest-first step of its carry. */
+    private readonly recoveredManifests = new Map<string, { key: string; sha256: string }>();
 
     constructor(
         private readonly deps: RunnerDependencies,
@@ -173,6 +194,7 @@ class RunExecution {
         private readonly scheduledFor: string | null,
     ) {
         this.dl = new DestinationLedger(deps, requireInstallation(deps));
+        this.drive = DriveRunPhase.forRun(deps, this.dl.installation, archive, staging, this.driveHost());
     }
 
     private get state() { return this.deps.ledger.state; }
@@ -192,12 +214,14 @@ class RunExecution {
         if (!check.ok) this.archiveLost();
         this.runId = this.deps.uuid();
         await this.recoverInterrupted();
+        await this.drive?.recoverInterrupted();
         await this.finishOpenRuns();
         this.startedAt = this.now();
         await this.deps.ledger.append("run_started", { runId: this.runId, scheduledFor: this.scheduledFor, startedAt: this.startedAt }, this.startedAt);
         try {
             await this.snapshotStage();
             await this.processCandidates();
+            await this.drive?.processWork(this.work);
             await this.publishRecords();
         } catch (error) {
             if (!(error instanceof StageFailure)) throw error;
@@ -283,7 +307,8 @@ class RunExecution {
             const at = this.now();
             await this.deps.ledger.append("run_finished", {
                 runId: run.runId, finishedAt: at, snapshotStatus: "failed", historicalCoverage: judgeHistoricalCoverage(this.state),
-                reasonCodes: ["crashed"], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0 },
+                reasonCodes: ["crashed"], counts: { candidates: 0, included: 0, verified: 0, blocked: 0, retryWait: 0, integrityError: 0, terminalUnavailable: 0, orphanTemps: 0,
+                    driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0 },
             }, at);
         }
     }
@@ -464,31 +489,173 @@ class RunExecution {
         const inSnapshot = new Set(this.work.flatMap((candidate) => candidate.artifacts.map((job) => job.artifactIdentity)));
         for (const entry of [...this.state.destinations.values()]) {
             if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
-            if (!carryable(entry) || inSnapshot.has(entry.artifactIdentity)) continue;
+            if (inSnapshot.has(entry.artifactIdentity)) continue;
+            // QF3: an entry the export failed for good is picked up only to heal it from a verified Drive copy; it is otherwise left as it is.
+            const repeated = entry.state === "blocked" && entry.reasonCode === "integrity-repeated";
+            if (repeated ? !this.holdsVerifiedDriveCopy(entry.artifactIdentity, entry.relativeKey) : !carryable(entry)) continue;
             const info = this.state.artifacts.get(entry.artifactIdentity);
-            if (info === undefined || info.byteLength === null) {
-                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
+            if (info === undefined) {
+                if (!repeated) await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
                 continue;
             }
             let relativeKey: string;
             try {
                 relativeKey = entry.relativeKey ?? artifactKey({ companyId: this.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
             } catch {
-                await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
+                if (!repeated) await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: entry.relativeKey });
+                continue;
+            }
+            // `recover` records an artifact without a length. Its length then comes from a manifest on the archive that lists it, never a guess.
+            const lookup = info.byteLength === null ? await this.recoveredManifestFor(entry.artifactIdentity, info, relativeKey) : null;
+            if (lookup !== null && lookup.status === "archive-unavailable") {
+                // A temporary archive outage is not proof that no manifest exists: stay retryable (never the terminal exact-bytes-unavailable).
+                if (!repeated) await this.carryArchiveUnavailable(entry.artifactIdentity, relativeKey);
+                continue;
+            }
+            const recovered = lookup !== null && lookup.status === "found" ? lookup : null;
+            const byteLength = info.byteLength ?? recovered?.byteLength ?? null;
+            if (byteLength === null) {
+                if (!repeated) await this.dl.transition(entry.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
                 continue;
             }
             const job: ArtifactJob = {
                 documentId: info.documentId, artifactType: info.artifactType, fileType: info.artifactType === "audit-trail" ? "audit_trail" : "document",
-                artifactIdentity: entry.artifactIdentity, sha256: info.sha256, byteLength: info.byteLength, relativeKey,
+                artifactIdentity: entry.artifactIdentity, sha256: info.sha256, byteLength, relativeKey,
             };
-            if (entry.state === "integrity_error" && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
-                await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "integrity-repeated", relativeKey });
-            } else if (await this.stagedUsable(job)) {
+            if (integrityExhausted(entry)) {
+                // Recorded blocked integrity-repeated, then healed from Drive if it holds a verified copy (processArtifact); else it stays so.
+                if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
                 await this.processArtifact(job, "carry");
+                // Still blocked after the attempt (Drive could not be asked, or the heal failed): reported like any carried artifact.
+                const after = this.dl.entryOf(job.artifactIdentity);
+                if (after?.state === "blocked" && !isTerminalReason(after.reasonCode)) this.carriedBlocked.add(job.artifactIdentity);
             } else {
-                await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
+                const bytes: DriveHeal = recovered === null
+                    ? (await this.stagedUsable(job) ? true : await this.healFromDrive(job))
+                    : await this.recoveredBytesStaged(job);
+                if (bytes === true) {
+                    if (recovered !== null) this.recoveredManifests.set(job.artifactIdentity, { key: recovered.key, sha256: recovered.sha256 });
+                    await this.processArtifact(job, "carry");
+                } else if (!this.archiveOk || !(await this.archiveStillUsable())) {
+                    // The archive is down, so the verified Drive copy cannot be used (or went away while it was being staged): retry later, never terminal.
+                    // The terminal outcome below needs an archive that is reachable now, not only at the start of the run.
+                    await this.carryArchiveUnavailable(job.artifactIdentity, relativeKey);
+                } else if (bytes !== false) {
+                    // Drive could not be asked: that says nothing about the copy it holds, so the local entry stays retryable (never terminal).
+                    await this.carryRetryable(job.artifactIdentity, relativeKey, bytes.unavailable);
+                } else {
+                    await this.dl.transition(job.artifactIdentity, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey });
+                }
             }
         }
+    }
+
+    /** The archive passes its own check right now (the run's first check may be long past); a failure latches the archive as lost. */
+    private async archiveStillUsable(): Promise<boolean> {
+        const check = await this.archive.checkArchive(0);
+        if (!check.ok) this.archiveLost();
+        return check.ok;
+    }
+
+    /**
+     * Records `blocked/archive-unavailable` for a carried artifact and latches the outage for the run. A live entry that already says exactly
+     * that (same state, reason, key and retry timestamp; the attempts are carried over unchanged) is a no-op, so an outage of many runs
+     * writes one transition per artifact, not one per run.
+     */
+    private async carryArchiveUnavailable(artifactIdentity: string, relativeKey: string): Promise<void> {
+        this.archiveLost();
+        await this.carryRetryable(artifactIdentity, relativeKey, "archive-unavailable");
+    }
+
+    /**
+     * Records a non-terminal `blocked/<reasonCode>` for a carried artifact (the next run carries it again). A live entry that already says
+     * exactly that (same state, reason, key and retry timestamp) is a no-op. A terminal code is never recorded here (it would end the carry).
+     */
+    private async carryRetryable(artifactIdentity: string, relativeKey: string, wanted: WorkerReasonCode): Promise<void> {
+        const reasonCode: WorkerReasonCode = isTerminalReason(wanted) ? "drive-unavailable" : wanted;
+        this.carriedBlocked.add(artifactIdentity);
+        const live = this.dl.entryOf(artifactIdentity);
+        if (live !== undefined && live.state === "blocked" && live.reasonCode === reasonCode && live.relativeKey === relativeKey && live.nextRetryAt === null) return;
+        await this.dl.transition(artifactIdentity, "blocked", { reasonCode, relativeKey });
+    }
+
+    /**
+     * The archive manifest that proves a recovered artifact's length: one that parses as a manifest of its document, is not contradicted by
+     * the ledger's or a valid completion's digest for its key, and lists this artifact with the recorded sha256, type and key. All such
+     * manifests must agree on one length; none, or a disagreement, is `none` (nothing is built or guessed). `none` is negative evidence, so it
+     * needs a completed observation: a listing that fails, a listed manifest that is gone before it is read, and an archive that does not pass
+     * a fresh check once the listing is done are all `archive-unavailable`, which says nothing about the manifests. Listed afresh: the
+     * run's shared listing is taken later, after this run's own manifests exist.
+     */
+    private async recoveredManifestFor(
+        artifactIdentity: string, info: { documentId: string; artifactType: ArchiveArtifactType; sha256: string }, relativeKey: string,
+    ): Promise<{ status: "found"; key: string; sha256: string; byteLength: number } | { status: "none" } | { status: "archive-unavailable" }> {
+        if (!this.archiveOk) return { status: "archive-unavailable" };
+        const found: Array<{ key: string; sha256: string; byteLength: number }> = [];
+        try {
+            const completions = await this.completionDigests();
+            for (const file of (await listManifestFiles(this.deps.config.archive.path, this.companyId)).filter((candidate) => candidate.documentId === info.documentId)) {
+                let bytes: Buffer | null;
+                try {
+                    bytes = await this.archive.readArchiveFile(file.key);
+                } catch (error) {
+                    if (error instanceof WorkerError && !isArchiveSide(error.reasonCode)) continue; // not a readable manifest: it lists nothing
+                    throw error;
+                }
+                // Listed a moment ago and gone now: the archive changed under the lookup, so nothing is established for this run.
+                if (bytes === null) throw new WorkerError("archive-unavailable");
+                let parsed: { manifest: Manifest; sha256: string };
+                try {
+                    parsed = parseManifestBytes(bytes, file.key, { companyId: this.companyId, documentId: file.documentId, metadataRevision: file.metadataRevision });
+                } catch (error) {
+                    if (!(error instanceof WorkerError)) throw error;
+                    continue;
+                }
+                const acknowledged = this.state.manifests.get(file.key);
+                if ((acknowledged !== undefined && acknowledged.sha256 !== parsed.sha256)
+                    || [...(completions.get(file.key) ?? [])].some((expected) => expected !== parsed.sha256)) continue;
+                for (const artifact of parsed.manifest.artifacts) {
+                    if (artifact.artifactIdentity !== artifactIdentity || artifact.sha256 !== info.sha256 || artifact.artifactType !== info.artifactType) continue;
+                    let derived: string;
+                    try {
+                        derived = artifactKey({ companyId: this.companyId, documentId: info.documentId, artifactType: artifact.artifactType, sha256: artifact.sha256 });
+                    } catch {
+                        continue;
+                    }
+                    if (derived === relativeKey) found.push({ key: file.key, sha256: parsed.sha256, byteLength: artifact.byteLength });
+                }
+            }
+        } catch (error) {
+            if (!(error instanceof WorkerError)) throw error;
+            this.archiveLost();
+            return { status: "archive-unavailable" };
+        }
+        if (found.length === 0 || new Set(found.map((candidate) => candidate.byteLength)).size !== 1) {
+            return await this.archiveStillUsable() ? { status: "none" } : { status: "archive-unavailable" };
+        }
+        return { status: "found", ...found[0]! };
+    }
+
+    /**
+     * A recovered artifact's bytes, staged, with the length its archive manifest names: a staged copy on record that hashes to the artifact
+     * (one that does not is set aside), else the verified Drive copy, which `restage` proves again by hash and size.
+     */
+    private async recoveredBytesStaged(job: ArtifactJob): Promise<DriveHeal> {
+        if (await this.stagedUsable(job)) {
+            if (await this.stagedHashes(job)) return true;
+            await this.setStagingAside(job);
+        }
+        return this.healFromDrive(job);
+    }
+
+    private async stagedHashes(job: ArtifactJob): Promise<boolean> {
+        const hash = createHash("sha256");
+        let seen = 0;
+        for await (const chunk of this.archive.openStaged(this.staging, job.artifactIdentity)) {
+            hash.update(chunk);
+            seen += chunk.byteLength;
+        }
+        return seen === job.byteLength && hash.digest("hex") === job.sha256;
     }
 
     private async stagedUsable(job: ArtifactJob): Promise<boolean> {
@@ -517,14 +684,34 @@ class RunExecution {
         }
         const state = entry?.state ?? null;
         if (entry !== undefined && state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
-        if (entry !== undefined && state === "integrity_error"
-            && integrityRetryDecision(integrityErrorCount(entry)).to === "blocked") {
-            await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
-            return;
+        let staged: boolean;
+        const exhausted = entry !== undefined && integrityExhausted(entry);
+        if (exhausted) {
+            if (state === "transferring" || state === "verifying") return;
+            if (state === "integrity_error") await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
+            // Blocked archive-unavailable and the archive is still down: nothing can change, so nothing is written (still counted and reported).
+            const live = this.dl.entryOf(id);
+            if (live?.state === "blocked" && live.reasonCode === "archive-unavailable" && !this.archiveOk) return;
+            // QF3 / V10: the export has failed this artifact for good, but a copy Drive holds verified still heals it, on every run, without
+            // asking the export again. A staged copy that is still usable (healed earlier, not yet published) is used as it is; only
+            // without one is Drive asked. While Drive cannot be asked (or holds no usable copy) the entry stays as it is, and a failed
+            // attempt is on record (below) so it is reported like any carried artifact.
+            if (!(await this.stagedUsable(job))) {
+                const heal = await this.healFromDrive(job);
+                if (heal !== true) {
+                    await this.exhaustedNotRestaged(job, heal);
+                    return;
+                }
+            }
+            staged = true;
+        } else {
+            staged = await this.stagedUsable(job);
+            if (entry !== undefined && state === "blocked" && !(await this.blockedMayRetry(entry, job, staged))) return;
+            if (state === "transferring" || state === "verifying") return;
+            // V10: a copy Drive holds verified is staged again before anything is downloaded or given up.
+            // Snapshot work falls back to the export when Drive could not be asked; carry work never gives up on that.
+            if (!staged) staged = (await this.healFromDrive(job)) === true;
         }
-        const staged = await this.stagedUsable(job);
-        if (entry !== undefined && state === "blocked" && !(await this.blockedMayRetry(entry, job, staged))) return;
-        if (state === "transferring" || state === "verifying") return;
 
         if (!staged) {
             if (mode === "carry" || this.stopDownloads) return;
@@ -547,6 +734,12 @@ class RunExecution {
         // A carried artifact is no longer in any snapshot, so no later run writes its manifest: it goes first.
         if (mode === "carry" && !(await this.manifestFirst(id, job.relativeKey))) return;
         if ((await this.transfer(job, !staged)) !== "staging-corrupt") return;
+        if (exhausted) {
+            // The copy healed from Drive was damaged on the way: the export is still not asked and nothing is given up. The entry goes back
+            // to blocked integrity-repeated, so the next run heals it from Drive again.
+            await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
+            return;
+        }
         // The staged copy did not match its own hash: it is set aside, so this artifact is now simply not staged.
         if (mode === "carry") {
             await this.dl.transition(id, "blocked", { reasonCode: "exact-bytes-unavailable", relativeKey: job.relativeKey });
@@ -554,6 +747,17 @@ class RunExecution {
         }
         if (this.stopDownloads || !(await controlHasStagingRoom(this.deps, job.byteLength))) return;
         await this.transfer(job, true);
+    }
+
+    /**
+     * A due exhausted entry whose copy could not be staged again from Drive (Drive could not be asked, or holds no usable copy). An entry that
+     * is already blocked keeps the reason it carries. Any other (an interrupted heal that recovery moved back to pending, a due retry_wait)
+     * is recorded as a non-terminal `blocked` with the Drive reason (else integrity-repeated), so it is counted and its reason reported;
+     * the next run heals it from Drive again. The export is not asked and nothing is given up.
+     */
+    private async exhaustedNotRestaged(job: ArtifactJob, heal: Exclude<DriveHeal, true>): Promise<void> {
+        if (this.dl.entryOf(job.artifactIdentity)?.state === "blocked") return;
+        await this.carryRetryable(job.artifactIdentity, job.relativeKey, heal === false ? "integrity-repeated" : heal.unavailable);
     }
 
     /** pending -> transferring -> (download) -> publish. `staging-corrupt`: the staged bytes failed their hash, the artifact waits in retry_wait. */
@@ -779,6 +983,74 @@ class RunExecution {
         return "done";
     }
 
+    // ---- Google Drive seams (BJJ-456) ------------------------------------------------------------------------------
+
+    /** V10: the artifact's staged bytes are gone and Drive holds it verified: stage it again from there, before downloading. */
+    private async healFromDrive(job: ArtifactJob): Promise<DriveHeal> {
+        if (!this.archiveOk) return false;
+        if (this.drive === null) {
+            // No Drive phase this run (no `drive` block in the config, or the binding is not ready). A verified Drive copy the ledger still
+            // holds for the installation's binding was not asked about: that is not an answer, so the local entry stays retryable.
+            return this.holdsVerifiedDriveCopy(job.artifactIdentity, job.relativeKey) ? { unavailable: "drive-not-configured" } : false;
+        }
+        if (!this.drive.driveVerified(job.artifactIdentity)) return false;
+        return this.drive.restageFromDrive(job);
+    }
+
+    /** The ledger records the artifact verified on the installation's Drive binding, with the file node that holds it. */
+    private holdsVerifiedDriveCopy(artifactIdentity: string, relativeKey: string | null): boolean {
+        const binding = this.dl.installation.drive;
+        if (binding === null || relativeKey === null) return false;
+        const entry = this.state.destinations.get(destinationKey(artifactIdentity, binding.destinationIdentity, binding.destinationRevision));
+        if (entry?.state !== "verified") return false;
+        return this.state.driveNodes.get(driveStateKey(binding.destinationRevision, relativeKey))?.kind === "file";
+    }
+
+    /**
+     * Stages `source` as the artifact's staged copy through the checks every staged file gets (hash, size, PDF shape), for a copy that
+     * comes from the other destination instead of the export. A control failure is thrown; any other failure is the reason it returns.
+     */
+    private async restage(job: ArtifactJob, source: AsyncIterable<Uint8Array>): Promise<{ ok: true } | { ok: false; reasonCode: WorkerReasonCode }> {
+        if (!(await controlHasStagingRoom(this.deps, job.byteLength))) return { ok: false, reasonCode: "control-space" };
+        // A staged file that is still there is not usable (otherwise nothing would be staged again): it would make the name conflict.
+        const leftover = await fs.lstat(`${this.staging.path}/${job.artifactIdentity}.bin`).catch(() => null);
+        if (leftover !== null) await this.setStagingAside(job);
+        const staged = await this.archive.stageArtifact(this.staging, this.input(job), source);
+        if (!staged.ok) {
+            if (staged.reasonCode === "control-unavailable" || staged.reasonCode === "control-space") throw new WorkerError(staged.reasonCode);
+            return { ok: false, reasonCode: staged.reasonCode };
+        }
+        await this.deps.ledger.append("staging_verified", { artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength }, this.now());
+        return { ok: true };
+    }
+
+    private driveHost(): DriveRunHost {
+        return {
+            archiveOk: () => this.archiveOk,
+            archiveLost: () => this.archiveLost(),
+            manifestOf: (candidate) => {
+                const { manifest, key } = this.manifestOf(candidate);
+                return { key, bytes: manifest.bytes, sha256: manifest.sha256 };
+            },
+            stagedUsable: (job) => this.stagedUsable(job),
+            setStagingAside: (job) => this.setStagingAside(job),
+            restage: (job, source) => this.restage(job, source),
+            locallyPublished: (relativeKey) => this.localPublished.has(relativeKey),
+            localCompletion: () => this.localCompletion,
+            completionContext: (): DriveCompletionContext | null => {
+                const binding = this.snapshotId === null ? undefined : this.state.snapshots.get(this.snapshotId);
+                if (binding === undefined) return null;
+                return {
+                    companyId: this.companyId, runId: this.runId, sequence: binding.sequence, snapshotId: binding.snapshotId,
+                    scopeRevision: binding.scopeRevision, policyRevision: binding.policyRevision,
+                    localIdentity: this.dl.destinationIdentity, localRevision: this.dl.destinationRevision,
+                    stateGaps: this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })),
+                    blockedDocuments: this.blockedDocuments, emptyDocuments: this.emptyDocuments,
+                };
+            },
+        };
+    }
+
     // ---- steps 9-10: manifests and the completion ------------------------------------------------------------------
 
     /** The manifest of one observed artifact set and the content-versioned key it is published under. */
@@ -816,6 +1088,7 @@ class RunExecution {
     }
 
     private async recordManifest(written: { key: string; sha256: string }): Promise<void> {
+        this.localPublished.add(written.key);
         if (!this.state.manifests.has(written.key)) {
             await this.deps.ledger.append("manifest_published", { relativeKey: written.key, sha256: written.sha256 }, this.now());
         }
@@ -842,6 +1115,13 @@ class RunExecution {
      * it cannot be written the artifact is blocked and nothing is published for it. `false`: the caller stops.
      */
     private async manifestFirst(artifactIdentity: string, relativeKey: string | null): Promise<boolean> {
+        // A recovered artifact has no observed source: the manifest already on the archive, validated, is the one that lists it.
+        const recovered = this.recoveredManifests.get(artifactIdentity);
+        if (recovered !== undefined) {
+            await this.fault("after-manifest-first-before-record");
+            await this.recordManifest(recovered);
+            return true;
+        }
         const source = this.manifestSourceFor(artifactIdentity);
         const written = await this.writeManifest(source);
         if (!written.ok) {
@@ -1216,12 +1496,14 @@ class RunExecution {
             destinationIdentity: this.dl.destinationIdentity, destinationRevision: this.dl.destinationRevision,
             entries, gaps: [...this.state.gaps.map((gap) => ({ documentId: gap.documentId, reasonCode: gap.reasonCode })), ...omissions],
         });
+        this.localCompletion = { key: completion.relativeKey, bytes: completion.bytes, sha256: completion.sha256 };
         const published = await this.archive.publishJson(completion.relativeKey, completion.bytes);
         if (!published.ok) {
             if (isArchiveSide(published.reasonCode)) this.archiveLost();
             else this.reasons.add(published.reasonCode);
             return;
         }
+        this.localPublished.add(completion.relativeKey);
         await this.fault("after-completion-before-record");
         await this.deps.ledger.append("completion_published", {
             relativeKey: completion.relativeKey, sha256: completion.sha256, sequence: binding.sequence,
@@ -1251,28 +1533,46 @@ class RunExecution {
             if (entry.state === "blocked" && isTerminalReason(entry.reasonCode)) terminalUnavailable += 1;
             else if (entry.state === "integrity_error") consider(entry);
         }
+        // A carried entry left retryably blocked is counted (never twice) but not fed to the snapshot judgement: it is not this snapshot's work.
+        for (const artifactIdentity of this.carriedBlocked) {
+            const entry = this.dl.entryOf(artifactIdentity);
+            if (entry === undefined || seen.has(artifactIdentity) || entry.state !== "blocked" || isTerminalReason(entry.reasonCode)) continue;
+            seen.add(artifactIdentity);
+            blocked += 1;
+        }
         return {
             counts: {
                 candidates: this.totalCandidates, included: this.includedCandidates, verified, blocked, retryWait, integrityError,
-                terminalUnavailable, orphanTemps,
+                terminalUnavailable, orphanTemps, driveVerified: 0, driveBlocked: 0, driveRetryWait: 0, driveIntegrityError: 0,
+                ...(this.drive === null ? {} : this.drive.counts()),
             },
             entries,
         };
     }
 
     private async finish(): Promise<RunSummary> {
+        // The Drive copies of the manifests and the completion go first: what they could not do is part of what the run reports.
+        await this.drive?.publishRecords();
         const { counts, entries } = this.counts(await countOrphanTemps(this.staging.path));
         const localEntries = [
             ...entries,
             ...this.blockedCandidates.map((reasonCode) => ({ state: "blocked" as const, reasonCode })),
         ];
+        const driveReasons = this.drive?.entryReasons() ?? [];
         const judged = judgeSnapshotStatus({
             snapshotFailure: this.snapshotFailure,
             controlFailure: this.blockRun ?? (this.archiveOk ? null : "archive-unavailable"),
             localEntries,
+            ...(this.drive === null ? {} : { drive: { bound: true, phaseFailure: this.drive.phaseFailure, entryReasons: driveReasons } }),
         });
         const extras = new Set<WorkerReasonCode>(this.reasons);
+        for (const code of driveReasons) extras.add(code);
+        if (this.drive?.phaseFailure != null) extras.add(this.drive.phaseFailure);
         for (const entry of entries) if (entry.state === "retry_wait" && entry.reasonCode !== null) extras.add(entry.reasonCode);
+        for (const artifactIdentity of this.carriedBlocked) {
+            const entry = this.dl.entryOf(artifactIdentity);
+            if (entry?.state === "blocked" && entry.reasonCode !== null && !isTerminalReason(entry.reasonCode)) extras.add(entry.reasonCode);
+        }
         for (const entry of this.state.destinations.values()) {
             if (entry.state === "blocked" && isTerminalReason(entry.reasonCode) && entry.reasonCode !== null) extras.add(entry.reasonCode);
         }
@@ -1280,21 +1580,25 @@ class RunExecution {
         const historicalCoverage = judgeHistoricalCoverage(this.state);
         const finishedAt = this.now();
         const binding = this.snapshotId === null ? undefined : this.state.snapshots.get(this.snapshotId);
-        if (this.archiveOk) {
+        if (this.archiveOk || this.drive !== null) {
             const inventory = buildRunInventory({
                 runId: this.runId, scheduledFor: this.scheduledFor, startedAt: this.startedAt, finishedAt,
                 snapshotId: this.snapshotId, sequence: binding?.sequence ?? null, snapshotStatus: judged.snapshotStatus,
                 historicalCoverage, reasonCodes, counts,
             });
+            const key = runKey({ companyId: this.companyId, runId: this.runId });
             // The inventory is a convenience copy; a refusal leaves the ledger record below as the only one.
-            await this.archive.publishJson(runKey({ companyId: this.companyId, runId: this.runId }), inventory.bytes);
+            const local = this.archiveOk ? (await this.archive.publishJson(key, inventory.bytes)).ok : false;
+            await this.drive?.publishInventory({ key, bytes: inventory.bytes, sha256: inventory.sha256 }, local);
         }
+        // What the inventory upload itself ran into is known only now: it is reported, but the inventory (already written) keeps the reasons it had.
+        const reported = this.snapshotFailure !== null ? reasonCodes : sortedUnique([...reasonCodes, ...(this.drive?.entryReasons() ?? []), ...(this.drive?.phaseFailure == null ? [] : [this.drive.phaseFailure])]);
         await this.deps.ledger.append("run_finished", {
-            runId: this.runId, finishedAt, snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes, counts,
+            runId: this.runId, finishedAt, snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes: reported, counts,
         }, finishedAt);
         return {
             outcome: "finished", runId: this.runId, snapshotId: this.snapshotId, sequence: binding?.sequence ?? null,
-            snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes, counts,
+            snapshotStatus: judged.snapshotStatus, historicalCoverage, reasonCodes: reported, counts,
         };
     }
 }

@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import {
-    WorkerError, destinationKey, integrityErrorCount, isoUtc, transitionDestination,
+    WorkerError, destinationKey, driveStateKey, integrityErrorCount, isoUtc, transitionDestination,
     type DestinationEntry, type DestinationState, type Installation, type LedgerBodies, type LedgerState,
     type TransitionContext, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { publishBytesNoClobber } from "./atomic-file";
+import type { DriveNodeLedger } from "./drive-destination";
 import { hasRoom } from "./fs-probe";
 import type { InstallationMarker } from "./ledger-replay";
 import type { LocalDestination } from "./local-destination";
@@ -92,12 +93,19 @@ export async function assertSameInstallation(destination: LocalDestination, inst
     }
 }
 
+/** The destination a `DestinationLedger` writes for: its identity and the layout revision of the current binding. */
+export interface DestinationBinding {
+    destinationIdentity: string;
+    destinationRevision: string;
+}
+
 export class DestinationLedger {
-    constructor(readonly deps: RunnerDependencies, readonly installation: Installation) {}
+    /** `binding` defaults to the installation's own (local) destination; a Drive caller passes the Drive binding. */
+    constructor(readonly deps: RunnerDependencies, readonly installation: Installation, readonly binding: DestinationBinding = installation) {}
 
     get state(): LedgerState { return this.deps.ledger.state; }
-    get destinationIdentity(): string { return this.installation.destinationIdentity; }
-    get destinationRevision(): string { return this.installation.destinationRevision; }
+    get destinationIdentity(): string { return this.binding.destinationIdentity; }
+    get destinationRevision(): string { return this.binding.destinationRevision; }
 
     entryOf(artifactIdentity: string): DestinationEntry | undefined {
         return this.state.destinations.get(destinationKey(artifactIdentity, this.destinationIdentity, this.destinationRevision));
@@ -133,6 +141,26 @@ export class DestinationLedger {
         };
         await this.deps.ledger.append("destination_transition", body, at);
     }
+}
+
+/**
+ * The node records of the Drive tree of one revision, kept in the ledger: a reservation is durable before the create that
+ * uses its id, and every record goes through `ledger.append`, which re-proves the worker lock before it writes.
+ * The ledger is read through `deps` on every call, so a ledger reopened by `recover` is picked up.
+ */
+export function ledgerDriveNodes(deps: RunnerDependencies, destinationRevision: string): DriveNodeLedger {
+    return {
+        current(nodeKey) {
+            const node = deps.ledger.state.driveNodes.get(driveStateKey(destinationRevision, nodeKey));
+            return node === undefined ? null : { kind: node.kind, fileId: node.fileId, parentFileId: node.parentFileId, status: node.status };
+        },
+        async reserve(kind, nodeKey, fileId, parentFileId) {
+            await deps.ledger.append("drive_node_reserved", { destinationRevision, kind, nodeKey, fileId, parentFileId }, nowIso(deps));
+        },
+        async created(nodeKey, fileId) {
+            await deps.ledger.append("drive_node_created", { destinationRevision, nodeKey, fileId }, nowIso(deps));
+        },
+    };
 }
 
 /** True when the entry belongs to a gap that can never be fetched again (the bytes are gone at the source). */

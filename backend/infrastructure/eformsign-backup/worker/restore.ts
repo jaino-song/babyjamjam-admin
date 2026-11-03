@@ -172,30 +172,43 @@ export interface ManifestFile {
     key: string;
 }
 
+/** One directory listing; a filesystem failure of any kind (an absent directory included) is the archive being unavailable. */
+async function listDirectory(directory: string): Promise<string[]> {
+    try {
+        return await fs.readdir(directory);
+    } catch {
+        throw new WorkerError("archive-unavailable");
+    }
+}
+
 /**
  * Every `eformsign/<company>/<document>/manifests/<revision>.json` and `<revision>-<manifestSha256>.json` in the archive,
  * sorted by document, then file name. `metadataRevision` is the revision the name carries in either shape.
+ *
+ * The result is complete or an error. An empty or short list is negative evidence for its callers (a recovered artifact no manifest
+ * lists is given up for good), so it is returned only after every directory the walk needed was listed. A directory is absent only when
+ * its parent's successful listing does not name it; a child the parent named that then cannot be examined (`ENOENT` included, the archive
+ * went away between the two calls) is `archive-unavailable`. The walk stays beneath the archive root and never returns what it had found
+ * when it failed.
  */
 export async function listManifestFiles(archivePath: string, companyId: string): Promise<ManifestFile[]> {
-    const root = `${archivePath}/eformsign/${companyId}`;
-    let names: string[];
-    try {
-        names = (await fs.readdir(root)).sort();
-    } catch {
-        return [];
-    }
+    if (!(await listDirectory(archivePath)).includes("eformsign")) return [];
+    const eformsign = `${archivePath}/eformsign`;
+    if (!(await listDirectory(eformsign)).includes(companyId)) return [];
+    const root = `${eformsign}/${companyId}`;
     const found: ManifestFile[] = [];
-    for (const documentId of names) {
+    for (const documentId of (await listDirectory(root)).sort()) {
         if (!isPathIdentifier(documentId)) continue;
-        const stat = await fs.lstat(`${root}/${documentId}`);
+        let stat;
+        try {
+            stat = await fs.lstat(`${root}/${documentId}`);
+        } catch {
+            throw new WorkerError("archive-unavailable");
+        }
         if (stat.isSymbolicLink()) throw new WorkerError("archive-unsafe-path");
         if (!stat.isDirectory()) continue;
-        let files: string[];
-        try {
-            files = (await fs.readdir(`${root}/${documentId}/manifests`)).filter((name) => parseManifestName(name) !== null).sort();
-        } catch {
-            continue;
-        }
+        if (!(await listDirectory(`${root}/${documentId}`)).includes("manifests")) continue;
+        const files = (await listDirectory(`${root}/${documentId}/manifests`)).filter((name) => parseManifestName(name) !== null).sort();
         for (const name of files) {
             found.push({ documentId, metadataRevision: parseManifestName(name)!.metadataRevision, key: `eformsign/${companyId}/${documentId}/manifests/${name}` });
         }

@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { WorkerError, identifier, isoWithOffset, type WorkerReasonCode } from "domain/eformsign-backup/worker";
-import { loadWorkerConfig, isNormalAbsolutePath, type WorkerConfig } from "./config";
+import { z } from "zod";
+
+import { UUID_V4_PATTERN, WorkerError, driveFileId, identifier, isoWithOffset, type WorkerReasonCode } from "domain/eformsign-backup/worker";
+import { loadWorkerConfig, isNormalAbsolutePath, resolveDriveConfig, type WorkerConfig } from "./config";
+import { DriveTokenSource } from "./drive-auth";
+import { DriveClient } from "./drive-client";
+import { DriveDestination } from "./drive-destination";
 import { ExportClient, readTokenFile } from "./export-client";
 import { assertSupportedFilesystem, createRealFsProbe, type FsProbe } from "./fs-probe";
 import { LedgerStore, type LedgerFaultPoint } from "./ledger-store";
@@ -10,15 +15,17 @@ import { lockGuard, verifyLockHeld } from "./lock";
 import { LocalDestination } from "./local-destination";
 import { controlMarkerWriter } from "./runner-common";
 import { WorkerRunner } from "./runner";
+import { DriveRootCandidatesError } from "./runner-recover";
 import { RunEndedWithFailure } from "./runner-run";
+import { readSecretFile, readSecretJson } from "./secret-file";
 import type { ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 import {
-    ZERO_COUNTS, type Clock, type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies,
+    ZERO_COUNTS, type Clock, type DriveDependency, type DriveSetupSummary, type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies,
     type RunnerFault, type VerifySummary, type WorkerRunnerPort,
 } from "./runner-types";
 
-export type WorkerCommand = "init" | "run" | "verify" | "recover" | "inspect";
-const COMMANDS: readonly WorkerCommand[] = ["init", "run", "verify", "recover", "inspect"];
+export type WorkerCommand = "init" | "run" | "verify" | "recover" | "inspect" | "drive-setup";
+const COMMANDS: readonly WorkerCommand[] = ["init", "run", "verify", "recover", "inspect", "drive-setup"];
 
 /** Everything a test may replace. Production passes nothing and gets the real clock, uuid source, `/proc/locks`, fetch and stdio. */
 export interface WorkerEnvironment {
@@ -52,14 +59,58 @@ class DisabledRunner implements WorkerRunnerPort {
     async recover(): Promise<RecoverSummary> {
         return { outcome: "disabled", recovered: 0, unverified: 0, sequenceFloor: 0, knownGaps: 0 };
     }
+    driveSetup(): Promise<DriveSetupSummary> { throw new WorkerError("internal"); }
     inspect(): InspectSummary { throw new WorkerError("internal"); }
 }
 
 const LOCK_NAME = "worker.lock";
 
+/** The commands that may talk to Drive, and so read the Drive secret files. `init` and `inspect` never do. */
+const DRIVE_COMMANDS: ReadonlySet<WorkerCommand> = new Set(["run", "drive-setup", "recover", "verify"]);
+const DRIVE_CLIENT_FILE_MAX_BYTES = 4096;
+const DRIVE_REFRESH_TOKEN_MAX_BYTES = 1024;
+const DRIVE_REFRESH_TOKEN_PATTERN = /^[A-Za-z0-9_\-/.]{20,512}$/;
+const driveClientFileSchema = z.strictObject({ client_id: z.string().min(1).max(512), client_secret: z.string().min(1).max(512) });
+
+/**
+ * The Drive client for a config with a `drive` block. Unreadable or badly permissioned secret files are `token-file-invalid`
+ * (a token the server rejects is `drive-token-invalid`, and only later). No request is made here.
+ */
+async function openDrive(config: WorkerConfig, clock: Clock, fetchImpl: typeof fetch | undefined): Promise<DriveDependency | null> {
+    const settings = resolveDriveConfig(config);
+    if (settings === null || config.drive === undefined) return null;
+    const credentials = await readSecretJson(config.drive.clientFile, driveClientFileSchema, DRIVE_CLIENT_FILE_MAX_BYTES, "token-file-invalid");
+    const refreshToken = await readSecretFile(config.drive.refreshTokenFile, {
+        pattern: DRIVE_REFRESH_TOKEN_PATTERN, maxBytes: DRIVE_REFRESH_TOKEN_MAX_BYTES, reasonCode: "token-file-invalid",
+    });
+    const tokens = new DriveTokenSource({
+        tokenUrl: settings.tokenUrl, clientId: credentials.client_id, clientSecret: credentials.client_secret, refreshToken,
+        now: () => clock.now(), requestTimeoutMs: settings.requestTimeoutMs, ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+    const client = new DriveClient({
+        apiBaseUrl: settings.apiBaseUrl, uploadBaseUrl: settings.uploadBaseUrl, tokens,
+        requestTimeoutMs: settings.requestTimeoutMs, chunkBytes: settings.chunkBytes, ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+    return { kind: "ready", client, settings };
+}
+
+/**
+ * `drive-setup` is a Drive-only command: an unusable secret file ends it (78). `run`, `recover` and `verify` have a local side that
+ * must not depend on Drive (design 7.1), so for them the failure becomes a dependency of kind `unavailable` (A8).
+ */
+async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock: Clock, fetchImpl: typeof fetch | undefined): Promise<DriveDependency | null> {
+    try {
+        return await openDrive(config, clock, fetchImpl);
+    } catch (error) {
+        if (command === "drive-setup" || !(error instanceof WorkerError) || error.reasonCode !== "token-file-invalid") throw error;
+        return { kind: "unavailable", reason: "token-file-invalid" };
+    }
+}
+
 /**
  * Opens what one command needs, in this order: the lock check (before anything is touched), the filesystem checks, the
- * token file (`run` only), the ledger. A failure at any step leaves the earlier ones unopened.
+ * token file (`run` only), the Drive secret files (`run`, `drive-setup`, `recover`, `verify`, when the config has a `drive` block; a bad one ends only
+ * `drive-setup`), the ledger. A failure at any step leaves the earlier ones unopened.
  */
 export async function openWorker(config: WorkerConfig, command: WorkerCommand, environment: WorkerEnvironment = {}): Promise<OpenedWorker> {
     if (!config.enabled && (command === "run" || command === "verify" || command === "recover")) {
@@ -86,6 +137,7 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
             requestTimeoutMs: config.requestTimeoutMs, ...(environment.fetchImpl === undefined ? {} : { fetchImpl: environment.fetchImpl }),
         })
         : null;
+    const drive = DRIVE_COMMANDS.has(command) ? await openDriveFor(command, config, clock, environment.fetchImpl) : null;
 
     const openLedger = (): Promise<LedgerStore> => LedgerStore.open(controlPath, {
         readOnly: command === "inspect",
@@ -110,6 +162,12 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
             reserveBytes: config.archive.reserveBytes, reserveInodes: config.archive.reserveInodes, requireMountPoint: config.archive.requireMountPoint,
         }, probe, environment.archiveFault),
         exportClient,
+        drive,
+        createDriveDestination: (binding) => {
+            if (drive === null) throw new WorkerError("drive-not-configured");
+            if (drive.kind === "unavailable") throw new WorkerError(drive.reason);
+            return new DriveDestination(drive.client, binding);
+        },
         ...(environment.compactionThreshold === undefined ? {} : { compactionThreshold: environment.compactionThreshold }),
         ...(environment.runnerFault === undefined ? {} : { runnerFault: environment.runnerFault }),
     };
@@ -124,6 +182,8 @@ interface ParsedArgs {
     scheduledFor: string | null;
     all: boolean;
     installationId: string | null;
+    rebind: boolean;
+    driveRootFolderId: string | null;
 }
 
 function usage(): never {
@@ -139,6 +199,8 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     let scheduledFor: string | null = null;
     let all = false;
     let installationId: string | null = null;
+    let rebind = false;
+    let driveRootFolderId: string | null = null;
     for (let index = 1; index < args.length; index++) {
         const flag = args[index]!;
         if (seen.has(flag)) usage();
@@ -146,6 +208,11 @@ function parseArgs(args: readonly string[]): ParsedArgs {
         if (flag === "--all") {
             if (command !== "verify") usage();
             all = true;
+            continue;
+        }
+        if (flag === "--rebind") {
+            if (command !== "drive-setup") usage();
+            rebind = true;
             continue;
         }
         const value = args[++index];
@@ -159,23 +226,31 @@ function parseArgs(args: readonly string[]): ParsedArgs {
         } else if (flag === "--installation-id") {
             if (command !== "recover" || !identifier.safeParse(value).success) usage();
             installationId = value;
+        } else if (flag === "--drive-root-folder-id") {
+            if (command !== "recover" || !driveFileId.safeParse(value).success) usage();
+            driveRootFolderId = value;
         } else {
             usage();
         }
     }
     if (configPath === null || (command === "recover" && installationId === null)) usage();
-    return { command, configPath, scheduledFor, all, installationId };
+    return { command, configPath, scheduledFor, all, installationId, rebind, driveRootFolderId };
 }
 
 // ---- exit codes ------------------------------------------------------------------------------------------------------
 
 const CONFIGURATION: ReadonlySet<WorkerReasonCode> = new Set([
     "config-invalid", "token-file-invalid", "export-base-url-invalid", "lock-not-held", "unsupported-filesystem",
+    "drive-not-configured", "drive-token-invalid",
 ]);
 const CONTROL: ReadonlySet<WorkerReasonCode> = new Set(["control-unavailable", "control-space"]);
 const STATE: ReadonlySet<WorkerReasonCode> = new Set([
     "not-initialized", "recovery-required", "ledger-duplicate-install", "ledger-inconsistent", "archive-identity-mismatch",
     "archive-marker-invalid", "archive-unavailable", "archive-conflict", "archive-not-mount-point", "archive-unsafe-path", "archive-space",
+    // A Drive-only command (drive-setup, restore-drive) ends on these; inside `run` a Drive failure never ends the run.
+    "drive-root-changed", "drive-permission", "drive-quota", "drive-conflict", "drive-unavailable",
+    // Transient Drive failures that end drive-setup or recover: "unavailable, retry later", the same 69 restore-drive gives them.
+    "network-timeout", "rate-limited",
 ]);
 
 /** 78 configuration, 74 control side, 69 state or archive, 70 anything else. */
@@ -188,7 +263,13 @@ export function exitCodeFor(reasonCode: WorkerReasonCode): number {
 
 // ---- main ------------------------------------------------------------------------------------------------------------
 
-type LogLine = { event: string; runId?: string; reasonCode?: string; counts?: Record<string, number> };
+type LogLine = {
+    event: string; runId?: string; reasonCode?: string; counts?: Record<string, number>;
+    /** `drive_bound` only: the Drive root and the layout revision it was bound under (identifiers, never a secret). */
+    rootFolderId?: string; destinationRevision?: string;
+    /** `recover_drive_root_ambiguous` only: the roots the operator can pick from, ids only. */
+    candidates?: Array<{ rootFolderId: string; bindingId: string | null }>;
+};
 
 async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: LogLine) => void): Promise<void> {
     const { runner } = worker;
@@ -226,7 +307,25 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
             return;
         }
         case "recover": {
-            const summary = await runner.recover({ installationId: parsed.installationId! });
+            let summary: RecoverSummary;
+            try {
+                summary = await runner.recover({
+                    installationId: parsed.installationId!,
+                    ...(parsed.driveRootFolderId === null ? {} : { driveRootFolderId: parsed.driveRootFolderId }),
+                });
+            } catch (error) {
+                // Several roots hold this archive's marker: the operator needs their ids to name one (A2.4). Ids only, validated.
+                if (error instanceof DriveRootCandidatesError) {
+                    emit({
+                        event: "recover_drive_root_ambiguous", reasonCode: error.reasonCode,
+                        candidates: error.candidates.filter((candidate) => driveFileId.safeParse(candidate.rootFolderId).success).map((candidate) => ({
+                            rootFolderId: candidate.rootFolderId,
+                            bindingId: candidate.bindingId !== null && UUID_V4_PATTERN.test(candidate.bindingId) ? candidate.bindingId : null,
+                        })),
+                    });
+                }
+                throw error;
+            }
             if (summary.outcome === "disabled") {
                 emit({ event: "disabled" });
                 return;
@@ -235,6 +334,11 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
                 event: "recovered",
                 counts: { recovered: summary.recovered, unverified: summary.unverified, sequenceFloor: summary.sequenceFloor, knownGaps: summary.knownGaps },
             });
+            return;
+        }
+        case "drive-setup": {
+            const summary = await runner.driveSetup({ rebind: parsed.rebind });
+            emit({ event: "drive_bound", rootFolderId: summary.rootFolderId, destinationRevision: summary.destinationRevision });
             return;
         }
         case "inspect": {
@@ -247,7 +351,8 @@ async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: Lo
 }
 
 /**
- * The command line contract: stdout carries one JSON object per line with keys from {event, runId, reasonCode, counts};
+ * The command line contract: stdout carries one JSON object per line with keys from {event, runId, reasonCode, counts,
+ * rootFolderId, destinationRevision} (the last two on `drive_bound` only; `candidates` joins them on `recover_drive_root_ambiguous` only);
  * stderr carries a reason code and nothing else; the exit code follows `exitCodeFor`. On failure stderr is that reason
  * code only; stdout still carries the lines a command had ready (a run that ended in a deferred failure prints its own
  * `run_*` lines), all built from the fixed keys above, so a token or a path can never reach a log.

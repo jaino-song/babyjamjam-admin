@@ -7,7 +7,7 @@ import { readManifestHistory } from "infrastructure/eformsign-backup/worker/runn
 
 import { INSTALL_BODY, fixedAt } from "./helpers/ledger-fixtures";
 
-const INSTALLATION = { ...INSTALL_BODY, origin: "installed", priorLedgerName: null } satisfies Installation;
+const INSTALLATION = { ...INSTALL_BODY, origin: "installed", priorLedgerName: null, drive: null } satisfies Installation;
 const hex = (n: number): string => n.toString(16).padStart(64, "0");
 
 type Artifact = LedgerBodies["candidate_observed"]["artifacts"][number];
