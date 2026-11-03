@@ -648,6 +648,98 @@ describe("CapabilityRouterService", () => {
             });
         });
 
+        describe("explicit service-records routing", () => {
+            function registry() {
+                return {
+                    list: () => [
+                        { meta: { name: "clients.search", domain: "clients" } },
+                        { meta: { name: "schedules.create", domain: "schedules" } },
+                        { meta: { name: "automation.list", domain: "automation" } },
+                        { meta: { name: "service-records.edit", domain: "service-records" } },
+                    ],
+                };
+            }
+
+            it.each(["회차", "제공기록지", "서비스 기록", "service-record", "기록지"])("keeps explicitly named %s after a valid two-domain selection", async (term) => {
+                const facade = facadeStub(["schedules", "clients"]);
+                const router = new CapabilityRouterService(registry() as never, enabledFlags() as never);
+                const text = `QA산모 산모님 ${term} 날짜를 11월 16일로 옮겨 주세요`;
+
+                const result = await router.route(text, principal, 12, [], facade.context("enforce"));
+
+                expect(result.domains).toEqual(["schedules", "clients", "service-records"]);
+                expect(result.capabilities.map((item) => item.meta.name)).toContain("service-records.edit");
+                expect(result.disposition).toBe("selected");
+                expect(facade.routeDomains).toHaveBeenCalledWith(facade.turn, expect.objectContaining({
+                    baseline: ["clients", "service-records"],
+                }));
+            });
+
+            it("does not duplicate service-records already in the valid selection", async () => {
+                const facade = facadeStub(["service-records", "clients"]);
+                const router = new CapabilityRouterService(registry() as never, enabledFlags() as never);
+
+                const result = await router.route("고객 회차 날짜 옮겨줘", principal, 12, [], facade.context("enforce"));
+
+                expect(result.domains).toEqual(["service-records", "clients"]);
+                expect(result.capabilities.filter((item) => item.meta.name === "service-records.edit")).toHaveLength(1);
+            });
+
+            it.each(["중단", "재개", "교체"])("does not append service-records for generic %s", async (verb) => {
+                const facade = facadeStub(["automation"]);
+                const router = new CapabilityRouterService(registry() as never, enabledFlags() as never);
+
+                const result = await router.route(`고객 ${verb}해줘`, principal, 12, [], facade.context("enforce"));
+
+                expect(result.domains).toEqual(["automation"]);
+                expect(result.capabilities.map((item) => item.meta.name)).not.toContain("service-records.edit");
+                expect(facade.routeDomains).toHaveBeenCalledTimes(1);
+            });
+
+            it("does not append explicitly named service-records when disabled", async () => {
+                const facade = facadeStub(["clients"]);
+                const flags = enabledFlags();
+                flags.isCapabilityEnabledFromSnapshot.mockImplementation((meta: { domain: string }) => meta.domain !== "service-records");
+                const router = new CapabilityRouterService(registry() as never, flags as never);
+
+                const result = await router.route("고객 일정 회차 날짜 옮겨줘", principal, 12, [], facade.context("enforce"));
+
+                expect(result.domains).toEqual(["clients"]);
+                expect(result.capabilities.map((item) => item.meta.name)).not.toContain("service-records.edit");
+                expect(facade.routeDomains).toHaveBeenCalledTimes(1);
+            });
+
+            it.each([
+                ["an abstention", null],
+                ["an empty selection", []],
+                ["more than two selected domains", ["clients", "schedules", "automation"]],
+                ["a disabled domain", ["employees"]],
+                ["a non-string domain", [42]],
+            ] as const)("keeps %s unchanged despite an explicit service-records name", async (_caseName, selection) => {
+                const facade = facadeStub(selection as readonly string[] | null);
+                const router = new CapabilityRouterService(registry() as never, enabledFlags() as never);
+
+                await expect(router.route("고객 회차 날짜 옮겨줘", principal, 12, [], facade.context("enforce"))).resolves.toEqual({
+                    domains: [],
+                    capabilities: [],
+                    disposition: "clarify",
+                });
+                expect(facade.routeDomains).toHaveBeenCalledTimes(1);
+            });
+
+            it("still abstains before the facade when explicit records make three keyword matches", async () => {
+                const facade = facadeStub(["clients", "schedules"]);
+                const router = new CapabilityRouterService(registry() as never, enabledFlags() as never);
+
+                await expect(router.route("고객 일정 회차 날짜 옮겨줘", principal, 12, [], facade.context("enforce"))).resolves.toEqual({
+                    domains: [],
+                    capabilities: [],
+                    disposition: "clarify",
+                });
+                expect(facade.routeDomains).not.toHaveBeenCalled();
+            });
+        });
+
         it("enforce deduplicates a repeated selection before accepting it", async () => {
             const facade = facadeStub(["clients", "clients"]);
             const router = new CapabilityRouterService(ambiguousRegistry() as never, enabledFlags() as never);
