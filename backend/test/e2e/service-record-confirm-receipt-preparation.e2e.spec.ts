@@ -4,11 +4,15 @@ import { Prisma } from "@prisma/client";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 import { reached } from "./helpers/service-record-confirm-race.helper";
+import { completeServiceRecordFinalizationCase } from "./helpers/service-record-finalization.helper";
 import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture, serviceRecordConfirmBarrier,
@@ -26,8 +30,14 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
     });
     afterAll(async () => { await prisma?.$disconnect(); });
 
-    async function setup() {
+    async function setup(complete = false) {
         const fixture = await createServiceRecordConfirmFixture(prisma);
+        if (complete) {
+            await completeServiceRecordFinalizationCase(prisma, fixture);
+            await prisma.service_record_case.update({ where: { id: fixture.record.id }, data: {
+                status: "READY_TO_FINALIZE",
+            } });
+        }
         const admin = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
         const started = await admin.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
         const draft = started.draft!;
@@ -38,6 +48,7 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
         const preview = await admin.previewDraft(fixture.branch.id, draft.id, fixture.actorUserId, {
             expectedDraftVersion: saved.draft!.draftVersion,
         });
+        expect(preview.blockingReasons).toEqual([]);
         const rule = await prisma.message_trigger_rule.create({ data: {
             branchId: fixture.branch.id, name: "Isolated receipt preparation", isActive: true,
             eventType: "SERVICE_END", offsetType: "AFTER", recipientType: "CLIENT", templateKey: "SERVICE_END_NOTICE",
@@ -61,8 +72,13 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
 
     function dispatcher(jobs: SbMessageTriggerJobRepository, delivery: unknown) {
         const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected external collaborator"); } });
+        const branchLock = new MessageAutomationBranchLockService(prisma as never);
+        const activation = new MessageAutomationActivationService(prisma as never, branchLock, forbidden as never);
+        const rules = new SbMessageTriggerRuleRepository(prisma as never);
         const service = new MessageTriggerService(prisma as never, delivery as never,
-            forbidden as never, forbidden as never, jobs, forbidden as never, forbidden as never, forbidden as never, undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate(prisma as never, undefined));
+            forbidden as never, rules, jobs, forbidden as never, forbidden as never, forbidden as never,
+            undefined, undefined, activation, branchLock, undefined,
+            createLegacyAutomationDeliveryGate(prisma as never, branchLock));
         return (job: MessageTriggerJobEntity, branchId: string) => (service as unknown as {
             dispatchClaimedJob(job: MessageTriggerJobEntity, sent: ReadonlySet<string>, approved: ReadonlySet<string>): Promise<void>;
         }).dispatchClaimedJob(job, new Set(), new Set([branchId]));
@@ -126,8 +142,10 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
         expect(await confirm()).toMatchObject({ status: "confirmed" });
     });
     it.each(["stale", "capability_unverified"] as const)("rejects an already %s revision before any receipt preparation", async (mode) => {
-        const { fixture, jobs, job, confirm } = await setup();
-        await confirm();
+        // Only these document-context cases need all submitted/signature rows.
+        // Other scenarios retain partial readiness and its provider-job guard.
+        const { fixture, jobs, job, confirm } = await setup(true);
+        expect(await confirm()).toMatchObject({ status: "confirmed" });
         const documentJob = await prisma.eformsign_document_job.findFirstOrThrow({
             where: { clientId: fixture.client.id }, orderBy: { createdAt: "desc" },
         });
