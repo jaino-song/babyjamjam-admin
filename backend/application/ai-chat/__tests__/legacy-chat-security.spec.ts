@@ -233,6 +233,70 @@ describe("legacy chat tool security boundary", () => {
         expect(mocks.employeeService.update).not.toHaveBeenCalled();
     });
 
+    it.each([{ clientId: 7 }, { clientName: "김산모", name: "   " }, { clientId: 7, unrecognized: "ignored" }])(
+        "rejects an empty client update before creating a confirmation: %o",
+        async args => {
+            const { executor, confirmationService, clientService } = createExecutor();
+            const result = await executor.execute({ ...context, branchRole: "manager" }, "updateClient", args);
+            expect(result).toMatchObject({ success: false, error: "변경할 내용이 없어요", code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" });
+            expect(confirmationService.createIntent).not.toHaveBeenCalled();
+            expect(clientService.update).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        { globalRole: "user", branchRole: "user" },
+        { globalRole: undefined, branchRole: undefined },
+        { globalRole: "user", branchRole: "unknown" },
+    ])("denies client-update proposals to unverified/nonmanager roles %o", async actor => {
+        const { executor, confirmationService } = createExecutor();
+        expect(await executor.execute({ ...context, ...actor }, "updateClient", { clientId: 7, phone: "01012345678" }))
+            .toMatchObject({ success: false, code: "ACCESS_DENIED", outcome: "NOT_APPLIED" });
+        expect(confirmationService.createIntent).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { globalRole: "user", branchRole: "manager", allowed: true },
+        { globalRole: "owner", branchRole: "owner", allowed: true },
+        { globalRole: "user", branchRole: "user", allowed: false },
+        { globalRole: undefined, branchRole: undefined, allowed: false },
+    ])("rechecks current client-update role at confirmation: %o", async ({ allowed, ...actor }) => {
+        const { mocks } = createExecutor();
+        let stored: Record<string, unknown> | null = null;
+        const confirmationService = new LegacyChatConfirmationService({
+            legacy_chat_confirmation_intent: {
+                create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+                    stored = { id: "intent-1", expiresAt: new Date(Date.now() + 60_000), ...data };
+                    return Promise.resolve({ id: "intent-1", expiresAt: stored["expiresAt"] });
+                }),
+                findFirst: jest.fn().mockImplementation(() => Promise.resolve(stored)),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        } as never);
+        mocks.clientService.update.mockResolvedValue({ id: 7, name: "김산모" });
+        const executor = new ToolExecutorService(
+            mocks.clientService as never, mocks.employeeService as never, mocks.messageService as never,
+            mocks.areaTemplateService as never, mocks.eformsignDocService as never,
+            mocks.voucherPriceInfoService as never, mocks.bankAccountInfoService as never,
+            mocks.employeeScheduleService as never, confirmationService,
+        );
+        const args = { clientId: 7, phone: "01012345678" };
+        const manager = { ...context, branchRole: "manager" };
+        const proposal = await executor.execute(manager, "updateClient", args);
+        expect(proposal).toMatchObject({ success: true, requiresConfirmation: true });
+        const consumed = await confirmationService.consumeIntent(manager, {
+            intentId: String(proposal.confirmationIntentId), nonce: String(proposal.confirmationNonce),
+        });
+        const result = await executor.executeAuthorized({ ...context, ...actor }, "updateClient", args, consumed);
+        if (allowed) {
+            expect(result).toMatchObject({ success: true, data: { message: "산모 정보가 수정되었습니다" } });
+            expect(mocks.clientService.update).toHaveBeenCalledWith("branch-1", 7, { phone: "01012345678" });
+        } else {
+            expect(result).toMatchObject({ success: false, code: "ACCESS_DENIED", outcome: "NOT_APPLIED" });
+            expect(mocks.clientService.update).not.toHaveBeenCalled();
+        }
+    });
+
     it("requires a consumed, payload-bound intent before authorized mutation execution", async () => {
         const { executor, clientService } = createExecutor();
         const args = { name: "김산모", primaryEmployeeId: 1, careCenter: false, voucherClient: true };

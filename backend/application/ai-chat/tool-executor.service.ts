@@ -86,10 +86,18 @@ const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const PROBLEM_OUTCOMES: readonly string[] = ["NOT_APPLIED", "FAILED", "PARTIALLY_APPLIED", "UNKNOWN"];
 const BRANCH_MANAGER_MUTATION_TOOLS = new Set([
+    "updateClient",
     "updateEmployee",
     "deleteEmployee",
     "createAndSendContract",
 ]);
+
+/** Shared verified-role allowlist for legacy tool offerings and execution. */
+export function canManageBranch(context?: Pick<LegacyChatToolContext, "globalRole" | "branchRole">): boolean {
+    return context?.globalRole === "owner"
+        || context?.branchRole === "admin"
+        || context?.branchRole === "manager";
+}
 
 @Injectable()
 export class ToolExecutorService {
@@ -127,7 +135,7 @@ export class ToolExecutorService {
                 return { success: false, error: validationError, code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" };
             }
 
-            if (BRANCH_MANAGER_MUTATION_TOOLS.has(toolName) && !this.canManageBranch(context)) {
+            if (BRANCH_MANAGER_MUTATION_TOOLS.has(toolName) && !canManageBranch(context)) {
                 return {
                     success: false,
                     error: "이 작업을 수행할 권한이 없습니다",
@@ -261,7 +269,7 @@ export class ToolExecutorService {
             return { success: false, error: "Only confirmed mutation tools can use this path", code: "ACCESS_DENIED", outcome: "NOT_APPLIED" };
         }
 
-        if (BRANCH_MANAGER_MUTATION_TOOLS.has(toolName) && !this.canManageBranch(context)) {
+        if (BRANCH_MANAGER_MUTATION_TOOLS.has(toolName) && !canManageBranch(context)) {
             return {
                 success: false,
                 error: "이 작업을 수행할 권한이 없습니다",
@@ -339,12 +347,6 @@ export class ToolExecutorService {
         return contextOrBranchId;
     }
 
-    private canManageBranch(context: LegacyChatToolContext): boolean {
-        return context.globalRole === "owner"
-            || context.branchRole === "admin"
-            || context.branchRole === "manager";
-    }
-
     private isBoundContext(context: LegacyChatToolContext): context is LegacyChatToolContext {
         return Boolean(context.userId && context.branchId && context.sessionId);
     }
@@ -374,6 +376,9 @@ export class ToolExecutorService {
                     if (!this.isMissingArg(args["voucherClient"])) this.parseOptionalBooleanArg(args, "voucherClient");
                     this.parseOptionalDateArg(args, "startDate");
                     this.parseOptionalDateArg(args, "endDate");
+                    if (Object.keys(this.buildClientUpdateData(args)).length === 0) {
+                        throw new Error("변경할 내용이 없어요");
+                    }
                     break;
                 case "deleteClient":
                 case "terminateClientService":
@@ -798,8 +803,7 @@ export class ToolExecutorService {
         return { success: true, data: { id: client.id, name: client.name, message: "산모가 등록되었습니다" } };
     }
 
-    private async updateClient(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
-        const clientId = await this.resolveClientId(branchid, args);
+    private buildClientUpdateData(args: ToolArgs): Record<string, unknown> {
         const updateData: Record<string, unknown> = {};
         
         if (args['name'] !== undefined) {
@@ -816,6 +820,15 @@ export class ToolExecutorService {
         if (args['endDate'] !== undefined) updateData['endDate'] = this.parseNullableDateArg(args, "endDate");
         if (args['serviceStatus'] !== undefined) updateData['serviceStatus'] = this.parseNullableStringArg(args, "serviceStatus", { allowedValues: CLIENT_SERVICE_STATUSES });
 
+        return updateData;
+    }
+
+    private async updateClient(branchid: string, args: ToolArgs): Promise<ToolExecutionResult> {
+        const updateData = this.buildClientUpdateData(args);
+        if (Object.keys(updateData).length === 0) {
+            return { success: false, error: "변경할 내용이 없어요", code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" };
+        }
+        const clientId = await this.resolveClientId(branchid, args);
         const client = await this.clientService.update(
             branchid,
             clientId,
