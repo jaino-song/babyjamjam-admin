@@ -217,6 +217,37 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
     }, 240_000);
 
+    /** NB-2: an exhausted entry blocked archive-unavailable that still has its staged copy writes nothing while the archive stays down. */
+    it.each([["snapshot", false], ["carry", true]] as const)(
+        "should write no ledger transition for an exhausted archive-unavailable entry while the archive stays down, then publish its staged copy (NB-2, %s)",
+        async (_name, carried) => {
+            const lost = await exhaustedThenArchiveOutage(carried);
+            expect(await stagedBins()).toHaveLength(1);
+            const away = await swapArchive(h);
+            const transitions = async (): Promise<number> => (await records("destination_transition")).filter((record) => !isDrive(record)).length;
+            const first = await tryRun(h) as { counts: { blocked: number }; reasonCodes: string[] };
+            const afterFirst = await transitions();
+            const second = await tryRun(h) as { counts: { blocked: number }; reasonCodes: string[] };
+
+            expect(await transitions()).toBe(afterFirst);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            expect(second.counts.blocked).toBe(first.counts.blocked);
+            expect(second.counts.blocked).toBe(1);
+            expect(second.reasonCodes).toEqual(first.reasonCodes);
+            expect(second.reasonCodes).toContain("archive-unavailable");
+            await swapBack(h, away);
+            const downloadsBefore = fakes.drive.downloads;
+            h.api.clearRequests();
+
+            await runOnce(h);
+
+            expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+            expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+            expect(fakes.drive.downloads).toBe(downloadsBefore);
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+        }, 240_000);
+
     it("should publish an exhausted entry's usable staged copy without downloading it from Drive again (QF4 L1)", async () => {
         const lost = await exhaustedThenArchiveOutage(false);
         expect(await stagedBins()).toHaveLength(1);

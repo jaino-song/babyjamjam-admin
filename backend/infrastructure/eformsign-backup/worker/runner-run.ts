@@ -689,6 +689,9 @@ class RunExecution {
         if (exhausted) {
             if (state === "transferring" || state === "verifying") return;
             if (state === "integrity_error") await this.dl.transition(id, "blocked", { reasonCode: "integrity-repeated", relativeKey: job.relativeKey });
+            // Blocked archive-unavailable and the archive is still down: nothing can change, so nothing is written (still counted and reported).
+            const live = this.dl.entryOf(id);
+            if (live?.state === "blocked" && live.reasonCode === "archive-unavailable" && !this.archiveOk) return;
             // QF3 / V10: the export has failed this artifact for good, but a copy Drive holds verified still heals it, on every run, without
             // asking the export again. A staged copy that is still usable (healed earlier, not yet published) is used as it is; only
             // without one is Drive asked. While Drive cannot be asked (or holds no usable copy) the entry stays as it is, and a failed
