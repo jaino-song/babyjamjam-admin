@@ -830,7 +830,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
-      "sourceDigest": "b264e15ebed1de1a1e4ca4d7109b77e71998e9d3410c10c7f8d6fefed83fe1c3"
+      "sourceDigest": "833eb5ea95bf2cdc9f89d1b1d1d556dcf0ec6f63395f1ee9cb28f8367672e2dd"
     },
     {
       "name": "service-records.oversight",
