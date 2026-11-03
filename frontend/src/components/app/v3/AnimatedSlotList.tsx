@@ -3,7 +3,7 @@
 import React, { useRef, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { selectableItemVariants } from "@/components/ui/selectable-item";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { cn } from "@/lib/utils";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
@@ -132,10 +132,6 @@ export function AnimatedSlotList<T>({
         const variantClassName =
           itemVariant === "card"
             ? cn(
-                selectableItemVariants({
-                  isSelected: Boolean(slotState.isActive),
-                  isInteractive,
-                }),
                 "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left duration-200 [&>*:only-child]:w-full",
                 isInteractive && "cursor-pointer"
               )
@@ -154,8 +150,9 @@ export function AnimatedSlotList<T>({
 
         if (isSlotLoading && itemVariant === "card") {
           return (
-            <div
+            <SelectableItemFrame
               key={slotKey}
+              isSelected={false}
               data-component={itemDataComponent}
               data-slot="animated-slot-list-item"
               data-state="loading"
@@ -163,7 +160,6 @@ export function AnimatedSlotList<T>({
                 shouldAnimateSlot && "animate-v3-pop-up",
                 // Mirror the real card chrome so a mid-load mix of skeleton and
                 // rendered rows reads as one list, not broken cards.
-                selectableItemVariants(),
                 "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left",
                 computedSlotClassName
               )}
@@ -178,16 +174,15 @@ export function AnimatedSlotList<T>({
                 <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                 <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-full bg-v3-dim-white" />
               </div>
-            </div>
+            </SelectableItemFrame>
           );
         }
 
         const handleClick =
           !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined;
 
-        return (
+        const slot = (
           <div
-            key={slotKey}
             data-component={itemDataComponent}
             data-slot="animated-slot-list-item"
             data-selected={slotState.isActive}
@@ -217,6 +212,17 @@ export function AnimatedSlotList<T>({
             {render({ index, item, isLoading: isSlotLoading })}
           </div>
         );
+
+        return itemVariant === "card" ? (
+          <SelectableItemFrame
+            key={slotKey}
+            asChild
+            isSelected={Boolean(slotState.isActive)}
+            isInteractive={isInteractive}
+          >
+            {slot}
+          </SelectableItemFrame>
+        ) : React.cloneElement(slot, { key: slotKey });
       })}
 
       {hasMore || isFetchingMore ? (

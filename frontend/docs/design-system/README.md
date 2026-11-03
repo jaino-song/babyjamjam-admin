@@ -81,16 +81,22 @@ default는 가장 자주 쓰는 시각 구조를 가져야 한다.
 
 ### 선택 가능한 카드와 chip 프레임
 
-`@/components/ui/selectable-item`의 `selectableItemVariants`는 목록 카드, `FormChip`,
-checkbox/radio 카드의 공통 프레임 recipe다. 크기·배치·모서리는 소비 컴포넌트가 소유한다.
+`@/components/ui/selectable-item`의 `SelectableItemFrame`은 목록 카드, `FormChip`,
+checkbox/radio 카드의 공통 선택 프레임 atom이다. 크기·배치·모서리는 소비 컴포넌트가 소유한다.
+보이는 선택 프레임은 이 컴포넌트로 구성한다. `selectableItemVariants`는 호환용 class recipe로만 남긴다.
+atom은 recipe와 상태별 inline `borderColor`를 함께 소유하여 기존 전역 border reset보다 우선한다.
+이 우선순위는 선택 프레임에만 적용하며 일반 input·tab·button의 테두리를 바꾸지 않는다.
+기본 root는 `div`이며 `asChild`로 native button/label 등의 단일 DOM 요소를 유지한다.
+소비자의 DOM 속성·ref·event·ARIA·data-slot과 borderColor 이외의 style은 보존하며,
+자식의 borderColor도 프레임의 선택 상태로 결정한다.
 기본/비선택 hover는 2px `v3-selectable-border`(light `214 16% 82%`, dark `214 16% 42%`),
 선택/선택 hover는 `v3-primary` 테두리와 `v3-primary-light` 배경이다. 기존 `v3-border`는 유지한다.
 
 `isSelected`와 소비자의 `data-selected`/ARIA 상태는 같은 값에서 계산한다.
-버튼은 `aria-pressed`, checkbox/radio는 해당 checked 의미를 유지하며, recipe가 role을 부여하지 않는다.
+버튼은 `aria-pressed`, checkbox/radio는 해당 checked 의미를 유지하며, atom이 role을 부여하지 않는다.
 `isInteractive`는 테두리와 별도의 focus-visible ring과 offset을 제공한다.
 label로 감싼 native checkbox/radio는 실제 focus 대상에서 ring이 보이도록 구성한다.
-`AnimatedSlotList`의 `unstyled`에는 recipe를 적용하지 않는다.
+`AnimatedSlotList`의 `unstyled`에는 atom·recipe·inline borderColor를 적용하지 않는다.
 탭·메뉴·input 자체·표 행·달력 cell·경고 ring에는 적용하지 않으며,
 전역 ARIA 또는 `data-component` selector로 선택 스타일을 덮어쓰지 않는다.
 

@@ -323,13 +323,15 @@
         "note": "In app forms prefer FormField + FormNativeSelect or Select composition."
       },
       {
-        "name": "SelectableItemRecipe",
-        "layer": "tokens",
+        "name": "SelectableItemFrame",
+        "layer": "atom",
         "import": "@/components/ui/selectable-item",
         "file": "frontend/src/components/ui/selectable-item.tsx",
         "exports": [
+          "SelectableItemFrame",
           "selectableItemVariants"
         ],
+        "note": "Visible selection frames use SelectableItemFrame, which owns recipe classes and inline border color. asChild preserves the native element, semantics, events, refs, and non-border styles. selectableItemVariants remains a compatibility class recipe only.",
         "replaces": [
           "duplicated selectable card and chip border/background/focus styles"
         ],

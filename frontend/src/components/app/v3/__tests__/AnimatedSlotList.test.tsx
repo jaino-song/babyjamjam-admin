@@ -80,10 +80,14 @@ describe("AnimatedSlotList", () => {
       />
     );
     const { rerender } = render(list(false));
+    expect(screen.getByRole("button", { name: "사용자 행" })).not.toHaveAttribute("style");
+    expect(screen.getByRole("button", { name: "사용자 행" })).not.toHaveAttribute("data-source-component");
     expect(screen.getByRole("button", { name: "사용자 행" })).not.toHaveClass(
       "border-2", "border-v3-primary", "bg-v3-primary-light",
     );
     rerender(list(true));
+    expect(screen.getByText("사용자 로딩")).not.toHaveAttribute("style");
+    expect(screen.getByText("사용자 로딩")).not.toHaveAttribute("data-source-component");
     expect(screen.getByText("사용자 로딩")).not.toHaveClass(
       "border-2", "border-v3-selectable-border", "bg-white",
     );

@@ -24,7 +24,7 @@ import {
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
-import { selectableItemVariants } from "@/components/ui/selectable-item";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
@@ -302,11 +302,11 @@ function ClientMessageHistoryList({
                 aria-label="메시지 발송 내역을 불러오는 중"
                 className="w-full min-w-0 max-w-full"
             >
-                <div
+                <SelectableItemFrame
+                    isSelected={false}
                     data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
                     data-slot="message-history-skeleton-item"
                     className={cn(
-                        selectableItemVariants(),
                         "flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))]"
                     )}
                 >
@@ -344,7 +344,7 @@ function ClientMessageHistoryList({
                             className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
                         />
                     </div>
-                </div>
+                </SelectableItemFrame>
             </div>
         );
     }
