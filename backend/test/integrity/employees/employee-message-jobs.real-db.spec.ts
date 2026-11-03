@@ -624,7 +624,7 @@ describeReal("employee state vs pending assignment SMS jobs (real PostgreSQL)", 
         expect(response.status).toHaveBeenCalledWith(409);
         expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
             code: "EMPLOYEE_PHONE_HELD_BY_DELETED", status: 409,
-            detail: "삭제된 관리사가 이 전화번호를 사용했어요. 그분을 복원하거나 새 관리사로 등록해 주세요.",
+            detail: "이전에 삭제된 제공인력이 이 전화번호를 사용했어요. 복원하거나 새 관리사로 등록할 수 있어요.",
             deletedEmployee: { id: original.id, name: "이전 사람" },
         }));
         expect(await handle.raw.employee.findUniqueOrThrow({ where: { id: original.id } })).toEqual(before);

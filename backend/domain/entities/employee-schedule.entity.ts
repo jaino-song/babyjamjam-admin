@@ -7,7 +7,7 @@ export class EmployeeScheduleDateRangeError extends Error {
 
 export class EmployeeScheduleRoleError extends Error {
     constructor() {
-        super("주담당과 부담당은 같은 직원일 수 없어요.");
+        super("주담당과 부담당은 같은 제공인력일 수 없어요.");
         this.name = "EmployeeScheduleRoleError";
     }
 }

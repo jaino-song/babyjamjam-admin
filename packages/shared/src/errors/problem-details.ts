@@ -765,12 +765,12 @@ const PROBLEM_DEFINITIONS: Readonly<
     EMPLOYEE_PHONE_HELD_BY_DELETED: {
         status: 409,
         title: {
-            "ko-KR": "삭제된 관리사의 연락처예요",
+            "ko-KR": "예전에 삭제된 기록이 있어요",
             "en-US": "Phone number held by a deleted employee",
         },
         detail: {
-            "ko-KR": "삭제된 관리사가 이 전화번호를 사용했어요. 그분을 복원하거나 새 관리사로 등록해 주세요.",
-            "en-US": "A deleted employee used this phone number. Restore them or register a new employee.",
+            "ko-KR": "이전에 삭제된 제공인력이 이 전화번호를 사용했어요. 복원하거나 새 관리사로 등록할 수 있어요.",
+            "en-US": "A previously deleted provider used this phone number. You can restore them or register a new caregiver.",
         },
     },
     EMPLOYEE_ASSIGNMENT_UNAVAILABLE: {

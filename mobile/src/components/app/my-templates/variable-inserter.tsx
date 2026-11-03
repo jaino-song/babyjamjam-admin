@@ -20,7 +20,7 @@ const PRESET_VARIABLES = [
     { key: "voucherType", label: "바우처유형" },
     { key: "fullPrice", label: "총금액" },
     { key: "actualPrice", label: "본인부담금" },
-    { key: "employeeName", label: "직원명" },
+    { key: "employeeName", label: "제공인력명" },
 ];
 
 export const VariableInserter = ({ "data-component": dataComponent, onInsert }: VariableInserterProps) => {

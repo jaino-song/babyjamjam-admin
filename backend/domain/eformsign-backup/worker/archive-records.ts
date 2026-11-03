@@ -85,8 +85,12 @@ const completionShape = z.strictObject({
 export const completionSchema = completionShape.superRefine((completion, ctx) => {
     const issue = (message: string) => ctx.addIssue({ code: "custom", message });
     completion.entries.forEach((entry, index) => {
+        // The legacy metadata-only key, or the content-versioned one whose suffix is this entry's own manifest digest.
         const bound = keyMatches(() => manifestKey({
             companyId: completion.companyId, documentId: entry.documentId, metadataRevision: entry.metadataRevision,
+        }), entry.manifestKey) || keyMatches(() => manifestKey({
+            companyId: completion.companyId, documentId: entry.documentId, metadataRevision: entry.metadataRevision,
+            manifestSha256: entry.manifestSha256,
         }), entry.manifestKey);
         if (!bound) issue("manifestKey is not this entry's manifest key");
         if (index > 0 && compare(completion.entries[index - 1]!.documentId, entry.documentId) >= 0) {
@@ -197,7 +201,8 @@ export interface CompletionInput {
     policyRevision: string;
     destinationIdentity: string;
     destinationRevision: string;
-    entries: ReadonlyArray<{ documentId: string; metadataRevision: string; manifestSha256: string }>;
+    /** `manifestKey`: the exact key the manifest was published under (default: the legacy metadata-only key). */
+    entries: ReadonlyArray<{ documentId: string; metadataRevision: string; manifestSha256: string; manifestKey?: string }>;
     gaps: ReadonlyArray<{ documentId: string; reasonCode: z.infer<typeof reasonCodeField> }>;
 }
 
@@ -208,7 +213,7 @@ export function buildCompletion(input: CompletionInput): BuiltRecord<Completion>
         .map((entry) => ({
             documentId: entry.documentId,
             metadataRevision: entry.metadataRevision,
-            manifestKey: manifestKey({
+            manifestKey: entry.manifestKey ?? manifestKey({
                 companyId: input.companyId, documentId: entry.documentId, metadataRevision: entry.metadataRevision,
             }),
             manifestSha256: entry.manifestSha256,

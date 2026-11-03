@@ -33,6 +33,21 @@ describe("EmployeeWriteAgentCapabilitiesProvider", () => {
         return { createEmployee, updateEmployee, changeAvailability, findEmployee, employeeRepository, triggerService, messageAutomationIntentService, transaction, prisma, capabilities: provider.getCapabilities() };
     }
 
+    it("labels employee forms as 제공인력 without changing field keys", () => {
+        const { capabilities } = setup(null);
+        const create = capabilities.find((entry) => entry.meta.name === "employees.create")!;
+        const update = capabilities.find((entry) => entry.meta.name === "employees.update")!;
+        expect(create.formFields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: "name", label: "제공인력 이름" }),
+        ]));
+        expect(update.formFields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: "id", label: "제공인력 ID" }),
+        ]));
+        for (const capability of capabilities) {
+            expect(capability.formFields?.some((field) => field.label.includes("직원"))).toBe(false);
+        }
+    });
+
     it("allows a deleted phone through to restore and reconciles its action-bound restored receipt", async () => {
         const deleted = EmployeeEntity.reconstitute(7, "복원 직원", ["서울"], "01012345678", "프리미엄", false, new Date(), undefined, new Date());
         const { createEmployee, employeeRepository, transaction, capabilities } = setup(null);

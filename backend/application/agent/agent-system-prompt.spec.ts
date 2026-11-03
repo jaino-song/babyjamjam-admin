@@ -42,6 +42,13 @@ function loadManifestCapabilityNames(): Set<string> {
 }
 
 describe("buildAgentSystemPrompt", () => {
+    it("uses 제공인력 for replies while recognizing legacy user terms", () => {
+        const prompt = samplePrompt();
+        expect(prompt).toContain('사용자는 제공인력을 "직원" 또는 "관리사"라고도 부를 수 있습니다. 답변에서는 "제공인력"으로 표현합니다.');
+        expect(prompt).toContain("- 제공인력 = 관리사 = 도우미 = 선생님");
+        expect(prompt).not.toContain("직원/운영자");
+    });
+
     it("includes every verbatim safety sentence", () => {
         const prompt = samplePrompt();
         for (const sentence of VERBATIM_SAFETY_SENTENCES) {

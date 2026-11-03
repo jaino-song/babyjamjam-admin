@@ -260,7 +260,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                                 무엇을 도와드릴까요?
                             </h3>
                             <p className="text-sm">
-                                고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.
+                                고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.
                             </p>
                         </div>
                     ) : (

@@ -1212,7 +1212,7 @@ describe("AgentRuntimeService", () => {
         const model = new DeterministicAgentLanguageModel([
             { type: "tool-call", toolName: "employees_search", input: {} },
             { type: "tool-call", toolName: "employees_get", input: { id: 7 } },
-            { type: "text", text: "직원 정보를 확인했습니다." },
+            { type: "text", text: "제공인력 정보를 확인했습니다." },
         ]);
         const modelStream = jest.spyOn(model, "doStream");
         const runtime = new AgentRuntimeService(
@@ -2250,7 +2250,7 @@ describe("AgentRuntimeService", () => {
         };
         const model = new DeterministicAgentLanguageModel([
             { type: "tool-call", toolName: "employees_create", input: {} },
-            { type: "text", text: "직원 등록 제안입니다." },
+            { type: "text", text: "제공인력 등록 제안입니다." },
         ]);
         const sessions = {
             create: jest.fn().mockResolvedValue({ id: "session-employee-form", selectedEntities: {}, messages: [] }),
@@ -2265,7 +2265,7 @@ describe("AgentRuntimeService", () => {
             risk: "reversible-write",
             branchId: "branch-a",
             targetSnapshot: null,
-            proposal: { title: "직원 등록", summary: "직원 등록", input: { name: "직원 이름", phone: "01012345678" } },
+            proposal: { title: "제공인력 등록", summary: "제공인력 등록", input: { name: "직원 이름", phone: "01012345678" } },
         };
         const propose = jest.fn().mockResolvedValue(action);
         const handleUserTurn = jest.fn(() => {

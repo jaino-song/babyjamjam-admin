@@ -103,7 +103,7 @@ const UpdateEmployeeSchema = z.object({
 const AvailabilitySchema = z.object({ id: z.number().int().positive(), openToNextWork: z.boolean() });
 const OutputSchema = z.object({ id: z.number().int().positive(), name: z.string(), status: z.string() });
 const EMPLOYEE_CREATE_FIELDS: AgentFormField[] = [
-    { name: "name", label: "직원 이름", type: "text", required: true },
+    { name: "name", label: "제공인력 이름", type: "text", required: true },
     { name: "workArea", label: "활동 지역", type: "text", required: true },
     { name: "phone", label: "전화번호", type: "text", required: true },
     { name: "grade", label: "등급", type: "text", required: true },
@@ -111,11 +111,11 @@ const EMPLOYEE_CREATE_FIELDS: AgentFormField[] = [
     { name: "birthday", label: "생년월일", type: "date", inputMode: "numeric", placeholder: "YYYY-MM-DD", maxLength: 10 },
 ];
 const EMPLOYEE_UPDATE_FIELDS: AgentFormField[] = [
-    { name: "id", label: "직원 ID", type: "number", required: true },
+    { name: "id", label: "제공인력 ID", type: "number", required: true },
     ...EMPLOYEE_CREATE_FIELDS.map((field) => ({ ...field, required: false })),
 ];
 const EMPLOYEE_AVAILABILITY_FIELDS: AgentFormField[] = [
-    { name: "id", label: "직원 ID", type: "number", required: true },
+    { name: "id", label: "제공인력 ID", type: "number", required: true },
     { name: "openToNextWork", label: "다음 업무 가능", type: "boolean", required: true },
 ];
 

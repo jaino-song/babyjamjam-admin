@@ -36,6 +36,14 @@ describe("users api sms automation", () => {
     expect(body).not.toHaveProperty("smsAutomationEnabled");
   });
 
+  it("posts the branch-admin assignment as adminBranchId, never the legacy ownerBranchId", async () => {
+    await approveUser("user-1", "admin", "branch-1", "branch-2");
+
+    const body = mockPost.mock.calls[0][1];
+    expect(body).toEqual({ role: "admin", branchId: "branch-1", adminBranchId: "branch-2" });
+    expect(body).not.toHaveProperty("ownerBranchId");
+  });
+
   it("patches the encoded sms-automation path with { enabled }", async () => {
     await updateUserSmsAutomation("a b", true);
 

@@ -114,7 +114,7 @@ test.describe('Chat History Persistence', () => {
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
-        await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
+        await expect(page.getByText('고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
     });
 
     test('should send message and receive response', async ({ page }) => {
@@ -195,7 +195,7 @@ test.describe('Chat History Persistence', () => {
 
         await page.getByTestId('chat-clear').click();
 
-        await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText('고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible({ timeout: 5000 });
     });
 });
 

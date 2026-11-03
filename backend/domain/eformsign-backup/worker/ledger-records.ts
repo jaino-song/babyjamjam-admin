@@ -5,7 +5,7 @@ import { canonicalJson } from "domain/eformsign-backup/source-evidence";
 import { DESTINATION_STATES } from "./destination-transitions";
 import {
     artifactTypeField, count, fileNameField, hex64, identifier, isoUtc, isoWithOffset, opaqueId,
-    reasonCodeField, relativeKeyField, runCountsSchema, runIdField, sequenceField, sequenceFloorField,
+    driveFileId, reasonCodeField, relativeKeyField, runCountsSchema, runIdField, sequenceField, sequenceFloorField,
 } from "./schema-fields";
 import { JUDGED_HISTORICAL_COVERAGES, JUDGED_SNAPSHOT_STATUSES } from "./snapshot-status";
 import { WorkerError } from "./worker-error";
@@ -26,6 +26,12 @@ export const LEDGER_RECORD_TYPES = [
     "tail_discarded",
     "recovery_started",
     "recovered_verified",
+    "drive_bound",
+    "drive_ready",
+    "drive_node_reserved",
+    "drive_node_created",
+    "drive_record_published",
+    "drive_record_pending",
 ] as const;
 export type LedgerRecordType = typeof LEDGER_RECORD_TYPES[number];
 
@@ -39,6 +45,19 @@ const installationFields = {
 };
 
 const destinationStateField = z.enum(DESTINATION_STATES);
+
+/** The Google Drive binding of an installation (BJJ-456): which root folder, of which account, under which layout revision. */
+export const driveBindingFields = {
+    destinationIdentity: identifier,
+    destinationRevision: identifier,
+    bindingId: runIdField,
+    rootFolderId: driveFileId,
+    rootName: z.string().min(1).max(255),
+    rootParentId: driveFileId,
+    accountId: identifier,
+};
+export const driveBindingSchema = z.strictObject(driveBindingFields);
+export type DriveBindingFields = z.infer<typeof driveBindingSchema>;
 
 export const knownGapSchema = z.strictObject({
     documentId: opaqueId,
@@ -100,8 +119,32 @@ export const LEDGER_BODY_SCHEMAS = {
         priorLedgerName: fileNameField,
         sequenceFloor: sequenceFloorField,
         knownGaps: z.array(knownGapSchema),
+        drive: driveBindingSchema.optional(),
     }),
-    recovered_verified: z.strictObject({ artifactIdentity: hex64, relativeKey: relativeKeyField, sha256: hex64 }),
+    // Without the three Drive fields it is the local result; with them it is the result for that Drive binding.
+    recovered_verified: z.strictObject({
+        artifactIdentity: hex64,
+        relativeKey: relativeKeyField,
+        sha256: hex64,
+        destinationIdentity: identifier.optional(),
+        destinationRevision: identifier.optional(),
+        fileId: driveFileId.optional(),
+    }).refine((body) => {
+        const present = [body.destinationIdentity, body.destinationRevision, body.fileId].filter((field) => field !== undefined).length;
+        return present === 0 || present === 3;
+    }),
+    drive_bound: driveBindingSchema,
+    drive_ready: z.strictObject({ destinationRevision: identifier }),
+    drive_node_reserved: z.strictObject({
+        destinationRevision: identifier,
+        kind: z.enum(["folder", "file"]),
+        nodeKey: relativeKeyField,
+        fileId: driveFileId,
+        parentFileId: driveFileId,
+    }),
+    drive_node_created: z.strictObject({ destinationRevision: identifier, nodeKey: relativeKeyField, fileId: driveFileId }),
+    drive_record_published: z.strictObject({ destinationRevision: identifier, relativeKey: relativeKeyField, sha256: hex64, fileId: driveFileId }),
+    drive_record_pending: z.strictObject({ destinationRevision: identifier, relativeKey: relativeKeyField, sha256: hex64 }),
 } as const satisfies Record<LedgerRecordType, z.ZodType>;
 
 export type LedgerBodies = { [T in LedgerRecordType]: z.infer<typeof LEDGER_BODY_SCHEMAS[T]> };
