@@ -12,6 +12,7 @@ export type {
     SystemTemplate,
     SystemTemplateContract,
     SystemTemplateKey,
+    SystemTemplateGroup,
     SystemTemplateListResponse,
     SystemTemplateRecord,
     SystemTemplateVersionDetail,

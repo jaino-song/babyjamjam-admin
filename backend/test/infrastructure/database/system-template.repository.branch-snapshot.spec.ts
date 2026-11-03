@@ -11,17 +11,17 @@ function entry(content: string) {
 }
 
 /** A snapshot frozen before CONTRACT_REMINDER existed: every other key is present. */
-function snapshotWithout(missing: SystemTemplateKey) {
+function snapshotWithout(missing: SystemTemplateKey | SystemTemplateKey[]) {
     const templates = Object.fromEntries(
         Object.values(SystemTemplateKey)
-            .filter((key) => key !== missing)
+            .filter((key) => !(Array.isArray(missing) ? missing : [missing]).includes(key))
             .map((key) => [key, entry(`frozen-${key}`)]),
     );
     return { version: BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION, createdAt: at, createdBy: "user-a", templates };
 }
 
-function setup(globalRows: Array<{ templateKey: SystemTemplateKey; content: string }> = []) {
-    const branchRow = { id: branchId, systemTemplateSnapshot: snapshotWithout(SystemTemplateKey.CONTRACT_REMINDER) };
+function setup(globalRows: Array<{ templateKey: SystemTemplateKey; content: string }> = [], missing: SystemTemplateKey | SystemTemplateKey[] = SystemTemplateKey.CONTRACT_REMINDER) {
+    const branchRow = { id: branchId, systemTemplateSnapshot: snapshotWithout(missing) };
     const rows = globalRows.map((row) => ({
         id: `global-${row.templateKey}`,
         templateKey: row.templateKey,
@@ -93,5 +93,28 @@ describe("SbSystemTemplateRepository — key added after the branch snapshot fro
         const saved = tx.branch.update.mock.calls[0][0].data.systemTemplateSnapshot;
         expect(saved.templates[SystemTemplateKey.CONTRACT_REMINDER].content).toBe("branch wording");
         expect(saved.templates[SystemTemplateKey.THANKS].content).toBe(`frozen-${SystemTemplateKey.THANKS}`);
+    });
+});
+
+
+describe("the four create-only templates on an old ten-key branch snapshot", () => {
+    const newKeys = [SystemTemplateKey.CONTRACT_GUIDE, SystemTemplateKey.MATERNAL_NOTICE,
+        SystemTemplateKey.PROVIDER_NOTICE, SystemTemplateKey.SERVICE_RECORD_REMINDER];
+
+    it("preserves all frozen bodies and exposes four empty defaults without writing the snapshot", async () => {
+        const { repository, tx } = setup([], newKeys);
+        const templates = await repository.findAllByBranch(branchId);
+        expect(templates).toHaveLength(14);
+        for (const template of templates) {
+            expect(template.content).toBe(newKeys.includes(template.templateKey) ? "" : `frozen-${template.templateKey}`);
+        }
+        expect(tx.branch.update).not.toHaveBeenCalled();
+    });
+
+    it.each(newKeys)("uses a saved global body for %s without replacing frozen content", async (key) => {
+        const { repository } = setup([{ templateKey: key, content: "owner edit" }], newKeys);
+        const templates = await repository.findAllByBranch(branchId);
+        expect(templates.find((template) => template.templateKey === key)?.content).toBe("owner edit");
+        expect(templates.find((template) => template.templateKey === SystemTemplateKey.SERVICE_INFO)?.content).toBe("frozen-SERVICE_INFO");
     });
 });

@@ -1,5 +1,8 @@
 import { expect, test, type Page, type Request, type Route } from '@playwright/test';
 
+const templateListBody = (page: Page) =>
+  page.locator('[data-component="mobile_messages_templates_page_content_list-card_body"]');
+
 const templatesFixture = [
   {
     id: 'tpl-price',
@@ -86,18 +89,12 @@ test.describe('Templates List', () => {
 
     await expect(page.locator('[data-component="mobile_messages_templates_page_content_list-card_search"]')).toBeVisible();
     await expect(page.getByRole('button', { name: /전체\s*2/ })).toBeVisible();
-    await expect(page.locator('[data-component="mobile_messages_templates_page_content_list-card_body_section_header"]').first()).toContainText(
+    await expect(templateListBody(page).locator('[data-slot="section-header"]').first()).toContainText(
       '기본 템플릿',
     );
-    await expect(page.locator('[data-component="mobile_messages_templates_page_content_list-card_body_section_row"]')).toHaveCount(2);
-    // The row-name node also contains the channel badge ("알림톡"), so an
-    // exact-text match can never resolve — scope to the name node instead.
-    await expect(
-      page.locator('[data-component="mobile_messages_templates_page_content_list-card_body_section_row_info_name"]').filter({ hasText: '비용 안내' }),
-    ).toBeVisible();
-    await expect(
-      page.locator('[data-component="mobile_messages_templates_page_content_list-card_body_section_row_info_name"]').filter({ hasText: '인사(소개)' }),
-    ).toBeVisible();
+    await expect(templateListBody(page).getByRole('button')).toHaveCount(2);
+    await expect(templateListBody(page).getByRole('button', { name: /비용 안내/ })).toBeVisible();
+    await expect(templateListBody(page).getByRole('button', { name: /인사\(소개\)/ })).toBeVisible();
   });
 
   test('does not render mock templates or fake send counts when APIs are empty', async ({ page }) => {
@@ -144,7 +141,7 @@ test.describe('Templates List', () => {
     await expect(page.locator('[data-component="mobile_messages_templates_page_content_list-card_body_empty"]')).toHaveText(
       '등록된 템플릿이 없습니다.',
     );
-    await expect(page.locator('[data-component="mobile_messages_templates_page_content_list-card_body_section_row"]')).toHaveCount(0);
+    await expect(templateListBody(page).getByRole('button')).toHaveCount(0);
     await expect(page.getByText(/5월 \d+건 발송/)).toHaveCount(0);
   });
 
@@ -191,10 +188,7 @@ test.describe('Templates List', () => {
     await page.goto('/messages/templates');
     await expect(page.getByText('템플릿 관리')).toBeVisible({ timeout: 15000 });
 
-    await page
-      .locator('[data-component="mobile_messages_templates_page_content_list-card_body_section_row"]')
-      .filter({ hasText: '비용 안내' })
-      .click();
+    await templateListBody(page).getByRole('button', { name: /비용 안내/ }).click();
 
     await expect(page).toHaveURL(/\/messages\/system-templates\/PRICE_INFO/);
     await expect(page.locator('[data-component="messages-system-template-detail"]')).toBeVisible();

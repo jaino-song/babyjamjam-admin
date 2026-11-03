@@ -33,6 +33,8 @@ import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
+  SelectGroup,
+  SelectLabel,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -94,6 +96,9 @@ interface TemplateOption {
   name: string;
   body: string;
   variables: TemplateInputVariable[];
+  disabled?: boolean;
+  group?: string;
+  groupLabel?: string;
 }
 
 interface TemplateInputVariable {
@@ -1145,21 +1150,39 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       variables: normalizeTemplateVariables([], [], template.content),
     }));
 
-    return [
+    const supportedOptions = [
       greetingOption,
       serviceInfoOption,
-      infoOption,
       priceInfoOption,
       reminderOption,
       thanksOption,
+      infoOption,
       contractReminderOption,
-      surveyOption,
       ...(serviceEndNoticeOption ? [serviceEndNoticeOption] : []),
+      surveyOption,
+    ];
+    const byKey = new Map(supportedOptions.map((option) => [option.id, option]));
+    // Only successful server rows define the selector's membership, names and order.
+    // The established form options remain available internally for deep links
+    // while their individual branch queries enforce readiness.
+    const serverOptions = (systemTemplatesQuery.data ?? []).map((template) => {
+      const supported = byKey.get(template.templateKey);
+      return {
+        ...(supported ?? { id: template.templateKey, body: template.content, variables: [], disabled: true }),
+        name: template.name,
+        group: template.group,
+        groupLabel: template.groupLabel,
+      };
+    });
+    return [
+      ...serverOptions,
+      ...supportedOptions.filter((option) => !serverOptions.some((server) => server.id === option.id)),
       ...userOptions,
       CUSTOM_TEMPLATE_OPTION,
     ];
   }, [
     greetingSystemTemplate,
+    systemTemplatesQuery.data,
     infoSystemTemplate,
     priceInfoSystemTemplate,
     reminderSystemTemplate,
@@ -1171,6 +1194,19 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     thanksSystemTemplate,
     userTemplates,
   ]);
+  const templateSelectorSections = useMemo(() => {
+    const serverKeys = new Set(systemTemplatesQuery.data?.map((template) => template.templateKey));
+    const userKeys = new Set(userTemplates?.map((template) => template.id));
+    return templateOptions
+      .filter((option) => serverKeys.has(option.id as SystemTemplateKey) || userKeys.has(option.id) || option.id === CUSTOM_TEMPLATE_ID)
+      .reduce<{ id: string; label?: string; options: TemplateOption[] }[]>((sections, option) => {
+        const id = option.group && option.groupLabel ? option.group : "ungrouped";
+        const last = sections.at(-1);
+        if (last?.id === id) last.options.push(option);
+        else sections.push({ id, label: option.groupLabel, options: [option] });
+        return sections;
+      }, []);
+  }, [systemTemplatesQuery.data, templateOptions, userTemplates]);
   const selectedTemplate = useMemo(
     () => templateOptions.find((template) => template.id === selectedTemplateId) ?? CUSTOM_TEMPLATE_OPTION,
     [selectedTemplateId, templateOptions],
@@ -1189,9 +1225,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       data: serviceEndNoticeSystemTemplate,
     },
   }[selectedTemplateId];
-  const templateReadinessError = selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
-    ? BRANCH_TEMPLATE_READINESS_MESSAGE
-    : null;
+  const isUnsupportedTemplate = selectedTemplateId !== CUSTOM_TEMPLATE_ID && (
+    (!selectedSystemTemplateQuery && !templateOptions.some((option) => option.id === selectedTemplateId)) || Boolean(selectedTemplate.disabled)
+  );
+  const templateReadinessError = isUnsupportedTemplate
+    ? "이 템플릿은 직접 발송할 수 없습니다."
+    : selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
+      ? BRANCH_TEMPLATE_READINESS_MESSAGE
+      : null;
   const selectedTemplateVariables = selectedTemplate.variables;
   const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
   // Delivery is derived from the shared system-template contract. In
@@ -1375,8 +1416,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   // shows its own problem in its label-row slot (`short` is the one-line copy
   // for that slot); only "form" problems have no field to sit in.
   const validationIssue = useMemo((): ValidationIssue | null => {
+    if (selectedTemplateDeliveryMode === "service-feedback-link") {
+      return {
+        field: "template",
+        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
+        short: "기록지 화면에서 보내 주세요",
+      };
+    }
     if (templateReadinessError) {
-      return { field: "template", message: templateReadinessError, short: "템플릿을 불러오는 중이에요" };
+      return { field: "template", message: templateReadinessError, short: isUnsupportedTemplate ? templateReadinessError : "템플릿을 불러오는 중이에요" };
     }
     if (!receiverPayload) {
       return { field: "receiver", message: RECIPIENT_REQUIRED_MESSAGE, short: "수신자를 추가해 주세요" };
@@ -1399,13 +1447,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         field: "receiver",
         message: "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.",
         short: "산모님 한 명을 선택해 주세요",
-      };
-    }
-    if (selectedTemplateDeliveryMode === "service-feedback-link") {
-      return {
-        field: "template",
-        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
-        short: "기록지 화면에서 보내 주세요",
       };
     }
     if (isServiceEndNoticeSelected && receiptLinkPreparationError) {
@@ -1453,6 +1494,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     body,
     isReceiptLinkPreparing,
     isServiceEndNoticeSelected,
+    isUnsupportedTemplate,
     receiptLinkPreparation,
     receiptLinkPreparationError,
     receiverPayload,
@@ -1727,6 +1769,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   };
 
   const handleTemplateSelect = (option: TemplateOption) => {
+    if (option.disabled) return;
     setSelectedTemplateId(option.id);
     setBodyOverride(null);
     setReceiptLinkPreparation(null);
@@ -1905,8 +1948,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
     ?? (showValidationIssues && validationIssue && !issueHasSlot ? validationIssue.message : null);
 
-  // A field problem does not disable the button: pressing it is what shows the
-  // problem in its slot. Only a send that is already running or settled does.
+  // Field validation, including unsupported templates, is shown on submit.
+  // Approval readiness and a send already running or settled disable the action.
   const isSubmitDisabled =
     sendMutation.isPending ||
     isSenderApprovalLoading ||
@@ -2005,10 +2048,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         className={styles.templateSelectContent}
                         avoidCollisions
                       >
-                        {templateOptions.map((option) => (
-                          <SelectItem key={option.id} value={option.id}>
-                            {option.name}
-                          </SelectItem>
+                        {templateSelectorSections.map((section, index) => (
+                          <SelectGroup key={`${section.id}-${index}`}>
+                            {section.label ? <SelectLabel>{section.label}</SelectLabel> : null}
+                            {section.options.map((option) => (
+                              <SelectItem key={option.id} value={option.id} disabled={option.disabled}>
+                                {option.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
                         ))}
                       </SelectContent>
                     </Select>
