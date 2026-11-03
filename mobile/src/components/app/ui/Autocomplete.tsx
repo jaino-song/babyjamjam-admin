@@ -59,6 +59,7 @@ export interface AutocompleteProps<T> {
     /** Id of a message slot rendered by the caller (when it draws its own label row and passes `label=""`). */
     ariaDescribedBy?: string;
     emptyMessage?: ReactNode;
+    hideEmptyDropdown?: boolean;
     manualEntry?: AutocompleteManualEntry;
     disabled?: boolean;
     className?: string;
@@ -87,6 +88,7 @@ export function Autocomplete<T>({
     helperText,
     ariaDescribedBy,
     emptyMessage,
+    hideEmptyDropdown = false,
     manualEntry,
     disabled = false,
     className,
@@ -138,6 +140,7 @@ export function Autocomplete<T>({
     const hasQuery = displayInputValue.trim().length > 0;
     const isDropdownVisible =
         showDropdown &&
+        !(hideEmptyDropdown && !isLoading && !manualEntry && filteredItems.length === 0) &&
         (filteredItems.length > 0 || isLoading || hasQuery || items.length === 0);
     const optionCount = filteredItems.length + (manualEntry ? 1 : 0);
     const activeHighlightedIndex =
