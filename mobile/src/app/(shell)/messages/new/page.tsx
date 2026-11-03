@@ -1416,8 +1416,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   // shows its own problem in its label-row slot (`short` is the one-line copy
   // for that slot); only "form" problems have no field to sit in.
   const validationIssue = useMemo((): ValidationIssue | null => {
+    if (selectedTemplateDeliveryMode === "service-feedback-link") {
+      return {
+        field: "template",
+        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
+        short: "기록지 화면에서 보내 주세요",
+      };
+    }
     if (templateReadinessError) {
-      return { field: "template", message: templateReadinessError, short: "템플릿을 불러오는 중이에요" };
+      return { field: "template", message: templateReadinessError, short: isUnsupportedTemplate ? templateReadinessError : "템플릿을 불러오는 중이에요" };
     }
     if (!receiverPayload) {
       return { field: "receiver", message: RECIPIENT_REQUIRED_MESSAGE, short: "수신자를 추가해 주세요" };
@@ -1440,13 +1447,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         field: "receiver",
         message: "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.",
         short: "산모님 한 명을 선택해 주세요",
-      };
-    }
-    if (selectedTemplateDeliveryMode === "service-feedback-link") {
-      return {
-        field: "template",
-        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
-        short: "기록지 화면에서 보내 주세요",
       };
     }
     if (isServiceEndNoticeSelected && receiptLinkPreparationError) {
@@ -1494,6 +1494,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     body,
     isReceiptLinkPreparing,
     isServiceEndNoticeSelected,
+    isUnsupportedTemplate,
     receiptLinkPreparation,
     receiptLinkPreparationError,
     receiverPayload,
@@ -1947,10 +1948,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
     ?? (showValidationIssues && validationIssue && !issueHasSlot ? validationIssue.message : null);
 
-  // Field validation is shown on submit. Unsupported template flows, approval
-  // readiness, and a send already running or settled keep the action disabled.
+  // Field validation, including unsupported templates, is shown on submit.
+  // Approval readiness and a send already running or settled disable the action.
   const isSubmitDisabled =
-    isUnsupportedTemplate ||
     sendMutation.isPending ||
     isSenderApprovalLoading ||
     needsSenderApproval ||

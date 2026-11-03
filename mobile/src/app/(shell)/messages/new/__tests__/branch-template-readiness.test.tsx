@@ -193,15 +193,51 @@ beforeEach(() => {
 });
 
 describe("messages/new branch template readiness", () => {
-  it.each(["CONTRACT_GUIDE", "MATERNAL_NOTICE", "PROVIDER_NOTICE", "SERVICE_RECORD_REMINDER", "UNKNOWN_TEMPLATE"])(
-    "does not turn unsupported %s deep links into direct composing", (key) => {
-      mockSearchParams = new URLSearchParams({ template: key, body: "deep link body" });
+  it.each(["CONTRACT_GUIDE", "MATERNAL_NOTICE", "PROVIDER_NOTICE", "SERVICE_RECORD_REMINDER"])(
+    "explains unsupported %s after an owner saves a body without posting", (key) => {
+      mockUseSystemTemplates.mockReturnValue({ data: [{ templateKey: key, name: key, content: "owner saved body", requiredVariables: [], customVariables: [] }], isSuccess: true });
+      mockSearchParams = new URLSearchParams({ template: key, body: "owner saved body" });
       renderPage();
-      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
       submitForm();
+      expect(document.getElementById("template-select-message")).toHaveTextContent("이 템플릿은 직접 발송할 수 없습니다.");
+      expect(document.getElementById("template-select-message")).not.toHaveTextContent("불러오는 중");
       expect(api.post).not.toHaveBeenCalled();
     },
   );
+
+  it("explains an unknown deep link instead of sending its supplied body as direct composing", () => {
+    mockSearchParams = new URLSearchParams({ template: "UNKNOWN_TEMPLATE", body: "deep link body" });
+    renderPage();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    submitForm();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("이 템플릿은 직접 발송할 수 없습니다.");
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("keeps service-record preparation guidance visible after pressing send", () => {
+    mockUseSystemTemplates.mockReturnValue({ data: [{ templateKey: "SERVICE_RECORD_LINK", name: "제공기록지 작성 요청", content: "stored link body", requiredVariables: [], customVariables: [] }], isSuccess: true });
+    mockSearchParams = new URLSearchParams({ template: "SERVICE_RECORD_LINK", body: "stored link body" });
+    renderPage();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    submitForm();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("기록지 화면에서 보내 주세요");
+    expect(document.getElementById("template-select-message")).not.toHaveTextContent("불러오는 중");
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { data: undefined, isLoading: true, isError: false },
+    { data: undefined, isLoading: false, isError: true },
+  ])("shows a recoverable explanation for a user-template deep link while its list is unavailable (%j)", (query) => {
+    mockUseMessageTemplates.mockReturnValue(query);
+    mockSearchParams = new URLSearchParams({ template: "branch-template-1", body: "supplied custom body" });
+    renderPage();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    submitForm();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("이 템플릿은 직접 발송할 수 없습니다.");
+    expect(api.post).not.toHaveBeenCalled();
+  });
 
   it("uses the server names, order and groups in the compose selector and disables create-only entries", async () => {
     mockUseSystemTemplates.mockReturnValue({ data: [
