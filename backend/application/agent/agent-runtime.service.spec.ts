@@ -168,6 +168,18 @@ describe("deriveMissingFields (BJJ-344 part 2)", () => {
 });
 
 describe("AgentRuntimeService", () => {
+    it("excludes stored resolved proposals and results from authoritative model history", () => {
+        const current = { id: "current", role: "user" as const, parts: [{ type: "text" as const, text: "다음 질문" }] };
+        const messages = buildAuthoritativeModelMessages([{
+            id: "resolved", role: "assistant", parts: [
+                { type: "data-action-proposal", data: { title: "private proposal", changes: { name: "private value" } } },
+                { type: "data-action-result", data: { actionId: "action-a", status: "succeeded", summary: "작업 완료" } },
+            ],
+        } as never], current);
+        expect(messages).toEqual([current]);
+        expect(JSON.stringify(messages)).not.toContain("private");
+    });
+
     it("builds model history only from server-persisted text and the current user turn", () => {
         const messages = buildAuthoritativeModelMessages([
             { id: "persisted-user", role: "user", parts: [{ type: "text", text: "기존 질문" }] },

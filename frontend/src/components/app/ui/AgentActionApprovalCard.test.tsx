@@ -7,6 +7,14 @@ import { AgentActionApprovalCard, omitMaskedContactKeys } from "./AgentActionApp
 describe("AgentActionApprovalCard", () => {
     const dataComponent = "desktop_chat_tests_agent-part-registry_action-approval";
 
+    it("renders terminal proposals read-only without acknowledgement or action controls", () => {
+        render(<AgentActionApprovalCard data-component={dataComponent} actionId="action-1" capability="clients.update" title="고객 정보 수정" summary="변경 확인" expiresAt="2099-08-03T00:00:00.000Z" expectedRevision="revision-1" changes={{ name: "홍길동" }} terminal risk="external-side-effect" />);
+        expect(screen.getByLabelText("처리된 작업 제안")).toHaveTextContent("읽기 전용");
+        expect(screen.queryByRole("button", { name: "승인하고 실행" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "거절" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
+
     it("composes the shared Card primitives and exposes its owned slots", () => {
         render(
             <AgentActionApprovalCard

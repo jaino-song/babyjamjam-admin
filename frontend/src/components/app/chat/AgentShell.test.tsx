@@ -95,6 +95,27 @@ describe("AgentShell input composition", () => {
         });
     });
 
+    it("hides assistant bubbles containing only invisible parts", () => {
+        mockAgentChatState.messages.push({ id: "empty", role: "assistant", parts: [{ type: "step-start" }, { type: "reasoning" }, { type: "text", text: "  " }] } as never);
+        const { container } = render(<AgentShell />);
+        expect(container.querySelector("article")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "좋아요" })).not.toBeInTheDocument();
+    });
+
+    it.each(["succeeded", "rejected"] as const)("shows the refreshed %s card read-only above its result", (status) => {
+        mockAgentChatState.messages.push({ id: "agent-action-result:action-card", role: "assistant", parts: [
+            { type: "data-action-proposal", data: { actionId: "action-card", capability: "service-records.edit", title: "제공기록지 정정", summary: "회차 변경 제안", expiresAt: "2026-01-01T00:00:00.000Z", expectedRevision: "revision-a", changes: { endDate: "2026-10-14" } } },
+            { type: "data-action-result", data: { actionId: "action-card", status, summary: "작업 처리 결과" } },
+        ] } as never);
+        const { container } = render(<AgentShell />);
+        const card = screen.getByLabelText("처리된 작업 제안");
+        expect(card).toHaveTextContent("회차 변경 제안");
+        expect(card.compareDocumentPosition(screen.getByText("작업 처리 결과")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "승인하고 실행" })).not.toBeInTheDocument();
+        expect(screen.queryByText("제공기록지 정정은 PC 관리자 화면에서 승인해 주세요.")).not.toBeInTheDocument();
+        expect(container.querySelectorAll("article")).toHaveLength(1);
+    });
+
     it("bounds the thread and scroll viewport while keeping the header and composer outside the scroll area", () => {
         const { container } = render(<AgentShell />);
         const shell = screen.getByRole("main");

@@ -74,9 +74,16 @@ type Props = {
     onTaskCommand?: (taskId: string, command: MobileAgentTaskCommand) => Promise<MobileAgentTaskMutationResult | void> | MobileAgentTaskMutationResult | void;
 };
 
+/** Unknown parts render a safe fallback; only structural markers and blank text are invisible. */
+export function hasRenderableAgentPart(parts: readonly { type: string; text?: string }[]): boolean {
+    return parts.some((part) => part.type !== "step-start" && part.type !== "reasoning"
+        && (part.type !== "text" || Boolean(part.text?.trim())));
+}
+
 export function MobileAgentPartRegistry({ "data-component": dataComponent, part, onEntitySelect, onApproveAction, onRejectAction, onSubmitForm, onTaskEntitySelect, task, terminalActionIds, taskBusy = false, taskNeedsReconciliation = false, onTaskPatch, onTaskCommand }: Props) {
     if (part.type === "step-start") return null;
     if (part.type === "reasoning") return null;
+    if (part.type === "text" && !part.text?.trim()) return null;
     if (part.type === "text") return <AgentMarkdownText data-component={dataComponent} text={part.text ?? ""} />;
     if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
         if (part.state === "output-error") return <p data-slot="tool-error" className="text-sm text-muted-foreground">{part.errorText ?? "도구 결과를 표시할 수 없어요."}</p>;
@@ -140,7 +147,7 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
     if (part.type === "data-action-proposal") {
         const parsed = AgentActionProposalPartSchema.safeParse(part.data);
         if (!parsed.success) return <Fallback />;
-        if (parsed.data.capability === "service-records.edit") {
+        if (parsed.data.capability === "service-records.edit" && !terminalActionIds?.has(parsed.data.actionId)) {
             return <p data-component={dataComponent} data-slot="desktop-approval-note" data-source-component="MobileAgentPartRegistry" className="text-sm text-muted-foreground">제공기록지 정정은 PC 관리자 화면에서 승인해 주세요.</p>;
         }
         const candidates = [
