@@ -3,6 +3,7 @@
 import React, { useRef, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { selectableItemVariants } from "@/components/ui/selectable-item";
 import { cn } from "@/lib/utils";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
@@ -131,12 +132,12 @@ export function AnimatedSlotList<T>({
         const variantClassName =
           itemVariant === "card"
             ? cn(
-                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
-                isInteractive &&
-                  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2",
-                slotState.isActive
-                  ? "border-v3-primary bg-v3-primary-light"
-                  : isInteractive && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
+                selectableItemVariants({
+                  isSelected: Boolean(slotState.isActive),
+                  isInteractive,
+                }),
+                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left duration-200 [&>*:only-child]:w-full",
+                isInteractive && "cursor-pointer"
               )
             : "";
 
@@ -156,11 +157,14 @@ export function AnimatedSlotList<T>({
             <div
               key={slotKey}
               data-component={itemDataComponent}
+              data-slot="animated-slot-list-item"
+              data-state="loading"
               className={cn(
                 shouldAnimateSlot && "animate-v3-pop-up",
                 // Mirror the real card chrome so a mid-load mix of skeleton and
                 // rendered rows reads as one list, not broken cards.
-                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left",
+                selectableItemVariants(),
+                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left",
                 computedSlotClassName
               )}
               style={shouldAnimateSlot ? { animationDelay } : undefined}
@@ -185,6 +189,8 @@ export function AnimatedSlotList<T>({
           <div
             key={slotKey}
             data-component={itemDataComponent}
+            data-slot="animated-slot-list-item"
+            data-selected={slotState.isActive}
             className={cn(
               shouldAnimateSlot && "animate-v3-pop-up",
               variantClassName,

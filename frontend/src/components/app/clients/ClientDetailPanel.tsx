@@ -24,6 +24,7 @@ import {
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
+import { selectableItemVariants } from "@/components/ui/selectable-item";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
@@ -303,7 +304,11 @@ function ClientMessageHistoryList({
             >
                 <div
                     data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
-                    className="flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                    data-slot="message-history-skeleton-item"
+                    className={cn(
+                        selectableItemVariants(),
+                        "flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))]"
+                    )}
                 >
                     <Skeleton
                         data-component={`${dataComponentPrefix}_history-list_skeleton-icon`}
