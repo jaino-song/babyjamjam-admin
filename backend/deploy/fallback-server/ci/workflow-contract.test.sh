@@ -87,6 +87,56 @@ assert_contains "$WORKFLOW" '::error::LightNode status' \
 assert_contains "$WORKFLOW" 'expect_status lease_mode required' \
     "LightNode replacement must confirm the deployed runtime contests the scheduler lease (ADR-010)"
 
+# Both active deploys must prove the new runtime adopted the DNS-resolved owner.
+# Never apply the public-owner check to a manual non-owner or passive deployment.
+assert_production_provider_contract() {
+    local workflow_file="$1" job active_job
+    for job in deploy-lightsail deploy-lightnode; do
+        active_job="$(extract_job "^  $job:" "$workflow_file")"
+        assert_text_contains "$active_job" 'uses: actions/checkout@' \
+            "$job must check out the shared local verifier"
+        assert_text_contains "$active_job" 'persist-credentials: false' \
+            "$job checkout must not retain credentials"
+        assert_text_contains "$active_job" 'RESOLVED_DEPLOY_TARGET: \$\{\{ needs\.resolve-backend-deploy-target\.outputs\.target \}\}' \
+            "$job must pass the DNS-resolved target to the verifier"
+        assert_text_contains "$active_job" '^        run: node backend/deploy/ci/verify-production-provider\.mjs "\$RESOLVED_DEPLOY_TARGET"$' \
+            "$job must require the public production provider verifier"
+        if grep -Eq 'continue-on-error:|verify-production-provider.*(\|\||&&|;)' <<<"$active_job"; then
+            fail "$job must not ignore provider verification failure"
+        fi
+    done
+    assert_contains "$workflow_file" 'node --test backend/deploy/ci/\*\.test\.mjs' \
+        "required checks must execute the production verifier tests"
+    local standby_job
+    standby_job="$(extract_job '^  deploy-lightnode-standby:' "$workflow_file")"
+    if grep -q 'verify-production-provider' <<<"$standby_job"; then
+        fail "passive standby must not verify ownership of the public API"
+    fi
+}
+assert_production_provider_contract "$WORKFLOW"
+
+provider_mutation="$(mktemp)"
+trap 'rm -f "$provider_mutation"' EXIT
+for job in deploy-lightsail deploy-lightnode; do
+    # Mutate only the selected active job, so one surviving check cannot mask a gap.
+    awk -v header="  $job:" '
+        $0 == header { inside=1 }
+        inside && /^  [a-z0-9-]*:$/ && $0 != header { inside=0 }
+        inside && /run: node backend\/deploy\/ci\/verify-production-provider/ { next }
+        { print }
+    ' "$WORKFLOW" > "$provider_mutation"
+    if ( assert_production_provider_contract "$provider_mutation" ) >/dev/null 2>&1; then
+        fail "$job provider-verification removal must fail the contract"
+    fi
+done
+sed 's/RESOLVED_DEPLOY_TARGET: \${{ needs.resolve-backend-deploy-target.outputs.target }}/RESOLVED_DEPLOY_TARGET: lightnode/' \
+    "$WORKFLOW" > "$provider_mutation"
+if ( assert_production_provider_contract "$provider_mutation" ) >/dev/null 2>&1; then
+    fail "hard-coded owner in place of resolved target must fail the contract"
+fi
+rm -f "$provider_mutation"
+trap - EXIT
+
 # The Cloud Run preview deploy job contract (BJJ-341). Takes the workflow
 # path as an argument so the mutation self-check below can re-run the exact
 # same assertions against a mutated copy.

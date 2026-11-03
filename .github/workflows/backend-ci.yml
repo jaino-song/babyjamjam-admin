@@ -158,7 +158,7 @@ jobs:
           bash backend/deploy/fallback-server/ci/standby-decision.test.sh
           bash backend/deploy/fallback-server/ci/newer-primary-release.test.sh
           backend/deploy/ci/wait-database-patches.test.sh
-          node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
+          node --test backend/deploy/ci/*.test.mjs backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
 
       # pdfjs-dist is ESM-only and its Jest VM import can outlive a neighboring
       # CommonJS test environment when both suites share a worker. Keep the
@@ -831,6 +831,10 @@ jobs:
       LIGHTSAIL_SSM_TARGET_TAG: ${{ vars.LIGHTSAIL_SSM_TARGET_TAG }}
 
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
       - name: Validate deployment configuration
         run: |
           set -euo pipefail
@@ -1045,6 +1049,11 @@ jobs:
             "runtime_route=$runtime_route" \
             "db_readiness=$db_readiness"
 
+      - name: Verify public production provider eligibility
+        env:
+          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}
+        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"
+
   deploy-lightnode:
     name: deploy LightNode fallback backend
     if: >-
@@ -1162,6 +1171,11 @@ jobs:
             "public_routing=fallback" \
             "schedulers_enabled=true" \
             "lease_mode=required"
+      - name: Verify public production provider eligibility
+        env:
+          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}
+        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"
+
   deploy-lightnode-standby:
     # Warm standby: after Lightsail (the primary) has deployed a `main` backend
     # release, the LightNode Fallback Server is brought to the same immutable
