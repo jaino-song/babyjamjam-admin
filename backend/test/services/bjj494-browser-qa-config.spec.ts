@@ -1,4 +1,5 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -158,6 +159,40 @@ describe("BJJ494 fail-closed configuration", () => {
         await withQaLifecycle({ apply: step("apply"), start: step("start"), wait: step("wait"), stopNext: step("next-groups-and-ports-closed"), stopBackend: step("backend-group-and-port-closed"), restore: step("restore"), stopPg: step("pg-stop") });
         expect(events).toEqual(["apply", "start", "wait", "next-groups-and-ports-closed", "backend-group-and-port-closed", "restore", "pg-stop"]);
     });
+    it("finishes asynchronous restore and PG cleanup after repeated real SIGINT signals", async () => {
+        const probe = `
+            const { installQaShutdownHandlers, withQaLifecycle } = require("./scripts/agent/bjj494-browser-qa");
+            let release;
+            const stopped = new Promise(done => { release = done; });
+            const remove = installQaShutdownHandlers(() => release());
+            const keepAlive = setInterval(() => {}, 1000);
+            withQaLifecycle({
+                apply: async () => {}, start: async () => {},
+                wait: async () => { console.log("READY"); await stopped; },
+                stopNext: async () => { console.log("NEXT"); await new Promise(done => setTimeout(done, 200)); },
+                stopBackend: async () => console.log("BACKEND"),
+                restore: async () => console.log("RESTORED"),
+                stopPg: async () => console.log("PG_STOPPED"),
+            }).then(() => { clearInterval(keepAlive); remove(); console.log("DONE"); }, () => { clearInterval(keepAlive); process.exitCode = 1; });
+        `;
+        const child = spawn(process.execPath, ["-r", "ts-node/register", "-e", probe], {
+            cwd: join(__dirname, "../.."), env: { PATH: process.env["PATH"], HOME: process.env["HOME"], NODE_PATH: "." },
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        let output = ""; let firstSent = false; let secondSent = false;
+        const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done, reject) => {
+            child.once("error", reject);
+            child.stdout.on("data", chunk => {
+                output += chunk.toString();
+                if (output.includes("READY") && !firstSent) { firstSent = true; child.kill("SIGINT"); }
+                if (output.includes("NEXT") && !secondSent) { secondSent = true; child.kill("SIGINT"); }
+            });
+            child.once("close", (code, signal) => done({ code, signal }));
+        });
+        expect(result).toEqual({ code: 0, signal: null });
+        expect(output.trim().split("\n")).toEqual(["READY", "NEXT", "BACKEND", "RESTORED", "PG_STOPPED", "DONE"]);
+    }, 20_000);
+
     it("keeps recovery metadata and refuses URL restore if Next shutdown cannot be verified", async () => {
         const restore = jest.fn(); const stopPg = jest.fn(); const stopBackend = jest.fn();
         await expect(withQaLifecycle({ apply: async () => {}, start: async () => {}, wait: async () => {}, stopNext: async () => { throw new Error("still listening"); }, stopBackend, restore, stopPg })).rejects.toThrow();

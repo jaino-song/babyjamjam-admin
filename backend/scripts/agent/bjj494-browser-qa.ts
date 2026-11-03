@@ -9,6 +9,16 @@ import {
     assertQaDatabase, assertLocalSocketArguments, backendEnvironment, parseLocalEnv, parseQaOptions, type QaOptions,
 } from "./bjj494-browser-qa.config";
 
+/** Keep signal handlers installed throughout asynchronous shutdown. */
+export function installQaShutdownHandlers(requestStop: () => void): () => void {
+    // A terminal signal and a forwarding wrapper can both deliver SIGINT.
+    // Repeated signals must not restore Node's default terminate behavior
+    // while Next shutdown / URL restore / PG cleanup are still in flight.
+    process.on("SIGINT", requestStop);
+    process.on("SIGTERM", requestStop);
+    return () => { process.off("SIGINT", requestStop); process.off("SIGTERM", requestStop); };
+}
+
 interface Lifecycle {
     apply: () => Promise<unknown>; start: () => Promise<unknown>; wait: () => Promise<unknown>;
     stopNext: () => Promise<unknown>; stopBackend: () => Promise<unknown>;
@@ -182,7 +192,7 @@ async function run(options: QaOptions): Promise<void> {
     const shutdown = new Promise<void>(done => { resolveShutdown = done; });
     const signal = () => { stopping = true; resolveShutdown(); };
     const ensureRunning = () => { if (stopping) throw new Error("QA startup was interrupted"); };
-    process.once("SIGINT", signal); process.once("SIGTERM", signal);
+    const removeSignalHandlers = installQaShutdownHandlers(signal);
     const launch = (binary: string, args: string[], cwd: string, childEnv: NodeJS.ProcessEnv, ipc = false) => {
         const child = spawn(binary, args, { cwd, env: childEnv, detached: true, stdio: ipc ? ["ignore", "ignore", "ignore", "ipc"] : "ignore" });
         const failed = () => { if (!stopping) unexpectedExit = true; signal(); };
@@ -231,6 +241,7 @@ async function run(options: QaOptions): Promise<void> {
             await waitForPort(62295, false, 10_000); rmSync(directory, { recursive: true, force: true });
         },
     });
+    removeSignalHandlers();
     console.log("QA_STOPPED: owned groups and ports closed; URL restored; disposable cluster removed");
 }
 
