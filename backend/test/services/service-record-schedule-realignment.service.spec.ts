@@ -222,6 +222,86 @@ beforeEach(() => {
 
 describe("ServiceRecordScheduleRealignmentService", () => {
     describe("planned vector", () => {
+        it.each([false, true])("keeps the incident pause while today is inside it (Saturday=%s)", async (saturday) => {
+            const stored = ["2026-10-01", "2026-10-14", "2026-10-15"];
+            const world = createWorld({
+                flags: { saturday }, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-09T15:00:00.000Z") }); // Oct 10 KST, inside the pause.
+
+            expect(world.plannedDates()).toEqual(stored);
+            expect(world.tx.service_record_case.update).not.toHaveBeenCalled();
+            expect(world.tx.employee_schedule.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("keeps a manual weekday gap but re-lays later sessions within the segment", async () => {
+            const stored = ["2026-10-14", "2026-10-16", "2026-10-19"];
+            const world = createWorld({
+                flags: { saturday: true }, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-14T15:00:00.000Z") }); // Oct 15 KST.
+
+            // Thu 15 is a pause; Sat 17 / Sun 18 are not. Only the segment's start stays put.
+            expect(world.plannedDates()).toEqual(["2026-10-14", "2026-10-16", "2026-10-17"]);
+            expect(iso(world.client.endDate)).toBe("2026-10-17");
+        });
+
+        it("rolls a post-pause segment forward when its stored start is no longer a service day", async () => {
+            // The stored Saturday start follows an empty Thu/Fri; disabling Saturday rolls it to Mon.
+            const stored = ["2026-10-14", "2026-10-17", "2026-10-19"];
+            const world = createWorld({
+                planned: vector(stored), requiredSessionCount: 3, startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-14T15:00:00.000Z") });
+
+            expect(world.plannedDates()).toEqual(["2026-10-14", "2026-10-19", "2026-10-20"]);
+        });
+
+        it("uses branch holidays to distinguish a holiday gap from a pause", async () => {
+            const stored = ["2026-10-14", "2026-10-16", "2026-10-19"];
+            const calendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-10-15"]);
+            const world = createWorld({
+                flags: { saturday: true, holiday: true }, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ calendar, now: new Date("2026-10-14T15:00:00.000Z") });
+
+            // Oct 15 is the branch holiday, so this is no pause even though the client accepts holiday service.
+            expect(world.plannedDates()).toEqual(["2026-10-14", "2026-10-15", "2026-10-16"]);
+        });
+
+        it.each([
+            { flags: { saturday: true }, expected: ["2026-10-08", "2026-10-10", "2026-10-12"] },
+            { flags: { saturday: true, holiday: true }, expected: ["2026-10-08", "2026-10-09", "2026-10-10"] },
+        ])("does not treat a holiday/weekend gap as a pause under flags $flags", async ({ flags, expected }) => {
+            // Fri Oct 9 is a holiday, then Sat/Sun. There is no plain working weekday in this gap.
+            const stored = ["2026-10-08", "2026-10-12", "2026-10-13"];
+            const world = createWorld({
+                flags, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-08T15:00:00.000Z") });
+
+            expect(world.plannedDates()).toEqual(expected);
+        });
+
         it("keeps written sessions and moves the unwritten suffix onto the new Saturday service days", async () => {
             const world = createWorld({
                 flags: { saturday: true },
