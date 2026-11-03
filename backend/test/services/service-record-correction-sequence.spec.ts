@@ -1016,26 +1016,27 @@ describe("service-record correction sequences (real services over one persisted 
             expect(periods(store).assignmentA).toEqual(["2026-10-01", "2026-10-01"]);
             expect(periods(store).assignmentB).toEqual(["2026-10-20", "2026-10-21"]);
 
-            // --- Step 4: Saturday realignment at 2026-10-17 00:00 KST (Sat). Session 1 is written (and its date
-            // 10-14 is before today), so the split is after it; lowerBound = max(10-15, today 10-17) = Sat 10-17,
-            // a service day now. Session 2 = Sat 10-17, session 3 = Mon 10-19 (Sun 10-18 is off). End 10-19.
+            // --- Step 4: Saturday realignment at Oct 17 KST stays outside the stored weekday pause.
+            // Oct 15, 16 and 19 lie between the fixed Oct 14 and resumed Oct 20. The old oracle
+            // erased that pause by moving B to Oct 17/19; the pause invariant keeps Oct 20/21.
             const aBefore = rowsOfA(store.snapshot());
             const realignMark = store.mark();
             const realigned = await realignWithSaturday(store, "2026-10-16T15:00:00.000Z");
-            expect(realigned).toMatchObject({ changed: true, mode: "planned", endDate: "2026-10-19" });
-            expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(["2026-10-14", "2026-10-17", "2026-10-19"]);
+            expect(realigned).toMatchObject({ changed: false, mode: "planned", endDate: null });
+            expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(["2026-10-14", "2026-10-20", "2026-10-21"]);
             expect(periods(store)).toEqual({
                 assignmentA: ["2026-10-01", "2026-10-01"],
                 scheduleA: ["2026-10-01", "2026-10-01"],
-                assignmentB: ["2026-10-17", "2026-10-19"],
-                scheduleB: ["2026-10-17", "2026-10-19"],
+                assignmentB: ["2026-10-20", "2026-10-21"],
+                scheduleB: ["2026-10-20", "2026-10-21"],
             });
             expect(rowsOfA(store.snapshot())).toEqual(aBefore);
             const realignWrites = store.writesSince(realignMark);
-            expect(writesTo(realignWrites, "service_record_assignment", "updateMany").map((write) => (write.where as Row)["id"])).toEqual([B_ID]);
-            expect(writesTo(realignWrites, "employee_schedule", "updateMany").map((write) => (write.where as Row)["id"])).toEqual([SCHEDULE_B]);
-            expect(ymd(caseRow(store)["endDate"])).toBe("2026-10-19");
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-19T15:00:00.000Z");
+            expect(writesTo(realignWrites, "service_record_assignment")).toEqual([]);
+            expect(writesTo(realignWrites, "employee_schedule")).toEqual([]);
+            expect(ymd(caseRow(store)["endDate"])).toBe("2026-10-21");
+            expect(ymd(clientRow(store)["endDate"])).toBe("2026-10-21");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-21T15:00:00.000Z");
 
             // --- Step 5: B submits sessions 2..3 on the dates now in the store; the owner/writer match holds.
             writeMissingDays(store);
@@ -1043,6 +1044,55 @@ describe("service-record correction sequences (real services over one persisted 
             await expectFinalizationMismatchWhenADayIsFlipped(store, 2);
             await expectFinalizationMismatchWhenAConsistentAlternateWriterIsRecorded(store, 2);
         });
+    });
+
+    it("resumes after a pause, moves within that segment on Saturday, and finalizes the same dates", async () => {
+        // Wed 14 is written. Thu 15 is a pause. Fri 16 -> Mon 19 spans only a weekend.
+        const store = seedStore({
+            duration: 3, clientStart: "2026-10-14", clientEnd: "2026-10-16",
+            scheduleA: { startDate: "2026-10-14", endDate: "2026-10-14" },
+            scheduleB: { startDate: "2026-10-15", endDate: "2026-10-16" },
+            vector: [
+                { serviceDate: "2026-10-14", owner: "A" },
+                { serviceDate: "2026-10-15", owner: "B" },
+                { serviceDate: "2026-10-16", owner: "B" },
+            ],
+            days: [{ sessionIndex: 1, serviceDate: "2026-10-14", submittedAt: submittedAtFor("2026-10-14"), owner: "A" }],
+            dueAt: "2026-10-16T11:00:00.000Z", tokenBExpiresAt: "2026-10-16T15:00:00.000Z",
+        });
+        const harness = createHarness(store);
+        const resume = await openEdit(harness, { resumeReplan: { fromSessionIndex: 2, resumeDate: "2026-10-16" } });
+        expect(resume.preview.blockingReasons).toEqual([]);
+        expect((await resume.confirm()).status).toBe("confirmed");
+        expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(["2026-10-14", "2026-10-16", "2026-10-19"]);
+
+        const aBefore = rowsOfA(store.snapshot());
+        const mark = store.mark();
+        const result = await realignWithSaturday(store, "2026-10-14T15:00:00Z"); // Exactly Oct 15 00:00 KST.
+
+        expect(result).toMatchObject({ changed: true, mode: "planned", endDate: "2026-10-17" });
+        expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(["2026-10-14", "2026-10-16", "2026-10-17"]);
+        expect(periods(store)).toEqual({
+            assignmentA: ["2026-10-14", "2026-10-14"], scheduleA: ["2026-10-14", "2026-10-14"],
+            assignmentB: ["2026-10-16", "2026-10-17"], scheduleB: ["2026-10-16", "2026-10-17"],
+        });
+        expect(rowsOfA(store.snapshot())).toEqual(aBefore);
+        const writes = store.writesSince(mark);
+        expect(writesTo(writes, "service_record_assignment", "updateMany").map((write) => [write.where, write.data])).toEqual([
+            [{ id: B_ID, branchId: BRANCH_ID, serviceRecordCaseId: CASE_ID }, { startDate: date("2026-10-16"), endDate: date("2026-10-17") }],
+        ]);
+        expect(writesTo(writes, "employee_schedule", "updateMany").map((write) => [write.where, write.data])).toEqual([
+            [{ id: SCHEDULE_B, branchId: BRANCH_ID }, { startDate: date("2026-10-16"), endDate: date("2026-10-17") }],
+        ]);
+        expect(ymd(caseRow(store)["endDate"])).toBe("2026-10-17");
+        expect(ymd(clientRow(store)["endDate"])).toBe("2026-10-17");
+        expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-17T15:00:00.000Z");
+
+        writeMissingDays(store);
+        expect(dayRows(store).map((row) => ymd(row["serviceDate"]))).toEqual(["2026-10-14", "2026-10-16", "2026-10-17"]);
+        await expectFinalizationMatch(store);
+        await expectFinalizationMismatchWhenADayIsFlipped(store, 3);
+        await expectFinalizationMismatchWhenAConsistentAlternateWriterIsRecorded(store, 3);
     });
 
     describe("S8 a resume writes exactly the periods the next confirm would compute", () => {

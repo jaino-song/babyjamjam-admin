@@ -20,7 +20,7 @@ import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodi
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
 import type { ServiceRecordEditSourceAssignment } from "domain/repositories/service-record-edit.repository.interface";
-import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
+import { DEFAULT_SERVICE_DAY_POLICY, isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
 
 /** The extension code a screen reads to send the admin to "제공기록지 일정 변경". */
@@ -189,7 +189,8 @@ interface ScheduleRow {
  * Re-lays a client's remaining service-record sessions when its Saturday /
  * Sunday / holiday service-day flags change. Sessions already written (locked,
  * submitted, or dated before today) stay as they are; everything after the last
- * of them moves onto the next service days under the client's NEW flags.
+ * of them moves onto the next service days under the client's NEW flags, preserving
+ * stored pauses between segments.
  *
  * Runs inside the caller's transaction, after the flag write. The caller owns
  * the client -> employees -> case -> schedules/assignments/days lock order
@@ -312,8 +313,20 @@ export class ServiceRecordScheduleRealignmentService {
         const lowerBound = afterFixed > today ? afterFixed : today;
         let cursor = calendar.isBusinessDay(lowerBound) ? lowerBound : calendar.nextBusinessDay(lowerBound);
 
-        const relaid: ServiceRecordPlannedSession[] = vector.map((entry) => {
+        // 휴일이 아닌 평일이 비어 있으면 수동 변경을 포함한 중단 기간이다.
+        // 고객의 토요일/일요일/공휴일 플래그와 무관하게 지점의 기본 달력으로 판정한다.
+        const pauseCalendar = params.calendar.withServiceDays(DEFAULT_SERVICE_DAY_POLICY);
+        const relaid: ServiceRecordPlannedSession[] = vector.map((entry, index) => {
             if (entry.sessionIndex <= lastFixed) return { ...entry };
+            const previous = vector[index - 1];
+            const followsPause = previous !== undefined
+                && pauseCalendar.nextBusinessDay(previous.serviceDate) < entry.serviceDate;
+            // 중단 후 구간의 첫 날짜만 하한으로 보존하고, 구간 내부는 새 서비스 요일로 재배치한다.
+            if (followsPause && cursor < entry.serviceDate) {
+                cursor = calendar.isBusinessDay(entry.serviceDate)
+                    ? entry.serviceDate
+                    : calendar.nextBusinessDay(entry.serviceDate);
+            }
             const serviceDate = cursor;
             cursor = calendar.nextBusinessDay(cursor);
             // originalDate stays: it records the first projection and never changes on a move.
