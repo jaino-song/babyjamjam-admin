@@ -129,7 +129,7 @@ test.describe("Chat live stream smoke", () => {
     });
 
     await page.goto("/chat");
-    await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible({ timeout: 15000 });
 
     const input = page.getByPlaceholder("무엇을 도와드릴까요?").first();
     await expect(input).toBeVisible({ timeout: 10000 });
@@ -191,7 +191,7 @@ test.describe("Chat quick actions", () => {
     });
 
     await page.goto("/chat");
-    await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible({ timeout: 15000 });
 
     await page.getByRole("button", { name: "산모 등록" }).click();
     await expect(page.locator('[data-component="desktop_chat_page_wizard-registration"]').first()).toBeVisible({ timeout: 5000 });

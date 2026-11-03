@@ -171,12 +171,12 @@ test.describe("Release A flag coexistence", () => {
         await page.goto("/chat");
 
         if (!shellEnabled) {
-            await expect(page.getByText("AI 어시스턴트")).toBeVisible();
+            await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
             await expect(page.getByText("고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.")).toBeVisible();
             return;
         }
 
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
         await expect(page.getByText("홍길동 조회")).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
@@ -189,6 +189,7 @@ test.describe("Release A flag coexistence", () => {
 
         await page.getByRole("button", { name: "홍길동 조회", exact: true }).click();
         await expect(page.getByText("복원된 조회")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "홍길동 조회", exact: true })).toBeVisible();
         await expect(page.getByRole("button", { name: "지점 바꾸기" })).toBeVisible();
 
         await page.getByRole("button", { name: "홍길동 조회 삭제" }).click();
@@ -208,18 +209,30 @@ test.describe("Release A flag coexistence", () => {
 
         await page.setViewportSize({ width: 390, height: 844 });
         await expect(page.getByLabel("질문 입력")).toBeVisible();
+        const workspace = page.locator('[data-component="desktop_chat_agent-shell"]');
         const sidebar = page.locator('[data-component="desktop_chat_agent-shell_sidebar"]');
-        await expect(sidebar).toHaveAttribute("aria-hidden", "true");
+        const drawer = page.getByRole("dialog", { name: "대화 목록", exact: true });
+        const menu = page.getByRole("button", { name: "사이드바 열기" });
+        await expect(sidebar).toHaveCount(0);
+        await expect(drawer).toHaveCount(0);
         await expect(page.getByRole("button", { name: "전송" })).toHaveAccessibleName("전송");
-        await page.getByRole("button", { name: "사이드바 열기" }).click();
-        await expect(sidebar).toHaveAttribute("aria-hidden", "false");
-        await page.getByRole("button", { name: "사이드바 닫기" }).click();
+        await menu.click();
+        await expect(drawer).toBeVisible();
+        await expect(drawer.locator('[data-component="desktop_chat_agent-shell_sidebar"]')).toBeVisible();
+        await expect.poll(() => drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        await expect(workspace).toHaveJSProperty("inert", true);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).not.toHaveCount(0);
+        await drawer.getByRole("button", { name: "사이드바 닫기" }).click();
+        await expect(drawer).toHaveCount(0);
+        await expect(sidebar).toHaveCount(0);
+        await expect(workspace).toHaveJSProperty("inert", false);
+        await expect(menu).toBeFocused();
     });
 
     test("uses the real Release A backend stream", async ({ page }) => {
         test.skip(!runAgentRealE2E, "Run with RUN_AGENT_REAL_E2E=1 against the real backend");
         await page.goto("/chat");
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
         await input.fill("홍길동 산모 찾아줘");
@@ -232,7 +245,7 @@ test.describe("Release A flag coexistence", () => {
         test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page);
         await page.goto("/chat");
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
         await input.fill("조합중 입력");
@@ -245,24 +258,45 @@ test.describe("Release A flag coexistence", () => {
 
         await page.setViewportSize({ width: 390, height: 844 });
         const menu = page.getByRole("button", { name: "사이드바 열기" });
+        const workspace = page.locator('[data-component="desktop_chat_agent-shell"]');
         const sidebar = page.locator('[data-component="desktop_chat_agent-shell_sidebar"]');
+        const drawer = page.getByRole("dialog", { name: "대화 목록", exact: true });
+        await expect(sidebar).toHaveCount(0);
+        await expect(drawer).toHaveCount(0);
         await menu.focus();
         await menu.click();
-        await expect(sidebar).toHaveAttribute("aria-hidden", "false");
-        await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-component"))).toBe("desktop_chat_agent-shell_sidebar");
-        await expect(sidebar).toHaveJSProperty("inert", false);
+        await expect(drawer).toBeVisible();
+        await expect(drawer.locator('[data-component="desktop_chat_agent-shell_sidebar"]')).toBeVisible();
+        await expect.poll(() => drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        await expect(workspace).toHaveJSProperty("inert", true);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).not.toHaveCount(0);
 
-        await page.getByRole("button", { name: "사이드바 닫기" }).click();
-        await expect(sidebar).toHaveAttribute("aria-hidden", "true");
-        await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("사이드바 열기");
-        await expect(sidebar).toHaveJSProperty("inert", true);
+        await page.keyboard.press("Escape");
+        await expect(drawer).toHaveCount(0);
+        await expect(sidebar).toHaveCount(0);
+        await expect(menu).toBeFocused();
+        await expect(workspace).toHaveJSProperty("inert", false);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).toHaveCount(0);
+
+        // The conditional Sheet must open and close again at the same 390px viewport.
+        await menu.click();
+        await expect(drawer).toBeVisible();
+        await expect.poll(() => drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        await expect(workspace).toHaveJSProperty("inert", true);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).not.toHaveCount(0);
+        await drawer.getByRole("button", { name: "사이드바 닫기" }).click();
+        await expect(drawer).toHaveCount(0);
+        await expect(sidebar).toHaveCount(0);
+        await expect(menu).toBeFocused();
+        await expect(workspace).toHaveJSProperty("inert", false);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).toHaveCount(0);
     });
 
     test("shows the latest server draft after a task revision conflict", async ({ page }) => {
         test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page, { task: true });
         await page.goto("/chat");
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
         await input.fill("초안 충돌");

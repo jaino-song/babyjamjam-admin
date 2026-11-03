@@ -64,7 +64,7 @@ test.describe('chat message feedback', () => {
     await page.goto('/chat');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId('message-feedback')).toBeVisible({ timeout: 5000 });
   });
 

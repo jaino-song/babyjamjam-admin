@@ -88,7 +88,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
         await expect(page.getByText('무엇을 도와드릴까요?').first()).toBeVisible();
@@ -113,7 +113,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
     });
 
@@ -121,7 +121,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         const chatPageInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await expect(chatPageInput).toBeVisible({ timeout: 5000 });
@@ -149,7 +149,7 @@ test.describe('Chat History Persistence', () => {
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
     });
 
@@ -177,7 +177,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         // Do not wait for network idle: the history request is held open on purpose.
         await page.goto('/chat');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         // While the history request is pending the stored conversation is not shown yet.
         await expect(page.getByText('안녕하세요')).toHaveCount(0);
@@ -216,7 +216,7 @@ test.describe('Chat History API Error Handling', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
     });
 
     test('should handle 401 unauthorized error', async ({ page }) => {
@@ -231,6 +231,6 @@ test.describe('Chat History API Error Handling', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
     });
 });
