@@ -1,4 +1,9 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
+import type { DashboardStats } from "../src/hooks/useDashboardStats";
+import type { ClientListSummary } from "../src/features/clients/types";
+import type { EformsignDocumentJobSummary, ConsultationInquiryListResponse } from "../src/services/api";
+import type { ClientActionRequiredAlert } from "../src/hooks/useClientAlerts";
+import type { Notification as AppNotification } from "../src/hooks/usePushNotification";
 
 const mock_auth_response = {
   id: 'test-user',
@@ -19,6 +24,32 @@ type FeedbackPayload = {
 };
 
 const setupAuthMocks = async (page: Page) => {
+  // These UI-only reads must stay isolated from the real backend under mock auth.
+  // Match exact paths and GET only; auth refresh and every mutation remain unmocked.
+  const workspaceReadFixtures = [
+      { pathname: "/api/clients/stats", json: { activeClients: 0, contractsNotSent: 0, contractsPendingSignature: 0, upcomingThisMonth: 0, upcomingNextMonth: 0 } satisfies DashboardStats },
+      { pathname: "/api/clients/list-summary", json: {
+          total: 0,
+          byTab: { all: 0, pre_booking: 0, waiting: 0, replacement_requested: 0, active: 0, completed: 0, terminated: 0 },
+          dueDate: { thisMonth: 0, nextMonth: 0 },
+          serviceEnd: { count: 0, from: "2026-11-01", to: "2026-11-07" },
+      } satisfies ClientListSummary },
+      { pathname: "/api/eformsign-docs/jobs/summary", json: { activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] } satisfies EformsignDocumentJobSummary },
+      { pathname: "/api/consultation-inquiries", json: { data: [], total: 0, page: 1, limit: 1, totalPages: 0 } satisfies ConsultationInquiryListResponse },
+      { pathname: "/api/clients/alerts", json: [] satisfies ClientActionRequiredAlert[] },
+      { pathname: "/api/notifications", json: [] satisfies AppNotification[] },
+      { pathname: "/api/notifications/unread/count", json: { count: 0 } satisfies { count: number } },
+  ];
+  for (const fixture of workspaceReadFixtures) {
+      await page.route((url) => url.pathname === fixture.pathname, async (route) => {
+          if (route.request().method() !== "GET") {
+              await route.fallback();
+              return;
+          }
+          await route.fulfill({ status: 200, json: fixture.json });
+      });
+  }
+
   await page.addInitScript(() => {
     (window as typeof window & { __e2e_auth__?: boolean }).__e2e_auth__ = true;
   });
