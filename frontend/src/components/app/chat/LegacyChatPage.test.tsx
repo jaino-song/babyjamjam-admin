@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { hydrateRoot, type Root } from "react-dom/client";
 import type { ChatMessage, ChatState } from "@/hooks/useChatStream";
 import { LegacyChatPage } from "./LegacyChatPage";
+
+const { renderToString } = jest.requireActual<typeof import("react-dom/server")>("react-dom/server.node");
 
 const mockBack = jest.fn();
 const mockSend = jest.fn();
@@ -103,4 +106,49 @@ describe("LegacyChatPage workspace preservation", () => {
         fireEvent.keyDown(input, { key: "Enter" });
         expect(mockSend).toHaveBeenCalledWith("한글 질문");
     });
+    it("hydrates server-null session markup with a client-cached session without recovery or remount", async () => {
+        mockState.sessionId = null;
+        const container = document.createElement("div");
+        container.innerHTML = renderToString(<LegacyChatPage />);
+        document.body.appendChild(container);
+        const serverWorkspace = container.querySelector('[data-component="desktop_chat_page"]');
+        const serverViewport = container.querySelector('[data-component="desktop_chat_page_messages"]');
+        const serverComposer = container.querySelector('[aria-label="질문 입력"]');
+        expect(container.querySelector("h1")).toHaveTextContent("새 대화");
+        expect(container).toHaveTextContent("아직 대화가 없습니다.");
+        expect(serverComposer).toBeInTheDocument();
+        expect(mockHistory).not.toHaveBeenCalled();
+
+        // The real hook sees null on the server and reads this cached id in its client initializer.
+        window.localStorage.setItem("ai_chat_session_id", "returning-session");
+        mockState.sessionId = window.localStorage.getItem("ai_chat_session_id");
+        const onRecoverableError = jest.fn();
+        let root: Root | undefined;
+        try {
+            await act(async () => {
+                root = hydrateRoot(container, <LegacyChatPage />, { onRecoverableError });
+            });
+            expect(onRecoverableError).not.toHaveBeenCalled();
+            expect(container.querySelector('[data-component="desktop_chat_page"]')).toBe(serverWorkspace);
+            expect(container.querySelector('[data-component="desktop_chat_page_messages"]')).toBe(serverViewport);
+            expect(container.querySelector('[aria-label="질문 입력"]')).toBe(serverComposer);
+            expect(container.querySelector("h1")).toHaveTextContent("현재 대화");
+            expect(container.querySelector('[data-component="desktop_chat_page_sidebar_current"]')).toHaveAttribute("aria-current", "true");
+            expect(container).not.toHaveTextContent("아직 대화가 없습니다.");
+            expect(mockHistory).toHaveBeenCalledTimes(1);
+            expect(mockHistory).toHaveBeenCalledWith(0);
+
+            mockState.sessionId = null;
+            await act(async () => { root?.render(<LegacyChatPage />); });
+            expect(container.querySelector("h1")).toHaveTextContent("새 대화");
+            expect(container.querySelector('[data-component="desktop_chat_page_sidebar_current"]')).not.toBeInTheDocument();
+            expect(container).toHaveTextContent("아직 대화가 없습니다.");
+            expect(container.querySelector('[data-component="desktop_chat_page_messages"]')).toBe(serverViewport);
+        } finally {
+            await act(async () => { root?.unmount(); });
+            container.remove();
+            window.localStorage.removeItem("ai_chat_session_id");
+        }
+    });
+
 });

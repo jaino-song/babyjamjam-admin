@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { useRef, useEffect, useCallback, useLayoutEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,11 @@ import { ChatWorkspaceStats } from "./ChatWorkspaceStats";
 import { ChatInput } from "@/components/app/chat/ChatInput";
 import { AssistantMessage } from "@/components/app/chat/AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
+
+// Match server markup on the first hydration pass; session identity stays hook-owned.
+const subscribeHydration = () => () => {};
+const clientReadySnapshot = () => true;
+const serverReadySnapshot = () => false;
 
 function UserMessage({ message }: { message: ChatMessage }) {
     return (
@@ -58,6 +63,8 @@ export function LegacyChatPage() {
         isLoadingHistory,
         hasMoreHistory,
     } = useChatStream();
+    const isClientReady = useSyncExternalStore(subscribeHydration, clientReadySnapshot, serverReadySnapshot);
+    const showCurrentSession = isClientReady && Boolean(sessionId);
 
     const handleSubmitFeedback = useCallback(async (
         messageIndex: number,
@@ -123,7 +130,7 @@ export function LegacyChatPage() {
     return (
         <ChatWorkspace data-component="desktop_chat_page" stats={<ChatWorkspaceStats data-component="desktop_chat_page_stats" />} list={() => (
             <ListPanel data-component="desktop_chat_page_sidebar" title="대화">
-                {sessionId ? <p data-component="desktop_chat_page_sidebar_current" aria-current="true" className="rounded-2xl bg-v3-primary-light px-4 py-3 text-sm font-semibold text-v3-primary">현재 대화</p> : <p className="text-sm text-muted-foreground">아직 대화가 없습니다.</p>}
+                {showCurrentSession ? <p data-component="desktop_chat_page_sidebar_current" aria-current="true" className="rounded-2xl bg-v3-primary-light px-4 py-3 text-sm font-semibold text-v3-primary">현재 대화</p> : <p className="text-sm text-muted-foreground">아직 대화가 없습니다.</p>}
             </ListPanel>
         )} header={(menu) => (
             <div data-component="desktop_chat_page_header" className="flex min-w-0 items-center justify-between gap-2 border-b border-v3-border pb-3">
@@ -131,7 +138,7 @@ export function LegacyChatPage() {
                     {menu}
                     <Button variant="ghost" size="icon" onClick={handleBack} aria-label="뒤로가기" data-testid="chat-back"><ArrowLeft className="w-5 h-5" /></Button>
                     <Sparkles className="w-5 h-5 shrink-0 text-primary" />
-                    <h1 className="truncate text-base font-semibold text-foreground">{sessionId ? "현재 대화" : "새 대화"}</h1>
+                    <h1 className="truncate text-base font-semibold text-foreground">{showCurrentSession ? "현재 대화" : "새 대화"}</h1>
                 </div>
                 <Button variant="ghost" size="icon" onClick={clearSession} aria-label="대화 삭제" data-testid="chat-clear"><Trash2 className="w-5 h-5" /></Button>
             </div>
