@@ -1074,7 +1074,7 @@ describe("ServiceRecordEditRepository", () => {
         ];
         const toggles = { saturday: true, sunday: false, holiday: false };
 
-        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }) {
+        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }, finalizationDueAt?: string) {
             const source = futureSource();
             const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
             const tx = {
@@ -1118,6 +1118,7 @@ describe("ServiceRecordEditRepository", () => {
                 documentJob: null,
                 clientServiceDays: toggles,
                 materializedPlannedSessions: materialize as never,
+                ...(finalizationDueAt ? { finalizationDueAt } : {}),
             };
             const response = await repository.confirmDraft({
                 branchId,
@@ -1171,6 +1172,17 @@ describe("ServiceRecordEditRepository", () => {
             });
             expect(tx.service_record_revision.create).not.toHaveBeenCalled();
             expect(tx.service_record_document_job.create).not.toHaveBeenCalled();
+        });
+
+        it("writes the deadline with a materialized end date without a revision", async () => {
+            const { tx } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-05" }, "2026-09-05T11:00:00.000Z");
+            expect(tx.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({
+                    endDate: new Date("2026-09-05T00:00:00.000Z"),
+                    finalizationDueAt: new Date("2026-09-05T11:00:00.000Z"),
+                }),
+            }));
+            expect(tx.service_record_revision.create).not.toHaveBeenCalled();
         });
 
         it("leaves the end dates alone where they already match", async () => {
@@ -1344,6 +1356,20 @@ describe("ServiceRecordEditRepository", () => {
             const { confirmed } = await confirmWith(resumePlan, { tokens });
             await confirmed;
             expect(tokens[0]!.expiresAt).toEqual(later);
+        });
+
+        it("writes a non-resume deadline while retaining the unconditional token expiry write", async () => {
+            const tokens: FakeToken[] = [{ id: "later", active: true, revokedAt: null, expiresAt: new Date("2026-12-01T15:00:00.000Z") }];
+            const { tx, confirmed } = await confirmWith({ finalizationDueAt: "2026-11-02T11:00:00.000Z" }, { tokens });
+            await confirmed;
+            expect(tx.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ finalizationDueAt: new Date("2026-11-02T11:00:00.000Z") }),
+            }));
+            expect(tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
+                data: { expiresAt: GOLDEN_NEW_EXPIRY },
+            });
+            expect(tokens[0]!.expiresAt).toEqual(GOLDEN_NEW_EXPIRY);
         });
 
         it("keeps the unconditional token write for every other plan", async () => {
