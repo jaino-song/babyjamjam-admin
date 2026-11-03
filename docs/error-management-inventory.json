@@ -3911,6 +3911,14 @@
       "discovery_task_id": "1.1.01"
     },
     {
+      "path": "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
+      "root": "backend/application/",
+      "kind": "runtime",
+      "candidate_count": 52,
+      "review_status": "reviewed",
+      "discovery_task_id": "bjj-494-error-intake"
+    },
+    {
       "path": "backend/application/usecases/system-setting/get-setting.usecase.ts",
       "root": "backend/application/",
       "kind": "runtime",
@@ -77499,6 +77507,344 @@
       "review_task": null,
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Registered codes only; scheduleCode extension re-attached at the HTTP boundary"
+    },
+    {
+      "id": "owner-202b8665a89c",
+      "path": "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
+      "root": "backend/application/",
+      "classification": "no-direct-error-boundary",
+      "reason": "Introduced by 55857d5ea and inherited by BJJ-494; the raw-error intake pattern matches exception-class mentions, not only authored HTTP throws. Nest exception names occur only in the import (L1) and instanceof checks (L622, L625, L639, L849) that translate editor refusals or invalidate stale targets. Authored errors are AgentActionCertainFailureError/AgentActionQuestionError, private CardOverflowError mapped to a certain failure, and the plain Error catalog invariant at L779. Known editor refusals become agent questions/certain failures; unclassified errors propagate unchanged to the action coordinator for uncertainty and reconciliation. This provider is not an HTTP response boundary; registration changes no exception mapping.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 171,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 415,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 544,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 547,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 622,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 625,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 639,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 676,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 680,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 681,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 693,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 703,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 707,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 714,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 719,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 730,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 744,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 765,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 779,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 787,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 813,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 830,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 831,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 848,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 849,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 850,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 862,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 864,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 868,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 871,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 882,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 883,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 903,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 906,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 932,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 938,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 941,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 943,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 949,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 961,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 975,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 981,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 983,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 986,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1004,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1010,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1012,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1014,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1030,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1033,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1052,
+          "kinds": [
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "bjj-494-error-intake",
+      "spec_ids": [
+        "EM-STATE-01",
+        "EM-ARCH-03"
+      ],
+      "public_codes": [],
+      "outcome_evidence": null,
+      "consumer_paths": [
+        "service-records.edit capability inspection, approved execution and reconciliation via the action coordinator"
+      ],
+      "test_evidence": [
+        "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "bjj-494-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Known editor refusals use AgentActionQuestionError/CertainFailureError; unknown failures retain their identity for coordinator uncertainty/reconciliation. Spec-ID references and the existing provider spec are evidence pointers, not a complete coverage or compliance claim."
     }
   ]
 }
