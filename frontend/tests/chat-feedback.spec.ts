@@ -1,4 +1,7 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
+import type { OutOfPocketPriceInfo } from "@babyjamjam/shared";
+import type { AvailableClientArea } from "../src/hooks/useVoucherData";
+import type { BranchHolidayYear } from "../src/services/holidays";
 import type { DashboardStats } from "../src/hooks/useDashboardStats";
 import type { ClientListSummary } from "../src/features/clients/types";
 import type { EformsignDocumentJobSummary, ConsultationInquiryListResponse } from "../src/services/api";
@@ -39,6 +42,9 @@ const setupAuthMocks = async (page: Page) => {
       { pathname: "/api/clients/alerts", json: [] satisfies ClientActionRequiredAlert[] },
       { pathname: "/api/notifications", json: [] satisfies AppNotification[] },
       { pathname: "/api/notifications/unread/count", json: { count: 0 } satisfies { count: number } },
+      { pathname: "/api/voucher-price-infos/years", json: [] satisfies number[] },
+      { pathname: "/api/area-templates/available-areas", json: [] satisfies AvailableClientArea[] },
+      { pathname: "/api/out-of-pocket-price-infos", json: [] satisfies OutOfPocketPriceInfo[] },
   ];
   for (const fixture of workspaceReadFixtures) {
       await page.route((url) => url.pathname === fixture.pathname, async (route) => {
@@ -49,6 +55,36 @@ const setupAuthMocks = async (page: Page) => {
           await route.fulfill({ status: 200, json: fixture.json });
       });
   }
+  // Only fixture branches used by the E2E server/auth storage are isolated here.
+  const holidayFixturePaths = [
+      "/api/branches/e2e-branch/holidays",
+      "/api/branches/20000000-0000-4000-8000-000000000001/holidays",
+  ];
+  await page.route((url) => holidayFixturePaths.includes(url.pathname), async (route) => {
+      if (route.request().method() !== "GET") {
+          await route.fallback();
+          return;
+      }
+      const year = Number(new URL(route.request().url()).searchParams.get("year"));
+      if (!Number.isInteger(year) || year < 1) {
+          await route.fallback();
+          return;
+      }
+      await route.fulfill({ status: 200, json: {
+          year, revision: 0, supported: false, synced: false,
+          lastSyncedAt: null, holidays: [], inactiveOverrides: [],
+      } satisfies BranchHolidayYear });
+  });
+  // Realtime delivery is outside these mocked chat cases. An open SSE would block
+  // networkidle; abort leaves the real 3s retry/auth-me probe on existing auth,
+  // without contacting the real stream or mocking auth refresh.
+  await page.route((url) => url.pathname === "/api/realtime/events", async (route) => {
+      if (route.request().method() !== "GET") {
+          await route.fallback();
+          return;
+      }
+      await route.abort("failed");
+  });
 
   await page.addInitScript(() => {
     (window as typeof window & { __e2e_auth__?: boolean }).__e2e_auth__ = true;
