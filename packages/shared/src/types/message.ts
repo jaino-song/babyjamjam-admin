@@ -53,6 +53,25 @@ export const MESSAGE_TRIGGER_RECIPIENT_TYPES = [
 
 export type MessageTriggerRecipientType = (typeof MESSAGE_TRIGGER_RECIPIENT_TYPES)[number];
 
+/** UI group mode; each projected child/job still has a single recipient type. */
+export const MESSAGE_TRIGGER_RECIPIENT_MODES = [
+  ...MESSAGE_TRIGGER_RECIPIENT_TYPES,
+  "BOTH_EMPLOYEES",
+] as const;
+
+export type MessageTriggerRecipientMode = (typeof MESSAGE_TRIGGER_RECIPIENT_MODES)[number];
+
+export interface MessageTriggerRuleGroup {
+  id: string;
+  branchId: string;
+  name: string;
+  recipientMode: MessageTriggerRecipientMode;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
 export const MESSAGE_TRIGGER_TEMPLATE_KEYS = [
   "CLIENT_WELCOME",
   "SERVICE_START_REMINDER",
@@ -100,6 +119,7 @@ export const MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS: Readonly<
 export const messageTriggerEventTypeSchema = z.enum(MESSAGE_TRIGGER_EVENT_TYPES);
 export const messageTriggerOffsetTypeSchema = z.enum(MESSAGE_TRIGGER_OFFSET_TYPES);
 export const messageTriggerRecipientTypeSchema = z.enum(MESSAGE_TRIGGER_RECIPIENT_TYPES);
+export const messageTriggerRecipientModeSchema = z.enum(MESSAGE_TRIGGER_RECIPIENT_MODES);
 export const messageTriggerTemplateKeySchema = z.enum(MESSAGE_TRIGGER_TEMPLATE_KEYS);
 export const messageTriggerTargetClientStatusSchema = z.enum(
   MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
@@ -216,6 +236,8 @@ export interface MessageTriggerTemplateCatalogItem {
 
 export interface MessageTriggerRule {
   id: string;
+  /** Nullable for system/default rules; absent on older servers. */
+  groupId?: string | null;
   branchId: string | null;
   name: string;
   /**
@@ -336,6 +358,8 @@ export interface UpcomingMessageTriggerJobPayload {
 
 export interface UpcomingMessageTriggerJob {
   id: string;
+  /** Claim policy snapshot; absent on older servers or null before claiming. */
+  processingDeadlineAt?: string | null;
   ruleId: string;
   ruleName: string;
   eventType: MessageTriggerEventType | null;

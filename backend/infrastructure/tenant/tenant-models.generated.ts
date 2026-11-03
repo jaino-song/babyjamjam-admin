@@ -34,6 +34,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
     "message_trigger_job",
     "message_trigger_rule",
     "message_trigger_rule_branch_override",
+    "message_trigger_rule_group",
     "notification",
     "receipt_link_token",
     "schedule_change_request",

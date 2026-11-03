@@ -64,6 +64,7 @@ type MessageTriggerJobPrismaRow = {
     createdAt: Date;
     updatedAt: Date;
     claimToken: string | null;
+    processingDeadlineAt: Date | null;
 };
 
 type MessageTriggerJobRawRow = {
@@ -87,6 +88,7 @@ type MessageTriggerJobRawRow = {
     created_at: Date | string;
     updated_at: Date | string;
     claim_token: string | null;
+    processing_deadline_at: Date | string | null;
 };
 
 type ClientUpcomingMessageTriggerJobRawRow = {
@@ -1729,6 +1731,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             attempts: job.attempts,
             nextAttemptAt: job.nextAttemptAt,
             claimToken: job.claimToken,
+            processingDeadlineAt: job.processingDeadlineAt,
         };
     }
 
@@ -1746,6 +1749,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             attempts: job.attempts,
             nextAttemptAt: job.nextAttemptAt,
             claimToken: job.claimToken,
+            processingDeadlineAt: job.processingDeadlineAt,
         };
     }
 
@@ -1777,6 +1781,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             row.attempts,
             row.nextAttemptAt,
             row.claimToken,
+            row.processingDeadlineAt ?? null,
         );
     }
 
@@ -1803,6 +1808,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             row.attempts,
             this.toNullableDate(row.next_attempt_at),
             row.claim_token,
+            this.toNullableDate(row.processing_deadline_at),
         );
     }
 

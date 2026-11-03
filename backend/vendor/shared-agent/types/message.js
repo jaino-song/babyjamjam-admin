@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SERVICE_RECORD_LINK_RULE_ID = exports.STORED_MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SENDER_APPROVAL_STATUSES = exports.updateMessageTriggerRuleDtoSchema = exports.createMessageTriggerRuleDtoSchema = exports.UpdateMessageTriggerRuleSchema = exports.CreateMessageTriggerRuleSchema = exports.updateMessageTriggerRuleSchema = exports.createMessageTriggerRuleSchema = exports.CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = exports.messageTriggerTargetClientStatusSchema = exports.messageTriggerTemplateKeySchema = exports.messageTriggerRecipientTypeSchema = exports.messageTriggerOffsetTypeSchema = exports.messageTriggerEventTypeSchema = exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS = exports.DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = exports.DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS = exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES = exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = exports.MESSAGE_TRIGGER_OFFSET_TYPES = exports.MESSAGE_TRIGGER_EVENT_TYPES = void 0;
+exports.SERVICE_RECORD_LINK_RULE_ID = exports.STORED_MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SETTINGS_POLICY_IDS = exports.MESSAGE_SENDER_APPROVAL_STATUSES = exports.updateMessageTriggerRuleDtoSchema = exports.createMessageTriggerRuleDtoSchema = exports.UpdateMessageTriggerRuleSchema = exports.CreateMessageTriggerRuleSchema = exports.updateMessageTriggerRuleSchema = exports.createMessageTriggerRuleSchema = exports.CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TEMPLATE_KEYS = exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = exports.messageTriggerTargetClientStatusSchema = exports.messageTriggerTemplateKeySchema = exports.messageTriggerRecipientModeSchema = exports.messageTriggerRecipientTypeSchema = exports.messageTriggerOffsetTypeSchema = exports.messageTriggerEventTypeSchema = exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS = exports.DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE = exports.DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS = exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES = exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = exports.MESSAGE_TRIGGER_RECIPIENT_MODES = exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = exports.MESSAGE_TRIGGER_OFFSET_TYPES = exports.MESSAGE_TRIGGER_EVENT_TYPES = void 0;
 exports.getTriggerTemplateChannel = getTriggerTemplateChannel;
 const zod_1 = require("zod");
 // Shared message contracts used by both frontend and mobile.
@@ -44,6 +44,11 @@ exports.MESSAGE_TRIGGER_RECIPIENT_TYPES = [
     "PRIMARY_EMPLOYEE",
     "SECONDARY_EMPLOYEE",
 ];
+/** UI group mode; each projected child/job still has a single recipient type. */
+exports.MESSAGE_TRIGGER_RECIPIENT_MODES = [
+    ...exports.MESSAGE_TRIGGER_RECIPIENT_TYPES,
+    "BOTH_EMPLOYEES",
+];
 exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = [
     "CLIENT_WELCOME",
     "SERVICE_START_REMINDER",
@@ -80,6 +85,7 @@ exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS = {
 exports.messageTriggerEventTypeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_EVENT_TYPES);
 exports.messageTriggerOffsetTypeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_OFFSET_TYPES);
 exports.messageTriggerRecipientTypeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_RECIPIENT_TYPES);
+exports.messageTriggerRecipientModeSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_RECIPIENT_MODES);
 exports.messageTriggerTemplateKeySchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_TEMPLATE_KEYS);
 exports.messageTriggerTargetClientStatusSchema = zod_1.z.enum(exports.MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES);
 /**

@@ -17,6 +17,7 @@ import {
 type MessageTriggerRuleRawRow = {
     id: string;
     branch_id: string | null;
+    group_id: string | null;
     name: string;
     is_active: boolean;
     event_type: string;
@@ -151,6 +152,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         const row = await (transaction ?? this.prisma).message_trigger_rule.create({
             data: {
                 branchId,
+                groupId: rule.groupId,
                 name: rule.name,
                 isActive: rule.isActive,
                 eventType: rule.eventType,
@@ -177,6 +179,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             where: { id: rule.id, branchId, deletedAt: null },
             data: {
                 branchId,
+                groupId: rule.groupId,
                 name: rule.name,
                 isActive: rule.isActive,
                 eventType: rule.eventType,
@@ -249,6 +252,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 SELECT
                     id,
                     branch_id,
+                    group_id,
                     name,
                     is_active,
                     event_type,
@@ -315,6 +319,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 RETURNING
                     id,
                     branch_id,
+                    group_id,
                     name,
                     is_active,
                     event_type,
@@ -469,6 +474,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 SELECT
                     id,
                     branch_id,
+                    group_id,
                     name,
                     is_active,
                     event_type,
@@ -536,6 +542,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
     private toDomain(row: {
         id: string;
         branchId: string | null;
+        groupId?: string | null;
         name: string;
         isActive: boolean;
         eventType: string;
@@ -570,6 +577,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 ? row.targetClientStatus as MessageTriggerTargetClientStatus
                 : DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
             row.retryOnFailure ?? true,
+            row.groupId ?? null,
         );
     }
 
@@ -577,6 +585,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         return this.toDomain({
             id: row.id,
             branchId: row.branch_id,
+            groupId: row.group_id,
             name: row.name,
             isActive: row.is_active,
             eventType: row.event_type,
