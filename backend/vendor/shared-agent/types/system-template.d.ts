@@ -1,5 +1,5 @@
 import { z } from "zod";
-export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "THANKS", "CONTRACT_REMINDER", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
+export declare const SYSTEM_TEMPLATE_KEYS: readonly ["GREETING", "SERVICE_INFO", "PRICE_INFO", "REMINDER", "THANKS", "INFO", "CONTRACT_GUIDE", "CONTRACT_REMINDER", "MATERNAL_NOTICE", "SERVICE_END_NOTICE", "SURVEY", "PROVIDER_NOTICE", "SERVICE_RECORD_LINK", "SERVICE_RECORD_REMINDER"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 /** Runtime key validation for system-template BFF route parameters. */
 export declare const systemTemplateKeySchema: z.ZodEnum<{
@@ -12,7 +12,11 @@ export declare const systemTemplateKeySchema: z.ZodEnum<{
     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
     GREETING: "GREETING";
+    CONTRACT_GUIDE: "CONTRACT_GUIDE";
     CONTRACT_REMINDER: "CONTRACT_REMINDER";
+    MATERNAL_NOTICE: "MATERNAL_NOTICE";
+    PROVIDER_NOTICE: "PROVIDER_NOTICE";
+    SERVICE_RECORD_REMINDER: "SERVICE_RECORD_REMINDER";
 }>;
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES: readonly ["sms", "service-feedback-link", "receipt-link"];
 export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)[number];
@@ -22,16 +26,20 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY: {
-    PRICE_INFO: "sms";
     GREETING: "sms";
-    THANKS: "sms";
-    CONTRACT_REMINDER: "sms";
-    SURVEY: "sms";
     SERVICE_INFO: "sms";
-    SERVICE_RECORD_LINK: "service-feedback-link";
-    SERVICE_END_NOTICE: "receipt-link";
+    PRICE_INFO: "sms";
     REMINDER: "sms";
+    THANKS: "sms";
     INFO: "sms";
+    CONTRACT_GUIDE: "sms";
+    CONTRACT_REMINDER: "sms";
+    MATERNAL_NOTICE: "sms";
+    SERVICE_END_NOTICE: "receipt-link";
+    SURVEY: "sms";
+    PROVIDER_NOTICE: "sms";
+    SERVICE_RECORD_LINK: "service-feedback-link";
+    SERVICE_RECORD_REMINDER: "sms";
 };
 /**
  * Resolve the delivery preparation path for a system template.
@@ -56,7 +64,13 @@ export interface CustomVariable {
     label: string;
     required: boolean;
 }
-export interface SystemTemplateContract {
+export type SystemTemplateGroup = 'mother' | 'provider';
+/** Optional for compatibility with older server responses. */
+export interface SystemTemplatePresentation {
+    group?: SystemTemplateGroup;
+    groupLabel?: string;
+}
+export interface SystemTemplateContract extends SystemTemplatePresentation {
     key: SystemTemplateKey;
     name: string;
     description: string;
@@ -79,12 +93,12 @@ export interface SystemTemplateRecord {
     createdAt: string;
     updatedAt: string;
 }
-export interface RawSystemTemplate extends RawSystemTemplateRecord {
+export interface RawSystemTemplate extends RawSystemTemplateRecord, SystemTemplatePresentation {
     name: string;
     description: string;
     requiredVariables: TemplateVariable[];
 }
-export interface SystemTemplate extends SystemTemplateRecord {
+export interface SystemTemplate extends SystemTemplateRecord, SystemTemplatePresentation {
     name: string;
     description: string;
     requiredVariables: TemplateVariable[];
