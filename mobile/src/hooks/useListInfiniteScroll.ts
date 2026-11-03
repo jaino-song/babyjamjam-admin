@@ -33,8 +33,8 @@ function resolveVisibleCount({
 /**
  * Teaser → tap-to-expand → infinite scroll 패턴.
  *
- * - 초기 단계 (`isInitialLoad === true`): 화면에 들어가는 row 수 + 1개 (peek) 만큼 렌더 + "탭하여 더보기"
- *   버튼 노출. `scrollContainerRef` 가 가리키는 스크롤 영역의 clientHeight 와 첫 row 의 offsetHeight 를
+ * - 초기 단계 (`isInitialLoad === true`): 화면에 들어가는 row 수 + 1개 (peek) 만큼 렌더하고 기본적으로
+ *   "탭하여 더보기" 버튼 노출. `scrollContainerRef` 가 가리키는 스크롤 영역의 clientHeight 와 첫 row 의 offsetHeight 를
  *   측정해 `floor((scrollH + gap) / (rowH + gap)) + 1` 만큼 채운다 — 마지막 row 는 footer 의 white
  *   gradient 뒤로 살짝 가려져 "더 있다" 라는 teaser cue 가 됨. 측정 실패 시 `fallbackInitialCount` 사용.
  * - 사용자가 한 번 누르면 `isInitialLoad=false` 로 전환되어 버튼은 사라지고 sentinel 요소가
@@ -44,15 +44,19 @@ function resolveVisibleCount({
  * - totalItems: 가장 큰 섹션 등 "더 표시 가능한지" 판단의 기준 값. 호출 페이지에서 slice 이전 상태로
  *   계산해서 넘기면 순환참조 없음.
  * - fallbackInitialCount: 첫 render (측정 전) 또는 측정 실패 시 사용할 기본값.
+ * - autoLoadInitial: 기본값 false. true 이면 초기 단계에도 sentinel 관찰을 시작하므로 호출 페이지는
+ *   버튼 없이 sentinel 을 마운트해 자동 로드할 수 있다. 초기 측정과 isInitialLoad 의미는 동일하다.
  */
 export function useListInfiniteScroll({
   resetKey,
   totalItems,
   fallbackInitialCount = LIST_INFINITE_INITIAL_COUNT,
+  autoLoadInitial = false,
 }: {
   resetKey: unknown;
   totalItems: number;
   fallbackInitialCount?: number;
+  autoLoadInitial?: boolean;
 }) {
   const initialVisibleCount = clampVisibleCount(fallbackInitialCount, totalItems);
   const [visibilityState, setVisibilityState] = useState({
@@ -144,7 +148,7 @@ export function useListInfiniteScroll({
   }, [initialVisibleCount, resetKey, setVisibilityState, totalItems]);
 
   useEffect(() => {
-    if (!hasMore || isInitialLoad) return;
+    if (!hasMore || (isInitialLoad && !autoLoadInitial)) return;
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
     const observer = new IntersectionObserver(
@@ -155,7 +159,7 @@ export function useListInfiniteScroll({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, isInitialLoad, loadMore]);
+  }, [autoLoadInitial, hasMore, isInitialLoad, loadMore]);
 
   return {
     visibleCount,

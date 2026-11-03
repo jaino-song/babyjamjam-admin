@@ -34,6 +34,7 @@ interface ClientAutocompleteProps {
     helperText?: string;
     /** Id of a message slot the caller renders itself (when `label=""`). */
     ariaDescribedBy?: string;
+    hideEmptyDropdown?: boolean;
     excludeIds?: number[];
     allowManualEntry?: boolean;
     manualEntryLabel?: string;
@@ -55,6 +56,7 @@ export function ClientAutocomplete({
     message,
     helperText,
     ariaDescribedBy,
+    hideEmptyDropdown,
     excludeIds = [],
     allowManualEntry = false,
     manualEntryLabel,
@@ -160,6 +162,7 @@ export function ClientAutocomplete({
                 helperText={helperText}
                 ariaDescribedBy={ariaDescribedBy}
                 emptyMessage={t(locale, "contract-msg.no-client-found")}
+                hideEmptyDropdown={hideEmptyDropdown}
                 manualEntry={
                     allowManualEntry
                         ? {
