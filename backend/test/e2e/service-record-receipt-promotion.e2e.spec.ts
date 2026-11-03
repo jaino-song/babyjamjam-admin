@@ -313,10 +313,16 @@ describeE2E("receipt revision artifact promotion (disposable PostgreSQL)", () =>
     it("preserves revision-era token state on public lookup while retaining legacy restoration", async () => {
         const promotion = await buildPromotionFixture(prisma);
         const revisionTokenHash = hash(`link-${promotion.token.id}`);
-        const storedExpiry = promotion.token.expiresAt;
-        const revisionRevokedAt = new Date("2026-09-02T00:00:00.000Z");
+        // appendRevision records confirmedAt in the database. Build both token eras
+        // around that immutable timestamp rather than assuming the wall-clock date.
+        const revisionConfirmedAt = promotion.revision.confirmedAt;
+        const dayInMs = 24 * 60 * 60 * 1_000;
+        const revisionCreatedAt = new Date(revisionConfirmedAt.getTime() - 3 * dayInMs);
+        const revisionVerifiedAt = new Date(revisionConfirmedAt.getTime() - 2 * dayInMs);
+        const revisionRevokedAt = new Date(revisionConfirmedAt.getTime() - dayInMs);
+        const storedExpiry = new Date(revisionCreatedAt.getTime() + 30 * dayInMs);
         const revisionAccessTokenHash = hash(`revision-session-${promotion.token.id}`);
-        const revisionVerifiedAt = new Date("2026-09-02T08:00:00.000Z");
+        expect(revisionCreatedAt.getTime()).toBeLessThan(revisionConfirmedAt.getTime());
 
         await prisma.receipt_link_token.update({
             where: { id: promotion.token.id },
@@ -326,7 +332,7 @@ describeE2E("receipt revision artifact promotion (disposable PostgreSQL)", () =>
                 accessTokenHash: revisionAccessTokenHash,
                 verifiedAt: revisionVerifiedAt,
                 expiresAt: storedExpiry,
-                createdAt: new Date("2026-08-31T00:00:00.000Z"),
+                createdAt: revisionCreatedAt,
             },
         });
         await prisma.client.update({
@@ -351,7 +357,12 @@ describeE2E("receipt revision artifact promotion (disposable PostgreSQL)", () =>
             });
 
         const legacyTokenId = randomUUID();
-        const legacyCreatedAt = new Date("2026-10-01T00:00:00.000Z");
+        // A token issued strictly after the revision is eligible for legacy restore.
+        const legacyCreatedAt = new Date(revisionConfirmedAt.getTime() + dayInMs);
+        const legacyVerifiedAt = new Date(legacyCreatedAt.getTime() + 8 * 60 * 60 * 1_000);
+        const legacyRevokedAt = new Date(legacyCreatedAt.getTime() + 9 * 60 * 60 * 1_000);
+        const legacyStoredExpiry = new Date(legacyCreatedAt.getTime() + 30 * dayInMs);
+        expect(legacyCreatedAt.getTime()).toBeGreaterThan(revisionConfirmedAt.getTime());
         await prisma.receipt_link_token.create({
             data: {
                 id: legacyTokenId,
@@ -362,12 +373,12 @@ describeE2E("receipt revision artifact promotion (disposable PostgreSQL)", () =>
                 linkTokenHash: hash(`link-${legacyTokenId}`),
                 accessTokenHash: hash(`legacy-session-${legacyTokenId}`),
                 expectedBirthdayHash: hash(`legacy-birthday-${legacyTokenId}`),
-                verifiedAt: new Date("2026-10-02T08:00:00.000Z"),
+                verifiedAt: legacyVerifiedAt,
                 failedAttempts: 1,
                 lockedAt: null,
-                expiresAt: new Date("2026-10-02T00:00:00.000Z"),
+                expiresAt: legacyStoredExpiry,
                 active: false,
-                revokedAt: new Date("2026-10-02T09:00:00.000Z"),
+                revokedAt: legacyRevokedAt,
                 storagePath: `receipts/${legacyTokenId}/legacy.pdf`,
                 contentSha256: "d".repeat(64),
                 byteSize: 123,
@@ -382,10 +393,11 @@ describeE2E("receipt revision artifact promotion (disposable PostgreSQL)", () =>
             active: true,
             accessTokenHash: null,
             verifiedAt: null,
-            expiresAt: new Date("2026-10-29T15:00:00.000Z"),
+            // Public lookup preserves the expiry stored when the token was sent.
+            expiresAt: legacyStoredExpiry,
         });
         await expect(prisma.receipt_link_token.findUniqueOrThrow({ where: { id: legacyTokenId } }))
-            .resolves.toMatchObject({ active: true, revokedAt: null, accessTokenHash: null });
+            .resolves.toMatchObject({ active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null, expiresAt: legacyStoredExpiry });
     });
 
     it("fails closed for stale proof, state version, and revision without replacing the old artifact", async () => {
