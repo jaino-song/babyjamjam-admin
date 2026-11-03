@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useLayoutEffect, useState } from "react";
+import { useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { cn } from "@/lib/utils";
+import { ListPanel } from "@/components/app/v3/ListPanel";
+import { ChatWorkspace } from "./ChatWorkspace";
+import { ChatWorkspaceStats } from "./ChatWorkspaceStats";
 import { ChatInput } from "@/components/app/chat/ChatInput";
 import { AssistantMessage } from "@/components/app/chat/AssistantMessage";
 import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
@@ -13,7 +15,7 @@ import { useChatStream, ChatMessage, ChatState } from "@/hooks/useChatStream";
 function UserMessage({ message }: { message: ChatMessage }) {
     return (
         <div data-component="desktop_chat_page_message-user-row" className="flex justify-end mb-4">
-            <div data-component="desktop_chat_page_message-user-row_bubble" className="max-w-[80%] px-4 py-3 rounded-lg bg-primary text-primary-foreground">
+            <div data-component="desktop_chat_page_message-user-row_bubble" className="max-w-[80%] px-4 py-3 rounded-lg bg-v3-primary-light text-v3-primary">
                 <p className="text-base whitespace-pre-wrap break-words">{message.content}</p>
             </div>
         </div>
@@ -41,7 +43,6 @@ function StateIndicator({ state }: { state: ChatState }) {
 
 export function LegacyChatPage() {
     const router = useRouter();
-    const [isOpen, setIsOpen] = useState(false);
     const {
         messages,
         state,
@@ -75,11 +76,6 @@ export function LegacyChatPage() {
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const prevScrollHeightRef = useRef(0);
     const lastMessageRef = useRef<ChatMessage | null>(null);
-
-    useEffect(() => {
-        const timer = setTimeout(() => setIsOpen(true), 10);
-        return () => clearTimeout(timer);
-    }, []);
 
     useEffect(() => {
         loadHistory(0);
@@ -116,8 +112,7 @@ export function LegacyChatPage() {
     }, [messages]);
 
     const handleBack = () => {
-        setIsOpen(false);
-        setTimeout(() => router.back(), 300);
+        router.back();
     };
     const handleConfirm = () => { void confirmAction?.(); };
     const handleCancel = () => { cancelAction?.(); };
@@ -126,17 +121,22 @@ export function LegacyChatPage() {
     const showConfirmButtons = Boolean(pendingConfirmation) && lastMessage?.role === "assistant" && !lastMessage.isStreaming;
 
     return (
-        <div data-component="desktop_chat_page" className={cn("fixed inset-0 h-dvh flex flex-col bg-background z-[1200]", "transition-transform duration-300 ease-out", isOpen ? "translate-y-0" : "translate-y-full")}>
-            <div data-component="desktop_chat_page_header" className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
-                <div data-component="desktop_chat_page_header_title-group" className="flex items-center gap-2">
+        <ChatWorkspace data-component="desktop_chat_page" stats={<ChatWorkspaceStats data-component="desktop_chat_page_stats" />} list={() => (
+            <ListPanel data-component="desktop_chat_page_sidebar" title="대화">
+                {sessionId ? <p data-component="desktop_chat_page_sidebar_current" aria-current="true" className="rounded-2xl bg-v3-primary-light px-4 py-3 text-sm font-semibold text-v3-primary">현재 대화</p> : <p className="text-sm text-muted-foreground">아직 대화가 없습니다.</p>}
+            </ListPanel>
+        )} header={(menu) => (
+            <div data-component="desktop_chat_page_header" className="flex min-w-0 items-center justify-between gap-2 border-b border-v3-border pb-3">
+                <div data-component="desktop_chat_page_header_title-group" className="flex min-w-0 items-center gap-2">
+                    {menu}
                     <Button variant="ghost" size="icon" onClick={handleBack} aria-label="뒤로가기" data-testid="chat-back"><ArrowLeft className="w-5 h-5" /></Button>
-                    <Sparkles className="w-5 h-5 text-primary" />
-                    <h1 className="text-lg font-semibold text-foreground">AI 어시스턴트</h1>
+                    <Sparkles className="w-5 h-5 shrink-0 text-primary" />
+                    <h1 className="truncate text-base font-semibold text-foreground">{sessionId ? "현재 대화" : "새 대화"}</h1>
                 </div>
                 <Button variant="ghost" size="icon" onClick={clearSession} aria-label="대화 삭제" data-testid="chat-clear"><Trash2 className="w-5 h-5" /></Button>
             </div>
-
-            <div data-component="desktop_chat_page_messages" ref={scrollContainerRef} className="flex-1 overflow-auto px-4 sm:px-8 py-6 select-text [-webkit-overflow-scrolling:touch]">
+        )}>
+            <div data-component="desktop_chat_page_messages" ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto px-4 sm:px-8 py-6 select-text [-webkit-overflow-scrolling:touch]">
                 {isLoadingHistory && messages.length > 0 && <div data-component="desktop_chat_page_messages_history-loading" className="flex justify-center p-4"><Spinner size="sm" /></div>}
                 {messages.length === 0 ? (
                     <div data-component="desktop_chat_page_messages_empty" className="flex flex-col items-center justify-center h-full text-center text-muted-foreground animate-fade-in">
@@ -149,7 +149,7 @@ export function LegacyChatPage() {
                         {messages.map((msg: ChatMessage, idx: number) => msg.role === "user" ? (
                             <UserMessage key={idx} message={msg} />
                         ) : (
-                            <AssistantMessage key={idx} message={msg} messageIndex={idx} sessionId={sessionId} isToolExecuting={isToolExecuting} currentTool={currentTool} onSubmitFeedback={handleSubmitFeedback} />
+                            <AssistantMessage key={idx} message={msg} messageIndex={idx} sessionId={sessionId} isToolExecuting={isToolExecuting} currentTool={currentTool} onSubmitFeedback={handleSubmitFeedback} variant="workspace" />
                         ))}
                         {isToolExecuting && <ToolExecutingIndicator toolName={currentTool} />}
                         <StateIndicator state={state} />
@@ -168,8 +168,8 @@ export function LegacyChatPage() {
                 <div data-component="desktop_chat_page_input-area_quick-actions" className="mb-3 flex flex-wrap gap-2">
                     {quickActions.map((label) => <Button key={label} type="button" variant="secondary" size="sm" onClick={() => sendMessage(label)} disabled={state === "streaming" || state === "connecting"} className="rounded-full">{label}</Button>)}
                 </div>
-                <ChatInput onSubmit={sendMessage} disabled={state === "streaming" || state === "connecting"} />
+                <ChatInput variant="workspace" onSubmit={sendMessage} disabled={state === "streaming" || state === "connecting"} />
             </div>
-        </div>
+        </ChatWorkspace>
     );
 }

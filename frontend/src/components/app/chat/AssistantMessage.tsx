@@ -15,6 +15,7 @@ import ContractSendWizard from "./ContractSendWizard";
 import ContractStatusWizard, { type ContractStatusResult } from "./ContractStatusWizard";
 
 interface AssistantMessageProps {
+    variant?: "default" | "workspace";
     message: ChatMessage;
     messageIndex: number;
     sessionId: string | null;
@@ -24,6 +25,7 @@ interface AssistantMessageProps {
 }
 
 export function AssistantMessage({
+    variant = "default",
     message,
     messageIndex,
     sessionId,
@@ -100,10 +102,10 @@ export function AssistantMessage({
 
     return (
         <div data-component="desktop_chat_page_message-assistant" className="flex gap-4 mb-6 w-full">
-            <Avatar className="w-8 h-8 shrink-0 mt-1">
+            {variant !== "workspace" && <Avatar className="w-8 h-8 shrink-0 mt-1">
                 <AvatarImage src="/assets/icon-72.png" alt="AI" />
                 <AvatarFallback>AI</AvatarFallback>
-            </Avatar>
+            </Avatar>}
 
             <div className="flex-1 min-w-0">
                 {isToolExecuting && message.isStreaming && (

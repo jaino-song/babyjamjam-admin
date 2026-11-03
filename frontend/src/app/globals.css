@@ -1733,3 +1733,12 @@ body {
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] .grid { grid-template-columns: minmax(0, 1fr); }
 
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] :is(button, a) { min-height: 40px; font-size: .78rem; }
+
+/* ChatWorkspace owns the bounded viewport; the controllers retain their scrollers. */
+.chat-workspace-thread > [data-slot="detail-panel"] > [data-slot="detail-panel-main"] > [data-slot="detail-panel-scroll-content"] {
+  overflow: hidden;
+  padding: 0;
+}
+.chat-workspace-thread > [data-slot="detail-panel"] > [data-slot="detail-panel-main"] > [data-slot="detail-panel-bottom-spacer"] {
+  display: none;
+}

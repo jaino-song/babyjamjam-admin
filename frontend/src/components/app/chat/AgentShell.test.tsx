@@ -1,8 +1,15 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { AgentShell } from "./AgentShell";
 
 const mockSendMessage = jest.fn();
+const mockSelectSession = jest.fn();
+const mockDeleteSession = jest.fn();
+const mockResetBranch = jest.fn();
+const mockStop = jest.fn();
+const mockRegenerate = jest.fn();
+const mockPush = jest.fn();
+const mockDisplayed = { session: null as { id: string; title: string } | null };
 const mockLoadTaskSnapshot = jest.fn();
 const mockRetryPendingTaskEvent = jest.fn();
 const mockPatchTask = jest.fn();
@@ -31,8 +38,10 @@ const mockAgentChatState: {
     taskNeedsReconciliation: false,
 };
 
+jest.mock("./ChatWorkspaceStats", () => ({ ChatWorkspaceStats: () => null }));
+
 jest.mock("next/navigation", () => ({
-    useRouter: () => ({ push: jest.fn() }),
+    useRouter: () => ({ push: mockPush }),
 }));
 
 jest.mock("@/hooks/useAgentChat", () => ({
@@ -52,13 +61,14 @@ jest.mock("@/hooks/useAgentChat", () => ({
         commandTask: mockCommandTask,
         loadTaskSnapshot: mockLoadTaskSnapshot,
         retryPendingTaskEvent: mockRetryPendingTaskEvent,
-        stop: jest.fn(),
-        regenerate: jest.fn(),
-        resetBranch: jest.fn(),
+        stop: mockStop,
+        regenerate: mockRegenerate,
+        resetBranch: mockResetBranch,
         sessions: [{ id: "session-a", title: "첫 대화", updatedAt: "2026-08-03" }],
-        selectSession: jest.fn(),
+        selectSession: mockSelectSession,
+        displayedSession: mockDisplayed.session,
         renameSession: mockRenameSession,
-        deleteSession: jest.fn(),
+        deleteSession: mockDeleteSession,
         approveAction: jest.fn(),
         rejectAction: jest.fn(),
         submitStructuredForm: jest.fn(),
@@ -68,6 +78,9 @@ jest.mock("@/hooks/useAgentChat", () => ({
 
 describe("AgentShell input composition", () => {
     beforeEach(() => {
+        mockDisplayed.session = null;
+        mockSelectSession.mockClear(); mockDeleteSession.mockClear(); mockResetBranch.mockClear();
+        mockStop.mockClear(); mockRegenerate.mockClear(); mockPush.mockClear();
         mockSendMessage.mockClear();
         mockLoadTaskSnapshot.mockReset();
         mockRetryPendingTaskEvent.mockReset();
@@ -116,41 +129,52 @@ describe("AgentShell input composition", () => {
         expect(container.querySelectorAll("article")).toHaveLength(1);
     });
 
-    it("bounds the thread and scroll viewport while keeping the header and composer outside the scroll area", () => {
-        const { container } = render(<AgentShell />);
-        const shell = screen.getByRole("main");
+    it("bounds its section under one application main and keeps header/composer outside the scroller", () => {
+        const { container } = render(<main><AgentShell /></main>);
+        const shell = container.querySelector('[data-component="desktop_chat_agent-shell"]');
         const thread = container.querySelector('[data-component="desktop_chat_agent-shell_thread"]');
         const scrollArea = container.querySelector('[data-slot="scroll-area"]');
         const viewport = container.querySelector('[data-radix-scroll-area-viewport]');
-
-        // jsdom cannot measure overflow; the browser reproduction verifies actual scrolling.
-        expect(shell).toHaveClass("fixed", "inset-0", "grid", "grid-rows-[minmax(0,1fr)]");
-        expect(thread).toHaveClass("flex", "min-h-0", "flex-col");
+        const composer = container.querySelector('[data-component="desktop_chat_agent-shell_thread_composer"]');
+        const header = container.querySelector('[data-component="desktop_chat_agent-shell_thread_header"]');
+        expect(screen.getAllByRole("main")).toHaveLength(1);
+        expect(shell?.tagName).toBe("SECTION");
+        expect(shell).toHaveClass("h-full", "min-h-0", "overflow-hidden");
+        expect(shell).not.toHaveClass("fixed");
+        expect(thread).toHaveClass("flex", "h-full", "min-h-0", "overflow-hidden");
         expect(scrollArea).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
         expect(viewport).toHaveClass("h-full", "w-full");
-        expect(scrollArea?.parentElement).toBe(thread);
-        expect(container.querySelector('[data-component="desktop_chat_agent-shell_thread_header"]')?.parentElement).toBe(thread);
-        expect(container.querySelector('[data-component="desktop_chat_agent-shell_thread_composer"]')?.parentElement).toBe(thread);
+        expect(scrollArea?.parentElement).toBe(composer?.parentElement);
+        expect(thread).toContainElement(header as HTMLElement);
+        expect(scrollArea).not.toContainElement(header as HTMLElement);
+        expect(scrollArea).not.toContainElement(composer as HTMLElement);
     });
 
-    it("keeps the mobile sidebar as a dismissible overlay", () => {
+    it("uses an accessible modal drawer, hides/inerts the background and restores focus on Escape", async () => {
         Object.defineProperty(window, "matchMedia", {
             configurable: true,
             value: jest.fn(() => ({ matches: true, addEventListener: jest.fn(), removeEventListener: jest.fn() })),
         });
         const { container } = render(<AgentShell />);
         const menu = screen.getByRole("button", { name: "사이드바 열기" });
-        const sidebar = container.querySelector('[data-component="desktop_chat_agent-shell_sidebar"]');
-
+        const shell = container.querySelector('[data-component="desktop_chat_agent-shell"]');
+        const viewport = container.querySelector('[data-radix-scroll-area-viewport]');
         expect(menu).toHaveAttribute("aria-expanded", "false");
-        expect(sidebar).toHaveClass("fixed", "inset-y-0", "md:static", "-translate-x-full");
+        expect(screen.queryByRole("textbox", { name: "대화 검색" })).not.toBeInTheDocument();
         fireEvent.click(menu);
-        expect(menu).toHaveAttribute("aria-expanded", "true");
-        expect(sidebar).toHaveFocus();
-        expect(screen.getByRole("button", { name: "사이드바 닫기" })).toHaveClass("fixed", "md:hidden");
-        fireEvent.keyDown(window, { key: "Escape" });
+        const dialog = await screen.findByRole("dialog", { name: "대화 목록" });
+        expect(dialog).toContainElement(document.activeElement as HTMLElement);
+        expect(shell).toHaveAttribute("inert");
+        expect(shell?.closest('[aria-hidden="true"]')).not.toBeNull();
+        expect(document.querySelectorAll(`#${menu.getAttribute("aria-controls")}`)).toHaveLength(1);
+        expect(within(dialog).getByRole("textbox", { name: "대화 검색" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "사이드바 닫기" })).toBeInTheDocument();
+        fireEvent.keyDown(document.activeElement ?? dialog, { key: "Escape" });
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
         expect(menu).toHaveAttribute("aria-expanded", "false");
         expect(menu).toHaveFocus();
+        expect(shell).not.toHaveAttribute("inert");
+        expect(container.querySelector('[data-radix-scroll-area-viewport]')).toBe(viewport);
     });
 
     it("does not submit the composer while Korean IME is composing", () => {
@@ -350,4 +374,41 @@ describe("AgentShell input composition", () => {
         expect(alerts[0]).toHaveAttribute("data-component", "desktop_chat_agent-shell_thread_messages_stream-error");
         expect(alerts[1]).toHaveAttribute("data-component", "desktop_chat_agent-shell_thread_messages_action-error");
     });
+    it("uses confirmed header metadata, real session actions and preserves branch/back/new controls", () => {
+        const back = jest.spyOn(window.history, "back").mockImplementation(() => undefined);
+        const { rerender } = render(<AgentShell />);
+        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("새 대화");
+        fireEvent.click(screen.getByRole("button", { name: "첫 대화" }));
+        expect(mockSelectSession).toHaveBeenCalledWith("session-a");
+        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("새 대화");
+        mockDisplayed.session = { id: "session-a", title: "확인된 실제 제목" };
+        rerender(<AgentShell />);
+        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("확인된 실제 제목");
+        expect(screen.getByRole("button", { name: "첫 대화" })).toHaveAttribute("aria-current", "true");
+        fireEvent.change(screen.getByRole("textbox", { name: "대화 검색" }), { target: { value: "없음" } });
+        expect(screen.queryByRole("button", { name: "첫 대화" })).not.toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox", { name: "대화 검색" }), { target: { value: "첫" } });
+        fireEvent.click(screen.getByRole("button", { name: "첫 대화 삭제" }));
+        expect(mockDeleteSession).toHaveBeenCalledWith("session-a");
+        fireEvent.click(screen.getByRole("button", { name: "새 대화" }));
+        expect(mockResetBranch).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByRole("button", { name: "지점 바꾸기" }));
+        expect(mockResetBranch).toHaveBeenCalledTimes(2);
+        expect(mockPush).toHaveBeenCalledWith("/select-branch");
+        fireEvent.click(screen.getByRole("button", { name: "기존 채팅으로 돌아가기" }));
+        expect(back).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole("button", { name: "산모 등록" })).not.toBeInTheDocument();
+        back.mockRestore();
+    });
+
+    it("keeps stream stop and regenerate callbacks wired", () => {
+        mockAgentChatState.status = "streaming";
+        mockAgentChatState.error = new Error("stream");
+        render(<AgentShell />);
+        fireEvent.click(screen.getByRole("button", { name: "중지" }));
+        expect(mockStop).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(mockRegenerate).toHaveBeenCalledTimes(1);
+    });
+
 });

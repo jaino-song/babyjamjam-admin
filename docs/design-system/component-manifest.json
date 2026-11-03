@@ -1777,6 +1777,30 @@
         "requiredFor": [
           "admin service-record editor"
         ]
+      },
+      {
+        "name": "ChatWorkspace",
+        "layer": "template",
+        "import": "@/components/app/chat/ChatWorkspace",
+        "file": "frontend/src/components/app/chat/ChatWorkspace.tsx",
+        "exports": [
+          "ChatWorkspace"
+        ],
+        "replaces": [
+          "fixed fullscreen chat shells",
+          "custom chat sidebar overlays"
+        ],
+        "note": "Chat-only ListPanel/DetailPanel composition with controller-owned list/header/message slots. One compact Sheet authority below 1280px."
+      },
+      {
+        "name": "ChatWorkspaceStats",
+        "layer": "organism",
+        "import": "@/components/app/chat/ChatWorkspaceStats",
+        "file": "frontend/src/components/app/chat/ChatWorkspaceStats.tsx",
+        "exports": [
+          "ChatWorkspaceStats"
+        ],
+        "note": "Branch-aligned live chat statistics; reuses DocumentJobsStatMini and backend contractsNotSent/serviceEnd counts."
       }
     ],
     "mobile": [

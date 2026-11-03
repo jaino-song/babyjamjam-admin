@@ -17314,7 +17314,7 @@
       "path": "frontend/src/hooks/useDashboardStats.ts",
       "root": "frontend/src/",
       "kind": "runtime",
-      "candidate_count": 1,
+      "candidate_count": 2,
       "review_status": "reviewed",
       "discovery_task_id": "1.1.08"
     },
@@ -62190,10 +62190,16 @@
       "path": "frontend/src/hooks/useDashboardStats.ts",
       "root": "frontend/src/",
       "classification": "no-direct-error-boundary",
-      "reason": "Query hooks; fetchDashboardStats throws a status-only Error at line 31 and no error state or copy is authored here.",
+      "reason": "Query hooks; fetchDashboardStats throws a status-only Error and the optional scoped query rejects requests when auth enablement or captured branch alignment is unavailable. User-facing error state and retry copy are owned by ChatWorkspaceStats.",
       "seams": [
         {
-          "line": 31,
+          "line": 35,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 47,
           "kinds": [
             "throw_or_reject"
           ]
@@ -62205,15 +62211,19 @@
         "EM-FE-02"
       ],
       "public_codes": [],
-      "outcome_evidence": "Error handling is delegated to the dashboard page.",
+      "outcome_evidence": "Error handling is delegated to consumers. ChatWorkspaceStats displays unavailable counts as an em dash and source-specific retry alerts; the scoped query guard performs no API call when unavailable.",
       "consumer_paths": [
-        "app/(protected)/dashboard/page.tsx"
+        "app/(protected)/dashboard/page.tsx",
+        "frontend/src/components/app/chat/ChatWorkspaceStats.tsx"
       ],
-      "test_evidence": [],
+      "test_evidence": [
+        "frontend/src/hooks/useDashboardStats.test.tsx",
+        "frontend/src/components/app/chat/ChatWorkspaceStats.test.tsx"
+      ],
       "followup_task": null,
       "review_task": "1.1-batch-c",
       "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "fetchDashboardStats throws status-only Error (31); no copy authored"
+      "spec_mapping_note": "fetchDashboardStats status-only Error (35) and optional scoped query enablement/alignment guard (47); no raw upstream error copy is authored"
     },
     {
       "id": "owner-349e7cd710d8",

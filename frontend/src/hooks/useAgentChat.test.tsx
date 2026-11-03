@@ -1060,3 +1060,114 @@ describe("useAgentShellEnabled capability discovery", () => {
         expect(global.fetch).not.toHaveBeenCalled();
     });
 });
+
+describe("useAgentChat confirmed displayed-session metadata", () => {
+    const reply = (body: unknown) => ({ ok: true, json: async () => body }) as Response;
+    let setMessages: jest.Mock;
+    let list: Array<{ id: string; title: string }>;
+    beforeEach(() => {
+        jest.resetAllMocks();
+        window.sessionStorage.clear();
+        setMessages = jest.fn();
+        list = [{ id: "a", title: "A 제목" }, { id: "b", title: "B 제목" }];
+        (useChat as jest.Mock).mockReturnValue({ messages: [], setMessages, sendMessage: jest.fn(), stop: jest.fn(), status: "ready" });
+        global.fetch = jest.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url === "/api/ai/agent/sessions") return reply(list);
+            const id = url.split("/").pop();
+            if (init?.method === "PATCH") { list = list.map((s) => s.id === id ? { ...s, title: "저장된 제목" } : s); return reply({}); }
+            return reply({ id, title: `${id?.toUpperCase()} 제목`, messages: [{ id }] });
+        });
+    });
+
+    it("restores a response title even outside the current list", async () => {
+        window.sessionStorage.setItem("agent_session_id", "archived-page");
+        const { result } = renderHook(() => useAgentChat());
+        await waitFor(() => expect(result.current.displayedSession).toEqual({ id: "archived-page", title: "ARCHIVED-PAGE 제목" }));
+        expect(setMessages).toHaveBeenLastCalledWith([{ id: "archived-page" }]);
+        expect(result.current.sessions).toEqual(list);
+    });
+
+    it("changes A to B only after selection success and keeps A on a failed selection", async () => {
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.selectSession("a"); });
+        expect(result.current.displayedSession?.title).toBe("A 제목");
+        const fetchMock = global.fetch as jest.Mock;
+        fetchMock.mockResolvedValueOnce({ ok: false });
+        await act(async () => { await result.current.selectSession("b"); });
+        expect(result.current.displayedSession).toEqual({ id: "a", title: "A 제목" });
+        expect(setMessages).toHaveBeenLastCalledWith([{ id: "a" }]);
+        await act(async () => { await result.current.selectSession("b"); });
+        expect(result.current.displayedSession).toEqual({ id: "b", title: "B 제목" });
+        expect(setMessages).toHaveBeenLastCalledWith([{ id: "b" }]);
+    });
+
+    it("uses authoritative refreshed rename data and clears metadata with active delete/archive/reset", async () => {
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.selectSession("a"); });
+        await act(async () => { await result.current.renameSession("a", "제안한 제목"); });
+        expect(result.current.displayedSession?.title).toBe("저장된 제목");
+        await act(async () => { await result.current.deleteSession("a"); });
+        expect(result.current.displayedSession).toBeNull();
+        expect(setMessages).toHaveBeenLastCalledWith([]);
+        await act(async () => { await result.current.selectSession("b"); });
+        await act(async () => { await result.current.archiveSession("b"); });
+        expect(result.current.displayedSession).toBeNull();
+        await act(async () => { await result.current.selectSession("a"); });
+        await act(async () => { result.current.resetBranch(); });
+        expect(result.current.displayedSession).toBeNull();
+    });
+
+    it("projects the first accepted response id and refreshes the real title on finish", async () => {
+        const { result } = renderHook(() => useAgentChat());
+        await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+        const transport = (DefaultChatTransport as jest.Mock).mock.calls[0][0];
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, headers: new Headers({ "x-agent-session-id": "a" }) });
+        await act(async () => { await transport.fetch("/api/ai/agent/chat"); });
+        expect(result.current.displayedSession).toEqual({ id: "a", title: null });
+        const options = (useChat as jest.Mock).mock.calls.at(-1)[0];
+        await act(async () => { options.onFinish(); });
+        await waitFor(() => expect(result.current.displayedSession?.title).toBe("A 제목"));
+    });
+
+    it.each(["select", "reset"])("ignores a delayed transport response after %s", async (operation) => {
+        const { result } = renderHook(() => useAgentChat());
+        await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+        const transport = (DefaultChatTransport as jest.Mock).mock.calls[0][0];
+        let release!: (response: unknown) => void;
+        (global.fetch as jest.Mock).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+        const pending = transport.fetch("/api/ai/agent/chat");
+        await act(async () => { if (operation === "select") await result.current.selectSession("b"); else result.current.resetBranch(); });
+        await act(async () => { release({ ok: true, headers: new Headers({ "x-agent-session-id": "a" }) }); await pending; });
+        expect(result.current.displayedSession).toEqual(operation === "select" ? { id: "b", title: "B 제목" } : null);
+    });
+
+    it("ignores an older overlapping selection's title as well as its messages", async () => {
+        const { result } = renderHook(() => useAgentChat());
+        await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+        let release!: (response: Response) => void;
+        (global.fetch as jest.Mock).mockImplementationOnce(() => new Promise<Response>((resolve) => { release = resolve; }));
+        let pending!: Promise<void>;
+        act(() => { pending = result.current.selectSession("a"); });
+        await act(async () => { await result.current.selectSession("b"); });
+        await act(async () => { release(reply({ id: "a", title: "지연 A", messages: [{ id: "a" }] })); await pending; });
+        expect(result.current.displayedSession).toEqual({ id: "b", title: "B 제목" });
+        expect(setMessages).toHaveBeenLastCalledWith([{ id: "b" }]);
+    });
+    it("retains confirmed metadata on failed rename/delete and rejects aborted response projection", async () => {
+        const { result } = renderHook(() => useAgentChat());
+        await act(async () => { await result.current.selectSession("a"); });
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false });
+        await act(async () => { expect(await result.current.renameSession("a", "실패")).toBe(false); });
+        expect(result.current.displayedSession?.title).toBe("A 제목");
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false });
+        await act(async () => { await result.current.deleteSession("a"); });
+        expect(result.current.displayedSession?.title).toBe("A 제목");
+        const transport = (DefaultChatTransport as jest.Mock).mock.calls[0][0];
+        const controller = new AbortController();
+        controller.abort();
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, headers: new Headers({ "x-agent-session-id": "b" }) });
+        await act(async () => { await transport.fetch("/api/ai/agent/chat", { signal: controller.signal }); });
+        expect(result.current.displayedSession?.title).toBe("A 제목");
+    });
+
+});
