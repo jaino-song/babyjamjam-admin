@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import {
     FindEformsignDocByIdUsecase,
     FindEformsignDocByDocumentIdUsecase,
@@ -27,7 +27,6 @@ import {
     isReviewerRejectedStatus,
     isRevokeRequestedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
-import { EformsignDocumentSnapshotService } from "./eformsign-document-snapshot.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { EformsignProviderPrincipal } from "./eformsign-credential-boundary.service";
 
@@ -52,8 +51,6 @@ export class EformsignDocService {
         private readonly fetchEformsignDocFromApiUsecase: FetchEformsignDocFromApiUsecase,
         // Contract creation
         private readonly createAndSendContractUsecase: CreateAndSendContractUsecase,
-        @Optional()
-        private readonly documentSnapshotService?: EformsignDocumentSnapshotService,
     ) {}
 
     // ============ Local DB Operations ============
@@ -65,19 +62,8 @@ export class EformsignDocService {
     async create(branchid: string, params: CreateEformsignDocParams): Promise<EformsignDocEntity> {
         this.logger.log(`Creating eformsign doc record: documentId=${params.documentId}, clientId=${params.clientId}, linkToClient=${params.linkToClient}`);
         const result = await this.createEformsignDocUsecase.execute(branchid, params);
-        await this.bumpDocumentSnapshotVersion(branchid);
         this.logger.log(`Successfully created eformsign doc record: id=${result.id}, documentId=${result.documentId}`);
         return result;
-    }
-
-    private async bumpDocumentSnapshotVersion(branchId: string): Promise<void> {
-        if (!branchId) return;
-
-        try {
-            await this.documentSnapshotService?.bumpVersion(branchId);
-        } catch {
-            // 캐시 무효화 실패가 계약 생성 성공을 되돌리면 안 된다.
-        }
     }
 
     /**
