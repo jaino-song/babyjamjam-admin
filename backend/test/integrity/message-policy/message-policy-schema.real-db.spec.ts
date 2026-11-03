@@ -194,9 +194,11 @@ describeReal("DB-1 message policy additive migration (real PostgreSQL)", () => {
                 expect(await partialIndexes()).toEqual(beforeIndexes);
 
                 const childData = { name: "invalid", eventType: "SERVICE_START", offsetType: "SAME_DAY", recipientType: "CLIENT", templateKey: "INFO" };
-                await expect(prisma.message_trigger_rule.create({ data: { ...childData, branchId: branchB, groupId: post.id } })).rejects.toMatchObject({ code: "P2003" });
+                // The POST group already contains CLIENT. Use distinct unused
+                // roles so the unique index cannot mask either tenant fence.
+                await expect(prisma.message_trigger_rule.create({ data: { ...childData, recipientType: "PRIMARY_EMPLOYEE", branchId: branchB, groupId: post.id } })).rejects.toMatchObject({ code: "P2003" });
                 await expect(prisma.message_trigger_rule.create({ data: { ...childData, branchId: branchA, groupId: post.id } })).rejects.toMatchObject({ code: "P2002" });
-                await expect(prisma.message_trigger_rule.create({ data: { ...childData, groupId: post.id } })).rejects.toThrow();
+                await expect(prisma.message_trigger_rule.create({ data: { ...childData, recipientType: "SECONDARY_EMPLOYEE", groupId: post.id } })).rejects.toThrow("message_trigger_rule_group_requires_branch_check");
                 await expect(prisma.message_trigger_rule_group.create({ data: { branchId: randomUUID(), name: "orphan", recipientMode: "CLIENT" } })).rejects.toMatchObject({ code: "P2003" });
                 await expect(prisma.message_trigger_rule_group.delete({ where: { id: both.id } })).rejects.toMatchObject({ code: "P2003" });
             } finally {
