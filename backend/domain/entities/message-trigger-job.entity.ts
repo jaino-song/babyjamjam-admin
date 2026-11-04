@@ -178,9 +178,10 @@ export class MessageTriggerJobEntity {
         );
     }
 
-    markProcessing(claimToken?: string | null): void {
+    markProcessing(claimToken?: string | null, processingDeadlineAt?: Date): void {
         if (this.isTerminal()) return;
         this.status = "processing";
+        if (processingDeadlineAt !== undefined) this.processingDeadlineAt = processingDeadlineAt;
         if (claimToken !== undefined) {
             this.claimToken = claimToken;
         }
@@ -199,7 +200,7 @@ export class MessageTriggerJobEntity {
         this.updatedAt = new Date();
     }
 
-    defer(kind: "transient", reason: string): void {
+    defer(kind: "transient", reason: string, retryDelayMs = TRIGGER_JOB_RETRY_DELAY_MS): void {
         if (this.isTerminal()) return;
         const now = new Date();
 
@@ -210,7 +211,7 @@ export class MessageTriggerJobEntity {
         }
 
         this.status = "pending";
-        this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_RETRY_DELAY_MS);
+        this.nextAttemptAt = new Date(now.getTime() + retryDelayMs);
         this.updatedAt = now;
     }
 

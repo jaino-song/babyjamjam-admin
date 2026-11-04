@@ -83,6 +83,16 @@ export interface CancelPendingJobsResult {
     inFlightJobIds: string[];
 }
 
+export interface MessageDispatchBranchEligibility {
+    branchId: string;
+    automaticEnabled: boolean;
+    retryEnabled: boolean;
+    intervalMinutes: number;
+}
+
+export type MessageTriggerClaimSnapshot = Pick<MessageTriggerJobEntity,
+    "status" | "claimToken" | "updatedAt" | "processingDeadlineAt">;
+
 export interface IMessageTriggerJobRepository {
     /** Auxiliary persisted override projection shared with the branch rule list. */
     findPolicyRuleBranchOverrides(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleBranchOverride[]>;
@@ -98,13 +108,16 @@ export interface IMessageTriggerJobRepository {
      * returned token is unique to this processing attempt and must be supplied
      * to every terminal update/fence before a provider call.
      */
-    claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
+    claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
     /**
      * Same rule fence and token as `claimPendingWithRuleFence`, but for a job in
      * `needs_setup` (manual resend). Returns null when the job is not in that
      * state or the rule fence refuses; the row is left unchanged.
      */
-    claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
+    claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
+    findDueDispatchBranchIds(now: Date): Promise<string[]>;
+    consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
+    reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
     findUpcomingPendingByBranch(
