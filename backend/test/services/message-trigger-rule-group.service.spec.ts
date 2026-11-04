@@ -229,6 +229,56 @@ function draftRule() {
     return { name: "고객 시작 안내", eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 3, sendTime: "10:30", isActive: false, recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO, branchId: branch };
 }
 
+describe("Phase6 C1 effective optional group-update state", () => {
+    it("refuses the actual pre_booking duplicate when status is omitted and leaves state unchanged", async () => {
+        const f = coreFixture();
+        await f.facade.create(branch, draft({ sendTime: "09:00", targetClientStatus: "pre_booking" }));
+        const target = await f.facade.create(branch, draft({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        const before = structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs });
+        const update = { ...draft({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update.targetClientStatus;
+        await expect(f.facade.update(branch, target.id, update)).rejects.toMatchObject({ status: 409 });
+        expect(structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs })).toEqual(before);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+    });
+
+    it("allows the distinct pre_booking rule when an all-status rule already uses the requested time", async () => {
+        const f = coreFixture();
+        await f.facade.create(branch, draft({ sendTime: "09:00", targetClientStatus: "all" }));
+        const target = await f.facade.create(branch, draft({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        const update = { ...draft({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update.targetClientStatus;
+        await expect(f.facade.update(branch, target.id, update)).resolves.toMatchObject({
+            version: 2, sendTime: "09:00", targetClientStatus: "pre_booking",
+            rules: [{ targetClientStatus: "pre_booking", sendTime: "09:00" }],
+        });
+    });
+
+    it("keeps the public effective-state coded400 wrapper and excludes its private cause", async () => {
+        const f = coreFixture(); const target = await f.facade.create(branch, draft()); let caught: unknown;
+        try { await f.facade.update(branch, target.id, { ...draft({ eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED, offsetType: MessageTriggerOffsetType.IMMEDIATE }), expectedVersion: 1 }); }
+        catch (error) { caught = error; }
+        const problem = mapHttpProblem(caught, { method: "PUT", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(JSON.stringify(problem)).not.toMatch(/cause|stack|Invalid recipient/); expect(f.groups[0]!.version).toBe(1);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+    });
+
+    it("preserves every omitted optional field before validation and still applies explicit replacement values", async () => {
+        const f = coreFixture();
+        const target = await f.facade.create(branch, draft({ offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" }));
+        const update = { ...draft({ name: "metadata only" }), expectedVersion: 1 };
+        delete update.offsetDays; delete update.sendTime; delete update.retryOnFailure; delete update.isActive; delete update.targetClientStatus;
+        await expect(f.facade.update(branch, target.id, update)).resolves.toMatchObject({
+            name: "metadata only", version: 2, offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking",
+            rules: [{ offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" }],
+        });
+        await expect(f.facade.update(branch, target.id, { ...draft({ offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: true, targetClientStatus: "active" }), expectedVersion: 2 })).resolves.toMatchObject({
+            version: 3, offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: true, targetClientStatus: "active",
+        });
+    });
+});
+
 describe("SbMessageTriggerRuleRepository generic group primitives", () => {
     it.each(["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"] as const)("persists %s without a CLIENT-only SQL gate and uses only the supplied transaction", async (mode) => {
         const row = new MessageTriggerRuleGroupEntity("legacy-rule:opaque", branch, "group", mode as MessageTriggerRuleGroupEntity["recipientMode"], 4, new Date(), new Date());

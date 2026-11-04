@@ -1391,7 +1391,9 @@ export class MessageTriggerService {
     }
 
     async updateRuleGroup(branchId: string, id: string, draft: MessageTriggerRuleGroupDraft & { expectedVersion: number }): Promise<MessageTriggerRuleGroupView> {
-        this.validatePublicRuleGroup(draft);
+        // Optional PUT fields inherit the locked child; validate their effective
+        // values inside mutateGroupedRule, after that child has been read.
+        this.validatePublicRuleGroup(draft, false);
         if (!Number.isInteger(draft.expectedVersion) || draft.expectedVersion < 1) this.invalidGroup();
         await this.ensureTriggerSchemaReady();
         await this.messageSenderApprovalService.ensureApproved(branchId);
@@ -1401,7 +1403,7 @@ export class MessageTriggerService {
             const children = await this.ruleRepository.findGroupRules(branchId, id, transaction);
             const child = children[0];
             if (children.length !== 1 || !child || child.recipientType !== MessageTriggerRecipientType.CLIENT) this.groupConflict(group);
-            await this.mutateGroupedRule(branchId, group, child, this.groupDraftRule(draft), transaction);
+            await this.mutateGroupedRule(branchId, group, child, this.groupDraftRule(draft), transaction, draft);
         }, undefined, this.groupDraftRule(draft));
         for (const rule of await this.ruleRepository.findGroupRules(branchId, id)) await this.reconcileRuleGenerationAfterMutation(branchId, rule.id);
         return this.getRuleGroup(branchId, id);
@@ -1415,11 +1417,12 @@ export class MessageTriggerService {
         });
     }
 
-    private validatePublicRuleGroup(draft: MessageTriggerRuleGroupDraft): void {
+    private validatePublicRuleGroup(draft: MessageTriggerRuleGroupDraft, effectiveRule?: UpsertRuleParams | false): void {
         if (draft.recipientMode !== MessageTriggerRecipientType.CLIENT || !draft.name?.trim()
             || !draft.recipientTemplates || typeof draft.recipientTemplates !== "object"
             || Object.keys(draft.recipientTemplates).length !== 1 || !draft.recipientTemplates.CLIENT) this.invalidGroup();
-        try { this.validateRule(this.groupDraftRule(draft)); }
+        if (effectiveRule === false) return;
+        try { this.validateRule(effectiveRule ?? this.groupDraftRule(draft)); }
         catch (error) {
             if (!(error instanceof BadRequestException)) throw error;
             throw new BadRequestException(problemBody("VALIDATION_FAILED", { pointer: "/draft", code: "INVALID_VALUE", detail: "규칙 그룹의 이벤트, 시각 또는 템플릿이 올바르지 않습니다.", location: "body" }), { cause: error });
@@ -1509,9 +1512,23 @@ export class MessageTriggerService {
         if (!await this.ruleRepository.updateGroupCAS(branchId, group, group.version, transaction)) this.groupConflict(group);
     }
 
-    private async mutateGroupedRule(branchId: string, group: MessageTriggerRuleGroupEntity, current: MessageTriggerRuleEntity, params: Partial<UpsertRuleParams>, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity> {
-        const state: UpsertRuleParams = { ...current, ...params, sendTime: params.sendTime ?? current.sendTime };
-        this.validateRule(state, current.templateKey);
+    private async mutateGroupedRule(branchId: string, group: MessageTriggerRuleGroupEntity, current: MessageTriggerRuleEntity, params: Partial<UpsertRuleParams>, transaction: Prisma.TransactionClient, publicDraft?: MessageTriggerRuleGroupDraft): Promise<MessageTriggerRuleEntity> {
+        // The duplicate predicate and entity update must inspect the same
+        // effective state. groupDraftRule includes omitted keys as undefined.
+        const state: UpsertRuleParams = {
+            name: params.name === undefined ? current.name : params.name,
+            isActive: params.isActive === undefined ? current.isActive : params.isActive,
+            eventType: params.eventType === undefined ? current.eventType : params.eventType,
+            offsetType: params.offsetType === undefined ? current.offsetType : params.offsetType,
+            offsetDays: params.offsetDays === undefined ? current.offsetDays : params.offsetDays,
+            sendTime: params.sendTime === undefined ? current.sendTime : params.sendTime,
+            recipientType: params.recipientType === undefined ? current.recipientType : params.recipientType,
+            templateKey: params.templateKey === undefined ? current.templateKey : params.templateKey,
+            targetClientStatus: params.targetClientStatus === undefined ? current.targetClientStatus : params.targetClientStatus,
+            retryOnFailure: params.retryOnFailure === undefined ? current.retryOnFailure : params.retryOnFailure,
+        };
+        if (publicDraft) this.validatePublicRuleGroup(publicDraft, state);
+        else this.validateRule(state, current.templateKey);
         const parentEnabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(branchId, transaction);
         if (!parentEnabled && params.isActive !== true) state.isActive = false;
         return this.runRuleTemplateMutation(branchId, state, async (writeTransaction) => {

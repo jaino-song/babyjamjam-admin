@@ -1159,6 +1159,55 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         const after = await handle.raw.message_trigger_job.findMany({ where: { branchId }, select: { id: true, status: true, dedupeKey: true, payload: true }, orderBy: { dedupeKey: "asc" } });
         expect(after.map((job) => job.id)).toEqual(idsBefore.map((job) => job.id)); expect(after.map((job) => job.status)).toEqual(["canceled", "canceled", "sent"]); expect(after[0]!.payload).toEqual(idsBefore[0]!.payload); expect(provider).not.toHaveBeenCalled();
     });
+    it("C1 refuses an omitted-status duplicate with no version, rule or job mutation", async () => {
+        const first = await post(clientGroupBody({ sendTime: "09:00", targetClientStatus: "pre_booking" }));
+        const target = await post(clientGroupBody({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        expect(first.status).toBe(201); expect(target.status).toBe(201);
+        await jobs.create(MessageTriggerJobEntity.create({ branchId, ruleId: target.body.rules[0].id,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            scheduledFor: new Date("2026-12-01T00:00:00Z"), dedupeKey: `phase6-c1:${target.body.id}`,
+            payload: { memberId: "synthetic", recipientName: "합성", recipientPhone: "01000000001", templateVariables: {} } }));
+        const beforeGroups = await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeRules = await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeJobs = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const update: Record<string, unknown> = { ...clientGroupBody({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update["targetClientStatus"];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(409); expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT" });
+        expect(await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeGroups);
+        expect(await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeRules);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeJobs);
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C1 allows the requested time for a distinct retained status without a false duplicate", async () => {
+        const first = await post(clientGroupBody({ sendTime: "09:00", targetClientStatus: "all" }));
+        const target = await post(clientGroupBody({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        expect(first.status).toBe(201); expect(target.status).toBe(201);
+        const update: Record<string, unknown> = { ...clientGroupBody({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update["targetClientStatus"];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ version: 2, sendTime: "09:00", targetClientStatus: "pre_booking" });
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: target.body.rules[0].id } })).toMatchObject({ sendTime: "09:00", targetClientStatus: "pre_booking" });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C1 preserves omitted metadata options and applies explicit options on the next version", async () => {
+        const target = await post(clientGroupBody({ offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" }));
+        expect(target.status).toBe(201);
+        const update: Record<string, unknown> = { ...clientGroupBody({ name: "metadata only" }), expectedVersion: 1 };
+        for (const key of ["offsetDays", "sendTime", "retryOnFailure", "isActive", "targetClientStatus"]) delete update[key];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ name: "metadata only", version: 2,
+            offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" });
+        const explicit = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId)
+            .send({ ...clientGroupBody({ offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: false, targetClientStatus: "active" }), expectedVersion: 2 });
+        expect(explicit.status).toBe(200); expect(explicit.body).toMatchObject({ version: 3, offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: false, targetClientStatus: "active" });
+        const invalid = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId)
+            .send({ ...clientGroupBody({ eventType: "EMPLOYEE_ASSIGNED", offsetType: "IMMEDIATE" }), expectedVersion: 3 });
+        expect(invalid.status).toBe(400); expect(invalid.body).toMatchObject({ code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(JSON.stringify(invalid.body)).not.toMatch(/cause|stack|Invalid recipient/);
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } })).toMatchObject({ version: 3 });
+        expect(provider).not.toHaveBeenCalled();
+    });
     it("generic projection primitives retain removed role identity for later re-addition", async () => {
         const lock = new MessageAutomationBranchLockService(handle.service);
         let groupId = ""; let childId = "";
