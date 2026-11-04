@@ -119,6 +119,39 @@ export class ServiceRecordEditScheduleDto {
     dates!: string[];
 }
 
+/**
+ * Resume replan: after a pause (and possibly a caregiver replacement) the
+ * remaining sessions move to consecutive business days from `resumeDate`.
+ * Submitted sessions move too; only their planned date changes.
+ */
+export class ServiceRecordEditResumeReplanDto {
+    /** 1-based index of the first session that is re-planned. */
+    @IsInt()
+    @Min(1)
+    fromSessionIndex!: number;
+
+    @IsString()
+    @Matches(/^\d{4}-\d{2}-\d{2}$/)
+    resumeDate!: string;
+
+    /** Last day the outgoing caregiver served; only valid on a handover. */
+    @IsOptional()
+    @IsString()
+    @Matches(/^\d{4}-\d{2}-\d{2}$/)
+    outgoingLastServedDate?: string;
+
+    /**
+     * The assignment that takes the re-planned sessions over. When absent the
+     * server picks it from the replacement history, or rejects the request
+     * listing the candidates when more than one fits.
+     */
+    @IsOptional()
+    @IsString()
+    @MinLength(1)
+    @MaxLength(64)
+    incomingAssignmentId?: string;
+}
+
 export class UpdateServiceRecordEditDraftDto {
     @IsInt()
     @Min(1)
@@ -139,6 +172,16 @@ export class UpdateServiceRecordEditDraftDto {
     @ValidateNested()
     @Type(() => ServiceRecordEditScheduleDto)
     schedule?: ServiceRecordEditScheduleDto;
+
+    /**
+     * Moves the remaining sessions to consecutive business days from the resume
+     * date. Callers send `changes: {}` alongside it; mutually exclusive with
+     * `dateMove` and `schedule`.
+     */
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ServiceRecordEditResumeReplanDto)
+    resumeReplan?: ServiceRecordEditResumeReplanDto;
 }
 
 /** Body used for a read-only authoritative preview. */

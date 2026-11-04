@@ -1,9 +1,9 @@
 import { Injectable, Inject, Logger, NotFoundException } from "@nestjs/common";
 import { ChatMessage, GeminiStreamChunk, FunctionDeclaration, FunctionCall } from "infrastructure/api/gemini-chat.gateway";
-import { ToolExecutorService, LegacyChatToolContext, ToolExecutionResult } from "application/ai-chat/tool-executor.service";
+import { ToolExecutorService, LegacyChatToolContext, ToolExecutionResult, canManageBranch } from "application/ai-chat/tool-executor.service";
 import { CHAT_SESSION_REPOSITORY, IChatSessionRepository } from "domain/repositories/chat-session.repository.interface";
 import { ChatSessionEntity, ChatMessage as SessionMessage } from "domain/entities/chat-session.entity";
-import { allTools } from "application/ai-chat/tools";
+import { allTools, isCUDTool } from "application/ai-chat/tools";
 import { GEMINI_GATEWAY } from "module/ai-chat.tokens";
 import {
     LegacyChatConfirmationService,
@@ -120,6 +120,8 @@ other synonyms:
    - if missing info, call tool with what you have and let the user refine
    - for update/delete/terminate/replacement requests, call the target action tool first with available identifiers (e.g., clientName); the server returns a confirmation intent for the user to approve
    - for operational requests (counts/search/create/update/delete/contracts), the first response MUST include at least one tool call before any conversational text
+   - writes happen only after the user presses the confirmation button; never claim a write is already completed in a chat answer
+   - 제공기록지 corrections are available in the agent chat or 제공기록지 editor, not in this legacy chat
 
 3. **intent-first mappings** (use these tools for these expressions):
 
@@ -440,7 +442,8 @@ export class AIChatService {
                 userId,
                 branchId: branchid,
                 sessionId: session.id,
-                ...actor,
+                globalRole: actor?.globalRole,
+                branchRole: actor?.branchRole,
             }, "getDashboardStats", {}, principal);
 
             if (dashboardResult.success && this.isDashboardStatsData(dashboardResult.data)) {
@@ -460,38 +463,38 @@ export class AIChatService {
 
         const messages = this.buildGeminiMessages(session.messages);
         let toolCallCount = 0;
+        const offeredTools = canManageBranch(actor) ? allTools : allTools.filter(tool => !isCUDTool(tool.name));
+        const offeredToolNames = new Set(offeredTools.map(tool => tool.name));
 
         try {
             let continueLoop = true;
 
             while (continueLoop && toolCallCount < MAX_TOOL_CALLS_PER_TURN) {
                 continueLoop = false;
-                let accumulatedText = '';
-
                 let retryCount = 0;
                 const MAX_RETRIES = 1;
 
                 while (retryCount <= MAX_RETRIES) {
                     const streamRedactor = new LegacyChatStreamRedactor();
+                    // Keep each attempt private until its full answer has been checked.
+                    // In particular, a false completion must never be streamed then retracted.
+                    let accumulatedText = '';
                     try {
-                        for await (const chunk of this.geminiGateway.chatStream(messages, allTools, callerSignal)) {
+                        for await (const chunk of this.geminiGateway.chatStream(messages, offeredTools, callerSignal)) {
                             if (chunk.type === 'text' && chunk.content) {
                                 const safeContent = streamRedactor.append(chunk.content);
                                 accumulatedText += safeContent;
-                                if (safeContent) {
-                                    yield { type: 'chunk', content: safeContent };
-                                }
                             }
 
                             if (chunk.type === 'function_call' && chunk.functionCall) {
-                                const safeTail = streamRedactor.flush();
-                                if (safeTail) {
-                                    accumulatedText += safeTail;
-                                    yield { type: 'chunk', content: safeTail };
-                                }
-
+                                // Tool-turn preambles are not final answers. The server's
+                                // confirmation message, if any, is the authoritative copy.
                                 toolCallCount++;
                                 const { name, args } = chunk.functionCall;
+                                if (!offeredToolNames.has(name)) {
+                                    yield { type: 'error', error: "이 대화에서 사용할 수 없는 작업이에요." };
+                                    return;
+                                }
 
                                 yield { type: 'tool_call', toolName: name, toolStatus: 'executing' };
 
@@ -499,7 +502,8 @@ export class AIChatService {
                                     userId,
                                     branchId: branchid,
                                     sessionId: session.id,
-                                    ...actor,
+                                    globalRole: actor?.globalRole,
+                                    branchRole: actor?.branchRole,
                                 }, name, args, principal);
 
                                 if (result.requiresConfirmation) {
@@ -532,27 +536,6 @@ export class AIChatService {
                                 break;
                             }
 
-                            if (chunk.type === 'done') {
-                                const safeTail = streamRedactor.flush();
-                                if (safeTail) {
-                                    accumulatedText += safeTail;
-                                    yield { type: 'chunk', content: safeTail };
-                                }
-
-                                const text = accumulatedText.trim();
-                                if (!text) {
-                                    continue;
-                                }
-
-                                const lastMessage = session.messages[session.messages.length - 1];
-                                const isDuplicateAssistantMessage =
-                                    lastMessage?.role === 'assistant' && lastMessage.content === accumulatedText;
-
-                                if (!isDuplicateAssistantMessage) {
-                                    session.addMessage('assistant', accumulatedText);
-                                }
-                            }
-
                             if (chunk.type === 'error') {
                                 this.logger.warn(
                                     `Upstream chat chunk error redacted: ${redactSensitiveLegacyChatContent(chunk.error ?? "unknown")}`
@@ -565,10 +548,16 @@ export class AIChatService {
                             }
                         }
 
-                        const safeTail = streamRedactor.flush();
-                        if (safeTail) {
-                            accumulatedText += safeTail;
-                            yield { type: 'chunk', content: safeTail };
+                        if (!continueLoop) {
+                            accumulatedText += streamRedactor.flush();
+                            const responseText = this.normalizeModelAnswer(accumulatedText, userMessage);
+                            if (responseText.trim()) {
+                                const lastMessage = session.messages[session.messages.length - 1];
+                                if (lastMessage?.role !== 'assistant' || lastMessage.content !== responseText) {
+                                    session.addMessage('assistant', responseText);
+                                }
+                                yield { type: 'chunk', content: responseText };
+                            }
                         }
                         break; // Success, exit retry loop
                     } catch (error) {
@@ -677,6 +666,19 @@ export class AIChatService {
                     );
             },
         );
+    }
+
+    /** Only model-generated turn text is checked; confirmed write results are
+     * persisted separately and must retain their actual completion message. */
+    private normalizeModelAnswer(text: string, userMessage: string): string {
+        const claimsWriteCompletion = /(?:수정|변경|정정|등록|삭제|저장|반영)(?:이|가)?\s*(?:되었|됐|완료)/.test(text);
+        if (!claimsWriteCompletion) return text;
+
+        const unchanged = "아직 변경된 내용이 없어요. 변경은 승인 버튼을 누른 뒤에만 적용돼요.";
+        if (/제공\s*기록지/.test(`${userMessage} ${text}`)) {
+            return `${unchanged} 제공기록지 정정은 에이전트 채팅이나 제공기록지 편집 화면에서 진행해 주세요.`;
+        }
+        return unchanged;
     }
 
     private buildGeminiMessages(sessionMessages: SessionMessage[]): ChatMessage[] {

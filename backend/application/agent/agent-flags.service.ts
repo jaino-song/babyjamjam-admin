@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import type { AgentCapabilityMeta } from "@babyjamjam/shared";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
-import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
+import { MOBILE_EXCLUDED_CAPABILITIES, type AgentPrincipal } from "./agent-client-surface";
 
 const AGENT_FLAGS_SETTING_KEY = "agent.flags";
 const AGENT_EMERGENCY_DISABLED_SETTING_KEY = "agent.flags.emergency-disabled";
@@ -69,7 +69,7 @@ export class AgentFlagsService {
 
     async isCapabilityEnabled(
         capability: AgentCapabilityMeta,
-        principal: VerifiedTenantPrincipal,
+        principal: AgentPrincipal,
     ): Promise<boolean> {
         return this.isCapabilityEnabledFromSnapshot(capability, principal, await this.getSnapshot());
     }
@@ -84,9 +84,10 @@ export class AgentFlagsService {
 
     isCapabilityEnabledFromSnapshot(
         capability: AgentCapabilityMeta,
-        principal: VerifiedTenantPrincipal,
+        principal: AgentPrincipal,
         snapshot: AgentFlagsSnapshot,
     ): boolean {
+        if (principal.clientSurface === "mobile" && MOBILE_EXCLUDED_CAPABILITIES.has(capability.name)) return false;
         if (snapshot.emergencyDisabled) return false;
         const flags = snapshot.config;
         if (!flags.enabled) return false;
@@ -157,7 +158,7 @@ export class AgentFlagsService {
     private isRolloutStageAllowed(
         flags: AgentFlagsConfig,
         capability: AgentCapabilityMeta,
-        principal: VerifiedTenantPrincipal,
+        principal: AgentPrincipal,
     ): boolean {
         const nodeEnvironment = this.configService.get<string>("NODE_ENV") ?? "development";
         if (nodeEnvironment !== "production") return flags.rolloutStage !== "off";

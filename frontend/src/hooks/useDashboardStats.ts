@@ -2,6 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import { isBranchContextAligned } from "@/features/system-templates/branch-context";
+
 import { api } from "@/lib/api/client";
 import type { Client, PaginatedResponse } from "@/lib/client/types";
 
@@ -14,7 +16,9 @@ export interface DashboardStats {
 }
 
 export const dashboardQueryKeys = {
-  stats: () => ["dashboard", "stats"] as const,
+  stats: (branchId?: string | null) => branchId === undefined
+    ? ["dashboard", "stats"] as const
+    : ["dashboard", "stats", { branchId }] as const,
   overview: (limit: number) => ["dashboard", "overview", { limit }] as const,
   /** Prefix key matching every `overview(limit)` query, for broad invalidation. */
   overviewAll: () => ["dashboard", "overview"] as const,
@@ -33,12 +37,21 @@ async function fetchDashboardStats(): Promise<DashboardStats> {
   return response.json();
 }
 
-export function useDashboardStats() {
-  return useQuery<DashboardStats>({
-    queryKey: dashboardQueryKeys.stats(),
-    queryFn: fetchDashboardStats,
+export function useDashboardStats(options: { branchId?: string | null; enabled?: boolean } = {}) {
+  const scoped = options.branchId !== undefined;
+  const ready = options.enabled !== false && (!scoped || isBranchContextAligned(options.branchId ?? null));
+  const query = useQuery<DashboardStats>({
+    queryKey: dashboardQueryKeys.stats(options.branchId),
+    queryFn: () => {
+      if (options.enabled === false || (scoped && !isBranchContextAligned(options.branchId ?? null))) {
+        throw new Error("Branch selection required");
+      }
+      return fetchDashboardStats();
+    },
+    enabled: ready,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+  return { ...query, data: ready ? query.data : undefined };
 }
 
 export async function fetchDashboardClientPage(page: number, limit: number): Promise<PaginatedResponse<Client>> {

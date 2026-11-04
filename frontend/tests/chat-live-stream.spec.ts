@@ -1,4 +1,12 @@
 import { test, expect } from "@playwright/test";
+import type { OutOfPocketPriceInfo } from "@babyjamjam/shared";
+import type { AvailableClientArea } from "../src/hooks/useVoucherData";
+import type { BranchHolidayYear } from "../src/services/holidays";
+import type { DashboardStats } from "../src/hooks/useDashboardStats";
+import type { ClientListSummary } from "../src/features/clients/types";
+import type { EformsignDocumentJobSummary, ConsultationInquiryListResponse } from "../src/services/api";
+import type { ClientActionRequiredAlert } from "../src/hooks/useClientAlerts";
+import type { Notification as AppNotification } from "../src/hooks/usePushNotification";
 import * as fs from "fs";
 import * as path from "path";
 import crypto from "crypto";
@@ -129,7 +137,7 @@ test.describe("Chat live stream smoke", () => {
     });
 
     await page.goto("/chat");
-    await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible({ timeout: 15000 });
 
     const input = page.getByPlaceholder("무엇을 도와드릴까요?").first();
     await expect(input).toBeVisible({ timeout: 10000 });
@@ -156,6 +164,65 @@ test.describe("Chat live stream smoke", () => {
 // This case never reaches the LLM, so it runs with the suite's regular signed-in session.
 test.describe("Chat quick actions", () => {
   test.beforeEach(async ({ page }) => {
+    // These UI-only reads must stay isolated from the real backend under mock auth.
+    // Match exact paths and GET only; auth refresh and every mutation remain unmocked.
+    const workspaceReadFixtures = [
+        { pathname: "/api/clients/stats", json: { activeClients: 0, contractsNotSent: 0, contractsPendingSignature: 0, upcomingThisMonth: 0, upcomingNextMonth: 0 } satisfies DashboardStats },
+        { pathname: "/api/clients/list-summary", json: {
+            total: 0,
+            byTab: { all: 0, pre_booking: 0, waiting: 0, replacement_requested: 0, active: 0, completed: 0, terminated: 0 },
+            dueDate: { thisMonth: 0, nextMonth: 0 },
+            serviceEnd: { count: 0, from: "2026-11-01", to: "2026-11-07" },
+        } satisfies ClientListSummary },
+        { pathname: "/api/eformsign-docs/jobs/summary", json: { activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] } satisfies EformsignDocumentJobSummary },
+        { pathname: "/api/consultation-inquiries", json: { data: [], total: 0, page: 1, limit: 1, totalPages: 0 } satisfies ConsultationInquiryListResponse },
+        { pathname: "/api/clients/alerts", json: [] satisfies ClientActionRequiredAlert[] },
+        { pathname: "/api/notifications", json: [] satisfies AppNotification[] },
+        { pathname: "/api/notifications/unread/count", json: { count: 0 } satisfies { count: number } },
+        { pathname: "/api/voucher-price-infos/years", json: [] satisfies number[] },
+        { pathname: "/api/area-templates/available-areas", json: [] satisfies AvailableClientArea[] },
+        { pathname: "/api/out-of-pocket-price-infos", json: [] satisfies OutOfPocketPriceInfo[] },
+    ];
+    for (const fixture of workspaceReadFixtures) {
+        await page.route((url) => url.pathname === fixture.pathname, async (route) => {
+            if (route.request().method() !== "GET") {
+                await route.fallback();
+                return;
+            }
+            await route.fulfill({ status: 200, json: fixture.json });
+        });
+    }
+    // Only fixture branches used by the E2E server/auth storage are isolated here.
+    const holidayFixturePaths = [
+        "/api/branches/e2e-branch/holidays",
+        "/api/branches/20000000-0000-4000-8000-000000000001/holidays",
+    ];
+    await page.route((url) => holidayFixturePaths.includes(url.pathname), async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        const year = Number(new URL(route.request().url()).searchParams.get("year"));
+        if (!Number.isInteger(year) || year < 1) {
+            await route.fallback();
+            return;
+        }
+        await route.fulfill({ status: 200, json: {
+            year, revision: 0, supported: false, synced: false,
+            lastSyncedAt: null, holidays: [], inactiveOverrides: [],
+        } satisfies BranchHolidayYear });
+    });
+    // Realtime delivery is outside these mocked chat cases. An open SSE would block
+    // networkidle; abort leaves the real 3s retry/auth-me probe on existing auth,
+    // without contacting the real stream or mocking auth refresh.
+    await page.route((url) => url.pathname === "/api/realtime/events", async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        await route.abort("failed");
+    });
+
     await page.addInitScript(() => {
       try {
         localStorage.removeItem("ai_chat_session_id");
@@ -190,8 +257,20 @@ test.describe("Chat quick actions", () => {
       });
     });
 
+    // The SSR header can appear while loadHistory(0) is still in flight. Its
+    // empty response replaces messages, so settle it before opening a local wizard.
+    const initialHistory = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET"
+        && url.pathname === "/api/ai/chat/history"
+        && url.searchParams.get("offset") === "0";
+    });
     await page.goto("/chat");
-    await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
+    const historyResponse = await initialHistory;
+    expect(historyResponse.status()).toBe(200);
+    await historyResponse.finished();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible({ timeout: 15000 });
 
     await page.getByRole("button", { name: "산모 등록" }).click();
     await expect(page.locator('[data-component="desktop_chat_page_wizard-registration"]').first()).toBeVisible({ timeout: 5000 });

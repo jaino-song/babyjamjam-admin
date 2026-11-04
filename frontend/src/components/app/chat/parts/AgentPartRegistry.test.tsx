@@ -288,6 +288,30 @@ describe("AgentPartRegistry", () => {
         expect(onApproveAction).toHaveBeenCalledWith("action-reversible", "revision-1", "ack-token");
     });
 
+    it("passes an action proposal preview through to the approval card", () => {
+        const message = {
+            id: "assistant-preview-1",
+            role: "assistant",
+            parts: [{
+                type: "data-action-proposal",
+                data: {
+                    actionId: "action-preview",
+                    capability: "clients.update",
+                    title: "서비스 일정 정정",
+                    summary: "회차 날짜를 변경합니다.",
+                    expiresAt: "2099-08-03T00:00:00.000Z",
+                    expectedRevision: "revision-1",
+                    changes: { clientId: 1 },
+                    preview: { sections: [{ title: "회차 날짜", rows: [{ label: "1회차", before: "2026-08-03", after: "2026-08-04", note: "확인 필요" }] }] },
+                },
+            }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const row = document.querySelector('[data-slot="preview-row"]');
+        expect(row).toHaveAttribute("data-changed", "true");
+        expect(row).toHaveTextContent("1회차2026-08-032026-08-04확인 필요");
+    });
+
     it("serializes untouched booleans as false and preserves non-boolean values", () => {
         const onSubmitForm = jest.fn();
         const message = {

@@ -4,11 +4,15 @@ import { ConflictException } from "@nestjs/common";
 import { clientLock, reached } from "./helpers/service-record-confirm-race.helper";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE, type SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
 import { MessageTriggerTemplateKey, MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey,
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON } from "domain/constants/message-automation-intent";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture, serviceRecordConfirmBarrier,
@@ -21,15 +25,31 @@ function edit(prisma: unknown) {
     return new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
 }
 
-// Actual production authorization transaction only. This suite never invokes
-// delivery; focused unit tests verify the caller sends only after allow.
-function authorize(prisma: unknown, job: MessageTriggerJobEntity) {
+// Only the provider preparation adapter and focused race admission are doubles.
+// Preparation, snapshot persistence and both authorization fences use production
+// code; this authorization-only suite never sends a provider request.
+function authorizationService(prisma: unknown) {
     const forbidden = new Proxy({}, { get: () => { throw new Error("Unexpected non-DB collaborator"); } });
-    const service = new MessageTriggerService(prisma as never, forbidden as never, forbidden as never,
-        forbidden as never, forbidden as never, forbidden as never, forbidden as never, forbidden as never, undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate(prisma as never, undefined));
-    return (service as unknown as {
-        authorizeClaimedJobForDispatch(job: MessageTriggerJobEntity): Promise<{ kind: string }>;
-    }).authorizeClaimedJobForDispatch(job);
+    const branchLock = new MessageAutomationBranchLockService(prisma as never);
+    const activation = new MessageAutomationActivationService(prisma as never, branchLock, forbidden as never);
+    const delivery = {
+        prepareJob: async (job: MessageTriggerJobEntity) => {
+            const serializedSnapshot = "synthetic-adapter-snapshot";
+            job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = serializedSnapshot;
+            return { snapshot: Object.freeze({}), serializedSnapshot };
+        },
+    };
+    const jobs = new SbMessageTriggerJobRepository(prisma as never);
+    const service = new MessageTriggerService(prisma as never, delivery as never, forbidden as never,
+        forbidden as never, jobs, forbidden as never, forbidden as never, forbidden as never,
+        undefined, undefined, activation, branchLock, undefined,
+        createLegacyAutomationDeliveryGate(prisma as never, branchLock));
+    return service as unknown as {
+        authorizeClaimedJobBeforePreparation(job: MessageTriggerJobEntity): Promise<{ kind: string }>;
+        prepareClaimedJob(job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null>;
+        persistPreparedDelivery(job: MessageTriggerJobEntity): Promise<boolean>;
+        authorizeClaimedJobForDispatch(job: MessageTriggerJobEntity, preparation: SmsTriggerDeliveryPreparation): Promise<{ kind: string }>;
+    };
 }
 
 describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () => {
@@ -73,6 +93,18 @@ describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () =>
             MessageTriggerRecipientType.CLIENT, row.recipientPhone, MessageTriggerTemplateKey.SERVICE_END_REMINDER,
             row.dedupeKey, payload, row.attempts, row.nextAttemptAt, row.createdAt, row.updatedAt, row.claimToken,
         );
+        // Complete preparation before installing the one-shot client-lock hooks.
+        // A repository CAS can return without writing, so verify the stored
+        // snapshot as well as persistPreparedDelivery's boolean result.
+        const preparationService = authorizationService(prisma);
+        expect(await preparationService.authorizeClaimedJobBeforePreparation(job)).toMatchObject({ kind: "allow" });
+        const preparation = await preparationService.prepareClaimedJob(job);
+        expect(preparation).not.toBeNull();
+        if (!preparation) throw new Error("Missing prepared race delivery");
+        expect(await preparationService.persistPreparedDelivery(job)).toBe(true);
+        const preparedJob = await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: job.id } });
+        expect((preparedJob.payload as { templateVariables: Record<string, unknown> })
+            .templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]).toBe(preparation.serializedSnapshot);
         const held = serviceRecordConfirmBarrier();
         const release = serviceRecordConfirmBarrier();
         const attempted = serviceRecordConfirmBarrier();
@@ -80,13 +112,13 @@ describeE2E("confirm versus legacy SMS authorization (actual PostgreSQL)", () =>
         const losingClient = clientLock(prisma, { attempted: attempted.release });
         const confirm = (client: unknown) => edit(client)
             .confirmDraft(fixture.branch.id, draft.id, fixture.actorUserId, request);
-        const winner = (first === "confirm" ? confirm(winningClient) : authorize(winningClient, job))
+        const winner = (first === "confirm" ? confirm(winningClient) : authorizationService(winningClient).authorizeClaimedJobForDispatch(job, preparation))
             .then((value) => value, (error: unknown) => error);
         let loser: Promise<unknown> | undefined;
         let boundaryError: unknown;
         try {
             await reached(held.entered, winner);
-            loser = (first === "confirm" ? authorize(losingClient, job) : confirm(losingClient))
+            loser = (first === "confirm" ? authorizationService(losingClient).authorizeClaimedJobForDispatch(job, preparation) : confirm(losingClient))
                 .then((value) => value, (error: unknown) => error);
             await reached(attempted.entered, loser);
         } catch (error) { boundaryError = error; } finally { release.release(); }
