@@ -651,6 +651,29 @@ describe("POL-1 versioned message policy", () => {
         expect(saved.configuration.quietHours.enabled).toBe(true);
         expect(logs.countFutureProviderReservations).toHaveBeenLastCalledWith("A", expect.any(Date), tx);
     });
+    it.each(["absent default OFF", "persisted OFF"])("allows canonical and legacy OFF-to-OFF saves with one reservation: %s", async storedState => {
+        if (storedState === "persisted OFF") rows.set(key, JSON.stringify(draft()));
+        logs.countFutureProviderReservations.mockResolvedValue(1);
+        const initial = await service.getMessageAutomationPolicyConfig("A");
+        expect(initial.configuration.quietHours.enabled).toBe(false);
+        expect(initial.version === null).toBe(storedState === "absent default OFF");
+        const saved = await service.setMessageAutomationPolicyConfig("A", initial.version, { ...draft(), duplicateWindowHours: 96 });
+        expect(saved.configuration.duplicateWindowHours).toBe(96);
+        expect(saved.configuration.quietHours.enabled).toBe(false);
+        expect(saved.version).toMatch(/^[a-f0-9]{64}$/);
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+        const legacy = await service.setMessageAutomationPastTriggerConfig("A", { sendIntervalMinutes: 7, ruleOrder: ["sms-A"] });
+        expect(JSON.parse(legacy.value)).toEqual({ ...draft(), duplicateWindowHours: 96, pastSendIntervalMinutes: 7, pastRuleOrder: ["sms-A"] });
+        const reload = await service.getMessageAutomationPolicyConfig("A");
+        expect(reload.configuration).toMatchObject({ quietHours: { enabled: false }, duplicateWindowHours: 96,
+            pastSendIntervalMinutes: 7, pastRuleOrder: ["sms-A"] });
+        expect(reload.warnings).toEqual([]);
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+        expect(update.execute).not.toHaveBeenCalled();
+        expect(update.executeIfVersion).toHaveBeenCalledTimes(2);
+        expect(update.executeIfVersion.mock.calls[0]?.[5]).toBe(tx);
+        expect(update.executeIfVersion.mock.calls[1]?.[5]).toBe(tx);
+    });
     it("allows an already-ON canonical field change and OFF transition despite one reservation", async () => {
         const configuration = { ...draft(), quietHours: { ...draft().quietHours, enabled: true } };
         const enabled = await service.setMessageAutomationPolicyConfig("A", null, configuration);
