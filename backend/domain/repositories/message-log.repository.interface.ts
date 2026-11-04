@@ -1,3 +1,4 @@
+import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { CarrierResultState, MessageLogEntity } from "domain/entities/message-log.entity";
 import type { Prisma } from "@prisma/client";
 
@@ -54,6 +55,11 @@ export interface SaveCarrierCheckResultInput {
 export type SaveCarrierCheckResultOutcome = "saved" | "saved_status_failed" | "stale";
 
 export interface IMessageLogRepository {
+    /** Full branch-scoped, read-only policy population; no UI page limit. */
+    findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]>;
+    countFutureProviderReservations(branchId: string, now: Date, transaction?: Prisma.TransactionClient): Promise<number>;
+    resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[]): Promise<MessagePolicyPreviewCandidate[]>;
+
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;
     /**

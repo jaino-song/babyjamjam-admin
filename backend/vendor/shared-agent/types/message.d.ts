@@ -701,3 +701,51 @@ export interface SystemAdminBranchRequest {
     owner?: SystemAdminBranchUser | null;
     messageSenderApproval: SystemAdminBranchMessageSenderApproval;
 }
+export declare const MESSAGE_POLICY_RECIPIENT_GROUPS: readonly ["CLIENT", "CAREGIVER", "STAFF"];
+export type MessagePolicyRecipientGroup = typeof MESSAGE_POLICY_RECIPIENT_GROUPS[number];
+export interface MessageAutomationPolicyConfiguration {
+    schemaVersion: 1;
+    dispatchCheckIntervalMinutes: number;
+    defaultRuleSendTime: string;
+    triggerRetryIntervalMinutes: number;
+    processingReclaimMinutes: number;
+    smsRetryIntervalMinutes: number;
+    pastExpiryHours: number;
+    pastSendIntervalMinutes: number;
+    pastRuleOrder: string[];
+    duplicateWindowHours: number;
+    quietHours: {
+        enabled: boolean;
+        start: string;
+        end: string;
+        recipientGroups: MessagePolicyRecipientGroup[];
+        action: "DEFER" | "CANCEL";
+        timezone: "Asia/Seoul";
+    };
+}
+export interface MessagePolicyWarning {
+    code: "ORDER_ENTRY_PRUNED";
+    ruleId: string;
+}
+export interface MessageAutomationPolicyConfigResponse {
+    version: string | null;
+    configuration: MessageAutomationPolicyConfiguration;
+    permissions: {
+        canRead: boolean;
+        canWrite: boolean;
+    };
+    warnings: MessagePolicyWarning[];
+}
+export interface UpdateMessageAutomationPolicyConfigRequest {
+    expectedVersion: string | null;
+    configuration: MessageAutomationPolicyConfiguration;
+}
+export interface MessageAutomationPolicyPreviewResponse {
+    version: string | null;
+    deferredCount: number;
+    canceledCount: number;
+    reevaluateAt: string | null;
+    futureProviderReservations: number;
+    canEnableQuietHours: boolean;
+    warnings: MessagePolicyWarning[];
+}

@@ -78,3 +78,48 @@ export class SystemSettingEntity {
     }
 
 }
+
+export const MESSAGE_POLICY_RECIPIENT_GROUPS = ["CLIENT", "CAREGIVER", "STAFF"] as const;
+export type MessagePolicyRecipientGroup = typeof MESSAGE_POLICY_RECIPIENT_GROUPS[number];
+export interface MessageAutomationPolicyConfiguration {
+    schemaVersion: 1;
+    dispatchCheckIntervalMinutes: number;
+    defaultRuleSendTime: string;
+    triggerRetryIntervalMinutes: number;
+    processingReclaimMinutes: number;
+    smsRetryIntervalMinutes: number;
+    pastExpiryHours: number;
+    pastSendIntervalMinutes: number;
+    pastRuleOrder: string[];
+    duplicateWindowHours: number;
+    quietHours: {
+        enabled: boolean;
+        start: string;
+        end: string;
+        recipientGroups: MessagePolicyRecipientGroup[];
+        action: "DEFER" | "CANCEL";
+        timezone: "Asia/Seoul";
+    };
+}
+export interface MessagePolicyWarning { code: "ORDER_ENTRY_PRUNED"; ruleId: string }
+
+/** Return fresh arrays so one request cannot mutate another branch's defaults. */
+export function defaultMessageAutomationPolicy(): MessageAutomationPolicyConfiguration {
+    return {
+        schemaVersion: 1,
+        dispatchCheckIntervalMinutes: 1,
+        defaultRuleSendTime: "09:00",
+        triggerRetryIntervalMinutes: 5,
+        processingReclaimMinutes: 10,
+        smsRetryIntervalMinutes: 5,
+        pastExpiryHours: 24,
+        pastSendIntervalMinutes: 1,
+        pastRuleOrder: [],
+        duplicateWindowHours: 72,
+        quietHours: {
+            enabled: false, start: "22:00", end: "08:00",
+            recipientGroups: ["CLIENT", "CAREGIVER", "STAFF"],
+            action: "DEFER", timezone: "Asia/Seoul",
+        },
+    };
+}

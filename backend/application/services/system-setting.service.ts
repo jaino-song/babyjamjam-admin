@@ -1,4 +1,5 @@
-import { ConflictException, Injectable, Optional, ServiceUnavailableException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
+import { BadRequestException, ConflictException, Inject, Injectable, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { AdminAuditActor, AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { currentAdminAuditActor } from "application/services/admin-audit-context";
@@ -8,6 +9,9 @@ import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import {
     SystemSettingEntity,
+    MessageAutomationPolicyConfiguration,
+    MessagePolicyWarning,
+    defaultMessageAutomationPolicy,
     RibbonConfig,
     DEFAULT_RIBBON_CONFIG,
     MessageAutomationPastTriggerConfig,
@@ -22,6 +26,13 @@ import {
     STORED_MESSAGE_SETTINGS_POLICY_IDS,
     StoredMessageSettingsPolicyId,
 } from "domain/constants/message-settings-policy";
+
+import { validateMessageAutomationPolicy, evaluateMessageQuietHours } from "domain/message-policy-evaluator";
+import { isConfigurableSmsTriggerTemplate } from "domain/constants/message-trigger-catalog";
+import { IMessageTriggerRuleRepository, MESSAGE_TRIGGER_RULE_REPOSITORY } from "domain/repositories/message-trigger-rule.repository.interface";
+import { IMessageTriggerJobRepository, MESSAGE_TRIGGER_JOB_REPOSITORY } from "domain/repositories/message-trigger-job.repository.interface";
+import { IMessageLogRepository, MESSAGE_LOG_REPOSITORY } from "domain/repositories/message-log.repository.interface";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 
 export type PwaDigestDeliveryStatus = "sent" | "retryable" | "uncertain";
 
@@ -48,6 +59,14 @@ export class SystemSettingService {
         private readonly auditWriter?: AdminAuditEventWriter,
         @Optional()
         private readonly messageAutomationActivationService?: MessageAutomationActivationService,
+        @Optional() @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
+        private readonly policyRules?: IMessageTriggerRuleRepository,
+        @Optional() @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
+        private readonly policyJobs?: IMessageTriggerJobRepository,
+        @Optional() @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly policyLogs?: IMessageLogRepository,
+        @Optional()
+        private readonly policyBranchLock?: MessageAutomationBranchLockService,
     ) {}
 
     private getUserEmailNotificationPreferenceKey(userId: string): string {
@@ -161,28 +180,180 @@ export class SystemSettingService {
         return updated;
     }
 
+    private messagePolicyKey(branchId: string): string {
+        if (!branchId.trim()) throw new BadRequestException("Branch is required");
+        return `branch:${branchId}:message_automation:policy`;
+    }
+
+    private policyVersion(raw: string | null): string {
+        return raw === null ? "absent" : createHash("sha256").update(raw).digest("hex");
+    }
+
+    private async readMessagePolicy(
+        branchId: string,
+        transaction?: Prisma.TransactionClient,
+        readValue?: (key: string) => Promise<string | null>,
+    ): Promise<{ version: string | null; configuration: MessageAutomationPolicyConfiguration }> {
+        try {
+            const read = readValue ?? ((key: string) => transaction
+                ? this.getSettingUsecase.execute(key, transaction) : this.getSettingUsecase.execute(key));
+            const raw = await read(this.messagePolicyKey(branchId));
+            if (raw != null) return {
+                version: this.policyVersion(raw),
+                configuration: validateMessageAutomationPolicy(JSON.parse(raw)),
+            };
+            const legacy = this.parseMessageAutomationPastTriggerConfig(
+                await read(this.getMessageAutomationPastTriggerConfigKey(branchId)),
+            );
+            return {
+                version: null,
+                configuration: { ...defaultMessageAutomationPolicy(), pastSendIntervalMinutes: legacy.sendIntervalMinutes, pastRuleOrder: legacy.ruleOrder },
+            };
+        } catch {
+            throw new ServiceUnavailableException("Message automation policy is unavailable");
+        }
+    }
+
+    private async effectivePolicyOrder(
+        branchId: string,
+        configuration: MessageAutomationPolicyConfiguration,
+        storedOrder: readonly string[],
+        isWrite: boolean,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<{ configuration: MessageAutomationPolicyConfiguration; warnings: MessagePolicyWarning[] }> {
+        const warnings: MessagePolicyWarning[] = [];
+        if (!configuration.pastRuleOrder.length) return { configuration, warnings };
+        if (!this.policyRules) throw new ServiceUnavailableException("Message policy rules are unavailable");
+        let rules;
+        try { rules = await this.policyRules.findAll(branchId, transaction); }
+        catch { throw new ServiceUnavailableException("Message policy rules are unavailable"); }
+        const active = new Set(rules.filter(rule => rule.branchId === branchId && rule.isActive
+            && isConfigurableSmsTriggerTemplate(rule.templateKey)).map(rule => rule.id));
+        const ruleOrder: string[] = [];
+        for (const id of configuration.pastRuleOrder) {
+            if (active.has(id)) ruleOrder.push(id);
+            else if (isWrite && !storedOrder.includes(id)) throw new BadRequestException("pastRuleOrder must contain active SMS rules from this branch");
+            else warnings.push({ code: "ORDER_ENTRY_PRUNED", ruleId: id });
+        }
+        return { configuration: { ...configuration, pastRuleOrder: ruleOrder }, warnings };
+    }
+
+    async getMessageAutomationPolicyConfig(branchId: string) {
+        const stored = await this.readMessagePolicy(branchId);
+        return { version: stored.version, ...await this.effectivePolicyOrder(branchId, stored.configuration, stored.configuration.pastRuleOrder, false) };
+    }
+
+    private validatePolicyDraft(expectedVersion: unknown, configuration: unknown): MessageAutomationPolicyConfiguration {
+        if (expectedVersion !== null && (typeof expectedVersion !== "string" || !/^[a-f0-9]{64}$/.test(expectedVersion))) {
+            throw new BadRequestException("expectedVersion must be null or a policy version");
+        }
+        try { return validateMessageAutomationPolicy(configuration); }
+        catch { throw new BadRequestException("Invalid message automation policy configuration"); }
+    }
+
+    private async saveMessagePolicy(
+        branchId: string,
+        expectedVersion: string | null,
+        configuration: MessageAutomationPolicyConfiguration,
+        actor: AdminAuditActor | undefined,
+        transaction: Prisma.TransactionClient,
+    ) {
+        const stored = await this.readMessagePolicy(branchId, transaction);
+        if (stored.version !== expectedVersion) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        const effective = await this.effectivePolicyOrder(branchId, configuration, stored.configuration.pastRuleOrder, true, transaction);
+        if (configuration.quietHours.enabled) {
+            if (!this.policyLogs) throw new ServiceUnavailableException("Message policy logs are unavailable");
+            let reservations: number;
+            try { reservations = await this.policyLogs.countFutureProviderReservations(branchId, new Date(), transaction); }
+            catch { throw new ServiceUnavailableException("Provider reservation state is unavailable"); }
+            if (reservations > 0) throw new ConflictException({ code: "FUTURE_PROVIDER_RESERVATIONS", count: reservations });
+        }
+        const raw = JSON.stringify(effective.configuration);
+        const audit = this.auditContext(actor ?? currentAdminAuditActor(), "system_setting.message_automation.updated", branchId);
+        const entity = await this.updateSettingUsecase.executeIfVersion(
+            this.messagePolicyKey(branchId), raw, expectedVersion ?? "absent", value => this.policyVersion(value), audit, transaction,
+        );
+        if (!entity) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        return { version: this.policyVersion(entity.value), ...effective, entity };
+    }
+
+    async setMessageAutomationPolicyConfig(
+        branchId: string, expectedVersion: string | null, configuration: unknown, actor?: AdminAuditActor,
+    ) {
+        const validated = this.validatePolicyDraft(expectedVersion, configuration);
+        if (!this.policyBranchLock) throw new ServiceUnavailableException("Message policy lock is unavailable");
+        // Database errors (including first-create P2002) leave the caller transaction
+        // before they become a public conflict. No query runs on an aborted transaction.
+        try {
+            const result = await this.policyBranchLock.runExclusive(branchId,
+                transaction => this.saveMessagePolicy(branchId, expectedVersion, validated, actor, transaction));
+            return { version: result.version, configuration: result.configuration, warnings: result.warnings };
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "P2002") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw error;
+        }
+    }
+
+    async previewMessageAutomationPolicyConfig(branchId: string, expectedVersion: string | null, configuration: unknown, now = new Date()) {
+        const validated = this.validatePolicyDraft(expectedVersion, configuration);
+        const stored = await this.readMessagePolicy(branchId);
+        if (stored.version !== expectedVersion) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        const effective = await this.effectivePolicyOrder(branchId, validated, stored.configuration.pastRuleOrder, true);
+        if (!this.policyJobs || !this.policyLogs) throw new ServiceUnavailableException("Message policy preview is unavailable");
+        try {
+            const [jobs, retries, reservations] = await Promise.all([
+                this.policyJobs.findPolicyPreviewCandidates(branchId),
+                this.policyLogs.findPolicyPreviewCandidates(branchId),
+                this.policyLogs.countFutureProviderReservations(branchId, now),
+            ]);
+            const candidates = await this.policyLogs.resolvePolicyRecipientGroups(branchId, [...jobs, ...retries]);
+            let deferredCount = 0;
+            let canceledCount = 0;
+            let reevaluateAt: Date | null = null;
+            for (const candidate of candidates) {
+                const at = new Date(Math.max(now.getTime(), candidate.dueAt.getTime()));
+                const decision = evaluateMessageQuietHours(effective.configuration.quietHours, candidate.recipientGroups, at);
+                if (decision.action === "CANCEL") canceledCount++;
+                if (decision.action === "DEFER") {
+                    deferredCount++;
+                    if (!reevaluateAt || decision.reevaluateAt < reevaluateAt) reevaluateAt = decision.reevaluateAt;
+                }
+            }
+            return { version: stored.version, deferredCount, canceledCount, reevaluateAt: reevaluateAt?.toISOString() ?? null,
+                futureProviderReservations: reservations, canEnableQuietHours: reservations === 0, warnings: effective.warnings };
+        } catch {
+            throw new ServiceUnavailableException("Message policy preview is unavailable");
+        }
+    }
+
     async getMessageAutomationPastTriggerConfig(
         branchId: string,
         readValue?: (key: string) => Promise<string | null>,
     ): Promise<MessageAutomationPastTriggerConfig> {
-        const key = this.getMessageAutomationPastTriggerConfigKey(branchId);
-        const value = readValue ? await readValue(key) : await this.getSettingUsecase.execute(key);
-        return this.parseMessageAutomationPastTriggerConfig(value);
+        const { configuration } = await this.readMessagePolicy(branchId, undefined, readValue);
+        return { sendIntervalMinutes: configuration.pastSendIntervalMinutes, ruleOrder: configuration.pastRuleOrder };
     }
 
     async setMessageAutomationPastTriggerConfig(
-        branchId: string,
-        config: MessageAutomationPastTriggerConfig,
-        actor?: AdminAuditActor,
+        branchId: string, config: MessageAutomationPastTriggerConfig, actor?: AdminAuditActor,
     ): Promise<SystemSettingEntity> {
-        actor = actor ?? currentAdminAuditActor();
-        const normalized = this.normalizeMessageAutomationPastTriggerConfig(config);
-        const key = this.getMessageAutomationPastTriggerConfigKey(branchId);
-        const value = JSON.stringify(normalized);
-        const auditContext = this.auditContext(actor, "system_setting.message_automation.updated", branchId);
-        return auditContext
-            ? this.updateSettingUsecase.execute(key, value, auditContext)
-            : this.updateSettingUsecase.execute(key, value);
+        if (!Number.isInteger(config.sendIntervalMinutes) || config.sendIntervalMinutes < 1 || config.sendIntervalMinutes > 1440
+            || !Array.isArray(config.ruleOrder) || config.ruleOrder.some(id => typeof id !== "string" || !id.trim())) {
+            throw new BadRequestException("Invalid past trigger configuration");
+        }
+        if (!this.policyBranchLock) throw new ServiceUnavailableException("Message policy lock is unavailable");
+        try {
+            return await this.policyBranchLock.runExclusive(branchId, async transaction => {
+                const stored = await this.readMessagePolicy(branchId, transaction);
+                const result = await this.saveMessagePolicy(branchId, stored.version, {
+                    ...stored.configuration, pastSendIntervalMinutes: config.sendIntervalMinutes, pastRuleOrder: [...new Set(config.ruleOrder)],
+                }, actor, transaction);
+                return result.entity;
+            });
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "P2002") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw error;
+        }
     }
 
     async getMessageSettingsPolicyEnabled(
@@ -473,34 +644,26 @@ export class SystemSettingService {
     private parseMessageAutomationPastTriggerConfig(
         value: string | null,
     ): MessageAutomationPastTriggerConfig {
-        if (!value) return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+        if (value === null) return { ...DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG, ruleOrder: [] };
 
         try {
             return this.normalizeMessageAutomationPastTriggerConfig(JSON.parse(value));
         } catch {
-            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+            throw new ServiceUnavailableException("Legacy message automation policy is unavailable");
         }
     }
 
-    private normalizeMessageAutomationPastTriggerConfig(
-        config: unknown,
-    ): MessageAutomationPastTriggerConfig {
-        if (typeof config !== "object" || config === null) {
-            return DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG;
+    private normalizeMessageAutomationPastTriggerConfig(config: unknown): MessageAutomationPastTriggerConfig {
+        if (typeof config !== "object" || config === null || Array.isArray(config)) {
+            throw new Error("Invalid legacy message policy");
         }
-
         const candidate = config as Partial<MessageAutomationPastTriggerConfig>;
-        const sendIntervalMinutes = Number.isInteger(candidate.sendIntervalMinutes)
-            ? candidate.sendIntervalMinutes
-            : DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG.sendIntervalMinutes;
-        const ruleOrder = Array.isArray(candidate.ruleOrder)
-            ? candidate.ruleOrder.filter((id): id is string => typeof id === "string" && id.length > 0)
-            : DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG.ruleOrder;
-
-        return {
-            sendIntervalMinutes: Math.min(Math.max(sendIntervalMinutes ?? 1, 1), 1440),
-            ruleOrder: [...new Set(ruleOrder)],
-        };
+        if (typeof candidate.sendIntervalMinutes !== "number" || !Number.isInteger(candidate.sendIntervalMinutes)
+            || candidate.sendIntervalMinutes < 1 || candidate.sendIntervalMinutes > 1440
+            || !Array.isArray(candidate.ruleOrder) || candidate.ruleOrder.some(id => typeof id !== "string" || !id.trim())) {
+            throw new Error("Invalid legacy message policy");
+        }
+        return { sendIntervalMinutes: candidate.sendIntervalMinutes, ruleOrder: [...new Set(candidate.ruleOrder)] };
     }
 
     private parseContractAutoFinalizeConfig(value: string | null): ContractAutoFinalizeConfig {

@@ -1,3 +1,4 @@
+import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
 import type { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
@@ -82,6 +83,9 @@ export interface CancelPendingJobsResult {
 }
 
 export interface IMessageTriggerJobRepository {
+    /** Full branch-scoped, read-only policy population; no UI page limit. */
+    findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]>;
+
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     /** Branch-fenced read for request-path callers; a branch mismatch resolves to null, not another branch's row. */

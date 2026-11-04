@@ -1,3 +1,4 @@
+import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -463,6 +464,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             take: limit,
         });
         return rows.map((row) => this.toDomain(row));
+    }
+
+    async findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]> {
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: { branchId, status: { in: ["pending", "processing", "dispatching"] } },
+            select: { scheduledFor: true, nextAttemptAt: true, recipientType: true, recipientPhone: true },
+        });
+        return rows.map(row => ({
+            dueAt: new Date(Math.max(row.scheduledFor.getTime(), row.nextAttemptAt?.getTime() ?? 0)),
+            recipientGroups: row.recipientType === "CLIENT" ? ["CLIENT"]
+                : ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(row.recipientType) ? ["CAREGIVER"] : [],
+            recipientPhone: row.recipientPhone,
+        }));
     }
 
     async findUpcomingPendingByBranch(

@@ -1,3 +1,5 @@
+import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
+import type { MessagePolicyRecipientGroup } from "domain/entities/system-setting.entity";
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
@@ -15,6 +17,7 @@ import { MessageLogMapper } from "infrastructure/database/mapper/message-log.map
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     koreanPhoneStoredDigitCandidates,
+    normalizeKoreanPhoneLookupKey,
     storedPhoneMatchesSql,
 } from "./stored-phone-lookup";
 import {
@@ -44,6 +47,74 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             return {};
         }
         return { branchId: log.branchId };
+    }
+
+    async countFutureProviderReservations(branchId: string, now: Date, transaction?: Prisma.TransactionClient): Promise<number> {
+        // Aligo schedule fields are persisted in provider format YYYYMMDD/HHmm.
+        // Their fixed width permits a KST lexical cutoff without parsing malformed
+        // historical JSON as a PostgreSQL timestamp (which could abort the TX).
+        const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString();
+        const cutoff = kst.slice(0, 10).replace(/-/g, "") + kst.slice(11, 16).replace(":", "");
+        const rows = await (transaction ?? this.prisma).$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+            SELECT COUNT(*) AS count FROM message_log
+            WHERE branch_id = ${branchId}::uuid AND provider = 'aligo_sms'
+              AND provider_acceptance_state IN ('started', 'uncertain', 'accepted', 'reconciled_delivered', 'legacy')
+              AND (provider_acceptance_state <> 'legacy' OR status = 'sent')
+              AND variables->>'scheduledDate' ~ '^[0-9]{8}$'
+              AND variables->>'scheduledTime' ~ '^([01][0-9]|2[0-3])[0-5][0-9]$'
+              AND ((variables->>'scheduledDate') || (variables->>'scheduledTime')) > ${cutoff}
+              AND variables->>'testMode' IS DISTINCT FROM 'true'
+        `);
+        return Number(rows[0]?.count ?? 0);
+    }
+
+    async findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]> {
+        const rows = await this.prisma.message_log.findMany({
+            where: { branchId, provider: "aligo_sms", status: { in: ["pending", "failed"] }, attempts: { lt: 3 }, nextRetryAt: { not: null },
+                providerAcceptanceState: { in: ["legacy", "rejected", "reconciled_not_delivered"] } },
+            select: { nextRetryAt: true, recipientPhone: true, receiver: true, clientId: true, variables: true,
+                triggerJob: { select: { branchId: true, recipientType: true } } },
+        });
+        return rows.map(row => {
+            const variables = row.variables && typeof row.variables === "object" && !Array.isArray(row.variables)
+                ? row.variables as Record<string, unknown> : {};
+            const recipientType = row.triggerJob?.branchId === branchId ? row.triggerJob.recipientType : variables["recipientType"];
+            const caregiver = ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(String(recipientType)) || variables["employeeId"] != null;
+            return { dueAt: row.nextRetryAt!, recipientPhone: row.recipientPhone ?? row.receiver,
+                recipientGroups: row.clientId != null || recipientType === "CLIENT" ? ["CLIENT"] as MessagePolicyRecipientGroup[]
+                    : caregiver ? ["CAREGIVER"] as MessagePolicyRecipientGroup[] : [] };
+        });
+    }
+
+    async resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[]): Promise<MessagePolicyPreviewCandidate[]> {
+        const numbers = [...new Set(candidates.flatMap(candidate => koreanPhoneStoredDigitCandidates(
+            normalizeKoreanPhoneLookupKey(candidate.recipientPhone),
+        )))];
+        if (!numbers.length) return candidates;
+        // A single exact-number batch, branch fenced, with no arbitrary 500-user
+        // scan. Union STAFF even when a customer/caregiver identity already exists.
+        const rows = await this.prisma.$queryRaw<Array<{ phone: string; group_name: MessagePolicyRecipientGroup }>>(Prisma.sql`
+            SELECT u.phone, 'STAFF'::text AS group_name FROM "user" u
+            JOIN user_branch ub ON ub.user_id = u.id
+            WHERE ub.branch_id = ${branchId}::uuid AND ${storedPhoneMatchesSql(Prisma.sql`u.phone`, numbers)}
+            UNION ALL
+            SELECT c.phone, 'CLIENT'::text FROM client c
+            WHERE c.branch_id = ${branchId}::uuid AND c.deleted_at IS NULL AND ${storedPhoneMatchesSql(Prisma.sql`c.phone`, numbers)}
+            UNION ALL
+            SELECT e.phone, 'CAREGIVER'::text FROM employee e
+            WHERE e.branch_id = ${branchId}::uuid AND e.deleted_at IS NULL AND ${storedPhoneMatchesSql(Prisma.sql`e.phone`, numbers)}
+        `);
+        const groups = new Map<string, Set<MessagePolicyRecipientGroup>>();
+        for (const row of rows) {
+            const phone = normalizeKoreanPhoneLookupKey(row.phone);
+            const current = groups.get(phone) ?? new Set<MessagePolicyRecipientGroup>();
+            current.add(row.group_name);
+            groups.set(phone, current);
+        }
+        return candidates.map(candidate => ({ ...candidate,
+            recipientGroups: [...new Set([...candidate.recipientGroups,
+                ...groups.get(normalizeKoreanPhoneLookupKey(candidate.recipientPhone)) ?? []])],
+        }));
     }
 
     async save(log: MessageLogEntity): Promise<MessageLogEntity> {

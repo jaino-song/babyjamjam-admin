@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 
 export interface SystemSettingAuditContext {
@@ -12,7 +13,7 @@ export interface SystemSettingAuditContext {
 }
 
 export interface ISystemSettingRepository {
-    findByKey(key: string): Promise<SystemSettingEntity | null>;
+    findByKey(key: string, transaction?: Prisma.TransactionClient): Promise<SystemSettingEntity | null>;
     upsert(
         entity: SystemSettingEntity,
         auditContext?: SystemSettingAuditContext,
@@ -23,6 +24,7 @@ export interface ISystemSettingRepository {
         entity: SystemSettingEntity,
         versionOf: (value: string | null) => string,
         auditContext?: SystemSettingAuditContext,
+        transaction?: Prisma.TransactionClient,
     ): Promise<SystemSettingEntity | null>;
 }
 

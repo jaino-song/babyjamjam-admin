@@ -1,3 +1,4 @@
+import { evaluateMessageQuietHours } from "domain/message-policy-evaluator";
 import { ConflictException } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
@@ -50,7 +51,7 @@ describe("SystemSettingService", () => {
         });
 
         it("should parse and normalize the stored config", async () => {
-            getSettingUsecase.execute.mockResolvedValue(JSON.stringify({
+            getSettingUsecase.execute.mockResolvedValueOnce(null).mockResolvedValueOnce(JSON.stringify({
                 sendIntervalMinutes: 3,
                 ruleOrder: ["rule-2", "rule-1", "rule-2"],
             }));
@@ -63,41 +64,17 @@ describe("SystemSettingService", () => {
             });
         });
 
-        it("should fall back to the default config when stored JSON is invalid", async () => {
+        it("should fail closed when stored JSON is invalid", async () => {
             getSettingUsecase.execute.mockResolvedValue("{");
-
-            const result = await service.getMessageAutomationPastTriggerConfig("branch-1");
-
-            expect(result).toEqual({
-                sendIntervalMinutes: 1,
-                ruleOrder: [],
-            });
+            await expect(service.getMessageAutomationPastTriggerConfig("branch-1")).rejects.toMatchObject({ status: 503 });
         });
 
-        it("should persist a normalized branch-scoped config", async () => {
-            const entity = new SystemSettingEntity(
-                "branch:branch-1:message_automation:past_trigger",
-                JSON.stringify({
-                    sendIntervalMinutes: 1440,
-                    ruleOrder: ["rule-1", "rule-2"],
-                }),
-                new Date(),
-            );
-            updateSettingUsecase.execute.mockResolvedValue(entity);
-
-            const result = await service.setMessageAutomationPastTriggerConfig("branch-1", {
-                sendIntervalMinutes: 2000,
-                ruleOrder: ["rule-1", "rule-2", "rule-1"],
-            });
-
-            expect(updateSettingUsecase.execute).toHaveBeenCalledWith(
-                "branch:branch-1:message_automation:past_trigger",
-                JSON.stringify({
-                    sendIntervalMinutes: 1440,
-                    ruleOrder: ["rule-1", "rule-2"],
-                }),
-            );
-            expect(result).toBe(entity);
+        it("should reject invalid input instead of persisting a clamped config", async () => {
+            await expect(service.setMessageAutomationPastTriggerConfig("branch-1", {
+                sendIntervalMinutes: 2000, ruleOrder: ["rule-1", "rule-2", "rule-1"],
+            })).rejects.toMatchObject({ status: 400 });
+            expect(updateSettingUsecase.execute).not.toHaveBeenCalled();
+            expect(updateSettingUsecase.executeIfVersion).not.toHaveBeenCalled();
         });
     });
 
@@ -504,5 +481,167 @@ describe("SystemSettingService", () => {
 
             expect(isEntityChangeHintsSuppressed()).toBe(false);
         });
+    });
+});
+
+// POL-1 expectations are literals independent from production default constants.
+describe("POL-1 versioned message policy", () => {
+    const draft = () => ({
+        schemaVersion: 1 as const, dispatchCheckIntervalMinutes: 1, defaultRuleSendTime: "09:00",
+        triggerRetryIntervalMinutes: 5, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 5,
+        pastExpiryHours: 24, pastSendIntervalMinutes: 1, pastRuleOrder: [] as string[], duplicateWindowHours: 72,
+        quietHours: { enabled: false, start: "22:00", end: "08:00", recipientGroups: ["CLIENT", "CAREGIVER", "STAFF"] as ("CLIENT" | "CAREGIVER" | "STAFF")[], action: "DEFER" as "DEFER" | "CANCEL", timezone: "Asia/Seoul" as const },
+    });
+    let rows: Map<string, string>;
+    let service: SystemSettingService;
+    let get: { execute: jest.Mock };
+    let update: { executeIfVersion: jest.Mock; execute: jest.Mock };
+    let rules: { findAll: jest.Mock };
+    let jobs: { findPolicyPreviewCandidates: jest.Mock };
+    let logs: { findPolicyPreviewCandidates: jest.Mock; countFutureProviderReservations: jest.Mock; resolvePolicyRecipientGroups: jest.Mock };
+    const tx = { marker: "single branch transaction" };
+    let lock: { runExclusive: jest.Mock };
+    const key = "branch:A:message_automation:policy";
+    beforeEach(() => {
+        rows = new Map();
+        get = { execute: jest.fn(async (key: string) => rows.get(key) ?? null) };
+        update = {
+            execute: jest.fn(),
+            executeIfVersion: jest.fn(async (key: string, value: string, expected: string, versionOf: (raw: string | null) => string) => {
+                if (versionOf(rows.get(key) ?? null) !== expected) return null;
+                rows.set(key, value);
+                return SystemSettingEntity.create(key, value);
+            }),
+        };
+        rules = { findAll: jest.fn().mockResolvedValue([
+            { id: "sms-A", branchId: "A", isActive: true, templateKey: "INFO" },
+            { id: "inactive", branchId: "A", isActive: false, templateKey: "INFO" },
+            { id: "sms-B", branchId: "B", isActive: true, templateKey: "INFO" },
+            { id: "alimtalk", branchId: "A", isActive: true, templateKey: "CLIENT_WELCOME" },
+        ]) };
+        jobs = { findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]) };
+        logs = { findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]), countFutureProviderReservations: jest.fn().mockResolvedValue(0),
+            resolvePolicyRecipientGroups: jest.fn(async (_branch: string, candidates: unknown[]) => candidates) };
+        lock = { runExclusive: jest.fn(async (_branch: string, callback: (tx: unknown) => Promise<unknown>) => callback(tx)) };
+        service = new SystemSettingService(get as any, update as any, undefined, undefined, rules as any, jobs as any, logs as any, lock as any);
+    });
+    it("returns exact missing defaults/null version and legacy precedence without writes", async () => {
+        expect(await service.getMessageAutomationPolicyConfig("A")).toEqual({ version: null, configuration: draft(), warnings: [] });
+        rows.set("branch:A:message_automation:past_trigger", JSON.stringify({ sendIntervalMinutes: 7, ruleOrder: ["sms-A"] }));
+        expect(await service.getMessageAutomationPolicyConfig("A")).toEqual({ version: null, configuration: { ...draft(), pastSendIntervalMinutes: 7, pastRuleOrder: ["sms-A"] }, warnings: [] });
+        expect(update.executeIfVersion).not.toHaveBeenCalled();
+    });
+    it("saves/reloads stable canonical JSON and rejects stale/null writes without changes", async () => {
+        const config = { ...draft(), dispatchCheckIntervalMinutes: 7, defaultRuleSendTime: "11:30", pastRuleOrder: ["sms-A"] };
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, config);
+        expect(saved.version).toMatch(/^[a-f0-9]{64}$/);
+        expect(await service.getMessageAutomationPolicyConfig("A")).toEqual(saved);
+        const before = rows.get(key);
+        await expect(service.setMessageAutomationPolicyConfig("A", null, draft())).rejects.toMatchObject({ status: 409 });
+        await expect(service.setMessageAutomationPolicyConfig("A", "a".repeat(64), draft())).rejects.toMatchObject({ status: 409 });
+        expect(rows.get(key)).toBe(before);
+        expect(update.executeIfVersion).toHaveBeenCalledTimes(1);
+        expect(get.execute).toHaveBeenCalledWith(key, tx);
+        expect(rules.findAll).toHaveBeenCalledWith("A", tx);
+        expect(update.executeIfVersion.mock.calls[0]?.[5]).toBe(tx);
+    });
+    it.each(["sms-B", "inactive", "unknown", "alimtalk"])("rejects newly introduced invalid order entry %s", async id => {
+        await expect(service.setMessageAutomationPolicyConfig("A", null, { ...draft(), pastRuleOrder: [id] })).rejects.toMatchObject({ status: 400 });
+        expect(rows.size).toBe(0);
+    });
+    it("prunes stored inactive entries with warning and retains raw version until a successful save", async () => {
+        rows.set(key, JSON.stringify({ ...draft(), pastRuleOrder: ["inactive", "sms-A"] }));
+        const current = await service.getMessageAutomationPolicyConfig("A");
+        expect(current.configuration.pastRuleOrder).toEqual(["sms-A"]);
+        expect(current.warnings).toEqual([{ code: "ORDER_ENTRY_PRUNED", ruleId: "inactive" }]);
+        const saved = await service.setMessageAutomationPolicyConfig("A", current.version, { ...draft(), pastRuleOrder: ["inactive", "sms-A"] });
+        expect(saved.configuration.pastRuleOrder).toEqual(["sms-A"]);
+        expect(saved.warnings).toEqual([{ code: "ORDER_ENTRY_PRUNED", ruleId: "inactive" }]);
+        expect(saved.version).not.toBe(current.version);
+    });
+    it.each([
+        ["dispatchCheckIntervalMinutes", 0], ["defaultRuleSendTime", "24:00"], ["triggerRetryIntervalMinutes", 1441],
+        ["processingReclaimMinutes", 9], ["smsRetryIntervalMinutes", 1.5], ["pastExpiryHours", 721],
+        ["pastSendIntervalMinutes", "1"], ["duplicateWindowHours", 0],
+    ])("rejects invalid timing %s", async (field, value) => {
+        await expect(service.setMessageAutomationPolicyConfig("A", null, { ...draft(), [field]: value })).rejects.toMatchObject({ status: 400 });
+        expect(update.executeIfVersion).not.toHaveBeenCalled();
+    });
+    it("rejects quiet ON with no target, equal bounds, invalid timezone or duplicate groups", async () => {
+        for (const quiet of [{ enabled: true, recipientGroups: [] }, { start: "08:00" }, { timezone: "UTC" }, { recipientGroups: ["CLIENT", "CLIENT"] }]) {
+            await expect(service.setMessageAutomationPolicyConfig("A", null, { ...draft(), quietHours: { ...draft().quietHours, ...quiet } })).rejects.toMatchObject({ status: 400 });
+        }
+        expect(rows.size).toBe(0);
+    });
+    it("rejects one future provider reservation, then enables with zero using the SAME transaction", async () => {
+        const config = { ...draft(), quietHours: { ...draft().quietHours, enabled: true } };
+        logs.countFutureProviderReservations.mockResolvedValueOnce(1);
+        await expect(service.setMessageAutomationPolicyConfig("A", null, config)).rejects.toMatchObject({ status: 409 });
+        expect(rows.size).toBe(0);
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, config);
+        expect(saved.configuration.quietHours.enabled).toBe(true);
+        expect(logs.countFutureProviderReservations).toHaveBeenLastCalledWith("A", expect.any(Date), tx);
+    });
+    it.each(["{", "null", JSON.stringify({ ...draft(), schemaVersion: 2 }), ""])("fails closed on corrupt policy %s", async raw => {
+        rows.set(key, raw);
+        await expect(service.getMessageAutomationPolicyConfig("A")).rejects.toMatchObject({ status: 503 });
+        await expect(service.setMessageAutomationPolicyConfig("A", null, draft())).rejects.toMatchObject({ status: 503 });
+        expect(update.executeIfVersion).not.toHaveBeenCalled();
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+    });
+    it("converts a caller-TX create conflict only after the lock exits, with no queries after failure", async () => {
+        let lockExited = false;
+        lock.runExclusive.mockImplementation(async (_branch: string, work: (transaction: unknown) => Promise<unknown>) => {
+            try { return await work(tx); } finally { lockExited = true; }
+        });
+        update.executeIfVersion.mockRejectedValueOnce(Object.assign(new Error("first-create collision"), { code: "P2002" }));
+        await expect(service.setMessageAutomationPolicyConfig("A", null, draft())).rejects.toMatchObject({ status: 409 });
+        expect(lockExited).toBe(true);
+        expect(get.execute).toHaveBeenCalledTimes(2);
+        expect(update.executeIfVersion).toHaveBeenCalledTimes(1);
+        expect(rows.size).toBe(0);
+    });
+    it("legacy adapter writes only the canonical key, preserving unrelated fields and safe stale conflict", async () => {
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, { ...draft(), smsRetryIntervalMinutes: 12 });
+        await service.setMessageAutomationPastTriggerConfig("A", { sendIntervalMinutes: 7, ruleOrder: ["sms-A"] });
+        expect(JSON.parse(rows.get(key)!)).toEqual({ ...saved.configuration, pastSendIntervalMinutes: 7, pastRuleOrder: ["sms-A"] });
+        expect(rows.has("branch:A:message_automation:past_trigger")).toBe(false);
+        expect(update.execute).not.toHaveBeenCalled();
+        update.executeIfVersion.mockResolvedValueOnce(null);
+        await expect(service.setMessageAutomationPastTriggerConfig("A", { sendIntervalMinutes: 8, ruleOrder: [] })).rejects.toMatchObject({ status: 409 });
+    });
+    it("counts all jobs/retries by due time and group with zero writes, including >200 jobs", async () => {
+        const now = new Date("2026-11-04T13:00:00Z"); // 22:00 KST inclusive
+        jobs.findPolicyPreviewCandidates.mockResolvedValue([
+            ...Array.from({ length: 205 }, () => ({ dueAt: now, recipientGroups: ["CLIENT"], recipientPhone: null })),
+            { dueAt: new Date("2026-11-04T23:00:00Z"), recipientGroups: ["CLIENT"], recipientPhone: null }, // 08:00 exclusive
+            { dueAt: now, recipientGroups: ["CAREGIVER"], recipientPhone: null },
+        ]);
+        logs.findPolicyPreviewCandidates.mockResolvedValue([{ dueAt: now, recipientGroups: ["CLIENT", "STAFF"], recipientPhone: null }]);
+        const config = { ...draft(), quietHours: { ...draft().quietHours, enabled: true, recipientGroups: ["CLIENT"] as "CLIENT"[] } };
+        logs.countFutureProviderReservations.mockResolvedValue(1);
+        expect(await service.previewMessageAutomationPolicyConfig("A", null, config, now)).toEqual({
+            version: null, deferredCount: 206, canceledCount: 0, reevaluateAt: "2026-11-04T23:00:00.000Z", futureProviderReservations: 1, canEnableQuietHours: false, warnings: [],
+        });
+        config.quietHours.action = "CANCEL";
+        expect(await service.previewMessageAutomationPolicyConfig("A", null, config, now)).toMatchObject({ deferredCount: 0, canceledCount: 206, reevaluateAt: null });
+        expect(update.executeIfVersion).not.toHaveBeenCalled();
+        expect(update.execute).not.toHaveBeenCalled();
+        expect(lock.runExclusive).not.toHaveBeenCalled();
+    });
+});
+
+describe("message quiet-hours pure evaluation", () => {
+    const quiet = { enabled: true, start: "22:00", end: "08:00", recipientGroups: ["STAFF"] as "STAFF"[], action: "DEFER" as const, timezone: "Asia/Seoul" as const };
+    it("unions overlapping recipient groups with inclusive start and exclusive end", () => {
+        expect(evaluateMessageQuietHours(quiet, ["CLIENT", "STAFF"], new Date("2026-11-04T13:00:00Z"))).toEqual({ action: "DEFER", reevaluateAt: new Date("2026-11-04T23:00:00Z") });
+        expect(evaluateMessageQuietHours(quiet, ["STAFF"], new Date("2026-11-04T22:59:59Z"))).toEqual({ action: "DEFER", reevaluateAt: new Date("2026-11-04T23:00:00Z") });
+        expect(evaluateMessageQuietHours(quiet, ["STAFF"], new Date("2026-11-04T23:00:00Z"))).toEqual({ action: "ALLOW", reevaluateAt: null });
+        expect(evaluateMessageQuietHours(quiet, ["CLIENT"], new Date("2026-11-04T13:00:00Z"))).toEqual({ action: "ALLOW", reevaluateAt: null });
+        expect(evaluateMessageQuietHours({ ...quiet, enabled: false }, ["STAFF"], new Date("2026-11-04T13:00:00Z"))).toEqual({ action: "ALLOW", reevaluateAt: null });
+    });
+    it("handles same-day windows and CANCEL without inventing retry times", () => {
+        expect(evaluateMessageQuietHours({ ...quiet, start: "09:00", end: "12:00" }, ["STAFF"], new Date("2026-11-04T00:00:00Z"))).toEqual({ action: "DEFER", reevaluateAt: new Date("2026-11-04T03:00:00Z") });
+        expect(evaluateMessageQuietHours({ ...quiet, action: "CANCEL" }, ["STAFF"], new Date("2026-11-04T13:00:00Z"))).toEqual({ action: "CANCEL", reevaluateAt: null });
     });
 });
