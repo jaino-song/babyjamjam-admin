@@ -185,7 +185,7 @@ reason은 `provider_not_configured`와 `provider_match`이며 다른 reason은 �
 
 ```bash
 (
-if validated=$(
+if bjj493_ssh_validated_json=$(
   set -o pipefail
   {
     ssh -o ClearAllForwardings=yes -o RequestTTY=no -o BatchMode=yes \
@@ -398,7 +398,7 @@ except Exception:
 print(json.dumps(result))
 ' 2>/dev/null
 ); then
-  printf '%s\n' "$validated"
+  printf '%s\n' "$bjj493_ssh_validated_json"
   printf '%s\n' '단일 backend의 ready와 HOLD 비소유 상태를 관측했습니다. failback 승인은 아닙니다.'
 else
   printf '%s\n' '{"validation":"inconclusive","reason":"ssh_or_result_unverified"}'
