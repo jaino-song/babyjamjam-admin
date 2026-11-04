@@ -78,6 +78,28 @@ const lightsailProviderCheckout = [
   '          persist-credentials: false',
   '', '',
 ].join('\n');
+const lightnodeLeaseComment = {
+  before: [
+    '          # ADR-010: a temporary-active fallback contests the lease. Only asserted',
+    '          # after replace (the pre-replace release may predate /health/lease), and',
+    '          # only the mode: lease_held may legitimately be false while Lightsail holds it.',
+  ].join('\n'),
+  after: [
+    '          # ADR-010: this post-replace CI check requires lease mode required.',
+    '          # Persistent LightNode independently requires required AND held=true in',
+    '          # ci-deployer validated_status before status/replace and after replace.',
+    '          # The enabled temporary-expiry lifecycle has a separate legacy contract.',
+  ].join('\n'),
+};
+// Normalize exactly the approved comment once; executable bytes stay frozen.
+function withApprovedLightnodeLeaseCommentAtBase(text,label) {
+  const block=jobText(text,'deploy-lightnode');
+  assert.ok(block,`${label}: deploy-lightnode exists`);
+  assert.equal(text.split(lightnodeLeaseComment.after).length-1,1,`${label}: approved LightNode lease comment occurs exactly once`);
+  assert.equal(block.includes(lightnodeLeaseComment.after),true,`${label}: approved lease comment belongs to deploy-lightnode`);
+  assert.equal(text.includes(lightnodeLeaseComment.before),false,`${label}: old LightNode lease comment is gone`);
+  return text.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.before);
+}
 function withApprovedDeployAdditionsAtBase(text,label) {
   for(const id of ['deploy-lightsail','deploy-lightnode']) {
     const block=jobText(text,id);
@@ -91,7 +113,7 @@ function withApprovedDeployAdditionsAtBase(text,label) {
     }
     text=text.replace(block,projected);
   }
-  return text;
+  return withApprovedLightnodeLeaseCommentAtBase(text,label);
 }
 // The LightNode warm-standby change adds exactly these contract-test commands to the
 // 'Verify backend deployment automation contracts' step, right after the ci-deployer
@@ -188,6 +210,14 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
     const mutant=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current.replace(original,mutated),'negative mutation'),'negative mutation');
     assert.throws(()=>assert.equal(jobText(mutant,id),jobText(before,id),`${id} raw block changed`),/raw block changed/,`${id}: unrelated deployment edits must remain visible to the frozen comparison`);
   }
+});
+test('LightNode lease comment projection rejects duplicate and unrecognized comment edits',()=>{
+  const current=read('backend-ci.yml');
+  assert.equal(withApprovedLightnodeLeaseCommentAtBase(current,'approved'),current.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.before));
+  assert.throws(()=>withApprovedLightnodeLeaseCommentAtBase(current.replace(lightnodeLeaseComment.after,`${lightnodeLeaseComment.after}\n${lightnodeLeaseComment.after}`),'duplicate'),/occurs exactly once/);
+  assert.throws(()=>withApprovedLightnodeLeaseCommentAtBase(current.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.after.replace('held=true','held=false')),'unrecognized'),/occurs exactly once/);
+  const extraComment=current.replace('          expect_status lease_mode required','          # unapproved lease exception\n          expect_status lease_mode required');
+  assert.notEqual(jobText(withApprovedLightnodeLeaseCommentAtBase(extraComment,'extra comment'),'deploy-lightnode'),jobText(withApprovedLightnodeLeaseCommentAtBase(current,'approved'),'deploy-lightnode'),'unrecognized extra comments remain visible');
 });
 test('mobile advisory keeps every step/service and full suite; only relevance and direct dependency change',()=>{
   const a=parse(old('mobile-ci.yml')).jobs.e2e,b=parse(read('mobile-ci.yml')).jobs.e2e;

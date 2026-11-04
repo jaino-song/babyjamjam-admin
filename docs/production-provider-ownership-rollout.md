@@ -23,6 +23,23 @@ Passive `SCHEDULERS_ENABLED=false` always remains standby and makes no lease DB 
 Development `PRODUCTION_DEPLOYMENT_PROVIDER=none`, mode `off`, holder `local` retains
 local execution without touching the lease DB. Preview remains passive.
 
+## Current hold state
+
+Lightsail failback remains **HOLD**. LightNode owns production API traffic and
+background jobs; an available Lightsail API is not authority to transfer either.
+Provider eligibility was introduced by #918. DNS routing, configured eligibility,
+locally reported recent lease ownership, and completed work are distinct evidence.
+The persistent LightNode runtime retains the `temporary-active` mode name with
+`automatic_shutdown=disabled`; the enabled temporary-expiry lifecycle is a separate
+legacy path, and passive standby never contests the lease.
+
+During HOLD, retain the persistent owner's required-mode and held-lease checks.
+Investigate a missing lease or stalled jobs through sanctioned observation and
+approved recovery; do not accept missing jobs simply because Lightsail holds the
+lease. Failback requires a separate explicit approval for the controlled handover
+below, including routing and job ownership verification. This document update
+does not authorize a provider change or certify either host's environment.
+
 ## Hard gates before production merge
 
 A production merge automatically deploys to the resolved host. Do not merge until
@@ -34,7 +51,9 @@ No new remote command or privileged interface is introduced.
 
 Before rollout, read the sanctioned LightNode status, including `automatic_shutdown`
 and `lease_held`. On a persistent LightNode (`automatic_shutdown=disabled`), the
-existing `ci-deployer` requires `lease_held=true` **before and after replacement**.
+existing `ci-deployer` requires `lease_mode=required` AND `lease_held=true` through
+`validated_status`: for status, **before replacement including no-op, and after
+replacement**.
 This may block the fix deployment while the old Lightsail API still renews the lease.
 Moving that API off the lease through an approved administrator stop is then a
 precondition for a green LightNode deployment. Do not weaken the persistent lease
@@ -67,7 +86,16 @@ administrator recovery was verified or performed by this implementation.
    requires configuration/release diagnosis; it does not provision the missing env.
 5. Observe eventual selected-holder lease renewal, nonselected `eligible=false` and
    `held=false` (or stopped), and document queue progress with existing feature flags.
+   `/health/lease` reports the local process's recent ownership under its renewal/grace
+   rules. A green provider verifier alone does not establish held ownership or job
+   completion. An aggregate completed-job count does not identify which host ran an
+   individual job, and DB completed status alone does not verify provider delivery.
    Do not label local/mock tests or eligible status as proof of remote document sending.
+
+Local regression checks in this follow-up do not prove direct Lightsail
+`eligible=false/held=false`, the host identity behind historical job completions,
+or actual eFormsign delivery. No direct Lightsail verification, queued-job completion,
+host configuration change, or automatic failback guarantee is established here.
 
 The public owner verifier is not used for manual non-owner deployment or passive
 standby. Those retain their own status contracts. A passive host's mismatch is expected.
