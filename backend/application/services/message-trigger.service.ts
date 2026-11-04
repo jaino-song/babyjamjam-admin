@@ -1423,6 +1423,11 @@ export class MessageTriggerService {
         });
     }
 
+    /** Read the validated branch default before binding a rule creation proposal. */
+    async getDefaultRuleSendTime(branchId: string): Promise<string> {
+        return (await this.getDispatchTimingPolicy(branchId)).defaultRuleSendTime;
+    }
+
     async createRule(
         branchId: string,
         params: UpsertRuleParams,
@@ -1440,7 +1445,7 @@ export class MessageTriggerService {
         }
         let persistedParams: UpsertRuleParams = {
             ...params,
-            sendTime: params.sendTime ?? (await this.getDispatchTimingPolicy(branchId)).defaultRuleSendTime,
+            sendTime: params.sendTime ?? await this.getDefaultRuleSendTime(branchId),
         };
         const persistRule = async (writeTransaction: Prisma.TransactionClient) => {
             const rule = await this.ruleRepository.create(

@@ -6,6 +6,9 @@ import { AligoService } from "application/services/aligo.service";
 import { SendAligoSmsUsecase } from "application/usecases/aligo/send-sms.usecase";
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { ActionCoordinatorService, AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
@@ -1034,6 +1037,210 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(repository.upsertPending).not.toHaveBeenCalled();
     });
 
+    describe("automation create approval time binding", () => {
+        const input = {
+            name: "서비스 시작 알림",
+            isActive: true,
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 1,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        };
+
+        function setupTimeBinding() {
+            const configuration = { ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "10:30" };
+            const storedRules: MessageTriggerRuleEntity[] = [];
+            const records: { current?: Record<string, any> } = {};
+            const prisma = {
+                system_setting: {
+                    findUnique: jest.fn(async ({ where }: { where: { key: string } }) =>
+                        where.key === `branch:${principal.branchId}:message_automation:policy`
+                            ? { key: where.key, value: JSON.stringify(configuration), updatedAt: new Date() } : null),
+                },
+                $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
+                $transaction: jest.fn(),
+                agent_action: {
+                    findUnique: jest.fn().mockResolvedValue(null),
+                    findFirst: jest.fn(async () => records.current),
+                    create: jest.fn(async ({ data }: { data: Record<string, any> }) => {
+                        records.current = { ...data, createdAt: new Date(), updatedAt: new Date(),
+                            approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null,
+                            result: null, error: null, executedAt: null, executionAttemptCount: 0,
+                            resultPartPersistedAt: null };
+                        return records.current;
+                    }),
+                    updateMany: jest.fn(async ({ data }: { data: Record<string, any> }) => {
+                        if (!records.current) return { count: 0 };
+                        records.current = { ...records.current, ...data, updatedAt: new Date() };
+                        return { count: 1 };
+                    }),
+                },
+            };
+            prisma.$transaction.mockImplementation(async (work: (tx: typeof prisma) => Promise<unknown>) => work(prisma));
+            const settingRepository = new SbSystemSettingRepository(prisma as never);
+            const settings = new SystemSettingService(
+                new GetSettingUsecase(settingRepository), new UpdateSettingUsecase(settingRepository),
+            );
+            const ruleRepository = {
+                create: jest.fn(async (_branchId: string, rule: MessageTriggerRuleEntity) => {
+                    storedRules.push(Object.assign(rule, { id: `created-${storedRules.length}` }));
+                    return rule;
+                }),
+                markJobsStale: jest.fn().mockResolvedValue(undefined),
+            };
+            const jobRepository = { upsertPending: jest.fn(), upsertPendingForRuleGeneration: jest.fn() };
+            const senderApproval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
+            const activation = {
+                getTriggerDispatchEnabled: jest.fn().mockResolvedValue(true),
+                assertTriggerDispatchEnabled: jest.fn().mockResolvedValue(undefined),
+            };
+            const branchLock = { runExclusive: jest.fn(async (
+                _branchId: string, work: (tx: typeof prisma) => Promise<unknown>, tx: typeof prisma,
+            ) => work(tx)) };
+            const templateLock = { runExclusive: jest.fn(async (
+                _key: string, work: (tx: typeof prisma) => Promise<unknown>, tx: typeof prisma,
+            ) => work(tx)) };
+            const service = new MessageTriggerService(
+                prisma as never, {} as never, senderApproval as never, ruleRepository as never,
+                jobRepository as never, {} as never,
+                { getByKeyForBranch: jest.fn().mockResolvedValue({ customVariables: [] }) } as never,
+                templateLock as never, settings, undefined, activation as never, branchLock as never,
+            );
+            const provider = new MessageExternalAgentCapabilitiesProvider(
+                prisma as never, service, jobRepository as never, {} as never, senderApproval as never,
+            );
+            const capability = provider.getCapabilities().find((entry) => entry.meta.name === "automation.create")!;
+            let registeredCapability = capability;
+            const coordinator = new ActionCoordinatorService(
+                prisma as never, { get: () => registeredCapability } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never, {} as never,
+                { assertActive: jest.fn().mockResolvedValue(undefined), upsertActionResultMessage: jest.fn().mockResolvedValue(true) } as never,
+                { createInActiveSession: jest.fn(async (data: Record<string, any>) => ({
+                    status: "created", action: await prisma.agent_action.create({ data }),
+                })) } as never,
+                createSchedulerLeaseMock(),
+            );
+            const propose = (rawInput: Record<string, unknown> = input) => coordinator.propose({
+                sessionId: context.sessionId, principal, capability: "automation.create", input: rawInput, locale: "ko",
+            });
+            // Reproduce a pre-release persisted proposal through the real coordinator,
+            // without the new canonicalization/inspection hooks. Restore the current
+            // capability before approval so legacy execution crosses the new boundary.
+            const proposeLegacy = async () => {
+                registeredCapability = { ...capability, canonicalizeInput: undefined, inspect: undefined };
+                try { return await propose(); } finally { registeredCapability = capability; }
+            };
+            const expectNoEffects = () => {
+                expect(ruleRepository.create).not.toHaveBeenCalled();
+                expect(ruleRepository.markJobsStale).not.toHaveBeenCalled();
+                expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+                expect(jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+                expect(prisma.$transaction).not.toHaveBeenCalled();
+            };
+            return { configuration, prisma, service, capability, coordinator, propose, proposeLegacy,
+                records, storedRules, ruleRepository, senderApproval, activation, branchLock, templateLock, expectNoEffects };
+        }
+
+        it("binds an omitted time to the validated branch default in proposal input and inspection", async () => {
+            const fixture = setupTimeBinding();
+            const action = await fixture.propose();
+
+            expect(action.proposal["input"]).toEqual({ ...input, sendTime: "10:30" });
+            expect(action.proposal["summary"]).toContain("10:30");
+            expect(fixture.prisma.system_setting.findUnique).toHaveBeenCalledWith({
+                where: { key: `branch:${principal.branchId}:message_automation:policy` },
+            });
+            fixture.expectNoEffects();
+        });
+
+        it("executes the originally approved 10:30 after the branch default changes to 11:45", async () => {
+            const fixture = setupTimeBinding();
+            const action = await fixture.propose();
+            const acknowledgement = fixture.coordinator.strongAcknowledgementToken(action);
+            fixture.configuration.defaultRuleSendTime = "11:45";
+            fixture.prisma.system_setting.findUnique.mockClear();
+
+            await expect(fixture.coordinator.approve(action.id, principal, action.proposalRevision, acknowledgement))
+                .resolves.toEqual(expect.objectContaining({ action: expect.objectContaining({ status: "succeeded" }) }));
+            expect(fixture.storedRules).toHaveLength(1);
+            expect(fixture.storedRules[0]?.sendTime).toBe("10:30");
+            expect(fixture.prisma.system_setting.findUnique).not.toHaveBeenCalled();
+            expect(fixture.senderApproval.ensureApproved).toHaveBeenCalledWith(principal.branchId);
+            expect(fixture.activation.assertTriggerDispatchEnabled).toHaveBeenCalledWith(principal.branchId, fixture.prisma);
+            expect(fixture.branchLock.runExclusive).toHaveBeenCalled();
+            expect(fixture.templateLock.runExclusive).toHaveBeenCalled();
+            expect(fixture.records.current?.["effectReceipt"]).toEqual(expect.objectContaining({ actionId: action.id, resourceId: "created-0" }));
+        });
+
+        it("gives a fresh omitted-time proposal the new 11:45 input hash and revision", async () => {
+            const fixture = setupTimeBinding();
+            const original = await fixture.propose();
+            fixture.configuration.defaultRuleSendTime = "11:45";
+            const fresh = await fixture.propose();
+
+            expect(original.proposal["input"]).toEqual({ ...input, sendTime: "10:30" });
+            expect(fresh.proposal["input"]).toEqual({ ...input, sendTime: "11:45" });
+            expect(fresh.proposal["summary"]).toContain("11:45");
+            expect(fresh.inputHash).not.toBe(original.inputHash);
+            expect(fresh.proposalRevision).not.toBe(original.proposalRevision);
+            fixture.expectNoEffects();
+        });
+
+        it("preserves an explicit 10:30 without looking up a mutable default", async () => {
+            const fixture = setupTimeBinding();
+            const action = await fixture.propose({ ...input, sendTime: "10:30" });
+            fixture.configuration.defaultRuleSendTime = "11:45";
+
+            await fixture.coordinator.approve(action.id, principal, action.proposalRevision,
+                fixture.coordinator.strongAcknowledgementToken(action));
+            expect(action.proposal["input"]).toEqual({ ...input, sendTime: "10:30" });
+            expect(fixture.storedRules[0]?.sendTime).toBe("10:30");
+            expect(fixture.prisma.system_setting.findUnique).not.toHaveBeenCalled();
+        });
+
+        it.each(["proposed", "approved"])("refuses a legacy unbound %s proposal before rule or job effects", async (status) => {
+            const fixture = setupTimeBinding();
+            const action = await fixture.proposeLegacy();
+            expect(action.proposal["input"]).not.toHaveProperty("sendTime");
+            Object.assign(fixture.records.current!, { status, approvedBy: status === "approved" ? principal.userId : null });
+            fixture.configuration.defaultRuleSendTime = "11:45";
+
+            await expect(fixture.coordinator.approve(action.id, principal, action.proposalRevision,
+                fixture.coordinator.strongAcknowledgementToken(action))).rejects.toThrow();
+            expect(fixture.records.current?.["status"]).toBe("failed");
+            expect(fixture.prisma.system_setting.findUnique).not.toHaveBeenCalled();
+            fixture.expectNoEffects();
+        });
+
+        it("refuses raw omitted-time inspection and execution without resolving a new default", async () => {
+            const fixture = setupTimeBinding();
+
+            await expect(fixture.capability.inspect!(context, input)).rejects.toThrow("review a new proposal");
+            await expect(fixture.capability.execute(context, input)).rejects.toBeInstanceOf(AgentActionCertainFailureError);
+            expect(fixture.prisma.system_setting.findUnique).not.toHaveBeenCalled();
+            fixture.expectNoEffects();
+        });
+
+        it.each(["lookup failure", "invalid policy"])("fails closed before a proposal or effects on %s", async (failure) => {
+            const fixture = setupTimeBinding();
+            if (failure === "lookup failure") fixture.prisma.system_setting.findUnique.mockRejectedValueOnce(new Error("settings unavailable"));
+            else fixture.configuration.defaultRuleSendTime = "25:00";
+
+            await expect(fixture.propose()).rejects.toThrow();
+            expect(fixture.prisma.agent_action.create).not.toHaveBeenCalled();
+            fixture.expectNoEffects();
+        });
+
+        it("keeps direct service creation with omitted time dynamic", async () => {
+            const fixture = setupTimeBinding();
+
+            expect((await fixture.service.createRule(principal.branchId, input, fixture.prisma as never)).sendTime).toBe("10:30");
+            fixture.configuration.defaultRuleSendTime = "11:45";
+            expect((await fixture.service.createRule(principal.branchId, input, fixture.prisma as never)).sendTime).toBe("11:45");
+        });
+    });
+
     it("binds automation approval to the persisted send time", async () => {
         const { delivery, capabilities } = setup();
         const update = capabilities.find((entry) => entry.meta.name === "automation.update")!;
@@ -1201,6 +1408,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 1,
+            sendTime: "10:30",
             recipientType: MessageTriggerRecipientType.CLIENT,
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         };
@@ -1228,6 +1436,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             eventType: MessageTriggerEventType.SERVICE_START,
             offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
             offsetDays: 1,
+            sendTime: "10:30",
             recipientType: MessageTriggerRecipientType.CLIENT,
             templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
         };
