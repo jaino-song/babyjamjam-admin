@@ -651,6 +651,49 @@ describe("POL-1 versioned message policy", () => {
         expect(saved.configuration.quietHours.enabled).toBe(true);
         expect(logs.countFutureProviderReservations).toHaveBeenLastCalledWith("A", expect.any(Date), tx);
     });
+    it("allows an already-ON canonical field change and OFF transition despite one reservation", async () => {
+        const configuration = { ...draft(), quietHours: { ...draft().quietHours, enabled: true } };
+        const enabled = await service.setMessageAutomationPolicyConfig("A", null, configuration);
+        logs.countFutureProviderReservations.mockClear().mockResolvedValue(1);
+        const changed = await service.setMessageAutomationPolicyConfig("A", enabled.version, { ...configuration, duplicateWindowHours: 96 });
+        expect(changed.configuration.duplicateWindowHours).toBe(96);
+        expect(changed.configuration.quietHours.enabled).toBe(true);
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+        const disabled = await service.setMessageAutomationPolicyConfig("A", changed.version, { ...changed.configuration,
+            quietHours: { ...changed.configuration.quietHours, enabled: false } });
+        expect(disabled.configuration.quietHours.enabled).toBe(false);
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+        expect(update.executeIfVersion).toHaveBeenCalledTimes(3);
+        expect(update.executeIfVersion.mock.calls[2]?.[5]).toBe(tx);
+    });
+    it("allows an already-ON legacy interval/order save despite one reservation", async () => {
+        const enabled = await service.setMessageAutomationPolicyConfig("A", null, { ...draft(), quietHours: { ...draft().quietHours, enabled: true } });
+        logs.countFutureProviderReservations.mockClear().mockResolvedValue(1);
+        await service.setMessageAutomationPastTriggerConfig("A", { sendIntervalMinutes: 7, ruleOrder: ["sms-A"] });
+        expect(JSON.parse(rows.get(key)!)).toEqual({ ...enabled.configuration, pastSendIntervalMinutes: 7, pastRuleOrder: ["sms-A"] });
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+        expect(update.execute).not.toHaveBeenCalled();
+        expect(update.executeIfVersion).toHaveBeenCalledTimes(2);
+        expect(update.executeIfVersion.mock.calls[1]?.[5]).toBe(tx);
+    });
+    it("preview keeps the raw reservation count but blocks only an OFF-to-ON draft, without writes", async () => {
+        const now = new Date("2026-11-04T13:00:00Z");
+        const enabled = { ...draft(), quietHours: { ...draft().quietHours, enabled: true } };
+        logs.countFutureProviderReservations.mockResolvedValue(1);
+        expect(await service.previewMessageAutomationPolicyConfig("A", null, enabled, now)).toMatchObject({ futureProviderReservations: 1, canEnableQuietHours: false });
+        expect(await service.previewMessageAutomationPolicyConfig("A", null, draft(), now)).toMatchObject({ futureProviderReservations: 1, canEnableQuietHours: true });
+        rows.set(key, JSON.stringify(enabled));
+        const stored = await service.getMessageAutomationPolicyConfig("A");
+        const raw = rows.get(key);
+        expect(await service.previewMessageAutomationPolicyConfig("A", stored.version, { ...enabled, duplicateWindowHours: 96 }, now))
+            .toMatchObject({ futureProviderReservations: 1, canEnableQuietHours: true });
+        expect(await service.previewMessageAutomationPolicyConfig("A", stored.version, draft(), now))
+            .toMatchObject({ futureProviderReservations: 1, canEnableQuietHours: true });
+        expect(rows.get(key)).toBe(raw);
+        expect(update.executeIfVersion).not.toHaveBeenCalled();
+        expect(update.execute).not.toHaveBeenCalled();
+        expect(lock.runExclusive).not.toHaveBeenCalled();
+    });
     it.each(["{", "null", JSON.stringify({ ...draft(), schemaVersion: 2 }), ""])("fails closed on corrupt policy %s", async raw => {
         rows.set(key, raw);
         await expect(service.getMessageAutomationPolicyConfig("A")).rejects.toMatchObject({ status: 503 });

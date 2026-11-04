@@ -280,7 +280,7 @@ export class SystemSettingService {
         const stored = await this.readMessagePolicy(branchId, transaction);
         if (stored.version !== expectedVersion) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         const effective = await this.effectivePolicyOrder(branchId, configuration, stored.configuration.pastRuleOrder, true, transaction);
-        if (configuration.quietHours.enabled) {
+        if (!stored.configuration.quietHours.enabled && configuration.quietHours.enabled) {
             if (!this.policyLogs) throw new ServiceUnavailableException("Message policy logs are unavailable");
             let reservations: number;
             try { reservations = await this.policyLogs.countFutureProviderReservations(branchId, new Date(), transaction); }
@@ -318,6 +318,7 @@ export class SystemSettingService {
         const stored = await this.readMessagePolicy(branchId);
         if (stored.version !== expectedVersion) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         const effective = await this.effectivePolicyOrder(branchId, validated, stored.configuration.pastRuleOrder, true);
+        const activatingQuietHours = !stored.configuration.quietHours.enabled && effective.configuration.quietHours.enabled;
         if (!this.policyJobs || !this.policyLogs) throw new ServiceUnavailableException("Message policy preview is unavailable");
         try {
             const [jobs, retries, reservations] = await Promise.all([
@@ -339,7 +340,7 @@ export class SystemSettingService {
                 }
             }
             return { version: stored.version, deferredCount, canceledCount, reevaluateAt: reevaluateAt?.toISOString() ?? null,
-                futureProviderReservations: reservations, canEnableQuietHours: reservations === 0, warnings: effective.warnings };
+                futureProviderReservations: reservations, canEnableQuietHours: !activatingQuietHours || reservations === 0, warnings: effective.warnings };
         } catch {
             throw new ServiceUnavailableException("Message policy preview is unavailable");
         }
