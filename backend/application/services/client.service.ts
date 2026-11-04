@@ -2575,7 +2575,7 @@ export class ClientService {
                 && automationImpact.effects.length > 0
             ) {
                 const clientEffects = automationImpact.effects.filter(
-                    (effect): effect is AgentAutomationEffect => effect.kind === "client-rule",
+                    (effect): effect is AgentAutomationEffect => effect.kind === "client-rule" || effect.kind === "caregiver-service",
                 );
                 if (clientEffects.length > 0) {
                     await this.agentAutomationRecordStore!.appendOrdinarySuccessors(transaction, {
