@@ -1,5 +1,5 @@
 import { z } from "zod";
-export declare const SYSTEM_TEMPLATE_KEYS: readonly ["PRICE_INFO", "GREETING", "THANKS", "CONTRACT_REMINDER", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
+export declare const SYSTEM_TEMPLATE_KEYS: readonly ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE", "PRICE_INFO", "GREETING", "THANKS", "CONTRACT_REMINDER", "SURVEY", "SERVICE_INFO", "SERVICE_RECORD_LINK", "SERVICE_END_NOTICE", "REMINDER", "INFO"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 /** Runtime key validation for system-template BFF route parameters. */
 export declare const systemTemplateKeySchema: z.ZodEnum<{
@@ -11,6 +11,8 @@ export declare const systemTemplateKeySchema: z.ZodEnum<{
     INFO: "INFO";
     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
     GREETING: "GREETING";
     CONTRACT_REMINDER: "CONTRACT_REMINDER";
 }>;
@@ -22,6 +24,8 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 export declare const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY: {
+    CAREGIVER_SERVICE_START_NOTICE: "sms";
+    CAREGIVER_SERVICE_END_NOTICE: "sms";
     PRICE_INFO: "sms";
     GREETING: "sms";
     THANKS: "sms";
@@ -169,3 +173,10 @@ export type SystemTemplateVersionListResponse = SystemTemplateVersionSummary[];
 export type SystemTemplateVersionDetailResponse = SystemTemplateVersionDetail;
 export type RollbackSystemTemplateResponse = SystemTemplateRecord;
 export type ResetSystemTemplateResponse = SystemTemplateRecord;
+export type CaregiverTemplateLifecycleAction = "activate" | "disable" | "delete" | "restore";
+export interface CaregiverTemplateLifecycleResponse {
+    key: "CAREGIVER_SERVICE_START_NOTICE" | "CAREGIVER_SERVICE_END_NOTICE";
+    state: "active" | "disabled" | "deleted";
+    deletedAt: string | null;
+    snapshotVersion: 2;
+}

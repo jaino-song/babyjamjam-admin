@@ -247,6 +247,7 @@ export declare const AgentAutomationEffectKindSchema: z.ZodEnum<{
     "client-rule": "client-rule";
     "employee-assignment": "employee-assignment";
     "service-record-link": "service-record-link";
+    "caregiver-service": "caregiver-service";
 }>;
 export declare const AgentAutomationQuestionAvailabilitySchema: z.ZodEnum<{
     available: "available";
@@ -267,6 +268,7 @@ export declare const AgentAutomationEffectSummarySchema: z.ZodObject<{
         "client-rule": "client-rule";
         "employee-assignment": "employee-assignment";
         "service-record-link": "service-record-link";
+        "caregiver-service": "caregiver-service";
     }>;
     recipientType: z.ZodEnum<{
         client: "client";
@@ -289,6 +291,8 @@ export declare const AgentAutomationEffectSummarySchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
     }>;
 }, z.core.$strict>;
 export declare const AgentAutomationQuestionSchema: z.ZodObject<{
@@ -316,6 +320,7 @@ export declare const AgentAutomationQuestionSchema: z.ZodObject<{
             "client-rule": "client-rule";
             "employee-assignment": "employee-assignment";
             "service-record-link": "service-record-link";
+            "caregiver-service": "caregiver-service";
         }>;
         recipientType: z.ZodEnum<{
             client: "client";
@@ -338,6 +343,8 @@ export declare const AgentAutomationQuestionSchema: z.ZodObject<{
             SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
             EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
             SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+            CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+            CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         }>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
@@ -554,6 +561,7 @@ export declare const AgentTaskSchema: z.ZodObject<{
                 "client-rule": "client-rule";
                 "employee-assignment": "employee-assignment";
                 "service-record-link": "service-record-link";
+                "caregiver-service": "caregiver-service";
             }>;
             recipientType: z.ZodEnum<{
                 client: "client";
@@ -576,6 +584,8 @@ export declare const AgentTaskSchema: z.ZodObject<{
                 SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
                 EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
                 SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+                CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+                CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
             }>;
         }, z.core.$strict>>;
     }, z.core.$strict>>;
@@ -904,6 +914,7 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
                     "client-rule": "client-rule";
                     "employee-assignment": "employee-assignment";
                     "service-record-link": "service-record-link";
+                    "caregiver-service": "caregiver-service";
                 }>;
                 recipientType: z.ZodEnum<{
                     client: "client";
@@ -926,6 +937,8 @@ export declare const AgentTaskMutationResponseSchema: z.ZodObject<{
                     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
                     EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
                     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+                    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+                    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
                 }>;
             }, z.core.$strict>>;
         }, z.core.$strict>>;

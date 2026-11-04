@@ -1,7 +1,9 @@
+import { BranchSystemTemplateSnapshotError, type CaregiverTemplateLifecycleAction, type CaregiverTemplateLifecycleResult } from "domain/entities/branch-system-template-snapshot";
 import { Inject, Injectable } from "@nestjs/common";
 import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import {
     CustomVariable,
+    isCaregiverSystemTemplateKey,
     SystemTemplateKey,
 } from "domain/constants/system-template-registry";
 import {
@@ -19,6 +21,12 @@ export class UpdateBranchSystemTemplateUseCase {
         private readonly mutationGuard: SystemTemplateMutationGuardService,
         private readonly automationLock: MessageTemplateAutomationLockService,
     ) {}
+
+    lifecycle(branchId: string, key: SystemTemplateKey, action: CaregiverTemplateLifecycleAction, userId: string): Promise<CaregiverTemplateLifecycleResult> {
+        if (!isCaregiverSystemTemplateKey(key) || !["activate", "disable", "delete", "restore"].includes(action)
+            || !this.repository.updateCaregiverTemplateLifecycle) throw new BranchSystemTemplateSnapshotError(branchId, key, "caregiver lifecycle is unavailable");
+        return this.automationLock.runExclusive(key, (transaction) => this.repository.updateCaregiverTemplateLifecycle!(branchId, key, action, userId, transaction));
+    }
 
     execute(
         branchId: string,

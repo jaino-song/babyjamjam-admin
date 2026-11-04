@@ -1839,7 +1839,7 @@ describe("MessageTriggerService", () => {
         },
     );
 
-    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
+    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.filter((key) => MESSAGE_TRIGGER_TEMPLATE_CATALOG[key].allowedRecipientTypes.includes(MessageTriggerRecipientType.CLIENT)))(
         "rejects invalid employee-recipient creation for %s without persisting a rule",
         async (templateKey) => {
             const { service, ruleRepository } = createService();
@@ -6019,7 +6019,7 @@ describe("MessageTriggerService", () => {
         expect(variables["receiptUrl"]).toBeUndefined();
     });
 
-    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
+    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.filter((key) => MESSAGE_TRIGGER_TEMPLATE_CATALOG[key].allowedRecipientTypes.includes(MessageTriggerRecipientType.CLIENT)))(
         "builds every required %s variable from a complete client record",
         (templateKey) => {
             const rule = createRule({

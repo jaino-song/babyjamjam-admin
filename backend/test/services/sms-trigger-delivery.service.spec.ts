@@ -1184,7 +1184,8 @@ describe("SMS system-template variable coverage", () => {
     };
 
     const smsTemplateCases = Object.values(MESSAGE_TRIGGER_TEMPLATE_CATALOG)
-        .filter((item) => item.providers.sms)
+        // New automatic caregiver keys are covered through real permits in the recipient resolver suite.
+        .filter((item) => item.providers.sms && item.key !== "CAREGIVER_SERVICE_START_NOTICE" && item.key !== "CAREGIVER_SERVICE_END_NOTICE")
         .map((item) => {
             const systemTemplateKey = SMS_TEMPLATE_DELIVERY[item.key]?.systemTemplateKey;
             if (!systemTemplateKey) {

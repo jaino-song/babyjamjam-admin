@@ -26,7 +26,22 @@ export interface MessageTriggerCatchUpMetadata {
     predecessorDedupeKey: string | null;
 }
 
+export interface CaregiverSourceSnapshot {
+    version: 1;
+    groupId: string;
+    groupVersion: number;
+    ruleId: string;
+    eventType: "SERVICE_START" | "SERVICE_END";
+    schedule: { id: number; incarnationId: string; startDate: string; endDate: string; replaced: false; terminatedAt: null };
+    employee: { id: number; branchId: string; name: string; phone: string; deletedAt: null; smsAutomationEnabled: true };
+    client: { id: number; branchId: string; name: string; createdAt: string; deletedAt: null; serviceStatus: string | null;
+        startDate: string | null; endDate: string | null; bookingConfirmedAt: string | null };
+    branchName: string;
+    variables: Record<string, string>;
+}
+
 export interface MessageTriggerJobPayload {
+    caregiverSourceSnapshot?: CaregiverSourceSnapshot;
     /** Private server-derived authority. Presence is not proof without terminal-record validation. */
     agentAutomationSeal?: AgentAutomationJobSeal;
     /** Digest-only task commit/coverage lookup; never contains customer or message data. */

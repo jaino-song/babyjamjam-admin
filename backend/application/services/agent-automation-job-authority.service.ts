@@ -1,3 +1,5 @@
+import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "./message-trigger-recipient-resolver.service";
+import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
 import { Injectable, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Prisma } from "@prisma/client";
@@ -53,6 +55,7 @@ export class AgentAutomationJobAuthorityService {
         private readonly sender: AligoDefaultSenderPolicyService,
         @Optional()
         private readonly configService?: ConfigService,
+        private readonly caregiverRecipients?: MessageTriggerRecipientResolverService,
     ) {}
 
     async checkAutomaticJob(
@@ -70,7 +73,7 @@ export class AgentAutomationJobAuthorityService {
                     : job.recipientType === MessageTriggerRecipientType.SECONDARY_EMPLOYEE ? "secondary-employee" : null;
             if (!recipientType) return refuse();
             const kind = job.ruleId === SERVICE_RECORD_LINK_RULE_ID ? "service-record-link"
-                : job.employeeScheduleId === null ? "client-rule" : "employee-assignment";
+                : isCaregiverTriggerTemplate(job.templateKey) ? "caregiver-service" : job.employeeScheduleId === null ? "client-rule" : "employee-assignment";
             const payload = job.payload as unknown as Record<string, unknown>;
             const seal = Object.prototype.hasOwnProperty.call(payload, AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY)
                 ? payload[AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY] : undefined;
@@ -80,6 +83,7 @@ export class AgentAutomationJobAuthorityService {
                 : undefined;
             if (hasTaskReference && !parsedTaskReference) return refuse();
             const taskReference: AgentAutomationTaskCommitReference | undefined = parsedTaskReference ?? undefined;
+            if (kind === "caregiver-service" && !await this.currentCaregiverRecipe(transaction, job, render, preparedSnapshotHash)) return refuse();
             const concreteJobDigest = agentAutomationConcreteJobDigest(job);
             // A transient/copied object cannot authorize another row. Materializers
             // insert/upsert, validate, then stamp within their existing transaction.
@@ -95,6 +99,25 @@ export class AgentAutomationJobAuthorityService {
         }
     }
 
+    private async currentCaregiverRecipe(transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, render: CanonicalAutomationRenderer, preparedSnapshotHash?: string) {
+        if (!this.caregiverRecipients || !job.branchId || !job.clientId || job.payload.caregiverSourceSnapshot?.version !== 1) return null;
+        const settings = await this.sources.readClientAutomationSettings(job.branchId, transaction);
+        if (settings.status !== "available") return null;
+        const rule = settings.rules.find((entry) => entry.id === job.ruleId && entry.branchId === job.branchId && entry.isActive);
+        if (!rule || !rule.groupId || rule.templateKey !== job.templateKey || rule.recipientType !== job.recipientType) return null;
+        const set = await this.caregiverRecipients.resolve(job.branchId, job.clientId,
+            settings.rules.filter((entry) => entry.isActive && entry.groupId === rule.groupId), transaction);
+        const row = set.recipients.find((entry) => entry.ruleId === job.ruleId && entry.employeeScheduleId === job.employeeScheduleId && entry.recipe?.dedupeKey === job.dedupeKey);
+        if (!set.complete || row?.outcome !== "ready" || !row.recipe) return null;
+        const recipe = row.recipe;
+        const payload = { ...recipe.payload, ...(job.payload.taskAutomationReference ? { taskAutomationReference: job.payload.taskAutomationReference } : {}) };
+        if (job.scheduledFor.getTime() !== recipe.scheduledFor.getTime() || job.recipientPhone !== recipe.recipientPhone
+            || agentBindingHash(agentAutomationSourcePayload(job.payload, job.templateKey)) !== agentBindingHash(payload)) return null;
+        const snapshot = await render(job, transaction);
+        if (snapshot.message !== row.body || snapshot.receiver !== recipe.recipientPhone || preparedSnapshotHash !== undefined && snapshot.snapshotHash !== preparedSnapshotHash) return null;
+        return { rule, recipe, snapshot, settings };
+    }
+
     private async describeCurrentClientEffect(
         transaction: Prisma.TransactionClient,
         job: MessageTriggerJobEntity,
@@ -105,6 +128,18 @@ export class AgentAutomationJobAuthorityService {
     ) {
         // Dedicated schedule/link owners require their bounded recipe adapters;
         // a known task scope cannot acquire authority from a generic substitute.
+        if (input.scope.kind === "caregiver-service") {
+            const current = await this.currentCaregiverRecipe(transaction, job, render, preparedSnapshotHash);
+            if (!current) return null;
+            const sender = this.sender.read();
+            return describeCaregiverMessageEffect({ branchId: input.scope.branchId, subject: input.subject, rule: current.rule,
+                recipe: current.recipe, snapshot: current.snapshot, change: input.change, policy: {
+                    dispatchEnabled: current.settings.dispatchEnabled, senderApproved: current.settings.senderApproved,
+                    senderIdentityDigest: sender.availability === "available" ? sender.identityDigest : null,
+                    senderApprovedAt: current.settings.senderApprovedAt?.toISOString() ?? null,
+                    pastTriggerEnabled: current.settings.pastTriggerEnabled, pastTriggerConfig: current.settings.pastTriggerConfig,
+                } });
+        }
         if (input.scope.kind === "employee-assignment") {
             return this.describeCurrentEmployeeAssignmentEffect(transaction, job, input, render, preparedSnapshotHash, taskReference);
         }

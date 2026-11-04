@@ -17,6 +17,8 @@ import { z } from "zod";
 // string while Raw* variants retain Date for backend-reference parity.
 
 export const SYSTEM_TEMPLATE_KEYS = [
+  "CAREGIVER_SERVICE_START_NOTICE",
+  "CAREGIVER_SERVICE_END_NOTICE",
   'PRICE_INFO',
   'GREETING',
   'THANKS',
@@ -48,6 +50,8 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 export const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
+  CAREGIVER_SERVICE_START_NOTICE: "sms",
+  CAREGIVER_SERVICE_END_NOTICE: "sms",
   PRICE_INFO: "sms",
   GREETING: "sms",
   THANKS: "sms",
@@ -219,3 +223,11 @@ export type SystemTemplateVersionListResponse = SystemTemplateVersionSummary[];
 export type SystemTemplateVersionDetailResponse = SystemTemplateVersionDetail;
 export type RollbackSystemTemplateResponse = SystemTemplateRecord;
 export type ResetSystemTemplateResponse = SystemTemplateRecord;
+
+export type CaregiverTemplateLifecycleAction = "activate" | "disable" | "delete" | "restore";
+export interface CaregiverTemplateLifecycleResponse {
+  key: "CAREGIVER_SERVICE_START_NOTICE" | "CAREGIVER_SERVICE_END_NOTICE";
+  state: "active" | "disabled" | "deleted";
+  deletedAt: string | null;
+  snapshotVersion: 2;
+}

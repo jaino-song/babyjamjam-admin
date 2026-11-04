@@ -1,3 +1,14 @@
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { SystemTemplateService } from "application/services/system-template.service";
+import { GetAllSystemTemplatesUseCase } from "application/usecases/system-template/get-all-system-templates.usecase";
+import { GetSystemTemplateUseCase } from "application/usecases/system-template/get-system-template.usecase";
+import { UpdateBranchSystemTemplateUseCase } from "application/usecases/system-template/update-branch-system-template.usecase";
+import { SystemTemplateMutationGuardService } from "application/services/system-template-mutation-guard.service";
+import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
+import { BranchSystemTemplateController } from "interface/controllers/branch-system-template.controller";
+import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
     BadRequestException,
@@ -1059,6 +1070,9 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
     let jobs: SbMessageTriggerJobRepository;
     let branchId: string;
     let otherBranchId: string;
+    let templates: SystemTemplateService;
+    let caregiverTemplates: CaregiverTemplateResolverService;
+    let caregiverResolver: MessageTriggerRecipientResolverService;
     const branches: string[] = [];
     const provider = jest.fn();
     beforeAll(async () => {
@@ -1068,13 +1082,29 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         const settings = { getMessageAutomationPolicyConfig: async () => ({ configuration: { ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "11:45" } }), getMessageSettingsPolicyEnabled: async () => false };
         const approval = { ensureApproved: async () => undefined, isApproved: async () => true };
         const activation = { getTriggerDispatchEnabled: async () => true, assertTriggerDispatchEnabled: async () => undefined };
+        const templateRepository = new SbSystemTemplateRepository(handle.service);
+        const templateLock = new MessageTemplateAutomationLockService(handle.service);
+        templates = new SystemTemplateService(new GetAllSystemTemplatesUseCase(templateRepository), new GetSystemTemplateUseCase(templateRepository), undefined as never,
+            new UpdateBranchSystemTemplateUseCase(templateRepository, new SystemTemplateMutationGuardService(repository), templateLock),
+            undefined as never, undefined as never, undefined as never, undefined as never, undefined as never, undefined as never);
+        caregiverTemplates = new CaregiverTemplateResolverService(handle.service);
+        const source = new ClientAutomationSourceReader(handle.service, repository, new SbMessageTriggerRuleBranchOverrideRepository(handle.service), approval as never,
+            settings as never, activation as never);
+        caregiverResolver = new MessageTriggerRecipientResolverService(source, caregiverTemplates, repository);
         core = new MessageTriggerService(handle.service, { send: provider } as never, approval as never, repository, jobs,
             new SbMessageLogRepository(handle.service), { getByKeyForBranch: async () => ({ customVariables: [] }) } as never,
             new MessageTemplateAutomationLockService(handle.service), settings as never,
             new SbMessageTriggerRuleBranchOverrideRepository(handle.service), activation as never, branchLock);
-        const module = await Test.createTestingModule({ controllers: [MessageTriggerRuleGroupController, MessageTriggerController], providers: [BranchManagerGuard,
+        Object.assign(core, { caregiverTemplates, caregiverRecipients: caregiverResolver });
+        const module = await Test.createTestingModule({ controllers: [MessageTriggerRuleGroupController, MessageTriggerController, BranchSystemTemplateController], providers: [BranchManagerGuard,
+            { provide: SystemTemplateService, useValue: templates },
             MessageTriggerRuleGroupService, { provide: MessageTriggerService, useValue: core }, { provide: SmsRetryService, useValue: {} }] })
-            .overrideGuard(JwtGuard).useValue(groupTenantGuard).overrideGuard(TenantGuard).useValue(groupTenantGuard).compile();
+            .overrideGuard(JwtGuard).useValue(groupTenantGuard).overrideGuard(TenantGuard).useValue({ canActivate(context: ExecutionContext) {
+                const allowed = groupTenantGuard.canActivate(context);
+                const req = context.switchToHttp().getRequest();
+                if (req.url.startsWith("/branch-system-templates")) req.tenant.userId = "66000000-0000-4000-8000-000000000001";
+                return allowed;
+            } }).compile();
         app = module.createNestApplication(); app.useGlobalPipes(new ValidationPipe({ transform: true })); installGroupProblemFilter(app); await app.init();
     });
     beforeEach(async () => {
@@ -1294,6 +1324,7 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         const latch = () => { let release!: () => void; const promise = new Promise<void>((resolve) => { release = resolve; }); return { promise, release }; };
         const reads = latch(); const resume = latch(); const firstTemplates = latch();
         const paused = new Set<string>(); const seenTransactions = new WeakSet<object>(); const acquiredKeys: string[] = [];
+        const canonicalKeys = new Map<object, string[]>();
         let firstCount = 0; let legacyPhase = false;
         const originalFind = repository.findById.bind(repository);
         const findSpy = jest.spyOn(repository, "findById").mockImplementation(async (scope, id, transaction) => {
@@ -1306,11 +1337,12 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         const templateLock = (core as unknown as { templateAutomationLock: MessageTemplateAutomationLockService }).templateAutomationLock;
         const originalTemplate = templateLock.runExclusive.bind(templateLock);
         const templateSpy = jest.spyOn(templateLock, "runExclusive").mockImplementation(async (key, work, transaction) => {
+            if (legacyPhase && transaction) canonicalKeys.set(transaction, [...(canonicalKeys.get(transaction) ?? []), key]);
             if (!legacyPhase || !transaction || seenTransactions.has(transaction)) return originalTemplate(key, work, transaction);
             seenTransactions.add(transaction);
             return originalTemplate(key, async (lockedTransaction) => {
                 acquiredKeys.push(key); firstCount++; if (firstCount === 2) firstTemplates.release();
-                await firstTemplates.promise;
+                if (mode !== "explicit-request") await firstTemplates.promise;
                 return work(lockedTransaction);
             }, transaction);
         });
@@ -1326,7 +1358,8 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
             legacyPhase = true; resume.release();
             const responses = await Promise.all(legacy);
             expect(responses.map((response) => response.status)).toEqual([200, 200]);
-            expect(acquiredKeys.sort()).toEqual(["INFO", "SERVICE_INFO"]);
+            expect(acquiredKeys.sort()).toEqual(mode === "explicit-request" ? ["INFO", "INFO"] : ["INFO", "SERVICE_INFO"]);
+            if (mode === "explicit-request") expect([...canonicalKeys.values()]).toEqual([["INFO", "SERVICE_INFO"], ["INFO", "SERVICE_INFO"]]);
             for (const [index, scope] of scopes.entries()) {
                 const expectedTemplate = mode === "swapped-current" ? initial[1 - index] : initial[index];
                 const group = await handle.raw.message_trigger_rule_group.findUnique({ where: { id: created[index]!.body.id } });
@@ -1343,6 +1376,76 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
             findSpy.mockRestore(); templateSpy.mockRestore();
         }
     });
+    it("RULE-2 lifecycle HTTP persists v2 tombstones and preserves unrelated branch edits", async () => {
+        const key = "CAREGIVER_SERVICE_START_NOTICE";
+        const content = "{{employeeName}} 관리사님 / {{clientName}} / {{serviceStartDate}} / {{branchName}} (지점 편집)";
+        expect((await request(app.getHttpServer()).put("/branch-system-templates/INFO").set("x-test-branch", branchId).send({ content: "보존할 정보" })).status).toBe(200);
+        expect((await request(app.getHttpServer()).put(`/branch-system-templates/${key}`).set("x-test-branch", branchId).send({ content })).status).toBe(200);
+        const before = await handle.raw.branch.findUniqueOrThrow({ where: { id: branchId } });
+        expect((before.systemTemplateSnapshot as { version: number }).version).toBe(1);
+        for (const [action, state] of [["disable", "disabled"], ["delete", "deleted"], ["restore", "active"]]) {
+            const response = await request(app.getHttpServer()).put(`/branch-system-templates/${key}/lifecycle`).set("x-test-branch", branchId).send({ action });
+            expect(response.status).toBe(200); expect(response.body).toMatchObject({ key, state, snapshotVersion: 2 });
+            const branch = await handle.raw.branch.findUniqueOrThrow({ where: { id: branchId } });
+            const snapshot = branch.systemTemplateSnapshot as { version: number; templates: Record<string, { content: string; state?: string; deletedAt?: string }> };
+            expect(snapshot.version).toBe(2); expect(snapshot.templates["INFO"]?.content).toBe("보존할 정보");
+            expect(snapshot.templates[key]).toMatchObject({ content, state });
+            if (state === "deleted") expect(snapshot.templates[key]?.deletedAt).toEqual(expect.any(String));
+            else expect(snapshot.templates[key]).not.toHaveProperty("deletedAt");
+            if (state === "disabled" || state === "deleted") await expect(caregiverTemplates.resolve(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE)).rejects.toThrow();
+            else expect((await caregiverTemplates.resolve(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE)).content).toBe(content);
+        }
+        expect((await request(app.getHttpServer()).put("/branch-system-templates/INFO/lifecycle").set("x-test-branch", branchId).send({ action: "disable" })).status).toBe(400);
+        expect((await request(app.getHttpServer()).put(`/branch-system-templates/${key}/lifecycle?expectedBranchId=${otherBranchId}`).set("x-test-branch", branchId).send({ action: "disable" })).status).toBe(409);
+        expect(provider).not.toHaveBeenCalled();
+    });
+
+    it.each(["content", "lifecycle"] as const)("RULE-2 C1 canonical keys precede group/FK while concurrent %s owns a later key and snapshot row", async (writer) => {
+        await templates.updateForBranch(branchId, "INFO", "보존할 정보", "fixture-user");
+        const pair = clientGroupBody({ recipientMode: "BOTH_EMPLOYEES", recipientTemplates: {
+            PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_END_NOTICE",
+        } });
+        const created = await post(pair); expect(created.status).toBe(201);
+        const latch = () => { let release!: () => void; const promise = new Promise<void>((resolve) => { release = resolve; }); return { promise, release }; };
+        const first = latch(); const resume = latch(); let paused = false;
+        const lock = (core as unknown as { templateAutomationLock: MessageTemplateAutomationLockService }).templateAutomationLock;
+        const original = lock.runExclusive.bind(lock); const trace: string[] = [];
+        const spy = jest.spyOn(lock, "runExclusive").mockImplementation((key, work, transaction) => original(key, async (tx) => {
+            trace.push(key);
+            if (!paused && key === "CAREGIVER_SERVICE_END_NOTICE") { paused = true; first.release(); await resume.promise; }
+            return work(tx);
+        }, transaction));
+        const update = request(app.getHttpServer()).put(`/message-trigger-rule-groups/${created.body.id}`).set("x-test-branch", branchId).send({
+            ...pair, name: "동시 갱신", expectedVersion: 1, recipientTemplates: {
+                PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_END_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE",
+            },
+        }).then((response) => response);
+        try {
+            await first.promise;
+            const content = "{{employeeName}} 관리사님 / {{clientName}} / {{serviceStartDate}} / {{branchName}} (동시 편집)";
+            const changed = writer === "content"
+                ? await request(app.getHttpServer()).put("/branch-system-templates/CAREGIVER_SERVICE_START_NOTICE").set("x-test-branch", branchId).send({ content })
+                : await request(app.getHttpServer()).put("/branch-system-templates/CAREGIVER_SERVICE_START_NOTICE/lifecycle").set("x-test-branch", branchId).send({ action: "disable" });
+            expect(changed.status).toBe(200);
+            resume.release();
+            expect((await update).status).toBe(200);
+            expect(trace).toEqual(["CAREGIVER_SERVICE_END_NOTICE", "CAREGIVER_SERVICE_START_NOTICE"]);
+            const group = await repository.findGroup(branchId, created.body.id); expect(group?.version).toBe(2);
+            const children = await repository.findGroupRules(branchId, created.body.id);
+            expect(children.map((child) => child.id).sort()).toEqual(created.body.rules.map((child: { id: string }) => child.id).sort());
+            expect(children.map((child) => [child.recipientType, child.templateKey]).sort()).toEqual([
+                ["PRIMARY_EMPLOYEE", "CAREGIVER_SERVICE_END_NOTICE"], ["SECONDARY_EMPLOYEE", "CAREGIVER_SERVICE_START_NOTICE"],
+            ]);
+            expect(children.every((child) => child.name === "동시 갱신" && child.isActive === false)).toBe(true);
+            const snapshot = (await handle.raw.branch.findUniqueOrThrow({ where: { id: branchId } })).systemTemplateSnapshot as { templates: Record<string, { content: string; state?: string }> };
+            expect(snapshot.templates["INFO"]?.content).toBe("보존할 정보");
+            if (writer === "content") expect(snapshot.templates["CAREGIVER_SERVICE_START_NOTICE"]?.content).toBe(content);
+            else { expect(snapshot.templates["CAREGIVER_SERVICE_START_NOTICE"]?.state).toBe("disabled");
+                await expect(caregiverTemplates.resolve(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE)).rejects.toThrow(); }
+            expect(await handle.raw.message_trigger_job.count({ where: { branchId } })).toBe(0); expect(provider).not.toHaveBeenCalled();
+        } finally { resume.release(); await Promise.allSettled([update]); spy.mockRestore(); }
+    });
+
     it("generic projection primitives retain removed role identity for later re-addition", async () => {
         const lock = new MessageAutomationBranchLockService(handle.service);
         let groupId = ""; let childId = "";

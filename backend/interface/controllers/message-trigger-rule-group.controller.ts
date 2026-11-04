@@ -3,7 +3,7 @@ import { MessageTriggerRuleGroupService } from "application/services/message-tri
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
-import { CreateMessageTriggerRuleGroupDto, UpdateMessageTriggerRuleGroupDto } from "interface/dto/message-trigger-rule-group.dto";
+import { CreateMessageTriggerRuleGroupDto, PreviewMessageTriggerRuleGroupDto, UpdateMessageTriggerRuleGroupDto } from "interface/dto/message-trigger-rule-group.dto";
 
 @Controller("message-trigger-rule-groups")
 @UseGuards(JwtGuard, TenantGuard)
@@ -15,6 +15,11 @@ export class MessageTriggerRuleGroupController {
 
     @Get(":id")
     get(@CurrentTenant() tenant: { branchId?: string }, @Param("id") id: string) { return this.groups.get(tenant.branchId ?? "", id); }
+
+    @Post("preview")
+    preview(@CurrentTenant() tenant: { branchId?: string }, @Body() input: PreviewMessageTriggerRuleGroupDto) {
+        return this.groups.preview(tenant.branchId ?? "", input);
+    }
 
     @Post()
     @UseGuards(BranchManagerGuard)

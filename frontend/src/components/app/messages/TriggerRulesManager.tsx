@@ -197,6 +197,8 @@ const TRIGGER_TEMPLATE_OPTION_SUFFIXES = {
 } as const;
 
 const TRIGGER_TEMPLATE_MESSAGE_FALLBACKS: Record<TriggerTemplateKey, string> = {
+  CAREGIVER_SERVICE_START_NOTICE: "{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}",
+  CAREGIVER_SERVICE_END_NOTICE: "{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceEndDate}}에 종료됩니다. 마무리 안내를 확인해 주세요. - {{branchName}}",
   CLIENT_WELCOME: `[아이미래 인천]
 #{고객명}님, 등록이 완료되었습니다.
 

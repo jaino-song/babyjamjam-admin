@@ -244,7 +244,7 @@ function getClientAnchorDate(
     }
 }
 
-function computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity, now: Date): Date {
+export function computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity, now: Date): Date {
     if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) {
         return new Date(now);
     }

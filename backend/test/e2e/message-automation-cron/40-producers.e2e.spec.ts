@@ -1,3 +1,17 @@
+import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import { createHash, randomUUID } from "node:crypto";
+import { ClientWriteAgentCapabilitiesProvider } from "application/usecases/client/client-write-agent-capabilities.provider";
+import { fulfillClientMessageAutomationIntent } from "application/services/client-message-automation-intent-fulfiller";
+import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { createAgentAutomationQuestion } from "application/agent/agent-automation-question";
+import { parseTaskAutomationArtifact } from "application/agent/agent-task-automation-artifact";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { MESSAGE_CRON_OWNER_USER_ID } from "../helpers/message-automation-cron.helper";
+import type { AgentContext } from "application/agent/agent-context";
 import { Prisma } from "@prisma/client";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
@@ -74,6 +88,8 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
     const clientIds = new Set<number>();
     const scheduleIds = new Set<number>();
     const producerRuleIds: string[] = [];
+    const producerGroupIds: string[] = [];
+    const caregiverSessionIds: string[] = [];
     const intentRuleId = MESSAGE_AUTOMATION_INTENT_RULE_ID;
 
     beforeAll(async () => {
@@ -122,6 +138,12 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             await prisma.message_trigger_job.deleteMany({ where: { ruleId } }).catch(() => undefined);
             await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } }).catch(() => undefined);
         }
+        for (const sessionId of caregiverSessionIds) {
+            await prisma.agent_action.deleteMany({ where: { sessionId } });
+            await prisma.agent_task.deleteMany({ where: { sessionId } });
+            await prisma.agent_session.deleteMany({ where: { id: sessionId } });
+        }
+        await prisma.message_trigger_rule_group.deleteMany({ where: { id: { in: producerGroupIds } } });
         await prisma.employee.deleteMany({ where: { id: { in: [...employeeIds] } } }).catch(() => undefined);
         await prisma.branch.deleteMany({ where: { id: { in: [...branchIds] } } });
         await harness?.close();
@@ -921,4 +943,125 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             where: { scheduleId: { in: [terminatedFixture.scheduleId, replacedFixture.scheduleId] } },
         })).toBe(0);
     }, 30_000);
+    it.each(["SERVICE_START", "SERVICE_END"] as const)("RULE-2 r4.19 actual reviewed caregiver-only %s provider→RecordStore→client intent→core→seal→fake provider", async (event) => {
+        const activation = harness.app.get(MessageAutomationActivationService);
+        const previousBranchName = (await prisma.branch.findUniqueOrThrow({ where: { id: MESSAGE_CRON_BRANCH_ID } })).name;
+        const previousParent = await prisma.system_setting.findUnique({ where: { key: activation.getParentKey(MESSAGE_CRON_BRANCH_ID) } });
+        const previousRules = await prisma.message_trigger_rule.findMany({ where: { branchId: MESSAGE_CRON_BRANCH_ID, recipientType: "CLIENT", deletedAt: null }, select: { id: true, isActive: true, updatedAt: true } });
+        let defaults = previousRules;
+        try {
+        await prisma.branch.update({ where: { id: MESSAGE_CRON_BRANCH_ID }, data: { name: "Phase7 합성 지점" } });
+        await activation.setTriggerDispatchEnabled(MESSAGE_CRON_BRANCH_ID, true, { userId: MESSAGE_CRON_OWNER_USER_ID, globalRole: "owner", branchRole: "owner" });
+        await triggers.ensureDefaultRulesForBranch(MESSAGE_CRON_BRANCH_ID);
+        defaults = await prisma.message_trigger_rule.findMany({ where: { branchId: MESSAGE_CRON_BRANCH_ID, recipientType: "CLIENT", deletedAt: null } });
+        await prisma.message_trigger_rule.updateMany({ where: { id: { in: defaults.map((rule) => rule.id) } }, data: { isActive: false } });
+        const group = await triggers.createRuleGroup(MESSAGE_CRON_BRANCH_ID, { name: "검토된 배정 안내", recipientMode: "BOTH_EMPLOYEES",
+            eventType: event as MessageTriggerEventType, offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "10:30", isActive: true,
+            recipientTemplates: { PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, SECONDARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE } });
+        producerGroupIds.push(group.id); producerRuleIds.push(...group.rules.map((rule) => rule.id));
+        const primary = await prisma.employee.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "합성 주", phone: event === "SERVICE_START" ? "01000000111" : "01000000211", grade: "스탠다드" } });
+        const secondary = await prisma.employee.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "합성 보조", phone: event === "SERVICE_START" ? "01000000112" : "01000000212", grade: "스탠다드" } });
+        employeeIds.add(primary.id); employeeIds.add(secondary.id);
+        const client = await prisma.client.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "변경 전 합성 고객", phone: event === "SERVICE_START" ? "01000000113" : "01000000213", voucherClient: false,
+            startDate: new Date("2026-11-10T00:00:00.000Z"), endDate: new Date("2026-11-20T00:00:00.000Z"), bookingConfirmedAt: new Date("2026-10-01T00:00:00.000Z"), serviceStatus: "waiting" } });
+        clientIds.add(client.id);
+        const schedule = await prisma.employee_schedule.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id, primaryEmployeeId: primary.id, secondaryEmployeeId: secondary.id,
+            workAddress: "합성 주소", startDate: new Date("2026-11-10T00:00:00.000Z"), endDate: new Date("2026-11-20T00:00:00.000Z") } });
+        scheduleIds.add(schedule.id);
+        const serviceRecordCase = await prisma.service_record_case.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id,
+            startDate: new Date("2026-11-10T00:00:00.000Z"), endDate: new Date("2026-11-20T00:00:00.000Z"), requiredSessionCount: 9 } });
+        const preservedToken = await prisma.service_record_token.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, scheduleId: schedule.id, employeeId: primary.id, serviceRecordCaseId: serviceRecordCase.id,
+            linkTokenHash: `phase7_${randomUUID().replace(/-/g, "")}`, expectedPhoneHash: createHash("sha256").update(primary.phone).digest("hex"), expiresAt: new Date("2026-12-01T00:00:00.000Z") } });
+        await prisma.message_trigger_rule.upsert({ where: { id: SERVICE_RECORD_LINK_RULE_ID }, update: {}, create: { id: SERVICE_RECORD_LINK_RULE_ID,
+            branchId: null, name: "제공기록지 링크", isActive: true, eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0,
+            sendTime: "15:00", recipientType: "PRIMARY_EMPLOYEE", templateKey: "SERVICE_RECORD_LINK", isDefault: true } });
+        const oldClientRule = await prisma.message_trigger_rule.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "기존 고객", isActive: false,
+            eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0, recipientType: "CLIENT", templateKey: "INFO" } });
+        const oldAssignmentRule = await prisma.message_trigger_rule.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "기존 배정", isActive: false,
+            eventType: "EMPLOYEE_ASSIGNED", offsetType: "IMMEDIATE", offsetDays: 0, recipientType: "PRIMARY_EMPLOYEE", templateKey: "EMPLOYEE_ASSIGNED" } });
+        producerRuleIds.push(oldClientRule.id, oldAssignmentRule.id);
+        const oldFamilies = [];
+        for (const [ruleId, templateKey, recipientType, employeeScheduleId, dedupeKey] of [
+            [oldClientRule.id, "INFO", "CLIENT", null, `phase7-old-client-${client.id}`],
+            [oldAssignmentRule.id, "EMPLOYEE_ASSIGNED", "PRIMARY_EMPLOYEE", schedule.id, `phase7-old-assignment-${client.id}`],
+            [SERVICE_RECORD_LINK_RULE_ID, "SERVICE_RECORD_LINK", "PRIMARY_EMPLOYEE", schedule.id, `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${schedule.id}:primary`],
+        ] as const) oldFamilies.push(await prisma.message_trigger_job.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id, ruleId, templateKey, recipientType, employeeScheduleId,
+            status: "sent", sentAt: new Date("2026-11-01T00:00:00.000Z"), scheduledFor: new Date("2026-11-01T00:00:00.000Z"), dedupeKey,
+            recipientPhone: "01000000999", payload: { memberId: String(client.id), recipientName: "보존할 이력", recipientPhone: "01000000999", templateVariables: {}, legacyAuthorityMarker: "preserve" } } }));
+        const sessionId = randomUUID(); const taskId = randomUUID(); const actionId = randomUUID(); caregiverSessionIds.push(sessionId);
+        await prisma.agent_session.create({ data: { id: sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, model: "fixture", agentVersion: "fixture", expiresAt: new Date("2027-01-01T00:00:00Z") } });
+        await prisma.agent_task.create({ data: { id: taskId, sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, capabilityId: "clients.update", status: "executing", revision: 2, expiresAt: new Date("2027-01-01T00:00:00Z") } });
+        const capability = harness.app.get(ClientWriteAgentCapabilitiesProvider).getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
+        const context: AgentContext = { principal: { userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, globalRole: "owner", branchRole: "owner" } as never,
+            sessionId, actionId, traceId: randomUUID(), locale: "ko" };
+            const inspection = await capability.inspect!(context, { id: client.id, name: "변경 후 합성 고객" });
+            const input = { id: client.id, name: "변경 후 합성 고객", targetVersion: inspection.targetVersion };
+            const impact = await capability.planAutomationImpact!(context, input, taskId);
+            expect(impact.availability).toBe("available"); expect(impact.complete).toBe(true);
+            expect(impact.effects.map((effect) => [effect.kind, effect.scheduleId, effect.recipientType]).sort()).toEqual([
+                ["caregiver-service", schedule.id, "primary-employee"], ["caregiver-service", schedule.id, "secondary-employee"],
+            ]);
+            const question = createAgentAutomationQuestion(impact);
+            const artifact = parseTaskAutomationArtifact({ version: 1, actionId, taskId, taskRevision: 2, sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID,
+                capability: "clients.update", inputHash: agentBindingHash(input), targetClientId: client.id, targetVersion: inspection.targetVersion, question,
+                consent: { choice: "yes", binding: { recipientRef: question.recipientSetRef, templateRef: question.templateSetRef, effectDigest: question.effectDigest, policyDigest: question.policyDigest, consentEventId: randomUUID() } }, noSend: false, impact });
+            expect(artifact).not.toBeNull();
+            await prisma.agent_action.create({ data: { id: actionId, sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, taskId, taskRevision: 2,
+                capability: "clients.update", capabilityVersion: "1.0.0", risk: "external-side-effect", status: "executing", proposal: { _taskAutomation: artifact } as Prisma.InputJsonValue,
+                proposalRevision: "fixture", inputHash: artifact!.inputHash, targetVersion: inspection.targetVersion, authorizationContext: { approvalPolicy: "strong" }, expiresAt: new Date("2027-01-01T00:00:00Z"),
+                idempotencyKey: randomUUID(), requestDedupeKey: randomUUID(), dedupeExpiresAt: new Date("2027-01-01T00:00:00Z") } });
+            context.taskAutomation = artifact!; context.approvedTargetVersion = inspection.targetVersion;
+            const callsBefore = aligoStub.sendCalls.length;
+            expect(await capability.executeApprovedTarget!(context, input, inspection.targetVersion!)).toEqual({ id: client.id, name: "변경 후 합성 고객", status: "updated" });
+            const intents = await prisma.message_trigger_job.findMany({ where: { branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON } });
+            expect(intents).toHaveLength(1);
+            const reference = parseAgentAutomationTaskCommitReference((intents[0]!.payload as { taskAutomationReference: unknown }).taskAutomationReference);
+            expect(reference).not.toBeNull();
+            if (!reference) throw new Error("missing persisted task reference");
+            expect(await fulfillClientMessageAutomationIntent({ prisma, triggerService: triggers, branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id, includePast: true, suppressGreeting: false,
+                taskOrigin: true, taskAutomationReference: reference })).toBe(true);
+            const generated = await prisma.message_trigger_job.findMany({ where: { clientId: client.id, ruleId: { in: group.rules.map((rule) => rule.id) } }, orderBy: { recipientType: "asc" } });
+            expect(generated).toHaveLength(2);
+            for (const row of generated) {
+                expect(row.status).toBe("pending");
+                expect(row.scheduledFor.toISOString()).toBe(event === "SERVICE_START" ? "2026-11-10T01:30:00.000Z" : "2026-11-20T01:30:00.000Z");
+                expect(row.payload).toMatchObject({ caregiverSourceSnapshot: { version: 1, groupId: group.id, groupVersion: 1 }, agentAutomationSeal: { version: 1 } });
+            }
+            const gate = harness.app.get(AgentAutomationDeliveryGateService); const delivery = harness.app.get(SmsTriggerDeliveryService); const jobs = new SbMessageTriggerJobRepository(prisma);
+            for (const row of generated) {
+                const token = await jobs.claimPendingWithRuleFence(row.id, MESSAGE_CRON_BRANCH_ID); expect(token).not.toBeNull();
+                const job = await jobs.findByIdInBranch(MESSAGE_CRON_BRANCH_ID, row.id); expect(job).not.toBeNull();
+                const render = (candidate: MessageTriggerJobEntity, tx: Prisma.TransactionClient) => delivery.resolveCanonicalDeliverySnapshot(candidate, tx);
+                expect(await gate.authorizePreparation(job!, render, async () => ({ kind: "allow" }))).toEqual({ kind: "allow" });
+                const prepared = await delivery.prepareJob(job!); expect(prepared).not.toBeNull(); await jobs.update(job!);
+                expect(await gate.authorizeDispatch(job!, prepared!, render, async (tx) => {
+                    const changed = await tx.message_trigger_job.updateMany({ where: { id: row.id, branchId: MESSAGE_CRON_BRANCH_ID, status: "processing", claimToken: token }, data: { status: "dispatching" } });
+                    return changed.count === 1 ? { kind: "allow" } : { kind: "lost" };
+                })).toEqual({ kind: "allow" });
+                job!.status = "dispatching"; expect(await delivery.sendPreparedJob(job!, prepared!)).toBe(true);
+                job!.markSent(); await jobs.update(job!);
+            }
+            expect(aligoStub.sendCalls.slice(callsBefore).map((call) => [call.receiver, call.message]).sort()).toEqual([
+                [event === "SERVICE_START" ? "01000000111" : "01000000211", "합성 주 관리사님, 변경 후 합성 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - Phase7 합성 지점"],
+                [event === "SERVICE_START" ? "01000000112" : "01000000212", "합성 보조 관리사님, 변경 후 합성 고객 고객님의 서비스가 2026-11-20에 종료됩니다. 마무리 안내를 확인해 주세요. - Phase7 합성 지점"],
+            ].sort());
+            await triggers.syncClientRulesForClient(MESSAGE_CRON_BRANCH_ID, client.id, true, false, { preserveExisting: true, stableBatchAt: new Date(), taskOrigin: true, taskAutomationReference: reference });
+            expect(await prisma.message_trigger_job.count({ where: { clientId: client.id, ruleId: { in: group.rules.map((rule) => rule.id) } } })).toBe(2);
+            expect(aligoStub.sendCalls.length - callsBefore).toBe(2);
+            for (const old of oldFamilies) expect(await prisma.message_trigger_job.findUnique({ where: { id: old.id } })).toEqual(old);
+            expect(await prisma.service_record_token.findUnique({ where: { id: preservedToken.id } })).toEqual(preservedToken);
+            expect(aligoStub.sendCalls.slice(callsBefore).some((call) => call.receiver === "01000000999")).toBe(false);
+        } finally {
+            await prisma.branch.update({ where: { id: MESSAGE_CRON_BRANCH_ID }, data: { name: previousBranchName } });
+            for (const id of producerGroupIds) {
+                const group = await prisma.message_trigger_rule_group.findUnique({ where: { id } });
+                if (group && !group.deletedAt) await triggers.deleteRuleGroup(MESSAGE_CRON_BRANCH_ID, id);
+            }
+            for (const rule of previousRules) await prisma.message_trigger_rule.update({ where: { id: rule.id }, data: { isActive: rule.isActive, updatedAt: rule.updatedAt } });
+            for (const rule of defaults.filter((rule) => !previousRules.some((previous) => previous.id === rule.id))) await prisma.message_trigger_rule.update({ where: { id: rule.id }, data: { isActive: rule.isActive, updatedAt: rule.updatedAt } });
+            if (previousParent) await prisma.system_setting.update({ where: { key: previousParent.key }, data: { value: previousParent.value, updatedAt: previousParent.updatedAt } });
+            else await prisma.system_setting.deleteMany({ where: { key: activation.getParentKey(MESSAGE_CRON_BRANCH_ID) } });
+        }
+    });
+
 });

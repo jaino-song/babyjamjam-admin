@@ -1,3 +1,5 @@
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
 import { MessageTriggerRuleGroupController } from "interface/controllers/message-trigger-rule-group.controller";
 import { MessageTriggerRuleGroupService } from "application/services/message-trigger-rule-group.service";
 import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
@@ -64,6 +66,8 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
     ],
     controllers: [MessageController, MessageTriggerController, MessageTriggerRuleGroupController],
     providers: [
+        CaregiverTemplateResolverService,
+        MessageTriggerRecipientResolverService,
         MessageTriggerRuleGroupService,
         MessageDuplicateCheckService,
         CreateMessageUsecase,

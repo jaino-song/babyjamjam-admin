@@ -1,3 +1,14 @@
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { SystemTemplateService } from "application/services/system-template.service";
+import { GetAllSystemTemplatesUseCase } from "application/usecases/system-template/get-all-system-templates.usecase";
+import { GetSystemTemplateUseCase } from "application/usecases/system-template/get-system-template.usecase";
+import { UpdateBranchSystemTemplateUseCase } from "application/usecases/system-template/update-branch-system-template.usecase";
+import { SystemTemplateMutationGuardService } from "application/services/system-template-mutation-guard.service";
+import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
@@ -39,6 +50,63 @@ const draft = (overrides: Partial<MessageTriggerRuleGroupDraft> = {}): MessageTr
 });
 const cloneRule = (rule: MessageTriggerRuleEntity) => Object.assign(Object.create(MessageTriggerRuleEntity.prototype) as MessageTriggerRuleEntity, structuredClone(rule));
 
+describe("RULE-2 caregiver group projection", () => {
+    it("fences stale caregiver cancellation against the persisted pending status", async () => {
+        const f = coreFixture();
+        const group = await f.facade.create(branch, draft({ recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipientTemplates: {
+            PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+        } }));
+        f.rules[0]!.isActive = true;
+        const stale = MessageTriggerJobEntity.create({ branchId: branch, ruleId: group.rules[0]!.id, clientId: 7,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01000000011", templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+            scheduledFor: new Date("2026-11-10T01:30:00Z"), dedupeKey: "retired-caregiver-occurrence",
+            payload: { employeeId: 11, memberId: "11", recipientName: "합성 주", recipientPhone: "01000000011", templateVariables: {} } });
+        const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+        Object.assign(f.tx, { message_trigger_job: { updateMany } });
+        Object.assign(f.core, { caregiverRecipients: { resolve: async () => ({ complete: true, recipients: [] }) },
+            jobRepository: { findForClientAutomationReview: async () => [stale] } });
+        await (f.core as unknown as { syncCaregiverRulesForClient: (scope: string, clientId: number, includePast: boolean) => Promise<void> })
+            .syncCaregiverRulesForClient(branch, 7, false);
+        expect(updateMany).toHaveBeenCalledWith({ where: { id: stale.id, branchId: branch, clientId: 7, status: "pending", canceledByUser: false },
+            data: expect.objectContaining({ status: "canceled", cancelReason: "Caregiver assignment changed", claimToken: null, nextAttemptAt: null }) });
+        expect(stale.status).toBe("canceled");
+    });
+    it("creates BOTH as two recipient children under one version and rejects overlapping PRIMARY", async () => {
+        const f = coreFixture();
+        const pair = draft({ recipientMode: "BOTH_EMPLOYEES", recipientTemplates: {
+            PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" as MessageTriggerTemplateKey,
+            SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" as MessageTriggerTemplateKey,
+        } });
+        const created = await f.facade.create(branch, pair);
+        expect(created.version).toBe(1);
+        expect(created.rules.map((rule) => rule.recipientType)).toEqual(["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"]);
+        await expect(f.facade.create(branch, { ...pair, recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientTemplates: { PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" as MessageTriggerTemplateKey } })).rejects.toMatchObject({ status: 409 });
+        expect(f.groups).toHaveLength(1);
+        expect(f.rules).toHaveLength(2);
+    });
+    it.each([MessageTriggerEventType.SERVICE_START, MessageTriggerEventType.SERVICE_END])("preserves child identities while changing %s recipient mode and independent templates", async (eventType) => {
+        const f = coreFixture();
+        const pair = draft({ eventType, recipientMode: "BOTH_EMPLOYEES", recipientTemplates: {
+            PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+            SECONDARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+        } });
+        const created = await f.facade.create(branch, pair);
+        expect(created.rules.map((rule) => rule.templateKey)).toEqual(["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"]);
+        const ids = created.rules.map((rule) => rule.id);
+        const singleton = await f.facade.update(branch, created.id, { ...pair, recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientTemplates: { PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE }, expectedVersion: 1 });
+        expect(singleton).toMatchObject({ version: 2, recipientMode: "PRIMARY_EMPLOYEE", rules: [{ id: ids[0] }] });
+        const restored = await f.facade.update(branch, created.id, { ...pair, name: "복원", sendTime: "12:15", expectedVersion: 2 });
+        expect(restored.version).toBe(3);
+        expect(restored.rules.map((rule) => rule.id)).toEqual(ids);
+        expect(restored.rules.map((rule) => [rule.name, rule.sendTime, rule.isActive])).toEqual([["복원", "12:15", false], ["복원", "12:15", false]]);
+        expect(f.jobs).toEqual([{ status: "canceled", canceledByUser: true }, { status: "sent", canceledByUser: false }, { status: "canceled", canceledByUser: false }]);
+    });
+
+});
+
 function coreFixture() {
     const groups: MessageTriggerRuleGroupEntity[] = [];
     const rules: MessageTriggerRuleEntity[] = [];
@@ -65,6 +133,11 @@ function coreFixture() {
         }),
         create: jest.fn(async (_scope: string, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient) => { expect(transaction).toBe(tx); locks.push("children"); rule = cloneRule(rule); Object.assign(rule, { id: `rule-${++sequence}` }); rules.push(rule); return cloneRule(rule); }),
         markJobsStale: jest.fn(async (_scope: string, id: string, transaction: Prisma.TransactionClient) => { expect(transaction).toBe(tx); const rule = rules.find((row) => row.id === id)!; rule.jobsStale = true; }),
+        restoreGroupRule: jest.fn(async (_scope: string, _groupId: string, next: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient) => {
+            expect(transaction).toBe(tx); const stored = rules.find((row) => row.id === next.id);
+            if (!stored || !removed.has(next.id)) return null;
+            removed.delete(next.id); Object.assign(stored, cloneRule(next), { jobsStale: true }); return cloneRule(stored);
+        }),
         updateGroupCAS: jest.fn(async (_scope: string, group: MessageTriggerRuleGroupEntity, version: number, transaction: Prisma.TransactionClient) => {
             expect(transaction).toBe(tx); const stored = groups.find((row) => row.id === group.id)!;
             if (stored.version !== version) return false; Object.assign(stored, { name: group.name, recipientMode: group.recipientMode, version: version + 1 }); return true;
@@ -112,7 +185,7 @@ describe("MessageTriggerRuleGroupService through actual trigger core", () => {
         expect(await f.facade.list(branch)).toMatchObject({ groups: [{ id: created.id }], standaloneRules: [] });
         const updated = await f.facade.update(branch, created.id, { ...draft({ name: "변경", sendTime: "12:15", offsetDays: 5 }), expectedVersion: 1 });
         expect(updated).toMatchObject({ version: 2, name: "변경", sendTime: "12:15", offsetDays: 5, rules: [{ id: created.rules[0]!.id, groupId: created.id, sendTime: "12:15" }] });
-        expect(f.locks.slice(-4)).toEqual(["branch", "group", "children", "jobs"]);
+        expect(f.locks.slice(-5)).toEqual(["branch", "template", "group", "children", "jobs"]);
         await f.facade.delete(branch, created.id);
         expect(f.removed.has(created.rules[0]!.id)).toBe(true); expect(f.groups[0]!.deletedAt).toBeInstanceOf(Date);
         await expect(f.facade.get(branch, created.id)).rejects.toMatchObject({ status: 404 });
@@ -407,7 +480,7 @@ async function c4CoreInterleaving(options: { swap: boolean; explicitTemplate?: b
             await new Promise<void>((resolve) => { const queue = pending.get(key) ?? []; queue.push({ tx, resolve }); pending.set(key, queue); });
         } else owners.set(key, tx);
         trace.push({ tx, kind: "held", key });
-        if (legacyPhase && key.startsWith("babyjamjam:message-template-automation:") && !firstTemplates.has(tx)) {
+        if (legacyPhase && !(options.swap && options.explicitTemplate) && key.startsWith("babyjamjam:message-template-automation:") && !firstTemplates.has(tx)) {
             firstTemplates.add(tx); firstCount++;
             if (firstCount === 2) firstKeysGate.release();
             await firstKeysGate.promise;
@@ -447,7 +520,7 @@ async function c4CoreInterleaving(options: { swap: boolean; explicitTemplate?: b
         })));
         if (options.parentOff) fixtures.forEach((f) => f.setParent(false));
         trace.length = 0; legacyPhase = true;
-        if (options.active === false && !options.requestActivation) firstKeysGate.release();
+        if (options.swap && options.explicitTemplate) firstKeysGate.release();
         resumeGate.release();
         const results = await Promise.allSettled(updates);
         return { fixtures, scopes, trace, cycle, results };
@@ -475,7 +548,9 @@ describe("Phase6 C4 fresh legacy template lock resolution", () => {
         expect(result.cycle).toBe(false); expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
         for (const [index, scope] of result.scopes.entries()) {
             const keys = [...new Set(result.trace.filter((entry) => entry.tx.includes(scope) && entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key))];
-            expect(keys).toEqual([index === 0 ? "babyjamjam:message-template-automation:SERVICE_INFO" : "babyjamjam:message-template-automation:INFO"]);
+            expect(keys).toEqual(explicitTemplate
+                ? ["babyjamjam:message-template-automation:INFO", "babyjamjam:message-template-automation:SERVICE_INFO"]
+                : [index === 0 ? "babyjamjam:message-template-automation:SERVICE_INFO" : "babyjamjam:message-template-automation:INFO"]);
             expect(result.fixtures[index]!.groups[0]!.version).toBe(explicitTemplate ? 3 : 2);
         }
     });
@@ -497,10 +572,15 @@ describe("Phase6 C4 fresh legacy template lock resolution", () => {
         expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
         expect(result.cycle).toBe(false);
     });
-    it("does not acquire a template key for current inactive metadata updates", async () => {
+    it("acquires fresh current template keys before current inactive metadata updates", async () => {
         const result = await c4CoreInterleaving({ swap: true, active: false });
         expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
-        expect(result.trace.filter((entry) => entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:"))).toEqual([]);
+        for (const [index, scope] of result.scopes.entries()) {
+            const events = result.trace.filter((entry) => entry.tx.includes(scope));
+            const keys = events.filter((entry) => entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key);
+            expect(keys).toEqual([index === 0 ? "babyjamjam:message-template-automation:INFO" : "babyjamjam:message-template-automation:SERVICE_INFO"]);
+            expect(events.findIndex((entry) => entry.kind === "held" && entry.key === keys[0])).toBeLessThan(events.findIndex((entry) => entry.kind === "group"));
+        }
         expect(result.fixtures.map((f) => f.rules[0]!.isActive)).toEqual([false, false]);
     });
     it.each([false, true])("preserves parent-OFF metadata/explicit-activation gates (activation=%s)", async (requestActivation) => {
@@ -527,5 +607,60 @@ describe("SbMessageTriggerRuleRepository generic group primitives", () => {
         expect(transaction.message_trigger_rule.findMany).toHaveBeenCalledWith({ where: { branchId: branch, groupId: row.id }, orderBy: { id: "asc" } });
         expect(await repository.updateGroupCAS(branch, row, 4, transaction as never)).toBe(true);
         expect(transaction.message_trigger_rule_group.updateMany).toHaveBeenCalledWith({ where: { id: row.id, branchId: branch, deletedAt: null, version: 4 }, data: { name: "group", recipientMode: mode, version: { increment: 1 } } });
+    });
+});
+
+describe("RULE-2 actual core/template service/repository absence boundary", () => {
+    it("never freezes caregiver global text through active group validation or an unrelated first edit", async () => {
+        const f = coreFixture(); let snapshot: unknown = null;
+        const at = new Date("2026-10-01T00:00:00.000Z");
+        const client = { id: 7, branchId: branch, name: "합성 고객", phone: null, createdAt: at, deletedAt: null,
+            serviceStatus: "waiting", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z"), bookingConfirmedAt: at };
+        const schedule = { id: 91, incarnationId: "44000000-0000-4000-8000-000000000001", branchId: branch, clientId: 7,
+            startDate: new Date("2026-11-10T00:00:00Z"), endDate: new Date("2026-11-20T00:00:00Z"), replaced: false, terminatedAt: null,
+            primaryEmployeeId: 11, secondaryEmployeeId: null,
+            primaryEmployee: { id: 11, branchId: branch, name: "합성 주", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true }, secondaryEmployee: null };
+        const tx = Object.assign(f.tx, {
+            $executeRaw: jest.fn(async () => 1), $queryRaw: jest.fn(async () => [{ id: branch, system_template_snapshot: snapshot }]),
+            branch: { findUnique: jest.fn(async () => ({ id: branch, name: "합성 지점", systemTemplateSnapshot: snapshot })),
+                update: jest.fn(async ({ data }: { data: { systemTemplateSnapshot: unknown } }) => { snapshot = data.systemTemplateSnapshot; }) },
+            client: { findFirst: jest.fn(async () => client) }, employee_schedule: { findMany: jest.fn(async () => [schedule]) },
+            system_template: { findMany: jest.fn(async () => [{ id: "global-caregiver", templateKey: "CAREGIVER_SERVICE_START_NOTICE", content: "GLOBAL MUST NOT LEAK", customVariables: [], createdAt: at, updatedAt: at }]),
+                findUnique: jest.fn(async () => null) },
+        });
+        const database = { ...tx, $transaction: async <T>(work: (value: typeof tx) => Promise<T>) => work(tx) };
+        const repository = new SbSystemTemplateRepository(database as never);
+        const lock = new MessageTemplateAutomationLockService(database as never);
+        const templates = new SystemTemplateService(new GetAllSystemTemplatesUseCase(repository), new GetSystemTemplateUseCase(repository), undefined as never,
+            new UpdateBranchSystemTemplateUseCase(repository, new SystemTemplateMutationGuardService(f.repository as never), lock),
+            undefined as never, undefined as never, undefined as never, undefined as never, undefined as never, undefined as never);
+        const reader = new ClientAutomationSourceReader(database as never, f.repository as never, {} as never, f.approval as never);
+        const caregiverTemplates = new CaregiverTemplateResolverService(database as never);
+        const recipients = new MessageTriggerRecipientResolverService(reader, caregiverTemplates, f.repository as never);
+        Object.assign(f.core, { systemTemplateService: templates, caregiverTemplates, caregiverRecipients: recipients });
+        const body = draft({ isActive: true, recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientTemplates: { PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE } });
+        await f.facade.create(branch, body);
+        expect(snapshot).toBeNull();
+        expect(tx.branch.update).not.toHaveBeenCalled();
+        expect(tx.system_template.findMany).not.toHaveBeenCalled();
+        const expected = "합성 주 관리사님, 합성 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - 합성 지점";
+        expect((await f.core.previewRuleGroup(branch, { draft: body, clientId: 7 })).recipients[0]?.body).toBe(expected);
+        await templates.updateForBranch(branch, "GREETING", "보존할 인사 편집", "user-a");
+        expect((snapshot as { version: number }).version).toBe(1);
+        expect((snapshot as { templates: Record<string, { content: string }> }).templates["CAREGIVER_SERVICE_START_NOTICE"]?.content)
+            .toBe("{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}");
+        const beforePreviewWrites = tx.branch.update.mock.calls.length;
+        expect((await templates.getByKeyForBranch(branch, "CAREGIVER_SERVICE_START_NOTICE")).content).not.toBe("GLOBAL MUST NOT LEAK");
+        expect((await f.core.previewRuleGroup(branch, { draft: body, clientId: 7 })).recipients[0]?.body).toBe(expected);
+        const rendered = await recipients.resolve(branch, 7, f.rules, tx);
+        const delivery = new SmsTriggerDeliveryService({} as never, templates, {} as never, undefined, undefined, undefined, undefined, undefined, caregiverTemplates);
+        expect((await delivery.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(rendered.recipients[0]!.recipe!), tx)).message).toBe(expected);
+        expect(tx.branch.update.mock.calls.length).toBe(beforePreviewWrites);
+        const edited = "{{employeeName}} 관리사님 / {{clientName}} / {{serviceStartDate}} / {{branchName}} (지점 편집)";
+        await templates.updateForBranch(branch, "CAREGIVER_SERVICE_START_NOTICE", edited, "user-a");
+        await templates.updateForBranch(branch, "INFO", "무관한 정보 편집", "user-a");
+        expect((await templates.getByKeyForBranch(branch, "CAREGIVER_SERVICE_START_NOTICE")).content).toBe(edited);
+        expect((await templates.getByKeyForBranch(branch, "GREETING")).content).toBe("보존할 인사 편집");
     });
 });

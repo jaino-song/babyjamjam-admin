@@ -1,3 +1,7 @@
+import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
+import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
+import { CaregiverTemplateResolverService } from "./caregiver-template-resolver.service";
+import { isCaregiverSystemTemplateKey } from "domain/constants/system-template-registry";
 import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
@@ -129,6 +133,14 @@ class MissingSmsTemplateVariablesError extends Error {
  * bumped and every pending approval re-approved.
  */
 export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
+        smsLogTemplateKey: "caregiver_service_start_notice_sms", automationKey: "CAREGIVER_SERVICE_START_NOTICE_SMS",
+        triggerType: "caregiver_service_start", title: "제공인력 서비스 시작 안내", systemTemplateKey: SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+    },
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
+        smsLogTemplateKey: "caregiver_service_end_notice_sms", automationKey: "CAREGIVER_SERVICE_END_NOTICE_SMS",
+        triggerType: "caregiver_service_end", title: "제공인력 서비스 종료 안내", systemTemplateKey: SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+    },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",
@@ -214,6 +226,7 @@ export class SmsTriggerDeliveryService {
         private readonly ruleRepository?: IMessageTriggerRuleRepository,
         // Mandatory Nest dependency; timing never falls back after a failed read.
         private readonly systemSettingService?: SystemSettingService,
+        private readonly caregiverTemplates?: CaregiverTemplateResolverService,
     ) {}
 
     /**
@@ -571,6 +584,15 @@ export class SmsTriggerDeliveryService {
     }
 
     private assertDeliveryJob(job: MessageTriggerJobEntity): void {
+        if (isCaregiverTriggerTemplate(job.templateKey)) {
+            const source = job.payload.caregiverSourceSnapshot;
+            if (isManualMessageTriggerJob(job) || !job.employeeScheduleId || !source || source.version !== 1
+                || !source.groupId || source.ruleId !== job.ruleId || source.schedule.id !== job.employeeScheduleId
+                || source.employee.id !== job.payload.employeeId
+                || ![MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE].includes(job.recipientType)) {
+                throw new SmsTriggerDeliverySkipError("Caregiver service source is unavailable");
+            }
+        }
         if (isReservedAutomationJob(job)) throw new SmsTriggerDeliverySkipError("Internal automation records cannot be delivered");
     }
 
@@ -799,6 +821,10 @@ export class SmsTriggerDeliveryService {
     ): Promise<ResolvedSmsTemplate> {
         if (!systemTemplateKey) {
             throw new Error("systemTemplateKey is required for templated SMS delivery");
+        }
+        if (isCaregiverSystemTemplateKey(systemTemplateKey)) {
+            if (!this.caregiverTemplates) throw new BranchSystemTemplateSnapshotError(branchId, systemTemplateKey, "resolver unavailable");
+            return this.caregiverTemplates.resolve(branchId, systemTemplateKey, transaction);
         }
         try {
             const template = transaction ? await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey, transaction)

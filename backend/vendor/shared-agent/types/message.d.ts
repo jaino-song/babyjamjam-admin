@@ -20,7 +20,7 @@ export interface MessageTriggerRuleGroup {
     updatedAt: string;
     deletedAt: string | null;
 }
-export declare const MESSAGE_TRIGGER_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_INFO", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO", "SERVICE_END_NOTICE"];
+export declare const MESSAGE_TRIGGER_TEMPLATE_KEYS: readonly ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE", "CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_INFO", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO", "SERVICE_END_NOTICE"];
 export type MessageTriggerTemplateKey = (typeof MESSAGE_TRIGGER_TEMPLATE_KEYS)[number];
 /**
  * Which clients a trigger rule applies to, by their service stage at send time.
@@ -65,6 +65,8 @@ export declare const messageTriggerTemplateKeySchema: z.ZodEnum<{
     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
     EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
     CLIENT_WELCOME: "CLIENT_WELCOME";
     SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
     SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -173,6 +175,27 @@ export interface PreviewMessageTriggerRuleGroupDto {
     clientId?: number;
     employeeScheduleId?: number;
 }
+export interface MessageTriggerRuleGroupPreviewRecipient {
+    ruleId: string;
+    recipientType: MessageTriggerRecipientType;
+    employeeId: number | null;
+    employeeScheduleId: number | null;
+    recipientName: string | null;
+    recipientPhone: string | null;
+    templateKey: MessageTriggerTemplateKey;
+    body: string | null;
+    count: number;
+    scheduledFor: string | null;
+    anchorSource: "client.createdAt" | "client.startDate" | "client.endDate" | "employee_schedule.startDate" | "employee_schedule.endDate";
+    anchorDate: string | null;
+    outcome: "ready" | "skip" | "needs_setup" | "unavailable";
+    reason: string | null;
+}
+export interface MessageTriggerRuleGroupPreviewResponse {
+    complete: boolean;
+    recipients: MessageTriggerRuleGroupPreviewRecipient[];
+    count: number;
+}
 /**
  * Runtime validation for `POST /message-trigger-rules`.
  *
@@ -213,6 +236,8 @@ export declare const createMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -259,6 +284,8 @@ export declare const updateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -304,6 +331,8 @@ export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -349,6 +378,8 @@ export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -394,6 +425,8 @@ export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -439,6 +472,8 @@ export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";

@@ -47,6 +47,69 @@ function setup(globalRows: Array<{ templateKey: SystemTemplateKey; content: stri
 }
 
 describe("SbSystemTemplateRepository — key added after the branch snapshot froze", () => {
+    it("RULE-2 caregiver absence refuses global fallback and uses the approved registry body", async () => {
+        const key = "CAREGIVER_SERVICE_START_NOTICE" as SystemTemplateKey;
+        const { repository, tx } = setup([{ templateKey: key, content: "GLOBAL MUST NOT LEAK" }]);
+        const frozen = snapshotWithout(key);
+        tx.branch.findUnique.mockResolvedValue({ id: branchId, systemTemplateSnapshot: frozen });
+
+        const result = await repository.findByBranchKey(branchId, key);
+
+        expect(result?.content).toBe("{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}");
+        expect(tx.system_template.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("RULE-2 disabled v2 caregiver content remains blocked after an unrelated edit", async () => {
+        const key = "CAREGIVER_SERVICE_START_NOTICE" as SystemTemplateKey;
+        const { repository, tx } = setup();
+        const frozen = { ...snapshotWithout(SystemTemplateKey.CONTRACT_REMINDER), version: 2,
+            templates: { ...snapshotWithout(SystemTemplateKey.CONTRACT_REMINDER).templates,
+                [key]: { ...entry("edited caregiver"), state: "disabled" },
+                futureEntry: { opaque: "preserve exactly" } } };
+        tx.$queryRaw.mockResolvedValue([{ id: branchId, system_template_snapshot: frozen }] as never);
+
+        await repository.updateBranchTemplate(branchId, SystemTemplateKey.THANKS, "new thanks", "user-b", undefined, jest.fn());
+
+        const saved = tx.branch.update.mock.calls[0][0].data.systemTemplateSnapshot;
+        expect(saved.version).toBe(2);
+        expect(saved.templates[key]).toEqual({ ...entry("edited caregiver"), state: "disabled" });
+        expect(saved.templates.futureEntry).toEqual({ opaque: "preserve exactly" });
+    });
+
+    it("RULE-2 explicit lifecycle upgrades v1 only once, keeps content/tombstones, and requires restore", async () => {
+        const key = SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE;
+        const { repository, tx } = setup();
+        let snapshot: unknown = { version: 1, createdAt: at, createdBy: "user-a", templates: {
+            [key]: entry("edited caregiver"), INFO: entry("unrelated content"), futureEntry: { opaque: "keep" },
+        } };
+        tx.$queryRaw.mockImplementation(async () => [{ id: branchId, system_template_snapshot: snapshot }] as never);
+        tx.branch.update.mockImplementation(async (input) => { snapshot = input.data.systemTemplateSnapshot; });
+        expect(await repository.updateCaregiverTemplateLifecycle(branchId, key, "disable", "user-b", tx as never))
+            .toMatchObject({ state: "disabled", snapshotVersion: 2, deletedAt: null });
+        expect((snapshot as { version: number }).version).toBe(2);
+        await repository.updateBranchTemplate(branchId, key, "edited while disabled", "user-b", undefined, jest.fn(), tx as never);
+        expect((snapshot as { templates: Record<string, unknown> }).templates[key]).toMatchObject({ content: "edited while disabled", state: "disabled" });
+        expect((snapshot as { templates: Record<string, unknown> }).templates["INFO"]).toEqual(entry("unrelated content"));
+        expect((snapshot as { templates: Record<string, unknown> }).templates["futureEntry"]).toEqual({ opaque: "keep" });
+        expect(await repository.updateCaregiverTemplateLifecycle(branchId, key, "delete", "user-b", tx as never))
+            .toMatchObject({ state: "deleted", deletedAt: expect.any(String), snapshotVersion: 2 });
+        await expect(repository.updateCaregiverTemplateLifecycle(branchId, key, "activate", "user-b", tx as never)).rejects.toThrow("explicit restore");
+        expect(await repository.updateCaregiverTemplateLifecycle(branchId, key, "restore", "user-b", tx as never))
+            .toEqual({ key: "CAREGIVER_SERVICE_START_NOTICE", state: "active", deletedAt: null, snapshotVersion: 2 });
+        expect((snapshot as { templates: Record<string, unknown> }).templates[key]).toMatchObject({ content: "edited while disabled", state: "active" });
+        expect((snapshot as { templates: Record<string, unknown> }).templates[key]).not.toHaveProperty("deletedAt");
+    });
+
+    it("RULE-2 ordinary v1 content edit retains version1 and an unknown version refuses every write", async () => {
+        const { repository, tx } = setup();
+        await repository.updateBranchTemplate(branchId, SystemTemplateKey.THANKS, "new thanks", "user-b", undefined, jest.fn());
+        expect(tx.branch.update.mock.calls[0][0].data.systemTemplateSnapshot.version).toBe(1);
+        tx.branch.update.mockClear();
+        tx.$queryRaw.mockResolvedValue([{ id: branchId, system_template_snapshot: { version: 99 } }] as never);
+        await expect(repository.updateCaregiverTemplateLifecycle(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE, "disable", "user-b", tx as never)).rejects.toThrow("snapshot");
+        expect(tx.branch.update).not.toHaveBeenCalled();
+    });
+
     it("lists every template, using the registry default for the missing key", async () => {
         const { repository } = setup();
 

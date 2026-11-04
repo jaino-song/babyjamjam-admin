@@ -50,6 +50,8 @@ exports.MESSAGE_TRIGGER_RECIPIENT_MODES = [
     "BOTH_EMPLOYEES",
 ];
 exports.MESSAGE_TRIGGER_TEMPLATE_KEYS = [
+    "CAREGIVER_SERVICE_START_NOTICE",
+    "CAREGIVER_SERVICE_END_NOTICE",
     "CLIENT_WELCOME",
     "SERVICE_START_REMINDER",
     "SERVICE_INFO",
@@ -93,6 +95,8 @@ exports.messageTriggerTargetClientStatusSchema = zod_1.z.enum(exports.MESSAGE_TR
  * Backend parity is enforced by message-trigger-template-consistency.spec.ts.
  */
 exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = {
+    CAREGIVER_SERVICE_START_NOTICE: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
+    CAREGIVER_SERVICE_END_NOTICE: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
     CLIENT_WELCOME: ["name", "clientName", "registrationDate", "serviceType"],
     SERVICE_START_REMINDER: ["name", "clientName", "serviceStartDate", "timingText"],
     SERVICE_INFO: ["name", "clientName", "phone"],
@@ -130,6 +134,8 @@ exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = {
 // Which system template's body each SMS trigger template renders. One source of
 // truth for both the backend SMS delivery and the form preview.
 exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = {
+    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE",
+    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE",
     SERVICE_INFO: "SERVICE_INFO",
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK",
     CLIENT_GREETING: "GREETING",
@@ -145,6 +151,8 @@ exports.SMS_TRIGGER_TO_SYSTEM_TEMPLATE = {
 // data-driven dropdowns, the channel filters, and the backend delivery drift
 // guard without hardcoded per-surface lists.
 exports.SMS_TRIGGER_TEMPLATE_KEYS = [
+    "CAREGIVER_SERVICE_START_NOTICE",
+    "CAREGIVER_SERVICE_END_NOTICE",
     "SERVICE_INFO",
     "SERVICE_RECORD_LINK",
     "CLIENT_GREETING",

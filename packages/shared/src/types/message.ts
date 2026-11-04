@@ -73,6 +73,8 @@ export interface MessageTriggerRuleGroup {
 }
 
 export const MESSAGE_TRIGGER_TEMPLATE_KEYS = [
+  "CAREGIVER_SERVICE_START_NOTICE",
+  "CAREGIVER_SERVICE_END_NOTICE",
   "CLIENT_WELCOME",
   "SERVICE_START_REMINDER",
   "SERVICE_INFO",
@@ -132,6 +134,8 @@ export const messageTriggerTargetClientStatusSchema = z.enum(
 export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
   Record<MessageTriggerTemplateKey, readonly string[]>
 > = {
+  CAREGIVER_SERVICE_START_NOTICE: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
+  CAREGIVER_SERVICE_END_NOTICE: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
   CLIENT_WELCOME: ["name", "clientName", "registrationDate", "serviceType"],
   SERVICE_START_REMINDER: ["name", "clientName", "serviceStartDate", "timingText"],
   SERVICE_INFO: ["name", "clientName", "phone"],
@@ -172,6 +176,8 @@ export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
 export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
   Record<MessageTriggerTemplateKey, SystemTemplateKey>
 > = {
+  CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE",
+  CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE",
   SERVICE_INFO: "SERVICE_INFO",
   SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK",
   CLIENT_GREETING: "GREETING",
@@ -188,6 +194,8 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
 // data-driven dropdowns, the channel filters, and the backend delivery drift
 // guard without hardcoded per-surface lists.
 export const SMS_TRIGGER_TEMPLATE_KEYS: MessageTriggerTemplateKey[] = [
+  "CAREGIVER_SERVICE_START_NOTICE",
+  "CAREGIVER_SERVICE_END_NOTICE",
   "SERVICE_INFO",
   "SERVICE_RECORD_LINK",
   "CLIENT_GREETING",
@@ -310,6 +318,28 @@ export interface PreviewMessageTriggerRuleGroupDto {
   draft: CreateMessageTriggerRuleGroupDto;
   clientId?: number;
   employeeScheduleId?: number;
+}
+
+export interface MessageTriggerRuleGroupPreviewRecipient {
+  ruleId: string;
+  recipientType: MessageTriggerRecipientType;
+  employeeId: number | null;
+  employeeScheduleId: number | null;
+  recipientName: string | null;
+  recipientPhone: string | null;
+  templateKey: MessageTriggerTemplateKey;
+  body: string | null;
+  count: number;
+  scheduledFor: string | null;
+  anchorSource: "client.createdAt" | "client.startDate" | "client.endDate" | "employee_schedule.startDate" | "employee_schedule.endDate";
+  anchorDate: string | null;
+  outcome: "ready" | "skip" | "needs_setup" | "unavailable";
+  reason: string | null;
+}
+export interface MessageTriggerRuleGroupPreviewResponse {
+  complete: boolean;
+  recipients: MessageTriggerRuleGroupPreviewRecipient[];
+  count: number;
 }
 
 /**
