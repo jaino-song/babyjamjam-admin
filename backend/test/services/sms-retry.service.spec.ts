@@ -1,3 +1,12 @@
+import { OPTIONAL_DEPS_METADATA } from "@nestjs/common/constants";
+import { SCHEDULE_CRON_OPTIONS } from "@nestjs/schedule/dist/schedule.constants";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { MessageRetrySchedulerService } from "application/services/message-retry-scheduler.service";
+import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
+import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { ConflictException, ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
@@ -94,7 +103,7 @@ describe("SmsRetryService", () => {
         service = new SmsRetryService(
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,
+            messageSenderApprovalService as unknown as MessageSenderApprovalService,undefined, undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
         nowSpy = jest.spyOn(Date, "now");
         nowSpy.mockReturnValue(0);
@@ -238,7 +247,7 @@ describe("SmsRetryService", () => {
                 activation as never,
                 undefined,
                 undefined,
-                jobRepository as never,
+                jobRepository as never,undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
             );
             return { activation, findUnique };
         };
@@ -1028,7 +1037,7 @@ describe("SmsRetryService", () => {
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             undefined,
-            activationService as never,
+            activationService as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
         await expect(retryService.retry(sourceLog, "automatic")).resolves.toBeNull();
@@ -1057,7 +1066,7 @@ describe("SmsRetryService", () => {
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             undefined,
-            activationService as never,
+            activationService as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
         await expect(retryService.retry(sourceLog, "automatic")).resolves.toBe(sourceLog);
@@ -1169,7 +1178,7 @@ describe("SmsRetryService", () => {
             undefined,
             activationService as never,
             authorityService as never,
-            deliveryService as never,
+            deliveryService as never,undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
         aligoService.sendSms.mockResolvedValue({
             request: { senderPhone: "0212345678", receiver: canonicalSnapshot.receiver, msgType: "LMS", testModeYn: "N" },
@@ -1242,7 +1251,7 @@ describe("SmsRetryService", () => {
             undefined,
             activationService as never,
             { checkAutomaticJob: jest.fn() } as never,
-            { resolveCanonicalDeliverySnapshot: jest.fn() } as never,
+            { resolveCanonicalDeliverySnapshot: jest.fn() } as never,undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
         await expect(retryService.retry(sourceLog, "automatic")).resolves.toEqual(expect.objectContaining({ status: "failed" }));
@@ -1279,7 +1288,7 @@ describe("SmsRetryService", () => {
                 aligoService as unknown as AligoService,
                 messageSenderApprovalService as unknown as MessageSenderApprovalService,
                 undefined,
-                activation as never,
+                activation as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
             );
             return { source, transaction, clientFindFirst, activation };
         };
@@ -1488,7 +1497,7 @@ describe("SmsRetryService", () => {
                 logRepository as unknown as IMessageLogRepository,
                 aligoService as unknown as AligoService,
                 messageSenderApprovalService as unknown as MessageSenderApprovalService,
-                undefined, activation as never, undefined, undefined, undefined, safeguard,
+                undefined, activation as never, undefined, undefined, undefined, safeguard,new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
             );
             const source = createSmsRetryLog();
             source.triggerJobId = row.id;
@@ -1574,4 +1583,263 @@ describe("SmsRetryService", () => {
         });
     });
 
+});
+
+
+describe("TIME-2 branch SMS retry timing", () => {
+    const branchId = "11111111-1111-1111-1111-111111111111";
+    const rejection = { request: { receiver: "01012345678" }, response: { result_code: -999, message: "일시적인 서버 장애" } };
+    const accepted = { request: { receiver: "01012345678" }, response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0 } };
+    const policy = (interval: number | null | "corrupt" | "unavailable") => {
+        const execute = jest.fn(async () => {
+            if (interval === "unavailable") throw new Error("policy unavailable");
+            return interval === null ? null : JSON.stringify({ ...defaultMessageAutomationPolicy(), smsRetryIntervalMinutes: interval });
+        });
+        const settings = new SystemSettingService({ execute } as never, {} as never);
+        jest.spyOn(settings, "getMessageSettingsPolicyEnabled").mockResolvedValue(true);
+        return settings;
+    };
+    const retryHarness = (settings = policy(1), bound = true) => {
+        const source = MessageLogEntity.create({ branchId, provider: "aligo_sms", templateKey: "client_greeting_sms",
+            ...(bound ? { triggerJobId: "job-time-2" } : {}), receiver: "01012345678", messageBody: "timing fixture",
+            variables: { retrySafety: "provider-rejected" } });
+        Object.assign(source, { id: 77, status: "failed", attempts: 1, nextRetryAt: new Date("2026-11-03T21:00:00+09:00") });
+        const checkpoints: { due: Date | null; state: string }[] = [];
+        const logs = {
+            findByIdInBranch: jest.fn(async (branch: string) => branch === branchId ? source : null),
+            findRetryFamilyInBranch: jest.fn().mockResolvedValue([]),
+            hasNewerServiceRecordSmsInBranch: jest.fn().mockResolvedValue(false),
+            findPendingRetriesSystemScope: jest.fn().mockResolvedValue([source]),
+            startRetryAttempt: jest.fn(async (_source: MessageLogEntity, draft: MessageLogEntity) => {
+                checkpoints.push({ due: draft.nextRetryAt, state: draft.providerAcceptanceState });
+                Object.assign(draft, { id: 78 });
+                return { kind: "started", log: draft };
+            }), update: jest.fn(),
+        };
+        const aligo = { sendSms: jest.fn().mockResolvedValue(rejection) };
+        const activation = { runAutomaticRetryIfEnabled: jest.fn().mockResolvedValue({ applies: false, allowed: true }),
+            readJobRuleRetryPermission: jest.fn().mockResolvedValue("on") };
+        const retry: SmsRetryService = Reflect.construct(SmsRetryService, [logs, aligo, { ensureApproved: jest.fn() }, undefined,
+            activation, undefined, undefined, undefined, { checkJobById: jest.fn().mockResolvedValue({ allowed: true }) }, settings]);
+        const scheduler = () => new MessageRetrySchedulerService(logs as never, retry, { holdsLease: () => true } as never, settings);
+        return { source, logs, aligo, retry, checkpoints, scheduler, activation };
+    };
+    const deliveryHarness = (settings = policy(1), manualOwned = false) => {
+        const job = MessageTriggerJobEntity.create({ branchId, ruleId: manualOwned ? "agent-sms:timing" : "rule-time-2",
+            scheduledFor: new Date("2026-11-03T21:00:00+09:00"), recipientType: MessageTriggerRecipientType.CLIENT,
+            recipientPhone: "01012345678", templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+            dedupeKey: manualOwned ? "agent-sms:timing" : "time-2",
+            payload: { memberId: "7", recipientName: "fixture", recipientPhone: "01012345678", templateVariables: { name: "fixture" } } });
+        Object.assign(job, { id: "job-time-2" });
+        const logs = { save: jest.fn(async (log: MessageLogEntity) => log), update: jest.fn() };
+        const aligo = { sendSms: jest.fn().mockResolvedValue(rejection) };
+        const delivery: SmsTriggerDeliveryService = Reflect.construct(SmsTriggerDeliveryService, [aligo,
+            { getByKeyForBranch: jest.fn().mockResolvedValue({ content: "{{name}} fixture" }) }, logs,
+            undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, settings]);
+        return { job, logs, aligo, delivery };
+    };
+    beforeEach(() => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-11-03T21:00:00+09:00").getTime());
+        jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it.each([[1, "2026-11-03T21:01:00+09:00"], [5, "2026-11-03T21:05:00+09:00"], [null, "2026-11-03T21:05:00+09:00"]] as const)(
+        "initial rejection uses interval %s (missing settings default5)", async (interval, due) => {
+            const { delivery, job, logs, aligo } = deliveryHarness(policy(interval));
+            await expect(delivery.sendJob(job)).resolves.toBe(false);
+            expect(aligo.sendSms).toHaveBeenCalledTimes(1);
+            expect(logs.save.mock.calls[0]![0].nextRetryAt).toEqual(new Date(due));
+        });
+    it.each([[1, "2026-11-03T21:01:00+09:00"], [5, "2026-11-03T21:05:00+09:00"], [null, "2026-11-03T21:05:00+09:00"]] as const)(
+        "automatic retry uses interval %s for prepared recovery and rejection", async (interval, due) => {
+            const { retry, source, checkpoints, aligo } = retryHarness(policy(interval));
+            const result = await retry.retry(source, "automatic");
+            expect(checkpoints).toEqual([{ due: new Date(due), state: "prepared" }]);
+            expect(result?.nextRetryAt).toEqual(new Date(due));
+            expect(aligo.sendSms).toHaveBeenCalledTimes(1);
+        });
+    it.each(["corrupt", "unavailable", "missing-dependency"] as const)("initial delivery refuses %s before log/provider", async (failure) => {
+        const h = deliveryHarness();
+        Object.assign(h.delivery, { systemSettingService: failure === "missing-dependency" ? undefined : policy(failure) });
+        await expect(h.delivery.sendJob(h.job)).rejects.toThrow();
+        expect(h.logs.save).not.toHaveBeenCalled();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["automatic", "manual"] as const)("%s retry refuses corrupt/unavailable policy before admission/provider", async (invocation) => {
+        for (const invalid of ["corrupt", "unavailable"] as const) {
+            const h = retryHarness(policy(invalid));
+            await expect(h.retry.retry(h.source, invocation)).rejects.toThrow();
+            expect(h.logs.startRetryAttempt).not.toHaveBeenCalled();
+            expect(h.aligo.sendSms).not.toHaveBeenCalled();
+        }
+    });
+    it("missing retry dependency fails closed before admission/provider", async () => {
+        const h = retryHarness();
+        Object.assign(h.retry, { systemSettingService: undefined });
+        await expect(h.retry.retry(h.source, "manual")).rejects.toThrow();
+        expect(h.logs.startRetryAttempt).not.toHaveBeenCalled();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each([true, false])("explicit history bound=%s keeps prepared recovery then parks rejection", async (bound) => {
+        const h = retryHarness(policy(1), bound);
+        const result = await h.retry.retryById(branchId, h.source.id);
+        expect(h.checkpoints).toEqual([{ due: new Date("2026-11-03T21:01:00+09:00"), state: "prepared" }]);
+        expect(result.nextRetryAt).toBeNull();
+        expect(result.variables["retrySafety"]).toBe("manual-provider-rejected");
+        expect(h.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it("preserves branch authorization on explicit history retry", async () => {
+        const h = retryHarness();
+        await expect(h.retry.retryById("other-branch", h.source.id)).rejects.toBeInstanceOf(NotFoundException);
+        expect(h.logs.startRetryAttempt).not.toHaveBeenCalled();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("keeps persisted future due when interval changes without an early send", async () => {
+        const h = retryHarness(policy(1));
+        h.source.nextRetryAt = new Date("2026-11-03T21:05:00+09:00");
+        h.logs.findPendingRetriesSystemScope.mockImplementation(async () => h.source.nextRetryAt && h.source.nextRetryAt.getTime() <= Date.now() ? [h.source] : []);
+        await h.scheduler().retryFailedMessages();
+        expect(h.source.nextRetryAt).toEqual(new Date("2026-11-03T21:05:00+09:00"));
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("scheduler never submits direct manual-origin logs, including legacy due", async () => {
+        const h = retryHarness(policy(1), false);
+        h.source.variables["retrySafety"] = "manual-provider-rejected";
+        h.source.nextRetryAt = null;
+        await h.scheduler().retryFailedMessages();
+        expect(h.source.nextRetryAt).toBeNull();
+        h.source.nextRetryAt = new Date("2026-11-03T21:00:00+09:00");
+        await h.scheduler().retryFailedMessages();
+        expect(h.source.nextRetryAt).toBeNull();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("preserves configured automatic retry for a general manual-owned agent job", async () => {
+        const h = deliveryHarness(policy(1), true);
+        await h.delivery.sendJob(h.job);
+        expect(h.logs.save.mock.calls[0]![0].nextRetryAt).toEqual(new Date("2026-11-03T21:01:00+09:00"));
+    });
+    it("keeps max3 after third transient rejection with interval1", async () => {
+        const h = retryHarness();
+        h.source.attempts = 2;
+        const result = await h.retry.retry(h.source, "automatic");
+        expect(result?.attempts).toBe(3);
+        expect(result?.canRetry()).toBe(false);
+        expect(result?.nextRetryAt).toBeNull();
+    });
+    it("independent scheduler instances converge at attempt admission on provider1", async () => {
+        const h = retryHarness();
+        let admitted = false;
+        let release!: () => void;
+        let lost!: () => void;
+        let entered!: () => void;
+        const paused = new Promise<void>(resolve => { release = resolve; });
+        const loser = new Promise<void>(resolve => { lost = resolve; });
+        const provider = new Promise<void>(resolve => { entered = resolve; });
+        h.logs.startRetryAttempt.mockImplementation(async (_source, draft) => {
+            if (admitted) { lost(); return { kind: "lost" } as never; }
+            admitted = true;
+            Object.assign(draft, { id: 78 });
+            return { kind: "started", log: draft };
+        });
+        h.aligo.sendSms.mockImplementation(async () => { entered(); await paused; return accepted; });
+        const runs = [h.scheduler().retryFailedMessages(), h.scheduler().retryFailedMessages()];
+        try {
+            await Promise.all([provider, loser]);
+            expect(h.logs.startRetryAttempt).toHaveBeenCalledTimes(2);
+            expect(h.aligo.sendSms).toHaveBeenCalledTimes(1);
+        } finally { release(); await Promise.all(runs); }
+        expect(h.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it.each(["partial", "uncertain"])("scheduler refuses %s while permitting definite rejection", async (safety) => {
+        const refused = retryHarness();
+        refused.source.variables["retrySafety"] = safety;
+        await refused.scheduler().retryFailedMessages();
+        expect(refused.aligo.sendSms).not.toHaveBeenCalled();
+        const allowed = retryHarness();
+        allowed.aligo.sendSms.mockResolvedValue(accepted);
+        await allowed.scheduler().retryFailedMessages();
+        expect(allowed.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it.each(["corrupt", "unavailable"] as const)("scheduler preserves persisted state on %s timing policy", async (failure) => {
+        const h = retryHarness(policy(failure));
+        const stored = { status: h.source.status, due: h.source.nextRetryAt, attempts: h.source.attempts };
+        await h.scheduler().retryFailedMessages();
+        expect({ status: h.source.status, due: h.source.nextRetryAt, attempts: h.source.attempts }).toEqual(stored);
+        expect(h.logs.update).not.toHaveBeenCalled();
+        expect(h.logs.startRetryAttempt).not.toHaveBeenCalled();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each([[1, "2026-11-03T21:01:00+09:00"], [5, "2026-11-03T21:05:00+09:00"]] as const)(
+        "scheduler generic failure uses validated interval %s", async (interval, due) => {
+            const h = retryHarness(policy(interval));
+            h.logs.startRetryAttempt.mockRejectedValue(new Error("admission unavailable"));
+            await h.scheduler().retryFailedMessages();
+            expect(h.source.nextRetryAt).toEqual(new Date(due));
+            expect(h.source.attempts).toBe(2);
+            expect(h.logs.update).toHaveBeenCalledTimes(1);
+            expect(h.aligo.sendSms).not.toHaveBeenCalled();
+        });
+    it("uses configured timing inside the automatic activation transaction", async () => {
+        const h = retryHarness(policy(1));
+        const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue({ id: h.source.triggerJobId, branchId, payload: {} }) } };
+        h.activation.runAutomaticRetryIfEnabled.mockImplementation(async (_branch, _job, work) => ({
+            applies: true, allowed: true, value: await work(transaction),
+        }));
+        const result = await h.retry.retry(h.source, "automatic");
+        expect(h.checkpoints).toEqual([{ due: new Date("2026-11-03T21:01:00+09:00"), state: "prepared" }]);
+        expect(result?.nextRetryAt).toEqual(new Date("2026-11-03T21:01:00+09:00"));
+        expect(h.logs.startRetryAttempt).toHaveBeenCalledWith(h.source, expect.any(MessageLogEntity), "automatic", transaction);
+        expect(h.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it("does not consume admission when policy lookup fails inside the activation transaction", async () => {
+        const h = retryHarness(policy("unavailable"));
+        const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue({ id: h.source.triggerJobId, branchId, payload: {} }) } };
+        h.activation.runAutomaticRetryIfEnabled.mockImplementation(async (_branch, _job, work) => ({
+            applies: true, allowed: true, value: await work(transaction),
+        }));
+        await expect(h.retry.retry(h.source, "automatic")).rejects.toThrow("timing policy is unavailable");
+        expect(h.logs.startRetryAttempt).not.toHaveBeenCalled();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("keeps the rejection timestamp base after a provider delay", async () => {
+        const h = retryHarness(policy(1));
+        h.aligo.sendSms.mockImplementation(async () => {
+            jest.spyOn(Date, "now").mockReturnValue(new Date("2026-11-03T21:02:00+09:00").getTime());
+            return rejection;
+        });
+        const result = await h.retry.retry(h.source, "automatic");
+        expect(h.checkpoints).toEqual([{ due: new Date("2026-11-03T21:01:00+09:00"), state: "prepared" }]);
+        expect(result?.nextRetryAt).toEqual(new Date("2026-11-03T21:03:00+09:00"));
+    });
+    it("preserves state if the generic catch cannot resolve a fresh validated interval", async () => {
+        const settings = policy(1);
+        const read = settings.getMessageAutomationPolicyConfig.bind(settings);
+        jest.spyOn(settings, "getMessageAutomationPolicyConfig").mockImplementationOnce(read).mockRejectedValueOnce(new Error("read unavailable"));
+        const h = retryHarness(settings);
+        h.logs.startRetryAttempt.mockRejectedValue(new Error("admission unavailable"));
+        const stored = { status: h.source.status, due: h.source.nextRetryAt, attempts: h.source.attempts };
+        await h.scheduler().retryFailedMessages();
+        expect({ status: h.source.status, due: h.source.nextRetryAt, attempts: h.source.attempts }).toEqual(stored);
+        expect(h.logs.update).not.toHaveBeenCalled();
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("requires the timing settings dependency in Nest for both services", () => {
+        expect(Reflect.getMetadata("design:paramtypes", SmsRetryService)[9]).toBe(SystemSettingService);
+        expect(Reflect.getMetadata(OPTIONAL_DEPS_METADATA, SmsRetryService)).not.toContain(9);
+        expect(Reflect.getMetadata("design:paramtypes", SmsTriggerDeliveryService)[7]).toBe(SystemSettingService);
+        expect(Reflect.getMetadata(OPTIONAL_DEPS_METADATA, SmsTriggerDeliveryService)).not.toContain(7);
+    });
+    it("only SMS retry cron becomes one minute and history reconciliation remains wired", async () => {
+        expect(Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, MessageRetrySchedulerService.prototype.retryFailedMessages)).toMatchObject({ cronTime: "* * * * *", timeZone: "Asia/Seoul" });
+        expect(Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, SmsCarrierCheckService.prototype.checkDueCarrierResults)).toMatchObject({ cronTime: "*/5 * * * *", timeZone: "Asia/Seoul" });
+        expect(Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, MessageAutomationIntentService.prototype.reconcilePendingIntents)).toMatchObject({ cronTime: "*/5 * * * *", timeZone: "Asia/Seoul" });
+        const h = retryHarness();
+        h.logs.findPendingRetriesSystemScope.mockResolvedValue([]);
+        const reconcile = jest.fn().mockResolvedValue(undefined);
+        await new MessageRetrySchedulerService(h.logs as never, h.retry, { holdsLease: () => true } as never, policy(1), { reconcile } as never).retryFailedMessages();
+        expect(reconcile).toHaveBeenCalledTimes(1);
+        expect(h.logs.findPendingRetriesSystemScope).toHaveBeenCalledTimes(1);
+    });
 });

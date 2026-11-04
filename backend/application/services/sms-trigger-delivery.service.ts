@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { SystemSettingService } from "./system-setting.service";
 import { AligoService } from "application/services/aligo.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import {
@@ -37,7 +38,6 @@ import { resolveRuleRetryPermission } from "application/services/message-automat
 import {
     MessageLogEntity,
     MessageLogStatus,
-    SMS_DELIVERY_RETRY_DELAY_MS,
 } from "domain/entities/message-log.entity";
 import {
     MESSAGE_LOG_REPOSITORY,
@@ -212,6 +212,8 @@ export class SmsTriggerDeliveryService {
         @Optional()
         @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
         private readonly ruleRepository?: IMessageTriggerRuleRepository,
+        // Mandatory Nest dependency; timing never falls back after a failed read.
+        private readonly systemSettingService?: SystemSettingService,
     ) {}
 
     /**
@@ -592,6 +594,11 @@ export class SmsTriggerDeliveryService {
         const retryOnFailure = preparedSnapshot
             ? await this.readRuleRetryOnFailureForDispatchedJob(job)
             : await this.readRuleRetryOnFailureOrDefer(job);
+        if (!this.systemSettingService || !job.branchId) {
+            throw new Error("SMS retry timing policy is unavailable");
+        }
+        const { configuration } = await this.systemSettingService.getMessageAutomationPolicyConfig(job.branchId);
+        const retryDelayMs = configuration.smsRetryIntervalMinutes * 60 * 1000;
         const snapshot = preparedSnapshot ?? await this.resolveDeliverySnapshot(job);
 
         const pendingAttempt = this.buildSmsLog({
@@ -604,6 +611,7 @@ export class SmsTriggerDeliveryService {
             errorMessage: null,
             msgType: snapshot.requestedDeliveryType,
             templateVariables: payload.templateVariables,
+            retryDelayMs,
         });
         // A few legacy in-process adapters return void from save even though
         // the repository contract returns the persisted entity. Treat that as
@@ -660,7 +668,7 @@ export class SmsTriggerDeliveryService {
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
             attempt.nextRetryAt = !isAccepted && !isPermanent && retryOnFailure && attempt.canRetry()
-                ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
+                ? new Date(Date.now() + retryDelayMs)
                 : null;
             attempt.updatedAt = new Date(Date.now());
             if (isAccepted && attempt.aligoMid) {
@@ -854,6 +862,7 @@ export class SmsTriggerDeliveryService {
         errorMessage: string | null;
         msgType: string;
         templateVariables: Record<string, string>;
+        retryDelayMs: number;
     }): MessageLogEntity {
         const now = new Date();
         const variables: Record<string, string> = {
@@ -906,7 +915,7 @@ export class SmsTriggerDeliveryService {
             params.status === "pending" ? 0 : 1,
             params.status === "pending" ? null : now,
             params.status === "failed"
-                ? new Date(now.getTime() + SMS_DELIVERY_RETRY_DELAY_MS)
+                ? new Date(now.getTime() + params.retryDelayMs)
                 : null,
             now,
             now,

@@ -1,3 +1,6 @@
+import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
+import { SystemSettingService } from "application/services/system-setting.service";
 import type { Prisma } from "@prisma/client";
 
 import { AligoService } from "application/services/aligo.service";
@@ -132,7 +135,7 @@ describeReal("SMS dispatching reconciliation and eligibility re-check (real Post
             undefined,
             undefined,
             jobRepository,
-            undefined,
+            undefined,new SystemSettingService(new GetSettingUsecase(new SbSystemSettingRepository(handle.service)), new UpdateSettingUsecase(new SbSystemSettingRepository(handle.service))),
         );
         return { service, sendSms };
     }

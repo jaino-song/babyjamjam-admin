@@ -119,7 +119,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             aligoService as unknown as AligoService,
             { getByKey: jest.fn() } as never,
             { save: jest.fn() } as never,
-        undefined, undefined, createLegacyAutomationDeliveryGate());
+        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const senderApproval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
         const provider = new MessageExternalAgentCapabilitiesProvider(
             prisma as never,
@@ -826,7 +826,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             aligoService,
             systemTemplateService as never,
             { save: jest.fn().mockImplementation(async (log: unknown) => log) } as never,
-        undefined, undefined, createLegacyAutomationDeliveryGate());
+        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const triggerDelivery = new MessageTriggerDeliveryService(smsDelivery);
         const senderApproval = {
             getApprovedBranchIds: jest.fn().mockResolvedValue(new Set([principal.branchId])),

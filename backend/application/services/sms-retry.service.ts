@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { SystemSettingService } from "./system-setting.service";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageAutomationActivationService, type AutomaticRetryRulePolicy } from "application/services/message-automation-activation.service";
@@ -18,7 +19,6 @@ import {
     isRetryFamilyBlocker,
     withoutAligoHistoryBookkeeping,
     SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
-    SMS_DELIVERY_RETRY_DELAY_MS,
     SMS_PARTIAL_RETRY_SAFETY,
 } from "domain/entities/message-log.entity";
 import {
@@ -54,6 +54,12 @@ const UNCERTAIN_RETRY_SUPERSEDED_REASON =
 const AUTOMATION_RETRY_SEAL_INVALID_REASON =
     "자동 문자 권한 증거가 현재 작업과 일치하지 않아 자동 재전송을 중단했습니다. 작업을 다시 검토해 주세요.";
 
+export class SmsRetryTimingPolicyUnavailableError extends ServiceUnavailableException {
+    constructor() {
+        super("SMS retry timing policy is unavailable");
+    }
+}
+
 interface RetrySchedule {
     scheduledDate?: string;
     scheduledTime?: string;
@@ -68,6 +74,7 @@ type AutomaticRetryBoundary =
         schedule: RetrySchedule;
         retryLog: MessageLogEntity;
         providerAttempt: MessageLogEntity;
+        retryDelayMs: number;
         authorizedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>;
     };
 
@@ -99,7 +106,19 @@ export class SmsRetryService {
         private readonly jobRepository?: IMessageTriggerJobRepository,
         // Required in production (no @Optional): the safeguard must never fail open.
         private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
+        // Nest injection is mandatory; legacy direct callers fail closed at timing lookup.
+        private readonly systemSettingService?: SystemSettingService,
     ) {}
+
+    async getRetryDelayMs(branchId: string | null): Promise<number> {
+        if (!branchId || !this.systemSettingService) throw new SmsRetryTimingPolicyUnavailableError();
+        try {
+            const { configuration } = await this.systemSettingService.getMessageAutomationPolicyConfig(branchId);
+            return configuration.smsRetryIntervalMinutes * 60 * 1000;
+        } catch {
+            throw new SmsRetryTimingPolicyUnavailableError();
+        }
+    }
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
         const sourceLog = await this.logRepository.findByIdInBranch(branchId, logId);
@@ -225,7 +244,8 @@ export class SmsRetryService {
                     }
 
                     const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog);
-                    const retryDraft = this.createRetryAttempt(sourceLog);
+                    const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
+                    const retryDraft = this.createRetryAttempt(sourceLog, retryDelayMs);
                     if (retryAuthority.kind === "valid") {
                         this.applyAuthorizedSnapshot(retryDraft, retryAuthority.snapshot);
                     }
@@ -269,6 +289,7 @@ export class SmsRetryService {
                         schedule,
                         retryLog,
                         providerAttempt,
+                        retryDelayMs,
                         ...(retryAuthority.kind === "valid" ? { authorizedSnapshot: retryAuthority.snapshot } : {}),
                     };
                 },
@@ -286,6 +307,7 @@ export class SmsRetryService {
                     boundary.value.retryLog,
                     boundary.value.providerAttempt,
                     invocation,
+                    boundary.value.retryDelayMs,
                     boundary.value.authorizedSnapshot,
                 );
             }
@@ -315,9 +337,10 @@ export class SmsRetryService {
             return sourceLog;
         }
 
+        const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
         const retryStart = await this.logRepository.startRetryAttempt(
             sourceLog,
-            this.createRetryAttempt(sourceLog),
+            this.createRetryAttempt(sourceLog, retryDelayMs),
             invocation,
         );
         if (retryStart.kind === "lost") {
@@ -352,7 +375,7 @@ export class SmsRetryService {
             ? await this.acceptanceService.beginProviderCall(retryLog)
             : this.beginProviderCallWithoutBoundary(retryLog);
 
-        return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation);
+        return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs);
     }
 
     /**
@@ -502,6 +525,7 @@ export class SmsRetryService {
         retryLog: MessageLogEntity,
         providerAttempt: MessageLogEntity,
         invocation: MessageRetryInvocation,
+        retryDelayMs: number,
         authorizedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<MessageLogEntity> {
         const isScheduledInFuture = schedule.scheduledAtMs !== null && schedule.scheduledAtMs > Date.now();
@@ -529,7 +553,7 @@ export class SmsRetryService {
                 countSmsRecipients(authorizedSnapshot?.receiver ?? providerAttempt.receiver),
             );
             if (providerOutcome === "rejected") {
-                this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation);
+                this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation, retryDelayMs);
                 // 수동 재시도의 주차 정책은 변경하지 않는다.
                 if (invocation === "automatic") {
                     const rejection = classifySmsProviderRejection(result);
@@ -694,9 +718,9 @@ export class SmsRetryService {
         });
     }
 
-    private createRetryAttempt(sourceLog: MessageLogEntity): MessageLogEntity {
+    private createRetryAttempt(sourceLog: MessageLogEntity, retryDelayMs: number): MessageLogEntity {
         const now = new Date(Date.now());
-        const recoveryAt = new Date(now.getTime() + SMS_DELIVERY_RETRY_DELAY_MS);
+        const recoveryAt = new Date(now.getTime() + retryDelayMs);
         const retryAttempt = sourceLog.attempts + 1;
         const providerAcceptanceKey = buildSmsProviderAcceptanceKey(
             "retry",
@@ -781,6 +805,7 @@ export class SmsRetryService {
         log: MessageLogEntity,
         errorMessage: string,
         invocation: MessageRetryInvocation,
+        retryDelayMs: number,
     ): void {
         log.status = "failed";
         log.providerAcceptanceState = "rejected";
@@ -809,7 +834,7 @@ export class SmsRetryService {
         // on; sendRetryAttempt re-checks the rule's CURRENT value before keeping
         // this schedule, and the next pick is superseded at the boundary too.
         log.nextRetryAt = log.canRetry()
-            ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
+            ? new Date(Date.now() + retryDelayMs)
             : null;
     }
 

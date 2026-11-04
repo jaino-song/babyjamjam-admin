@@ -6,7 +6,7 @@ import {
 } from "domain/repositories/message-log.repository.interface";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
-import { SmsRetryService } from "./sms-retry.service";
+import { SmsRetryService, SmsRetryTimingPolicyUnavailableError } from "./sms-retry.service";
 import { SystemSettingService } from "./system-setting.service";
 import { SmsHistoryReconciliationService } from "./sms-history-reconciliation.service";
 import {
@@ -48,7 +48,7 @@ export class MessageRetrySchedulerService {
         private readonly smsHistoryReconciliationService?: SmsHistoryReconciliationService,
     ) {}
 
-    @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
+    @Cron("* * * * *", { timeZone: "Asia/Seoul" })
     async retryFailedMessages(): Promise<void> {
         if (!this.schedulerLease.holdsLease()) {
             return;
@@ -130,7 +130,18 @@ export class MessageRetrySchedulerService {
                         await this.logRepository.update(log);
                     }
                 } catch (error) {
-                    log.markFailed(error instanceof Error ? error.message : String(error));
+                    if (error instanceof SmsRetryTimingPolicyUnavailableError) {
+                        this.logger.warn(`[Retry] Timing policy unavailable for log ${log.id}; stored retry unchanged`);
+                        continue;
+                    }
+                    let retryDelayMs: number;
+                    try {
+                        retryDelayMs = await this.smsRetryService.getRetryDelayMs(log.branchId);
+                    } catch {
+                        this.logger.warn(`[Retry] Could not resolve failure timing for log ${log.id}; stored retry unchanged`);
+                        continue;
+                    }
+                    log.markFailed(error instanceof Error ? error.message : String(error), retryDelayMs);
                     await this.logRepository.update(log);
                     this.logger.warn(`[Retry] Failed attempt ${log.attempts} for log ${log.id}: ${error}`);
                 }
