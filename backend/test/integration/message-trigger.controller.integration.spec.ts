@@ -1237,6 +1237,55 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         expect(response.status).toBe(200); expect(response.body).toMatchObject({ version: 2, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
         expect(provider).not.toHaveBeenCalled();
     });
+    it("C3 refuses immediate create duplicates that differ only in stored HH:mm", async () => {
+        const immediate = clientGroupBody({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: "CLIENT_GREETING" } });
+        const first = await post(immediate); expect(first.status).toBe(201);
+        const duplicate = await post({ ...immediate, sendTime: "10:00" });
+        expect(duplicate.status).toBe(409); expect(duplicate.body).toMatchObject({ code: "REQUEST_CONFLICT", groupId: first.body.id });
+        const legacy = await request(app.getHttpServer()).post("/message-trigger-rules").set("x-test-branch", branchId).send({
+            name: "legacy immediate", eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "11:00", isActive: false, recipientType: "CLIENT", templateKey: "CLIENT_GREETING" });
+        expect(legacy.status).toBe(409);
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(1);
+        expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(1);
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: first.body.rules[0].id } })).toMatchObject({ sendTime: "09:00" });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C3 refuses group and legacy conversion to duplicate immediate semantics without any mutation", async () => {
+        const immediate = clientGroupBody({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: "CLIENT_GREETING" } });
+        const first = await post(immediate); const target = await post(clientGroupBody({ sendTime: "10:00" }));
+        expect(first.status).toBe(201); expect(target.status).toBe(201);
+        await jobs.create(MessageTriggerJobEntity.create({ branchId, ruleId: target.body.rules[0].id,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            scheduledFor: new Date("2026-12-01T00:00:00Z"), dedupeKey: `phase6-c3:${target.body.id}`,
+            payload: { memberId: "synthetic", recipientName: "합성", recipientPhone: "01000000001", templateVariables: {} } }));
+        const beforeGroups = await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeRules = await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeJobs = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const duplicate = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId)
+            .send({ ...immediate, sendTime: "10:00", expectedVersion: 1 });
+        expect(duplicate.status).toBe(409); expect(duplicate.body).toMatchObject({ code: "REQUEST_CONFLICT", groupId: first.body.id });
+        const legacy = await request(app.getHttpServer()).patch(`/message-trigger-rules/${target.body.rules[0].id}`).set("x-test-branch", branchId)
+            .send({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "11:00", templateKey: "CLIENT_GREETING" });
+        expect(legacy.status).toBe(409);
+        expect(await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeGroups);
+        expect(await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeRules);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeJobs);
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C3 retains distinct calendar times and permits same-group metadata/time updates", async () => {
+        const first = await post(clientGroupBody({ sendTime: "09:00" })); const second = await post(clientGroupBody({ sendTime: "10:00" }));
+        expect(first.status).toBe(201); expect(second.status).toBe(201);
+        const updated = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${first.body.id}`).set("x-test-branch", branchId)
+            .send({ ...clientGroupBody({ name: "calendar metadata", sendTime: "09:00" }), expectedVersion: 1 });
+        expect(updated.status).toBe(200); expect(updated.body).toMatchObject({ version: 2, name: "calendar metadata", sendTime: "09:00" });
+        const immediate = clientGroupBody({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: "CLIENT_GREETING" } });
+        const own = await post(immediate); expect(own.status).toBe(201);
+        const ownUpdate = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${own.body.id}`).set("x-test-branch", branchId)
+            .send({ ...immediate, name: "immediate metadata", sendTime: "10:00", expectedVersion: 1 });
+        expect(ownUpdate.status).toBe(200); expect(ownUpdate.body).toMatchObject({ version: 2, name: "immediate metadata", sendTime: "10:00" });
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: own.body.rules[0].id } })).toMatchObject({ sendTime: "10:00" });
+        expect(provider).not.toHaveBeenCalled();
+    });
     it("generic projection primitives retain removed role identity for later re-addition", async () => {
         const lock = new MessageAutomationBranchLockService(handle.service);
         let groupId = ""; let childId = "";

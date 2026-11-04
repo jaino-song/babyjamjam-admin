@@ -1497,13 +1497,16 @@ export class MessageTriggerService {
         // Only configurable automatic rules participate; default/system/manual
         // senders have their own specialized APIs and are never conflated.
         if (!isConfigurableSmsTriggerTemplate(candidate.templateKey)) return;
+        // IMMEDIATE recipes use now; stored HH:mm does not distinguish a send.
+        const effectiveSendTime = candidate.offsetType === MessageTriggerOffsetType.IMMEDIATE ? null : candidate.sendTime;
         const rules = await this.ruleRepository.findGroupDuplicateCandidates(branchId, transaction);
         const duplicate = rules.find((rule) => rule.branchId === branchId && !rule.isDefault
             && !MessageTriggerRuleEntity.isReservedId(rule.id) && !isManualMessageTriggerRule(rule)
             && isConfigurableSmsTriggerTemplate(rule.templateKey) && (!excludedGroupId || rule.groupId !== excludedGroupId)
             && rule.recipientType === candidate.recipientType && rule.eventType === candidate.eventType
             && this.semanticRuleOffset(rule) === this.semanticRuleOffset(candidate)
-            && rule.sendTime === candidate.sendTime && rule.targetClientStatus === (candidate.targetClientStatus ?? "all")
+            && (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE ? null : rule.sendTime) === effectiveSendTime
+            && rule.targetClientStatus === (candidate.targetClientStatus ?? "all")
             && rule.templateKey === candidate.templateKey);
         if (duplicate) throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), groupId: duplicate.groupId, ruleId: duplicate.id });
     }

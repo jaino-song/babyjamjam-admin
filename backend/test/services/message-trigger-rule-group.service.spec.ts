@@ -312,6 +312,59 @@ describe("Phase6 C2 public template input boundary", () => {
     });
 });
 
+describe("Phase6 C3 immediate effective-time duplicates", () => {
+    it("ignores stored HH:mm for immediate create duplicates while recipes use the same literal instant", async () => {
+        const f = coreFixture();
+        const immediate = draft({ eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } });
+        const first = await f.facade.create(branch, immediate);
+        const alternative = cloneRule(first.rules[0]!); Object.assign(alternative, { id: "other-immediate-rule", sendTime: "10:00" });
+        const client = { id: 1, name: "합성", phone: "01000000001", createdAt: new Date("2026-11-01T00:00:00Z"), startDate: null, endDate: null, serviceEndNoticeSentAt: null };
+        const fixedNow = new Date("2026-11-03T12:00:00Z");
+        const firstRecipe = buildClientMessageRecipe(first.rules[0]!, client as never, fixedNow);
+        const alternativeRecipe = buildClientMessageRecipe(alternative, client as never, fixedNow);
+        expect(firstRecipe?.scheduledFor.toISOString()).toBe("2026-11-03T12:00:00.000Z");
+        expect(alternativeRecipe?.scheduledFor.toISOString()).toBe("2026-11-03T12:00:00.000Z");
+        expect(firstRecipe).toMatchObject({ recipientPhone: "01000000001", recipientType: "CLIENT", templateKey: "CLIENT_GREETING" });
+        expect(alternativeRecipe).toMatchObject({ recipientPhone: "01000000001", recipientType: "CLIENT", templateKey: "CLIENT_GREETING" });
+        expect(alternativeRecipe?.dedupeKey).not.toBe(firstRecipe?.dedupeKey);
+        await expect(f.facade.create(branch, { ...immediate, sendTime: "10:00" })).rejects.toMatchObject({ status: 409 });
+        await expect(f.core.createRule(branch, { name: "legacy immediate", eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE, sendTime: "11:00", isActive: false,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING })).rejects.toMatchObject({ status: 409 });
+        expect(f.groups).toHaveLength(1); expect(f.rules).toHaveLength(1); expect(f.groups[0]!.version).toBe(1);
+    });
+    it("refuses a group or legacy update into existing immediate semantics without changing any state", async () => {
+        const f = coreFixture();
+        const immediate = draft({ eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } });
+        await f.facade.create(branch, immediate);
+        const target = await f.facade.create(branch, draft({ sendTime: "10:00" }));
+        const before = structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs });
+        await expect(f.facade.update(branch, target.id, { ...immediate, sendTime: "10:00", expectedVersion: 1 })).rejects.toMatchObject({ status: 409 });
+        await expect(f.core.updateRule(branch, target.rules[0]!.id, { eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0, sendTime: "11:00", templateKey: MessageTriggerTemplateKey.CLIENT_GREETING })).rejects.toMatchObject({ status: 409 });
+        expect(structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs })).toEqual(before);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+    });
+    it("retains distinct calendar times and excludes the same group during metadata updates", async () => {
+        const f = coreFixture();
+        const first = await f.facade.create(branch, draft({ sendTime: "09:00" }));
+        const second = await f.facade.create(branch, draft({ sendTime: "10:00" }));
+        expect(second).toMatchObject({ version: 1, sendTime: "10:00" });
+        await expect(f.facade.update(branch, first.id, { ...draft({ name: "calendar metadata", sendTime: "09:00" }), expectedVersion: 1 })).resolves.toMatchObject({
+            version: 2, name: "calendar metadata", sendTime: "09:00", rules: [{ id: first.rules[0]!.id, sendTime: "09:00" }],
+        });
+        expect(f.groups).toHaveLength(2); expect(f.rules).toHaveLength(2);
+        const immediate = draft({ eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } });
+        const own = await f.facade.create(branch, immediate);
+        await expect(f.facade.update(branch, own.id, { ...immediate, name: "immediate metadata", sendTime: "10:00", expectedVersion: 1 })).resolves.toMatchObject({
+            version: 2, name: "immediate metadata", sendTime: "10:00", rules: [{ id: own.rules[0]!.id, sendTime: "10:00" }],
+        });
+    });
+});
+
 describe("SbMessageTriggerRuleRepository generic group primitives", () => {
     it.each(["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"] as const)("persists %s without a CLIENT-only SQL gate and uses only the supplied transaction", async (mode) => {
         const row = new MessageTriggerRuleGroupEntity("legacy-rule:opaque", branch, "group", mode as MessageTriggerRuleGroupEntity["recipientMode"], 4, new Date(), new Date());
