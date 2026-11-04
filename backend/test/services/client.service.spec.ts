@@ -33,6 +33,25 @@ import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
 import { isActiveContractSignal } from "application/utils/current-contract-document";
 import { legacyClientBadges } from "../../../packages/shared/src/client/badges";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "application/services/message-trigger-recipient-resolver.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
+import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
+import { AgentAutomationAuthorityService } from "application/agent/agent-automation-authority.service";
+import { AgentAutomationRecordRefusedError, AgentAutomationRecordStoreService, agentAutomationTaskCommitReference } from "application/agent/agent-automation-record-store.service";
+import { createAgentAutomationTerminalRecord, agentAutomationRecordKey } from "application/agent/agent-automation-terminal-record";
+import { agentAutomationCoverageRecordDigest, agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
+import { agentAutomationEffectDigest, agentAutomationRecordDigest, agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
+import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationScope } from "domain/entities/agent-automation-consent";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 
 /** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
 const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
@@ -8529,5 +8548,235 @@ describe("ClientService", () => {
             expect(result).toHaveLength(1);
             expect(result[0]?.serviceStatus).toBe("active");
         });
+    });
+});
+
+/** Real ordinary caller and caregiver controls; only persistence/config/provider boundaries are synthetic. */
+describe("ClientService ordinary caregiver authority successors", () => {
+    beforeEach(() => jest.useFakeTimers({ now: new Date("2026-11-05T00:00:00.000Z") }));
+    afterEach(() => jest.useRealTimers());
+    const uuid = (n: number) => `88000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const branchId = uuid(1);
+    const digest = "a".repeat(64);
+    type Row = { id: string; branchId: string | null; dedupeKey: string; payload: unknown; status?: unknown; claimToken?: unknown; [key: string]: unknown };
+
+    async function fixture(event: "START" | "END" = "START", decision: "allow" | "deny" | "noSend" | "empty-review" = "allow") {
+        const client = { id: 7, branchId, name: "변경 전 고객", phone: "01000000007", createdAt: new Date("2026-10-01T00:00:00Z"), deletedAt: null,
+            serviceStatus: "waiting", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z"), bookingConfirmedAt: new Date("2026-10-02T00:00:00Z"),
+            type: null, duration: 1, voucherClient: false, allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
+        const schedule = { id: 91, incarnationId: uuid(2), branchId, clientId: 7, replaced: false, terminatedAt: null,
+            startDate: new Date("2026-11-10T00:00:00Z"), endDate: new Date("2026-11-20T00:00:00Z"), primaryEmployeeId: 11, secondaryEmployeeId: null,
+            primaryEmployee: { id: 11, branchId, name: "합성 주", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true }, secondaryEmployee: null };
+        const branch = { id: branchId, name: "합성 지점", systemTemplateSnapshot: null };
+        const rule = MessageTriggerRuleEntity.create({ branchId, name: "배정 안내", groupId: uuid(3), isActive: true,
+            eventType: event === "START" ? MessageTriggerEventType.SERVICE_START : MessageTriggerEventType.SERVICE_END,
+            offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "10:30", recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: event === "START" ? MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE : MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE });
+        Object.assign(rule, { id: uuid(4) });
+        const rows: Row[] = [];
+        let inTransaction = false;
+        const database = {
+            client: {
+                findFirst: jest.fn(async () => client), findUnique: jest.fn(async () => client),
+                updateMany: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+                    expect(inTransaction).toBe(true);
+                    Object.assign(client, Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined)));
+                    return { count: 1 };
+                }),
+            },
+            branch: { findUnique: jest.fn(async () => branch) },
+            employee_schedule: { findMany: jest.fn<Promise<(typeof schedule)[]>, [query?: { take?: number }]>().mockResolvedValue([schedule]), findFirst: jest.fn(async () => schedule) },
+            eformsign_doc: { findMany: jest.fn(async () => []) },
+            $executeRaw: jest.fn(async () => 1),
+            $transaction: jest.fn(async <T,>(work: (transaction: Prisma.TransactionClient) => Promise<T>): Promise<T> => {
+                expect(inTransaction).toBe(false);
+                const beforeClient = structuredClone(client);
+                const beforeRows = structuredClone(rows);
+                inTransaction = true;
+                try { return await work(database as never); }
+                catch (error) { Object.assign(client, beforeClient); rows.splice(0, rows.length, ...beforeRows); throw error; }
+                finally { inTransaction = false; }
+            }),
+            message_trigger_job: {
+                findMany: jest.fn(async ({ where }: { where: { dedupeKey?: { startsWith: string }; id?: { in: string[] } } }) =>
+                    rows.filter((row) => !where.dedupeKey || row.dedupeKey.startsWith(where.dedupeKey.startsWith))
+                        .filter((row) => !where.id || where.id.in.includes(row.id))),
+                findFirst: jest.fn(async ({ where }: { where: { id: string; branchId?: string; status?: string; claimToken?: string } }) =>
+                    rows.find((row) => row.id === where.id && (!where.branchId || row.branchId === where.branchId)
+                        && (!where.status || row.status === where.status) && (!where.claimToken || row.claimToken === where.claimToken)) ?? null),
+                create: jest.fn(async ({ data }: { data: Row }) => {
+                    expect(inTransaction).toBe(true);
+                    const row = { sentAt: null, ...structuredClone(data) }; rows.push(row); return row;
+                }),
+                updateMany: jest.fn(async ({ where, data }: { where: { id: string; branchId: string; status?: string; claimToken?: string | null }; data: Record<string, unknown> }) => {
+                    const row = rows.find((entry) => entry.id === where.id && entry.branchId === where.branchId
+                        && (!where.status || entry.status === where.status) && (where.claimToken === undefined || entry.claimToken === where.claimToken));
+                    if (!row) return { count: 0 };
+                    Object.assign(row, structuredClone(data)); return { count: 1 };
+                }),
+            },
+        };
+        const sources = new ClientAutomationSourceReader(database as never, {} as never, {} as never, {} as never);
+        const settings = { status: "available" as const, rules: [rule], defaultsPresent: true, dispatchEnabled: true, senderApproved: true,
+            senderApprovedAt: null, pastTriggerEnabled: true, pastTriggerConfig: { sendIntervalMinutes: 1, ruleOrder: [] } };
+        // Keep unrelated legacy-source/config boundaries bounded. The caregiver SourceReader method itself is real.
+        jest.spyOn(sources, "readClientAutomationSettings").mockResolvedValue(settings);
+        jest.spyOn(sources, "readClientAutomationSource").mockImplementation(async () => ({ ...client, serviceEndNoticeSentAt: null, area: null }));
+        jest.spyOn(sources, "readClientAutomationSchedules").mockResolvedValue([]);
+        jest.spyOn(sources, "readClientAutomationServiceRecordLinks").mockResolvedValue([]);
+        const templates = new CaregiverTemplateResolverService(database as never);
+        const resolver = new MessageTriggerRecipientResolverService(sources, templates, { findGroup: async () => ({ id: uuid(3), version: 1 }) } as never);
+        const lock = new MessageAutomationBranchLockService(database as never);
+        const records = new AgentAutomationRecordStoreService(lock);
+        const sender = { read: () => ({ availability: "available", identityDigest: digest }) };
+        const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sources, sender as never, undefined, resolver);
+        const gate = new AgentAutomationDeliveryGateService(database as never, lock, authority);
+        const provider = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
+        const delivery = new SmsTriggerDeliveryService(provider as never, {} as never, { save: async (log: unknown) => log } as never,
+            undefined, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
+        const impact = new ClientAutomationImpactService(sources, delivery, sender as never,
+            { findForClientAutomationReview: async () => rows.filter((row) => row.id === uuid(12)).map((row) => ({ ...row, canceledByUser: false })) } as never, undefined, resolver);
+        const resolve = async () => (await resolver.resolve(branchId, 7, [rule], database as never)).recipients[0]!.recipe!;
+        const recipe = await resolve();
+        const subject = { kind: "client" as const, clientId: 7,
+            clientIdentity: agentBindingHash({ version: 1, resource: "client", id: 7, createdAt: client.createdAt.toISOString() }) };
+        const effect = describeCaregiverMessageEffect({ branchId, subject, rule, recipe, change: "refresh",
+            snapshot: await delivery.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(recipe)),
+            policy: { dispatchEnabled: true, senderApproved: true, senderIdentityDigest: digest, senderApprovedAt: null,
+                pastTriggerEnabled: true, pastTriggerConfig: settings.pastTriggerConfig } });
+        if (!effect) throw new Error("Synthetic caregiver source did not produce an effect");
+        const scope: AgentAutomationScope = { branchId, clientId: 7, clientIdentity: subject.clientIdentity, kind: "caregiver-service", ruleId: rule.id,
+            scheduleId: 91, scheduleIdentity: agentAutomationScheduleIdentity(schedule.incarnationId), recipientType: "primary-employee" };
+        const origin = { kind: "task" as const, userId: uuid(5), actionId: uuid(6), taskId: uuid(7), taskRevision: 2, consentEventId: uuid(8) };
+        const recordedAt = "2026-11-01T00:00:00.000Z";
+        const coverage: AgentAutomationCoverage = { kind: "coverage", version: 1, id: uuid(9), scope: agentAutomationCoverageScope(scope), sequence: 1,
+            previousId: null, origin, mutationDigest: digest, grandfatheredScopes: [], recordedAt, recordDigest: "" };
+        coverage.recordDigest = agentAutomationCoverageRecordDigest(coverage);
+        const reviewed: AgentAutomationAuthority = { version: 1, id: uuid(10), scope, sequence: 1, previousId: null, origin,
+            decision: decision === "deny" || decision === "noSend" ? "deny" : "allow", noSend: decision === "noSend", effects: [effect], scopeEffectDigest: agentAutomationEffectDigest([effect]),
+            reviewedEffectDigest: agentAutomationEffectDigest([effect]), reviewedPolicyDigest: effect.policyDigest, recordedAt, recordDigest: "" };
+        reviewed.recordDigest = agentAutomationRecordDigest(reviewed);
+        const authorities = decision === "empty-review" ? [] : [reviewed];
+        for (const record of [coverage, ...authorities]) {
+            const terminal = createAgentAutomationTerminalRecord(record, { version: 1, kind: "task", actionId: uuid(6), userId: uuid(5), taskId: uuid(7),
+                taskRevision: 2, questionRef: uuid(11), inputHash: digest, capability: "clients.update", resourceId: 7, receiptDigest: digest, recordedAt });
+            rows.push({ id: record.id, branchId, ruleId: "system:message_automation_intent", dedupeKey: agentAutomationRecordKey(record), status: "canceled",
+                cancelReason: "agent_automation_authority_record", canceledAt: new Date(recordedAt), scheduledFor: new Date(recordedAt), sentAt: null, clientId: null,
+                employeeScheduleId: null, recipientPhone: null, recipientType: "CLIENT", templateKey: "CLIENT_GREETING", nextAttemptAt: null, attempts: 0,
+                claimToken: null, canceledByUser: false, payload: { agentAutomationRecord: terminal } });
+        }
+        const reference = agentAutomationTaskCommitReference({ actionId: uuid(6), taskId: uuid(7), taskRevision: 2, batch: { authorities, coverages: [coverage] } });
+        const job = MessageTriggerJobEntity.create({ ...recipe, payload: { ...recipe.payload, taskAutomationReference: reference } });
+        Object.assign(job, { id: uuid(12) }); rows.push({ ...job });
+        const storeJob = () => { rows.splice(rows.findIndex((row) => row.id === job.id), 1, { ...structuredClone(job) }); };
+        const render = (candidate: MessageTriggerJobEntity, transaction: Prisma.TransactionClient) => delivery.resolveCanonicalDeliverySnapshot(candidate, transaction);
+        const check = () => authority.checkAutomaticJob(database as never, job, "materialize", render);
+        const refresh = async () => { Object.assign(job, await resolve()); storeJob(); };
+        const service = new ClientService(undefined as never, { execute: async () => client } as never, undefined as never, undefined as never,
+            undefined as never, undefined as never, database as never, { findByPhone: async () => null } as never, undefined as never, undefined as never, undefined as never,
+            { forBranch: async () => branchCalendar2026([]) } as never, undefined, undefined, undefined, undefined, undefined, impact, records, lock);
+        const append = jest.spyOn(records, "appendOrdinarySuccessors");
+        return { client, schedule, rows, database, sources, records, authority, gate, delivery, provider, impact, service, job, reference, check, refresh, render, storeJob, append };
+    }
+
+    it.each(["START", "END"] as const)("keeps reviewed %s authority through the real ordinary caller and sends the refreshed literal body once", async (event) => {
+        const f = await fixture(event);
+        expect((await f.check()).status).toBe("allowed");
+        const beforeRows = structuredClone(f.rows);
+        const planned = await f.impact.planClientWrite(branchId, { kind: "update", clientId: 7, values: { name: "변경 후 고객" } });
+        expect(planned).toMatchObject({ availability: "available", complete: true, effects: [{ kind: "caregiver-service", change: "refresh", scheduleId: 91 }] });
+        await f.service.update(branchId, 7, { name: "변경 후 고객" });
+        expect(f.client.name).toBe("변경 후 고객");
+        expect(f.append).toHaveBeenCalledTimes(1);
+        expect(f.append).toHaveBeenCalledWith(f.database, expect.objectContaining({ branchId, clientId: 7, operation: "client-write", effects: planned.effects }));
+        expect(f.database.$transaction).toHaveBeenCalledTimes(1);
+        expect(f.database.message_trigger_job.create).toHaveBeenCalledTimes(1);
+        const successor = f.database.message_trigger_job.create.mock.calls[0]![0].data;
+        expect(successor.payload).toMatchObject({ agentAutomationRecord: { record: { sequence: 2, previousId: uuid(10), decision: "allow", noSend: false,
+            scope: { kind: "caregiver-service", ruleId: uuid(4), scheduleId: 91, recipientType: "primary-employee" },
+            origin: { kind: "ordinary", operation: "client-write", mutationId: f.append.mock.calls[0]![1].mutationId } },
+            commit: { kind: "ordinary", operation: "client-write", mutationId: f.append.mock.calls[0]![1].mutationId, resourceId: 7 } } });
+        expect(f.rows.slice(0, beforeRows.length)).toEqual(beforeRows);
+        await f.refresh();
+        expect(f.job.payload).toMatchObject({ caregiverSourceSnapshot: { version: 1, client: { name: "변경 후 고객" }, schedule: { id: 91, incarnationId: uuid(2) } } });
+        expect(f.job.scheduledFor.toISOString()).toBe(event === "START" ? "2026-11-10T01:30:00.000Z" : "2026-11-20T01:30:00.000Z");
+        // An actual missing persisted successor must fail the same authority path, even with a freshly resolved recipe.
+        const index = f.rows.findIndex((row) => row.id === successor.id);
+        const [saved] = f.rows.splice(index, 1);
+        expect((await f.check()).status).toBe("refused");
+        f.rows.splice(index, 0, saved!);
+        expect((await f.check()).status).toBe("allowed");
+        await f.database.$transaction((tx) => f.gate.bindMaterialization(tx as never, f.job, f.render));
+        f.job.markProcessing("claim-ordinary-caregiver"); f.storeJob();
+        expect(await f.gate.authorizePreparation(f.job, f.render, async () => ({ kind: "allow" }))).toEqual({ kind: "allow" });
+        const preparation = await f.delivery.prepareJob(f.job);
+        expect(preparation).not.toBeNull();
+        f.storeJob();
+        expect(await f.gate.authorizeDispatch(f.job, preparation!, f.render, async (tx) => {
+            const updated = await tx.message_trigger_job.updateMany({ where: { id: f.job.id, branchId, status: "processing", claimToken: f.job.claimToken }, data: { status: "dispatching" } });
+            return updated.count === 1 ? { kind: "allow" } : { kind: "lost" };
+        })).toEqual({ kind: "allow" });
+        f.job.status = "dispatching";
+        expect(await f.delivery.sendPreparedJob(f.job, preparation!)).toBe(true);
+        expect(f.provider.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.provider.sendSms).toHaveBeenCalledWith(expect.objectContaining({ receiver: "01000000011", message: event === "START"
+            ? "합성 주 관리사님, 변경 후 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - 합성 지점"
+            : "합성 주 관리사님, 변경 후 고객 고객님의 서비스가 2026-11-20에 종료됩니다. 마무리 안내를 확인해 주세요. - 합성 지점" }));
+        await expect(f.delivery.sendPreparedJob(f.job, preparation!)).rejects.toThrow();
+        expect(f.provider.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["deny", "noSend"] as const)("preserves task %s and rolls back the ordinary name mutation", async (decision) => {
+        const f = await fixture("START", decision);
+        expect((await f.check()).status).toBe("refused");
+        const beforeRows = structuredClone(f.rows);
+        await expect(f.service.update(branchId, 7, { name: "변경 후 고객" })).rejects.toBeInstanceOf(AgentAutomationRecordRefusedError);
+        expect(f.client.name).toBe("변경 전 고객");
+        expect(f.rows).toEqual(beforeRows);
+        expect(f.database.message_trigger_job.create).not.toHaveBeenCalled();
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("does not grant a new rule from an empty prior task review", async () => {
+        const f = await fixture("START", "empty-review");
+        expect((await f.check()).status).toBe("refused");
+        const beforeRows = structuredClone(f.rows);
+        await f.service.update(branchId, 7, { name: "변경 후 고객" });
+        expect(f.append).toHaveBeenCalledTimes(1);
+        expect(f.client.name).toBe("변경 후 고객");
+        expect(f.rows).toEqual(beforeRows);
+        expect(f.database.message_trigger_job.create).not.toHaveBeenCalled();
+        await f.refresh();
+        expect((await f.check()).status).toBe("refused");
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("rolls back the client write when the same-transaction successor cannot persist", async () => {
+        const f = await fixture();
+        const beforeRows = structuredClone(f.rows);
+        f.database.message_trigger_job.create.mockRejectedValueOnce(new Error("synthetic persistence failure"));
+        await expect(f.service.update(branchId, 7, { name: "변경 후 고객" })).rejects.toThrow("synthetic persistence failure");
+        expect(f.client.name).toBe("변경 전 고객");
+        expect(f.rows).toEqual(beforeRows);
+        expect((await f.check()).status).toBe("allowed");
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each(["read-failure", "overflow"] as const)("keeps current authority refused after a %s prevents a complete successor plan", async (failure) => {
+        const f = await fixture();
+        expect((await f.check()).status).toBe("allowed");
+        f.database.employee_schedule.findMany.mockImplementation(async (query) => {
+            if (query?.take !== 501) return [f.schedule];
+            if (failure === "read-failure") throw new Error("synthetic source failure");
+            return Array.from({ length: 501 }, (_, index) => ({ ...f.schedule, id: 91 + index }));
+        });
+        await f.service.update(branchId, 7, { name: "변경 후 고객" });
+        expect(f.client.name).toBe("변경 후 고객");
+        expect(f.append).not.toHaveBeenCalled();
+        expect(f.database.message_trigger_job.create).not.toHaveBeenCalled();
+        f.database.employee_schedule.findMany.mockResolvedValue([f.schedule]);
+        await f.refresh();
+        expect((await f.check()).status).toBe("refused");
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
     });
 });
