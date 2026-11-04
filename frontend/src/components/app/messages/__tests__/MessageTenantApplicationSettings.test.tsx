@@ -676,6 +676,47 @@ describe("MessageTenantApplicationSettings", () => {
     );
   });
 
+  it("keeps consent labels and native Space activation while framing the checked state", () => {
+    mockSettingsQueries(false);
+    const onSubmit = jest.fn((event) => event.preventDefault());
+    const originalResizeObserver = globalThis.ResizeObserver;
+    // Radix observes its native form input; jsdom supplies no layout observer.
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    try {
+      render(<form onSubmit={onSubmit}><MessageTenantApplicationSettings /></form>);
+      const checkbox = screen.getAllByRole("checkbox")[0];
+      const label = checkbox.closest("label")!;
+      const submit = screen.getByRole("button", { name: "메시지 발송 신청하기" });
+      expect(label.htmlFor).toBe(checkbox.id);
+      expect(label).toHaveClass("border-2", "border-v3-selectable-border", "hover:border-v3-selectable-border");
+      expect(checkbox).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(label);
+      expect(checkbox).toHaveAttribute("aria-checked", "true");
+      expect(label).toHaveAttribute("data-selected", "true");
+      expect(label).toHaveClass("border-v3-primary", "hover:border-v3-primary");
+      checkbox.focus();
+      expect(document.activeElement).toBe(checkbox);
+      // jsdom does not synthesize a native button click from Space. Verify Space
+      // remains uncancelled, then dispatch that native activation explicitly.
+      expect(fireEvent.keyDown(checkbox, { key: " ", code: "Space" })).toBe(true);
+      fireEvent.keyUp(checkbox, { key: " ", code: "Space" });
+      fireEvent.click(checkbox);
+      expect(checkbox).toHaveAttribute("aria-checked", "false");
+      expect(label).toHaveClass("border-v3-selectable-border", "hover:border-v3-selectable-border");
+      expect(label).not.toHaveClass("border-v3-primary");
+      expect(label.className).not.toContain("!border");
+      expect(submit).toBeDisabled();
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(mockedSettingsApi.requestMessageSenderApproval).not.toHaveBeenCalled();
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
   it("sender application submit posts the approval request and refetches the approval state", async () => {
     mockSettingsQueries(false);
     mockedSettingsApi.requestMessageSenderApproval.mockResolvedValue({

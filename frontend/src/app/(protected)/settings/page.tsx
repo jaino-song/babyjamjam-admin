@@ -1,5 +1,6 @@
 "use client";
 
+import { ThemeChoice } from "@/components/app/ui/theme-choice";
 import { forwardRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,9 +13,6 @@ import {
   Palette,
   Send,
   Shield,
-  Sun,
-  Moon,
-  Monitor,
 } from "lucide-react";
 import { CallIngestTokenBranchRequired } from "@/components/app/call-ingest-tokens/CallIngestTokenBranchRequired";
 import { CallIngestTokenSection } from "@/components/app/call-ingest-tokens/CallIngestTokenSection";
@@ -95,12 +93,6 @@ type SectionId =
   | "call-ingest-tokens"
   | "holidays"
   | "send-notification";
-
-const THEME_OPTIONS = [
-  { id: "light", label: "라이트", icon: Sun, description: "밝은 테마" },
-  { id: "dark", label: "다크", icon: Moon, description: "어두운 테마" },
-  { id: "system", label: "시스템", icon: Monitor, description: "시스템 설정" },
-] as const;
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
@@ -371,54 +363,7 @@ export default function SettingsPage() {
               </div>
               <Separator className="mb-6" />
 
-              <div data-component="desktop_settings_sections_theme_theme-options" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {THEME_OPTIONS.map((theme) => {
-                  const Icon = theme.icon;
-                  const isSelected = theme.id === "light";
-                  return (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      aria-pressed={isSelected}
-                      disabled={!isSelected}
-                      className={`relative flex flex-col items-center gap-3 p-6 rounded-xl border-2 transition-all duration-200 ${
-                        isSelected
-                          ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))]/5"
-                          : "border-[hsl(var(--v3-border))] hover:border-[hsl(var(--v3-primary))]/30"
-                      } ${!isSelected ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-                    >
-                      <div
-                        data-component="desktop_settings_sections_theme_theme-options_theme-option-icon"
-                        className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                          isSelected
-                            ? "bg-[hsl(var(--v3-primary))]/10"
-                            : "bg-muted/50"
-                        }`}
-                      >
-                        <Icon
-                          size={24}
-                          className={
-                            isSelected
-                              ? "text-[hsl(var(--v3-primary))]"
-                              : "text-muted-foreground"
-                          }
-                        />
-                      </div>
-                      <div data-component="desktop_settings_sections_theme_theme-options_theme-option-text" className="text-center">
-                        <p className="text-sm font-medium">{theme.label}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {theme.description}
-                        </p>
-                      </div>
-                      {!isSelected && (
-                        <span className="absolute top-2 right-2 text-[10px] bg-muted px-2 py-0.5 rounded-full text-muted-foreground">
-                          준비 중
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+              <ThemeChoice data-component="desktop_settings_sections_theme_theme-options" />
             </ContentPaper>
           </section>
           )}

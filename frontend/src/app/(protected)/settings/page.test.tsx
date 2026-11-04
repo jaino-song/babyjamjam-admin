@@ -135,6 +135,27 @@ describe("SettingsPage profile query states", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("keeps only the light theme selected and unavailable themes disabled", () => {
+    renderProfile({ data: { name: "직원", role: "user" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "테마" })[0]);
+    const light = screen.getByRole("button", { name: /라이트 밝은 테마/ });
+    expect(light).toHaveAttribute("aria-pressed", "true");
+    expect(light).toHaveClass("border-2", "border-v3-primary", "hover:border-v3-primary");
+    expect(light).toHaveAttribute("type", "button");
+    for (const name of [/다크 어두운 테마/, /시스템 시스템 설정/]) {
+      const option = screen.getByRole("button", { name });
+      expect(option).toBeDisabled();
+      expect(option).toHaveAttribute("aria-pressed", "false");
+      expect(option).toHaveClass("border-2", "border-v3-selectable-border", "hover:border-v3-selectable-border");
+      expect(option.className).not.toContain("!border");
+      fireEvent.click(option);
+      expect(light).toHaveAttribute("aria-pressed", "true");
+      expect(option).toHaveAttribute("aria-pressed", "false");
+    }
+    light.focus();
+    expect(document.activeElement).toBe(light);
+  });
+
   it("keeps flag-off email disabled without a load-failure alert", async () => {
     jest.mocked(settingsApi.getNotificationPreferences).mockRejectedValueOnce(new Error("load failed"));
     const { client } = renderProfile({ data: { name: "직원", role: "user" } });

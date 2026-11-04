@@ -796,6 +796,15 @@
         }
       },
       {
+        "name": "ThemeChoice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/theme-choice",
+        "file": "frontend/src/components/app/ui/theme-choice.tsx",
+        "exports": ["ThemeChoice"],
+        "note": "Light-only theme choices using SelectableItemFrame; dark and system remain disabled.",
+        "replaces": ["settings page-local theme option markup"]
+      },
+      {
         "name": "InfoRow",
         "layer": "molecule",
         "import": "@/components/app/ui/info-row",

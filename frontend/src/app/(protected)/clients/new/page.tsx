@@ -42,7 +42,7 @@ import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { FieldMessageText } from "@/components/app/ui/field-message";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import { FormField as AppFormField, FormNativeSelect, FormSwitchGroupRow, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
+import { FormChip, FormField as AppFormField, FormNativeSelect, FormSwitchGroupRow, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
@@ -775,21 +775,16 @@ export default function NewClientPage() {
                 { key: "breastPump" as const, label: t(locale, "clients.form.breast-pump") },
                 { key: "applyMessageAutomation" as const, label: t(locale, "clients.form.message-automation") },
               ]).map(({ key, label }) => (
-                <button
+                <FormChip
                   key={key}
                   data-component={`desktop_clients-new_service_flags-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-chip`}
                   type="button"
                   onClick={() => setField(key, !store[key])}
-                  className={cn(
-                    "px-4 py-2.5 rounded-[14px] text-[0.8rem] font-semibold transition-all border-[1.5px]",
-                    store[key]
-                      ? "bg-v3-primary-light border-v3-primary text-v3-primary"
-                      : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
-                  )}
+                  selected={store[key]}
                 >
                   {store[key] && <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />}
                   {label}
-                </button>
+                </FormChip>
               ))}
             </div>
           </div>

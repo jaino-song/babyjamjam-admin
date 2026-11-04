@@ -27,6 +27,7 @@ import {
   ListEmptyState,
   ListPanel,
 } from "@/components/app/v3";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +44,6 @@ import type {
 } from "@/features/message-triggers/types";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 import {
   settingsApi,
   type MessagePolicyActivationResponse,
@@ -964,37 +964,35 @@ export function MessageTenantApplicationSettings() {
                 const checked = agreements[policy.id];
 
                 return (
-                  <label
-                    key={policy.id}
-                    htmlFor={policy.id}
-                    className={cn(
-                      "block cursor-pointer rounded-[18px] border px-4 py-3 transition-colors",
-                      checked
-                        ? "border-v3-primary bg-v3-primary-light/60"
-                        : "border-v3-border bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/20",
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <Checkbox
-                        id={policy.id}
-                        checked={checked}
-                        onCheckedChange={(value) => toggleAgreement(policy.id, value === true)}
-                        className="mt-0.5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[0.76rem] leading-5 text-v3-dark">{policy.text}</p>
-                        <a
-                          href={policy.sourceHref}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[0.7rem] font-semibold text-v3-primary hover:underline"
-                        >
-                          {policy.sourceLabel}
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
+                  <SelectableItemFrame key={policy.id} asChild isSelected={checked}>
+                    <label
+                      data-component={`desktop_messages_sections_split-layout_detail-panel-5_tenant-form_agreements_${policy.id}`}
+                      data-selected={checked}
+                      htmlFor={policy.id}
+                      className="block cursor-pointer rounded-[18px] px-4 py-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Checkbox
+                          id={policy.id}
+                          checked={checked}
+                          onCheckedChange={(value) => toggleAgreement(policy.id, value === true)}
+                          className="mt-0.5"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[0.76rem] leading-5 text-v3-dark">{policy.text}</p>
+                          <a
+                            href={policy.sourceHref}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex items-center gap-1 text-[0.7rem] font-semibold text-v3-primary hover:underline"
+                          >
+                            {policy.sourceLabel}
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </div>
                       </div>
-                    </div>
-                  </label>
+                    </label>
+                  </SelectableItemFrame>
                 );
               })}
             </div>

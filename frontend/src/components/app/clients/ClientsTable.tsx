@@ -14,6 +14,7 @@ import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { ContentPaper } from "../root/content-paper";
 import { DataTablePagination } from "../ui/datatable/DataTablePagination";
 import { cn } from "@/lib/utils";
@@ -237,7 +238,7 @@ export function ClientsTable() {
                         <Button variant="ghost" size="sm" className="text-muted-foreground h-7 rounded-[10px] text-xs hover:text-foreground">카드</Button>
                     </div>
                 </div>
-                
+
                 <div data-component="desktop_clients_table_body" className="p-3 bg-[hsl(220,20%,99%)] flex-1 overflow-y-auto">
                     <div className="space-y-2">
                         {isLoading ? (
@@ -246,43 +247,45 @@ export function ClientsTable() {
                              <div className="p-8 text-center text-muted-foreground">{t(locale, "clients.no-data")}</div>
                         ) : (
                             filteredClients.map((client: Client, idx: number) => (
-                                <Card 
-                                    key={client.id} 
-                                    variant="v3" 
-                                    data-component="desktop_clients_table_body_row"
-                                    className="flex items-center gap-4 p-5 cursor-pointer animate-pop-in border-2 border-transparent hover:border-[hsl(214,100%,34%)] hover:bg-[hsl(214,80%,98%)] group" 
-                                    style={{ animationDelay: `${idx * 0.05}s` }} 
-                                    onClick={() => handleRowClick(client)}
-                                >
-                                    <div className={cn(
-                                        "w-14 h-14 rounded-[18px] flex items-center justify-center shrink-0 shadow-md transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3",
-                                        getAvatarGradient(client.name)
-                                    )}>
-                                        <Users className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
-                                    </div>
+                                <SelectableItemFrame key={client.id} asChild isSelected={selectedClient?.id === client.id} isInteractive>
+                                    <Card
+                                        variant="v3"
+                                        data-component="desktop_clients_table_body_row"
+                                        className="flex items-center gap-4 p-5 cursor-pointer animate-pop-in group"
+                                        style={{ animationDelay: `${idx * 0.05}s` }}
+                                        data-selected={selectedClient?.id === client.id}
+                                        onClick={() => handleRowClick(client)}
+                                    >
+                                        <div className={cn(
+                                            "w-14 h-14 rounded-[18px] flex items-center justify-center shrink-0 shadow-md transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3",
+                                            getAvatarGradient(client.name)
+                                        )}>
+                                            <Users className="w-5 h-5 shrink-0 transition-colors text-white" aria-hidden="true" />
+                                        </div>
 
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="font-bold text-[0.95rem] text-[hsl(214,40%,18%)]">{client.name}</span>
-                                            <Badge variant="secondary" className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0.5 text-[10px] font-bold">
-                                                {client.type || "일반"}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="font-bold text-[0.95rem] text-[hsl(214,40%,18%)]">{client.name}</span>
+                                                <Badge variant="secondary" className="bg-[hsl(270,60%,94%)] text-[hsl(270,60%,55%)] border-none rounded-full px-2 py-0.5 text-[10px] font-bold">
+                                                    {client.type || "일반"}
+                                                </Badge>
+                                            </div>
+                                            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                                <span>📱 {client.phone}</span>
+                                                <span>📍 {client.address?.split(" ")[1] || client.address}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-col items-end gap-1.5">
+                                            <Badge variant={getStatusBadgeVariant(client.serviceStatus)} className="rounded-full px-3 py-1 text-[10px]">
+                                                {getStatusLabel(client.serviceStatus)}
                                             </Badge>
+                                            <span className="text-[10px] text-muted-foreground">
+                                                {client.duration ? `${client.duration}일` : "-"}
+                                            </span>
                                         </div>
-                                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                            <span>📱 {client.phone}</span>
-                                            <span>📍 {client.address?.split(" ")[1] || client.address}</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex flex-col items-end gap-1.5">
-                                        <Badge variant={getStatusBadgeVariant(client.serviceStatus)} className="rounded-full px-3 py-1 text-[10px]">
-                                            {getStatusLabel(client.serviceStatus)}
-                                        </Badge>
-                                        <span className="text-[10px] text-muted-foreground">
-                                            {client.duration ? `${client.duration}일` : "-"}
-                                        </span>
-                                    </div>
-                                </Card>
+                                    </Card>
+                                </SelectableItemFrame>
                             ))
                         )}
                     </div>
