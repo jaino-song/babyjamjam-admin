@@ -602,3 +602,78 @@ describe("Phase7 C4 completed slots and canonical predecessor retry", () => {
     });
 
 });
+
+// Phase7 C4b: active-catalog change is a direct continuation of the same replay invariant.
+describe("Phase7 C4b stable mixed replay after CARE catalog deactivation", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([
+        { deactivate: false, reviewed: false }, { deactivate: true, reviewed: false },
+        { deactivate: false, reviewed: true }, { deactivate: true, reviewed: true },
+    ])("retains CLIENT identity and current-policy delivery for %j", async ({ deactivate, reviewed }) => {
+        const f = await c4TimingFixture(true, reviewed);
+        // The production repository returns only active rows; keep this correction local to the new regression.
+        (f.core as unknown as { ruleRepository: { findActiveByEventTypes: jest.Mock } }).ruleRepository.findActiveByEventTypes
+            .mockImplementation(async () => f.rules.filter((rule) => rule.isActive));
+        Object.assign(f.jobRepository, { findForClientAutomationReview: jest.fn(async (scope: string, clientId: number, ruleIds: string[]) =>
+            f.jobs.filter((row) => row.branchId === scope && row.clientId === clientId && ruleIds.includes(row.ruleId)).map(timingJobCopy)) });
+        const effectiveOrder = () => f.ruleOrder.filter((id) => f.rules.some((rule) => rule.id === id && rule.isActive));
+        f.settings.getMessageAutomationPastTriggerConfig.mockImplementation(async () => ({ sendIntervalMinutes: 3, ruleOrder: effectiveOrder() }));
+        if (reviewed) jest.spyOn(f.sources, "readClientAutomationSettings").mockImplementation(async () => ({ status: "available", rules: f.rules, defaultsPresent: true,
+            dispatchEnabled: true, senderApproved: true, senderApprovedAt: null, pastTriggerEnabled: true,
+            pastTriggerConfig: { sendIntervalMinutes: 3, ruleOrder: effectiveOrder() } }));
+        await f.sync();
+        const originalClient = f.jobs.find((row) => row.ruleId === "child-client")!;
+        const originalId = originalClient.id;
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!;
+        expect(await f.send(timingJobCopy(secondary))).toBe(true); f.complete(secondary);
+        const history = structuredClone(secondary);
+        if (deactivate) for (const rule of f.rules.filter((rule) => rule.recipientType !== "CLIENT")) rule.isActive = false;
+        jest.setSystemTime(new Date("2026-11-05T12:01:00Z")); await f.sync();
+        const clients = f.jobs.filter((row) => row.ruleId === "child-client");
+        jest.setSystemTime(new Date("2026-11-05T12:04:00Z"));
+        const deliveries: Array<{ id: string; due: string; allowed: boolean }> = [];
+        for (const row of clients) {
+            const blocked = row.status !== "pending" || await f.postpone(row);
+            deliveries.push({ id: row.id, due: row.scheduledFor.toISOString(), allowed: !blocked && await f.send(timingJobCopy(row)) });
+        }
+        console.log("C4B_CATALOG_REPLAY", JSON.stringify({ deactivate, reviewed, clients: clients.map((row) => ({ id: row.id, due: row.scheduledFor.toISOString(), key: row.dedupeKey, status: row.status })), deliveries }));
+        expect(clients).toHaveLength(1);
+        expect(clients[0]).toMatchObject({ id: originalId, dedupeKey: "child-client:client:7:CLIENT:2026-11-05T12:03:00.000Z", scheduledFor: new Date("2026-11-05T12:03:00Z") });
+        // Inactive explicit order entries are pruned in production: the old reviewed policy must then refuse.
+        const allowed = !(deactivate && reviewed);
+        expect(deliveries).toEqual([{ id: originalId, due: "2026-11-05T12:03:00.000Z", allowed }]);
+        expect(f.aligo.sendSms.mock.calls.filter(([request]) => request.receiver === "01000000007")).toHaveLength(allowed ? 1 : 0);
+        expect(secondary).toEqual(history);
+    });
+    it("retains the mixed CLIENT slot through the joint path when only unrelated future END CARE remains active", async () => {
+        const f = await c4TimingFixture(true);
+        const end = Object.assign(MessageTriggerRuleEntity.create({ branchId, name: "future END", groupId: "group-end", isActive: true,
+            eventType: MessageTriggerEventType.SERVICE_END, offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "09:00",
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE }), { id: "child-end", jobsStale: false });
+        f.rules.push(end);
+        const repository = (f.core as unknown as { ruleRepository: { findActiveByEventTypes: jest.Mock } }).ruleRepository;
+        repository.findActiveByEventTypes.mockImplementation(async () => f.rules.filter((rule) => rule.isActive));
+        Object.assign(repository, { findGroup: jest.fn(async (scope: string, id: string) => scope === branchId ? { id, version: 3 } : null),
+            findGroupRules: jest.fn(async (scope: string, id: string) => f.rules.filter((rule) => rule.branchId === scope && rule.groupId === id)) });
+        Object.assign(f.jobRepository, { findForClientAutomationReview: jest.fn(async (scope: string, clientId: number, ruleIds: string[]) =>
+            f.jobs.filter((row) => row.branchId === scope && row.clientId === clientId && ruleIds.includes(row.ruleId)).map(timingJobCopy)) });
+        f.settings.getMessageAutomationPastTriggerConfig.mockImplementation(async () => ({ sendIntervalMinutes: 3,
+            ruleOrder: f.ruleOrder.filter((id) => f.rules.some((rule) => rule.id === id && rule.isActive)) }));
+        await f.sync();
+        const client = f.jobs.find((row) => row.ruleId === "child-client")!; const originalId = client.id;
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!;
+        expect(await f.send(timingJobCopy(secondary))).toBe(true); f.complete(secondary); const history = structuredClone(secondary);
+        const endHistory = structuredClone(f.jobs.find((row) => row.ruleId === "child-end")!);
+        for (const rule of f.rules.filter((rule) => rule.eventType === "SERVICE_START" && rule.recipientType !== "CLIENT")) rule.isActive = false;
+        expect(f.rules.filter((rule) => rule.isActive).map((rule) => rule.id)).toEqual(["child-client", "child-end"]);
+        jest.setSystemTime(new Date("2026-11-05T12:01:00Z")); await f.sync();
+        const clients = f.jobs.filter((row) => row.ruleId === "child-client"); expect(clients).toHaveLength(1);
+        expect(clients[0]).toMatchObject({ id: originalId, dedupeKey: "child-client:client:7:CLIENT:2026-11-05T12:03:00.000Z", scheduledFor: new Date("2026-11-05T12:03:00Z") });
+        expect(f.jobs.find((row) => row.ruleId === "child-end")).toEqual(endHistory); expect(secondary).toEqual(history);
+        jest.setSystemTime(new Date("2026-11-05T12:04:00Z")); expect(await f.postpone(clients[0]!)).toBe(false);
+        expect(await f.send(timingJobCopy(clients[0]!))).toBe(true);
+        expect(f.aligo.sendSms.mock.calls.filter(([request]) => request.receiver === "01000000007")).toHaveLength(1);
+    });
+
+});

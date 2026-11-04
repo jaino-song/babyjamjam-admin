@@ -6085,12 +6085,17 @@ describe("MessageTriggerService", () => {
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
         };
+        // C4b: snapshot only rows actually submitted to this synthetic persistence boundary.
+        const history = new Map<string, MessageTriggerJobEntity & { canceledByUser: boolean }>();
         const jobRepository = {
             upsertPending: jest.fn().mockResolvedValue(undefined),
             upsertPendingForRuleGeneration: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => {
                 await jobRepository.upsertPending(job);
+                history.set(job.dedupeKey, Object.assign(structuredClone(job), { canceledByUser: false }));
                 return job;
             }),
+            findForClientAutomationReview: jest.fn(async (scope: string, clientId: number, ruleIds: string[]) =>
+                [...history.values()].filter((row) => row.branchId === scope && row.clientId === clientId && ruleIds.includes(row.ruleId)).map((row) => structuredClone(row))),
             findPendingByRuleIdsAndClientId: jest.fn().mockResolvedValue([]),
             cancelPendingByClientContext: jest.fn().mockResolvedValue(0),
             cancelProcessingClaim: jest.fn().mockResolvedValue(true),
@@ -6115,6 +6120,9 @@ describe("MessageTriggerService", () => {
             update: jest.fn().mockResolvedValue(undefined),
         };
         const prisma = {
+            message_trigger_job: { findUnique: jest.fn(async ({ where }: { where: { dedupeKey: string } }) => {
+                const row = history.get(where.dedupeKey); return row ? structuredClone(row) : null;
+            }) },
             client: {
                 findFirst: jest.fn().mockResolvedValue({
                     id: 1,

@@ -2585,6 +2585,10 @@ export class MessageTriggerService {
             )
             : candidateJobs;
 
+        if (includePast && intentOptions?.preserveExisting && intentOptions.stableBatchAt) {
+            await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, intentOptions.stableBatchAt);
+        }
+
         for (const { rule, job } of jobsToPersist) {
             await this.persistPendingJob(
                 job,
@@ -2595,6 +2599,39 @@ export class MessageTriggerService {
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
+        }
+    }
+
+    private async retainExistingMixedBatchClientSlots(branchId: string, candidates: ClientRuleJobCandidate[], batchAt: Date,
+        transaction?: Prisma.TransactionClient): Promise<void> {
+        const catchUps = candidates.filter(({ job }) => job.recipientType === MessageTriggerRecipientType.CLIENT && job.clientId !== null && job.payload.catchUp);
+        if (!catchUps.length) return;
+        const clientId = catchUps[0]!.job.clientId!;
+        const batchId = `client:${clientId}:${batchAt.toISOString()}`;
+        const previous = await this.jobRepository.findForClientAutomationReview(branchId, clientId, catchUps.map(({ rule }) => rule.id), transaction);
+        if (previous.length > 500) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        for (const { rule, job } of catchUps) {
+            const slot = previous.find((row) => row.branchId === branchId && row.clientId === clientId && row.ruleId === rule.id
+                && row.employeeScheduleId === null && row.recipientType === job.recipientType && row.templateKey === job.templateKey
+                && row.payload.catchUp?.batchId === batchId);
+            if (!slot?.payload.catchUp) continue;
+            // A surviving CLIENT slot proves its mixed origin through actual
+            // stored predecessors, even if no CARE rule is currently active.
+            let predecessorKey = slot.payload.catchUp.predecessorDedupeKey;
+            let mixed = false;
+            for (let remaining = 500; predecessorKey && remaining > 0; remaining--) {
+                const predecessor = await (transaction ?? this.prisma).message_trigger_job.findUnique({ where: { dedupeKey: predecessorKey } });
+                const metadata = predecessor?.payload && typeof predecessor.payload === "object" && !Array.isArray(predecessor.payload)
+                    ? predecessor.payload as unknown as MessageTriggerJobEntity["payload"] : undefined;
+                if (!predecessor || predecessor.branchId !== branchId || predecessor.clientId !== clientId || metadata?.catchUp?.batchId !== batchId) break;
+                if (isCaregiverTriggerTemplate(predecessor.templateKey as MessageTriggerTemplateKey)
+                    && predecessor.employeeScheduleId !== null && metadata.caregiverSourceSnapshot?.version === 1) { mixed = true; break; }
+                predecessorKey = metadata.catchUp.predecessorDedupeKey;
+            }
+            if (!mixed) continue;
+            job.scheduledFor = new Date(slot.scheduledFor);
+            job.dedupeKey = slot.dedupeKey;
+            job.payload.catchUp = { ...slot.payload.catchUp };
         }
     }
 
@@ -2672,6 +2709,9 @@ export class MessageTriggerService {
             const jobsToPersist = includePast
                 ? await this.applyRetroactiveSendConfig(branchId, admitted, options?.stableBatchAt, tx)
                 : admitted;
+            if (includePast && options?.preserveExisting && options.stableBatchAt) {
+                await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, options.stableBatchAt, tx);
+            }
             for (const { rule, job } of jobsToPersist) {
                 if (completedSlots.has(job.dedupeKey)) continue;
                 if (conflicts.has(job.dedupeKey)) {
