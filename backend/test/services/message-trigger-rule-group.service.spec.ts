@@ -685,3 +685,34 @@ describe("RULE-2 actual core/template service/repository absence boundary", () =
         expect((await templates.getByKeyForBranch(branch, "GREETING")).content).toBe("보존할 인사 편집");
     });
 });
+
+// Phase7 C3: both projected children consume independent rows in the existing catch-up helper.
+describe("Phase7 C3 BOTH child catch-up projection", () => {
+    it("keeps stable CARE occurrence keys while sharing the configured CLIENT/secondary/primary order", async () => {
+        jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+        try {
+            const make = (id: string, recipientType: MessageTriggerRecipientType, employeeId?: number) => {
+                const rule = Object.assign(MessageTriggerRuleEntity.create({ branchId: "branch-a", name: id, groupId: "group-a", isActive: true,
+                    eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "09:00", recipientType,
+                    templateKey: employeeId ? MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE : MessageTriggerTemplateKey.INFO }), { id });
+                const job = MessageTriggerJobEntity.create({ branchId: "branch-a", ruleId: id, clientId: 7, employeeScheduleId: employeeId ? 91 : null, recipientType,
+                    templateKey: rule.templateKey, scheduledFor: new Date("2026-11-05T00:00:00Z"),
+                    dedupeKey: employeeId ? `group:group-a:child:${id}:schedule:91:event:SERVICE_START:employee:${employeeId}` : "old-client-key", payload: { templateVariables: {}, memberId: "7", recipientName: "합성", recipientPhone: "01000000007" } });
+                return { rule, job };
+            };
+            const primary = make("child-primary", MessageTriggerRecipientType.PRIMARY_EMPLOYEE, 11);
+            const secondary = make("child-secondary", MessageTriggerRecipientType.SECONDARY_EMPLOYEE, 12);
+            const client = make("child-client", MessageTriggerRecipientType.CLIENT);
+            const core: MessageTriggerService = Object.assign(Object.create(MessageTriggerService.prototype), { automationSources: {
+                getMessagePolicyEnabled: async () => true, getRetroactiveSendConfig: async () => ({ sendIntervalMinutes: 3, ruleOrder: ["child-client", "child-secondary", "child-primary"] }),
+            } });
+            const result = await (core as unknown as { applyRetroactiveSendConfig: (branch: string, rows: typeof primary[], stable: Date) => Promise<typeof primary[]> })
+                .applyRetroactiveSendConfig("branch-a", [primary, secondary, client], new Date("2026-11-05T12:00:00Z"));
+            expect(result.map(({ job }) => [job.ruleId, job.scheduledFor.toISOString(), job.dedupeKey, job.payload.catchUp?.sequence, job.payload.catchUp?.predecessorDedupeKey])).toEqual([
+                ["child-client", "2026-11-05T12:00:00.000Z", "child-client:client:7:CLIENT:2026-11-05T12:00:00.000Z", 1, null],
+                ["child-secondary", "2026-11-05T12:03:00.000Z", "group:group-a:child:child-secondary:schedule:91:event:SERVICE_START:employee:12", 2, "child-client:client:7:CLIENT:2026-11-05T12:00:00.000Z"],
+                ["child-primary", "2026-11-05T12:06:00.000Z", "group:group-a:child:child-primary:schedule:91:event:SERVICE_START:employee:11", 3, "group:group-a:child:child-secondary:schedule:91:event:SERVICE_START:employee:12"],
+            ]);
+        } finally { jest.useRealTimers(); }
+    });
+});

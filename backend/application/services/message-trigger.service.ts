@@ -1,3 +1,5 @@
+import { agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
+import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import type { MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
 import { agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
 import { MessageTriggerRecipientResolverService } from "./message-trigger-recipient-resolver.service";
@@ -2519,9 +2521,8 @@ export class MessageTriggerService {
         ]);
 
         const caregiverRules = allRules.filter((rule) => isCaregiverTriggerTemplate(rule.templateKey));
-        if (caregiverRules.length) await this.syncCaregiverRulesForClient(branchId, clientId, includePast, intentOptions);
         const rules = allRules.filter((rule) => rule.recipientType === MessageTriggerRecipientType.CLIENT
-            && (!intentOptions?.taskOrigin || caregiverRules.length === 0 || this.referenceIncludesClientRule(intentOptions.taskAutomationReference, branchId, client, rule)));
+            && (!intentOptions?.taskOrigin || this.referenceIncludesClientRule(intentOptions.taskAutomationReference, branchId, client, rule)));
 
         if (includePast) {
             if (!intentOptions?.preserveExisting) {
@@ -2568,6 +2569,14 @@ export class MessageTriggerService {
             candidateJobs.push({ rule, job });
         }
 
+        if (caregiverRules.length) {
+            // One branch-owned batch makes child ordering and predecessor reads
+            // atomic across the two recipient families. CLIENT-only keeps its
+            // existing persistence boundary below.
+            await this.syncCaregiverRulesForClient(branchId, clientId, includePast, intentOptions, undefined, candidateJobs);
+            return;
+        }
+
         const jobsToPersist = includePast
             ? await this.applyRetroactiveSendConfig(
                 branchId,
@@ -2590,19 +2599,20 @@ export class MessageTriggerService {
     }
 
     private referenceIncludesClientRule(reference: AgentAutomationTaskCommitReference | undefined, branchId: string, client: ClientTriggerSource, rule: MessageTriggerRuleEntity): boolean {
-        if (!reference || !client.createdAt) return false;
+        const committed = parseAgentAutomationTaskCommitReference(reference);
+        if (!committed || !client.createdAt) return false;
         const scope = { branchId, clientId: client.id, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: client.id, createdAt: client.createdAt.toISOString() }),
-            kind: "client-rule", ruleId: rule.id, scheduleId: null, scheduleIdentity: null, recipientType: "client" };
-        return reference.authorities.some((entry) => entry.scopeDigest === agentBindingHash(scope));
+            kind: "client-rule" as const, ruleId: rule.id, scheduleId: null, scheduleIdentity: null, recipientType: "client" as const };
+        return committed.authorities.some((entry) => entry.scopeDigest === agentBindingHash(scope))
+            || committed.coverages.some((entry) => entry.scopeDigest === agentBindingHash(agentAutomationCoverageScope(scope)));
     }
 
     private async syncCaregiverRulesForClient(branchId: string, clientId: number, includePast: boolean, options?: Partial<MessageTriggerIntentSyncOptions>,
-        transaction?: Prisma.TransactionClient): Promise<void> {
+        transaction?: Prisma.TransactionClient, clientCandidates: ClientRuleJobCandidate[] = []): Promise<void> {
         if (!this.caregiverRecipients || !this.messageAutomationBranchLockService) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         if (options?.taskOrigin && !options.taskAutomationReference) return;
         await this.messageAutomationBranchLockService.runExclusive(branchId, async (tx) => {
             const rules = (await this.ruleRepository.findAll(branchId, tx)).filter((rule) => rule.branchId === branchId && rule.isActive && isCaregiverTriggerTemplate(rule.templateKey));
-            if (!rules.length) return;
             const set = await this.caregiverRecipients!.resolve(branchId, clientId, rules, tx);
             if (!set.complete) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
             const groupIds = [...new Set(rules.map((rule) => rule.groupId!))];
@@ -2617,6 +2627,8 @@ export class MessageTriggerService {
                 await tx.message_trigger_job.updateMany({ where: { id: stale.id, branchId, clientId, status: previousStatus, canceledByUser: false },
                     data: { status: "canceled", canceledAt: stale.canceledAt, cancelReason: stale.cancelReason, claimToken: null, nextAttemptAt: null, updatedAt: new Date() } });
             }
+            const admitted: ClientRuleJobCandidate[] = [...clientCandidates];
+            const conflicts = new Set<string>();
             for (const row of candidates) {
                 const recipe = row.recipe!;
                 const rule = rules.find((entry) => entry.id === recipe.ruleId)!;
@@ -2635,13 +2647,23 @@ export class MessageTriggerService {
                     && (job.status === "sent" || job.canceledByUser))) continue;
                 if (row.outcome === "needs_setup" && row.reason === "recipient_phone_conflict") {
                     if (options?.taskOrigin) continue;
-                    const job = MessageTriggerJobEntity.create(recipe);
+                    conflicts.add(recipe.dedupeKey);
+                    admitted.push({ rule, job: MessageTriggerJobEntity.create(recipe) });
+                } else if (row.outcome === "ready") {
+                    admitted.push({ rule, job: MessageTriggerJobEntity.create(recipe) });
+                }
+            }
+            const jobsToPersist = includePast
+                ? await this.applyRetroactiveSendConfig(branchId, admitted, options?.stableBatchAt, tx)
+                : admitted;
+            for (const { rule, job } of jobsToPersist) {
+                if (conflicts.has(job.dedupeKey)) {
                     const persisted = await this.jobRepository.upsertPendingForRuleGeneration(job, rule.updatedAt, rule.jobsStale, options?.preserveExisting === true, tx);
                     if (persisted?.status === "pending") { persisted.markNeedsSetup("recipient_phone_conflict"); await tx.message_trigger_job.updateMany({ where: { id: persisted.id, branchId, status: "pending", canceledByUser: false },
                         data: { status: "needs_setup", cancelReason: "recipient_phone_conflict", claimToken: null, updatedAt: new Date() } }); }
-                } else if (row.outcome === "ready") {
-                    await this.persistPendingJob(MessageTriggerJobEntity.create(recipe), rule, includePast, rule.jobsStale, options?.preserveExisting === true,
-                        tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
+                } else {
+                    await this.persistPendingJob(job, rule, includePast, isCaregiverTriggerTemplate(rule.templateKey) ? rule.jobsStale : false,
+                        options?.preserveExisting === true, tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
                 }
             }
         }, transaction);
@@ -3082,15 +3104,16 @@ export class MessageTriggerService {
         branchId: string,
         candidates: ClientRuleJobCandidate[],
         stableBatchAt?: Date,
+        transaction?: Prisma.TransactionClient,
     ): Promise<ClientRuleJobCandidate[]> {
         if (candidates.length === 0) return candidates;
 
-        const pastTriggerEnabled = await this.getMessagePolicyEnabled(branchId, "past-trigger");
+        const pastTriggerEnabled = await this.getMessagePolicyEnabled(branchId, "past-trigger", transaction);
         if (!pastTriggerEnabled) {
             return candidates.filter(({ job }) => job.scheduledFor.getTime() > Date.now());
         }
 
-        const config = await this.getRetroactiveSendConfig(branchId);
+        const config = await this.getRetroactiveSendConfig(branchId, transaction);
         const now = Date.now();
         const baseScheduledFor = stableBatchAt
             ? new Date(stableBatchAt)
@@ -3111,7 +3134,7 @@ export class MessageTriggerService {
                 baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
             );
             job.scheduledFor = scheduledFor;
-            if (job.clientId !== null) {
+            if (job.clientId !== null && !isCaregiverTriggerTemplate(job.templateKey)) {
                 job.dedupeKey = buildMessageRecipeDedupeKey(
                     rule.id,
                     `client:${job.clientId}`,
