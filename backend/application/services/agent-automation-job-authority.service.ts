@@ -122,6 +122,8 @@ export class AgentAutomationJobAuthorityService {
                 || catchUp.originalScheduledFor !== recipe.scheduledFor.toISOString()
                 || (catchUp.sequence === 1) !== (catchUp.predecessorDedupeKey === null)
                 || catchUp.sequence > MAX_CATCH_UP_PREDECESSOR_CHAIN
+                // Predecessor waits use nextAttemptAt, an operational eligibility
+                // field. The source-bound slot and its seal must stay exact.
                 || job.scheduledFor.getTime() !== batchTime.getTime() + (catchUp.sequence - 1) * catchUp.intervalMinutes * 60_000) return null;
             if (catchUp.sequence > 1 && !await this.hasCanonicalCatchUpPredecessorChain(transaction, job, catchUp, settings.rules,
                 client, batchTime, job.payload.taskAutomationReference, settings.pastTriggerConfig.ruleOrder)) return null;

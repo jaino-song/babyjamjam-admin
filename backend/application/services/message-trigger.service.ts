@@ -2629,6 +2629,8 @@ export class MessageTriggerService {
             }
             const admitted: ClientRuleJobCandidate[] = [...clientCandidates];
             const conflicts = new Set<string>();
+            const completedSlots = new Set<string>();
+            const batchId = options?.stableBatchAt ? `client:${clientId}:${options.stableBatchAt.toISOString()}` : undefined;
             for (const row of candidates) {
                 const recipe = row.recipe!;
                 const rule = rules.find((entry) => entry.id === recipe.ruleId)!;
@@ -2642,9 +2644,23 @@ export class MessageTriggerService {
                 }
 
 
-                if (old.some((job) => job.employeeScheduleId === recipe.employeeScheduleId && job.payload.employeeId === source.employee.id
+                const completed = old.filter((job) => job.employeeScheduleId === recipe.employeeScheduleId && job.payload.employeeId === source.employee.id
                     && job.payload.caregiverSourceSnapshot?.groupId === source.groupId && job.payload.caregiverSourceSnapshot.eventType === source.eventType
-                    && (job.status === "sent" || job.canceledByUser))) continue;
+                    && (job.status === "sent" || job.canceledByUser));
+                if (completed.length) {
+                    // Completion suppresses persistence, not an already allocated
+                    // slot in this stable batch. Compacting it would mint a new
+                    // time-based CLIENT key. An unrelated batch gets no old slot.
+                    const slot = includePast && batchId ? completed.find((job) => job.dedupeKey === recipe.dedupeKey
+                        && job.payload.catchUp?.batchId === batchId) : undefined;
+                    if (slot?.payload.catchUp) {
+                        const originalTime = new Date(slot.payload.catchUp.originalScheduledFor);
+                        if (Number.isNaN(originalTime.getTime())) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+                        const job = MessageTriggerJobEntity.create({ ...recipe, scheduledFor: originalTime });
+                        admitted.push({ rule, job }); completedSlots.add(job.dedupeKey);
+                    }
+                    continue;
+                }
                 if (row.outcome === "needs_setup" && row.reason === "recipient_phone_conflict") {
                     if (options?.taskOrigin) continue;
                     conflicts.add(recipe.dedupeKey);
@@ -2657,6 +2673,7 @@ export class MessageTriggerService {
                 ? await this.applyRetroactiveSendConfig(branchId, admitted, options?.stableBatchAt, tx)
                 : admitted;
             for (const { rule, job } of jobsToPersist) {
+                if (completedSlots.has(job.dedupeKey)) continue;
                 if (conflicts.has(job.dedupeKey)) {
                     const persisted = await this.jobRepository.upsertPendingForRuleGeneration(job, rule.updatedAt, rule.jobsStale, options?.preserveExisting === true, tx);
                     if (persisted?.status === "pending") { persisted.markNeedsSetup("recipient_phone_conflict"); await tx.message_trigger_job.updateMany({ where: { id: persisted.id, branchId, status: "pending", canceledByUser: false },
@@ -4979,8 +4996,14 @@ export class MessageTriggerService {
             }
             const retryAt = new Date(Math.max(earliestNextSend.getTime(), now + intervalMs));
             job.status = "pending";
-            job.scheduledFor = retryAt;
-            job.nextAttemptAt = null;
+            if (isCaregiverTriggerTemplate(job.templateKey)) {
+                // CARE time and occurrence are canonical source/seal identity.
+                // Waiting is operational eligibility and consumes no attempt.
+                job.nextAttemptAt = retryAt;
+            } else {
+                job.scheduledFor = retryAt;
+                job.nextAttemptAt = null;
+            }
             await this.persistTriggerJobStatus(job, "postpone catch-up job for predecessor");
             return true;
         }

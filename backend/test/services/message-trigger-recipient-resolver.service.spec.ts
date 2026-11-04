@@ -1,3 +1,11 @@
+import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
+import { agentAutomationTaskCommitReference } from "application/agent/agent-automation-record-store.service";
+import { agentAutomationCoverageScope, agentAutomationCoverageRecordDigest } from "application/agent/agent-automation-coverage";
+import { agentAutomationEffectDigest, agentAutomationRecordDigest, agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
+import { createAgentAutomationTerminalRecord, agentAutomationRecordKey } from "application/agent/agent-automation-terminal-record";
+import { agentAutomationConcreteJobDigest } from "application/services/agent-automation-job-binding";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationScope } from "domain/entities/agent-automation-consent";
 import type { Prisma } from "@prisma/client";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
@@ -439,4 +447,158 @@ describe("Phase7 C3 canonical caregiver catch-up timing", () => {
         if (change === "source") f.schedule.primaryEmployee.phone = "01000000099";
         expect(await f.send(job)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
     });
+});
+
+
+// Phase7 C4: extend only the synthetic boundaries; all approved C3 fixtures and tests above remain byte-identical.
+async function c4TimingFixture(mixed = false, reviewed = false) {
+    const f = await timingFixture(true, false, mixed);
+    f.jobRepository.findForClientAutomationReview.mockImplementation(async () => f.jobs.filter((row) => row.employeeScheduleId !== null).map(timingJobCopy));
+    Object.assign(f.delivery, { systemTemplateService: { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내",
+        requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } });
+    const update = jest.fn(async (job: MessageTriggerJobEntity) => {
+        Object.assign(f.jobs.find((row) => row.id === job.id)!, structuredClone(job)); return job;
+    });
+    Object.assign(f.jobRepository, { update });
+    const terminalRows: Array<Record<string, unknown>> = [];
+    Object.assign(f.db.message_trigger_job, { findMany: jest.fn(async ({ where }: { where: { id?: { in: string[] }; dedupeKey?: { startsWith: string } } }) => where.id
+        ? terminalRows.filter((row) => where.id!.in.includes(String(row["id"]))) : where.dedupeKey
+            ? terminalRows.filter((row) => String(row["dedupeKey"]).startsWith(where.dedupeKey!.startsWith)) : terminalRows) });
+    let reference: ReturnType<typeof agentAutomationTaskCommitReference> | undefined;
+    if (reviewed) {
+        const id = (n: number) => `99000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+        const recordedAt = "2026-11-04T23:00:00.000Z";
+        jest.setSystemTime(new Date(recordedAt));
+        // Explicit synthetic configuration and unrelated legacy-resource boundaries,
+        // as in the approved C3 committed-reference fixture; CARE facts stay on the actual source reader/resolver.
+        jest.spyOn(f.sources, "readClientAutomationSettings").mockResolvedValue({ status: "available", rules: f.rules, defaultsPresent: true,
+            dispatchEnabled: true, senderApproved: true, senderApprovedAt: null, pastTriggerEnabled: true,
+            pastTriggerConfig: { sendIntervalMinutes: 3, ruleOrder: f.ruleOrder } });
+        jest.spyOn(f.sources, "readClientAutomationSchedules").mockResolvedValue([]);
+        jest.spyOn(f.sources, "readClientAutomationServiceRecordLinks").mockResolvedValue([]);
+        const impact = new ClientAutomationImpactService(f.sources, f.delivery,
+            { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never, f.jobRepository as never, undefined, f.resolver);
+        const plan = await impact.planClientWrite(branchId, { kind: "update", clientId: 7, values: { name: "검토 합성 고객" } });
+        expect(plan.availability).toBe("available"); expect(plan.complete).toBe(true);
+        expect(plan.effects.map((effect) => effect.kind).sort()).toEqual(mixed ? ["caregiver-service", "caregiver-service", "client-rule"] : ["caregiver-service", "caregiver-service"]);
+        const origin = { kind: "task" as const, userId: id(1), actionId: id(2), taskId: id(3), taskRevision: 1, consentEventId: id(4) };
+        const authorities: AgentAutomationAuthority[] = [], coverages: AgentAutomationCoverage[] = [];
+        for (const [index, effect] of plan.effects.entries()) {
+            const scope: AgentAutomationScope = { branchId, clientId: 7,
+                clientIdentity: agentBindingHash({ version: 1, resource: "client", id: 7, createdAt: f.client.createdAt.toISOString() }),
+                kind: effect.kind, ruleId: effect.ruleId, scheduleId: effect.scheduleId, scheduleIdentity: effect.scheduleId === null ? null : agentAutomationScheduleIdentity(incarnationId), recipientType: effect.recipientType };
+            const coverage: AgentAutomationCoverage = { kind: "coverage", version: 1, id: id(100 + index), scope: agentAutomationCoverageScope(scope), sequence: 1, previousId: null,
+                origin, mutationDigest: "a".repeat(64), grandfatheredScopes: [], recordedAt, recordDigest: "" };
+            coverage.recordDigest = agentAutomationCoverageRecordDigest(coverage); coverages.push(coverage);
+            const authority: AgentAutomationAuthority = { version: 1, id: id(200 + index), scope, sequence: 1, previousId: null, origin, decision: "allow", noSend: false,
+                effects: [effect], scopeEffectDigest: agentAutomationEffectDigest([effect]), reviewedEffectDigest: agentAutomationEffectDigest([effect]), reviewedPolicyDigest: effect.policyDigest, recordedAt, recordDigest: "" };
+            authority.recordDigest = agentAutomationRecordDigest(authority); authorities.push(authority);
+        }
+        for (const record of [...authorities, ...coverages]) {
+            const terminal = createAgentAutomationTerminalRecord(record, { version: 1, kind: "task", actionId: id(2), userId: id(1), taskId: id(3), taskRevision: 1,
+                questionRef: id(5), inputHash: "a".repeat(64), capability: "clients.update", resourceId: 7, receiptDigest: "a".repeat(64), recordedAt });
+            terminalRows.push({ id: record.id, branchId, ruleId: "system:message_automation_intent", dedupeKey: agentAutomationRecordKey(record), status: "canceled", cancelReason: "agent_automation_authority_record",
+                canceledAt: new Date(recordedAt), scheduledFor: new Date(recordedAt), sentAt: null, clientId: null, employeeScheduleId: null, recipientPhone: null, recipientType: "CLIENT", templateKey: "CLIENT_GREETING",
+                nextAttemptAt: null, claimToken: null, attempts: 0, canceledByUser: false, payload: { agentAutomationRecord: terminal } });
+        }
+        reference = agentAutomationTaskCommitReference({ actionId: id(2), taskId: id(3), taskRevision: 1, batch: { authorities, coverages } });
+        const records = new AgentAutomationRecordStoreService(new MessageAutomationBranchLockService(f.db as never));
+        expect(await records.verifyTaskCommitReference(f.db as never, reference, branchId)).toBe(true);
+        f.client.name = "검토 합성 고객";
+        jest.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+    }
+    const sync = (batch = "2026-11-05T12:00:00Z") => f.core.syncClientRulesForClient(branchId, 7, true, false,
+        { preserveExisting: true, stableBatchAt: new Date(batch), ...(reference ? { taskOrigin: true, taskAutomationReference: reference } : {}) });
+    const postpone = (job: MessageTriggerJobEntity, resend = false) => (f.core as unknown as {
+        postponeCatchUpJobUntilPredecessorCompletes: (job: MessageTriggerJobEntity, resend?: boolean) => Promise<boolean>;
+    }).postponeCatchUpJobUntilPredecessorCompletes(job, resend);
+    const complete = (job: MessageTriggerJobEntity) => { job.status = "sent"; job.sentAt = new Date(); job.nextAttemptAt = null; };
+    return { ...f, sync, postpone, update, complete, reference, terminalRows };
+}
+
+describe("Phase7 C4 completed slots and canonical predecessor retry", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([false, true])("keeps one mixed CLIENT occurrence after CARE completes, reviewed=%s", async (reviewed) => {
+        const f = await c4TimingFixture(true, reviewed); await f.sync();
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!;
+        expect(await f.send(timingJobCopy(secondary))).toBe(true); f.complete(secondary);
+        const history = structuredClone(secondary);
+        const client = f.jobs.find((row) => row.ruleId === "child-client")!;
+        expect(client.scheduledFor.toISOString()).toBe("2026-11-05T12:03:00.000Z");
+        expect(client.dedupeKey).toBe("child-client:client:7:CLIENT:2026-11-05T12:03:00.000Z");
+        jest.setSystemTime(new Date("2026-11-05T12:01:00Z")); await f.sync();
+        const clients = f.jobs.filter((row) => row.ruleId === "child-client");
+        expect(clients).toHaveLength(1);
+        expect(clients[0]).toMatchObject({ id: client.id, dedupeKey: "child-client:client:7:CLIENT:2026-11-05T12:03:00.000Z", scheduledFor: new Date("2026-11-05T12:03:00Z") });
+        expect(secondary).toEqual(history);
+        jest.setSystemTime(new Date("2026-11-05T12:04:00Z")); expect(await f.postpone(clients[0]!)).toBe(false);
+        expect(await f.send(timingJobCopy(clients[0]!))).toBe(true);
+        f.complete(clients[0]!); await f.sync();
+        expect(f.jobs.filter((row) => row.ruleId === "child-client")).toHaveLength(1);
+        expect(f.aligo.sendSms.mock.calls.filter(([request]) => request.receiver === "01000000007")).toHaveLength(1);
+        expect(secondary).toEqual(history);
+    });
+    it("preserves an all-pending mixed replay and a user-canceled CARE slot without resurrection", async () => {
+        const f = await c4TimingFixture(true); await f.sync(); const initial = structuredClone(f.jobs); await f.sync(); expect(f.jobs).toEqual(initial);
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!;
+        Object.assign(secondary, { status: "canceled", canceledByUser: true, canceledAt: new Date() });
+        const canceled = structuredClone(secondary);
+        jest.setSystemTime(new Date("2026-11-05T12:01:00Z")); await f.sync();
+        expect(f.jobs).toHaveLength(3); expect(secondary).toEqual(canceled);
+        expect(f.jobs.find((row) => row.ruleId === "child-client")?.scheduledFor.toISOString()).toBe("2026-11-05T12:03:00.000Z");
+        expect(f.jobRepository.upsertPendingForRuleGeneration.mock.calls.filter(([job]) => job.ruleId === "child-secondary")).toHaveLength(2);
+    });
+    it("does not reuse a completed slot from a different intent batch", async () => {
+        const f = await c4TimingFixture(true); await f.sync();
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!; f.complete(secondary); const history = structuredClone(secondary);
+        jest.setSystemTime(new Date("2026-11-05T13:00:00Z")); await f.sync("2026-11-05T13:00:00Z");
+        const next = f.jobs.find((row) => row.ruleId === "child-client" && row.scheduledFor.toISOString() === "2026-11-05T13:00:00.000Z")!;
+        expect(next).toMatchObject({ dedupeKey: "child-client:client:7:CLIENT:2026-11-05T13:00:00.000Z", payload: { catchUp: {
+            batchId: "client:7:2026-11-05T13:00:00.000Z", sequence: 1, predecessorDedupeKey: null } } });
+        expect(secondary).toEqual(history);
+    });
+    it.each([false, true])("waits using operational retry eligibility then obtains the canonical CARE final permit, reviewed=%s", async (reviewed) => {
+        const f = await c4TimingFixture(false, reviewed); await f.sync();
+        const primary = timingJobCopy(f.jobs.find((row) => row.ruleId === "child-primary")!);
+        const canonical = { scheduledFor: primary.scheduledFor.toISOString(), dedupeKey: primary.dedupeKey, digest: agentAutomationConcreteJobDigest(primary), seal: structuredClone(primary.payload.agentAutomationSeal) };
+        if (reviewed) expect(primary.payload.agentAutomationSeal).toBeDefined();
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(primary)).toBe(true);
+        expect(primary.scheduledFor.toISOString()).toBe("2026-11-05T12:03:00.000Z");
+        expect(primary.nextAttemptAt?.toISOString()).toBe("2026-11-05T12:06:00.000Z"); expect(primary.attempts).toBe(0);
+        expect({ scheduledFor: primary.scheduledFor.toISOString(), dedupeKey: primary.dedupeKey, digest: agentAutomationConcreteJobDigest(primary), seal: primary.payload.agentAutomationSeal }).toEqual(canonical);
+        expect(f.jobs.find((row) => row.id === primary.id)?.nextAttemptAt?.toISOString()).toBe("2026-11-05T12:06:00.000Z");
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!; f.complete(secondary);
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z")); expect(await f.postpone(primary)).toBe(false);
+        expect(await f.send(primary)).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1); expect(f.aligo.sendSms).toHaveBeenCalledWith(expect.objectContaining({ receiver: "01000000011" }));
+    });
+    it("keeps manual resend waiting in needs_setup with canonical time and no provider", async () => {
+        const f = await c4TimingFixture(); await f.sync(); const primary = timingJobCopy(f.jobs.find((row) => row.ruleId === "child-primary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(primary, true)).toBe(true);
+        expect(primary.status).toBe("needs_setup"); expect(primary.scheduledFor.toISOString()).toBe("2026-11-05T12:03:00.000Z"); expect(primary.nextAttemptAt).toBeNull(); expect(primary.attempts).toBe(0);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("allows the unpostponed canonical CARE slot once its predecessor interval has elapsed", async () => {
+        const f = await c4TimingFixture(); await f.sync();
+        f.complete(f.jobs.find((row) => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));
+        const primary = timingJobCopy(f.jobs.find((row) => row.ruleId === "child-primary")!);
+        expect(await f.postpone(primary)).toBe(false); expect(primary.nextAttemptAt).toBeNull();
+        expect(primary.scheduledFor.toISOString()).toBe("2026-11-05T12:03:00.000Z");
+        expect(await f.send(primary)).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it.each(["due", "source", "metadata", "predecessor"])("refuses %s tampering after legitimate sealed CARE postponement", async (change) => {
+        const f = await c4TimingFixture(false, true); await f.sync();
+        const primary = timingJobCopy(f.jobs.find((row) => row.ruleId === "child-primary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(primary)).toBe(true);
+        f.complete(f.jobs.find((row) => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));
+        if (change === "due") primary.scheduledFor = new Date("2026-11-05T12:06:00Z");
+        if (change === "source") f.schedule.primaryEmployee.phone = "01000000099";
+        if (change === "metadata") primary.payload.catchUp!.originalScheduledFor = "2026-11-04T00:00:00.000Z";
+        if (change === "predecessor") f.jobs.splice(f.jobs.findIndex((row) => row.ruleId === "child-secondary"), 1);
+        expect(await f.send(primary)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
+    });
+
 });
