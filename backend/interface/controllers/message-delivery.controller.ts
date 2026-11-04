@@ -1,3 +1,5 @@
+import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
+import { MessageDuplicateCheckDto } from "interface/dto/message-duplicate-check.dto";
 import {
     BadGatewayException,
     BadRequestException,
@@ -79,7 +81,47 @@ export class MessageDeliveryController {
         private readonly aligoService: AligoService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly prisma: PrismaService,
+        private readonly duplicateCheck: MessageDuplicateCheckService,
     ) {}
+
+    @Post("sms/duplicate-check")
+    async checkSmsDuplicates(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: MessageDuplicateCheckDto,
+        @Query("expectedBranchId") expectedBranchId?: string,
+    ) {
+        const branchId = tenant.branchId ?? "";
+        this.assertBranchContext(branchId, expectedBranchId);
+        const resolved = await this.resolveSmsRecipients(branchId, dto);
+        const schedule = this.smsSchedule(dto);
+        return this.duplicateCheck.check(branchId, resolved.receiver, resolved.message,
+            this.smsFingerprint(branchId, resolved, dto.triggerType ?? "immediate", schedule.scheduledDate, schedule.scheduledTime));
+    }
+
+    private assertBranchContext(branchId: string, expectedBranchId?: string): void {
+        if (expectedBranchId !== undefined && expectedBranchId !== branchId) {
+            throw new ConflictException({ code: "BRANCH_CONTEXT_CHANGED", message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요." });
+        }
+    }
+
+    private smsSchedule(dto: SendSmsMessageDto) {
+        if (dto.triggerType === "scheduled") this.assertScheduledAtLeastTenMinutesAhead(dto.scheduledDate, dto.scheduledTime);
+        return {
+            scheduledDate: dto.triggerType === "scheduled" ? dto.scheduledDate?.replace(/-/g, "") : undefined,
+            scheduledTime: dto.triggerType === "scheduled" ? dto.scheduledTime?.replace(":", "") : undefined,
+        };
+    }
+
+    private smsFingerprint(branchId: string, dto: SendSmsMessageDto, triggerType: string, scheduledDate?: string, scheduledTime?: string): string {
+        return buildSmsProviderAcceptanceFingerprint({
+            branchId, receiver: dto.receiver, message: dto.message,
+            recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null,
+            clientId: dto.clientId ?? null, employeeId: dto.employeeId ?? null,
+            msgType: dto.msgType ?? "AUTO", triggerType,
+            scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null,
+            testMode: dto.testMode === true,
+        });
+    }
 
     @Post("sms")
     async sendSms(
@@ -90,12 +132,7 @@ export class MessageDeliveryController {
     ) {
         const triggerType = dto.triggerType ?? "immediate";
         const branchId = tenant.branchId ?? "";
-        if (expectedBranchId !== undefined && expectedBranchId !== branchId) {
-            throw new ConflictException({
-                code: "BRANCH_CONTEXT_CHANGED",
-                message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.",
-            });
-        }
+        this.assertBranchContext(branchId, expectedBranchId);
         const resolvedDto = await this.resolveSmsRecipients(branchId, dto);
         this.logger.log(
             `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(resolvedDto.receiver)}`,
@@ -110,19 +147,7 @@ export class MessageDeliveryController {
             throw error;
         }
 
-        if (triggerType === "scheduled") {
-            this.assertScheduledAtLeastTenMinutesAhead(
-                dto.scheduledDate,
-                dto.scheduledTime,
-            );
-        }
-
-        const scheduledDate = triggerType === "scheduled"
-            ? dto.scheduledDate?.replace(/-/g, "")
-            : undefined;
-        const scheduledTime = triggerType === "scheduled"
-            ? dto.scheduledTime?.replace(":", "")
-            : undefined;
+        const { scheduledDate, scheduledTime } = this.smsSchedule(dto);
         const pendingLog = await this.createPendingSmsLog(
             branchId,
             resolvedDto,
@@ -131,7 +156,7 @@ export class MessageDeliveryController {
             scheduledTime,
             dto.idempotencyKey ?? requestId,
         ).catch((error) => {
-            if (error instanceof ConflictException) {
+            if (error instanceof ConflictException || error instanceof ServiceUnavailableException) {
                 throw error;
             }
             this.logger.error(
@@ -327,20 +352,7 @@ export class MessageDeliveryController {
             "manual",
             `${branchId}:${logicalIdentity}`,
         );
-        const providerAcceptanceFingerprint = buildSmsProviderAcceptanceFingerprint({
-            branchId,
-            receiver: dto.receiver,
-            message: dto.message,
-            recipientName: dto.recipientName ?? null,
-            title: dto.title?.trim() || null,
-            clientId: dto.clientId ?? null,
-            employeeId: dto.employeeId ?? null,
-            msgType: dto.msgType ?? "AUTO",
-            triggerType,
-            scheduledDate: scheduledDate ?? null,
-            scheduledTime: scheduledTime ?? null,
-            testMode: dto.testMode === true,
-        });
+        const providerAcceptanceFingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
         const messageLogModel = this.prisma.message_log as typeof this.prisma.message_log & {
             findUnique?: (args: { where: { providerAcceptanceKey: string } }) => Promise<SmsMessageLogRecord | null>;
         };
@@ -358,6 +370,11 @@ export class MessageDeliveryController {
                 return { row: existing, created: false, id: existing.id };
             }
         }
+
+        // An existing durable identity always keeps its original replay/conflict
+        // outcome. Only a new request reaches the fresh gate, before admission.
+        await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message,
+            providerAcceptanceFingerprint, dto.duplicateDecision);
 
         const data = {
                 branchId: branchId || null,

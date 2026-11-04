@@ -4,6 +4,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import {
+    SmsDuplicateHistoryQuery,
+    SmsDuplicateHistoryMatch,
     ClientHistoryScope,
     IMessageLogRepository,
     MessageHistoryPageQuery,
@@ -34,6 +36,32 @@ export class SbMessageLogRepository implements IMessageLogRepository {
     private readonly logger = new Logger(SbMessageLogRepository.name);
 
     constructor(private readonly prisma: PrismaService) {}
+
+    async findSmsDuplicateMatches(query: SmsDuplicateHistoryQuery): Promise<SmsDuplicateHistoryMatch[]> {
+        if (!query.receivers.length) return [];
+        // PostgreSQL's whitespace regexp differs from ECMAScript trim (NBSP/BOM).
+        // Bind the exact trim character set alongside the CRLF replacement.
+        const trimCharacters = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+        // Split historical manual batches before normalization. Never concatenate
+        // multiple recipients into a single digit string; EXISTS returns each log once.
+        return this.prisma.$queryRaw<SmsDuplicateHistoryMatch[]>(Prisma.sql`
+            SELECT ml.id, COALESCE(ml.provider_call_started_at, ml.created_at) AS "sentAt"
+            FROM message_log ml
+            WHERE ml.branch_id = ${query.branchId}::uuid
+              AND ml.provider = 'aligo_sms'
+              AND ml.status = 'sent'
+              AND COALESCE(ml.provider_call_started_at, ml.created_at) >= ${query.from}
+              AND COALESCE(ml.provider_call_started_at, ml.created_at) <= ${query.to}
+              AND btrim(replace(ml.message_body, ${"\r\n"}, ${"\n"}), ${trimCharacters}) = ${query.messageBody}
+              AND EXISTS (
+                SELECT 1 FROM regexp_split_to_table(COALESCE(ml.recipient_phone, ml.receiver), ',') AS recipient(phone)
+                CROSS JOIN LATERAL (SELECT regexp_replace(recipient.phone, '[^0-9]', '', 'g') AS digits) raw
+                CROSS JOIN LATERAL (SELECT CASE WHEN raw.digits LIKE '82%' THEN '0' || substring(raw.digits FROM 3) ELSE raw.digits END AS phone) normalized
+                WHERE normalized.phone IN (${Prisma.join(query.receivers)})
+              )
+            ORDER BY ml.id ASC
+        `);
+    }
 
     /**
      * Build the branch-pinning fragment for a bare-id where clause. `message_log.branchId`

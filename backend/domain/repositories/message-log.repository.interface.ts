@@ -54,7 +54,22 @@ export interface SaveCarrierCheckResultInput {
  */
 export type SaveCarrierCheckResultOutcome = "saved" | "saved_status_failed" | "stale";
 
+export interface SmsDuplicateHistoryQuery {
+    branchId: string;
+    receivers: string[];
+    messageBody: string;
+    from: Date;
+    to: Date;
+}
+
+export interface SmsDuplicateHistoryMatch {
+    id: number;
+    sentAt: Date;
+}
+
 export interface IMessageLogRepository {
+    /** Full physical-phone/body history, independent of UI pages and associations. */
+    findSmsDuplicateMatches(query: SmsDuplicateHistoryQuery): Promise<SmsDuplicateHistoryMatch[]>;
     /** Full branch-scoped, read-only policy population; no UI page limit. */
     findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]>;
     countFutureProviderReservations(branchId: string, now: Date, transaction?: Prisma.TransactionClient): Promise<number>;

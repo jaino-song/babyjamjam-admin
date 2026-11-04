@@ -516,6 +516,23 @@ export type MessageDeliveryTriggerType = "immediate" | "scheduled";
 export type MessageDeliveryResolvedSmsType = "SMS" | "LMS";
 export type MessageDeliveryProviderSmsType = "SMS" | "LMS" | "MMS";
 
+export interface MessageDeliverySmsDuplicateDecision {
+  confirmed: true;
+  checkedAt: string;
+  matchIds: number[];
+  /** Optional on legacy input; the server requires a matching hash under ON. */
+  payloadHash?: string;
+}
+
+export interface MessageDeliverySmsDuplicateCheckResponse {
+  checkedAt: string;
+  matchIds: number[];
+  latestSentAt: string | null;
+  payloadHash: string;
+}
+
+export type MessageDeliverySmsDuplicateCheckRequest = SendMessageDeliverySmsRequest;
+
 export interface SendMessageDeliverySmsRequest {
   receiver: string;
   message: string;
@@ -530,6 +547,8 @@ export interface SendMessageDeliverySmsRequest {
   scheduledDate?: string;
   scheduledTime?: string;
   testMode?: boolean;
+  idempotencyKey?: string;
+  duplicateDecision?: MessageDeliverySmsDuplicateDecision;
 }
 
 export interface SendMessageDeliverySmsResponse {

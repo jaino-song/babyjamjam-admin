@@ -1,3 +1,4 @@
+import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 
@@ -61,6 +62,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
     ],
     controllers: [MessageController, MessageTriggerController],
     providers: [
+        MessageDuplicateCheckService,
         CreateMessageUsecase,
         ListMessagesUsecase,
         FindMessageByIdUsecase,
@@ -99,6 +101,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
         { provide: CLIENT_AUTOMATION_IMPACT, useExisting: ClientAutomationImpactService },
     ],
     exports: [
+        MessageDuplicateCheckService,
         MessageService,
         MessageTriggerService,
         CLIENT_AUTOMATION_IMPACT,

@@ -1,3 +1,18 @@
+import { ContextIdFactory } from "@nestjs/core";
+import { SchedulerLeaseModule } from "module/scheduler-lease.module";
+import { Test } from "@nestjs/testing";
+import { ConfigModule } from "@nestjs/config";
+import { MessageDeliveryModule } from "module/message-delivery.module";
+import { MessageModule } from "module/message.module";
+import { TenantModule } from "infrastructure/tenant/tenant.module";
+import { AligoApiClient } from "infrastructure/api/aligo-api.client";
+import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { GetSettingUsecase } from "application/usecases/system-setting";
+import type { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
@@ -15,6 +30,9 @@ import { MessageDeliveryController } from "interface/controllers/message-deliver
 
 describe("MessageDeliveryController", () => {
     let controller: MessageDeliveryController;
+    let duplicateHistory: jest.Mock;
+    let duplicateEnabled: jest.Mock;
+    let duplicateService: MessageDuplicateCheckService;
     let aligoService: jest.Mocked<Pick<AligoService, "sendSms">>;
     let messageSenderApprovalService: jest.Mocked<Pick<MessageSenderApprovalService, "ensureApproved">>;
     let prismaService: {
@@ -51,10 +69,18 @@ describe("MessageDeliveryController", () => {
                 update: jest.fn().mockResolvedValue({}),
             },
         };
+        duplicateHistory = jest.fn().mockResolvedValue([]);
+        duplicateEnabled = jest.fn().mockResolvedValue(true);
+        duplicateService = new MessageDuplicateCheckService(
+            { findSmsDuplicateMatches: duplicateHistory } as unknown as IMessageLogRepository,
+            { getMessageSettingsPolicyEnabled: duplicateEnabled, getMessageAutomationPolicyConfig: jest.fn().mockResolvedValue({ configuration: { duplicateWindowHours: 96 } }) } as unknown as SystemSettingService,
+            { execute: jest.fn().mockResolvedValue(null) } as unknown as GetSettingUsecase,
+        );
         controller = new MessageDeliveryController(
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             prismaService as unknown as PrismaService,
+            duplicateService,
         );
     });
 
@@ -1254,5 +1280,212 @@ describe("MessageDeliveryController", () => {
         expect(messageLogModel.findUnique).toHaveBeenCalledTimes(2);
         expect(prismaService.message_log.create).toHaveBeenCalledTimes(1);
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    const duplicateRequest = { receiver: "01012345678", message: "body" };
+    const approvedResult = {
+        request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "SMS" as const, testModeYn: "N" as const },
+        response: { result_code: 1, message: "accepted", msg_id: 321, success_cnt: 1, error_cnt: 0, msg_type: "SMS" as const },
+    };
+    const prior = [{ id: 1001, sentAt: new Date("2026-11-03T11:00:00.000Z") }];
+
+    it("preflight reads full history without approval, log writes or provider calls", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-11-03T12:00:00.000Z").getTime());
+        duplicateHistory.mockResolvedValue(prior);
+        const result = await controller.checkSmsDuplicates({ branchId: "org-1" }, duplicateRequest);
+        expect(result).toEqual({ checkedAt: "2026-11-03T12:00:00.000Z", matchIds: [1001], latestSentAt: "2026-11-03T11:00:00.000Z", payloadHash: "c3d880ca1da48cea7843e09fbdb2f3de85651ff971b63d48ecc08b9d06067495" });
+        expect(duplicateHistory).toHaveBeenCalledTimes(1);
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
+        expect(prismaService.message_log.update).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("allows no duplicate and an exact explicit duplicate confirmation with one provider call each", async () => {
+        aligoService.sendSms.mockResolvedValue(approvedResult);
+        await controller.sendSms({ branchId: "org-1" }, duplicateRequest);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        duplicateHistory.mockResolvedValue(prior);
+        const decision = await controller.checkSmsDuplicates({ branchId: "org-1" }, duplicateRequest);
+        await controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, duplicateDecision: { confirmed: true, ...decision } });
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects duplicate without a decision and history failure before provider boundary", async () => {
+        duplicateHistory.mockResolvedValue(prior);
+        await expect(controller.sendSms({ branchId: "org-1" }, duplicateRequest)).rejects.toThrow(ConflictException);
+        duplicateHistory.mockRejectedValue(new Error("offline"));
+        await expect(controller.sendSms({ branchId: "org-1" }, duplicateRequest)).rejects.toThrow(ServiceUnavailableException);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(prismaService.message_log.update).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "b".repeat(64)])("rejects absent/wrong decision hash %s with unchanged IDs before provider", async payloadHash => {
+        duplicateHistory.mockResolvedValue(prior);
+        await expect(controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest,
+            duplicateDecision: { confirmed: true, checkedAt: "2026-11-03T12:00:00.000Z", matchIds: [1001], payloadHash },
+        })).rejects.toThrow(ConflictException);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(0);
+    });
+
+    it("preserves branch-context and recipient validation on readonly preflight", async () => {
+        const mismatch: unknown = await controller.checkSmsDuplicates({ branchId: "org-1" }, duplicateRequest, "other-branch").catch(error => error);
+        expect(mismatch).toBeInstanceOf(ConflictException);
+        expect((mismatch as ConflictException).getResponse()).toMatchObject({ code: "BRANCH_CONTEXT_CHANGED" });
+        expect(prismaService.client.findFirst).not.toHaveBeenCalled();
+        await expect(controller.checkSmsDuplicates({ branchId: "org-1" }, { ...duplicateRequest, clientId: 1, employeeId: 2 })).rejects.toThrow(BadRequestException);
+        await expect(controller.checkSmsDuplicates({ branchId: "org-1" }, { ...duplicateRequest, receiver: "123" })).rejects.toThrow(BadRequestException);
+        expect(duplicateHistory).not.toHaveBeenCalled();
+        expect(prismaService.message_log.create).not.toHaveBeenCalled();
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("OFF allows stale decision with one provider call", async () => {
+        duplicateEnabled.mockResolvedValue(false);
+        aligoService.sendSms.mockResolvedValue(approvedResult);
+        await controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, duplicateDecision: { confirmed: true, checkedAt: "ignored", matchIds: [99], payloadHash: "stale" } });
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(duplicateHistory).not.toHaveBeenCalled();
+    });
+
+    it("fresh changed history refuses an otherwise bound decision", async () => {
+        duplicateHistory.mockResolvedValueOnce(prior).mockResolvedValueOnce([...prior, { id: 1002, sentAt: new Date("2026-11-03T12:00:00.000Z") }]);
+        const decision = await controller.checkSmsDuplicates({ branchId: "org-1" }, duplicateRequest);
+        await expect(controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, duplicateDecision: { confirmed: true, ...decision } })).rejects.toThrow(ConflictException);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { message: " body\r\n" }, { title: "changed" }, { msgType: "LMS" as const },
+        { triggerType: "scheduled" as const, scheduledDate: "2026-11-04", scheduledTime: "21:00" },
+    ])("rejects same IDs and old hash after changing payload %j", async change => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-11-03T12:00:00.000Z").getTime());
+        duplicateHistory.mockResolvedValue(prior);
+        const decision = await controller.checkSmsDuplicates({ branchId: "org-1" }, duplicateRequest);
+        await expect(controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, ...change, duplicateDecision: { confirmed: true, ...decision } })).rejects.toThrow(ConflictException);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("identity and batch changes invalidate hash even when physical history IDs stay equal", async () => {
+        duplicateHistory.mockResolvedValue(prior);
+        const decision = await controller.checkSmsDuplicates({ branchId: "org-1" }, duplicateRequest);
+        await expect(controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, clientId: 2, duplicateDecision: { confirmed: true, ...decision } })).rejects.toThrow(ConflictException);
+        const batch = { ...duplicateRequest, receiver: "01012345678,01088889999" };
+        const batchDecision = await controller.checkSmsDuplicates({ branchId: "org-1" }, batch);
+        await expect(controller.sendSms({ branchId: "org-1" }, { ...batch, receiver: "01012345678,01077776666", duplicateDecision: { confirmed: true, ...batchDecision } })).rejects.toThrow(ConflictException);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("canonical receiver and decision metadata retain the literal old acceptance fingerprint", async () => {
+        duplicateHistory.mockResolvedValue(prior);
+        aligoService.sendSms.mockResolvedValue(approvedResult);
+        const decision = await controller.checkSmsDuplicates({ branchId: "org-1" }, { ...duplicateRequest, receiver: "82 10-1234-5678", idempotencyKey: "first" });
+        await controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, idempotencyKey: "different", duplicateDecision: { confirmed: true, ...decision } });
+        expect(decision.payloadHash).toBe("c3d880ca1da48cea7843e09fbdb2f3de85651ff971b63d48ecc08b9d06067495");
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({ data: expect.objectContaining({ providerAcceptanceFingerprint: "c3d880ca1da48cea7843e09fbdb2f3de85651ff971b63d48ecc08b9d06067495" }) });
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("maps duplicate409 with fresh recheck binding and dependency503 through the real problem serializer", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-11-03T12:00:00.000Z").getTime());
+        duplicateHistory.mockResolvedValue(prior);
+        const conflict: unknown = await controller.sendSms({ branchId: "org-1" }, duplicateRequest).catch(error => error);
+        const request = { method: "POST", acceptsLanguages: () => "ko-KR" } as unknown as Request;
+        const response = { locals: { errorRequestId: "duplicate-transport-proof" } } as unknown as Response;
+        expect(mapHttpProblem(conflict, request, response)).toMatchObject({ code: "REQUEST_CONFLICT", status: 409, checkedAt: "2026-11-03T12:00:00.000Z", matchIds: [1001], latestSentAt: "2026-11-03T11:00:00.000Z", payloadHash: "c3d880ca1da48cea7843e09fbdb2f3de85651ff971b63d48ecc08b9d06067495", outcome: "NOT_APPLIED" });
+        duplicateHistory.mockRejectedValue(new Error("private database diagnostic"));
+        const unavailable: unknown = await controller.sendSms({ branchId: "org-1" }, duplicateRequest).catch(error => error);
+        const problem = mapHttpProblem(unavailable, request, response);
+        expect(problem).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE", status: 503, outcome: "NOT_APPLIED" });
+        expect(JSON.stringify(problem)).not.toContain("private database diagnostic");
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(0);
+    });
+
+
+    it.each([
+        { providerAcceptanceState: "accepted", status: "sent" },
+        { providerAcceptanceState: "reconciled_delivered", status: "sent" },
+        { providerAcceptanceState: "legacy", status: "sent" },
+        { providerAcceptanceState: "started", status: "pending" },
+        { providerAcceptanceState: "prepared", status: "pending" },
+        { providerAcceptanceState: "uncertain", status: "failed" },
+    ])("preserves persisted $providerAcceptanceState/$status replay409 before duplicate query", async state => {
+        const model = prismaService.message_log as typeof prismaService.message_log & { findUnique: jest.Mock };
+        model.findUnique = jest.fn().mockResolvedValue({ id: 4201, providerAcceptanceFingerprint: "c3d880ca1da48cea7843e09fbdb2f3de85651ff971b63d48ecc08b9d06067495", ...state });
+        duplicateHistory.mockRejectedValue(new Error("must not read own sent history"));
+        const error: unknown = await controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, idempotencyKey: "persisted-key" }).catch(error => error);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: "MESSAGE_SEND_ALREADY_REQUESTED", outcome: "UNKNOWN", operationId: "4201" });
+        expect(duplicateHistory).toHaveBeenCalledTimes(0);
+        expect(prismaService.message_log.create).toHaveBeenCalledTimes(0);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(0);
+    });
+
+    it("retains actual payload key conflict before duplicate query", async () => {
+        const model = prismaService.message_log as typeof prismaService.message_log & { findUnique: jest.Mock };
+        model.findUnique = jest.fn().mockResolvedValue({ id: 4201, providerAcceptanceFingerprint: "c3d880ca1da48cea7843e09fbdb2f3de85651ff971b63d48ecc08b9d06067495", providerAcceptanceState: "accepted", status: "sent" });
+        const error: unknown = await controller.sendSms({ branchId: "org-1" }, { ...duplicateRequest, message: "changed payload", idempotencyKey: "persisted-key" }).catch(error => error);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({ code: "MESSAGE_REQUEST_KEY_CONFLICT", outcome: "NOT_APPLIED" });
+        expect(duplicateHistory).toHaveBeenCalledTimes(0);
+        expect(prismaService.message_log.create).toHaveBeenCalledTimes(0);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(0);
+    });
+
+    it("refuses without admission then permits current confirmation on the same key exactly once", async () => {
+        let row: Record<string, unknown> | null = null;
+        const model = prismaService.message_log as typeof prismaService.message_log & { findUnique: jest.Mock };
+        model.findUnique = jest.fn().mockImplementation(async () => row);
+        prismaService.message_log.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => { row = { ...data, id: 4201 }; return row; });
+        prismaService.message_log.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => { Object.assign(row!, data); return row; });
+        duplicateHistory.mockResolvedValue(prior);
+        aligoService.sendSms.mockResolvedValue(approvedResult);
+        const request = { ...duplicateRequest, idempotencyKey: "confirm-same-key" };
+        await expect(controller.sendSms({ branchId: "org-1" }, request)).rejects.toThrow(ConflictException);
+        expect(row).toBeNull();
+        expect(prismaService.message_log.create).toHaveBeenCalledTimes(0);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(0);
+        const decision = await controller.checkSmsDuplicates({ branchId: "org-1" }, request);
+        await controller.sendSms({ branchId: "org-1" }, { ...request, duplicateDecision: { confirmed: true, ...decision } });
+        expect(prismaService.message_log.create).toHaveBeenCalledTimes(1);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        duplicateHistory.mockClear();
+        await expect(controller.sendSms({ branchId: "org-1" }, request)).rejects.toThrow(ConflictException);
+        expect(duplicateHistory).toHaveBeenCalledTimes(0);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("retains payloadHash through nested DTO validation without a circular import", async () => {
+        const dto = plainToInstance(SendSmsMessageDto, { ...duplicateRequest, duplicateDecision: { confirmed: true, checkedAt: "2026-11-03T12:00:00.000Z", matchIds: [1001], payloadHash: "a".repeat(64) } });
+        expect(await validate(dto, { whitelist: true })).toEqual([]);
+        expect(dto.duplicateDecision?.payloadHash).toBe("a".repeat(64));
+    });
+
+});
+
+describe("MessageDeliveryModule production duplicate-check wiring", () => {
+    it("resolves the real controller and service through production imports and exports without opening resources", async () => {
+        const unexpectedResource = jest.fn(() => { throw new Error("External resource access is forbidden in compile-only test"); });
+        const resourceGuard = new Proxy({}, { get: (_target, property) => {
+            if (property === "beforeApplicationShutdown" || property === "then" || property === "onModuleInit" || property === "onModuleDestroy" || property === "onApplicationShutdown") return undefined;
+            return unexpectedResource;
+        } });
+        const module = await Test.createTestingModule({ imports: [
+            ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+            TenantModule, SchedulerLeaseModule, MessageDeliveryModule,
+        ] }).overrideProvider(PrismaService).useValue(resourceGuard)
+            .overrideProvider(AligoApiClient).useValue(resourceGuard).compile();
+        try {
+            const contextId = ContextIdFactory.create();
+            module.registerRequestByContextId({}, contextId);
+            const controller = await module.select(MessageDeliveryModule).resolve(MessageDeliveryController, contextId, { strict: true });
+            const service = await module.select(MessageModule).resolve(MessageDuplicateCheckService, contextId, { strict: true });
+            expect(controller).toBeInstanceOf(MessageDeliveryController);
+            expect(service).toBeInstanceOf(MessageDuplicateCheckService);
+            expect((controller as unknown as { duplicateCheck: MessageDuplicateCheckService }).duplicateCheck).toBe(service);
+            expect(unexpectedResource).not.toHaveBeenCalled();
+        } finally { await module.close(); }
     });
 });
