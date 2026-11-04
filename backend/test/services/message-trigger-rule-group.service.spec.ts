@@ -611,6 +611,27 @@ describe("SbMessageTriggerRuleRepository generic group primitives", () => {
 });
 
 describe("RULE-2 actual core/template service/repository absence boundary", () => {
+    it.each([
+        { createdAt: "2026-11-03T16:00:00.000Z", anchorDate: "2026-11-04", scheduledFor: "2026-11-05T01:30:00.000Z" },
+        { createdAt: "2026-11-03T10:00:00.000Z", anchorDate: "2026-11-03", scheduledFor: "2026-11-04T01:30:00.000Z" },
+    ])("uses the Korean calendar for CLIENT_CREATED preview at $createdAt without writes", async ({ createdAt, anchorDate, scheduledFor }) => {
+        const f = coreFixture();
+        jest.spyOn(f.core, "readClientAutomationSource").mockResolvedValue({ id: 7, name: "합성 고객", phone: "01000000007", type: null,
+            createdAt: new Date(createdAt), startDate: null, endDate: null, serviceEndNoticeSentAt: null });
+        const writes = jest.fn();
+        Object.assign(f.core, { prisma: { $transaction: async <T>(work: (tx: unknown) => Promise<T>) => work({
+            client: { update: writes }, message_trigger_job: { create: writes }, service_record_token: { create: writes },
+        }) }, deliveryService: { resolveCanonicalDeliverySnapshot: async () => ({ message: "합성 preview 본문" }) } });
+        const preview = await f.facade.preview(branch, { draft: draft({ eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.AFTER_DAYS, offsetDays: 1, sendTime: "10:30",
+            recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } }), clientId: 7 });
+        expect(preview).toMatchObject({ complete: true, count: 1, recipients: [{ recipientType: "CLIENT", body: "합성 preview 본문",
+            outcome: "ready", reason: null, anchorSource: "client.createdAt", anchorDate, scheduledFor }] });
+        expect(writes).not.toHaveBeenCalled();
+        expect(f.repository.createGroup).not.toHaveBeenCalled();
+        expect(f.repository.create).not.toHaveBeenCalled();
+        expect(f.locks).toEqual([]);
+    });
     it("never freezes caregiver global text through active group validation or an unrelated first edit", async () => {
         const f = coreFixture(); let snapshot: unknown = null;
         const at = new Date("2026-10-01T00:00:00.000Z");

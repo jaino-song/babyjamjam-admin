@@ -213,6 +213,32 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
 }
 
 describe("RULE-2 automatic caregiver real permit path (repository-bound unit)", () => {
+    it.each([["active"], ["disabled"], ["deleted"], [], null, {}, false, 0, "unknown"].map((state) => ({ state })))("refuses malformed lifecycle %j through actual current authority with provider0", async ({ state }) => {
+        const f = await automaticFixture();
+        f.branch.systemTemplateSnapshot = { version: 2, createdAt: now.toISOString(), createdBy: "user-a", templates: {
+            CAREGIVER_SERVICE_START_NOTICE: { state, content: "{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}",
+                id: "branch-key", customVariables: [], createdAt: now.toISOString(), updatedAt: now.toISOString() },
+        } };
+        const authorization = await f.start();
+        const delivered = authorization.kind === "allow" ? await f.dispatch() : false;
+        expect(delivered).toBe(false);
+        expect(authorization.kind).toBe("stale");
+        expect((await f.resolve()).recipients[0]).toMatchObject({ outcome: "needs_setup", reason: "template_unavailable" });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.logs.save).not.toHaveBeenCalled();
+    });
+    it("allows a primitive active v2 lifecycle through actual preparation and final permit", async () => {
+        const f = await automaticFixture();
+        f.branch.systemTemplateSnapshot = { version: 2, createdAt: now.toISOString(), createdBy: "user-a", templates: {
+            CAREGIVER_SERVICE_START_NOTICE: { state: "active", content: "{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}",
+                id: "branch-key", customVariables: [], createdAt: now.toISOString(), updatedAt: now.toISOString() },
+        } };
+        expect(await f.start()).toEqual({ kind: "allow" });
+        expect(await f.dispatch()).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.aligo.sendSms).toHaveBeenCalledWith(expect.objectContaining({ receiver: "01000000011",
+            message: "합성 주 관리사님, 합성 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - 합성 지점" }));
+    });
     it.each(["START", "END"] as const)("delivers %s through actual source/current authority/prepare/final permit exactly once", async (event) => {
         const f = await automaticFixture(event);
         expect(await f.start()).toEqual({ kind: "allow" });

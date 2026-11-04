@@ -56,7 +56,7 @@ export function parseBranchSystemTemplateSnapshot(value: unknown, branchId: stri
             || entry["customVariables"].some((variable: unknown) => !record(variable) || typeof variable["key"] !== "string" || !variable["key"]
                 || typeof variable["label"] !== "string" || !variable["label"] || typeof variable["required"] !== "boolean")) throw new BranchSystemTemplateSnapshotError(branchId, key as SystemTemplateKey);
         if (entry["state"] !== undefined || entry["deletedAt"] !== undefined) {
-            if (value["version"] !== 2 || !isCaregiverSystemTemplateKey(key) || !["active", "disabled", "deleted"].includes(String(entry["state"]))
+            if (value["version"] !== 2 || !isCaregiverSystemTemplateKey(key) || typeof entry["state"] !== "string" || !["active", "disabled", "deleted"].includes(entry["state"])
                 || (entry["state"] === "deleted" ? !date(entry["deletedAt"]) : entry["deletedAt"] !== undefined)) throw new BranchSystemTemplateSnapshotError(branchId, key as SystemTemplateKey);
         }
     }

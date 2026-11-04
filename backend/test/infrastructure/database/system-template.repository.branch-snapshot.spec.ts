@@ -1,5 +1,5 @@
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
-import { BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION } from "domain/entities/branch-system-template-snapshot";
+import { BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION, BranchSystemTemplateSnapshotError, parseBranchSystemTemplateSnapshot } from "domain/entities/branch-system-template-snapshot";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
 
@@ -47,6 +47,26 @@ function setup(globalRows: Array<{ templateKey: SystemTemplateKey; content: stri
 }
 
 describe("SbSystemTemplateRepository — key added after the branch snapshot froze", () => {
+    it.each([1, 2])("preserves state-absent compatibility and opaque JSON in snapshot v%i", (version) => {
+        const snapshot = { version, createdAt: at, createdBy: "user-a", futureRoot: { keep: ["opaque"] }, templates: {
+            [SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: entry("legacy active content"),
+            futureTemplate: { state: ["disabled"], opaque: { keep: true } },
+        } };
+        const parsed = parseBranchSystemTemplateSnapshot(snapshot, branchId);
+        expect(parsed).toEqual(snapshot);
+        expect(parsed).not.toBe(snapshot);
+        expect(parsed?.templates[SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE]).not.toHaveProperty("state");
+    });
+    it.each([["active"], ["disabled"], ["deleted"], [], null, {}, true, 1, "unknown"].map((state) => ({ state })))("rejects non-literal persisted caregiver state %j in codec and repository", async ({ state }) => {
+        const key = SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE;
+        const snapshot = { version: 2, createdAt: at, createdBy: "user-a", templates: { [key]: { ...entry("malformed-state"), state } } };
+        expect(() => parseBranchSystemTemplateSnapshot(snapshot, branchId)).toThrow(BranchSystemTemplateSnapshotError);
+        const { repository, tx } = setup();
+        tx.branch.findUnique.mockResolvedValue({ id: branchId, systemTemplateSnapshot: snapshot } as never);
+        await expect(repository.findByBranchKey(branchId, key, tx as never)).rejects.toThrow(BranchSystemTemplateSnapshotError);
+        expect(tx.branch.update).not.toHaveBeenCalled();
+        expect(tx.system_template.findUnique).not.toHaveBeenCalled();
+    });
     it("RULE-2 caregiver absence refuses global fallback and uses the approved registry body", async () => {
         const key = "CAREGIVER_SERVICE_START_NOTICE" as SystemTemplateKey;
         const { repository, tx } = setup([{ templateKey: key, content: "GLOBAL MUST NOT LEAK" }]);

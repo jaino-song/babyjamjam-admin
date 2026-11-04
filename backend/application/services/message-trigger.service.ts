@@ -113,7 +113,7 @@ import {
     isMessageRecipeWithinMaterializationWindow,
     isSelectedMessageJobExpired,
     shouldSkipClientPreStartCatchUp,
-    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate,
+    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -1424,11 +1424,12 @@ export class MessageTriggerService {
                 let reason: string | null = recipe ? null : !source.phone ? "전화번호 없음" : "anchor 없음";
                 if (recipe) try { body = (await this.prisma.$transaction((tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(recipe), tx))).message; }
                 catch { reason = "template_unavailable"; }
+                const anchor = rule.eventType === MessageTriggerEventType.SERVICE_END ? source.endDate : rule.eventType === MessageTriggerEventType.SERVICE_START ? source.startDate : source.createdAt;
                 recipients.push({ ruleId: rule.id, recipientType: MessageTriggerRecipientType.CLIENT, employeeId: null, employeeScheduleId: null,
                     recipientName: source.name, recipientPhone: source.phone, templateKey: rule.templateKey, body, count: body ? 1 : 0,
                     scheduledFor: recipe?.scheduledFor.toISOString() ?? null,
                     anchorSource: rule.eventType === MessageTriggerEventType.SERVICE_END ? "client.endDate" : rule.eventType === MessageTriggerEventType.SERVICE_START ? "client.startDate" : "client.createdAt",
-                    anchorDate: (rule.eventType === MessageTriggerEventType.SERVICE_END ? source.endDate : rule.eventType === MessageTriggerEventType.SERVICE_START ? source.startDate : source.createdAt)?.toISOString().slice(0, 10) ?? null,
+                    anchorDate: anchor ? getKstCalendarDate(anchor, 0) : null,
                     outcome: reason ? "skip" : "ready", reason });
             }
         }
