@@ -191,6 +191,36 @@ describe("SbSystemSettingRepository provided transaction", () => {
     });
 });
 
+describe("SbMessageLogRepository reservation-count transaction selection", () => {
+    const branchId = "d771e5fc-5420-4b52-9f2e-253dc5f9133b";
+    const now = new Date("2098-12-31T23:00:00Z");
+
+    it("queries the provided transaction instead of the base Prisma client", async () => {
+        const queryTransaction = jest.fn().mockResolvedValue([{ count: 1n }]);
+        const queryBase = jest.fn().mockResolvedValue([{ count: 0n }]);
+        const tx = { $queryRaw: queryTransaction } as unknown as Prisma.TransactionClient;
+        const prisma = { $queryRaw: queryBase } as unknown as PrismaService;
+        const repository = new SbMessageLogRepository(prisma);
+
+        await expect(repository.countFutureProviderReservations(branchId, now, tx)).resolves.toBe(1);
+
+        expect(queryTransaction).toHaveBeenCalledTimes(1);
+        expect(queryTransaction).toHaveBeenCalledWith(expect.objectContaining({ values: [branchId, "209901010800"] }));
+        expect(queryBase).not.toHaveBeenCalled();
+    });
+
+    it("retains the base Prisma client fallback when no transaction is provided", async () => {
+        const queryBase = jest.fn().mockResolvedValue([{ count: 3n }]);
+        const prisma = { $queryRaw: queryBase } as unknown as PrismaService;
+        const repository = new SbMessageLogRepository(prisma);
+
+        await expect(repository.countFutureProviderReservations(branchId, now)).resolves.toBe(3);
+
+        expect(queryBase).toHaveBeenCalledTimes(1);
+        expect(queryBase).toHaveBeenCalledWith(expect.objectContaining({ values: [branchId, "209901010800"] }));
+    });
+});
+
 describeReal("policy settings real PostgreSQL transaction proof", () => {
     let handle: IntegrityPrisma;
     const prefix = `policy-cas-${randomUUID()}`;
@@ -249,6 +279,30 @@ describeReal("policy settings real PostgreSQL transaction proof", () => {
         expect(results.filter(Boolean)).toHaveLength(1);
         expect(await handle.raw.system_setting.findUnique({ where: { key } })).toMatchObject({ value: results.find(Boolean)!.value });
         expect(await handle.raw.admin_audit_event.count({ where: { targetId: key } })).toBe(1);
+    });
+    it("counts an uncommitted reservation only through its caller transaction and rolls it back", async () => {
+        const branchId = randomUUID();
+        const now = new Date("2098-12-31T23:00:00Z");
+        const repository = new SbMessageLogRepository(handle.service);
+        const rollback = new Error("rollback uncommitted reservation proof");
+
+        await expect(handle.service.$transaction(async tx => {
+            await tx.branch.create({ data: { id: branchId, name: "Policy TX visibility", slug: `${prefix}-tx-visibility` } });
+            await tx.message_log.create({ data: {
+                branchId, provider: "aligo_sms", providerAcceptanceState: "accepted", status: "sent",
+                templateKey: "manual_sms", receiver: "01012345678", messageBody: "transaction visibility fixture",
+                variables: { scheduledDate: "20990101", scheduledTime: "0900" },
+            } });
+
+            expect(await repository.countFutureProviderReservations(branchId, now, tx)).toBe(1);
+            expect(await repository.countFutureProviderReservations(branchId, now)).toBe(0);
+            expect(await handle.raw.message_log.count({ where: { branchId } })).toBe(0);
+            throw rollback;
+        })).rejects.toBe(rollback);
+
+        expect(await repository.countFutureProviderReservations(branchId, now)).toBe(0);
+        expect(await handle.raw.message_log.count({ where: { branchId } })).toBe(0);
+        expect(await handle.raw.branch.findUnique({ where: { id: branchId } })).toBeNull();
     });
     it("queries real branch reservations by provider acceptance and KST schedule; unions exact recipient groups", async () => {
         const branchA = await handle.raw.branch.create({ data: { name: "Policy A", slug: `${prefix}-a` } });
