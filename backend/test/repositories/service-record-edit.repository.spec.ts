@@ -216,6 +216,59 @@ describe("ServiceRecordEditRepository", () => {
         expect(service_record_edit_draft.create).toHaveBeenCalledTimes(1);
     });
 
+    describe("createDraftIfNoneActive", () => {
+        const input = {
+            branchId,
+            serviceRecordCaseId: caseId,
+            actorUserId: actorId,
+            sourceCaseVersion: 7,
+            sourceFingerprint: "source-fingerprint",
+            sourceSnapshot: { status: "IN_PROGRESS" },
+        };
+        function repositoryOver(draftTable: Record<string, jest.Mock>) {
+            const tx = { $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]), service_record_edit_draft: draftTable };
+            return {
+                tx,
+                repository: new ServiceRecordEditRepository({
+                    ...transactionalPrisma(tx),
+                    service_record_edit_draft: draftTable,
+                } as never),
+            };
+        }
+
+        it("creates the draft, under the case lock, when none is active", async () => {
+            const table = { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue(draftRow()) };
+            const { repository, tx } = repositoryOver(table);
+            await expect(repository.createDraftIfNoneActive(input)).resolves.toMatchObject({ id: draftId, draftVersion: 1, status: "ACTIVE" });
+            expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(table.create).toHaveBeenCalledTimes(1);
+        });
+
+        it("returns null and creates nothing when a draft is already active, even the caller's own", async () => {
+            const table = { findFirst: jest.fn().mockResolvedValue(draftRow()), create: jest.fn() };
+            const { repository } = repositoryOver(table);
+            await expect(repository.createDraftIfNoneActive(input)).resolves.toBeNull();
+            expect(table.create).not.toHaveBeenCalled();
+        });
+
+        it("returns null, never the winner's draft, on a concurrent unique violation", async () => {
+            const table = {
+                findFirst: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockRejectedValue(uniqueError()),
+            };
+            const { repository } = repositoryOver(table);
+            await expect(repository.createDraftIfNoneActive(input)).resolves.toBeNull();
+            // It did not go looking for the winner either: findFirst ran once, before the create.
+            expect(table.findFirst).toHaveBeenCalledTimes(1);
+        });
+
+        it("rethrows any other failure", async () => {
+            const table = { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockRejectedValue(new Error("boom")) };
+            const { repository } = repositoryOver(table);
+            await expect(repository.createDraftIfNoneActive(input)).rejects.toThrow("boom");
+        });
+    });
+
     it("returns the winner after a concurrent active-draft unique-index race", async () => {
         const winner = draftRow({ changes: { header: { momName: "Winner" } } });
         const service_record_edit_draft = {
@@ -1021,7 +1074,7 @@ describe("ServiceRecordEditRepository", () => {
         ];
         const toggles = { saturday: true, sunday: false, holiday: false };
 
-        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }) {
+        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }, finalizationDueAt?: string) {
             const source = futureSource();
             const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
             const tx = {
@@ -1065,6 +1118,7 @@ describe("ServiceRecordEditRepository", () => {
                 documentJob: null,
                 clientServiceDays: toggles,
                 materializedPlannedSessions: materialize as never,
+                ...(finalizationDueAt ? { finalizationDueAt } : {}),
             };
             const response = await repository.confirmDraft({
                 branchId,
@@ -1120,6 +1174,17 @@ describe("ServiceRecordEditRepository", () => {
             expect(tx.service_record_document_job.create).not.toHaveBeenCalled();
         });
 
+        it("writes the deadline with a materialized end date without a revision", async () => {
+            const { tx } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-05" }, "2026-09-05T11:00:00.000Z");
+            expect(tx.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({
+                    endDate: new Date("2026-09-05T00:00:00.000Z"),
+                    finalizationDueAt: new Date("2026-09-05T11:00:00.000Z"),
+                }),
+            }));
+            expect(tx.service_record_revision.create).not.toHaveBeenCalled();
+        });
+
         it("leaves the end dates alone where they already match", async () => {
             const { tx, source } = await confirmMaterialized({ plannedSessions: vector, endDate: futureSource().endDate });
             expect(tx.service_record_case.update).toHaveBeenCalledWith({
@@ -1132,7 +1197,261 @@ describe("ServiceRecordEditRepository", () => {
                 where: { id: source.client.id, branchId },
                 data: { allowSaturdayService: true, allowSundayService: false, allowHolidayService: false },
             });
+            // No end date moves, so no link is reset (a later-reissued link must not be clawed back).
+            expect(tx.service_record_token.updateMany).not.toHaveBeenCalled();
         });
+    });
+
+    describe("resume replan plan", () => {
+        type FakeToken = { id: string; active: boolean; revokedAt: Date | null; expiresAt: Date };
+        const GOLDEN_NEW_EXPIRY = new Date("2026-11-02T15:00:00.000Z");
+
+        async function confirmWith(
+            planOverrides: Partial<ServiceRecordEditConfirmPlan>,
+            options: { tokens?: FakeToken[]; failOn?: "token" | "assignment" | "schedule" } = {},
+        ) {
+            const source = futureSource();
+            const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+            const tokens = options.tokens ?? [];
+            const fail = (name: "token" | "assignment" | "schedule") => (options.failOn === name
+                ? jest.fn().mockRejectedValue(new Error(`${name} write failed`))
+                : null);
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([]),
+                service_record_edit_draft: {
+                    findFirst: jest.fn().mockResolvedValue(activeDraft),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+                service_record_case: { update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }) },
+                client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                service_record_day: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
+                service_record_token: {
+                    // Applies the where clause like the database would, so a raise-only filter is observable.
+                    updateMany: fail("token") ?? jest.fn().mockImplementation(async (args: {
+                        where: { active: boolean; revokedAt: null; expiresAt?: { lt: Date } };
+                        data: { expiresAt: Date };
+                    }) => {
+                        let count = 0;
+                        for (const token of tokens) {
+                            if (token.active !== args.where.active || token.revokedAt !== args.where.revokedAt) continue;
+                            if (args.where.expiresAt && !(token.expiresAt < args.where.expiresAt.lt)) continue;
+                            token.expiresAt = args.data.expiresAt;
+                            count += 1;
+                        }
+                        return { count };
+                    }),
+                },
+                service_record_assignment: { updateMany: fail("assignment") ?? jest.fn().mockResolvedValue({ count: 1 }) },
+                employee_schedule: { updateMany: fail("schedule") ?? jest.fn().mockResolvedValue({ count: 1 }) },
+            };
+            const prisma = transactionalPrisma(tx);
+            const repository = new ServiceRecordEditRepository(prisma as never);
+            const internals = repository as unknown as {
+                findDraftByIdWithClient: jest.Mock;
+                loadSourceWithClient: jest.Mock;
+            };
+            jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+            jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+            const plan: ServiceRecordEditConfirmPlan = {
+                status: "confirmed",
+                sourceFingerprint: "a".repeat(64),
+                caseId,
+                clientId: source.client.id,
+                formVersion: source.formVersion,
+                requiredSessionCount: source.requiredSessionCount,
+                startDate: "2026-10-01",
+                endDate: "2026-11-02",
+                header: source.header,
+                plannedSessions: source.plannedSessions,
+                sessions: [],
+                newSessions: [],
+                assignments: [
+                    { assignmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", scheduleId: 55, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: true },
+                    { assignmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", scheduleId: 56, startDate: "2026-10-14", endDate: "2026-11-02", datesChanged: true },
+                ],
+                revision: null,
+                dispatchContext: null,
+                documentStatus: "capability_unverified",
+                documentJob: null,
+                ...planOverrides,
+            };
+            const confirmed = repository.confirmDraft({
+                branchId,
+                draftId,
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: `srp_${"a".repeat(64)}`,
+                idempotencyKey: "66666666-6666-4666-8666-666666666666",
+                requestFingerprint: "b".repeat(64),
+                actorUserId: actorId,
+                prepare: () => plan,
+            });
+            return { tx, prisma, tokens, confirmed };
+        }
+
+        const resumePlan = { finalizationDueAt: "2026-11-02T11:00:00.000Z", tokenExpiryMode: "raise_only" as const };
+
+        it("writes finalizationDueAt with the case update only when the plan carries it", async () => {
+            const withDue = await confirmWith(resumePlan);
+            await withDue.confirmed;
+            expect(withDue.tx.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({
+                    endDate: new Date("2026-11-02T00:00:00.000Z"),
+                    finalizationDueAt: new Date("2026-11-02T11:00:00.000Z"),
+                }),
+            }));
+            const without = await confirmWith({});
+            await without.confirmed;
+            const data = without.tx.service_record_case.update.mock.calls[0]![0].data as Record<string, unknown>;
+            expect("finalizationDueAt" in data).toBe(false);
+        });
+
+        it("writes the boundary to the assignment and its schedule inside the one transaction", async () => {
+            const { tx, prisma, confirmed } = await confirmWith(resumePlan);
+            await confirmed;
+            expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+            expect(tx.service_record_assignment.updateMany.mock.calls.map(([call]) => [call.where.id, call.data])).toEqual([
+                ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", {
+                    startDate: new Date("2026-10-01T00:00:00.000Z"),
+                    endDate: new Date("2026-10-01T00:00:00.000Z"),
+                }],
+                ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", {
+                    startDate: new Date("2026-10-14T00:00:00.000Z"),
+                    endDate: new Date("2026-11-02T00:00:00.000Z"),
+                }],
+            ]);
+            expect(tx.employee_schedule.updateMany.mock.calls.map(([call]) => [call.where.id, call.data.endDate])).toEqual([
+                [55, new Date("2026-10-01T00:00:00.000Z")],
+                [56, new Date("2026-11-02T00:00:00.000Z")],
+            ]);
+        });
+
+        it("raises an active token to the new end and leaves a revoked one alone", async () => {
+            const tokens: FakeToken[] = [
+                { id: "b-active", active: true, revokedAt: null, expiresAt: new Date("2026-10-23T15:00:00.000Z") },
+                { id: "a-revoked", active: true, revokedAt: new Date("2026-10-14T00:00:00.000Z"), expiresAt: new Date("2026-10-13T15:00:00.000Z") },
+                { id: "a-inactive", active: false, revokedAt: null, expiresAt: new Date("2026-10-13T15:00:00.000Z") },
+            ];
+            const { tx, confirmed } = await confirmWith(resumePlan, { tokens });
+            await confirmed;
+            expect(tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                where: {
+                    branchId,
+                    serviceRecordCaseId: caseId,
+                    active: true,
+                    revokedAt: null,
+                    expiresAt: { lt: GOLDEN_NEW_EXPIRY },
+                },
+                data: { expiresAt: GOLDEN_NEW_EXPIRY },
+            });
+            expect(tokens.map(({ id, expiresAt }) => [id, expiresAt.toISOString()])).toEqual([
+                ["b-active", "2026-11-02T15:00:00.000Z"],
+                ["a-revoked", "2026-10-13T15:00:00.000Z"],
+                ["a-inactive", "2026-10-13T15:00:00.000Z"],
+            ]);
+        });
+
+        it("never lowers a token whose stored expiry is later than the recomputed one", async () => {
+            const later = new Date("2026-12-01T15:00:00.000Z");
+            const tokens: FakeToken[] = [{ id: "later", active: true, revokedAt: null, expiresAt: later }];
+            const { confirmed } = await confirmWith(resumePlan, { tokens });
+            await confirmed;
+            expect(tokens[0]!.expiresAt).toEqual(later);
+        });
+
+        it("writes a non-resume deadline while retaining the unconditional token expiry write", async () => {
+            const tokens: FakeToken[] = [{ id: "later", active: true, revokedAt: null, expiresAt: new Date("2026-12-01T15:00:00.000Z") }];
+            const { tx, confirmed } = await confirmWith({ finalizationDueAt: "2026-11-02T11:00:00.000Z" }, { tokens });
+            await confirmed;
+            expect(tx.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ finalizationDueAt: new Date("2026-11-02T11:00:00.000Z") }),
+            }));
+            expect(tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
+                data: { expiresAt: GOLDEN_NEW_EXPIRY },
+            });
+            expect(tokens[0]!.expiresAt).toEqual(GOLDEN_NEW_EXPIRY);
+        });
+
+        it("keeps the unconditional token write for every other plan", async () => {
+            const tokens: FakeToken[] = [{ id: "later", active: true, revokedAt: null, expiresAt: new Date("2026-12-01T15:00:00.000Z") }];
+            const { tx, confirmed } = await confirmWith({}, { tokens });
+            await confirmed;
+            const where = tx.service_record_token.updateMany.mock.calls[0]![0].where as Record<string, unknown>;
+            expect("expiresAt" in where).toBe(false);
+            expect(tokens[0]!.expiresAt).toEqual(GOLDEN_NEW_EXPIRY);
+        });
+
+        describe("a no_changes plan", () => {
+            // Every date, owner and due time already matches; only the token can still be behind.
+            const noChanges = { status: "no_changes" as const, assignments: [], documentStatus: "not_required" as const };
+            const behindToken = (): FakeToken[] => [
+                { id: "b-active", active: true, revokedAt: null, expiresAt: new Date("2026-10-23T15:00:00.000Z") },
+                { id: "a-revoked", active: true, revokedAt: new Date("2026-10-14T00:00:00.000Z"), expiresAt: new Date("2026-10-13T15:00:00.000Z") },
+            ];
+
+            it("still raises an active token when the marker plan asks for raise_only, and closes the draft", async () => {
+                const tokens = behindToken();
+                const { tx, confirmed } = await confirmWith({ ...noChanges, ...resumePlan }, { tokens });
+                const response = await confirmed;
+                expect(tx.service_record_token.updateMany).toHaveBeenCalledTimes(1);
+                expect(tx.service_record_token.updateMany).toHaveBeenCalledWith({
+                    where: {
+                        branchId,
+                        serviceRecordCaseId: caseId,
+                        active: true,
+                        revokedAt: null,
+                        expiresAt: { lt: GOLDEN_NEW_EXPIRY },
+                    },
+                    data: { expiresAt: GOLDEN_NEW_EXPIRY },
+                });
+                expect(tokens.map(({ id, expiresAt }) => [id, expiresAt.toISOString()])).toEqual([
+                    ["b-active", "2026-11-02T15:00:00.000Z"],
+                    ["a-revoked", "2026-10-13T15:00:00.000Z"],
+                ]);
+                // A token raise is not a business change: no case write, no revision, no document.
+                expect(tx.service_record_case.update).not.toHaveBeenCalled();
+                expect(tx.service_record_assignment.updateMany).not.toHaveBeenCalled();
+                expect(response).toMatchObject({ status: "no_changes", revisionId: null, documentStatus: "not_required" });
+                expect(tx.service_record_edit_draft.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ status: "CONFIRMED" }),
+                }));
+            });
+
+            it("never lowers a token whose stored expiry is later", async () => {
+                const later = new Date("2026-12-01T15:00:00.000Z");
+                const tokens: FakeToken[] = [{ id: "later", active: true, revokedAt: null, expiresAt: later }];
+                const { confirmed } = await confirmWith({ ...noChanges, ...resumePlan }, { tokens });
+                await confirmed;
+                expect(tokens[0]!.expiresAt).toEqual(later);
+            });
+
+            it("writes no token for a non-marker plan, and still closes the draft", async () => {
+                const tokens = behindToken();
+                const { tx, confirmed } = await confirmWith(noChanges, { tokens });
+                await confirmed;
+                expect(tx.service_record_token.updateMany).not.toHaveBeenCalled();
+                expect(tokens[0]!.expiresAt).toEqual(new Date("2026-10-23T15:00:00.000Z"));
+                expect(tx.service_record_edit_draft.updateMany).toHaveBeenCalledTimes(1);
+            });
+
+            it("fails the whole transaction when the token write rejects, so the draft stays open", async () => {
+                const { tx, prisma, confirmed } = await confirmWith({ ...noChanges, ...resumePlan }, { failOn: "token" });
+                await expect(confirmed).rejects.toThrow("token write failed");
+                expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+                expect(tx.service_record_edit_draft.updateMany).not.toHaveBeenCalled();
+            });
+        });
+
+        it.each(["token", "assignment", "schedule"] as const)(
+            "fails the whole transaction when the %s write rejects, so nothing commits",
+            async (failOn) => {
+                const { tx, prisma, confirmed } = await confirmWith(resumePlan, { failOn });
+                await expect(confirmed).rejects.toThrow(`${failOn} write failed`);
+                expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+                // The draft is only marked CONFIRMED after every business write succeeded.
+                expect(tx.service_record_edit_draft.updateMany).not.toHaveBeenCalled();
+            },
+        );
     });
 
     it("reads the client's service-day toggles into the source, defaulting a missing flag to false", async () => {
@@ -1694,6 +2013,95 @@ describe("ServiceRecordEditRepository", () => {
             expect(statement).toContain('owner_client.e_doc_id');
             expect(statement).toContain('owner_client.branch_id');
         }
+    });
+});
+
+describe("ServiceRecordEditRepository.loadConfirmSnapshot", () => {
+    it("reads the draft, the branch-owned source and the revision facts, scoped to the branch, and writes nothing", async () => {
+        const activeDraft = draftRow();
+        const source = futureSource();
+        const writes = { create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), delete: jest.fn(), upsert: jest.fn() };
+        const draftTable = { findFirst: jest.fn().mockResolvedValue(activeDraft), ...writes };
+        const tx = { service_record_edit_draft: draftTable, $queryRaw: jest.fn(), $executeRaw: jest.fn(), $executeRawUnsafe: jest.fn() };
+        const prisma = { $transaction: jest.fn(async (run: (client: unknown) => unknown) => run(tx)) };
+        const repository = new ServiceRecordEditRepository(prisma as never);
+        const internals = repository as unknown as { loadSourceWithClient: jest.Mock };
+        jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+
+        const snapshot = await repository.loadConfirmSnapshot(branchId, draftId, []);
+
+        expect(snapshot).toMatchObject({ draft: { id: draftId }, source: { caseId: source.caseId }, revisionFactsSource: { document: null } });
+        expect(draftTable.findFirst).toHaveBeenCalledWith({ where: { id: draftId, branchId } });
+        expect(internals.loadSourceWithClient).toHaveBeenCalledWith(tx, branchId, { caseId: caseId });
+        for (const write of Object.values(writes)) expect(write).not.toHaveBeenCalled();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+        expect(tx.$executeRawUnsafe).not.toHaveBeenCalled();
+        // No lock either: the confirm's FOR UPDATE queries ($queryRaw) are not issued.
+        expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("finds nothing for a draft of another branch or without a source", async () => {
+        const draftTable = { findFirst: jest.fn().mockResolvedValue(null) };
+        const prisma = { $transaction: jest.fn(async (run: (client: unknown) => unknown) => run({ service_record_edit_draft: draftTable })) };
+        const repository = new ServiceRecordEditRepository(prisma as never);
+        await expect(repository.loadConfirmSnapshot("99999999-9999-4999-8999-999999999999", draftId, [])).resolves.toBeNull();
+        expect(draftTable.findFirst).toHaveBeenCalledWith({ where: { id: draftId, branchId: "99999999-9999-4999-8999-999999999999" } });
+
+        const found = { findFirst: jest.fn().mockResolvedValue(draftRow()) };
+        const second = new ServiceRecordEditRepository({ $transaction: jest.fn(async (run: (client: unknown) => unknown) => run({ service_record_edit_draft: found })) } as never);
+        jest.spyOn(second as unknown as { loadSourceWithClient: jest.Mock }, "loadSourceWithClient").mockResolvedValue(null);
+        await expect(second.loadConfirmSnapshot(branchId, draftId, [])).resolves.toBeNull();
+    });
+});
+
+describe("ServiceRecordEditRepository.findConfirmedDraftByIdempotencyKey", () => {
+    const idempotencyKey = "66666666-6666-4666-8666-666666666666";
+    const otherBranchId = "99999999-9999-4999-8999-999999999999";
+    const response = { status: "confirmed", caseId, clientId: 101 };
+
+    /** A findFirst that really applies `where`, so a wrong scope shows up as a wrong answer. */
+    function repositoryWith(rows: Array<Record<string, unknown>>) {
+        const findFirst = jest.fn(async ({ where }: { where: Record<string, unknown> }) => (
+            rows.find((row) => Object.entries(where).every(([key, value]) => row[key] === value)) ?? null
+        ));
+        return { findFirst, repository: new ServiceRecordEditRepository({ service_record_edit_draft: { findFirst } } as never) };
+    }
+
+    const confirmedRow = (overrides: Record<string, unknown> = {}) => ({
+        branchId,
+        confirmedByUserId: actorId,
+        confirmationIdempotencyKey: idempotencyKey,
+        status: "CONFIRMED",
+        confirmationResponse: response,
+        ...overrides,
+    });
+
+    it("returns the stored response of the draft this user confirmed with the key, reading only", async () => {
+        const { repository, findFirst } = repositoryWith([confirmedRow()]);
+        await expect(repository.findConfirmedDraftByIdempotencyKey(branchId, actorId, idempotencyKey))
+            .resolves.toEqual({ confirmationResponse: response });
+        expect(findFirst).toHaveBeenCalledWith({
+            where: { branchId, confirmedByUserId: actorId, confirmationIdempotencyKey: idempotencyKey, status: "CONFIRMED" },
+            select: { confirmationResponse: true },
+        });
+    });
+
+    it("finds nothing for an unknown key, another user, an unconfirmed draft, or another branch", async () => {
+        const { repository } = repositoryWith([
+            confirmedRow(),
+            confirmedRow({ confirmationIdempotencyKey: "other-key", branchId: otherBranchId }),
+            confirmedRow({ status: "ACTIVE", confirmationIdempotencyKey: "active-key" }),
+        ]);
+        expect(await repository.findConfirmedDraftByIdempotencyKey(branchId, actorId, "unknown")).toBeNull();
+        expect(await repository.findConfirmedDraftByIdempotencyKey(branchId, "55555555-5555-4555-8555-555555555555", idempotencyKey)).toBeNull();
+        expect(await repository.findConfirmedDraftByIdempotencyKey(branchId, actorId, "active-key")).toBeNull();
+        expect(await repository.findConfirmedDraftByIdempotencyKey(otherBranchId, actorId, idempotencyKey)).toBeNull();
+    });
+
+    it("keeps a missing stored response as null rather than inventing one", async () => {
+        const { repository } = repositoryWith([confirmedRow({ confirmationResponse: null })]);
+        await expect(repository.findConfirmedDraftByIdempotencyKey(branchId, actorId, idempotencyKey))
+            .resolves.toEqual({ confirmationResponse: null });
     });
 });
 

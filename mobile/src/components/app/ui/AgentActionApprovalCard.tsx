@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
+import type { AgentActionPreview } from "@babyjamjam/shared";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,12 +30,59 @@ export interface AgentActionApprovalCardProps {
     branchId?: string;
     target?: Record<string, unknown>;
     changes: Record<string, unknown>;
+    preview?: AgentActionPreview;
     provider?: string;
     estimatedCost?: string;
     acknowledgementToken?: string;
     terminal?: boolean;
     onApprove?: (actionId: string, expectedRevision: string, acknowledgementToken?: string) => void;
     onReject?: (actionId: string) => void;
+}
+
+const PREVIEW_EMPTY_VALUE = "—";
+
+function AgentActionPreviewTables({ "data-component": dataComponent, preview }: { "data-component": string; preview: AgentActionPreview }) {
+    return (
+        <div data-component={dataComponent} data-slot="preview" className="flex flex-col gap-3">
+            {preview.sections.map((section, sectionIndex) => (
+                <section key={sectionIndex} data-component={`${dataComponent}_section`} data-slot="preview-section" className="flex flex-col gap-1">
+                    <h4 data-component={`${dataComponent}_section_title`} className="text-xs font-semibold">{section.title}</h4>
+                    <div data-component={`${dataComponent}_section_scroll`} className="overflow-x-auto rounded border border-amber-300 bg-white/60">
+                        <table data-component={`${dataComponent}_section_table`} data-slot="preview-table" className="w-full text-xs">
+                            <thead data-component={`${dataComponent}_section_table_head`}>
+                                <tr data-component={`${dataComponent}_section_table_head_row`} className="border-b border-amber-300 text-left text-amber-800/70">
+                                    <th data-component={`${dataComponent}_section_table_head_label`} scope="col" className="px-2 py-1 font-medium">항목</th>
+                                    <th data-component={`${dataComponent}_section_table_head_before`} scope="col" className="px-2 py-1 font-medium">변경 전</th>
+                                    <th data-component={`${dataComponent}_section_table_head_after`} scope="col" className="px-2 py-1 font-medium">변경 후</th>
+                                </tr>
+                            </thead>
+                            <tbody data-component={`${dataComponent}_section_table_body`}>
+                                {section.rows.map((row, rowIndex) => {
+                                    const changed = row.before !== row.after;
+                                    return (
+                                        <tr
+                                            key={rowIndex}
+                                            data-component={`${dataComponent}_section_table_row`}
+                                            data-slot="preview-row"
+                                            data-changed={changed ? "true" : "false"}
+                                            className={changed ? "border-b border-amber-200 bg-amber-200/60 font-semibold last:border-b-0" : "border-b border-amber-200 last:border-b-0"}
+                                        >
+                                            <th data-component={`${dataComponent}_section_table_row_label`} scope="row" className="px-2 py-1 text-left font-medium">{row.label}</th>
+                                            <td data-component={`${dataComponent}_section_table_row_before`} className="px-2 py-1">{row.before ?? PREVIEW_EMPTY_VALUE}</td>
+                                            <td data-component={`${dataComponent}_section_table_row_after`} className="px-2 py-1">
+                                                {row.after ?? PREVIEW_EMPTY_VALUE}
+                                                {row.note && <p data-component={`${dataComponent}_section_table_row_note`} data-slot="preview-note" role="note" className="mt-0.5 font-medium text-red-700">{row.note}</p>}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            ))}
+        </div>
+    );
 }
 
 export function AgentActionApprovalCard({
@@ -50,6 +98,7 @@ export function AgentActionApprovalCard({
     branchId,
     target,
     changes,
+    preview,
     provider,
     estimatedCost,
     acknowledgementToken,
@@ -81,8 +130,8 @@ export function AgentActionApprovalCard({
             data-component={dataComponent}
             data-source-component={SOURCE_COMPONENT}
             data-slot="action-proposal"
-            className="border-amber-300 bg-amber-50 text-amber-950"
-            aria-label="승인 대기 작업"
+            className={terminal ? "border-border bg-card text-card-foreground" : "border-amber-300 bg-amber-50 text-amber-950"}
+            aria-label={terminal ? "처리된 작업 제안" : "승인 대기 작업"}
         >
             <CardContent
                 data-component={sub("content")}
@@ -94,10 +143,11 @@ export function AgentActionApprovalCard({
                         <p data-slot="title" className="text-sm font-semibold">{title}</p>
                         <p data-slot="capability" className="text-xs opacity-75">{capability}</p>
                     </div>
-                    <span data-slot="expiry" className="text-xs">{expired ? "만료됨" : `만료 ${new Date(expiresAt).toLocaleString()}`}</span>
+                    <span data-slot="expiry" className="text-xs">{terminal ? "읽기 전용" : expired ? "만료됨" : `만료 ${new Date(expiresAt).toLocaleString()}`}</span>
                 </div>
                 <p data-slot="summary" className="whitespace-pre-wrap text-sm">{summary}</p>
                 {contact}
+                {preview && <AgentActionPreviewTables data-component={sub("content_preview")} preview={preview} />}
                 <dl data-slot="details" className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                     {risk && <><dt className="text-amber-800/70">위험도</dt><dd>{risk}</dd></>}
                     {branchId && <><dt className="text-amber-800/70">지점</dt><dd className="truncate">{branchId}</dd></>}
@@ -107,7 +157,7 @@ export function AgentActionApprovalCard({
                     {provider && <><dt className="text-amber-800/70">외부 제공자</dt><dd>{provider}</dd></>}
                     {estimatedCost && <><dt className="text-amber-800/70">예상 비용</dt><dd>{estimatedCost}</dd></>}
                 </dl>
-                {requiresStrongAcknowledgement && (
+                {!terminal && requiresStrongAcknowledgement && (
                     <div
                         data-component={sub("strong-acknowledgement")}
                         data-slot="strong-acknowledgement"
@@ -124,7 +174,7 @@ export function AgentActionApprovalCard({
                         </Label>
                     </div>
                 )}
-                <div data-component={sub("actions")} data-slot="actions" className="flex flex-wrap gap-2">
+                {!terminal && <div data-component={sub("actions")} data-slot="actions" className="flex flex-wrap gap-2">
                     <Button
                         data-component={sub("actions_approve")}
                         type="button"
@@ -146,7 +196,7 @@ export function AgentActionApprovalCard({
                     >
                         거절
                     </Button>
-                </div>
+                </div>}
             </CardContent>
         </Card>
     );

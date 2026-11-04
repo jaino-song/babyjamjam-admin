@@ -814,6 +814,25 @@
       "sourceDigest": "fff4d6bd89dd0970a598a5889f355f039831db8fd3b0090e68ac67455d7d3fcd"
     },
     {
+      "name": "service-records.edit",
+      "domain": "service-records",
+      "version": "1.0.0",
+      "description": "Correct a client's 제공기록지 (service record) through the admin editor after explicit approval; this covers every editor change. Use for: 제공기록지 수정, 서비스 중단 후 재개, 관리사 교체, 회차 날짜 변경, 회차 내용 수정, 제공기록지 헤더 수정. Input: clientId (the client's numeric id; resolve it via clients.search first) and operations, a list applied in order to one editor draft. Pick the operation by the change: a pause, or a pause plus a 관리사 replacement, is resumeReplan (needs resumeDate, the first service day after the pause, and either fromSessionIndex, the first 회차 that moves, or pauseStartDate, the first day of the pause; add outgoingLastServedDate only when told the outgoing 관리사's last working day; name a DIFFERENT 관리사 via incomingEmployeeId (the positive numeric employee id from employees.search); incomingAssignmentId is a service-record assignment UUID, not an employee id; OMIT both handover fields when the same 관리사 continues or only one successor exists); one wrong 회차 date is dateMove (sessionIndex, toDate, optional shiftFollowing); the weekday pattern is schedule (serviceDays plus one date per 회차); a 회차's content is sessionContent (sessionIndex plus answers, etcService, notes or paymentConfirmed; never a date); the header is header (momName, momBirth, babyName, babyBirth, deliveryType, babyWeight). resumeReplan cannot be combined with dateMove, schedule or another date change in the same request. Ask the user for a missing resume date or a new 관리사 instead of guessing. When the editor needs an answer (for example which 관리사 takes over), this tool replies with the question and the choices: ask the user, then call it again with the answer. Never ask the user for conversational confirmation; the structured proposal card with the editor's before/after table is the sole mandatory approval.",
+      "risk": "reversible-write",
+      "requiredRoles": [
+        "owner",
+        "admin",
+        "manager"
+      ],
+      "renderer": "action-proposal",
+      "flagKey": "agent.capability.service-records.edit",
+      "sideEffect": true,
+      "approvalPolicy": "structured",
+      "idempotencyPolicy": "action-id",
+      "sourceFile": "application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
+      "sourceDigest": "833eb5ea95bf2cdc9f89d1b1d1d556dcf0ec6f63395f1ee9cb28f8367672e2dd"
+    },
+    {
       "name": "service-records.oversight",
       "domain": "service-records",
       "renderer": "text",

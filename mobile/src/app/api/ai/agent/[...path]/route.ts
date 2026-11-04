@@ -36,7 +36,7 @@ async function forward(request: NextRequest, params: { path: string[] }, body: s
     try {
         const upstream = await fetch(`${BACKEND_URL}${backendPath}${new URL(request.url).search}`, {
             method: request.method,
-            headers: { Authorization: `Bearer ${token.value}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+            headers: { Authorization: `Bearer ${token.value}`, "x-bjj-client": "mobile", ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
             body,
             signal: request.signal,
         });

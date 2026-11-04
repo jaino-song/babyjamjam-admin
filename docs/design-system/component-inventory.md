@@ -58,3 +58,9 @@ mobile도 같은 StatusBadge/InfoRow 중복을 가진다 (frontend와 동일 처
 | `mobile/DATA-COMPONENT-CONVENTION.md` + `data-component-mapping.json` | ✅ 유효 — kebab-case data-component 네이밍 |
 | `docs/conventions/DESIGN_SYSTEM.md` | ⚠️ 부분 노후 — 토큰/색상 표는 참고 가능, 디렉토리 구조 설명은 Vite 시절 |
 | `docs/design-system/*` (이 디렉토리) | canonical 진입점 |
+
+## 채팅 작업 공간 (2026-11-04)
+
+- `ChatWorkspace` (`frontend/src/components/app/chat/ChatWorkspace.tsx`, template): `ListPanel`/`DetailPanel`과 compact `Sheet`를 조합한다. 1280px 이상은 목록과 대화의 두 패널, 미만은 단일 대화 패널과 모달 목록이다. 세션·전송·승인은 컨트롤러 소유다.
+- `ChatWorkspaceStats` (`frontend/src/components/app/chat/ChatWorkspaceStats.tsx`, organism): `StatsBar`/`DocumentJobsStatMini`를 사용하고 인증·지점 정렬 후 계약서 필요/종료 예정 산모의 실제 통계를 표시한다. 항목별 로딩과 오류 재시도를 독립 유지한다.
+- 시각 결정과 소스 매핑: `frontend/src/components/app/chat/DESIGN.md`. Storybook 의존성이나 독립 story는 추가하지 않는다.
