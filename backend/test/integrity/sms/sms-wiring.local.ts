@@ -10,6 +10,7 @@ import { AgentAutomationDeliveryGateService } from "application/services/agent-a
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
@@ -73,7 +74,6 @@ function stubCollaborators(branchId: string) {
                 throw new Error("system templates are not wired in the SMS integrity specs");
             },
         },
-        templateAutomationLock: {},
     };
 }
 
@@ -250,7 +250,7 @@ export function wireMessageTriggerService(
         jobRepository,
         logRepository,
         stubs.systemTemplateService as unknown as ConstructorParameters<typeof MessageTriggerService>[6],
-        stubs.templateAutomationLock as unknown as ConstructorParameters<typeof MessageTriggerService>[7],
+        new MessageTemplateAutomationLockService(service),
         settings,
         undefined,
         activation,

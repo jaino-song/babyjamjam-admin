@@ -13,6 +13,7 @@ import { SbMessageTriggerJobRepository } from "infrastructure/database/repositor
 import { MESSAGE_CRON_OWNER_USER_ID } from "../helpers/message-automation-cron.helper";
 import type { AgentContext } from "application/agent/agent-context";
 import { Prisma } from "@prisma/client";
+import { ConfigService } from "@nestjs/config";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import {
@@ -945,10 +946,14 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
     }, 30_000);
     it.each(["SERVICE_START", "SERVICE_END"] as const)("RULE-2 r4.19 actual reviewed caregiver-only %s provider→RecordStore→client intent→core→seal→fake provider", async (event) => {
         const activation = harness.app.get(MessageAutomationActivationService);
+        const config = harness.app.get(ConfigService);
+        const readConfig = config.get.bind(config);
         const previousBranchName = (await prisma.branch.findUniqueOrThrow({ where: { id: MESSAGE_CRON_BRANCH_ID } })).name;
         const previousParent = await prisma.system_setting.findUnique({ where: { key: activation.getParentKey(MESSAGE_CRON_BRANCH_ID) } });
         const previousRules = await prisma.message_trigger_rule.findMany({ where: { branchId: MESSAGE_CRON_BRANCH_ID, recipientType: "CLIENT", deletedAt: null }, select: { id: true, isActive: true, updatedAt: true } });
         let defaults = previousRules;
+        const linkBase = jest.spyOn(config, "get").mockImplementation((...args: Parameters<ConfigService["get"]>) =>
+            args[0] === "MOBILE_SERVICE_RECORD_BASE_URL" ? "https://phase7.example.invalid" : readConfig(...args));
         try {
         await prisma.branch.update({ where: { id: MESSAGE_CRON_BRANCH_ID }, data: { name: "Phase7 합성 지점" } });
         await activation.setTriggerDispatchEnabled(MESSAGE_CRON_BRANCH_ID, true, { userId: MESSAGE_CRON_OWNER_USER_ID, globalRole: "owner", branchRole: "owner" });
@@ -1052,6 +1057,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             expect(await prisma.service_record_token.findUnique({ where: { id: preservedToken.id } })).toEqual(preservedToken);
             expect(aligoStub.sendCalls.slice(callsBefore).some((call) => call.receiver === "01000000999")).toBe(false);
         } finally {
+            linkBase.mockRestore();
             await prisma.branch.update({ where: { id: MESSAGE_CRON_BRANCH_ID }, data: { name: previousBranchName } });
             for (const id of producerGroupIds) {
                 const group = await prisma.message_trigger_rule_group.findUnique({ where: { id } });
