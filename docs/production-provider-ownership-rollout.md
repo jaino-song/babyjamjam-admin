@@ -185,7 +185,11 @@ reason은 `provider_not_configured`와 `provider_match`이며 다른 reason은 �
 
 ```bash
 (
-if ssh -o ClearAllForwardings=yes -o RequestTTY=no -o BatchMode=yes   -o ConnectTimeout=10 agent-lightsail-operator 'python3 -' 2>/dev/null <<'PY'
+if validated=$(
+  set -o pipefail
+  {
+    ssh -o ClearAllForwardings=yes -o RequestTTY=no -o BatchMode=yes \
+      -o ConnectTimeout=10 agent-lightsail-operator 'python3 -' 2>/dev/null <<'PY'
 import grp
 import ipaddress
 import json
@@ -341,17 +345,73 @@ def main():
 
 sys.exit(main())
 PY
-then
+  } | python3 -c '
+import json
+import sys
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_key")
+        result[key] = value
+    return result
+
+
+try:
+    raw = sys.stdin.buffer.read(16385)
+    if not raw or len(raw) > 16384:
+        raise ValueError("invalid_size")
+    result = json.loads(raw, object_pairs_hook=unique_object)
+    expected = {"discovery", "validation", "candidate_count", "matching_endpoints",
+                "skipped", "observed", "hold_nonowner_observed"}
+    if (not isinstance(result, dict) or set(result) != expected
+            or result["discovery"] != "complete" or result["validation"] != "valid"
+            or type(result["hold_nonowner_observed"]) is not bool
+            or result["hold_nonowner_observed"] is not True
+            or type(result["candidate_count"]) is not int
+            or not 1 <= result["candidate_count"] <= 4
+            or type(result["matching_endpoints"]) is not int
+            or result["matching_endpoints"] != 1):
+        raise ValueError("invalid_result")
+    skipped = result["skipped"]
+    if (not isinstance(skipped, dict)
+            or set(skipped) != {"unresponsive", "http_non200", "non_production_holder"}
+            or any(type(value) is not int or not 0 <= value <= 3 for value in skipped.values())
+            or sum(skipped.values()) != result["candidate_count"] - 1):
+        raise ValueError("invalid_discovery")
+    observed = result["observed"]
+    if (not isinstance(observed, dict)
+            or set(observed) != {"mode", "holderId", "held", "provider", "eligible",
+                                 "eligibilityReason", "ready_http"}
+            or observed["mode"] != "required" or observed["holderId"] != "lightsail"
+            or type(observed["held"]) is not bool or observed["held"] is not False
+            or type(observed["eligible"]) is not bool or observed["eligible"] is not False
+            or observed["provider"] is not None
+            or observed["eligibilityReason"] != "provider_not_configured"
+            or type(observed["ready_http"]) is not int or observed["ready_http"] != 200):
+        raise ValueError("invalid_observation")
+except Exception:
+    sys.exit(2)
+# Re-serialize only the exact validated schema; do not echo remote stdout/errors.
+print(json.dumps(result))
+' 2>/dev/null
+); then
+  printf '%s\n' "$validated"
   printf '%s\n' '단일 backend의 ready와 HOLD 비소유 상태를 관측했습니다. failback 승인은 아닙니다.'
 else
-  printf '%s\n' '조회 미완료 또는 HOLD 비소유 상태 미확인: SSH 종료값과 정제된 validation 결과를 확인하세요.'
+  printf '%s\n' '{"validation":"inconclusive","reason":"ssh_or_result_unverified"}'
   exit 2
 fi
 )
 ```
 
-SSH 오류 원문에는 주소가 포함될 수 있어 화면 출력을 막았다. 무출력·비정상 종료를
-성공으로 해석하지 않는다. 반환된 `ready_http=200`은 API 준비 상태이고 `eligible`은
+SSH 오류 원문에는 주소가 포함될 수 있어 화면 출력을 막았다. SSH stdout은 고정된
+로컬 Python 검증기에 stdin으로 전달하며 shell 코드에 보간하거나 eval하지 않는다.
+바깥 Bash도 pipefail과 엄격한 JSON shape/타입/값 검증을 통과한 결과만 출력한다.
+빈 값·비 JSON·불일치 결과·SSH 비정상 종료는 원문 없이 `inconclusive`와 종료값 2로
+끝나며 성공 문구를 출력하지 않는다. 반환된 `ready_http=200`은 API 준비 상태이고 `eligible`은
 provider 설정상 참가 자격, `held`는 해당 프로세스의 최근 lease 소유 관측이다.
 `validation=valid`라도 `held=true` 또는 `eligible=true`이면 HOLD 비소유 확인이 아니므로
 중단하고 진단한다. `held=false/eligible=false` 자체도 모든 host cron/timer의 정지나
