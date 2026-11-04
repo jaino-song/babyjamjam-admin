@@ -271,6 +271,47 @@ export interface MessageTriggerRule {
   updatedAt: string;
 }
 
+/** A group projects one execution rule per recipient; children never repeat in standaloneRules. */
+export interface MessageTriggerRuleGroupView extends MessageTriggerRuleGroup {
+  rules: MessageTriggerRule[];
+  eventType: MessageTriggerEventType;
+  offsetType: MessageTriggerOffsetType;
+  offsetDays: number;
+  sendTime: string;
+  targetClientStatus: MessageTriggerTargetClientStatus;
+  retryOnFailure: boolean;
+  isActive: boolean;
+  recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+
+export interface MessageTriggerRuleGroupList {
+  groups: MessageTriggerRuleGroupView[];
+  standaloneRules: MessageTriggerRule[];
+}
+
+export interface CreateMessageTriggerRuleGroupDto {
+  name: string;
+  recipientMode: MessageTriggerRecipientMode;
+  eventType: MessageTriggerEventType;
+  offsetType: MessageTriggerOffsetType;
+  offsetDays?: number;
+  sendTime?: string;
+  targetClientStatus?: MessageTriggerTargetClientStatus;
+  retryOnFailure?: boolean;
+  isActive?: boolean;
+  recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+
+export interface UpdateMessageTriggerRuleGroupDto extends CreateMessageTriggerRuleGroupDto {
+  expectedVersion: number;
+}
+
+export interface PreviewMessageTriggerRuleGroupDto {
+  draft: CreateMessageTriggerRuleGroupDto;
+  clientId?: number;
+  employeeScheduleId?: number;
+}
+
 /**
  * Runtime validation for `POST /message-trigger-rules`.
  *

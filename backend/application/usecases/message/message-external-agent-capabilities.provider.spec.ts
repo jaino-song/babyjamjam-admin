@@ -1083,6 +1083,8 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                 new GetSettingUsecase(settingRepository), new UpdateSettingUsecase(settingRepository),
             );
             const ruleRepository = {
+                findGroupDuplicateCandidates: jest.fn().mockResolvedValue([]),
+                createGroup: jest.fn(async (branchId: string, name: string, recipientMode: string) => ({ id: `group-${storedRules.length}`, branchId, name, recipientMode })),
                 create: jest.fn(async (_branchId: string, rule: MessageTriggerRuleEntity) => {
                     storedRules.push(Object.assign(rule, { id: `created-${storedRules.length}` }));
                     return rule;

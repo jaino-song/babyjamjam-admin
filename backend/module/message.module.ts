@@ -1,3 +1,5 @@
+import { MessageTriggerRuleGroupController } from "interface/controllers/message-trigger-rule-group.controller";
+import { MessageTriggerRuleGroupService } from "application/services/message-trigger-rule-group.service";
 import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
@@ -60,8 +62,9 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
         AligoModule,
         SystemTemplateModule,
     ],
-    controllers: [MessageController, MessageTriggerController],
+    controllers: [MessageController, MessageTriggerController, MessageTriggerRuleGroupController],
     providers: [
+        MessageTriggerRuleGroupService,
         MessageDuplicateCheckService,
         CreateMessageUsecase,
         ListMessagesUsecase,

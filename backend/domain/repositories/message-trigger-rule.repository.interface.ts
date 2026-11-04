@@ -1,9 +1,22 @@
+import type { MessageTriggerRuleGroupEntity } from "domain/entities/message-trigger-rule-group.entity";
 import { MessageTriggerEventType } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import type { Prisma } from "@prisma/client";
 
 export interface IMessageTriggerRuleRepository {
+    findGroupDuplicateCandidates(branchId: string, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]>;
+    findGroups(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity[]>;
+    findGroup(branchId: string, id: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity | null>;
+    lockGroup(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity | null>;
+    findGroupRules(branchId: string, groupId: string, transaction?: Prisma.TransactionClient, includeDeleted?: boolean): Promise<MessageTriggerRuleEntity[]>;
+    lockGroupRules(branchId: string, groupId: string, transaction: Prisma.TransactionClient): Promise<void>;
+    createGroup(branchId: string, name: string, recipientMode: MessageTriggerRuleGroupEntity["recipientMode"], transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity>;
+    updateGroupCAS(branchId: string, group: MessageTriggerRuleGroupEntity, expectedVersion: number, transaction: Prisma.TransactionClient): Promise<boolean>;
+    softDeleteGroup(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<void>;
+    /** Reuse a removed role's original child identity; never deletes its job history. */
+    restoreGroupRule(branchId: string, groupId: string, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity | null>;
+
     findAll(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]>;
     findById(
         branchId: string,
@@ -72,7 +85,7 @@ export interface IMessageTriggerRuleRepository {
         updatedAtAtReadTime: Date,
         transaction?: Prisma.TransactionClient,
     ): Promise<boolean>;
-    delete(branchId: string, id: string): Promise<void>;
+    delete(branchId: string, id: string, transaction?: Prisma.TransactionClient): Promise<void>;
     /** Delete only when the full branch-scoped approved snapshot still matches. */
     deleteIfTargetMatches(branchId: string, expected: MessageTriggerRuleEntity): Promise<boolean>;
     /** Delete only after the branch-scoped rule lock fences active dispatch jobs. */
@@ -81,6 +94,7 @@ export interface IMessageTriggerRuleRepository {
         expected: MessageTriggerRuleEntity,
         reason: string,
         fenceStartedAt?: Date,
+        transaction?: Prisma.TransactionClient,
     ): Promise<boolean>;
 }
 

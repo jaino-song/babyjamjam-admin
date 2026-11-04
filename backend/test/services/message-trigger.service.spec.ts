@@ -300,7 +300,14 @@ describe("MessageTriggerService", () => {
             getMessageAutomationPolicyConfig: systemSettingService?.getMessageAutomationPolicyConfig
                 ?? jest.fn().mockResolvedValue({ configuration: defaultMessageAutomationPolicy() }),
         };
+        const durableGroups: Array<{ id: string; branchId: string; name: string; recipientMode: string }> = [];
         const ruleRepository = {
+            findGroupDuplicateCandidates: jest.fn().mockResolvedValue([]),
+            createGroup: jest.fn(async (groupBranchId: string, name: string, recipientMode: string) => {
+                const group = { id: `group-${durableGroups.length}`, branchId: groupBranchId, name, recipientMode };
+                durableGroups.push(group);
+                return group;
+            }),
             findAll: jest.fn(),
             findById: jest.fn(),
             findByIdIncludingGlobal: jest.fn().mockResolvedValue(null),
@@ -415,6 +422,7 @@ describe("MessageTriggerService", () => {
         jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
 
         return {
+            durableGroups,
             service,
             internals,
             prisma,
@@ -1629,15 +1637,23 @@ describe("MessageTriggerService", () => {
     it("rolls back the inserted rule when its stale marker fails so a retry cannot duplicate it", async () => {
         const { service, prisma, ruleRepository } = createService();
         const durableRules: MessageTriggerRuleEntity[] = [];
+        const durableGroups: unknown[] = [];
+        ruleRepository.createGroup.mockImplementation(async (groupBranchId, name, recipientMode) => {
+            const group = { id: `group-${durableGroups.length}`, branchId: groupBranchId, name, recipientMode };
+            durableGroups.push(group);
+            return group;
+        });
         let failStaleMarker = true;
         prisma.$transaction.mockImplementation(async (
             operation: (transaction: { id: string }) => Promise<MessageTriggerRuleEntity>,
         ) => {
             const snapshot = [...durableRules];
+            const groupSnapshot = [...durableGroups];
             try {
                 return await operation({ id: `tx-${prisma.$transaction.mock.calls.length}` });
             } catch (error) {
                 durableRules.splice(0, durableRules.length, ...snapshot);
+                durableGroups.splice(0, durableGroups.length, ...groupSnapshot);
                 throw error;
             }
         });

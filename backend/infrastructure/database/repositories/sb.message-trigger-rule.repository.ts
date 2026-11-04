@@ -1,3 +1,4 @@
+import { MessageTriggerRuleGroupEntity } from "domain/entities/message-trigger-rule-group.entity";
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { Prisma } from "@prisma/client";
@@ -37,6 +38,67 @@ type MessageTriggerRuleRawRow = {
 @Injectable()
 export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleRepository {
     constructor(private readonly prisma: PrismaService) {}
+
+    async findGroupDuplicateCandidates(branchId: string, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]> {
+        return this.findAll(branchId, transaction);
+    }
+
+    async findGroups(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity[]> {
+        const rows = await (transaction ?? this.prisma).message_trigger_rule_group.findMany({
+            where: { branchId, deletedAt: null }, orderBy: { createdAt: "desc" },
+        });
+        return rows.map((row) => this.groupToDomain(row));
+    }
+
+    async findGroup(branchId: string, id: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity | null> {
+        const row = await (transaction ?? this.prisma).message_trigger_rule_group.findFirst({ where: { id, branchId, deletedAt: null } });
+        return row ? this.groupToDomain(row) : null;
+    }
+
+    async lockGroup(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity | null> {
+        await transaction.$queryRaw(Prisma.sql`SELECT id FROM message_trigger_rule_group WHERE id = ${id} AND branch_id = ${branchId}::uuid AND deleted_at IS NULL FOR UPDATE`);
+        return this.findGroup(branchId, id, transaction);
+    }
+
+    async findGroupRules(branchId: string, groupId: string, transaction?: Prisma.TransactionClient, includeDeleted = false): Promise<MessageTriggerRuleEntity[]> {
+        const rows = await (transaction ?? this.prisma).message_trigger_rule.findMany({
+            where: { branchId, groupId, ...(includeDeleted ? {} : { deletedAt: null }) }, orderBy: { id: "asc" },
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    async lockGroupRules(branchId: string, groupId: string, transaction: Prisma.TransactionClient): Promise<void> {
+        await transaction.$queryRaw(Prisma.sql`SELECT id FROM message_trigger_rule WHERE branch_id = ${branchId}::uuid AND group_id = ${groupId} ORDER BY id FOR UPDATE`);
+    }
+
+    async createGroup(branchId: string, name: string, recipientMode: MessageTriggerRuleGroupEntity["recipientMode"], transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity> {
+        return this.groupToDomain(await transaction.message_trigger_rule_group.create({ data: { branchId, name, recipientMode } }));
+    }
+
+    async updateGroupCAS(branchId: string, group: MessageTriggerRuleGroupEntity, expectedVersion: number, transaction: Prisma.TransactionClient): Promise<boolean> {
+        const result = await transaction.message_trigger_rule_group.updateMany({
+            where: { id: group.id, branchId, deletedAt: null, version: expectedVersion },
+            data: { name: group.name, recipientMode: group.recipientMode, version: { increment: 1 } },
+        });
+        return result.count === 1;
+    }
+
+    async softDeleteGroup(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<void> {
+        await transaction.message_trigger_rule_group.updateMany({ where: { id, branchId, deletedAt: null }, data: { deletedAt: new Date(), version: { increment: 1 } } });
+    }
+
+    async restoreGroupRule(branchId: string, groupId: string, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity | null> {
+        // The unique(groupId, recipientType) row survives removal. Restore that
+        // same row, keeping all canceledByUser and sent job identities intact.
+        if (rule.branchId !== branchId || rule.groupId !== groupId) return null;
+        const restored = await transaction.message_trigger_rule.updateMany({ where: { id: rule.id, branchId, groupId, recipientType: rule.recipientType, deletedAt: { not: null } }, data: { deletedAt: null } });
+        if (restored.count !== 1) return null;
+        return this.update(branchId, rule, transaction);
+    }
+
+    private groupToDomain(row: { id: string; branchId: string; name: string; recipientMode: string; version: number; createdAt: Date; updatedAt: Date; deletedAt: Date | null }): MessageTriggerRuleGroupEntity {
+        return new MessageTriggerRuleGroupEntity(row.id, row.branchId, row.name, row.recipientMode as MessageTriggerRuleGroupEntity["recipientMode"], row.version, row.createdAt, row.updatedAt, row.deletedAt);
+    }
 
     async findAll(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleEntity[]> {
         const rows = await (transaction ?? this.prisma).message_trigger_rule.findMany({
@@ -425,9 +487,9 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         return result.count === 1;
     }
 
-    async delete(branchId: string, id: string): Promise<void> {
+    async delete(branchId: string, id: string, transaction?: Prisma.TransactionClient): Promise<void> {
         if (MessageTriggerRuleEntity.isReservedId(id)) return;
-        await this.prisma.message_trigger_rule.updateMany({
+        await (transaction ?? this.prisma).message_trigger_rule.updateMany({
             where: { id, branchId, deletedAt: null, isDefault: false },
             data: { deletedAt: new Date(), isActive: false, jobsStale: false },
         });
@@ -467,9 +529,10 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         expected: MessageTriggerRuleEntity,
         reason: string,
         fenceStartedAt?: Date,
+        transaction?: Prisma.TransactionClient,
     ): Promise<boolean> {
         if (MessageTriggerRuleEntity.isReservedId(expected.id) || expected.isDefault) return false;
-        return this.prisma.$transaction(async (transaction) => {
+        const remove = async (transaction: Prisma.TransactionClient) => {
             const rows = await transaction.$queryRaw<MessageTriggerRuleRawRow[]>(Prisma.sql`
                 SELECT
                     id,
@@ -536,7 +599,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 RETURNING id
             `);
             return deletedRows.length === 1;
-        });
+        };
+        return transaction ? remove(transaction) : this.prisma.$transaction(remove);
     }
 
     private toDomain(row: {

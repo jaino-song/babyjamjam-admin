@@ -130,6 +130,7 @@ export function buildClientMessageRecipe(
     client: ClientTriggerSource,
     now: Date,
 ): MessageTriggerJobRecipe | null {
+    if (rule.recipientType !== MessageTriggerRecipientType.CLIENT) return null;
     if (!client.phone) return null;
     if (
         rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
