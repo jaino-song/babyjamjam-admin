@@ -432,6 +432,35 @@ describe("SbMessageTriggerJobRepository", () => {
             messageTriggerJobModel.findMany.mockResolvedValue([createRow({ id: "a" }), createRow({ id: "b" })]);
             expect((await repository.consumeDispatchSlotsAndFindDueJobs(policy, now)).map(job => job.id)).toEqual(["b", "a"]);
         });
+        it("binds separate branch expiry hours and exposes only the SQL snapshot as non-enumerable metadata", async () => {
+            const selectedAt = new Date("2026-11-03T12:00:00.000Z");
+            queryRaw.mockResolvedValue([
+                { id: "a", expired: true, expiry_anchor: new Date("2026-11-02T12:00:00.000Z"), past_expiry_hours: 24, selected_at: selectedAt },
+                { id: "b", expired: false, expiry_anchor: new Date("2026-11-02T11:59:59.999Z"), past_expiry_hours: 48, selected_at: selectedAt },
+            ]);
+            // A materialization race must not replace the anchor used by SQL.
+            messageTriggerJobModel.findMany.mockResolvedValue([
+                createRow({ id: "b", scheduledFor: new Date("2026-11-02T11:59:59.999Z") }),
+                createRow({ id: "a", scheduledFor: selectedAt }),
+            ]);
+            const jobs = await repository.consumeDispatchSlotsAndFindDueJobs([
+                { branchId: "branch-a", automaticEnabled: true, retryEnabled: false, intervalMinutes: 7, pastExpiryHours: 24 },
+                { branchId: "branch-b", automaticEnabled: true, retryEnabled: true, intervalMinutes: 3, pastExpiryHours: 48 },
+            ], selectedAt);
+            const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            expect(query.values.slice(0, 10)).toEqual(["branch-a", true, false, 7, 24, "branch-b", true, true, 3, 48]);
+            expect(jobs.map(job => job.id)).toEqual(["a", "b"]);
+            expect(jobs[0]?.dispatchSelection).toEqual({
+                expired: true, anchor: new Date("2026-11-02T12:00:00.000Z"), pastExpiryHours: 24, selectedAt,
+            });
+            expect(jobs[1]?.dispatchSelection).toEqual({
+                expired: false, anchor: new Date("2026-11-02T11:59:59.999Z"), pastExpiryHours: 48, selectedAt,
+            });
+            expect(jobs[0]?.scheduledFor).toEqual(selectedAt);
+            expect(Object.keys(jobs[0]!)).not.toContain("dispatchSelection");
+            expect({ ...jobs[0] }).not.toHaveProperty("dispatchSelection");
+            expect(JSON.stringify(jobs)).not.toContain("dispatchSelection");
+        });
         it("writes the supplied deadline inside the existing claim statement", async () => {
             queryRaw.mockResolvedValue([{ claim_token: "new-token" }]);
             const deadline = new Date("2026-07-09T00:17:00.000Z");
@@ -2804,6 +2833,72 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         expect((await handle.raw.message_trigger_job.findUnique({ where: { id: row.id } }))?.nextAttemptAt).toEqual(due);
         expect((await repository.consumeDispatchSlotsAndFindDueJobs(changedPolicy, due)).map(job => job.id)).toEqual([row.id]);
         expect((await handle.raw.message_trigger_job.findUnique({ where: { id: row.id } }))?.nextAttemptAt).toEqual(due);
+    });
+
+    it("TIME-3 returns expired A24 and B48 rows with independent inclusive SQL cutoffs without stranding them", async () => {
+        const selectedAt = new Date("2026-11-03T12:00:00.000Z");
+        const aBefore = await seed(0, "a-before24", { scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+        const aExact = await seed(0, "a-exact24", { scheduledFor: new Date("2026-11-02T12:00:00.000Z") });
+        const aAfter = await seed(0, "a-after24", { scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+        const bAfter24 = await seed(1, "b-after24", { scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+        const bBefore = await seed(1, "b-before48", { scheduledFor: new Date("2026-11-01T12:00:00.001Z") });
+        const bExact = await seed(1, "b-exact48", { scheduledFor: new Date("2026-11-01T12:00:00.000Z") });
+        const bAfter = await seed(1, "b-after48", { scheduledFor: new Date("2026-11-01T11:59:59.999Z") });
+        const jobs = await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: branches[0]!, automaticEnabled: true, retryEnabled: true, intervalMinutes: 1, pastExpiryHours: 24 },
+            { branchId: branches[1]!, automaticEnabled: true, retryEnabled: true, intervalMinutes: 1, pastExpiryHours: 48 },
+        ], selectedAt, 100);
+        expect(jobs).toHaveLength(7);
+        for (const [id, expired, anchor, hours] of [
+            [aBefore.id, false, "2026-11-02T12:00:00.001Z", 24],
+            [aExact.id, true, "2026-11-02T12:00:00.000Z", 24],
+            [aAfter.id, true, "2026-11-02T11:59:59.999Z", 24],
+            [bAfter24.id, false, "2026-11-02T11:59:59.999Z", 48],
+            [bBefore.id, false, "2026-11-01T12:00:00.001Z", 48],
+            [bExact.id, true, "2026-11-01T12:00:00.000Z", 48],
+            [bAfter.id, true, "2026-11-01T11:59:59.999Z", 48],
+        ] as const) {
+            const job = jobs.find(candidate => candidate.id === id);
+            expect(job).toBeDefined();
+            expect(job!.dispatchSelection).toEqual({ expired, anchor: new Date(anchor), pastExpiryHours: hours, selectedAt });
+            expect(job!.status).toBe("pending");
+            expect(job!.attempts).toBe(0);
+            expect(JSON.stringify(job)).not.toContain("dispatchSelection");
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id } })).toMatchObject({
+                status: "pending", scheduledFor: new Date(anchor), attempts: 0, claimToken: null,
+            });
+        }
+        expect(await handle.raw.system_setting.findMany({ where: { key: { in: branches.map(key) } }, select: { value: true } }))
+            .toEqual([{ value: "2026-11-03T12:00:00.000Z" }, { value: "2026-11-03T12:00:00.000Z" }]);
+    });
+
+    it("TIME-3 retains the default24 inclusive SQL decision for legacy eligibility without expiry hours", async () => {
+        const row = await seed(0, "default24", { scheduledFor: new Date("2026-11-02T12:00:00.000Z") });
+        const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), new Date("2026-11-03T12:00:00.000Z"));
+        expect(jobs.map(job => job.id)).toEqual([row.id]);
+        expect(jobs[0]?.dispatchSelection).toEqual({
+            expired: true, anchor: new Date("2026-11-02T12:00:00.000Z"), pastExpiryHours: 24,
+            selectedAt: new Date("2026-11-03T12:00:00.000Z"),
+        });
+    });
+
+    it("TIME-3 keeps existing pending due and sent occurrences intact when generation-preserving materialization repeats", async () => {
+        const pending = await seed(0, "preserved-pending", { scheduledFor: new Date("2026-11-03T12:05:00.000Z") });
+        const sent = await seed(1, "preserved-sent", { status: "sent", sentAt: new Date("2026-11-03T11:00:00.000Z"),
+            scheduledFor: new Date("2026-11-03T10:00:00.000Z") });
+        for (const original of [pending, sent]) {
+            const rule = await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: original.ruleId } });
+            const replacement = MessageTriggerJobEntity.create({
+                branchId: original.branchId!, ruleId: original.ruleId, scheduledFor: new Date("2026-11-03T12:03:00.000Z"),
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+                dedupeKey: original.dedupeKey, payload: { memberId: "time3-repeat", recipientName: "Fixture",
+                    recipientPhone: "01012345678", templateVariables: {} },
+            });
+            const result = await repository.upsertPendingForRuleGeneration(replacement, rule.updatedAt, false, true);
+            expect(result?.id).toBe(original.id);
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toEqual(original);
+            expect(await handle.raw.message_trigger_job.count({ where: { dedupeKey: original.dedupeKey } })).toBe(1);
+        }
     });
 
     it("persists a custom claim deadline and leaves that snapshot intact before its exact expiry", async () => {

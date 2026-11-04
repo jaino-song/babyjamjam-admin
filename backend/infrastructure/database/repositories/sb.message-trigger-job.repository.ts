@@ -7,6 +7,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     IMessageTriggerJobRepository,
     MessageDispatchBranchEligibility,
+    MessageDispatchSelectedJob,
     MessageTriggerClaimSnapshot,
     CancelPendingJobsResult,
     MessageTriggerJobCancellationScope,
@@ -461,11 +462,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async consumeDispatchSlotsAndFindDueJobs(
         eligibility: MessageDispatchBranchEligibility[], now: Date, limit = 100,
-    ): Promise<MessageTriggerJobEntity[]> {
+    ): Promise<MessageDispatchSelectedJob[]> {
         if (eligibility.length === 0 || limit <= 0) return [];
         const eligibleValues = Prisma.join(eligibility.map((branch) => Prisma.sql`(
             ${branch.branchId}::uuid, ${branch.automaticEnabled}::boolean,
-            ${branch.retryEnabled}::boolean, ${branch.intervalMinutes}::integer
+            ${branch.retryEnabled}::boolean, ${branch.intervalMinutes}::integer,
+            ${branch.pastExpiryHours ?? 24}::integer
         )`));
         const manualJob = manualMessageTriggerJobPredicate({
             templateKey: Prisma.sql`job.template_key`, ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`,
@@ -474,10 +476,14 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // Rank one job per branch first, then the second per branch, etc. Oldest
         // consumed cadence slots lead so >100 active branches rotate across ticks.
         // The INSERT conflict predicate is the cross-process cadence CAS.
-        const selected = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-            WITH policy(branch_id, automatic_enabled, retry_enabled, interval_minutes) AS (VALUES ${eligibleValues}),
+        const selected = await this.prisma.$queryRaw<Array<{
+            id: string; expired: boolean; expiry_anchor: Date; past_expiry_hours: number; selected_at: Date;
+        }>>(Prisma.sql`
+            WITH policy(branch_id, automatic_enabled, retry_enabled, interval_minutes, past_expiry_hours) AS (VALUES ${eligibleValues}),
             eligible AS MATERIALIZED (
                 SELECT job.id, job.branch_id, job.scheduled_for, job.created_at, policy.interval_minutes,
+                    job.scheduled_for <= ${now}::timestamptz - policy.past_expiry_hours * interval '1 hour' AS expired,
+                    policy.past_expiry_hours,
                     row_number() OVER (PARTITION BY job.branch_id ORDER BY job.scheduled_for, job.created_at, job.id) AS ordinal
                 FROM "message_trigger_job" AS job
                 INNER JOIN policy ON policy.branch_id = job.branch_id
@@ -508,7 +514,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 ) * interval '1 minute'
                 RETURNING key
             )
-            SELECT eligible.id FROM eligible
+            SELECT eligible.id, eligible.expired, eligible.scheduled_for AS expiry_anchor,
+                eligible.past_expiry_hours, ${now}::timestamptz AS selected_at
+            FROM eligible
             INNER JOIN branches ON branches.branch_id = eligible.branch_id
             INNER JOIN consumed ON consumed.key = 'branch:' || eligible.branch_id::text || ':message_automation:last_dispatch_at'
             ORDER BY eligible.ordinal, branches.last_dispatch_at::timestamptz ASC NULLS FIRST,
@@ -520,7 +528,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             where: { id: { in: selected.map((row) => row.id) }, status: "pending", ...ordinaryAutomationJobWhere() },
         });
         const byId = new Map(rows.map((row) => [row.id, this.toDomain(row)]));
-        return selected.flatMap(({ id }) => { const job = byId.get(id); return job ? [job] : []; });
+        return selected.flatMap((selection) => {
+            const job = byId.get(selection.id);
+            if (!job) return [];
+            // Use SQL facts from the selection, not the later materialization read:
+            // a reschedule in between must invalidate this optimization at claim time.
+            Object.defineProperty(job, "dispatchSelection", { value: Object.freeze({
+                expired: selection.expired,
+                anchor: selection.expiry_anchor,
+                pastExpiryHours: selection.past_expiry_hours,
+                selectedAt: selection.selected_at,
+            }), enumerable: false });
+            return [job];
+        });
     }
 
     async reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean> {

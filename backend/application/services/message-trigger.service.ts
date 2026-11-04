@@ -85,6 +85,7 @@ import { getEffectiveClientServiceStatus } from "domain/repositories/client.repo
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
+    type MessageDispatchSelectedJob,
     type ClientUpcomingMessageTriggerJobCursor,
     type ClientUpcomingMessageTriggerJobRecord,
 } from "domain/repositories/message-trigger-job.repository.interface";
@@ -104,6 +105,7 @@ import { MessageSenderApprovalService } from "./message-sender-approval.service"
 import {
     buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
     isMessageRecipeWithinMaterializationWindow,
+    isSelectedMessageJobExpired,
     shouldSkipClientPreStartCatchUp,
     buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
@@ -1803,6 +1805,7 @@ export class MessageTriggerService {
                 automaticEnabled: await this.getMessagePolicyEnabled(branchId, "trigger-dispatch"),
                 retryEnabled: await this.getMessagePolicyEnabled(branchId, "trigger-job-retry"),
                 intervalMinutes: policy.dispatchCheckIntervalMinutes,
+                pastExpiryHours: policy.pastExpiryHours,
             });
         }
         const jobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(eligibility, now, 100);
@@ -3165,7 +3168,7 @@ export class MessageTriggerService {
     }
 
     private async dispatchClaimedJob(
-        job: MessageTriggerJobEntity,
+        job: MessageDispatchSelectedJob,
         sentIds: ReadonlySet<string>,
         approvedBranchIds: ReadonlySet<string>,
         options: DispatchClaimedJobOptions = {},
@@ -3184,8 +3187,9 @@ export class MessageTriggerService {
         const skipSafeguard = !this.smsAutomationSafeguard
             || this.smsAutomationSafeguard.isAdminDirectSend(job);
         let safeguardBlock: Extract<SmsAutomationSafeguardDecision, { allowed: false }> | null = null;
-        const timingPolicy = await this.getDispatchTimingPolicy(job.branchId);
-        let processingDeadlineAt = new Date(Date.now() + timingPolicy.processingReclaimMinutes * 60_000);
+        // Assigned only after a validated policy read inside the claim lock.
+        let processingDeadlineAt!: Date;
+        let pastExpiryHours!: number;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
@@ -3210,6 +3214,8 @@ export class MessageTriggerService {
                     return null;
                 }
             }
+            const timingPolicy = await this.getDispatchTimingPolicy(job.branchId);
+            pastExpiryHours = timingPolicy.pastExpiryHours;
             processingDeadlineAt = new Date(Date.now() + timingPolicy.processingReclaimMinutes * 60_000);
             if (resend) {
                 return transaction
@@ -3275,8 +3281,8 @@ export class MessageTriggerService {
                 return true;
             }
             linkClient = schedule.client;
-        } else if (!resend && job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) {
-            job.cancel(EXPIRED_PENDING_JOB_CANCEL_REASON);
+        } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date())) {
+            job.cancel(pastExpiryHours === 24 ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`);
             await this.persistTriggerJobStatus(job, "persist expired trigger job");
             return true;
         }

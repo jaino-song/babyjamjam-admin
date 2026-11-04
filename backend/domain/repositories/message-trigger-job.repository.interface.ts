@@ -88,7 +88,22 @@ export interface MessageDispatchBranchEligibility {
     automaticEnabled: boolean;
     retryEnabled: boolean;
     intervalMinutes: number;
+    /** Validated branch policy in production; legacy internal callers default to 24. */
+    pastExpiryHours?: number;
 }
+
+/** Transient SQL snapshot, never persisted or included in enumerable entity fields. */
+export interface MessageDispatchSelectionSnapshot {
+    readonly expired: boolean;
+    readonly anchor: Date;
+    readonly pastExpiryHours: number;
+    readonly selectedAt: Date;
+}
+
+/** Entity-only legacy adapters remain compatible; production SQL supplies the snapshot. */
+export type MessageDispatchSelectedJob = MessageTriggerJobEntity & {
+    readonly dispatchSelection?: MessageDispatchSelectionSnapshot;
+};
 
 export type MessageTriggerClaimSnapshot = Pick<MessageTriggerJobEntity,
     "status" | "claimToken" | "updatedAt" | "processingDeadlineAt">;
@@ -116,7 +131,7 @@ export interface IMessageTriggerJobRepository {
      */
     claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
     findDueDispatchBranchIds(now: Date): Promise<string[]>;
-    consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
+    consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
     reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;

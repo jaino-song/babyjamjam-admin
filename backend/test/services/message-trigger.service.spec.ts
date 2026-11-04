@@ -1,3 +1,4 @@
+import { SystemSettingService } from "application/services/system-setting.service";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
@@ -552,6 +553,206 @@ describe("MessageTriggerService", () => {
         };
     };
 
+    describe("TIME-3 branch past expiry", () => {
+        const at21 = new Date("2026-11-03T12:00:00.000Z");
+        const settings = (hours = 24) => ({
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(true),
+            getMessageAutomationPolicyConfig: jest.fn().mockResolvedValue({
+                configuration: { ...defaultMessageAutomationPolicy(), pastExpiryHours: hours },
+            }),
+        });
+        beforeEach(() => jest.useFakeTimers().setSystemTime(at21));
+        afterEach(() => jest.useRealTimers());
+
+        describe.each(["tick", "immediate"] as const)("%s dispatch", entry => {
+            it.each([
+                [24, "2026-11-02T12:00:00.001Z", "sent"],
+                [24, "2026-11-02T12:00:00.000Z", "canceled"],
+                [24, "2026-11-02T11:59:59.999Z", "canceled"],
+                [48, "2026-11-02T11:59:59.999Z", "sent"],
+                [48, "2026-11-01T12:00:00.001Z", "sent"],
+                [48, "2026-11-01T12:00:00.000Z", "canceled"],
+                [48, "2026-11-01T11:59:59.999Z", "canceled"],
+            ] as const)("%ih policy at %s resolves %s without advancing attempts", async (hours, scheduledFor, status) => {
+                const fx = createDispatchService(settings(hours));
+                const job = createJob({ scheduledFor: new Date(scheduledFor) });
+                fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+                fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+                if (entry === "tick") await fx.service.dispatchDueJobs();
+                else await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+                expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledTimes(1);
+                expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(status === "sent" ? 1 : 0);
+                expect(job.status).toBe(status);
+                expect(job.attempts).toBe(0);
+                if (status === "canceled") {
+                    expect(job.cancelReason).toBe(`기존 발송 예정 ${hours}시간 경과`);
+                    expect(fx.jobRepository.update).toHaveBeenCalledTimes(1);
+                    expect(fx.jobRepository.update).toHaveBeenCalledWith(expect.objectContaining({
+                        id: job.id, status: "canceled", claimToken: "claim-a", attempts: 0,
+                    }));
+                    expect(fx.jobRepository.claimPendingWithRuleFence.mock.invocationCallOrder[0])
+                        .toBeLessThan(fx.jobRepository.update.mock.invocationCallOrder[0]!);
+                }
+            });
+        });
+
+        it.each([
+            ["matching", "2026-11-02T12:00:00.000Z", 24, "2026-11-02T12:00:00.000Z", 24, "canceled"],
+            ["rescheduled", "2026-11-02T12:00:00.001Z", 24, "2026-11-01T12:00:00.000Z", 24, "sent"],
+            ["policy changed", "2026-11-02T11:59:59.999Z", 48, "2026-11-02T11:59:59.999Z", 24, "sent"],
+        ] as const)("uses a true SQL decision only while %s anchor and policy match", async (_label, currentAt, hours, selectedAt, selectedHours, status) => {
+            const fx = createDispatchService(settings(hours));
+            const job = createJob({ scheduledFor: new Date(currentAt) });
+            Object.defineProperty(job, "dispatchSelection", { value: {
+                expired: true, anchor: new Date(selectedAt), pastExpiryHours: selectedHours, selectedAt: at21,
+            } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe(status);
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(status === "sent" ? 1 : 0);
+        });
+
+        it("rechecks a false SQL decision after processing delay crosses the inclusive cutoff", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob({ scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+            Object.defineProperty(job, "dispatchSelection", { value: {
+                expired: false, anchor: new Date("2026-11-02T12:00:00.001Z"), pastExpiryHours: 24, selectedAt: at21,
+            } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockImplementation(async () => {
+                jest.setSystemTime(new Date("2026-11-03T12:00:00.001Z"));
+                return [job];
+            });
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe("canceled");
+            expect(job.attempts).toBe(0);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("recomputes a true SQL decision if the clock moves back before its selection time", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob({ scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+            Object.defineProperty(job, "dispatchSelection", { value: {
+                expired: true, anchor: new Date("2026-11-02T12:00:00.001Z"), pastExpiryHours: 24,
+                selectedAt: new Date("2026-11-03T12:00:00.001Z"),
+            } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe("sent");
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+        });
+
+        it("reads fresh validated hours after waiting for the branch claim lock", async () => {
+            const policy = settings();
+            const fx = createDispatchService(policy);
+            const job = createJob({ scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+            const original = fx.messageAutomationBranchLockService.runExclusive.getMockImplementation()!;
+            fx.messageAutomationBranchLockService.runExclusive.mockImplementation(async (...args: Parameters<typeof original>) => {
+                policy.getMessageAutomationPolicyConfig.mockResolvedValue({ configuration: {
+                    ...defaultMessageAutomationPolicy(), pastExpiryHours: 48,
+                } });
+                return original(...args);
+            });
+            await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+            expect(job.status).toBe("sent");
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([null, 48])("uses the real validated getter for legacy entity-only selection with stored hours %s", async hours => {
+            const read = jest.fn().mockResolvedValue(hours === null ? null : JSON.stringify({
+                ...defaultMessageAutomationPolicy(), pastExpiryHours: hours,
+            }));
+            const realSettings = new SystemSettingService({ execute: read } as never, {} as never);
+            const policy = settings();
+            policy.getMessageAutomationPolicyConfig.mockImplementation(id => realSettings.getMessageAutomationPolicyConfig(id));
+            const fx = createDispatchService(policy);
+            const job = createJob({ scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe(hours === null ? "canceled" : "sent");
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(hours === null ? 0 : 1);
+            expect(job).not.toHaveProperty("dispatchSelection");
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
+                expect.objectContaining({ branchId, pastExpiryHours: hours === null ? 24 : 48 }),
+            ], at21, 100);
+        });
+
+        it.each([
+            ["corrupt", "tick"], ["unavailable", "tick"], ["missing", "tick"],
+            ["corrupt", "immediate"], ["unavailable", "immediate"], ["missing", "immediate"],
+        ] as const)("fails closed before claim or provider when policy is %s in %s dispatch", async (failure, entry) => {
+            const read = jest.fn().mockResolvedValue(JSON.stringify({ ...defaultMessageAutomationPolicy(), pastExpiryHours: 0 }));
+            if (failure === "unavailable") read.mockRejectedValue(new Error("synthetic storage failure"));
+            const realSettings = new SystemSettingService({ execute: read } as never, {} as never);
+            const policy = settings();
+            policy.getMessageAutomationPolicyConfig.mockImplementation(id => realSettings.getMessageAutomationPolicyConfig(id));
+            const fx = createDispatchService(policy);
+            if (failure === "missing") Object.assign(fx.service, { systemSettingService: undefined });
+            const job = createJob({ scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await expect(entry === "tick" ? fx.service.dispatchDueJobs()
+                : fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId }))
+                .rejects.toBeInstanceOf(ServiceUnavailableException);
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("pending");
+            expect(job.attempts).toBe(0);
+        });
+
+        it("saving interval and expiry settings preserves old due/occurrence and sent-log history; repeat sends zero", async () => {
+            const fx = createDispatchService(settings());
+            const existing = createJob({ id: "old-due", scheduledFor: new Date("2026-11-03T12:05:00.000Z"),
+                dedupeKey: "old-rule:client:1:CLIENT:2026-11-03T12:05:00.000Z" });
+            const landed = createJob({ id: "landed", scheduledFor: new Date("2026-11-01T12:00:00.000Z"),
+                dedupeKey: "landed-rule:client:1:CLIENT:2026-11-01T12:00:00.000Z" });
+            const oldSnapshot = JSON.stringify(existing);
+            const sentHistory = new Set(["landed"]);
+            let stored: string | null = null;
+            const realSettings = new SystemSettingService(
+                { execute: jest.fn(async () => stored) } as never,
+                { executeIfVersion: jest.fn(async (_key: string, value: string) => {
+                    stored = value;
+                    return { value };
+                }) } as never,
+                undefined, undefined, undefined, undefined, undefined,
+                fx.messageAutomationBranchLockService as never,
+            );
+            fx.timingSettings.getMessageAutomationPolicyConfig.mockImplementation(id => realSettings.getMessageAutomationPolicyConfig(id));
+            await realSettings.setMessageAutomationPolicyConfig(branchId, null, {
+                ...defaultMessageAutomationPolicy(), pastSendIntervalMinutes: 3, pastExpiryHours: 48,
+            });
+            expect((await realSettings.getMessageAutomationPastTriggerConfig(branchId)).sendIntervalMinutes).toBe(3);
+            expect(JSON.stringify(existing)).toBe(oldSnapshot);
+            expect(existing.scheduledFor.toISOString()).toBe("2026-11-03T12:05:00.000Z");
+            expect(existing.dedupeKey).toBe("old-rule:client:1:CLIENT:2026-11-03T12:05:00.000Z");
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([landed]);
+            fx.messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(sentHistory);
+            await fx.service.dispatchDueJobs();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(landed);
+            await fx.service.dispatchPendingJobNow(landed.id, { expectedBranchId: branchId });
+            expect(landed.id).toBe("landed");
+            expect(landed.status).toBe("sent");
+            expect(landed.dedupeKey).toBe("landed-rule:client:1:CLIENT:2026-11-01T12:00:00.000Z");
+            expect([...sentHistory]).toEqual(["landed"]);
+            expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledTimes(1);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(JSON.stringify(existing)).toBe(oldSnapshot);
+        });
+
+        it("reconciles a sent log before expiry and never sends again", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob({ scheduledFor: new Date("2026-11-01T12:00:00.000Z") });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            fx.messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set([job.id]));
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe("sent");
+            expect(job.attempts).toBe(0);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+    });
+
     describe("TIME-1 runtime timing", () => {
         const at21 = new Date("2026-07-09T12:00:00.000Z");
         const settings = (configuration = defaultMessageAutomationPolicy()) => ({
@@ -635,8 +836,8 @@ describe("MessageTriggerService", () => {
             fx.messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async (id: string) => id !== "disabled");
             await fx.service.dispatchDueJobs();
             expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
-                { branchId: "disabled", automaticEnabled: false, retryEnabled: true, intervalMinutes: 7 },
-                { branchId, automaticEnabled: true, retryEnabled: true, intervalMinutes: 7 },
+                { branchId: "disabled", automaticEnabled: false, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
+                { branchId, automaticEnabled: true, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
             ], at21, 100);
             expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
         });
@@ -6787,6 +6988,34 @@ describe("MessageTriggerService", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    it("TIME-3 resolves saved canonical order and interval3 into literal 21:00, 21:03 and 21:06 new catchups", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+        try {
+            const rules = ["time3-first", "time3-second", "time3-third"].map(id => createRule({ id }));
+            const read = jest.fn().mockResolvedValue(JSON.stringify({
+                ...defaultMessageAutomationPolicy(), pastSendIntervalMinutes: 3,
+                pastRuleOrder: ["time3-third", "time3-first", "time3-second"],
+            }));
+            const realSettings = new SystemSettingService({ execute: read } as never, {} as never);
+            const sync = createSyncService({ createdAt: new Date("2026-11-02T00:00:00.000Z") });
+            sync.ruleRepository.findActiveByEventTypes.mockResolvedValue(rules);
+            sync.systemSettingService.getMessageAutomationPastTriggerConfig.mockImplementation(id => realSettings.getMessageAutomationPastTriggerConfig(id));
+            await sync.service.syncClientRulesForClient(branchId, 1, true);
+            const jobs = sync.jobRepository.upsertPending.mock.calls.map(([job]) => job);
+            expect(jobs.map(job => job.ruleId)).toEqual(["time3-third", "time3-first", "time3-second"]);
+            expect(jobs.map(job => job.scheduledFor.toISOString())).toEqual([
+                "2026-11-03T12:00:00.000Z", "2026-11-03T12:03:00.000Z", "2026-11-03T12:06:00.000Z",
+            ]);
+            expect(jobs.map(job => job.dedupeKey)).toEqual([
+                "time3-third:client:1:CLIENT:2026-11-03T12:00:00.000Z",
+                "time3-first:client:1:CLIENT:2026-11-03T12:03:00.000Z",
+                "time3-second:client:1:CLIENT:2026-11-03T12:06:00.000Z",
+            ]);
+            expect(jobs.map(job => job.payload.catchUp?.sequence)).toEqual([1, 2, 3]);
+            expect(jobs.map(job => job.payload.catchUp?.intervalMinutes)).toEqual([3, 3, 3]);
+        } finally { jest.useRealTimers(); }
     });
 
     it("includePast=true applies saved retroactive order and interval to due client jobs", async () => {
