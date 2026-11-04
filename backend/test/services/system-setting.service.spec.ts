@@ -1,3 +1,5 @@
+import { SMS_TRIGGER_TEMPLATE_KEYS } from "../../../packages/shared/src/types/message";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { evaluateMessageQuietHours } from "domain/message-policy-evaluator";
 import { ConflictException } from "@nestjs/common";
 import { SystemSettingService } from "application/services/system-setting.service";
@@ -497,7 +499,8 @@ describe("POL-1 versioned message policy", () => {
     let get: { execute: jest.Mock };
     let update: { executeIfVersion: jest.Mock; execute: jest.Mock };
     let rules: { findAll: jest.Mock };
-    let jobs: { findPolicyPreviewCandidates: jest.Mock };
+    let jobs: { findPolicyPreviewCandidates: jest.Mock; findPolicyRuleBranchOverrides: jest.Mock };
+    let activation: { getTriggerDispatchEnabled: jest.Mock };
     let logs: { findPolicyPreviewCandidates: jest.Mock; countFutureProviderReservations: jest.Mock; resolvePolicyRecipientGroups: jest.Mock };
     const tx = { marker: "single branch transaction" };
     let lock: { runExclusive: jest.Mock };
@@ -519,11 +522,12 @@ describe("POL-1 versioned message policy", () => {
             { id: "sms-B", branchId: "B", isActive: true, templateKey: "INFO" },
             { id: "alimtalk", branchId: "A", isActive: true, templateKey: "CLIENT_WELCOME" },
         ]) };
-        jobs = { findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]) };
+        jobs = { findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]), findPolicyRuleBranchOverrides: jest.fn().mockResolvedValue([]) };
+        activation = { getTriggerDispatchEnabled: jest.fn().mockResolvedValue(true) };
         logs = { findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]), countFutureProviderReservations: jest.fn().mockResolvedValue(0),
             resolvePolicyRecipientGroups: jest.fn(async (_branch: string, candidates: unknown[]) => candidates) };
         lock = { runExclusive: jest.fn(async (_branch: string, callback: (tx: unknown) => Promise<unknown>) => callback(tx)) };
-        service = new SystemSettingService(get as any, update as any, undefined, undefined, rules as any, jobs as any, logs as any, lock as any);
+        service = new SystemSettingService(get as any, update as any, undefined, activation as any, rules as any, jobs as any, logs as any, lock as any);
     });
     it("returns exact missing defaults/null version and legacy precedence without writes", async () => {
         expect(await service.getMessageAutomationPolicyConfig("A")).toEqual({ version: null, configuration: draft(), warnings: [] });
@@ -544,6 +548,71 @@ describe("POL-1 versioned message policy", () => {
         expect(get.execute).toHaveBeenCalledWith(key, tx);
         expect(rules.findAll).toHaveBeenCalledWith("A", tx);
         expect(update.executeIfVersion.mock.calls[0]?.[5]).toBe(tx);
+    });
+    it("accepts the same complete SMS template set used by the ordering UI", async () => {
+        rules.findAll.mockResolvedValue(SMS_TRIGGER_TEMPLATE_KEYS.map(templateKey => ({ id: `rule:${templateKey}`, branchId: "A", isActive: true, templateKey })));
+        const order = SMS_TRIGGER_TEMPLATE_KEYS.map(templateKey => `rule:${templateKey}`);
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, { ...draft(), pastRuleOrder: order });
+        expect(saved.configuration.pastRuleOrder).toEqual(order);
+        expect(saved.warnings).toEqual([]);
+    });
+    it("accepts a default-active global SMS rule on first canonical save and repeated legacy GET/PUT", async () => {
+        rules.findAll.mockResolvedValue([
+            { id: "sms-A", branchId: "A", isActive: true, templateKey: "INFO" },
+            { id: "system:service_record_link", branchId: null, isActive: true, templateKey: "SERVICE_RECORD_LINK" },
+        ]);
+        const order = ["sms-A", "system:service_record_link"];
+        await service.setMessageAutomationPastTriggerConfig("A", { sendIntervalMinutes: 1, ruleOrder: order });
+        expect(JSON.parse(rows.get(key)!).pastRuleOrder).toEqual(order);
+        rows.clear();
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, { ...draft(), pastRuleOrder: order });
+        expect(saved.configuration.pastRuleOrder).toEqual(order);
+        expect(saved.warnings).toEqual([]);
+        for (let pass = 0; pass < 2; pass++) {
+            const legacy = await service.getMessageAutomationPastTriggerConfig("A");
+            expect(legacy).toEqual({ sendIntervalMinutes: 1, ruleOrder: order });
+            await service.setMessageAutomationPastTriggerConfig("A", legacy);
+            const reload = await service.getMessageAutomationPolicyConfig("A");
+            expect(reload.configuration.pastRuleOrder).toEqual(order);
+            expect(reload.warnings).toEqual([]);
+        }
+        expect(jobs.findPolicyRuleBranchOverrides).toHaveBeenCalledWith("A", tx);
+        expect(activation.getTriggerDispatchEnabled).toHaveBeenCalledWith("A", tx);
+    });
+    it("rejects a new branch-disabled global rule and prunes previously stored order without changing its raw version", async () => {
+        rules.findAll.mockResolvedValue([{ id: "system:service_record_link", branchId: null, isActive: true, templateKey: "SERVICE_RECORD_LINK" }]);
+        jobs.findPolicyRuleBranchOverrides.mockResolvedValue([{ branchId: "A", ruleId: "system:service_record_link", isActive: false }]);
+        const configuration = { ...draft(), pastRuleOrder: ["system:service_record_link"] };
+        await expect(service.setMessageAutomationPolicyConfig("A", null, configuration)).rejects.toMatchObject({ status: 400 });
+        expect(update.executeIfVersion).not.toHaveBeenCalled();
+        jobs.findPolicyRuleBranchOverrides.mockResolvedValue([]);
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, configuration);
+        const raw = rows.get(key);
+        jobs.findPolicyRuleBranchOverrides.mockResolvedValue([{ branchId: "A", ruleId: "system:service_record_link", isActive: false }]);
+        const effective = await service.getMessageAutomationPolicyConfig("A");
+        expect(effective.version).toBe(saved.version);
+        expect(effective.configuration.pastRuleOrder).toEqual([]);
+        expect(effective.warnings).toEqual([{ code: "ORDER_ENTRY_PRUNED", ruleId: "system:service_record_link" }]);
+        expect(rows.get(key)).toBe(raw);
+        const pruned = await service.setMessageAutomationPolicyConfig("A", saved.version, configuration);
+        expect(pruned.configuration.pastRuleOrder).toEqual([]);
+        expect(pruned.warnings).toEqual([{ code: "ORDER_ENTRY_PRUNED", ruleId: "system:service_record_link" }]);
+    });
+    it("applies parent/global activation fences and ignores another branch's override", async () => {
+        rules.findAll.mockResolvedValue([{ id: "system:service_record_link", branchId: null, isActive: true, templateKey: "SERVICE_RECORD_LINK" }]);
+        jobs.findPolicyRuleBranchOverrides.mockResolvedValue([{ branchId: "B", ruleId: "system:service_record_link", isActive: false }]);
+        const configuration = { ...draft(), pastRuleOrder: ["system:service_record_link"] };
+        const saved = await service.setMessageAutomationPolicyConfig("A", null, configuration);
+        expect(saved.configuration.pastRuleOrder).toEqual(["system:service_record_link"]);
+        activation.getTriggerDispatchEnabled.mockResolvedValue(false);
+        expect(await service.getMessageAutomationPolicyConfig("A")).toMatchObject({ version: saved.version,
+            configuration: { pastRuleOrder: [] }, warnings: [{ code: "ORDER_ENTRY_PRUNED", ruleId: "system:service_record_link" }] });
+        rows.clear();
+        await expect(service.setMessageAutomationPolicyConfig("A", null, configuration)).rejects.toMatchObject({ status: 400 });
+        activation.getTriggerDispatchEnabled.mockResolvedValue(true);
+        rules.findAll.mockResolvedValue([{ id: "system:service_record_link", branchId: null, isActive: false, templateKey: "SERVICE_RECORD_LINK" }]);
+        jobs.findPolicyRuleBranchOverrides.mockResolvedValue([{ branchId: "A", ruleId: "system:service_record_link", isActive: true }]);
+        await expect(service.setMessageAutomationPolicyConfig("A", null, configuration)).rejects.toMatchObject({ status: 400 });
     });
     it.each(["sms-B", "inactive", "unknown", "alimtalk"])("rejects newly introduced invalid order entry %s", async id => {
         await expect(service.setMessageAutomationPolicyConfig("A", null, { ...draft(), pastRuleOrder: [id] })).rejects.toMatchObject({ status: 400 });
@@ -643,5 +712,19 @@ describe("message quiet-hours pure evaluation", () => {
     it("handles same-day windows and CANCEL without inventing retry times", () => {
         expect(evaluateMessageQuietHours({ ...quiet, start: "09:00", end: "12:00" }, ["STAFF"], new Date("2026-11-04T00:00:00Z"))).toEqual({ action: "DEFER", reevaluateAt: new Date("2026-11-04T03:00:00Z") });
         expect(evaluateMessageQuietHours({ ...quiet, action: "CANCEL" }, ["STAFF"], new Date("2026-11-04T13:00:00Z"))).toEqual({ action: "CANCEL", reevaluateAt: null });
+    });
+});
+
+describe("policy order override projection", () => {
+    it("reads exactly the existing branch override columns through the caller transaction", async () => {
+        const expected = [{ branchId: "A", ruleId: "system:service_record_link", isActive: false }];
+        const base = { message_trigger_rule_branch_override: { findMany: jest.fn().mockResolvedValue([]) } };
+        const transaction = { message_trigger_rule_branch_override: { findMany: jest.fn().mockResolvedValue(expected) } };
+        const repository = new SbMessageTriggerJobRepository(base as any);
+        expect(await repository.findPolicyRuleBranchOverrides("A", transaction as any)).toEqual(expected);
+        expect(transaction.message_trigger_rule_branch_override.findMany).toHaveBeenCalledWith({ where: { branchId: "A" }, select: { branchId: true, ruleId: true, isActive: true } });
+        expect(base.message_trigger_rule_branch_override.findMany).not.toHaveBeenCalled();
+        await repository.findPolicyRuleBranchOverrides("A");
+        expect(base.message_trigger_rule_branch_override.findMany).toHaveBeenCalledWith({ where: { branchId: "A" }, select: { branchId: true, ruleId: true, isActive: true } });
     });
 });

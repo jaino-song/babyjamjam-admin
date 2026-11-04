@@ -1,3 +1,4 @@
+import type { MessageTriggerRuleBranchOverride } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -464,6 +465,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             take: limit,
         });
         return rows.map((row) => this.toDomain(row));
+    }
+
+    async findPolicyRuleBranchOverrides(
+        branchId: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleBranchOverride[]> {
+        // Same persisted three-column read as ClientAutomationSourceReader. An
+        // existing branch-lock transaction must never fall back to the pool.
+        return (transaction ?? this.prisma).message_trigger_rule_branch_override.findMany({
+            where: { branchId }, select: { branchId: true, ruleId: true, isActive: true },
+        });
     }
 
     async findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]> {
