@@ -251,7 +251,7 @@ export function ClientsTable() {
                                     <Card
                                         variant="v3"
                                         data-component="desktop_clients_table_body_row"
-                                        className="flex items-center gap-4 p-5 cursor-pointer animate-pop-in group"
+                                        className="flex items-center gap-4 p-5 cursor-pointer animate-pop-in group border-solid"
                                         style={{ animationDelay: `${idx * 0.05}s` }}
                                         data-selected={selectedClient?.id === client.id}
                                         onClick={() => handleRowClick(client)}
