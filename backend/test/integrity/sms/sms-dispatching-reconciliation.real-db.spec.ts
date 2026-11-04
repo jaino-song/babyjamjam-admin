@@ -404,22 +404,20 @@ describeReal("SMS dispatching reconciliation and eligibility re-check (real Post
     });
 
     /**
-     * SI-SMS-09 — the reclaim keeps the claim token of a `dispatching` row, so
-     * the reclaimer and the still-in-flight original worker hold the SAME
-     * fence value. `persistTriggerJobStatus` fences everything on that token,
-     * so the in-flight worker's finishing write can overwrite the reclaimer's
+     * SI-SMS-09 — reclaim revokes the claim token of a `dispatching` row, so
+     * the still-in-flight original worker cannot overwrite the reclaimer's
      * terminal (failed, provider-uncertain) state. Forcing interleaving: the
      * original worker is paused inside the local provider call, after admission
      * but before its result returns and before the finishing write; a second real
      * `dispatchDueJobs()` tick reclaims the stale row through the production
      * reclaim path; releasing the worker lets it finish its CAS write.
      *
-     * Intended (operator decision 2026-10-31): a late authoritative provider
-     * success resolves the reclaimed uncertain failure without another send.
+     * Approved policy §3.3: the late provider success remains fenced out after
+     * revocation, and the uncertain failure never authorizes another send.
      */
     invariant(
         "SI-SMS-09",
-        "a late worker rewriting a reconciled failed job to sent is intended (operator decision 2026-10-31)",
+        "a reclaimed dispatching job revokes the claim and fences out a late worker success",
         async () => {
             await seedBranchRuleClient();
             const client = await handle.raw.client.findFirstOrThrow({ where: { branchId } });
@@ -460,12 +458,12 @@ describeReal("SMS dispatching reconciliation and eligibility re-check (real Post
                 expect(row.status).toBe("dispatching");
                 expect(row.claimToken).not.toBeNull();
                 expect(delivery.providerCalls).toHaveLength(1);
-                const claimToken = row.claimToken;
 
                 // Age only our row past the reclaim cutoff, then run a real
                 // second scheduler tick while the original result is paused.
+                const staleAt = new Date(Date.now() - 15 * 60 * 1000);
                 await handle.raw.$executeRaw`
-                    UPDATE "message_trigger_job" SET updated_at = ${new Date(Date.now() - 15 * 60 * 1000)}
+                    UPDATE "message_trigger_job" SET updated_at = ${staleAt}, processing_deadline_at = ${staleAt}
                     WHERE id = ${dueJob.id}
                 `;
                 await wireMessageTriggerService(handle, branchId).service.dispatchDueJobs();
@@ -476,10 +474,10 @@ describeReal("SMS dispatching reconciliation and eligibility re-check (real Post
                 });
                 expect(reconciled.status).toBe("failed");
                 expect(reconciled.cancelReason).toBe(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
-                expect(reconciled.claimToken).toBe(claimToken);
+                expect(reconciled.claimToken).toBeNull();
 
-                // Release the late success: its finishing CAS presents the same
-                // token the reclaimer kept. Pin today's late-result precedence.
+                // Release the late success: its finishing CAS presents the
+                // revoked token and must preserve the reconciled terminal state.
                 delivery.open();
                 await withDeadline(worker, 15_000, "the paused worker never finished after the release");
 
@@ -487,9 +485,9 @@ describeReal("SMS dispatching reconciliation and eligibility re-check (real Post
                     where: { id: dueJob.id },
                     select: { status: true, cancelReason: true, sentAt: true },
                 });
-                expect(after.status).toBe("sent");
-                expect(after.cancelReason).toBeNull();
-                expect(after.sentAt).not.toBeNull();
+                expect(after.status).toBe("failed");
+                expect(after.cancelReason).toBe(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+                expect(after.sentAt).toBeNull();
                 expect(delivery.providerCalls).toHaveLength(1);
             } finally {
                 delivery.open();
