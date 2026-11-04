@@ -1286,6 +1286,63 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: own.body.rules[0].id } })).toMatchObject({ sendTime: "10:00" });
         expect(provider).not.toHaveBeenCalled();
     });
+    it.each(["swapped-current", "unchanged", "explicit-request"] as const)("C4 serializes two-branch legacy template updates (%s) with the current effective key", async (mode) => {
+        const scopes = [branchId, otherBranchId]; const initial = ["SERVICE_INFO", "INFO"];
+        const created = await Promise.all(scopes.map((scope, index) => request(app.getHttpServer()).post("/message-trigger-rule-groups").set("x-test-branch", scope)
+            .send(clientGroupBody({ isActive: true, recipientTemplates: { CLIENT: initial[index] } }))));
+        created.forEach((response) => expect(response.status).toBe(201));
+        const latch = () => { let release!: () => void; const promise = new Promise<void>((resolve) => { release = resolve; }); return { promise, release }; };
+        const reads = latch(); const resume = latch(); const firstTemplates = latch();
+        const paused = new Set<string>(); const seenTransactions = new WeakSet<object>(); const acquiredKeys: string[] = [];
+        let firstCount = 0; let legacyPhase = false;
+        const originalFind = repository.findById.bind(repository);
+        const findSpy = jest.spyOn(repository, "findById").mockImplementation(async (scope, id, transaction) => {
+            const row = await originalFind(scope, id, transaction);
+            if (!transaction && created.some((response) => response.body.rules[0].id === id) && !paused.has(id)) {
+                paused.add(id); if (paused.size === 2) reads.release(); await resume.promise;
+            }
+            return row;
+        });
+        const templateLock = (core as unknown as { templateAutomationLock: MessageTemplateAutomationLockService }).templateAutomationLock;
+        const originalTemplate = templateLock.runExclusive.bind(templateLock);
+        const templateSpy = jest.spyOn(templateLock, "runExclusive").mockImplementation(async (key, work, transaction) => {
+            if (!legacyPhase || !transaction || seenTransactions.has(transaction)) return originalTemplate(key, work, transaction);
+            seenTransactions.add(transaction);
+            return originalTemplate(key, async (lockedTransaction) => {
+                acquiredKeys.push(key); firstCount++; if (firstCount === 2) firstTemplates.release();
+                await firstTemplates.promise;
+                return work(lockedTransaction);
+            }, transaction);
+        });
+        const legacy = scopes.map((scope, index) => request(app.getHttpServer()).patch(`/message-trigger-rules/${created[index]!.body.rules[0].id}`).set("x-test-branch", scope)
+            .send({ name: `legacy metadata ${index}`, ...(mode === "explicit-request" ? { templateKey: initial[index] } : {}) }).then((response) => response));
+        try {
+            await reads.promise;
+            if (mode !== "unchanged") {
+                const swaps = await Promise.all(scopes.map((scope, index) => request(app.getHttpServer()).put(`/message-trigger-rule-groups/${created[index]!.body.id}`).set("x-test-branch", scope)
+                    .send({ ...clientGroupBody({ isActive: true, recipientTemplates: { CLIENT: initial[1 - index] } }), expectedVersion: 1 })));
+                swaps.forEach((response) => { expect(response.status).toBe(200); expect(response.body.version).toBe(2); });
+            }
+            legacyPhase = true; resume.release();
+            const responses = await Promise.all(legacy);
+            expect(responses.map((response) => response.status)).toEqual([200, 200]);
+            expect(acquiredKeys.sort()).toEqual(["INFO", "SERVICE_INFO"]);
+            for (const [index, scope] of scopes.entries()) {
+                const expectedTemplate = mode === "swapped-current" ? initial[1 - index] : initial[index];
+                const group = await handle.raw.message_trigger_rule_group.findUnique({ where: { id: created[index]!.body.id } });
+                const rule = await handle.raw.message_trigger_rule.findUnique({ where: { id: created[index]!.body.rules[0].id } });
+                expect(group).toMatchObject({ branchId: scope, version: mode === "unchanged" ? 2 : 3 });
+                expect(rule).toMatchObject({ branchId: scope, groupId: created[index]!.body.id, templateKey: expectedTemplate, name: `legacy metadata ${index}` });
+                expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId: scope } })).toBe(1);
+                expect(await handle.raw.message_trigger_rule.count({ where: { branchId: scope } })).toBe(1);
+            }
+            expect(await handle.raw.message_trigger_job.count({ where: { branchId: { in: scopes } } })).toBe(0);
+            expect(provider).not.toHaveBeenCalled();
+        } finally {
+            resume.release(); firstTemplates.release(); await Promise.allSettled(legacy);
+            findSpy.mockRestore(); templateSpy.mockRestore();
+        }
+    });
     it("generic projection primitives retain removed role identity for later re-addition", async () => {
         const lock = new MessageAutomationBranchLockService(handle.service);
         let groupId = ""; let childId = "";

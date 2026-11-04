@@ -1,3 +1,5 @@
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { buildClientMessageRecipe } from "application/services/message-trigger-recipes";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -362,6 +364,151 @@ describe("Phase6 C3 immediate effective-time duplicates", () => {
         await expect(f.facade.update(branch, own.id, { ...immediate, name: "immediate metadata", sendTime: "10:00", expectedVersion: 1 })).resolves.toMatchObject({
             version: 2, name: "immediate metadata", sendTime: "10:00", rules: [{ id: own.rules[0]!.id, sendTime: "10:00" }],
         });
+    });
+});
+
+function c4Latch() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release };
+}
+
+async function c4CoreInterleaving(options: { swap: boolean; explicitTemplate?: boolean; active?: boolean; parentOff?: boolean; requestActivation?: boolean; undefinedOptions?: boolean }) {
+    const fixtures = [coreFixture(), coreFixture()];
+    const scopes = ["c4-branch-a", "c4-branch-b"];
+    const initialKeys = [MessageTriggerTemplateKey.SERVICE_INFO, MessageTriggerTemplateKey.INFO];
+    const trace: Array<{ tx: string; kind: string; key?: string }> = [];
+    const owners = new Map<string, string>();
+    const waiting = new Map<string, string>();
+    const pending = new Map<string, Array<{ tx: string; resolve: () => void }>>();
+    const names = new Map<Prisma.TransactionClient, string>();
+    const firstTemplates = new Set<string>();
+    const firstKeysGate = c4Latch(); const readsGate = c4Latch(); const resumeGate = c4Latch();
+    let firstCount = 0; let readCount = 0; let sequence = 0; let legacyPhase = false; let cycle = false;
+    const release = (tx: string) => {
+        waiting.delete(tx);
+        for (const [key, owner] of owners) {
+            if (owner !== tx) continue;
+            owners.delete(key);
+            const next = pending.get(key)?.shift();
+            if (next) { owners.set(key, next.tx); waiting.delete(next.tx); next.resolve(); }
+        }
+    };
+    const acquire = async (tx: string, key: string) => {
+        trace.push({ tx, kind: "request", key });
+        const owner = owners.get(key);
+        if (owner && owner !== tx) {
+            waiting.set(tx, owner);
+            let cursor: string | undefined = owner;
+            while (cursor) {
+                if (cursor === tx) { cycle = true; throw new Error("simulated advisory request cycle"); }
+                cursor = waiting.get(cursor);
+            }
+            await new Promise<void>((resolve) => { const queue = pending.get(key) ?? []; queue.push({ tx, resolve }); pending.set(key, queue); });
+        } else owners.set(key, tx);
+        trace.push({ tx, kind: "held", key });
+        if (legacyPhase && key.startsWith("babyjamjam:message-template-automation:") && !firstTemplates.has(tx)) {
+            firstTemplates.add(tx); firstCount++;
+            if (firstCount === 2) firstKeysGate.release();
+            await firstKeysGate.promise;
+        }
+    };
+    for (const [index, f] of fixtures.entries()) {
+        const scope = scopes[index]!;
+        Object.assign(f.tx, { $executeRaw: async (query: Prisma.Sql) => { await acquire(names.get(f.tx)!, String(query.values[0])); return 1; } });
+        const database = { $transaction: async <T>(work: (transaction: Prisma.TransactionClient) => Promise<T>) => {
+            const txName = `${legacyPhase ? "legacy" : "setup"}:${scope}:${++sequence}`; names.set(f.tx, txName);
+            try { return await work(f.tx); } finally { release(txName); }
+        } };
+        Object.assign(f.core, { messageAutomationBranchLockService: new MessageAutomationBranchLockService(database as never),
+            templateAutomationLock: new MessageTemplateAutomationLockService(database as never) });
+        const lockGroup = f.repository.lockGroup.getMockImplementation()!;
+        f.repository.lockGroup.mockImplementation(async (...args) => { trace.push({ tx: names.get(f.tx)!, kind: "group" }); return lockGroup(...args); });
+        const lockChildren = f.repository.lockGroupRules.getMockImplementation()!;
+        f.repository.lockGroupRules.mockImplementation(async (...args) => { trace.push({ tx: names.get(f.tx)!, kind: "children" }); return lockChildren(...args); });
+        await f.facade.create(scope, draft({ isActive: options.active ?? true, recipientTemplates: { CLIENT: initialKeys[index]! } }));
+        const find = f.repository.findById.getMockImplementation()!; let paused = false;
+        f.repository.findById.mockImplementation(async (branchId: string, id: string, transaction?: Prisma.TransactionClient) => {
+            const snapshot = await find(branchId, id);
+            if (!transaction && !paused) { paused = true; readCount++; if (readCount === 2) readsGate.release(); await resumeGate.promise; }
+            return snapshot;
+        });
+    }
+    const updates = fixtures.map((f, index) => f.core.updateRule(scopes[index]!, f.rules[0]!.id, {
+        name: `legacy metadata ${index}`,
+        ...(options.explicitTemplate ? { templateKey: initialKeys[index] } : {}),
+        ...(options.requestActivation ? { isActive: true } : {}),
+        ...(options.undefinedOptions ? { templateKey: undefined, isActive: undefined } : {}),
+    }));
+    try {
+        await readsGate.promise;
+        if (options.swap) await Promise.all(fixtures.map((f, index) => f.facade.update(scopes[index]!, f.groups[0]!.id, {
+            ...draft({ isActive: options.active ?? true, recipientTemplates: { CLIENT: initialKeys[1 - index]! } }), expectedVersion: 1,
+        })));
+        if (options.parentOff) fixtures.forEach((f) => f.setParent(false));
+        trace.length = 0; legacyPhase = true;
+        if (options.active === false && !options.requestActivation) firstKeysGate.release();
+        resumeGate.release();
+        const results = await Promise.allSettled(updates);
+        return { fixtures, scopes, trace, cycle, results };
+    } finally { resumeGate.release(); firstKeysGate.release(); await Promise.allSettled(updates); }
+}
+
+describe("Phase6 C4 fresh legacy template lock resolution", () => {
+    it("uses fresh swapped templates before group/child locks without a cross-branch request cycle", async () => {
+        const result = await c4CoreInterleaving({ swap: true });
+        const firstKeys = result.scopes.map((scope) => result.trace.find((entry) => entry.tx.includes(scope) && entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:"))?.key);
+        expect({ firstKeys, cycle: result.cycle, statuses: result.results.map((entry) => entry.status) }).toEqual({
+            firstKeys: ["babyjamjam:message-template-automation:INFO", "babyjamjam:message-template-automation:SERVICE_INFO"], cycle: false, statuses: ["fulfilled", "fulfilled"],
+        });
+        for (const [index, scope] of result.scopes.entries()) {
+            const events = result.trace.filter((entry) => entry.tx.includes(scope));
+            const templateKeys = [...new Set(events.filter((entry) => entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key))];
+            expect(templateKeys).toEqual([index === 0 ? "babyjamjam:message-template-automation:INFO" : "babyjamjam:message-template-automation:SERVICE_INFO"]);
+            expect(events.findIndex((entry) => entry.kind === "held" && entry.key === templateKeys[0])).toBeLessThan(events.findIndex((entry) => entry.kind === "group"));
+            expect(result.fixtures[index]!.groups[0]!.version).toBe(3);
+            expect(result.fixtures[index]!.rules[0]!.templateKey).toBe(index === 0 ? "INFO" : "SERVICE_INFO");
+        }
+    });
+    it.each([false, true])("allows unchanged-template control with explicit requested template %s", async (explicitTemplate) => {
+        const result = await c4CoreInterleaving({ swap: explicitTemplate, explicitTemplate });
+        expect(result.cycle).toBe(false); expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
+        for (const [index, scope] of result.scopes.entries()) {
+            const keys = [...new Set(result.trace.filter((entry) => entry.tx.includes(scope) && entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key))];
+            expect(keys).toEqual([index === 0 ? "babyjamjam:message-template-automation:SERVICE_INFO" : "babyjamjam:message-template-automation:INFO"]);
+            expect(result.fixtures[index]!.groups[0]!.version).toBe(explicitTemplate ? 3 : 2);
+        }
+    });
+    it.each(["missing-or-deleted", "reparented"])("refuses a %s fresh child before template/group writes", async (kind) => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft());
+        const initial = cloneRule(f.rules[0]!); const current = kind === "missing-or-deleted" ? null : cloneRule(initial);
+        if (current) current.groupId = "different-group";
+        f.repository.findById.mockClear();
+        f.repository.findById.mockResolvedValueOnce(initial).mockResolvedValue(current);
+        await expect(f.core.updateRule(branch, initial.id, { name: "stale writer" })).rejects.toMatchObject({
+            status: kind === "missing-or-deleted" ? 404 : 409, response: { code: kind === "missing-or-deleted" ? "RESOURCE_NOT_FOUND" : "REQUEST_CONFLICT" },
+        });
+        expect(f.repository.findById).toHaveBeenNthCalledWith(2, branch, initial.id, f.tx);
+        expect(f.repository.lockGroup).not.toHaveBeenCalled(); expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(f.groups[0]).toMatchObject({ id: created.id, version: 1 }); expect(f.rules[0]!.name).toBe("고객 시작 안내");
+    });
+    it("inherits current lock options when direct callers pass explicit undefined fields", async () => {
+        const result = await c4CoreInterleaving({ swap: false, undefinedOptions: true });
+        expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
+        expect(result.cycle).toBe(false);
+    });
+    it("does not acquire a template key for current inactive metadata updates", async () => {
+        const result = await c4CoreInterleaving({ swap: true, active: false });
+        expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
+        expect(result.trace.filter((entry) => entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:"))).toEqual([]);
+        expect(result.fixtures.map((f) => f.rules[0]!.isActive)).toEqual([false, false]);
+    });
+    it.each([false, true])("preserves parent-OFF metadata/explicit-activation gates (activation=%s)", async (requestActivation) => {
+        const result = await c4CoreInterleaving({ swap: false, parentOff: true, requestActivation });
+        expect(result.cycle).toBe(false);
+        expect(result.results.map((entry) => entry.status)).toEqual(requestActivation ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"]);
+        if (requestActivation) result.results.forEach((entry) => expect(entry).toMatchObject({ reason: { status: 409 } }));
+        else expect(result.fixtures.map((f) => f.rules[0]!.isActive)).toEqual([false, false]);
     });
 });
 

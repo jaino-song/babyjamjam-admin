@@ -1459,17 +1459,18 @@ export class MessageTriggerService {
         throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), groupId: group.id, currentVersion: group.version });
     }
 
-    private async withRuleGroupLock<T>(branchId: string, groupId: string, work: (group: MessageTriggerRuleGroupEntity, transaction: Prisma.TransactionClient) => Promise<T>, transaction?: Prisma.TransactionClient, templateParams?: UpsertRuleParams): Promise<T> {
+    private async withRuleGroupLock<T>(branchId: string, groupId: string, work: (group: MessageTriggerRuleGroupEntity, transaction: Prisma.TransactionClient) => Promise<T>, transaction?: Prisma.TransactionClient, templateParams?: UpsertRuleParams | ((transaction: Prisma.TransactionClient) => Promise<UpsertRuleParams>)): Promise<T> {
         if (!this.messageAutomationBranchLockService) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
         return this.messageAutomationBranchLockService.runExclusive(branchId, async (writeTransaction) => {
+            const effectiveTemplateParams = typeof templateParams === "function" ? await templateParams(writeTransaction) : templateParams;
             const mutate = async (lockedTransaction: Prisma.TransactionClient) => {
                 const group = await this.ruleRepository.lockGroup(branchId, groupId, lockedTransaction);
                 if (!group) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 await this.ruleRepository.lockGroupRules(branchId, groupId, lockedTransaction);
                 return work(group, lockedTransaction);
             };
-            if (templateParams?.isActive !== false) {
-                const key = templateParams && this.getRuleSystemTemplateKey(templateParams.templateKey);
+            if (effectiveTemplateParams?.isActive !== false) {
+                const key = effectiveTemplateParams && this.getRuleSystemTemplateKey(effectiveTemplateParams.templateKey);
                 if (key) return this.templateAutomationLock.runExclusive(key, mutate, writeTransaction);
             }
             return mutate(writeTransaction);
@@ -1735,7 +1736,20 @@ export class MessageTriggerService {
                 if (!current || current.groupId !== group.id) this.groupConflict(group);
                 await this.assertSingletonGroup(branchId, current, transaction);
                 return this.mutateGroupedRule(branchId, group, current, params, transaction);
-            }, undefined, { ...rule, ...params });
+            }, undefined, async (transaction) => {
+                // Branch serialization must precede the key read: a public PUT
+                // may have replaced the template after the initial legacy read.
+                const current = await this.ruleRepository.findById(branchId, id, transaction);
+                if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                if (current.groupId !== rule.groupId) {
+                    throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), groupId: rule.groupId });
+                }
+                return {
+                    ...current,
+                    templateKey: params.templateKey === undefined ? current.templateKey : params.templateKey,
+                    isActive: params.isActive === undefined ? current.isActive : params.isActive,
+                };
+            });
             return await this.reconcileRuleGenerationAfterMutation(branchId, updated.id) ?? updated;
         }
         const metadataOnlyUpdate = params.isActive === undefined;
