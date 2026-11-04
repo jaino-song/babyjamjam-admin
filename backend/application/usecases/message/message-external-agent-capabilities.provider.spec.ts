@@ -1,3 +1,4 @@
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { createLegacyAutomationDeliveryGate } from "../../../test/fixtures/legacy-automation-delivery-gate";
 import { NotFoundException } from "@nestjs/common";
 
@@ -858,7 +859,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                     transaction: unknown,
                 ) => work(transaction)),
             } as never,
-        undefined, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate({
+        { getMessageAutomationPolicyConfig: jest.fn().mockResolvedValue({ configuration: defaultMessageAutomationPolicy() }) } as never, undefined, undefined, undefined, undefined, createLegacyAutomationDeliveryGate({
                 $transaction: jest.fn().mockImplementation(async (work: (transaction: unknown) => Promise<unknown>) =>
                     work({
                         $queryRaw: jest.fn().mockImplementation(async () => [{
@@ -1210,7 +1211,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             result: { status: "created", id: "rule-a", isActive: true },
         });
 
-        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, { ...input, sendTime: "09:00" }, expect.objectContaining({ agent_action: expect.any(Object) }));
+        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, input, expect.objectContaining({ agent_action: expect.any(Object) }));
         expect(prisma.agent_action.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ id: context.actionId, capability: "automation.create" }),
         }));
@@ -1232,7 +1233,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         };
 
         await expect(create.execute(context, input)).rejects.toThrow("receipt could not be persisted");
-        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, { ...input, sendTime: "09:00" }, expect.objectContaining({ agent_action: expect.any(Object) }));
+        expect(delivery.createRule).toHaveBeenCalledWith(principal.branchId, input, expect.objectContaining({ agent_action: expect.any(Object) }));
     });
 
     it("rejects id-only automation updates before the canonical service is called", async () => {

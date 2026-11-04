@@ -108,7 +108,7 @@ const AutomationRuleMutableSchema = z.object({
 const AutomationRuleBaseSchema = AutomationRuleMutableSchema.extend({
     isActive: z.boolean().default(true),
     offsetDays: z.number().int().nonnegative().max(365).default(0),
-    sendTime: AutomationRuleMutableSchema.shape.sendTime.default("09:00"),
+    sendTime: AutomationRuleMutableSchema.shape.sendTime.optional(),
 });
 const AUTOMATION_RULE_MUTABLE_KEYS = Object.keys(AutomationRuleMutableSchema.shape);
 const AutomationRuleUpdateSchema = AutomationRuleMutableSchema.partial().extend({ id: z.string().min(1).max(200) }).superRefine((value, context) => {

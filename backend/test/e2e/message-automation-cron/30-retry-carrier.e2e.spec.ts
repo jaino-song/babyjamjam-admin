@@ -272,6 +272,7 @@ describeE2E("message-automation cron retry + carrier (real DB)", () => {
         const { jobId } = await makeDueJob("rj", receiver);
         const sendCountBefore = aligoStub.sendCalls.length;
 
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const log = await readLogByJobId(jobId);
@@ -330,6 +331,7 @@ describeE2E("message-automation cron retry + carrier (real DB)", () => {
         const sendCountBefore = aligoStub.sendCalls.length;
 
         // Only this job is due, so the throwing send cannot abort other jobs' dispatches.
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const log = await readLogByJobId(jobId);
@@ -472,6 +474,7 @@ describeE2E("message-automation cron retry + carrier (real DB)", () => {
         expect(receiver.endsWith("0000")).toBe(true);
         const { jobId } = await makeDueJob("cf", receiver);
 
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const log = await readLogByJobId(jobId);
@@ -516,6 +519,7 @@ describeE2E("message-automation cron retry + carrier (real DB)", () => {
             },
         });
         const sendCountBefore = aligoStub.sendCalls.length;
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const job = await readJob(jobId);
@@ -534,6 +538,7 @@ describeE2E("message-automation cron retry + carrier (real DB)", () => {
         expect(receiver.endsWith("0000")).toBe(false);
         const { jobId } = await makeDueJob("cs", receiver);
 
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const log = await readLogByJobId(jobId);

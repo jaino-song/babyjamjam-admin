@@ -10,7 +10,7 @@ import {
 import { SystemSettingService } from "application/services/system-setting.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MESSAGE_AUTOMATION_PARENT_DISABLED_REASON } from "application/services/message-automation-activation.service";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     MESSAGE_CRON_BRANCH_ID,
@@ -220,8 +220,11 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
             }
         }
         // Standby harness first (own module graph), then the main app.
-        await standbyHarness?.close().catch(() => undefined);
-        await harness?.close().catch(() => undefined);
+        try {
+            await standbyHarness?.close();
+        } finally {
+            await harness?.close();
+        }
     });
 
     const insertDuePendingJob = async (
@@ -273,6 +276,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         await harness.backdate(greetingJobId!, new Date(Date.now() - 60 * 60_000));
 
         const callsBefore = stub.sendCalls.length;
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const job = await readJob(greetingJobId!);
@@ -295,6 +299,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
     });
 
     it("2. a second dispatch tick is idempotent", async () => {
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const logCount = await prisma.message_log.count({ where: { triggerJobId: greetingJobId! } });
@@ -347,6 +352,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
 
         const callsBefore = stub.sendCalls.length;
         const firstTickStart = Date.now();
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
         batchElapsedMs.firstTick = Date.now() - firstTickStart;
 
@@ -364,6 +370,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         expect(stub.sendCalls.length - callsBefore).toBe(100);
 
         const secondTickStart = Date.now();
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
         batchElapsedMs.secondTick = Date.now() - secondTickStart;
         console.log(
@@ -389,6 +396,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         expect(standbyHarness.lease.holdsLease()).toBe(false);
 
         const dueJob = await insertDuePendingJob("standby", 91);
+        await standbyHarness.prepareFreshDispatchWindow();
         await standbyHarness.tick.dispatch();
 
         expect((await readJob(dueJob.id)).status).toBe("pending");
@@ -409,6 +417,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         // instance, hence the same SchedulerExecutionGuard: the second
         // tryStart returns null and its tick becomes a no-op.
         try {
+            await harness.prepareFreshDispatchWindow();
             await Promise.all([harness.tick.dispatch(), harness.tick.dispatch()]);
 
             expect(inner).toHaveBeenCalledTimes(1);
@@ -441,6 +450,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
             create: { key: TRIGGER_DISPATCH_POLICY_KEY, value: "false" },
             update: { value: "false" },
         });
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         // Gate: the due automatic job survives the tick still pending, and no
@@ -458,6 +468,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         } else {
             await prisma.system_setting.deleteMany({ where: { key: TRIGGER_DISPATCH_POLICY_KEY } });
         }
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         expect((await readJob(dueJob.id)).status).toBe("sent");
@@ -504,5 +515,57 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         await setting.setMessageSettingsPolicyEnabled(BRANCH_ID, "trigger-dispatch", true, actor);
         expect((await readJob(dueJob.id)).status).toBe("canceled");
         expect(stub.sendCalls.length - callsBefore).toBe(0);
+    });
+
+    describe("cadence fixture restoration (additional harness checks)", () => {
+        const key = `branch:${BRANCH_ID}:message_automation:last_dispatch_at`;
+        const readCadence = () => prisma.$queryRaw<Array<{ value: string; updated_at: string }>>(Prisma.sql`
+            SELECT value, updated_at::text AS updated_at FROM "system_setting" WHERE key = ${key}
+        `);
+        const restoreCadence = async (rows: Array<{ value: string; updated_at: string }>) => {
+            const row = rows[0];
+            if (row) {
+                await prisma.$executeRaw(Prisma.sql`
+                    INSERT INTO "system_setting" (key, value, updated_at)
+                    VALUES (${key}, ${row.value}, ${row.updated_at}::timestamptz)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                `);
+            } else {
+                await prisma.system_setting.deleteMany({ where: { key } });
+            }
+        };
+
+        it.each(["present", "absent"] as const)("restores the exact initially %s cadence row after multiple explicit windows", async (state) => {
+            const original = await readCadence();
+            let temporary: MessageCronHarness | undefined;
+            try {
+                if (state === "present") {
+                    await prisma.$executeRaw(Prisma.sql`
+                        INSERT INTO "system_setting" (key, value, updated_at)
+                        VALUES (${key}, '2026-01-02T03:04:05.000Z', '2026-01-02T03:04:05.123456Z'::timestamptz)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                    `);
+                } else {
+                    await prisma.system_setting.deleteMany({ where: { key } });
+                }
+                const expected = await readCadence();
+                temporary = await bootMessageCronHarness({ aligo: new ScriptedAligoStub() });
+                await temporary.prepareFreshDispatchWindow();
+                await temporary.prepareFreshDispatchWindow();
+                const prepared = await readCadence();
+                expect(prepared).toHaveLength(1);
+                expect(new Date(prepared[0]!.value).getTime()).toBeLessThanOrEqual(Date.now() - 24 * 60 * 60_000);
+                await temporary.close();
+                // Closing twice must not reopen the disconnected Prisma pool.
+                await temporary.close();
+                expect(await readCadence()).toEqual(expected);
+            } finally {
+                try {
+                    await temporary?.close();
+                } finally {
+                    await restoreCadence(original);
+                }
+            }
+        });
     });
 });

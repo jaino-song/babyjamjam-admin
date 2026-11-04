@@ -1438,7 +1438,10 @@ export class MessageTriggerService {
         if (isAutomaticRule && !this.messageAutomationActivationService) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        let persistedParams: UpsertRuleParams = params;
+        let persistedParams: UpsertRuleParams = {
+            ...params,
+            sendTime: params.sendTime ?? (await this.getDispatchTimingPolicy(branchId)).defaultRuleSendTime,
+        };
         const persistRule = async (writeTransaction: Prisma.TransactionClient) => {
             const rule = await this.ruleRepository.create(
                 branchId,
@@ -1765,6 +1768,13 @@ export class MessageTriggerService {
         return !(await this.jobRepository.hasActiveJobsBefore(branchId, rule.id, rule.updatedAt));
     }
 
+    private async getDispatchTimingPolicy(branchId: string | null) {
+        if (!branchId || !this.systemSettingService) {
+            throw new ServiceUnavailableException("Message automation policy is not configured");
+        }
+        return (await this.systemSettingService.getMessageAutomationPolicyConfig(branchId)).configuration;
+    }
+
     async dispatchDueJobs(): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
             return;
@@ -1776,32 +1786,30 @@ export class MessageTriggerService {
         // Rebuild before querying due rows so a rule saved immediately before
         // this tick can dispatch on this tick instead of waiting another minute.
         await this.processStaleRuleRebuilds();
-        const jobs = await this.jobRepository.findDuePendingSystemScope(100);
-        const policyCache = new Map<string, boolean>();
-        const isEnabled = async (
-            branchId: string,
-            policyId: "trigger-dispatch" | "trigger-job-retry",
-        ): Promise<boolean> => {
-            const cacheKey = `${branchId}:${policyId}`;
-            const cached = policyCache.get(cacheKey);
-            if (cached !== undefined) return cached;
-            const enabled = await this.getMessagePolicyEnabled(branchId, policyId);
-            policyCache.set(cacheKey, enabled);
-            return enabled;
-        };
-        const eligibleJobs: MessageTriggerJobEntity[] = [];
-        for (const job of jobs) {
-            if (!job.branchId) continue;
-            if (this.isAutomaticMessageJob(job) && !(await isEnabled(job.branchId, "trigger-dispatch"))) continue;
-            const isRetry = job.attempts > 0 || job.nextAttemptAt !== null;
-            if (isRetry && !(await isEnabled(job.branchId, "trigger-job-retry"))) continue;
-            eligibleJobs.push(job);
+        const now = new Date();
+        const branchIds = await this.jobRepository.findDueDispatchBranchIds(now);
+        const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(branchIds);
+        const eligibility = [];
+        for (const branchId of branchIds) {
+            if (!approvedBranchIds.has(branchId)) continue;
+            const policy = await this.getDispatchTimingPolicy(branchId);
+            eligibility.push({
+                branchId,
+                automaticEnabled: await this.getMessagePolicyEnabled(branchId, "trigger-dispatch"),
+                retryEnabled: await this.getMessagePolicyEnabled(branchId, "trigger-job-retry"),
+                intervalMinutes: policy.dispatchCheckIntervalMinutes,
+            });
         }
-
+        const jobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(eligibility, now, 100);
+        // The repository applies these before LIMIT. Keep the snapshot check at
+        // the consumer boundary too; claim/provider fences recheck live state.
+        const byBranch = new Map(eligibility.map((branch) => [branch.branchId, branch]));
+        const eligibleJobs = jobs.filter((job) => {
+            const branch = job.branchId ? byBranch.get(job.branchId) : undefined;
+            return branch && (branch.automaticEnabled || !this.isAutomaticMessageJob(job))
+                && (branch.retryEnabled || (job.attempts === 0 && job.nextAttemptAt === null));
+        });
         if (eligibleJobs.length > 0) {
-            const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
-                [...new Set(eligibleJobs.map((job) => job.branchId).filter((id): id is string => !!id))],
-            );
             const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope(
                 eligibleJobs.map((job) => job.id),
             );
@@ -3171,6 +3179,8 @@ export class MessageTriggerService {
         const skipSafeguard = !this.smsAutomationSafeguard
             || this.smsAutomationSafeguard.isAdminDirectSend(job);
         let safeguardBlock: Extract<SmsAutomationSafeguardDecision, { allowed: false }> | null = null;
+        const timingPolicy = await this.getDispatchTimingPolicy(job.branchId);
+        let processingDeadlineAt = new Date(Date.now() + timingPolicy.processingReclaimMinutes * 60_000);
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
@@ -3195,14 +3205,15 @@ export class MessageTriggerService {
                     return null;
                 }
             }
+            processingDeadlineAt = new Date(Date.now() + timingPolicy.processingReclaimMinutes * 60_000);
             if (resend) {
                 return transaction
-                    ? this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, transaction)
-                    : this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId);
+                    ? this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, transaction, processingDeadlineAt)
+                    : this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, undefined, processingDeadlineAt);
             }
             return transaction
-                ? this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, transaction)
-                : this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId);
+                ? this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, transaction, processingDeadlineAt)
+                : this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, undefined, processingDeadlineAt);
         };
         const claimed = automaticJob
             ? await this.messageAutomationBranchLockService!.runExclusive(job.branchId!, (transaction) => claim(transaction))
@@ -3221,6 +3232,7 @@ export class MessageTriggerService {
         // one is not safe to deliver: the pre-provider fence fails closed.
         const claimToken = claimed;
         job.claimToken = claimToken;
+        job.processingDeadlineAt = processingDeadlineAt;
         // The resend claim keeps the setup reason on the in-flight row: a
         // non-null `cancel_reason` on a `processing` row is the durable mark
         // that the stale-processing reclaim reads to return it to
@@ -3557,7 +3569,7 @@ export class MessageTriggerService {
             return await this.deliveryService.prepareJob(job);
         } catch (error) {
             if (error instanceof TriggerJobDeferredError) {
-                this.deferOrReturnToNeedsSetup(job, error, resend);
+                await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -4060,16 +4072,17 @@ export class MessageTriggerService {
      * the ordinary dispatcher would expire an old job on its next tick. It goes
      * back to `needs_setup` with the transient reason, attempts untouched.
      */
-    private deferOrReturnToNeedsSetup(
+    private async deferOrReturnToNeedsSetup(
         job: MessageTriggerJobEntity,
         error: TriggerJobDeferredError,
         resend: boolean,
-    ): void {
+    ): Promise<void> {
         if (resend) {
             job.markNeedsSetup(error.message);
             return;
         }
-        job.defer(error.kind, error.message);
+        const policy = await this.getDispatchTimingPolicy(job.branchId);
+        job.defer(error.kind, error.message, policy.triggerRetryIntervalMinutes * 60_000);
     }
 
     private async deliverClaimedJob(
@@ -4092,7 +4105,7 @@ export class MessageTriggerService {
             // entity; an unchanged dispatching row remains for reconciliation.
             if (error instanceof AgentAutomationDispatchUncertainError) return "preserve-stored";
             if (error instanceof TriggerJobDeferredError) {
-                this.deferOrReturnToNeedsSetup(job, error, resend);
+                await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -4590,6 +4603,10 @@ export class MessageTriggerService {
             ? await logRepository.findUncertainTriggerJobIdsSystemScope(stale.map((job) => job.id))
             : new Set<string>();
         for (const job of stale) {
+            const snapshot = {
+                status: job.status, claimToken: job.claimToken,
+                updatedAt: job.updatedAt, processingDeadlineAt: job.processingDeadlineAt,
+            };
             if (sentIds.has(job.id)) {
                 job.markSent();
             } else if (uncertainIds.has(job.id)) {
@@ -4608,9 +4625,13 @@ export class MessageTriggerService {
                 // the claim token so a newer owner is never overwritten.
                 job.markNeedsSetup(job.cancelReason);
             } else {
-                job.defer("transient", "Reclaimed stale processing job");
+                const policy = await this.getDispatchTimingPolicy(job.branchId);
+                job.defer("transient", "Reclaimed stale processing job", policy.triggerRetryIntervalMinutes * 60_000);
             }
-            await this.persistTriggerJobStatus(job, "persist reclaimed trigger job");
+            if (await this.jobRepository.reclaimWithClaimFence(job, snapshot)) {
+                job.claimToken = null;
+                job.processingDeadlineAt = null;
+            }
         }
     }
 
