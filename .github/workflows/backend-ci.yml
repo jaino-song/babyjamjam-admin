@@ -1156,9 +1156,10 @@ jobs:
           expect_status container_health healthy
           expect_status restart_count 0
           expect_status public_routing fallback
-          # ADR-010: a temporary-active fallback contests the lease. Only asserted
-          # after replace (the pre-replace release may predate /health/lease), and
-          # only the mode: lease_held may legitimately be false while Lightsail holds it.
+          # ADR-010: this post-replace CI check requires lease mode required.
+          # Persistent LightNode independently requires required AND held=true in
+          # ci-deployer validated_status before status/replace and after replace.
+          # The enabled temporary-expiry lifecycle has a separate legacy contract.
           expect_status lease_mode required
           curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
             https://api.babyjamjam.com/health/ready >/dev/null
