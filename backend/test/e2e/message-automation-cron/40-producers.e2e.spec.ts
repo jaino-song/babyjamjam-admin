@@ -354,6 +354,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
         for (const job of pending) {
             await harness.backdate(job.id, new Date(Date.now() - 60_000));
         }
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
 
         const logs = await sentLogsForClient(clientId);
@@ -869,6 +870,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
 
         // The recreated job is dispatchable: one dispatch sends the link SMS.
         await harness.backdate(repaired[0]!.id, new Date(Date.now() - 60_000));
+        await harness.prepareFreshDispatchWindow();
         await harness.tick.dispatch();
         const logs = await prisma.message_log.findMany({ where: { clientId: fixture.clientId, status: "sent" } });
         expect(logs.map((log) => log.triggerJobId)).toEqual([repaired[0]!.id]);
