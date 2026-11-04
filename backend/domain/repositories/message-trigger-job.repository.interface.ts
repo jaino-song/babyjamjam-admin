@@ -1,3 +1,4 @@
+import type { MessageTriggerRuleBranchOverride } from "./message-trigger-rule-branch-override.repository.interface";
 import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
@@ -83,6 +84,8 @@ export interface CancelPendingJobsResult {
 }
 
 export interface IMessageTriggerJobRepository {
+    /** Auxiliary persisted override projection shared with the branch rule list. */
+    findPolicyRuleBranchOverrides(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleBranchOverride[]>;
     /** Full branch-scoped, read-only policy population; no UI page limit. */
     findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]>;
 

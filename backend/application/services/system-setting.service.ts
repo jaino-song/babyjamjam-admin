@@ -28,7 +28,8 @@ import {
 } from "domain/constants/message-settings-policy";
 
 import { validateMessageAutomationPolicy, evaluateMessageQuietHours } from "domain/message-policy-evaluator";
-import { isConfigurableSmsTriggerTemplate } from "domain/constants/message-trigger-catalog";
+import { MESSAGE_TRIGGER_TEMPLATE_CATALOG } from "domain/constants/message-trigger-catalog";
+import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { IMessageTriggerRuleRepository, MESSAGE_TRIGGER_RULE_REPOSITORY } from "domain/repositories/message-trigger-rule.repository.interface";
 import { IMessageTriggerJobRepository, MESSAGE_TRIGGER_JOB_REPOSITORY } from "domain/repositories/message-trigger-job.repository.interface";
 import { IMessageLogRepository, MESSAGE_LOG_REPOSITORY } from "domain/repositories/message-log.repository.interface";
@@ -223,12 +224,30 @@ export class SystemSettingService {
     ): Promise<{ configuration: MessageAutomationPolicyConfiguration; warnings: MessagePolicyWarning[] }> {
         const warnings: MessagePolicyWarning[] = [];
         if (!configuration.pastRuleOrder.length) return { configuration, warnings };
-        if (!this.policyRules) throw new ServiceUnavailableException("Message policy rules are unavailable");
+        if (!this.policyRules || !this.policyJobs || !this.messageAutomationActivationService) {
+            throw new ServiceUnavailableException("Message policy rules are unavailable");
+        }
         let rules;
-        try { rules = await this.policyRules.findAll(branchId, transaction); }
-        catch { throw new ServiceUnavailableException("Message policy rules are unavailable"); }
-        const active = new Set(rules.filter(rule => rule.branchId === branchId && rule.isActive
-            && isConfigurableSmsTriggerTemplate(rule.templateKey)).map(rule => rule.id));
+        let overrides;
+        let parentEnabled;
+        try {
+            [rules, overrides, parentEnabled] = await Promise.all([
+                this.policyRules.findAll(branchId, transaction),
+                this.policyJobs.findPolicyRuleBranchOverrides(branchId, transaction),
+                transaction ? this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId, transaction)
+                    : this.messageAutomationActivationService.getTriggerDispatchEnabled(branchId),
+            ]);
+        } catch { throw new ServiceUnavailableException("Message policy rules are unavailable"); }
+        const overrideMap = new Map(overrides.filter(override => override.branchId === branchId)
+            .map(override => [override.ruleId, override.isActive]));
+        // Match the read-only listRules projection, including default-active
+        // global SMS rules and both the global and branch parent activation fences.
+        // Catalog SMS providers cover the UI's SMS_TRIGGER_TEMPLATE_KEYS, including
+        // dedicated SERVICE_RECORD_LINK, rather than only generic builder templates.
+        const active = new Set(rules.filter(rule => parentEnabled
+            && (rule.branchId === branchId || rule.branchId === null)
+            && isRuleActiveForBranch(rule.isActive, rule.branchId === null ? overrideMap.get(rule.id) : undefined)
+            && Boolean(MESSAGE_TRIGGER_TEMPLATE_CATALOG[rule.templateKey]?.providers.sms)).map(rule => rule.id));
         const ruleOrder: string[] = [];
         for (const id of configuration.pastRuleOrder) {
             if (active.has(id)) ruleOrder.push(id);
