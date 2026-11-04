@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { waitFor } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server.node";
 
+import { ThemeChoice } from "@/components/app/ui/theme-choice";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { settingsApi } from "@/services/api";
 
@@ -154,6 +156,26 @@ describe("SettingsPage profile query states", () => {
     }
     light.focus();
     expect(document.activeElement).toBe(light);
+  });
+
+  it.each([
+    { label: "light", name: /라이트 밝은 테마/, selected: true, border: "border-color:hsl(var(--v3-primary))" },
+    { label: "dark", name: /다크 어두운 테마/, selected: false, border: "border-color:hsl(var(--v3-selectable-border))" },
+    { label: "system", name: /시스템 시스템 설정/, selected: false, border: "border-color:hsl(var(--v3-selectable-border))" },
+  ])("emits the $label theme's inline border for its selected state", ({ name, selected, border }) => {
+    // SSR preserves CSS-variable declarations that jsdom's style parser can
+    // discard. Inspect the real consumer's emitted inline style, not its recipe
+    // classes; browser-computed color is covered by the separate browser gate.
+    const container = document.createElement("div");
+    container.innerHTML = renderToStaticMarkup(<ThemeChoice data-component="desktop_settings_theme-choice" />);
+    const option = within(container).getByRole("button", { name });
+    expect(option).toHaveAttribute("aria-pressed", String(selected));
+    if (selected) {
+      expect(option).toBeEnabled();
+    } else {
+      expect(option).toBeDisabled();
+    }
+    expect(option.getAttribute("style")?.split(";")).toContain(border);
   });
 
   it("keeps flag-off email disabled without a load-failure alert", async () => {
