@@ -279,6 +279,39 @@ describe("Phase6 C1 effective optional group-update state", () => {
     });
 });
 
+describe("Phase6 C2 public template input boundary", () => {
+    const malformedTemplates: unknown[] = ["NOT_A_TEMPLATE", 7, { toString: "x" }, "toString"];
+    it.each(malformedTemplates.flatMap((template) => [undefined, true, false].map((isActive) => ({ template, isActive }))))("rejects malformed update %j before lock-key lookup or mutation", async ({ template, isActive }) => {
+        const f = coreFixture(); const target = await f.facade.create(branch, draft());
+        const before = structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs });
+        f.lock.runExclusive.mockClear(); f.templates.getByKeyForBranch.mockClear();
+        let caught: unknown;
+        try { await f.facade.update(branch, target.id, { ...draft({ isActive, recipientTemplates: { CLIENT: template as MessageTriggerTemplateKey } }), expectedVersion: 1 }); }
+        catch (error) { caught = error; }
+        expect(caught).toBeInstanceOf(HttpException);
+        const problem = mapHttpProblem(caught, { method: "PUT", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(JSON.stringify(problem)).not.toMatch(/TypeError|cause|stack|NOT_A_TEMPLATE/);
+        expect(structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs })).toEqual(before);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(f.lock.runExclusive).not.toHaveBeenCalled(); expect(f.templates.getByKeyForBranch).not.toHaveBeenCalled();
+    });
+    it.each(malformedTemplates)("rejects malformed create template %j as coded400 without persistence", async (template) => {
+        const f = coreFixture(); let caught: unknown;
+        try { await f.facade.create(branch, draft({ recipientTemplates: { CLIENT: template as MessageTriggerTemplateKey } })); }
+        catch (error) { caught = error; }
+        const problem = mapHttpProblem(caught, { method: "POST", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(f.repository.createGroup).not.toHaveBeenCalled(); expect(f.repository.create).not.toHaveBeenCalled();
+    });
+    it("allows a registered CLIENT template with omitted and explicit active state", async () => {
+        const f = coreFixture(); const target = await f.facade.create(branch, draft());
+        const update = { ...draft({ name: "valid omitted active" }), expectedVersion: 1 }; delete update.isActive;
+        await expect(f.facade.update(branch, target.id, update)).resolves.toMatchObject({ version: 2, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
+        await expect(f.facade.update(branch, target.id, { ...draft({ isActive: true }), expectedVersion: 2 })).resolves.toMatchObject({ version: 3, isActive: true, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
+    });
+});
+
 describe("SbMessageTriggerRuleRepository generic group primitives", () => {
     it.each(["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"] as const)("persists %s without a CLIENT-only SQL gate and uses only the supplied transaction", async (mode) => {
         const row = new MessageTriggerRuleGroupEntity("legacy-rule:opaque", branch, "group", mode as MessageTriggerRuleGroupEntity["recipientMode"], 4, new Date(), new Date());

@@ -1208,6 +1208,35 @@ describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () =>
         expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } })).toMatchObject({ version: 3 });
         expect(provider).not.toHaveBeenCalled();
     });
+    it.each(["NOT_A_TEMPLATE", 7, { toString: "x" }, "toString"])("C2 rejects malformed HTTP update template %j for all active states without mutations", async (template) => {
+        const target = await post(); expect(target.status).toBe(201);
+        const beforeGroup = await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } });
+        const beforeRule = await handle.raw.message_trigger_rule.findUnique({ where: { id: target.body.rules[0].id } });
+        const beforeJobs = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        for (const isActive of [undefined, true, false]) {
+            const update = { ...clientGroupBody({ recipientTemplates: { CLIENT: template }, isActive }), expectedVersion: 1 };
+            const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+            expect(response.status).toBe(400); expect(response.body).toMatchObject({ code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+            expect(JSON.stringify(response.body)).not.toMatch(/TypeError|cause|stack|NOT_A_TEMPLATE/);
+        }
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } })).toEqual(beforeGroup);
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: target.body.rules[0].id } })).toEqual(beforeRule);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeJobs);
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C2 refuses malformed HTTP create values and permits a registered CLIENT template", async () => {
+        for (const template of ["NOT_A_TEMPLATE", 7, { toString: "x" }, "toString"]) {
+            const response = await post(clientGroupBody({ recipientTemplates: { CLIENT: template } }));
+            expect(response.status).toBe(400); expect(response.body).toMatchObject({ code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        }
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(0);
+        expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(0);
+        const target = await post(); expect(target.status).toBe(201);
+        const update: Record<string, unknown> = { ...clientGroupBody({ name: "valid template" }), expectedVersion: 1 }; delete update["isActive"];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ version: 2, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
+        expect(provider).not.toHaveBeenCalled();
+    });
     it("generic projection primitives retain removed role identity for later re-addition", async () => {
         const lock = new MessageAutomationBranchLockService(handle.service);
         let groupId = ""; let childId = "";

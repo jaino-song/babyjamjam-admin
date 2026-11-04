@@ -1420,9 +1420,17 @@ export class MessageTriggerService {
     private validatePublicRuleGroup(draft: MessageTriggerRuleGroupDraft, effectiveRule?: UpsertRuleParams | false): void {
         if (draft.recipientMode !== MessageTriggerRecipientType.CLIENT || !draft.name?.trim()
             || !draft.recipientTemplates || typeof draft.recipientTemplates !== "object"
-            || Object.keys(draft.recipientTemplates).length !== 1 || !draft.recipientTemplates.CLIENT) this.invalidGroup();
-        if (effectiveRule === false) return;
-        try { this.validateRule(effectiveRule ?? this.groupDraftRule(draft)); }
+            || Object.keys(draft.recipientTemplates).length !== 1) this.invalidGroup();
+        try {
+            // The outer template lock resolves this key before merged-rule
+            // validation; reject non-primitives and inherited object keys first.
+            const templateKey = draft.recipientTemplates.CLIENT;
+            if (typeof templateKey !== "string" || !Object.prototype.hasOwnProperty.call(MESSAGE_TRIGGER_TEMPLATE_CATALOG, templateKey)) {
+                throw new BadRequestException(codeOnlyProblemBody("VALIDATION_FAILED"));
+            }
+            if (effectiveRule === false) return;
+            this.validateRule(effectiveRule ?? this.groupDraftRule(draft));
+        }
         catch (error) {
             if (!(error instanceof BadRequestException)) throw error;
             throw new BadRequestException(problemBody("VALIDATION_FAILED", { pointer: "/draft", code: "INVALID_VALUE", detail: "규칙 그룹의 이벤트, 시각 또는 템플릿이 올바르지 않습니다.", location: "body" }), { cause: error });
