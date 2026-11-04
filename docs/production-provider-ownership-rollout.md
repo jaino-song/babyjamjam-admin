@@ -144,16 +144,18 @@ try:
     aws = ["aws", "--profile", "agent-lightsail-operator",
            "--region", "ap-northeast-2"]
     caller = json.loads(run(aws + ["sts", "get-caller-identity", "--output", "json"]))
-    instance = json.loads(run(aws + ["lightsail", "get-instance", "--instance-name",
-                                    "babyjamjam-admin-server", "--output", "json"]))["instance"]
     account = caller["Account"]
     arn = caller["Arn"]
+    if not (isinstance(account, str) and account.isascii() and account.isdigit()
+            and len(account) == 12 and isinstance(arn, str)
+            and arn == "arn:aws:iam::" + account + ":user/agent-lightsail-operator"):
+        raise ValueError("iam_operator_mismatch")
+    instance = json.loads(run(aws + ["lightsail", "get-instance", "--instance-name",
+                                    "babyjamjam-admin-server", "--output", "json"]))["instance"]
     config = dict(line.split(None, 1) for line in run([
         "ssh", "-G", "-o", "ClearAllForwardings=yes", "-o", "RequestTTY=no",
         "agent-lightsail-operator"]).splitlines() if " " in line)
-    valid = (isinstance(account, str) and account.isdigit() and len(account) == 12
-             and arn == "arn:aws:iam::" + account + ":user/agent-lightsail-operator"
-             and instance["arn"].split(":")[4] == account
+    valid = (instance["arn"].split(":")[4] == account
              and instance["name"] == "babyjamjam-admin-server"
              and config.get("user") == "agent-lightsail-operator"
              and config.get("hostname") == instance["publicIpAddress"])
