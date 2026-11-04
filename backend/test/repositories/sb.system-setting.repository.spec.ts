@@ -4,10 +4,27 @@ import { randomUUID } from "node:crypto";
 import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
 import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
+import { SystemSettingService } from "application/services/system-setting.service";
 import { describeReal, assertThrowawayTarget, createIntegrityPrisma, closeIntegrityPrisma, IntegrityPrisma } from "../integrity/helpers/real-db";
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { SystemSettingEntity } from "domain/entities/system-setting.entity";
+import { MessagePolicyRecipientGroup, SystemSettingEntity } from "domain/entities/system-setting.entity";
+
+const retryPreviewPolicy = (group: MessagePolicyRecipientGroup, action: "DEFER" | "CANCEL") => ({
+    schemaVersion: 1, dispatchCheckIntervalMinutes: 1, defaultRuleSendTime: "09:00",
+    triggerRetryIntervalMinutes: 5, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 5,
+    pastExpiryHours: 24, pastSendIntervalMinutes: 1, pastRuleOrder: [], duplicateWindowHours: 72,
+    quietHours: { enabled: true, start: "22:00", end: "08:00", recipientGroups: [group], action, timezone: "Asia/Seoul" },
+});
+
+// Keep the repository projection, exact-phone resolver, service and evaluator real;
+// no pending jobs are needed to isolate the retry's contribution to the preview.
+const createRetryPreviewService = (prisma: PrismaService) => {
+    const settings = new SbSystemSettingRepository(prisma);
+    const jobs = { findPolicyPreviewCandidates: async () => [] } as unknown as NonNullable<ConstructorParameters<typeof SystemSettingService>[5]>;
+    return new SystemSettingService(new GetSettingUsecase(settings), new UpdateSettingUsecase(settings),
+        undefined, undefined, undefined, jobs, new SbMessageLogRepository(prisma));
+};
 
 describe("SbSystemSettingRepository", () => {
     const createMockPrismaClient = () => ({
@@ -221,6 +238,62 @@ describe("SbMessageLogRepository reservation-count transaction selection", () =>
     });
 });
 
+describe("SbMessageLogRepository retry preview recipient identity", () => {
+    const branchId = "d771e5fc-5420-4b52-9f2e-253dc5f9133b";
+    const foreignBranchId = "b4253737-7836-45b3-83df-a59d651bc5e3";
+    const now = new Date("2026-11-04T13:00:00Z"); // 22:00 KST
+    const retry = (overrides = {}) => ({ nextRetryAt: now, recipientPhone: "01012345678", receiver: "01099999999",
+        clientId: 7, variables: {}, triggerJob: { branchId, recipientType: "PRIMARY_EMPLOYEE" }, ...overrides });
+    const mockPrisma = (rows: ReturnType<typeof retry>[], groups: { phone: string; group_name: MessagePolicyRecipientGroup }[] = []) => ({
+        message_log: { findMany: jest.fn().mockResolvedValue(rows) },
+        system_setting: { findUnique: jest.fn().mockResolvedValue(null) },
+        $queryRaw: jest.fn().mockResolvedValueOnce([{ count: 0n }]).mockResolvedValue(groups),
+    });
+
+    it.each(["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "CLIENT"])("previews %s retries with client context using the actual recipient type", async recipientType => {
+        for (const action of ["DEFER", "CANCEL"] as const) {
+            for (const group of ["CLIENT", "CAREGIVER"] as const) {
+                const prisma = mockPrisma([retry({ triggerJob: { branchId, recipientType },
+                    variables: { recipientType: recipientType === "CLIENT" ? "PRIMARY_EMPLOYEE" : "CLIENT", employeeId: 9 } })]);
+                const service = createRetryPreviewService(prisma as unknown as PrismaService);
+                const affected = group === (recipientType === "CLIENT" ? "CLIENT" : "CAREGIVER") ? 1 : 0;
+                await expect(service.previewMessageAutomationPolicyConfig(branchId, null, retryPreviewPolicy(group, action), now))
+                    .resolves.toMatchObject({ deferredCount: action === "DEFER" ? affected : 0,
+                        canceledCount: action === "CANCEL" ? affected : 0 });
+                expect(prisma.message_log.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({ branchId, provider: "aligo_sms" }),
+                    select: expect.objectContaining({ triggerJob: { select: { branchId: true, recipientType: true } } }),
+                }));
+            }
+        }
+    });
+
+    it("still unions an exact customer phone with a verified caregiver identity", async () => {
+        const prisma = mockPrisma([retry()], [{ phone: "+82 10-1234-5678", group_name: "CLIENT" }]);
+        await expect(createRetryPreviewService(prisma as unknown as PrismaService)
+            .previewMessageAutomationPolicyConfig(branchId, null, retryPreviewPolicy("CLIENT", "DEFER"), now))
+            .resolves.toMatchObject({ deferredCount: 1, canceledCount: 0 });
+        expect(prisma.$queryRaw.mock.calls[1]?.[0].values).toContain(branchId);
+    });
+
+    it.each([
+        { label: "legacy primary type with contextual client", triggerJob: null, clientId: 7, variables: { recipientType: "PRIMARY_EMPLOYEE" }, groups: ["CAREGIVER"] },
+        { label: "legacy secondary type with contextual client", triggerJob: null, clientId: 7, variables: { recipientType: "SECONDARY_EMPLOYEE" }, groups: ["CAREGIVER"] },
+        { label: "legacy client type with employee context", triggerJob: null, clientId: null, variables: { recipientType: "CLIENT", employeeId: 9 }, groups: ["CLIENT"] },
+        { label: "unknown type with both IDs", triggerJob: { branchId, recipientType: "UNKNOWN" }, clientId: 7, variables: { employeeId: 9 }, groups: ["CLIENT"] },
+        { label: "missing type with employee context", triggerJob: null, clientId: null, variables: { employeeId: 9 }, groups: ["CAREGIVER"] },
+        { label: "unknown type without IDs", triggerJob: null, clientId: null, variables: { recipientType: "UNKNOWN" }, groups: [] },
+        { label: "foreign caregiver job with client context", triggerJob: { branchId: foreignBranchId, recipientType: "PRIMARY_EMPLOYEE" }, clientId: 7, variables: {}, groups: ["CLIENT"] },
+        { label: "foreign client job with legacy caregiver type", triggerJob: { branchId: foreignBranchId, recipientType: "CLIENT" }, clientId: 7, variables: { recipientType: "SECONDARY_EMPLOYEE" }, groups: ["CAREGIVER"] },
+        { label: "foreign caregiver job without legacy identity", triggerJob: { branchId: foreignBranchId, recipientType: "SECONDARY_EMPLOYEE" }, clientId: null, variables: {}, groups: [] },
+    ])("retains branch-fenced legacy fallback: $label", async ({ triggerJob, clientId, variables, groups }) => {
+        const prisma = mockPrisma([retry({ triggerJob, clientId, variables })]);
+        await expect(new SbMessageLogRepository(prisma as unknown as PrismaService).findPolicyPreviewCandidates(branchId))
+            .resolves.toEqual([{ dueAt: now, recipientPhone: "01012345678", recipientGroups: groups }]);
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+});
+
 describeReal("policy settings real PostgreSQL transaction proof", () => {
     let handle: IntegrityPrisma;
     const prefix = `policy-cas-${randomUUID()}`;
@@ -331,6 +404,73 @@ describeReal("policy settings real PostgreSQL transaction proof", () => {
             await handle.raw.user_branch.deleteMany({ where: { userId: user.id } });
             await handle.raw.user.delete({ where: { id: user.id } });
             await handle.raw.branch.deleteMany({ where: { id: { in: [branchA.id, branchB.id] } } });
+        }
+    });
+
+    it("projects linked caregiver retries through preview without treating client context or foreign jobs as recipient identity", async () => {
+        const branchA = await handle.raw.branch.create({ data: { name: "Retry preview A", slug: `${prefix}-retry-a` } });
+        const branchB = await handle.raw.branch.create({ data: { name: "Retry preview B", slug: `${prefix}-retry-b` } });
+        const branchIds = [branchA.id, branchB.id];
+        const now = new Date("2026-11-04T13:00:00Z");
+        const phone = "01012345678";
+        try {
+            const context = await handle.raw.client.create({ data: {
+                branchId: branchA.id, name: "Retry client context fixture", voucherClient: false, phone: "01099999999",
+            } });
+            // An exact phone in another branch must not add CLIENT to branch A.
+            await handle.raw.client.create({ data: {
+                branchId: branchB.id, name: "Foreign phone fixture", voucherClient: false, phone,
+            } });
+            const rules = await Promise.all(branchIds.map(branchId => handle.raw.message_trigger_rule.create({ data: {
+                branchId, name: "Retry preview fixture", eventType: "SERVICE_RECORD_LINK", offsetType: "ON",
+                recipientType: "PRIMARY_EMPLOYEE", templateKey: "SERVICE_RECORD_LINK",
+            } })));
+            const job = await handle.raw.message_trigger_job.create({ data: {
+                branchId: branchA.id, ruleId: rules[0]!.id, recipientType: "PRIMARY_EMPLOYEE", clientId: context.id,
+                recipientPhone: phone, scheduledFor: now, status: "failed", templateKey: "SERVICE_RECORD_LINK", dedupeKey: `${prefix}-retry`,
+            } });
+            const log = await handle.raw.message_log.create({ data: {
+                branchId: branchA.id, triggerJobId: job.id, clientId: context.id, recipientPhone: phone, receiver: phone,
+                provider: "aligo_sms", status: "failed", attempts: 1, nextRetryAt: now, providerAcceptanceState: "rejected",
+                templateKey: "SERVICE_RECORD_LINK", messageBody: "Retry preview fixture", variables: {},
+            } });
+            const repository = new SbMessageLogRepository(handle.service);
+            const service = createRetryPreviewService(handle.service);
+            for (const recipientType of ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "CLIENT"]) {
+                await handle.raw.message_trigger_job.update({ where: { id: job.id }, data: { recipientType } });
+                const expected = recipientType === "CLIENT" ? "CLIENT" : "CAREGIVER";
+                const candidates = await repository.findPolicyPreviewCandidates(branchA.id);
+                expect(candidates).toEqual([{ dueAt: now, recipientPhone: phone, recipientGroups: [expected] }]);
+                expect((await repository.resolvePolicyRecipientGroups(branchA.id, candidates))[0]?.recipientGroups).toEqual([expected]);
+                for (const action of ["DEFER", "CANCEL"] as const) {
+                    for (const group of ["CLIENT", "CAREGIVER"] as const) {
+                        const affected = expected === group ? 1 : 0;
+                        await expect(service.previewMessageAutomationPolicyConfig(branchA.id, null, retryPreviewPolicy(group, action), now))
+                            .resolves.toMatchObject({ deferredCount: action === "DEFER" ? affected : 0,
+                                canceledCount: action === "CANCEL" ? affected : 0 });
+                    }
+                }
+            }
+            await handle.raw.message_trigger_job.update({ where: { id: job.id }, data: { recipientType: "PRIMARY_EMPLOYEE" } });
+            await handle.raw.client.update({ where: { id: context.id }, data: { phone: "+82 10-1234-5678" } });
+            expect((await repository.resolvePolicyRecipientGroups(branchA.id, await repository.findPolicyPreviewCandidates(branchA.id)))[0]?.recipientGroups)
+                .toEqual(["CAREGIVER", "CLIENT"]);
+            await expect(service.previewMessageAutomationPolicyConfig(branchA.id, null, retryPreviewPolicy("CLIENT", "CANCEL"), now))
+                .resolves.toMatchObject({ deferredCount: 0, canceledCount: 1 });
+
+            await handle.raw.message_trigger_job.update({ where: { id: job.id }, data: { branchId: branchB.id, ruleId: rules[1]!.id } });
+            await handle.raw.message_log.update({ where: { id: log.id }, data: { clientId: null } });
+            expect((await repository.findPolicyPreviewCandidates(branchA.id))[0]?.recipientGroups).toEqual([]);
+            await handle.raw.message_log.update({ where: { id: log.id }, data: { variables: { recipientType: "SECONDARY_EMPLOYEE" } } });
+            expect((await repository.findPolicyPreviewCandidates(branchA.id))[0]?.recipientGroups).toEqual(["CAREGIVER"]);
+            await handle.raw.message_log.update({ where: { id: log.id }, data: { triggerJobId: null, clientId: context.id, variables: {} } });
+            expect((await repository.findPolicyPreviewCandidates(branchA.id))[0]?.recipientGroups).toEqual(["CLIENT"]);
+        } finally {
+            await handle.raw.message_log.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.message_trigger_job.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.message_trigger_rule.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.client.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.branch.deleteMany({ where: { id: { in: branchIds } } });
         }
     });
 

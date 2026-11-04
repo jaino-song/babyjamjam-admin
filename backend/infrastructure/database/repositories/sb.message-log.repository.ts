@@ -79,10 +79,13 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             const variables = row.variables && typeof row.variables === "object" && !Array.isArray(row.variables)
                 ? row.variables as Record<string, unknown> : {};
             const recipientType = row.triggerJob?.branchId === branchId ? row.triggerJob.recipientType : variables["recipientType"];
-            const caregiver = ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(String(recipientType)) || variables["employeeId"] != null;
+            // A linked client's ID can be context for a caregiver's retry. Prefer
+            // the recipient type; retain ID-based inference for legacy unknowns.
+            const recipientGroup: MessagePolicyRecipientGroup | null = recipientType === "CLIENT" ? "CLIENT"
+                : ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(String(recipientType)) ? "CAREGIVER"
+                    : row.clientId != null ? "CLIENT" : variables["employeeId"] != null ? "CAREGIVER" : null;
             return { dueAt: row.nextRetryAt!, recipientPhone: row.recipientPhone ?? row.receiver,
-                recipientGroups: row.clientId != null || recipientType === "CLIENT" ? ["CLIENT"] as MessagePolicyRecipientGroup[]
-                    : caregiver ? ["CAREGIVER"] as MessagePolicyRecipientGroup[] : [] };
+                recipientGroups: recipientGroup ? [recipientGroup] : [] };
         });
     }
 
