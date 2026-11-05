@@ -904,6 +904,7 @@ class DeterministicProductSessionRepository implements IAgentSessionRepository {
 }
 
 class DeterministicProductClientRepository implements IClientRepository {
+    async findServiceRecordAlertCandidates(): Promise<Awaited<ReturnType<IClientRepository["findServiceRecordAlertCandidates"]>>> { return []; }
     async findById(): Promise<ClientEntity | null> { return null; }
     async findByIdForUpdate(): Promise<ClientEntity | null> { return null; }
     async findAll(): Promise<ClientEntity[]> { return []; }

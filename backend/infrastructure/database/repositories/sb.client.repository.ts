@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     ClientWithInitialSchedule,
+    ServiceRecordAlertCandidate,
     ClientPhoneMatch,
     AutomaticServiceStatusUpdateResult,
     IClientRepository,
@@ -49,6 +50,37 @@ import {
 } from "domain/errors/retention-delete-blocked.error";
 import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
 import type { Prisma } from "@prisma/client";
+import type { ServiceRecordEditJsonValue } from "domain/repositories/service-record-edit.repository.interface";
+
+const ALERT_CLIENT_PAGE_SIZE = 100;
+const ALERT_RELATION_PAGE_SIZE = 500;
+
+/** Bounded keyset reads; each callback keeps the branch predicates on every page. */
+async function readAlertRelationPages<T extends { id: string | number }>(
+    read: (after: T["id"] | undefined) => Promise<T[]>,
+): Promise<T[]> {
+    const result: T[] = [];
+    let after: T["id"] | undefined;
+    for (;;) {
+        const page = await read(after);
+        result.push(...page);
+        if (page.length < ALERT_RELATION_PAGE_SIZE) return result;
+        after = page[page.length - 1]!.id;
+    }
+}
+
+function alertDate(value: Date | null): string | null {
+    return value && Number.isFinite(value.getTime()) ? value.toISOString().slice(0, 10) : null;
+}
+
+function alertProjectionJson(value: Prisma.JsonValue): ServiceRecordEditJsonValue {
+    if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    if (Array.isArray(value)) return value.map(alertProjectionJson);
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+        if (item === undefined) throw new Error("Unexpected undefined JSON value");
+        return [key, alertProjectionJson(item)];
+    }));
+}
 
 const CLIENT_DELETED_CANCEL_REASON = "고객 삭제";
 
@@ -134,6 +166,138 @@ export class SbClientRepository implements IClientRepository {
         private readonly prismaService: PrismaService,
         @Optional() private readonly configService?: ConfigService,
     ) {}
+
+    async findServiceRecordAlertCandidates(branchId: string): Promise<ServiceRecordAlertCandidate[]> {
+        const candidates: ServiceRecordAlertCandidate[] = [];
+        let afterClientId: number | undefined;
+        for (;;) {
+            const clients = await this.prismaService.client.findMany({
+                where: {
+                    branchId, deletedAt: null,
+                    ...(afterClientId === undefined ? {} : { id: { gt: afterClientId } }),
+                    // Do not silently select an older schedule after omitting a newer,
+                    // inconsistently owned schedule or employee.
+                    employeeSchedules: { none: { OR: [
+                        { branchId: null }, { branchId: { not: branchId } },
+                        { primaryEmployee: { OR: [{ branchId: null }, { branchId: { not: branchId } }] } },
+                    ] } },
+                },
+                orderBy: { id: "asc" }, take: ALERT_CLIENT_PAGE_SIZE,
+                select: {
+                    id: true, branchId: true, name: true, duration: true, startDate: true, endDate: true,
+                    serviceStatus: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true,
+                },
+            });
+            if (clients.length === 0) break;
+            const clientIds = clients.map((client) => client.id);
+            const [records, schedules] = await Promise.all([
+                this.prismaService.service_record_case.findMany({
+                    where: { branchId, clientId: { in: clientIds }, client: { branchId, deletedAt: null } },
+                    orderBy: { id: "asc" }, take: ALERT_CLIENT_PAGE_SIZE,
+                    select: { id: true, clientId: true, version: true, requiredSessionCount: true,
+                        startDate: true, endDate: true, plannedSessions: true },
+                }),
+                readAlertRelationPages((after: number | undefined) => this.prismaService.employee_schedule.findMany({
+                    where: { branchId, clientId: { in: clientIds }, client: { branchId, deletedAt: null },
+                        primaryEmployee: { branchId }, ...(after === undefined ? {} : { id: { gt: after } }) },
+                    orderBy: { id: "asc" }, take: ALERT_RELATION_PAGE_SIZE,
+                    select: {
+                        id: true, branchId: true, clientId: true, startDate: true, endDate: true,
+                        replaced: true, terminatedAt: true, primaryEmployeeId: true, secondaryEmployeeId: true,
+                        primaryEmployee: { select: { name: true } },
+                        serviceRecordAssignment: {
+                            where: { branchId, serviceRecordCase: { branchId, client: { branchId, deletedAt: null } } },
+                            select: { id: true, branchId: true, serviceRecordCaseId: true, scheduleId: true,
+                                employeeId: true, startDate: true, endDate: true, employeeNameSnapshot: true },
+                        },
+                    },
+                })),
+            ]);
+            const caseIds = records.map((record) => record.id);
+            const scheduleIds = schedules.map((schedule) => schedule.id);
+            const days = caseIds.length === 0 ? [] : await readAlertRelationPages((after: string | undefined) =>
+                this.prismaService.service_record_day.findMany({
+                    where: { branchId, OR: [
+                        { serviceRecordCaseId: { in: caseIds } },
+                        { scheduleId: { in: scheduleIds }, schedule: { branchId, client: { branchId, deletedAt: null }, primaryEmployee: { branchId } } },
+                    ], ...(after === undefined ? {} : { id: { gt: after } }) },
+                    orderBy: { id: "asc" }, take: ALERT_RELATION_PAGE_SIZE,
+                    select: { id: true, serviceRecordCaseId: true, scheduleId: true, caseSessionIndex: true,
+                        sessionIndex: true, serviceDate: true, employeeId: true },
+                }));
+            const recordsByClient = new Map(records.map((record) => [record.clientId, record]));
+            const schedulesByClient = new Map<number, typeof schedules>();
+            for (const schedule of schedules) {
+                const group = schedulesByClient.get(schedule.clientId) ?? [];
+                group.push(schedule);
+                schedulesByClient.set(schedule.clientId, group);
+            }
+            const daysByCase = new Map<string, typeof days>();
+            const daysBySchedule = new Map<number, typeof days>();
+            for (const day of days) {
+                if (day.serviceRecordCaseId !== null) {
+                    const group = daysByCase.get(day.serviceRecordCaseId) ?? [];
+                    group.push(day);
+                    daysByCase.set(day.serviceRecordCaseId, group);
+                }
+                if (day.scheduleId !== null) {
+                    const group = daysBySchedule.get(day.scheduleId) ?? [];
+                    group.push(day);
+                    daysBySchedule.set(day.scheduleId, group);
+                }
+            }
+            for (const client of clients) {
+                const record = recordsByClient.get(client.id);
+                const ownedSchedules = schedulesByClient.get(client.id) ?? [];
+                if (!record || ownedSchedules.length === 0 || ownedSchedules.some((schedule) =>
+                    !schedule.serviceRecordAssignment || schedule.serviceRecordAssignment.branchId !== branchId
+                    || schedule.serviceRecordAssignment.serviceRecordCaseId !== record.id)) continue;
+                const localDays = ownedSchedules.flatMap((schedule) => daysBySchedule.get(schedule.id) ?? []);
+                if (localDays.some((day) => day.serviceRecordCaseId !== null && day.serviceRecordCaseId !== record.id)) continue;
+                const sourceDays = daysByCase.get(record.id) ?? [];
+                const counts = new Map<number, number>();
+                for (const day of sourceDays) {
+                    const index = day.caseSessionIndex ?? day.sessionIndex;
+                    counts.set(index, (counts.get(index) ?? 0) + 1);
+                }
+                candidates.push({
+                    source: {
+                        caseId: record.id, caseVersion: record.version, requiredSessionCount: record.requiredSessionCount,
+                        startDate: alertDate(record.startDate), endDate: alertDate(record.endDate),
+                        plannedSessions: alertProjectionJson(record.plannedSessions),
+                        client: { ...client, startDate: alertDate(client.startDate), endDate: alertDate(client.endDate) },
+                        sessions: sourceDays.map((day) => ({
+                            sessionIndex: day.caseSessionIndex ?? day.sessionIndex, serviceDate: alertDate(day.serviceDate) ?? "",
+                            scheduleId: day.scheduleId, employeeId: day.employeeId,
+                            ambiguous: (counts.get(day.caseSessionIndex ?? day.sessionIndex) ?? 0) > 1,
+                        })),
+                        // Same field precedence as ServiceRecordEditRepository.loadSourceWithClient.
+                        assignments: ownedSchedules.map((schedule) => ({
+                            id: schedule.serviceRecordAssignment?.id ?? null,
+                            branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId,
+                            serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
+                            scheduleId: schedule.id,
+                            employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
+                            startDate: alertDate(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
+                            endDate: alertDate(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
+                            replaced: schedule.replaced,
+                            employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
+                            scheduleStartDate: alertDate(schedule.startDate) ?? "", scheduleEndDate: alertDate(schedule.endDate) ?? "",
+                            scheduleTerminatedAt: schedule.terminatedAt?.toISOString() ?? null,
+                            primaryEmployeeId: schedule.primaryEmployeeId, secondaryEmployeeId: schedule.secondaryEmployeeId,
+                            primaryEmployeeName: schedule.primaryEmployee.name,
+                        })),
+                    },
+                    assignmentSessions: localDays.flatMap((day) => day.scheduleId === null ? [] : [{
+                        scheduleId: day.scheduleId, sessionIndex: day.sessionIndex, serviceDate: alertDate(day.serviceDate) ?? "",
+                    }]),
+                });
+            }
+            if (clients.length < ALERT_CLIENT_PAGE_SIZE) break;
+            afterClientId = clients[clients.length - 1]!.id;
+        }
+        return candidates;
+    }
 
     private async getClientSelect(capabilityClient: SchemaCapabilityClient = this.prismaService) {
         const supportsCreatedAt = await hasColumn(capabilityClient, "client", "created_at");

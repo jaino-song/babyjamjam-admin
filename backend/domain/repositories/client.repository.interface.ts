@@ -1,3 +1,4 @@
+import type { ServiceRecordEditSource, ServiceRecordEditSourceDay } from "./service-record-edit.repository.interface";
 import { ClientEntity } from "domain/entities/client.entity";
 import { SERVICE_STATUS, ServiceStatusType, computeServiceStatus } from "domain/value-objects/service-status.vo";
 import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -263,7 +264,21 @@ export interface ClientWithInitialSchedule {
     scheduleId: number;
 }
 
+/** Lean, observed projection evidence; no answers, signatures, tokens or documents. */
+export interface ServiceRecordAlertCandidate {
+    source: Pick<ServiceRecordEditSource,
+        "caseId" | "caseVersion" | "requiredSessionCount" | "startDate" | "endDate"
+        | "plannedSessions" | "assignments" | "client"> & {
+        sessions: Array<Pick<ServiceRecordEditSourceDay,
+            "sessionIndex" | "serviceDate" | "scheduleId" | "employeeId" | "ambiguous">>;
+    };
+    /** Original assignment-local indexes, including drafts and legacy rows without a case link. */
+    assignmentSessions: Array<{ scheduleId: number; sessionIndex: number; serviceDate: string }>;
+}
+
 export interface IClientRepository {
+    /** Branch-owned, non-deleted clients and their lean service-record schedule evidence. */
+    findServiceRecordAlertCandidates(branchId: string): Promise<ServiceRecordAlertCandidate[]>;
     /** Branch-scoped suffix prefilter; callers must compare normalized phones exactly. */
     findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]>;
     findById(branchid: string, id: number): Promise<ClientEntity | null>;
