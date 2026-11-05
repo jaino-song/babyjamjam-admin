@@ -18,6 +18,12 @@ function assertTarget(databaseUrl = process.env["DATABASE_URL"], directUrl = pro
         return url;
     } catch { throw new Error("Refusing manual-backup DB target"); }
 }
+function buildPsqlEnvironment(url: URL, inheritedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    // libpq can route via PGHOSTADDR even when PGHOST is set; pin both to the validated loopback host.
+    return { ...inheritedEnv, PGHOST: url.hostname, PGHOSTADDR: url.hostname, PGPORT: url.port,
+        PGUSER: url.username, PGDATABASE: url.pathname.slice(1), PGPASSWORD: decodeURIComponent(url.password),
+        PGSSLMODE: "disable", PGSERVICE: undefined, PGSERVICEFILE: undefined, PGOPTIONS: "" };
+}
 describe("manual-backup test target guard", () => {
     it("rejects missing flag, remote, wrong port/user/database and mismatching URLs before SQL", () => {
         const good = "postgresql://backup_test_owner:synthetic@127.0.0.1:63241/backup_exec_throwaway_guard";
@@ -27,6 +33,23 @@ describe("manual-backup test target guard", () => {
         }
         expect(() => assertTarget(good, good, "0")).toThrow("Refusing");
         expect(() => assertTarget(good, "different", "1")).toThrow("Refusing");
+    });
+    it("pins psql routing to the validated target despite conflicting inherited settings without connecting", () => {
+        const good = "postgresql://backup_test_owner:synthetic@127.0.0.1:63241/backup_exec_throwaway_guard";
+        const url = assertTarget(good, good, "1");
+        // Exercise only the pure builder: never put conflicting values in process.env or attempt SQL.
+        const inheritedEnv = Object.freeze({ PATH: "/synthetic/bin", PGHOSTADDR: "192.0.2.123", PGHOST: "anotherhost",
+            PGPORT: "9999", PGUSER: "wrong-user", PGDATABASE: "wrong-database", PGPASSWORD: "wrong-password",
+            PGSSLMODE: "require", PGSERVICE: "wrong-service", PGSERVICEFILE: "/synthetic/service", PGOPTIONS: "-c role=wrong" });
+        const capturedEnv = buildPsqlEnvironment(url, inheritedEnv);
+        expect(capturedEnv).toEqual({ PATH: "/synthetic/bin", PGHOSTADDR: "127.0.0.1", PGHOST: "127.0.0.1",
+            PGPORT: "63241", PGUSER: "backup_test_owner", PGDATABASE: "backup_exec_throwaway_guard", PGPASSWORD: "synthetic",
+            PGSSLMODE: "disable", PGSERVICE: undefined, PGSERVICEFILE: undefined, PGOPTIONS: "" });
+        expect(capturedEnv).not.toBe(inheritedEnv);
+        expect(inheritedEnv).toEqual({ PATH: "/synthetic/bin", PGHOSTADDR: "192.0.2.123", PGHOST: "anotherhost",
+            PGPORT: "9999", PGUSER: "wrong-user", PGDATABASE: "wrong-database", PGPASSWORD: "wrong-password",
+            PGSSLMODE: "require", PGSERVICE: "wrong-service", PGSERVICEFILE: "/synthetic/service", PGOPTIONS: "-c role=wrong" });
+        expect(url.href).toBe("postgresql://backup_test_owner:synthetic@127.0.0.1:63241/backup_exec_throwaway_guard");
     });
 });
 const MIGRATION = readFileSync(resolve(__dirname, "../../prisma/migrations/20261106020000_add_manual_eformsign_backup_runs/migration.sql"), "utf8");
@@ -47,9 +70,7 @@ describeReal("manual backup durable persistence (real PostgreSQL)", () => {
     function sql(text: string): { status: number | null; stdout: string } {
         const url = assertTarget();
         const result = spawnSync("psql", ["--no-psqlrc", "--set", "ON_ERROR_STOP=1", "--quiet", "--tuples-only", "--no-align"], {
-            input: text, encoding: "utf8", env: { ...process.env, PGHOST: url.hostname, PGPORT: url.port,
-                PGUSER: url.username, PGDATABASE: url.pathname.slice(1), PGPASSWORD: decodeURIComponent(url.password),
-                PGSSLMODE: "disable", PGSERVICE: undefined, PGSERVICEFILE: undefined, PGOPTIONS: "" },
+            input: text, encoding: "utf8", env: buildPsqlEnvironment(url, process.env),
         });
         // Do not relay child stderr/connection strings; assertions identify the failing contract.
         return { status: result.status, stdout: result.stdout.trim() };
@@ -80,6 +101,9 @@ describeReal("manual backup durable persistence (real PostgreSQL)", () => {
     }
     beforeAll(async () => {
         assertTarget();
+        const connection = sql("SELECT inet_server_addr(), inet_server_port(), current_user;");
+        expect(connection.status).toBe(0);
+        expect(connection.stdout).toBe("127.0.0.1|63241|backup_test_owner");
         jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
         jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         db = new PrismaClient(); second = new PrismaClient(); await db.$connect(); await second.$connect();
