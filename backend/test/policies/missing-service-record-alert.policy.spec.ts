@@ -1,4 +1,5 @@
 import { findMissingServiceRecordAlerts } from "application/policies/missing-service-record-alert.policy";
+import { resolveServiceRecordScheduleProjection } from "application/policies/service-record-edit-preview.policy";
 import type { ServiceRecordAlertCandidate } from "domain/repositories/client.repository.interface";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 
@@ -47,13 +48,13 @@ describe("missing service record eligibility", () => {
         expect(alerts([row], new Date("2026-09-10T18:00:00+09:00"))).toHaveLength(1);
     });
 
-    it.each([1, 2])("counts an unsubmitted draft for local session %i as written", (sessionIndex) => {
+    it.each([1, 2])("counts a canonical case draft for session %i as written", (sessionIndex) => {
         const row = candidate();
-        row.assignmentSessions.push({ scheduleId: 55, sessionIndex, serviceDate: `2026-09-0${sessionIndex + 6}` });
+        row.source.sessions.push({ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex, serviceDate: `2026-09-0${sessionIndex + 6}` });
         expect(alerts([row])).toEqual([]);
     });
 
-    it("does not renumber owned entries 3+ into the missing first and second slots", () => {
+    it("uses global slot 2 when the active assignment owns only entries 3+", () => {
         const row = candidate();
         row.source.assignments.unshift({ ...row.source.assignments[0]!, id: "old", scheduleId: 54,
             replaced: true, startDate: "2026-09-03", endDate: "2026-09-04",
@@ -65,11 +66,10 @@ describe("missing service record eligibility", () => {
             assignmentId: index < 2 ? "old" : "assignment-1", scheduleId: index < 2 ? 54 : 55,
             employeeId: 9, provenanceVersion: "7",
         }));
-        row.assignmentSessions = [{ scheduleId: 54, sessionIndex: 1, serviceDate: "2026-09-03" }];
-        expect(alerts([row])).toEqual([]);
+        expect(alerts([row])).toHaveLength(1);
     });
 
-    it("does not let a replaced schedule's local written row suppress active entries 1 and 2", () => {
+    it("keeps unlinked replaced-assignment rows from suppressing a case warning", () => {
         const row = candidate();
         row.source.assignments.unshift({ ...row.source.assignments[0]!, id: "old", scheduleId: 54,
             replaced: true, scheduleStartDate: "2026-09-03", startDate: "2026-09-03" });
@@ -80,17 +80,50 @@ describe("missing service record eligibility", () => {
         }]);
     });
 
-    it("partitions rows outside the active assignment period", () => {
+    it("partitions canonical rows outside the case period", () => {
         const row = candidate();
-        row.assignmentSessions = [{ scheduleId: 55, sessionIndex: 1, serviceDate: "2026-09-01" }];
+        row.source.sessions = [{ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex: 1, serviceDate: "2026-09-01" }];
         expect(alerts([row])).toHaveLength(1);
     });
 
-    it.each([0, 1, null])("rejects fewer than two configured sessions (%s)", (count) => {
+    it.each([0, 1])("rejects fewer than two configured sessions (%s)", (count) => {
         const row = candidate();
         row.source.requiredSessionCount = count;
-        row.source.client.duration = count;
+        row.source.client.duration = 3;
         expect(alerts([row])).toEqual([]);
+    });
+
+    it.each([{ plannedSessions: null }, { plannedSessions: [] }])("keeps the null-count projection blocker with planned sessions $plannedSessions", ({ plannedSessions }) => {
+        const row = candidate();
+        row.source.requiredSessionCount = null;
+        row.source.client.duration = 3;
+        row.source.plannedSessions = plannedSessions;
+        // mapCase derives legacy N from the case period, or displays unknown N=0
+        // for a persisted vector. The unchanged projection requires a stored N.
+        expect(resolveServiceRecordScheduleProjection(row.source, KR_BUILTIN_CALENDAR).blockingReasons)
+            .toEqual([expect.objectContaining({ code: "INVALID_SESSION_COUNT" })]);
+        expect(alerts([row])).toEqual([]);
+    });
+
+    it("uses stored case N independently of client duration and client period", () => {
+        const row = candidate();
+        row.source.client.duration = 1;
+        row.source.client.startDate = "2026-09-09";
+        row.source.client.endDate = "2026-09-09";
+        expect(alerts([row])).toHaveLength(1);
+    });
+
+    it.each(["2026-02-30", "invalid"])("does not treat invalid case service date %j as written", (serviceDate) => {
+        const row = candidate();
+        row.source.sessions = [{ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex: 1, serviceDate }];
+        // Invalid evidence must remain fail-closed through the real projection.
+        expect(alerts([row])).toEqual([]);
+    });
+
+    it("does not count an empty case service date as written when legacy projection resolves it", () => {
+        const row = candidate();
+        row.source.sessions = [{ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex: 1, serviceDate: "" }];
+        expect(alerts([row])).toHaveLength(1);
     });
 
     it("rejects a projection with only one owned slot", () => {
@@ -99,12 +132,14 @@ describe("missing service record eligibility", () => {
         expect(alerts([row])).toEqual([]);
     });
 
-    it.each(["missing start", "invalid date", "blank client", "blank employee", "foreign client", "foreign assignment", "wrong case", "missing assignment", "replaced", "projection blocker", "ambiguous rows"])("fails closed: %s", (scenario) => {
+    it.each(["missing start", "invalid date", "invalid client date", "reversed client period", "blank client", "blank employee", "foreign client", "foreign assignment", "wrong case", "missing assignment", "replaced", "projection blocker", "ambiguous rows"])("fails closed: %s", (scenario) => {
         const row = candidate();
         const assignment = row.source.assignments[0]!;
         switch (scenario) {
             case "missing start": row.source.startDate = null; break;
             case "invalid date": assignment.scheduleStartDate = "2026-02-30"; break;
+            case "invalid client date": row.source.client.startDate = "2026-02-30"; break;
+            case "reversed client period": row.source.client.endDate = "2026-09-06"; break;
             case "blank client": row.source.client.name = "  "; break;
             case "blank employee": assignment.primaryEmployeeName = "  "; break;
             case "foreign client": row.source.client.branchId = "other"; break;

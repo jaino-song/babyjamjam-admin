@@ -109,7 +109,7 @@ describe("missing service record parity regressions (carried F1/F2)", () => {
         expect(alerts(rows)).toEqual(expectedAlert);
     });
 
-    it("F2: active slots 3/4 have no slot 2 date and must never be renumbered", async () => {
+    it("case parity: active slots 3/4 still alert at global slot 2 without renumbering", async () => {
         const { db, record, load } = fixture();
         record.requiredSessionCount = 4;
         record.endDate = date("2026-09-10");
@@ -134,10 +134,110 @@ describe("missing service record parity regressions (carried F1/F2)", () => {
         const projection = resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR);
         expect(projection.blockingReasons).toEqual([]);
         expect(projection.entries.filter((entry) => entry.scheduleId === 55).map((entry) => entry.sessionIndex)).toEqual([3, 4]);
-        expect(alerts(rows, new Date("2026-09-10T18:00:00+09:00"))).toEqual([]);
+        expect(projection.entries.find((entry) => entry.sessionIndex === 2)?.serviceDate).toBe("2026-09-08");
+        expect(alerts(rows, new Date(threshold.getTime() - 1))).toEqual([]);
+        expect(alerts(rows)).toEqual(expectedAlert);
     });
 
-    it("F1: a replaced schedule's effective slot 2 draft does not suppress the active schedule", async () => {
+    it("case parity: a replaced schedule's case-linked slot 1 draft before the active period suppresses", async () => {
+        const { db, record, load } = fixture();
+        db.employee_schedule.findMany.mockResolvedValue([
+            schedule(54, "2026-09-07", "2026-09-07", true),
+            schedule(55, "2026-09-08", "2026-09-09"),
+        ]);
+        Object.assign(record.plannedSessions[0]!, { assignmentId: "assignment-54", scheduleId: 54 });
+        db.service_record_day.findMany.mockResolvedValue([{
+            ...writtenDay(3, 1, "2026-09-07"), scheduleId: 54,
+        }]);
+        const rows = await load();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.source.sessions).toEqual([{
+            sessionIndex: 1, serviceDate: "2026-09-07", scheduleId: 54, employeeId: 9, ambiguous: false,
+        }]);
+        expect(rows[0]!.source.assignments.find((assignment) => assignment.scheduleId === 55)?.scheduleStartDate).toBe("2026-09-08");
+        expect(resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR).blockingReasons).toEqual([]);
+        expect(alerts(rows)).toEqual([]);
+    });
+
+    it("case parity: an active writer's earlier case record outside the active period suppresses", async () => {
+        const { db, record, load } = fixture();
+        db.employee_schedule.findMany.mockResolvedValue([
+            schedule(54, "2026-09-07", "2026-09-07", true),
+            schedule(55, "2026-09-08", "2026-09-09"),
+        ]);
+        Object.assign(record.plannedSessions[0]!, { assignmentId: "assignment-54", scheduleId: 54 });
+        db.service_record_day.findMany.mockResolvedValue([writtenDay(3, 1, "2026-09-07")]);
+        const rows = await load();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.source.sessions[0]).toMatchObject({ sessionIndex: 1, scheduleId: 55, serviceDate: "2026-09-07" });
+        const projection = resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR);
+        expect(projection.blockingReasons).toEqual([]);
+        expect(projection.entries[0]).toMatchObject({ sessionIndex: 1, scheduleId: 55, serviceDate: "2026-09-07" });
+        expect(alerts(rows)).toEqual([]);
+    });
+
+    it("case parity: a case-linked draft with a null schedule suppresses", async () => {
+        const { db, load } = fixture();
+        db.service_record_day.findMany.mockResolvedValue([{
+            ...writtenDay(3, 1, "2026-09-07"), scheduleId: null,
+        }]);
+        const rows = await load();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.assignmentSessions).toEqual([]);
+        expect(rows[0]!.source.sessions).toEqual([{
+            sessionIndex: 1, serviceDate: "2026-09-07", scheduleId: null, employeeId: 9, ambiguous: false,
+        }]);
+        expect(resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR).blockingReasons).toEqual([]);
+        expect(alerts(rows)).toEqual([]);
+    });
+
+    it("case parity: stored N=3 alerts even when client duration and period allow only one", async () => {
+        const { db, load } = fixture();
+        const client = (await db.client.findMany())[0]!;
+        db.client.findMany.mockResolvedValue([{
+            ...client, duration: 1, startDate: date("2026-09-09"), endDate: date("2026-09-09"),
+        }]);
+        const rows = await load();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.source.requiredSessionCount).toBe(3);
+        expect(rows[0]!.source.client.duration).toBe(1);
+        expect(resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR).blockingReasons).toEqual([]);
+        expect(alerts(rows)).toEqual(expectedAlert);
+    });
+
+    it("case parity: stored N=1 refuses even when client duration and calendar allow three", async () => {
+        const { record, load } = fixture();
+        record.requiredSessionCount = 1;
+        record.plannedSessions.splice(1);
+        const rows = await load();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.source.client.duration).toBe(3);
+        const projection = resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR);
+        expect(projection.blockingReasons).toEqual([]);
+        expect(projection.entries.map((entry) => entry.sessionIndex)).toEqual([1]);
+        expect(alerts(rows)).toEqual([]);
+    });
+
+    it.each([
+        { boundary: "start (inclusive)", start: "2026-09-07", end: "2026-09-09", index: 1, serviceDate: "2026-09-07", written: true },
+        { boundary: "before start", start: "2026-09-08", end: "2026-09-09", index: 1, serviceDate: "2026-09-07", written: false },
+        { boundary: "end (inclusive)", start: "2026-09-07", end: "2026-09-08", index: 2, serviceDate: "2026-09-08", written: true },
+        { boundary: "after end", start: "2026-09-07", end: "2026-09-07", index: 2, serviceDate: "2026-09-08", written: false },
+    ])("case period: $boundary partitions written evidence independently of the active schedule", async ({ start, end, index, serviceDate, written }) => {
+        const { db, record, load } = fixture();
+        record.startDate = date(start);
+        record.endDate = date(end);
+        db.service_record_day.findMany.mockResolvedValue([writtenDay(3, index, serviceDate)]);
+        const rows = await load();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.source.sessions[0]).toMatchObject({ sessionIndex: index, serviceDate });
+        const active = rows[0]!.source.assignments[0]!;
+        expect(serviceDate >= active.scheduleStartDate && serviceDate <= active.scheduleEndDate).toBe(true);
+        expect(resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR).blockingReasons).toEqual([]);
+        expect(alerts(rows)).toEqual(written ? [] : expectedAlert);
+    });
+
+    it("F1: an unlinked replaced schedule draft does not suppress the case warning", async () => {
         const { db, load } = fixture();
         db.employee_schedule.findMany.mockResolvedValue([
             schedule(54, "2026-09-03", "2026-09-09", true), schedule(),
@@ -149,6 +249,7 @@ describe("missing service record parity regressions (carried F1/F2)", () => {
         const rows = await load();
         expect(rows).toHaveLength(1);
         expect(rows[0]!.assignmentSessions).toEqual([{ scheduleId: 54, sessionIndex: 2, serviceDate: "2026-09-08" }]);
+        expect(rows[0]!.source.sessions).toEqual([]);
         expect(resolveServiceRecordScheduleProjection(rows[0]!.source, KR_BUILTIN_CALENDAR).blockingReasons).toEqual([]);
         expect(alerts(rows)).toEqual(expectedAlert);
     });

@@ -27,7 +27,7 @@ export function findMissingServiceRecordAlerts(
     for (const candidate of candidates) {
         // Bad/unsupported source evidence must not prevent other clients' alerts.
         try {
-            const { source, assignmentSessions } = candidate;
+            const { source } = candidate;
             if (source.client.branchId !== branchId || !source.client.name.trim()
                 || !validDate(source.startDate) || !validDate(source.endDate)
                 || source.startDate > source.endDate) continue;
@@ -41,21 +41,26 @@ export function findMissingServiceRecordAlerts(
                 .find((assignment) => !assignment.replaced);
             if (!active?.id || active.scheduleId === null || !active.primaryEmployeeName?.trim()) continue;
             const calendar = branchCalendar.withServiceDays(storedServiceDays(source));
-            const start = source.client.startDate ?? active.scheduleStartDate;
-            const end = source.client.endDate ?? active.scheduleEndDate;
-            if (!validDate(start) || !validDate(end) || start > end) continue;
-            const total = serviceRecordSessionCount(new Date(start), new Date(end), source.client.duration, calendar);
+            const clientStart = source.client.startDate ?? active.scheduleStartDate;
+            const clientEnd = source.client.endDate ?? active.scheduleEndDate;
+            if (!validDate(clientStart) || !validDate(clientEnd) || clientStart > clientEnd) continue;
+            // mapCase displays stored N independently of client duration/period.
+            // Without N, a persisted vector is authoritative but unknown (zero);
+            // only a legacy case derives its display total from the case period.
+            const total = source.requiredSessionCount ?? (source.plannedSessions != null ? 0
+                : serviceRecordSessionCount(new Date(source.startDate), new Date(source.endDate), null, calendar));
             if (total === null || total < 2) continue;
             const projection = resolveServiceRecordScheduleProjection(source, calendar);
             if (projection.blockingReasons.length > 0) continue;
-            // The UI keeps projected indexes after filtering by schedule; it never
-            // renumbers later entries into slots 1 and 2. Only slot 2 needs a planned date.
-            const second = projection.entries.find((entry) => entry.scheduleId === active.scheduleId && entry.sessionIndex === 2);
+            // The case UI uses the whole projection without renumbering by owner.
+            // Only global slot 2 needs a planned date.
+            const second = projection.entries.find((entry) => entry.sessionIndex === 2);
             if (!second) continue;
-            const written = assignmentSessions.some((session) => session.scheduleId === active.scheduleId
-                && (session.sessionIndex === 1 || session.sessionIndex === 2)
+            // mapCase includes all case rows; the card partitions them by the
+            // inclusive case period before matching canonical indexes to slots.
+            const written = source.sessions.some((session) => (session.sessionIndex === 1 || session.sessionIndex === 2)
                 && validDate(session.serviceDate)
-                && session.serviceDate >= active.scheduleStartDate && session.serviceDate <= active.scheduleEndDate);
+                && session.serviceDate >= source.startDate! && session.serviceDate <= source.endDate!);
             if (written) continue;
             const secondDate = second.serviceDate;
             if (!validDate(secondDate)) continue;
