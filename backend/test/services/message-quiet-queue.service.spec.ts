@@ -1086,6 +1086,50 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
         expect(new Set(capped.map(job => job.id)).size).toBe(100);
         expect(await first.jobs.findDueQuietQueueJobs([], release)).toEqual([]);
     });
+    it("the actual claim timestamp round-trips through Prisma without changing the held source", async () => {
+        const f = await pgSlice();
+        const source = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.jobId } });
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const deadline = new Date("2026-11-03T23:20:00.000Z");
+        const token = await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(f.jobId, f.branchId, tx, deadline));
+        expect(token).toEqual(expect.any(String));
+        const reloaded = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.jobId } });
+        expect(reloaded).toMatchObject({ status: "processing", claimToken: token, processingDeadlineAt: deadline });
+        expect({ payload: reloaded.payload, dedupeKey: reloaded.dedupeKey, scheduledFor: reloaded.scheduledFor })
+            .toEqual({ payload: source.payload, dedupeKey: source.dedupeKey, scheduledFor: source.scheduledFor });
+        // Compare the stored precision directly with the Date used by the existing CAS.
+        const equality = await handle.raw.$queryRaw<Array<{ exact: boolean }>>(Prisma.sql`
+            SELECT updated_at = ${reloaded.updatedAt}::timestamptz AS exact
+            FROM message_trigger_job
+            WHERE id = ${f.jobId} AND branch_id = ${f.branchId}::uuid
+        `);
+        expect(equality).toEqual([{ exact: true }]);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["claim token", "deadline"])("refuses a captured claim after its %s changes without job, log, or entity writes", async fence => {
+        const f = await pgSlice();
+        const held = (await f.jobs.findQuietHeldJobs(f.branchId))[0]!;
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const deadline = new Date("2026-11-03T23:20:00.000Z");
+        const token = await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(f.jobId, f.branchId, tx, deadline));
+        expect(token).toEqual(expect.any(String));
+        const claimed = (await f.jobs.findByIdInBranch(f.branchId, f.jobId))!;
+        expect(claimed).toMatchObject({ status: "processing", claimToken: token, processingDeadlineAt: deadline });
+        const beforeEntity = structuredClone(claimed);
+        await handle.raw.message_trigger_job.update({ where: { id: f.jobId }, data: fence === "claim token"
+            ? { claimToken: randomUUID() } : { processingDeadlineAt: new Date("2026-11-03T23:21:00.000Z") } });
+        const beforeJob = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.jobId } });
+        const beforeLog = await handle.raw.message_log.findUniqueOrThrow({ where: { id: f.logId } });
+        await expect(f.lock.runExclusive(f.branchId, tx => f.jobs.transitionQuietHold(claimed, held.logId, held.acceptanceKey,
+            held.fingerprint, { action: "CANCEL", reevaluateAt: null }, held.hold.policyRevision, tx, "expired_after_quiet")))
+            .rejects.toThrow("Quiet hold claim changed");
+        expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.jobId } })).toEqual(beforeJob);
+        expect(await handle.raw.message_log.findUniqueOrThrow({ where: { id: f.logId } })).toEqual(beforeLog);
+        expect(await handle.raw.message_trigger_job.count({ where: { branchId: f.branchId } })).toBe(1);
+        expect(await handle.raw.message_log.count({ where: { branchId: f.branchId } })).toBe(1);
+        expect(structuredClone(claimed)).toEqual(beforeEntity);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
     it("the fresh claim-time helper cancels after 09:00 with an atomic terminal log and no provider", async () => {
         const f = await pgSlice(); jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-04T00:00:01.000Z"));
         await f.core.dispatchPendingJobNow(f.jobId, { expectedBranchId: f.branchId });

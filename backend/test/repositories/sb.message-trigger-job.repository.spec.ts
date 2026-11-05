@@ -550,7 +550,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("RETURNING job.id, job.claim_token");
         // The ordinary claim clears the reason, so a `processing` row that carries one can only be a
         // resend claim (the stale-processing reclaim reads that as the resend mark).
-        expect(sqlText).toContain("updated_at = now(), processing_deadline_at = , cancel_reason = NULL FROM locked_rule");
+        expect(sqlText).toContain("updated_at = date_trunc('milliseconds', now()), processing_deadline_at = , cancel_reason = NULL FROM locked_rule");
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]);

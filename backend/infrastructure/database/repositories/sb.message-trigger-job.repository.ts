@@ -569,7 +569,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FOR UPDATE OF rule
             )
             UPDATE "message_trigger_job" AS job
-            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = now(),
+            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = date_trunc('milliseconds', now()),
                 processing_deadline_at = ${processingDeadlineAt ?? new Date(Date.now() + 600_000)}${claimedReasonAssignment}
             FROM locked_rule AS rule
             WHERE job.id = ${id}
