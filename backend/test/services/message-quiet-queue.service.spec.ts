@@ -2,6 +2,7 @@ import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.e
 import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import * as evaluator from "domain/message-policy-evaluator";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { isSelectedMessageJobExpired } from "application/services/message-trigger-recipes";
 
@@ -196,7 +197,7 @@ function memoryQueue() {
         templates as never, {} as never, settings, undefined, activation, lock);
     const controller = new MessageDeliveryController(aligo as never, approval as never, db as never, duplicates, quiet, jobs, sender as never);
     const send = (extra = {}) => controller.sendSms({ branchId }, { receiver: "01000000011", message: "  synthetic {{literal}}\n", idempotencyKey: "body-key", ...extra }, "ignored-header");
-    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation,
+    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation, sender,
         newDuplicates: () => { duplicateMatches = [{ id: 999, sentAt: new Date(Date.now()) }]; },
         configure: (draft: typeof configuration) => { tables["system_setting"]![0]!["value"] = JSON.stringify(draft); },
         commitFailure: () => { commitFailure = true; }, logCasFailure: () => { logCasFailure = true; } };
@@ -324,17 +325,106 @@ describe("private manual queue through actual controls", () => {
         expect(await f.send()).toMatchObject({ outcome: "canceled", items: [{ reason }] });
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
-    it.each(["log CAS", "commit"])("rolls recipient cancellation back on %s failure without mutating the claimed entity", async mode => {
+    it.each(["changed", "missing", "unavailable", "after preparation", "current"])("persists the exact sender cancellation and replay, with a current sender control: %s", async mode => {
+        const f = memoryQueue(); await f.send();
+        const changeSender = () => {
+            const read = jest.spyOn(f.sender, "read");
+            if (mode === "missing") read.mockReturnValue(undefined as never);
+            else read.mockReturnValue({ availability: mode === "unavailable" ? "unavailable" : "available", identityDigest: "b".repeat(64) });
+        };
+        const sendPrepared = f.sms.sendPreparedJob.bind(f.sms);
+        jest.spyOn(f.sms, "sendPreparedJob").mockImplementation(async (claimed, preparation) => {
+            if (mode === "after preparation") changeSender();
+            const result = await sendPrepared(claimed, preparation);
+            if (mode === "after preparation") expect(claimed.canceledAt).toEqual(release);
+            return result;
+        });
+        if (mode !== "after preparation" && mode !== "current") changeSender();
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const source = structuredClone(f.tables["message_trigger_job"]![0]!);
+        await f.core.dispatchPendingJobNow(source["id"] as string, { expectedBranchId: f.branchId });
+        const reason = "메시지 발송 건너뜀: Manual sender changed";
+        if (mode === "current") {
+            expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "sent" });
+            expect(f.tables["message_log"]![0]).toMatchObject({ status: "sent", attempts: 1 });
+            expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+            return;
+        }
+        expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "canceled", cancelReason: reason, canceledAt: release,
+            nextAttemptAt: null, claimToken: null, processingDeadlineAt: null, scheduledFor: source["scheduledFor"], dedupeKey: source["dedupeKey"], payload: source["payload"] });
+        expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", errorMessage: reason, nextRetryAt: null, attempts: 0,
+            providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            variables: { quietHoursDisposition: "CANCEL", manualQueueStatus: "canceled", manualQueueReason: reason } });
+        jest.mocked(f.sender.read).mockRestore();
+        expect(await f.send()).toMatchObject({ outcome: "canceled", items: [{ status: "canceled", reason }] });
+        await f.core.dispatchPendingJobNow(source["id"] as string, { expectedBranchId: f.branchId });
+        expect(f.tables["message_log"]).toHaveLength(1);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["holder", "FK", "key", "fingerprint", "source", "job source", "branch", "claim", "deadline", "provider started", "provider accepted"])("never terminalizes unproven source rows with a changed sender: %s", async mode => {
         const f = memoryQueue(); await f.send();
         jest.mocked(Date.now).mockReturnValue(release.getTime());
         const id = f.tables["message_trigger_job"]![0]!["id"] as string;
         await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(id, f.branchId, tx, new Date("2026-11-03T23:20:00.000Z")));
         const claimed = (await f.jobs.findByIdInBranch(f.branchId, id))!;
-        f.tables["client"]![0]!["phone"] = "01000000044";
+        jest.spyOn(f.sender, "read").mockReturnValue({ availability: "available", identityDigest: "b".repeat(64) });
+        const log = f.tables["message_log"]![0]!;
+        const current = f.tables["message_trigger_job"]![0]!;
+        if (mode === "holder") f.tables["message_trigger_rule"] = [];
+        if (mode === "FK") log["triggerJobId"] = "unrelated-job";
+        if (mode === "key") log["providerAcceptanceKey"] = null;
+        if (mode === "fingerprint") log["providerAcceptanceFingerprint"] = "unrelated-fingerprint";
+        if (mode === "source") log["messageBody"] = "unrelated-body";
+        if (mode === "job source") current["dedupeKey"] = "unrelated-source";
+        if (mode === "branch") log["branchId"] = "unrelated-branch";
+        if (mode === "claim") current["claimToken"] = "another-worker";
+        if (mode === "deadline") current["processingDeadlineAt"] = release;
+        if (mode === "provider started") Object.assign(log, { providerAcceptanceState: "started", providerCallStartedAt: release });
+        if (mode === "provider accepted") Object.assign(log, { providerAcceptanceState: "accepted", providerAcceptedAt: release, aligoMid: "91" });
         const before = structuredClone(f.tables);
         const beforeEntity = structuredClone(claimed);
-        if (mode === "log CAS") f.logCasFailure(); else f.commitFailure();
-        await expect(f.sms.resolveDeliverySnapshot(claimed)).rejects.toThrow();
+        f.db.message_trigger_job.updateMany.mockClear();
+        f.db.message_log.updateMany.mockClear();
+        await expect(f.sms.resolveDeliverySnapshot(claimed)).rejects.toThrow(AgentAutomationDispatchUncertainError);
+        expect(f.tables).toEqual(before);
+        expect(structuredClone(claimed)).toEqual(beforeEntity);
+        expect(f.db.message_trigger_job.updateMany).not.toHaveBeenCalled();
+        expect(f.db.message_log.updateMany).not.toHaveBeenCalled();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["recipient job CAS", "recipient log CAS", "recipient commit", "sender job CAS", "sender log CAS", "sender commit"])("rolls source cancellation back on %s failure without mutating the claimed entity", async mode => {
+        const f = memoryQueue(); await f.send();
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const id = f.tables["message_trigger_job"]![0]!["id"] as string;
+        await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(id, f.branchId, tx, new Date("2026-11-03T23:20:00.000Z")));
+        const claimed = (await f.jobs.findByIdInBranch(f.branchId, id))!;
+        if (mode.startsWith("sender")) jest.spyOn(f.sender, "read").mockReturnValue({ availability: "available", identityDigest: "b".repeat(64) });
+        else f.tables["client"]![0]!["phone"] = "01000000044";
+        const before = structuredClone(f.tables);
+        const beforeEntity = structuredClone(claimed);
+        if (mode.endsWith("job CAS")) f.db.message_trigger_job.updateMany.mockResolvedValueOnce({ count: 0 });
+        else if (mode.endsWith("log CAS")) f.logCasFailure(); else f.commitFailure();
+        await expect(f.sms.resolveDeliverySnapshot(claimed)).rejects.toThrow(mode.endsWith("commit") ? "late commit failure" : AgentAutomationDispatchUncertainError);
+        expect(f.tables).toEqual(before);
+        expect(structuredClone(claimed)).toEqual(beforeEntity);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["job CAS", "log CAS", "commit"])("rolls final sender cancellation back on %s failure before changing the claimed entity", async mode => {
+        const f = memoryQueue(); await f.send();
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const id = f.tables["message_trigger_job"]![0]!["id"] as string;
+        await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(id, f.branchId, tx, new Date("2026-11-03T23:20:00.000Z")));
+        const claimed = (await f.jobs.findByIdInBranch(f.branchId, id))!;
+        const preparation = (await f.sms.prepareJob(claimed))!;
+        expect(preparation).not.toBeNull();
+        claimed.markDispatchAuthorized();
+        await f.jobs.update(claimed);
+        jest.spyOn(f.sender, "read").mockReturnValue({ availability: "available", identityDigest: "b".repeat(64) });
+        const before = structuredClone(f.tables);
+        const beforeEntity = structuredClone(claimed);
+        if (mode === "job CAS") f.db.message_trigger_job.updateMany.mockResolvedValueOnce({ count: 0 });
+        else if (mode === "log CAS") f.logCasFailure(); else f.commitFailure();
+        await expect(f.sms.sendPreparedJob(claimed, preparation)).rejects.toThrow(mode === "commit" ? "late commit failure" : AgentAutomationDispatchUncertainError);
         expect(f.tables).toEqual(before);
         expect(structuredClone(claimed)).toEqual(beforeEntity);
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
