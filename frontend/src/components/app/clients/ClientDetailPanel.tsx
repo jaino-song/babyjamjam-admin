@@ -22,6 +22,7 @@ import {
     normalizeApiError,
 } from "@babyjamjam/shared";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message";
 
 import { Button } from "@/components/ui/button";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
@@ -33,9 +34,11 @@ import {
     useConfirmBooking,
 } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
+import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { canRetryFailedHistory, canResendSetupJob, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
 import {
@@ -1180,6 +1183,28 @@ function ClientDetailPanelBody({
     const client = useMemo(() => confirmedBooking && selectedClient.bookingConfirmedAt == null
         ? { ...selectedClient, bookingConfirmedAt: confirmedBooking.bookingConfirmedAt, serviceStatus: confirmedBooking.serviceStatus }
         : selectedClient, [selectedClient, confirmedBooking]);
+    const { data: voucherYears = [] } = useVoucherYears();
+    const resolvedVoucherYear = useMemo(() => {
+        const endDateYear = isRealIsoDate(client?.endDate ?? "")
+            ? Number.parseInt((client?.endDate ?? "").slice(0, 4), 10)
+            : NaN;
+        if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
+            return endDateYear;
+        }
+        const currentYear = new Date().getFullYear();
+        if (voucherYears.length === 0 || voucherYears.includes(currentYear)) return currentYear;
+        return Math.max(...voucherYears);
+    }, [client?.endDate, voucherYears]);
+    const voucherType = client?.voucherClient ? client.type || "" : "";
+    const {
+        data: voucherPriceInfos,
+        isLoading: isVoucherPriceLoading,
+        isError: isVoucherPriceError,
+    } = useVoucherPriceInfos(voucherType, resolvedVoucherYear);
+    const availableVoucherDurations = useMemo(() => {
+        if (!voucherType || isVoucherPriceLoading || isVoucherPriceError) return [];
+        return (voucherPriceInfos ?? []).map((info) => Number(info.duration));
+    }, [voucherType, voucherPriceInfos, isVoucherPriceLoading, isVoucherPriceError]);
     const [isBookingConfirmationOpen, setIsBookingConfirmationOpen] = useState(false);
     const [isConfirmingBooking, setIsConfirmingBooking] = useState(false);
     const bookingConfirmationInFlightRef = useRef(false);
@@ -1753,7 +1778,9 @@ function ClientDetailPanelBody({
                                             label={t(locale, "clients.form.duration")}
                                             value={
                                                 client.duration
-                                                    ? `${client.duration}일`
+                                                    ? client.voucherClient
+                                                        ? formatVoucherDurationLabel(client.duration, availableVoucherDurations)
+                                                        : `${client.duration}일`
                                                     : "-"
                                             }
                                         />
