@@ -1185,8 +1185,18 @@ function ClientDetailPanelBody({
         : selectedClient, [selectedClient, confirmedBooking]);
     const { data: voucherYears = [] } = useVoucherYears();
     const resolvedVoucherYear = useMemo(() => {
-        const endDateYear = isRealIsoDate(client?.endDate ?? "")
-            ? Number.parseInt((client?.endDate ?? "").slice(0, 4), 10)
+        let endDate = client?.endDate ?? "";
+        if (!isRealIsoDate(endDate)) {
+            // Validate the original calendar date before parsing can normalize a rollover.
+            const isIsoTimestamp = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$/.test(endDate)
+                && isRealIsoDate(endDate.slice(0, 10));
+            const parsedDate = isIsoTimestamp ? new Date(endDate) : null;
+            endDate = parsedDate && !Number.isNaN(parsedDate.getTime())
+                ? parsedDate.toISOString().slice(0, 10)
+                : "";
+        }
+        const endDateYear = isRealIsoDate(endDate)
+            ? Number.parseInt(endDate.slice(0, 4), 10)
             : NaN;
         if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
             return endDateYear;
