@@ -50,6 +50,7 @@ import { SmsRetryService } from "application/services/sms-retry.service";
 import { MessageRetrySchedulerService } from "application/services/message-retry-scheduler.service";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { buildSmsProviderAcceptanceFingerprint, buildSmsProviderAcceptanceKey } from "application/services/sms-provider-acceptance.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
@@ -69,6 +70,7 @@ function memoryQueue() {
     let active = false;
     let commitFailure = false;
     let logCasFailure = false;
+    let afterPrepared: ((row: Row) => void) | undefined;
     let duplicateMatches: Array<{ id: number; sentAt: Date }> = [];
     const matches = (row: Row, where: Row): boolean => Object.entries(where).every(([key, value]) => {
         if (key === "AND") return (Array.isArray(value) ? value : [value]).every(part => matches(row, part as Row));
@@ -109,7 +111,10 @@ function memoryQueue() {
                 isActive: false, jobsStale: false, providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null,
                 errorMessage: null, lastAttemptAt: null, nextRetryAt: null, ...structuredClone(data) };
             if (name === "message_log" && tables[name]!.some(existing => existing["providerAcceptanceKey"] === row["providerAcceptanceKey"])) throw new Error("Duplicate acceptance");
-            tables[name]!.push(row); return structuredClone(row);
+            tables[name]!.push(row);
+            const result = structuredClone(row);
+            if (name === "message_log" && !active) afterPrepared?.(result);
+            return result;
         }),
         updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
             if (name === "message_log" && logCasFailure) return { count: 0 };
@@ -200,8 +205,156 @@ function memoryQueue() {
     return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation, sender,
         newDuplicates: () => { duplicateMatches = [{ id: 999, sentAt: new Date(Date.now()) }]; },
         configure: (draft: typeof configuration) => { tables["system_setting"]![0]!["value"] = JSON.stringify(draft); },
+        afterPrepared: (hook: (row: Row) => void) => { afterPrepared = hook; },
         commitFailure: () => { commitFailure = true; }, logCasFailure: () => { logCasFailure = true; } };
 }
+
+
+describe("manual final admission queue conversion", () => {
+    const beforeQuiet = new Date("2026-11-03T12:59:59.000Z");
+    const quietStart = new Date("2026-11-03T13:00:00.000Z");
+    beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(beforeQuiet.getTime()));
+    afterEach(() => jest.restoreAllMocks());
+    function batch(f: ReturnType<typeof memoryQueue>) {
+        f.tables["employee"]!.push({ id: 11, branchId: f.branchId, name: "synthetic employee", phone: "01000000022", deletedAt: null });
+        return { receiver: "010-0000-0022,01000000011,01000000022", title: "  final title  ", msgType: "LMS" as const, testMode: true };
+    }
+    const writes = (f: ReturnType<typeof memoryQueue>) => [f.db.message_log.create, f.db.message_log.updateMany,
+        f.db.message_log.update, f.db.message_trigger_job.create, f.db.message_trigger_job.updateMany,
+        f.db.message_trigger_rule.upsert, f.db.$executeRaw, f.db.$transaction].map(mock => mock.mock.calls.length);
+
+    it.each([1, 2])("converts final 22:00 DEFER for %i recipients and replays every ordinal without writes", async count => {
+        const f = memoryQueue();
+        const request = count === 2 ? batch(f) : { title: "  final title  ", msgType: "LMS" as const, testMode: true };
+        let prepared!: Row;
+        f.afterPrepared(row => {
+            // Simulate unrelated server metadata present in the prepared snapshot.
+            (row["variables"] as Row)["serverMetadata"] = "preserved";
+            (f.tables["message_log"]![0]!["variables"] as Row)["serverMetadata"] = "preserved";
+            prepared = row;
+            jest.mocked(Date.now).mockReturnValue(quietStart.getTime());
+        });
+        const response = await f.send(request);
+        expect(response).toMatchObject({ outcome: "deferred", request: { idempotencyKey: "body-key" } });
+        expect(response).not.toHaveProperty("result");
+        expect(response).not.toHaveProperty("sent");
+        expect(f.tables["message_log"]).toHaveLength(count); expect(f.tables["message_trigger_job"]).toHaveLength(count);
+        const rootKey = buildSmsProviderAcceptanceKey("manual", `${f.branchId}:body-key`);
+        expect(prepared).toMatchObject({ receiver: count === 2 ? "01000000022,01000000011" : "01000000011",
+            templateKey: "final title", status: "pending", triggerJobId: null, attempts: 0, providerCallStartedAt: null });
+        for (let ordinal = 0; ordinal < count; ordinal++) {
+            const log = f.tables["message_log"]![ordinal]!;
+            const source = f.tables["message_trigger_job"]![ordinal]!;
+            const phone = ordinal === 0 ? "01000000011" : "01000000022";
+            const key = ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`);
+            expect(log).toMatchObject({ id: ordinal === 0 ? prepared["id"] : expect.any(Number), branchId: f.branchId,
+                providerAcceptanceKey: key, providerAcceptanceFingerprint: prepared["providerAcceptanceFingerprint"],
+                receiver: phone, recipientPhone: phone, recipientName: ordinal === 0 ? "synthetic" : "synthetic employee",
+                clientId: ordinal === 0 ? 7 : null, templateKey: "manual_sms", messageBody: "  synthetic {{literal}}\n",
+                status: "pending", attempts: 0, providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                variables: { manualQueueOrdinal: String(ordinal), manualQueueCount: String(count), manualQueueStatus: "deferred",
+                    quietHoursDisposition: "DEFER", quietHoursReleaseAt: release.toISOString(), quietHoursOriginalScheduledFor: beforeQuiet.toISOString(),
+                    quietHoursPolicyRevision: expect.any(String), title: "  final title  ", msgType: "LMS", testMode: "true",
+                    employeeId: ordinal === 0 ? null : 11 } });
+            expect(log["triggerJobId"]).toBe(source["id"]);
+            expect(log["variables"]).not.toHaveProperty("scheduledDate"); expect(log["variables"]).not.toHaveProperty("scheduledTime");
+            const input = JSON.parse((log["variables"] as Row)["manualQueueFingerprintInput"] as string) as Row;
+            expect(input).toMatchObject({ receiver: prepared["receiver"], message: prepared["messageBody"], title: "final title", testMode: true });
+            expect(buildSmsProviderAcceptanceFingerprint(input)).toBe(prepared["providerAcceptanceFingerprint"]);
+            expect(source).toMatchObject({ scheduledFor: beforeQuiet, nextAttemptAt: release, attempts: 0,
+                recipientPhone: phone, dedupeKey: `manual-sms:${f.branchId}:${key}`, payload: { existingMessageLogId: log["id"] } });
+        }
+        expect(f.tables["message_log"]![0]!["variables"]).toMatchObject({ serverMetadata: "preserved" });
+        expect(prepared["triggerJobId"]).toBeNull(); expect(prepared["variables"]).not.toHaveProperty("manualQueueMode");
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        f.configuration.quietHours.enabled = false; f.configure(f.configuration);
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const before = structuredClone(f.tables); const calls = writes(f);
+        expect(await f.send(request)).toEqual(response);
+        expect(f.tables).toEqual(before); expect(writes(f)).toEqual(calls); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        // The converted root and sibling both satisfy the real manual source validator.
+        for (const source of f.tables["message_trigger_job"]!) {
+            const entity = (await f.jobs.findByIdInBranch(f.branchId, source["id"] as string))!;
+            await expect(f.sms.resolveDeliverySnapshot(entity)).resolves.toMatchObject({ receiver: source["recipientPhone"], title: "final title" });
+        }
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each(["DEFER", "CANCEL"] as const)("uses changed policy for final %s and preserves mixed recipient decisions", async action => {
+        const f = memoryQueue(); const request = batch(f);
+        f.configuration.quietHours.enabled = false; f.configure(f.configuration);
+        f.afterPrepared(() => {
+            Object.assign(f.configuration.quietHours, { enabled: true, start: "21:00", recipientGroups: ["CLIENT"], action });
+            f.configure(f.configuration);
+        });
+        const response = await f.send(request);
+        expect(response).toMatchObject({ outcome: "mixed", items: [
+            { recipientPhone: "01000000011", status: action === "DEFER" ? "deferred" : "canceled",
+                reason: `message_quiet_hours:${action}`, scheduledAt: action === "DEFER" ? release.toISOString() : beforeQuiet.toISOString() },
+            { recipientPhone: "01000000022", status: "queued", scheduledAt: beforeQuiet.toISOString() },
+        ] });
+        expect(f.tables["message_log"]![0]).toMatchObject({ status: action === "CANCEL" ? "failed" : "pending", attempts: 0 });
+        expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: action === "CANCEL" ? "canceled" : "pending", attempts: 0 });
+        f.configuration.quietHours.enabled = false; f.configure(f.configuration);
+        const calls = writes(f); expect(await f.send(request)).toEqual(response); expect(writes(f)).toEqual(calls);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("returns final single CANCEL truthfully and never revives the root on replay", async () => {
+        const f = memoryQueue(); let prepared!: Row;
+        f.afterPrepared(row => { prepared = row; f.configuration.quietHours.action = "CANCEL"; f.configure(f.configuration); jest.mocked(Date.now).mockReturnValue(quietStart.getTime()); });
+        const response = await f.send();
+        expect(response).toMatchObject({ outcome: "canceled", items: [{ messageLogId: prepared["id"], status: "canceled", reason: "message_quiet_hours:CANCEL" }] });
+        expect(f.tables["message_log"]![0]).toMatchObject({ providerAcceptanceKey: prepared["providerAcceptanceKey"], providerAcceptanceFingerprint: prepared["providerAcceptanceFingerprint"],
+            status: "failed", attempts: 0, providerCallStartedAt: null });
+        expect(f.tables["message_trigger_job"]).toHaveLength(1);
+        f.configuration.quietHours.enabled = false; f.configure(f.configuration);
+        const calls = writes(f); expect(await f.send()).toEqual(response); expect(writes(f)).toEqual(calls);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each(["root CAS", "sibling link CAS", "commit"])("rolls all conversion writes back on %s and leaves the prepared snapshot untouched", async fault => {
+        const f = memoryQueue(); const request = batch(f); let prepared!: Row;
+        f.afterPrepared(row => {
+            prepared = row; jest.mocked(Date.now).mockReturnValue(quietStart.getTime());
+            if (fault === "commit") f.commitFailure();
+            else if (fault === "root CAS") f.logCasFailure();
+            else {
+                const update = f.db.message_log.updateMany.getMockImplementation()!;
+                f.db.message_log.updateMany.mockImplementation(async args => args.data["triggerJobId"] && args.where["id"] !== row["id"] ? { count: 0 } : update(args));
+            }
+        });
+        await expect(f.send(request)).rejects.toThrow();
+        expect(f.tables["message_log"]).toEqual([prepared]); expect(f.tables["message_trigger_job"]).toHaveLength(0);
+        expect(f.tables["message_trigger_rule"]).toHaveLength(0); expect(prepared["variables"]).not.toHaveProperty("manualQueueMode");
+        expect(prepared["triggerJobId"]).toBeNull(); expect(prepared["providerCallStartedAt"]).toBeNull();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, unknown]>([
+        ["updatedAt", new Date("2026-11-03T13:00:00.001Z")], ["receiver", "01000000099"], ["recipientPhone", "01000000099"],
+        ["recipientName", "changed"], ["clientId", 99], ["templateKey", "changed"], ["messageBody", "changed"],
+        ["variables", { title: "changed" }], ["attempts", 1], ["status", "failed"], ["triggerJobId", "changed"],
+        ["providerAcceptanceKey", "changed"], ["providerAcceptanceFingerprint", "changed"], ["providerAcceptanceState", "started"],
+        ["providerCallStartedAt", quietStart], ["providerAcceptedAt", quietStart], ["providerReconciledAt", quietStart],
+        ["providerReconciledBy", "changed"], ["providerReconciliationReason", "changed"], ["aligoMid", "91"],
+    ])("rejects a stale prepared root when %s changed before the conversion", async (field, value) => {
+        const f = memoryQueue();
+        f.afterPrepared(() => { f.tables["message_log"]![0]![field] = value; jest.mocked(Date.now).mockReturnValue(quietStart.getTime()); });
+        await expect(f.send()).rejects.toThrow();
+        expect(f.tables["message_log"]).toHaveLength(1); expect(f.tables["message_log"]![0]![field]).toEqual(value);
+        expect(f.db.message_log.updateMany).not.toHaveBeenCalled(); expect(f.tables["message_trigger_job"]).toHaveLength(0);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("validates the entire current batch before any final conversion write", async () => {
+        const f = memoryQueue(); const request = batch(f); let prepared!: Row;
+        f.afterPrepared(row => { prepared = row; f.tables["employee"]![0]!["phone"] = "01000000099"; jest.mocked(Date.now).mockReturnValue(quietStart.getTime()); });
+        await expect(f.send(request)).rejects.toThrow();
+        expect(f.tables["message_log"]).toEqual([prepared]); expect(f.db.message_log.updateMany).not.toHaveBeenCalled();
+        expect(f.tables["message_trigger_job"]).toHaveLength(0); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+});
 
 describe("private manual queue through actual controls", () => {
     beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(original.getTime()));
@@ -1003,9 +1156,12 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
         await handle.raw.system_setting.deleteMany({ where: { key: { in: policyKeys } } });
         await tracker.cleanup(handle.raw); await closeIntegrityPrisma(handle);
     });
-    async function pgSlice() {
+    async function pgSlice(options: { finalDefer?: boolean; batch?: boolean;
+        onPrepared?: (row: Row, jobs: SbMessageTriggerJobRepository, branchId: string) => void } = {}) {
+        if (options.finalDefer) jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T12:59:59.000Z"));
         const branch = await createBranch(handle.raw, tracker); branches.push(branch.id);
         const client = await createClient(handle.raw, tracker, { branchId: branch.id, name: "synthetic quiet", phone: "01000000011", phoneNormalized: "01000000011" });
+        if (options.batch) await createClient(handle.raw, tracker, { branchId: branch.id, name: "synthetic second", phone: "01000000022", phoneNormalized: "01000000022" });
         const configuration = defaultMessageAutomationPolicy(); configuration.pastExpiryHours = 1; configuration.quietHours.enabled = true;
         const key = `branch:${branch.id}:message_automation:policy`;
         await handle.raw.system_setting.create({ data: { key, value: JSON.stringify(configuration) } }); policyKeys.push(key);
@@ -1029,11 +1185,79 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
         const core = new MessageTriggerService(handle.service, new MessageTriggerDeliveryService(sms), approval as never, {} as never, jobs, logs,
             {} as never, {} as never, settings, undefined, undefined, lock);
         const controller = new MessageDeliveryController(aligo as never, approval as never, handle.service, duplicates, quiet, jobs, sender as never);
-        const result = await controller.sendSms({ branchId: branch.id }, { clientId: client.id, receiver: "01000000011", message: "synthetic PG", idempotencyKey: "pg-queue" });
+        let prepared: Row | undefined;
+        if (options.finalDefer) {
+            const pending = controller as unknown as { createPendingSmsLog(...args: unknown[]): Promise<{ row: Row; created: boolean; id: number }> };
+            const createPending = pending.createPendingSmsLog.bind(controller);
+            jest.spyOn(pending, "createPendingSmsLog").mockImplementation(async (...args) => {
+                const result = await createPending(...args);
+                prepared = structuredClone(result.row);
+                jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T13:00:00.000Z"));
+                options.onPrepared?.(prepared, jobs, branch.id);
+                return result;
+            });
+        }
+        const request = { clientId: options.batch ? null : client.id, receiver: options.batch ? "01000000022,01000000011" : "01000000011",
+            message: "synthetic PG", idempotencyKey: "pg-queue", ...(options.finalDefer ? { title: "PG title", msgType: "LMS" as const, testMode: true } : {}) };
+        const send = () => controller.sendSms({ branchId: branch.id }, request);
+        const result = await send();
         if (!("items" in result)) throw new Error("Expected internal queue response");
         const item = result.items[0]!;
-        return { branchId: branch.id, configuration, jobs, logs, settings, lock, core, aligo, jobId: item.jobId, logId: item.messageLogId };
+        return { branchId: branch.id, configuration, jobs, logs, settings, lock, core, aligo, sms, send, result, prepared, jobId: item.jobId, logId: item.messageLogId };
     }
+    it.each([false, true])("atomically converts final DEFER in PostgreSQL (batch=%s), preserving source identity and replay", async batch => {
+        const f = await pgSlice({ finalDefer: true, batch });
+        const prepared = f.prepared!;
+        expect(f.result).toMatchObject({ outcome: "deferred" }); expect(f.result).not.toHaveProperty("result");
+        const logs = await handle.raw.message_log.findMany({ where: { branchId: f.branchId }, orderBy: { id: "asc" } });
+        const jobs = await handle.raw.message_trigger_job.findMany({ where: { branchId: f.branchId }, orderBy: { recipientPhone: "asc" } });
+        expect(logs).toHaveLength(batch ? 2 : 1); expect(jobs).toHaveLength(logs.length);
+        expect(logs[0]).toMatchObject({ id: prepared["id"], createdAt: prepared["createdAt"], providerAcceptanceKey: prepared["providerAcceptanceKey"],
+            providerAcceptanceFingerprint: prepared["providerAcceptanceFingerprint"], templateKey: "manual_sms", recipientPhone: "01000000011", receiver: "01000000011" });
+        for (let ordinal = 0; ordinal < logs.length; ordinal++) {
+            const log = logs[ordinal]!; const source = jobs[ordinal]!;
+            const expectedKey = ordinal === 0 ? prepared["providerAcceptanceKey"] : buildSmsProviderAcceptanceKey("manual", `${prepared["providerAcceptanceKey"]}:ordinal:${ordinal}`);
+            expect(log).toMatchObject({ triggerJobId: source.id, receiver: source.recipientPhone, recipientPhone: source.recipientPhone,
+                clientId: source.clientId, status: "pending", attempts: 0, providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                providerAcceptanceKey: expectedKey, providerAcceptanceFingerprint: prepared["providerAcceptanceFingerprint"], messageBody: "synthetic PG",
+                variables: { manualQueueCount: String(logs.length), manualQueueOrdinal: String(ordinal), manualQueueStatus: "deferred",
+                    title: "PG title", msgType: "LMS", testMode: "true", employeeId: null,
+                    quietHoursOriginalScheduledFor: "2026-11-03T12:59:59.000Z", quietHoursReleaseAt: release.toISOString(), quietHoursPolicyRevision: expect.any(String) } });
+            expect(source).toMatchObject({ scheduledFor: new Date("2026-11-03T12:59:59.000Z"), nextAttemptAt: release, attempts: 0,
+                payload: { existingMessageLogId: log.id, recipientPhone: log.recipientPhone, recipientName: log.recipientName,
+                    templateVariables: { title: "PG title", msgType: "LMS", testMode: "true" } } });
+            const variables = log.variables as Row;
+            expect(buildSmsProviderAcceptanceFingerprint(JSON.parse(variables["manualQueueFingerprintInput"] as string) as Row)).toBe(prepared["providerAcceptanceFingerprint"]);
+            expect(variables).not.toHaveProperty("scheduledDate"); expect(variables).not.toHaveProperty("scheduledTime");
+        }
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        f.configuration.quietHours.enabled = false;
+        await handle.raw.system_setting.update({ where: { key: `branch:${f.branchId}:message_automation:policy` }, data: { value: JSON.stringify(f.configuration) } });
+        const admission = jest.spyOn(f.lock, "runExclusive");
+        expect(await f.send()).toEqual(f.result); expect(admission).not.toHaveBeenCalled();
+        expect(await handle.raw.message_log.findMany({ where: { branchId: f.branchId }, orderBy: { id: "asc" } })).toEqual(logs);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId: f.branchId }, orderBy: { recipientPhone: "asc" } })).toEqual(jobs);
+        for (const source of jobs) {
+            const entity = (await f.jobs.findByIdInBranch(f.branchId, source.id))!;
+            await expect(f.sms.resolveDeliverySnapshot(entity)).resolves.toMatchObject({ receiver: source.recipientPhone, message: "synthetic PG" });
+        }
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("rolls back the converted PostgreSQL root and all ordinals when the last job write fails", async () => {
+        let prepared!: Row; let branchId!: string;
+        await expect(pgSlice({ finalDefer: true, batch: true, onPrepared: (row, jobs, branch) => {
+            prepared = row; branchId = branch;
+            const create = jobs.createManualSmsJob.bind(jobs); let calls = 0;
+            jest.spyOn(jobs, "createManualSmsJob").mockImplementation(async (...args) => {
+                const result = await create(...args);
+                if (++calls === 2) throw new Error("synthetic final ordinal failure");
+                return result;
+            });
+        } })).rejects.toThrow(ServiceUnavailableException);
+        expect(await handle.raw.message_log.findMany({ where: { branchId } })).toEqual([prepared]);
+        expect(await handle.raw.message_trigger_job.count({ where: { branchId } })).toBe(0);
+        expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(0);
+    });
     it("SQL uses the stable 08:00 anchor, initial retry-OFF selection bypasses cadence, and the real Core sends once", async () => {
         const f = await pgSlice(); const source = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.jobId } });
         expect(source).toMatchObject({ status: "pending", attempts: 0, claimToken: null, nextAttemptAt: release });

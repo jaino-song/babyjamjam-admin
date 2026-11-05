@@ -52,6 +52,7 @@ import type {
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
+type SmsQueueLogRecord = Awaited<ReturnType<Prisma.TransactionClient["message_log"]["findFirstOrThrow"]>>;
 interface SmsMessageLogRecord {
     id: number;
     providerAcceptanceKey?: string | null;
@@ -160,8 +161,9 @@ export class MessageDeliveryController {
 
         const { scheduledDate, scheduledTime } = this.smsSchedule(dto, !this.jobs);
         let knownExisting: SmsMessageLogRecord | null | undefined;
+        let immediateScheduledFor: Date | undefined;
         if (this.jobs) {
-            const queued = await this.enqueueOrReplay(branchId, resolvedDto, triggerType, scheduledDate, scheduledTime, effectiveRequestKey, existing => { knownExisting = existing; });
+            const queued = await this.enqueueOrReplay(branchId, resolvedDto, triggerType, scheduledDate, scheduledTime, effectiveRequestKey, (existing, scheduledFor) => { knownExisting = existing; immediateScheduledFor = scheduledFor; });
             if (queued) return queued;
         } else if (triggerType === "scheduled") {
             throw new MessageQuietHoursUnavailableError();
@@ -210,23 +212,18 @@ export class MessageDeliveryController {
             );
         }
 
-        let admitted = false;
+        let admission: { kind: "provider" } | { kind: "queued"; response: ReturnType<MessageDeliveryController["manualQueueResponse"]> };
         try {
             if (!this.quietHours) throw new MessageQuietHoursUnavailableError();
-            admitted = await this.quietHours.runAdmission(branchId, resolvedDto.receiver, async (decision, transaction) => {
+            admission = await this.quietHours.runAdmission(branchId, resolvedDto.receiver, async (decision, transaction) => {
                 if (decision.action !== "ALLOW") {
                     if (!transaction) throw new MessageQuietHoursUnavailableError();
-                    const refused = await transaction.message_log.updateMany({
-                        where: { id: pendingLog.id, branchId, providerAcceptanceState: "prepared" },
-                        data: { status: "failed", nextRetryAt: null,
-                            errorMessage: decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON,
-                            variables: { ...this.smsRecordVariables(pendingLog.row), quietHoursDisposition: decision.action } },
-                    });
-                    if (refused.count !== 1) throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(pendingLog.id)));
-                    return false;
+                    const response = await this.createManualQueue(branchId, resolvedDto, triggerType, scheduledDate, scheduledTime,
+                        effectiveRequestKey, immediateScheduledFor ?? new Date(Date.now()), transaction, pendingLog.row);
+                    return { kind: "queued" as const, response };
                 }
                 await this.markProviderCallStarted(pendingLog.row, transaction);
-                return true;
+                return { kind: "provider" as const };
             });
         } catch (error) {
             if (error instanceof ConflictException || error instanceof MessageQuietHoursUnavailableError) {
@@ -245,7 +242,7 @@ export class MessageDeliveryController {
             );
         }
 
-        if (!admitted) throw new ServiceUnavailableException(this.smsProblemBody("MESSAGE_SEND_NOT_STARTED", "NOT_APPLIED", this.safeOperationId(pendingLog.id)));
+        if (admission.kind === "queued") return admission.response;
 
         const result = await this.aligoService.sendSms({
             receiver: resolvedDto.receiver,
@@ -373,7 +370,7 @@ export class MessageDeliveryController {
     }
 
     private async enqueueOrReplay(branchId: string, dto: SendSmsMessageDto, triggerType: string,
-        scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string, onImmediate: (existing: SmsMessageLogRecord | null) => void) {
+        scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string, onImmediate: (existing: SmsMessageLogRecord | null, scheduledFor?: Date) => void) {
         if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
         const fingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
         const rootKey = buildSmsProviderAcceptanceKey("manual", `${branchId}:${requestKey}`);
@@ -400,58 +397,9 @@ export class MessageDeliveryController {
         await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message, fingerprint, dto.duplicateDecision);
         try {
             return await this.quietHours.runAdmission(branchId, dto.receiver, async (decision, transaction) => {
-                if (triggerType !== "scheduled" && decision.action === "ALLOW") { onImmediate(null); return null; }
+                if (triggerType !== "scheduled" && decision.action === "ALLOW") { onImmediate(null, scheduledFor); return null; }
                 if (!transaction) throw new MessageQuietHoursUnavailableError();
-                const phones = [...new Set(dto.receiver.split(","))].sort();
-                if (!phones.length) throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
-                const sender = this.defaultSender?.read();
-                if (!sender || sender.availability !== "available") throw new MessageQuietHoursUnavailableError();
-                // Validate the complete batch before the first ledger/job write.
-                const recipients = [];
-                for (const receiver of phones) recipients.push(await this.resolveSmsRecipients(branchId,
-                    { ...dto, receiver, clientId: phones.length === 1 ? dto.clientId : null, employeeId: phones.length === 1 ? dto.employeeId : null }, transaction));
-                const logs = [];
-                for (let ordinal = 0; ordinal < recipients.length; ordinal++) {
-                    const recipient = recipients[ordinal]!;
-                    logs.push(await this.quietHours!.runAdmission(branchId, recipient.receiver, async (current, tx, revision) => {
-                        if (!tx || (current.action === "DEFER" && !revision)) throw new MessageQuietHoursUnavailableError();
-                        const status = current.action === "DEFER" ? "deferred" : current.action === "CANCEL" ? "canceled" : "queued";
-                        const due = current.action === "DEFER" ? current.reevaluateAt : scheduledFor;
-                        const variables = { origin: "ADMIN_DIRECT", manualQueueMode: "internal", manualQueueCount: String(recipients.length),
-                            manualQueueOrdinal: String(ordinal), manualQueueStatus: status, manualQueueScheduledAt: due.toISOString(),
-                            manualQueueRequestKey: requestKey, manualQueueSenderIdentity: sender.identityDigest,
-                            manualQueueFingerprintInput: JSON.stringify({ branchId, receiver: dto.receiver, message: dto.message,
-                                recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null, clientId: dto.clientId ?? null,
-                                employeeId: dto.employeeId ?? null, msgType: dto.msgType ?? "AUTO", triggerType,
-                                scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null, testMode: dto.testMode === true }),
-                            title: dto.title ?? "", employeeId: recipient.employeeId ?? null,
-                            triggerType, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false",
-                            duplicateDecision: dto.duplicateDecision ? JSON.stringify(dto.duplicateDecision) : null,
-                            ...(current.action === "DEFER" ? messageQuietHoldVariables({ releaseAt: due, originalScheduledFor: scheduledFor,
-                                policyRevision: revision!, reason: QUIET_HOURS_DEFER_REASON }) : current.action === "CANCEL" ? { quietHoursDisposition: "CANCEL" } : {}) };
-                        const log = await tx.message_log.create({ data: { branchId, provider: "aligo_sms", templateKey: "manual_sms",
-                            receiver: recipient.receiver, recipientPhone: recipient.receiver, recipientName: recipient.recipientName ?? null,
-                            clientId: recipient.clientId ?? null, messageBody: dto.message, variables,
-                            status: current.action === "CANCEL" ? "failed" : "pending", attempts: 0, nextRetryAt: null,
-                            errorMessage: current.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : null,
-                            providerAcceptanceKey: keyFor(ordinal), providerAcceptanceFingerprint: fingerprint,
-                            providerAcceptanceState: "prepared", providerCallStartedAt: null } });
-                        const job = MessageTriggerJobEntity.create({ branchId, ruleId: MANUAL_SMS_RULE_PREFIX + branchId,
-                            scheduledFor, clientId: recipient.clientId ?? null,
-                            recipientType: recipient.employeeId ? MessageTriggerRecipientType.PRIMARY_EMPLOYEE : MessageTriggerRecipientType.CLIENT,
-                            recipientPhone: recipient.receiver, templateKey: MANUAL_SMS_TEMPLATE_KEY,
-                            dedupeKey: `manual-sms:${branchId}:${keyFor(ordinal)}`,
-                            payload: { origin: "ADMIN_DIRECT", existingMessageLogId: log.id, clientId: recipient.clientId,
-                                employeeId: recipient.employeeId, memberId: String(recipient.clientId ?? recipient.employeeId),
-                                recipientName: recipient.recipientName ?? "", recipientPhone: recipient.receiver, messageBody: dto.message,
-                                templateVariables: { senderIdentityDigest: sender.identityDigest, title: dto.title ?? "", msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false" } } });
-                        if (current.action === "DEFER") job.nextAttemptAt = due;
-                        if (current.action === "CANCEL") job.cancel(QUIET_HOURS_CANCEL_REASON);
-                        const saved = await this.jobs!.createManualSmsJob(job, log.id, tx);
-                        return { ...log, triggerJobId: saved.id };
-                    }, transaction, scheduledFor));
-                }
-                return this.manualQueueResponse(dto, triggerType, requestKey, logs);
+                return this.createManualQueue(branchId, dto, triggerType, scheduledDate, scheduledTime, requestKey, scheduledFor, transaction);
             }, undefined, scheduledFor);
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -460,6 +408,104 @@ export class MessageDeliveryController {
             }
             throw error;
         }
+    }
+
+    /** Reuses the caller's admission transaction; every ordinal is committed together. */
+    private async createManualQueue(branchId: string, dto: SendSmsMessageDto, triggerType: string,
+        scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string,
+        scheduledFor: Date, transaction: Prisma.TransactionClient, preparedRoot?: SmsQueueLogRecord) {
+        if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
+        const fingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
+        const rootKey = buildSmsProviderAcceptanceKey("manual", `${branchId}:${requestKey}`);
+        const keyFor = (ordinal: number) => ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`);
+        const phones = [...new Set(dto.receiver.split(","))].sort();
+        if (!phones.length) throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+        const sender = this.defaultSender?.read();
+        if (!sender || sender.availability !== "available") throw new MessageQuietHoursUnavailableError();
+        // Validate the complete batch before the first ledger/job write.
+        const recipients = [];
+        for (const receiver of phones) recipients.push(await this.resolveSmsRecipients(branchId,
+            { ...dto, receiver, clientId: phones.length === 1 ? dto.clientId : null, employeeId: phones.length === 1 ? dto.employeeId : null }, transaction));
+        // Match the prepared snapshot before any conversion write, then repeat the
+        // same fence at CAS. Never mutate the caller's snapshot before commit.
+        let rootFence: Prisma.message_logWhereInput | undefined;
+        if (preparedRoot) {
+            if (preparedRoot.branchId !== branchId || preparedRoot.provider !== "aligo_sms"
+                || preparedRoot.providerAcceptanceKey !== rootKey || preparedRoot.providerAcceptanceFingerprint !== fingerprint
+                || preparedRoot.status !== "pending" || preparedRoot.attempts !== 0 || preparedRoot.providerAcceptanceState !== "prepared"
+                || preparedRoot.triggerJobId !== null || preparedRoot.providerCallStartedAt !== null
+                || preparedRoot.providerAcceptedAt !== null || preparedRoot.providerReconciledAt !== null
+                || preparedRoot.providerReconciledBy !== null || preparedRoot.providerReconciliationReason !== null
+                || preparedRoot.aligoMid !== null || !preparedRoot.updatedAt || !this.isRecord(preparedRoot.variables)) {
+                throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(preparedRoot.id)));
+            }
+            rootFence = { id: preparedRoot.id, branchId, provider: "aligo_sms", providerAcceptanceKey: rootKey,
+                providerAcceptanceFingerprint: fingerprint, providerAcceptanceState: "prepared", status: "pending", attempts: 0,
+                triggerJobId: null, providerCallStartedAt: null, providerAcceptedAt: null, providerReconciledAt: null,
+                providerReconciledBy: null, providerReconciliationReason: null, aligoMid: null,
+                updatedAt: preparedRoot.updatedAt, templateKey: preparedRoot.templateKey, receiver: preparedRoot.receiver,
+                recipientPhone: preparedRoot.recipientPhone, recipientName: preparedRoot.recipientName, clientId: preparedRoot.clientId,
+                messageBody: preparedRoot.messageBody, variables: { equals: preparedRoot.variables },
+                errorMessage: preparedRoot.errorMessage, lastAttemptAt: preparedRoot.lastAttemptAt, nextRetryAt: preparedRoot.nextRetryAt };
+            if (!await transaction.message_log.findFirst({ where: rootFence })) {
+                throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(preparedRoot.id)));
+            }
+        }
+        const logs = [];
+        for (let ordinal = 0; ordinal < recipients.length; ordinal++) {
+            const recipient = recipients[ordinal]!;
+            logs.push(await this.quietHours!.runAdmission(branchId, recipient.receiver, async (current, tx, revision) => {
+                if (!tx || (current.action === "DEFER" && !revision)) throw new MessageQuietHoursUnavailableError();
+                const status = current.action === "DEFER" ? "deferred" : current.action === "CANCEL" ? "canceled" : "queued";
+                const due = current.action === "DEFER" ? current.reevaluateAt : scheduledFor;
+                const originalVariables: Record<string, Prisma.JsonValue> = ordinal === 0 && preparedRoot
+                    ? { ...this.smsRecordVariables(preparedRoot) } as Record<string, Prisma.JsonValue> : {};
+                // Provider reservation fields are not part of the internal queue source.
+                delete originalVariables["scheduledDate"];
+                delete originalVariables["scheduledTime"];
+                const variables = { ...originalVariables, ...(preparedRoot && ordinal === 0 ? { recipientName: recipient.recipientName ?? null } : {}), origin: "ADMIN_DIRECT", manualQueueMode: "internal", manualQueueCount: String(recipients.length),
+                    manualQueueOrdinal: String(ordinal), manualQueueStatus: status, manualQueueScheduledAt: due.toISOString(),
+                    manualQueueRequestKey: requestKey, manualQueueSenderIdentity: sender.identityDigest,
+                    manualQueueFingerprintInput: JSON.stringify({ branchId, receiver: dto.receiver, message: dto.message,
+                        recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null, clientId: dto.clientId ?? null,
+                        employeeId: dto.employeeId ?? null, msgType: dto.msgType ?? "AUTO", triggerType,
+                        scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null, testMode: dto.testMode === true }),
+                    title: dto.title ?? "", employeeId: recipient.employeeId ?? null,
+                    triggerType, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false",
+                    duplicateDecision: dto.duplicateDecision ? JSON.stringify(dto.duplicateDecision) : null,
+                    ...(current.action === "DEFER" ? messageQuietHoldVariables({ releaseAt: due, originalScheduledFor: scheduledFor,
+                        policyRevision: revision!, reason: QUIET_HOURS_DEFER_REASON }) : current.action === "CANCEL" ? { quietHoursDisposition: "CANCEL" } : {}) };
+                const data = { branchId, provider: "aligo_sms", templateKey: "manual_sms",
+                    receiver: recipient.receiver, recipientPhone: recipient.receiver, recipientName: recipient.recipientName ?? null,
+                    clientId: recipient.clientId ?? null, messageBody: dto.message, variables,
+                    status: current.action === "CANCEL" ? "failed" : "pending", attempts: 0, nextRetryAt: null,
+                    errorMessage: current.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : null,
+                    providerAcceptanceKey: keyFor(ordinal), providerAcceptanceFingerprint: fingerprint,
+                    providerAcceptanceState: "prepared", providerCallStartedAt: null };
+                let log: SmsQueueLogRecord;
+                if (ordinal === 0 && preparedRoot && rootFence) {
+                    const converted = await tx.message_log.updateMany({ where: rootFence, data });
+                    if (converted.count !== 1) throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(preparedRoot.id)));
+                    const convertedLog = await tx.message_log.findFirst({ where: { id: preparedRoot.id, branchId } });
+                    if (!convertedLog) throw new MessageQuietHoursUnavailableError();
+                    log = convertedLog;
+                } else log = await tx.message_log.create({ data });
+                const job = MessageTriggerJobEntity.create({ branchId, ruleId: MANUAL_SMS_RULE_PREFIX + branchId,
+                    scheduledFor, clientId: recipient.clientId ?? null,
+                    recipientType: recipient.employeeId ? MessageTriggerRecipientType.PRIMARY_EMPLOYEE : MessageTriggerRecipientType.CLIENT,
+                    recipientPhone: recipient.receiver, templateKey: MANUAL_SMS_TEMPLATE_KEY,
+                    dedupeKey: `manual-sms:${branchId}:${keyFor(ordinal)}`,
+                    payload: { origin: "ADMIN_DIRECT", existingMessageLogId: log.id, clientId: recipient.clientId,
+                        employeeId: recipient.employeeId, memberId: String(recipient.clientId ?? recipient.employeeId),
+                        recipientName: recipient.recipientName ?? "", recipientPhone: recipient.receiver, messageBody: dto.message,
+                        templateVariables: { senderIdentityDigest: sender.identityDigest, title: dto.title ?? "", msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false" } } });
+                if (current.action === "DEFER") job.nextAttemptAt = due;
+                if (current.action === "CANCEL") job.cancel(QUIET_HOURS_CANCEL_REASON);
+                const saved = await this.jobs!.createManualSmsJob(job, log.id, tx);
+                return { ...log, triggerJobId: saved.id };
+            }, transaction, scheduledFor));
+        }
+        return this.manualQueueResponse(dto, triggerType, requestKey, logs);
     }
 
     private manualQueueResponse(dto: SendSmsMessageDto, triggerType: string, requestKey: string,
@@ -483,7 +529,7 @@ export class MessageDeliveryController {
         scheduledTime?: string,
         requestId?: string,
         knownExisting?: SmsMessageLogRecord | null,
-    ): Promise<{ row: SmsMessageLogRecord; created: boolean; id: number }> {
+    ): Promise<{ row: SmsQueueLogRecord; created: true; id: number } | { row: SmsMessageLogRecord; created: false; id: number }> {
         // A caller-provided idempotency key (or HTTP Idempotency-Key header)
         // scopes duplicate manual requests. Without one, each intentional
         // send receives a fresh opaque identity; the persisted state still
