@@ -841,6 +841,7 @@ export function ledgerStateToJson(state: LedgerState): z.infer<typeof stateJsonS
         sequenceFloor: state.sequenceFloor,
         runs: [...state.runs.values()].map((run) => ({
             ...run, reasonCodes: [...run.reasonCodes], counts: run.counts && { ...run.counts },
+            ...(run.executionScope === undefined ? {} : { executionScope: { ...run.executionScope } }),
         })),
         snapshots: [...state.snapshots.values()].map((snapshot) => ({ ...snapshot, counts: { ...snapshot.counts } })),
         candidates: [...state.candidates.values()].map((candidate) => ({

@@ -276,3 +276,39 @@ it("rejects duplicate receipt ids across selected documents", () => {
     const state = append(selected(f), "manual_document_result", documentBody(f.result));
     rejected(state, "manual_document_result", documentBody({ ...f.result, documentId: "doc-2" }));
 });
+
+it("detaches exported run scopes from live state and other exports without breaking the next manual transition", () => {
+    const f = fixture();
+    const state = selected(f);
+    const run = state.runs.get(runId);
+    if (!run?.executionScope) throw new Error("fixture-manual-scope");
+    const originalScope = run.executionScope;
+    const originalValue = { ...originalScope };
+    const first = ledgerStateToJson(state).runs.find((entry) => entry.runId === runId)?.executionScope;
+    const second = ledgerStateToJson(state).runs.find((entry) => entry.runId === runId)?.executionScope;
+    if (!first || !second) throw new Error("fixture-exported-scope");
+
+    Object.assign(first, { kind: "changed-kind", companyId: "changed-company", branchId: id(9),
+        jobId: id(8), attemptId: `${id(8)}.attempt-2`, selectionDigest: h("f") });
+
+    expect(run.executionScope).toBe(originalScope);
+    expect(run.executionScope).toEqual(originalValue);
+    expect(first).not.toBe(originalScope);
+    expect(second).not.toBe(originalScope);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(originalValue);
+    const next = append(state, "manual_document_result", documentBody(f.result));
+    expect(next.lastSeq).toBe(state.lastSeq + 1);
+    expect(next.manualAttempts?.get(runId)?.results.get(candidate.documentId)?.payload).toEqual(f.result);
+});
+
+it("exports legacy runs without an executionScope own property and preserves their encoded bytes", () => {
+    const record: LedgerRecord = { v: 1, seq: 2, type: "run_started", at, body: { runId, scheduledFor: null, startedAt: at } };
+    const installed = append(emptyLedgerState(), "installed", { installationId: "installation-1", archiveId: "archive-1", archiveDev: 1, archiveIno: 2, destinationIdentity: "local-1", destinationRevision: "rev-1" });
+    const state = applyLedgerRecord(installed, record);
+    const exported = ledgerStateToJson(state).runs[0];
+
+    expect(Object.prototype.hasOwnProperty.call(exported, "executionScope")).toBe(false);
+    expect(JSON.stringify(exported)).toBe(`{"runId":"${runId}","scheduledFor":null,"startedAt":"${at}","status":"open","snapshotId":null,"sequence":null,"finishedAt":null,"snapshotStatus":null,"historicalCoverage":null,"reasonCodes":[],"counts":null}`);
+    expect(encodeLedgerLine(record)).toBe(LEGACY_LINE);
+});
