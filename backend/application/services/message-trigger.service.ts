@@ -2233,18 +2233,18 @@ export class MessageTriggerService {
         // The repository applies these before LIMIT. Keep the snapshot check at
         // the consumer boundary too; claim/provider fences recheck live state.
         const byBranch = new Map(eligibility.map((branch) => [branch.branchId, branch]));
-        const eligibleJobs = jobs.filter((job) => {
+        const eligibleJobs: typeof jobs = [];
+        for (const job of jobs) {
             const branch = job.branchId ? byBranch.get(job.branchId) : undefined;
-            return branch && (branch.automaticEnabled || !this.isAutomaticMessageJob(job))
-                && (branch.retryEnabled || (job.attempts === 0 && (job.nextAttemptAt === null || (
-                    // A CARE predecessor wait has not attempted delivery. Its
-                    // canonical schedule stays fixed; nextAttemptAt is only eligibility.
-                    job.status === "pending" && job.scheduledFor <= now && job.nextAttemptAt <= now
-                    && isCaregiverTriggerTemplate(job.templateKey)
-                    && typeof job.payload.catchUp?.predecessorDedupeKey === "string"
-                    && job.payload.catchUp.predecessorDedupeKey.trim().length > 0
-                ))));
-        });
+            if (!branch || !(branch.automaticEnabled || !this.isAutomaticMessageJob(job))) continue;
+            if (branch.retryEnabled || (job.attempts === 0 && (job.nextAttemptAt === null || (
+                // Canonical mixed slots wait operationally without attempting delivery.
+                job.status === "pending" && job.scheduledFor <= now && job.nextAttemptAt <= now
+                && typeof job.payload.catchUp?.predecessorDedupeKey === "string"
+                && job.payload.catchUp.predecessorDedupeKey.trim().length > 0
+                && (isCaregiverTriggerTemplate(job.templateKey) || await this.hasStoredMixedClientCatchUpBatch(job))
+            )))) eligibleJobs.push(job);
+        }
         if (eligibleJobs.length > 0) {
             const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope(
                 eligibleJobs.map((job) => job.id),
@@ -4993,6 +4993,28 @@ export class MessageTriggerService {
         return shouldSkipClientPreStartCatchUp(rule, client, new Date());
     }
 
+    private async hasStoredMixedClientCatchUpBatch(job: MessageTriggerJobEntity): Promise<boolean> {
+        const catchUp = job.payload.catchUp;
+        if (!job.branchId || job.clientId === null || job.employeeScheduleId !== null
+            || job.recipientType !== MessageTriggerRecipientType.CLIENT
+            || typeof catchUp?.batchId !== "string" || !catchUp.batchId.trim()
+            || typeof catchUp.predecessorDedupeKey !== "string" || !catchUp.predecessorDedupeKey.trim()) return false;
+        // Stored siblings establish timing identity in either direction, including
+        // terminal/inactive CARE history. Current source and authority still gate delivery.
+        return !!await this.prisma.message_trigger_job.findFirst({
+            where: {
+                branchId: job.branchId, clientId: job.clientId, employeeScheduleId: { not: null },
+                recipientType: { in: [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE] },
+                templateKey: { in: [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE] },
+                AND: [
+                    { payload: { path: ["catchUp", "batchId"], equals: catchUp.batchId } },
+                    { payload: { path: ["caregiverSourceSnapshot", "version"], equals: 1 } },
+                ],
+            },
+            select: { id: true },
+        });
+    }
+
     private async postponeCatchUpJobUntilPredecessorCompletes(
         job: MessageTriggerJobEntity,
         resend = false,
@@ -5043,8 +5065,8 @@ export class MessageTriggerService {
             }
             const retryAt = new Date(Math.max(earliestNextSend.getTime(), now + intervalMs));
             job.status = "pending";
-            if (isCaregiverTriggerTemplate(job.templateKey)) {
-                // CARE time and occurrence are canonical source/seal identity.
+            if (isCaregiverTriggerTemplate(job.templateKey) || await this.hasStoredMixedClientCatchUpBatch(job)) {
+                // CARE and proven mixed CLIENT slots are canonical chain identity.
                 // Waiting is operational eligibility and consumes no attempt.
                 job.nextAttemptAt = retryAt;
             } else {

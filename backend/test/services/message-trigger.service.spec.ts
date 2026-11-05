@@ -529,8 +529,18 @@ describe("MessageTriggerService", () => {
             },
         };
         const messageAutomationActivationService = createAutomationActivationService();
+        const storedCatchUpSiblings: MessageTriggerJobEntity[] = [];
         const prisma = {
             message_trigger_job: {
+                findFirst: jest.fn(async (query: unknown) => {
+                    const { where } = query as { where: { branchId: string; clientId: number; AND: Array<{ payload: { equals: unknown } }> } };
+                    const row = storedCatchUpSiblings.find(candidate => candidate.branchId === where.branchId && candidate.clientId === where.clientId
+                        && candidate.employeeScheduleId !== null && ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(candidate.recipientType)
+                        && ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"].includes(candidate.templateKey)
+                        && candidate.payload.catchUp?.batchId === where.AND[0]!.payload.equals
+                        && candidate.payload.caregiverSourceSnapshot?.version === where.AND[1]!.payload.equals);
+                    return row ? { id: row.id } : null;
+                }),
                 findUnique: jest.fn().mockResolvedValue(null),
             },
             employee_schedule: {
@@ -572,6 +582,7 @@ describe("MessageTriggerService", () => {
             prisma,
             transaction,
             claimedJobRead,
+            storedCatchUpSiblings,
             messageAutomationActivationService,
             messageAutomationBranchLockService,
         };
@@ -624,6 +635,46 @@ describe("MessageTriggerService", () => {
             fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
             await fx.service.dispatchDueJobs(); expect(reached).not.toHaveBeenCalled();
+        });
+    });
+
+    // Phase7 C6: stored sibling classification at the real consumer boundary.
+    describe("Phase7 C6 mixed CLIENT operational eligibility", () => {
+        beforeEach(() => jest.useFakeTimers().setSystemTime(new Date("2026-11-05T12:06:00Z")));
+        afterEach(() => jest.useRealTimers());
+        it.each(["valid downstream", "terminal inactive history", "branch", "client", "batch", "snapshot", "template", "recipient", "schedule", "missing", "blank batch", "numeric batch", "failure OFF", "failure ON", "future"])("classifies %s from actual stored rows", async change => {
+            const fx = createDispatchService({ getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry" || change === "failure ON") });
+            const batchId = "client:1:2026-11-05T12:00:00.000Z";
+            const job = createJob({ scheduledFor: new Date("2026-11-05T12:03:00Z"), clientId: 1 });
+            Object.assign(job.payload, { catchUp: { batchId, predecessorDedupeKey: "client-before-client", sequence: 2, intervalMinutes: 3, originalScheduledFor: "2026-11-05T00:00:00Z" } });
+            job.nextAttemptAt = new Date("2026-11-05T12:06:00Z");
+            const sibling = createJob({ id: "downstream-care", clientId: 1, employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, scheduledFor: new Date("2026-11-05T12:09:00Z") });
+            Object.assign(sibling.payload, { catchUp: { batchId }, caregiverSourceSnapshot: { version: 1 } });
+            if (change === "terminal inactive history") sibling.status = "canceled";
+            if (change === "branch") sibling.branchId = "other-branch";
+            if (change === "client") sibling.clientId = 2;
+            if (change === "batch") sibling.payload.catchUp!.batchId = "client:1:2026-11-05T13:00:00.000Z";
+            if (change === "snapshot") Object.assign(sibling.payload.caregiverSourceSnapshot!, { version: "1" });
+            if (change === "template") sibling.templateKey = MessageTriggerTemplateKey.INFO;
+            if (change === "recipient") sibling.recipientType = MessageTriggerRecipientType.CLIENT;
+            if (change === "schedule") sibling.employeeScheduleId = null;
+            if (change === "blank batch") job.payload.catchUp!.batchId = " \t";
+            if (change === "numeric batch") Object.assign(job.payload.catchUp!, { batchId: 12 });
+            if (change !== "missing") fx.storedCatchUpSiblings.push(sibling);
+            if (change.startsWith("failure")) job.defer("transient", "synthetic failure", 0);
+            if (change === "future") job.nextAttemptAt = new Date("2026-11-05T12:06:00.001Z");
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
+            await fx.service.dispatchDueJobs();
+            expect(reached).toHaveBeenCalledTimes(["valid downstream", "terminal inactive history", "failure ON"].includes(change) ? 1 : 0);
+        });
+        it("propagates a scoped read failure without a legacy eligibility fallback", async () => {
+            const fx = createDispatchService({ getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry") });
+            const job = createJob({ clientId: 1 }); job.nextAttemptAt = new Date("2026-11-05T12:06:00Z");
+            Object.assign(job.payload, { catchUp: { batchId: "client:1:2026-11-05T12:00:00.000Z", predecessorDedupeKey: "previous-client" } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]); fx.prisma.message_trigger_job.findFirst.mockRejectedValue(new Error("mixed history unavailable"));
+            await expect(fx.service.dispatchDueJobs()).rejects.toThrow("mixed history unavailable");
         });
     });
 

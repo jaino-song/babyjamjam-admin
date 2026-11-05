@@ -433,6 +433,23 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sql.indexOf("jsonb_typeof")).toBeLessThan(sql.indexOf("LIMIT"));
     });
 
+    it("Phase7 C6 binds persisted mixed sibling evidence before branch cadence and LIMIT", async () => {
+        queryRaw.mockResolvedValue([]); await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: "33000000-0000-4000-8000-000000000001", automaticEnabled: true, retryEnabled: false, intervalMinutes: 1 },
+        ], new Date("2026-11-05T12:06:00Z"));
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql; const sql = getSqlText(query);
+        const eligible = sql.slice(sql.indexOf("eligible AS MATERIALIZED"), sql.indexOf("branches AS MATERIALIZED"));
+        expect(eligible).toContain('SELECT 1 FROM "message_trigger_job" AS mixed_care');
+        expect(eligible).toContain("mixed_care.branch_id = job.branch_id AND mixed_care.client_id = job.client_id");
+        expect(eligible).toContain("mixed_care.employee_schedule_id IS NOT NULL");
+        expect(eligible).toContain("mixed_care.recipient_type IN ('PRIMARY_EMPLOYEE', 'SECONDARY_EMPLOYEE')");
+        expect(eligible).toContain("mixed_care.payload #> '{catchUp,batchId}' = job.payload #> '{catchUp,batchId}'");
+        expect(eligible).toContain("mixed_care.payload #> '{caregiverSourceSnapshot,version}' = '1'::jsonb");
+        expect(eligible).toContain("jsonb_typeof(job.payload #> '{catchUp,batchId}') = 'string'");
+        expect(eligible).not.toContain("mixed_care.status"); expect(eligible).not.toContain("is_active");
+        expect(sql.indexOf("AS mixed_care")).toBeLessThan(sql.indexOf("LIMIT"));
+    });
+
     describe("TIME-1 adapter contracts", () => {
         const policy = [{ branchId: "branch-1", automaticEnabled: true, retryEnabled: false, intervalMinutes: 7 }];
         it("binds eligibility, branch round robin and cadence CAS before the final limit", async () => {
@@ -2808,6 +2825,73 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         } finally {
             await closeIntegrityPrisma(handle);
         }
+    });
+
+    // Phase7 C6: same existing PostgreSQL guard and outer cleanup; no runtime DB in the worker.
+    describe("Phase7 C6 mixed CLIENT SQL wait classification", () => {
+        let clients: number[]; let employeeId: number; let scheduleId: number; let careRuleId: string;
+        beforeEach(async () => {
+            clients = [];
+            for (const name of ["C6 target", "C6 other client"]) {
+                const client = await handle.raw.client.create({ data: { name, voucherClient: false, branchId: branches[0]! } }); clients.push(client.id);
+            }
+            const employee = await handle.raw.employee.create({ data: { name: "C6 employee", phone: "01000000011", workArea: [], grade: "fixture", branchId: branches[0]! } }); employeeId = employee.id;
+            const schedule = await handle.raw.employee_schedule.create({ data: { branchId: branches[0]!, clientId: clients[0]!, primaryEmployeeId: employeeId,
+                workAddress: "synthetic", startDate: new Date("2026-11-05T00:00:00Z"), endDate: new Date("2026-11-20T00:00:00Z") } }); scheduleId = schedule.id;
+            const rule = await handle.raw.message_trigger_rule.create({ data: { branchId: branches[0]!, name: "C6 inactive CARE history", isActive: false,
+                eventType: "SERVICE_START", offsetType: "SAME_DAY", recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE" } }); careRuleId = rule.id; rules.push(rule.id);
+        });
+        afterEach(async () => {
+            await handle.raw.message_trigger_job.deleteMany({ where: { branchId: { in: branches } } });
+            if (scheduleId) await handle.raw.employee_schedule.deleteMany({ where: { id: scheduleId } });
+            if (clients?.length) await handle.raw.client.deleteMany({ where: { id: { in: clients } } });
+            if (employeeId) await handle.raw.employee.deleteMany({ where: { id: employeeId } });
+        });
+        const payload = (batchId: string, predecessor: Prisma.InputJsonValue | null = "preceding-client") => ({ memberId: "c6", recipientName: "Fixture", recipientPhone: "01000000007", templateVariables: {},
+            catchUp: { batchId, sequence: 2, intervalMinutes: 3, originalScheduledFor: "2026-11-05T00:00:00.000Z", predecessorDedupeKey: predecessor } });
+        const clientWait = (batchId: string) => ({ clientId: clients[0]!, recipientType: "CLIENT", templateKey: "INFO", employeeScheduleId: null,
+            scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: new Date("2026-11-05T12:06:00Z"), attempts: 0, payload: payload(batchId) });
+        const sibling = (batchId: string) => ({ clientId: clients[0]!, ruleId: careRuleId, employeeScheduleId: scheduleId, recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+            status: "canceled", canceledAt: new Date("2026-11-05T12:03:00Z"), scheduledFor: new Date("2026-11-05T12:09:00Z"),
+            payload: { ...payload(batchId), catchUp: { ...payload(batchId).catchUp, sequence: 3 }, caregiverSourceSnapshot: { version: 1 } } });
+        it.each([false, true])("admits actual downstream CARE-backed CLIENT wait with retry=%s and preserves failure policy", async retryEnabled => {
+            const batch = `client:${clients[0]}:2026-11-05T12:00:00.000Z`;
+            const care = await seed(0, `c6-downstream-${retryEnabled}`, sibling(batch));
+            const wait = await seed(0, `c6-wait-${retryEnabled}`, clientWait(batch));
+            const failureJob = MessageTriggerJobEntity.create({ branchId: branches[0]!, ruleId: rules[0]!, clientId: clients[0]!, recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.INFO, dedupeKey: "actual-failure", scheduledFor: new Date("2026-11-05T12:03:00Z"), payload: { ...payload(batch), catchUp: { ...payload(batch).catchUp, predecessorDedupeKey: "preceding-client" } } }); failureJob.defer("transient", "synthetic failure"); expect(failureJob.attempts).toBe(1);
+            const failure = await seed(0, `c6-failure-${retryEnabled}`, { ...clientWait(batch), attempts: failureJob.attempts });
+            const policy = [{ branchId: branches[0]!, automaticEnabled: true, retryEnabled, intervalMinutes: 1 }];
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:05:59.999Z"))).toEqual([]);
+            const selected = await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:06:00Z"));
+            expect(selected.map(row => row.id).sort()).toEqual((retryEnabled ? [wait.id, failure.id] : [wait.id]).sort());
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id: care.id } })).toEqual(care);
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id: wait.id } })).toEqual(wait);
+        });
+        it("refuses missing/cross-scope/malformed/future mixed evidence with retry OFF", async () => {
+            for (const [index, kind] of ["missing", "branch", "client", "batch", "snapshot", "recipient", "template", "schedule", "metadata", "blank", "numeric", "future", "future canonical"].entries()) {
+                const batch = `client:${clients[0]}:${new Date(Date.UTC(2026, 10, 5, 11, index)).toISOString()}`;
+                const target: Prisma.message_trigger_jobUncheckedCreateInput = { branchId: branches[0]!, ruleId: rules[0]!, dedupeKey: `${fixture}-c6-negative-${kind}`, ...clientWait(batch) };
+                const care: Prisma.message_trigger_jobUncheckedCreateInput = { branchId: branches[0]!, dedupeKey: `${fixture}-c6-negative-care-${kind}`, ...sibling(batch) };
+                if (kind === "branch") care.branchId = branches[1]!;
+                if (kind === "client") care.clientId = clients[1]!;
+                if (kind === "batch") care.payload = sibling("different-batch").payload;
+                if (kind === "snapshot") care.payload = { ...payload(batch), caregiverSourceSnapshot: { version: "1" } };
+                if (kind === "recipient") care.recipientType = "CLIENT";
+                if (kind === "template") care.templateKey = "INFO";
+                if (kind === "schedule") care.employeeScheduleId = null;
+                if (kind === "metadata") target.payload = payload(batch, {});
+                if (kind === "blank") target.payload = payload(" \t");
+                if (kind === "numeric") target.payload = { ...payload(batch), catchUp: { ...payload(batch).catchUp, batchId: 12 } };
+                if (kind === "future") target.nextAttemptAt = new Date("2026-11-05T12:06:00.001Z");
+                if (kind === "future canonical") target.scheduledFor = new Date("2026-11-05T12:06:00.001Z");
+                if (kind !== "missing") await handle.raw.message_trigger_job.create({ data: care });
+                await handle.raw.message_trigger_job.create({ data: target });
+            }
+            const policy = [{ branchId: branches[0]!, automaticEnabled: true, retryEnabled: false, intervalMinutes: 1 }];
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:06:00Z"))).toEqual([]);
+            expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } })).toBeNull();
+        });
     });
 
     // Phase7 C5 real SQL: Main executes this existing throwaway-DB guard on the committed candidate.

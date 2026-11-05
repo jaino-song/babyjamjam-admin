@@ -494,7 +494,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                       job.next_attempt_at IS NULL OR (
                           -- Unattempted CARE predecessor waits are operational eligibility, not failure retries.
                           -- The trim character set matches JavaScript String.trim at the consumer.
-                          job.template_key IN (${MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE}, ${MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE})
+                          (job.template_key IN (${MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE}, ${MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE})
+                           OR (job.recipient_type = 'CLIENT' AND job.employee_schedule_id IS NULL AND job.client_id IS NOT NULL
+                               AND jsonb_typeof(job.payload #> '{catchUp,batchId}') = 'string'
+                               AND length(btrim(job.payload #>> '{catchUp,batchId}', ${" \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"})) > 0
+                               AND EXISTS (
+                                   SELECT 1 FROM "message_trigger_job" AS mixed_care
+                                   WHERE mixed_care.branch_id = job.branch_id AND mixed_care.client_id = job.client_id
+                                     AND mixed_care.employee_schedule_id IS NOT NULL
+                                     AND mixed_care.recipient_type IN ('PRIMARY_EMPLOYEE', 'SECONDARY_EMPLOYEE')
+                                     AND mixed_care.template_key IN (${MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE}, ${MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE})
+                                     AND mixed_care.payload #> '{catchUp,batchId}' = job.payload #> '{catchUp,batchId}'
+                                     AND mixed_care.payload #> '{caregiverSourceSnapshot,version}' = '1'::jsonb
+                               )))
                           AND jsonb_typeof(job.payload #> '{catchUp,predecessorDedupeKey}') = 'string'
                           AND length(btrim(job.payload #>> '{catchUp,predecessorDedupeKey}', ${" \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"})) > 0
                       )

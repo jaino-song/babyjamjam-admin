@@ -762,3 +762,322 @@ describe("Phase7 C5 actual CARE failure and sealed-wait controls", () => {
         expect(primary.scheduledFor).toEqual(new Date("2026-11-05T12:03:00Z")); expect(primary.attempts).toBe(0);
     });
 });
+
+function c6StoredCareLookup(rows: MessageTriggerJobEntity[], query: unknown) {
+    const { where } = query as { where: { id?: string; branchId: string; clientId: number; AND: Array<{ payload: { equals: unknown } }> } };
+    if (where.id) return structuredClone(rows.find(row => row.id === where.id) ?? null);
+    return structuredClone(rows.find(row => row.branchId === where.branchId && row.clientId === where.clientId
+        && row.employeeScheduleId !== null && ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(row.recipientType)
+        && ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"].includes(row.templateKey)
+        && row.payload.catchUp?.batchId === where.AND[0]!.payload.equals
+        && row.payload.caregiverSourceSnapshot?.version === where.AND[1]!.payload.equals) ?? null);
+}
+// Phase7 C6: immutable nine-case parent proof, locally scoped to preserve every approved fixture.
+describe("Phase7 C6 exact parent nine-case proof", () => {
+const branchId = "33000000-0000-4000-8000-000000000001";
+const incarnationId = "44000000-0000-4000-8000-000000000001";
+const now = new Date("2026-11-03T12:00:00.000Z");
+function fixture() {
+    const employee = (id: number, name: string, phone: string) => ({ id, branchId, name, phone, deletedAt: null, smsAutomationEnabled: true });
+    const client = { id: 7, branchId, name: "합성 고객", phone: null, createdAt: new Date("2026-10-01T00:00:00Z"), deletedAt: null,
+        serviceStatus: "waiting", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z"), bookingConfirmedAt: new Date("2026-10-02T00:00:00Z") };
+    const schedule = { id: 91, incarnationId, branchId, clientId: 7, replaced: false, terminatedAt: null,
+        startDate: new Date("2026-11-10T00:00:00Z"), endDate: new Date("2026-11-20T00:00:00Z"), primaryEmployeeId: 11, secondaryEmployeeId: 12,
+        primaryEmployee: employee(11, "합성 주", "01000000011"), secondaryEmployee: employee(12, "합성 보조", "01000000012") };
+    const branch = { id: branchId, name: "합성 지점", systemTemplateSnapshot: null as unknown };
+    const database = { client: { findFirst: jest.fn(async () => client) }, branch: { findUnique: jest.fn(async () => branch) },
+        employee_schedule: { findMany: jest.fn(async () => [schedule]) }, system_template: { findUnique: jest.fn(() => { throw new Error("global fallback forbidden"); }) } };
+    const source = new ClientAutomationSourceReader(database as never, {} as never, {} as never, {} as never);
+    const templates = new CaregiverTemplateResolverService(database as never);
+    const groups = { findGroup: jest.fn(async () => ({ id: "group-a", version: 3 })) };
+    const resolver = new MessageTriggerRecipientResolverService(source, templates, groups as never);
+    const rules = [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE].map((recipientType) => {
+        const rule = MessageTriggerRuleEntity.create({ branchId, name: "배정 시작", groupId: "group-a", isActive: true, eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 3, sendTime: "10:30", recipientType, templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE });
+        Object.assign(rule, { id: recipientType === "PRIMARY_EMPLOYEE" ? "child-primary" : "child-secondary" }); return rule;
+    });
+    const resolve = () => resolver.resolve(branchId, 7, rules, undefined, { now });
+    return { client, branch, schedule, database, source, templates, groups, resolver, rules, resolve };
+}
+
+function timingJobCopy(job: MessageTriggerJobEntity): MessageTriggerJobEntity {
+    return Object.assign(Object.create(MessageTriggerJobEntity.prototype), structuredClone(job));
+}
+async function timingFixture(enabled: boolean, future = false, mixed = false) {
+    const f = fixture();
+    Object.assign(f.client, { phone: "01000000007", startDate: new Date("2026-11-05T00:00:00Z") });
+    f.schedule.startDate = new Date(future ? "2026-11-06T00:00:00Z" : "2026-11-05T00:00:00Z");
+    for (const rule of f.rules) Object.assign(rule, { offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "09:00", jobsStale: false });
+    const clientRule = MessageTriggerRuleEntity.create({ branchId, name: "CLIENT timing control", groupId: "group-client", isActive: true,
+        eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "09:00",
+        recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.INFO });
+    Object.assign(clientRule, { id: "child-client", jobsStale: false });
+    const rules = mixed ? [...f.rules, clientRule] : f.rules;
+    const ruleOrder = mixed ? ["child-secondary", "child-client", "child-primary"] : ["child-secondary", "child-primary"];
+    const repository = { findAll: jest.fn(async () => rules), findActiveByEventTypes: jest.fn(async () => rules),
+        findGroup: f.groups.findGroup, findGroupRules: jest.fn(async () => f.rules) };
+    const settings = { getMessageSettingsPolicyEnabled: jest.fn(async () => enabled),
+        getMessageAutomationPastTriggerConfig: jest.fn(async () => ({ sendIntervalMinutes: 3, ruleOrder })),
+        getMessageAutomationPolicyConfig: jest.fn(async () => ({ configuration: defaultMessageAutomationPolicy() })) };
+    const approval = { isApproved: jest.fn(async () => true), getApprovedBranches: jest.fn(async () => new Map([[branchId, null]])) };
+    const activation = { getTriggerDispatchEnabled: jest.fn(async () => true) };
+    const jobs: MessageTriggerJobEntity[] = [];
+    const db = Object.assign(f.database, { $queryRawUnsafe: jest.fn(async () => [{ exists: true }]), $executeRaw: jest.fn(async () => 1),
+        $transaction: jest.fn(async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> => {
+            const before = structuredClone(jobs);
+            try { return await work(db as never); } catch (error) { jobs.splice(0, jobs.length, ...before); throw error; }
+        }),
+        message_trigger_rule_branch_override: { findMany: jest.fn(async () => []) },
+        message_trigger_job: {
+            findMany: jest.fn(async () => []),
+            findFirst: jest.fn(async (query: unknown) => c6StoredCareLookup(jobs, query)),
+            findUnique: jest.fn(async ({ where }: { where: { dedupeKey: string } }) => structuredClone(jobs.find((job) => job.dedupeKey === where.dedupeKey) ?? null)),
+            updateMany: jest.fn(async ({ where, data }: { where: { id: string; status?: string; claimToken?: string }; data: Partial<MessageTriggerJobEntity> }) => {
+                const job = jobs.find((row) => row.id === where.id && (!where.status || row.status === where.status) && (!where.claimToken || row.claimToken === where.claimToken));
+                if (!job) return { count: 0 }; Object.assign(job, structuredClone(data)); return { count: 1 };
+            }),
+        } });
+    Object.assign(db.employee_schedule, { findFirst: jest.fn(async () => f.schedule) });
+    const sources = new ClientAutomationSourceReader(db as never, repository as never, { findAllByBranch: async () => [] } as never, approval as never, settings as never, activation as never);
+    const resolver = new MessageTriggerRecipientResolverService(sources, f.templates, repository as never);
+    const lock = new MessageAutomationBranchLockService(db as never);
+    const records = new AgentAutomationRecordStoreService(lock);
+    const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sources,
+        { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never, undefined, resolver);
+    const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
+    const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
+    const logs = { save: jest.fn(async (log: unknown) => log) };
+    const delivery = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, undefined, undefined, gate, undefined, settings as never, f.templates);
+    const jobRepository = { findForClientAutomationReview: jest.fn(async () => jobs), upsertPendingForRuleGeneration: jest.fn(async (job: MessageTriggerJobEntity, version: Date, stale: boolean, preserve: boolean, tx: unknown) => {
+        expect(version).toBeInstanceOf(Date); expect(stale).toBe(false); expect(preserve).toBe(true); expect(tx).toBe(db);
+        const previous = jobs.find((row) => row.dedupeKey === job.dedupeKey);
+        if (previous) return timingJobCopy(previous);
+        const saved = Object.assign(timingJobCopy(job), { id: `55000000-0000-4000-8000-${String(jobs.length + 1).padStart(12, "0")}` });
+        jobs.push(structuredClone(saved)); return saved;
+    }) };
+    const core = new MessageTriggerService(db as never, delivery as never, approval as never, repository as never, jobRepository as never, {} as never, {} as never, {} as never,
+        settings as never, undefined, activation as never, lock, sources, gate, undefined, undefined, resolver, f.templates);
+    const options = { preserveExisting: true, stableBatchAt: new Date("2026-11-05T12:00:00Z") };
+    const sync = () => core.syncClientRulesForClient(branchId, 7, true, false, options);
+    const render = (job: MessageTriggerJobEntity, tx: Parameters<typeof delivery.resolveCanonicalDeliverySnapshot>[1]) => delivery.resolveCanonicalDeliverySnapshot(job, tx);
+    const preparation = async (job: MessageTriggerJobEntity) => {
+        job.markProcessing("timing-claim"); Object.assign(jobs.find((row) => row.id === job.id)!, structuredClone(job));
+        return gate.authorizePreparation(job, render as never, async () => ({ kind: "allow" }));
+    };
+    const send = async (job: MessageTriggerJobEntity) => {
+        if ((await preparation(job)).kind !== "allow") return false;
+        const prepared = await delivery.prepareJob(job); if (!prepared) return false;
+        Object.assign(jobs.find((row) => row.id === job.id)!, structuredClone(job));
+        const permit = await gate.authorizeDispatch(job, prepared, render as never, async (tx) => {
+            const changed = await tx.message_trigger_job.updateMany({ where: { id: job.id, status: "processing", claimToken: job.claimToken }, data: { status: "dispatching" } });
+            return changed.count === 1 ? { kind: "allow" } : { kind: "lost" };
+        });
+        if (permit.kind !== "allow") return false; job.status = "dispatching";
+        return delivery.sendPreparedJob(job, prepared);
+    };
+    return { ...f, rules, ruleOrder, clientRule, jobs, db, sources, resolver, settings, core, jobRepository, authority, gate, delivery, aligo, logs, sync, preparation, send };
+}
+
+
+
+function wireRetry(f: Awaited<ReturnType<typeof timingFixture>>) {
+    Object.assign(f.jobRepository, { update: async (job: MessageTriggerJobEntity) => {
+        Object.assign(f.jobs.find((row) => row.id === job.id)!, structuredClone(job)); return job;
+    } });
+    return (job: MessageTriggerJobEntity) => (f.core as unknown as {
+        postponeCatchUpJobUntilPredecessorCompletes: (job: MessageTriggerJobEntity) => Promise<boolean>
+    }).postponeCatchUpJobUntilPredecessorCompletes(job);
+}
+describe("Independent C4 R2 exact original scenarios and direct scheduler impact", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it("original completed CARE replay keeps CLIENT at12:03 and sends once", async () => {
+        const f = await timingFixture(true, false, true);
+        f.jobRepository.findForClientAutomationReview.mockImplementation(async () => f.jobs.filter((row) => row.employeeScheduleId !== null).map(timingJobCopy));
+        Object.assign(f.delivery, { systemTemplateService: { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내", requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } });
+        await f.sync();
+        const initial = structuredClone(f.jobs.find((row) => row.ruleId === "child-client")!);
+        const secondary = f.jobs.find((row) => row.ruleId === "child-secondary")!;
+        secondary.status="sent"; secondary.sentAt=new Date("2026-11-05T12:00:00Z");
+        const sentHistory=structuredClone(secondary);
+        jest.setSystemTime(new Date("2026-11-05T12:01:00Z")); await f.sync();
+        const clients=f.jobs.filter((row)=>row.ruleId==="child-client");
+        expect(clients).toHaveLength(1);
+        expect(clients[0]).toMatchObject({id:initial.id,dedupeKey:"child-client:client:7:CLIENT:2026-11-05T12:03:00.000Z",scheduledFor:new Date("2026-11-05T12:03:00Z")});
+        expect(secondary).toEqual(sentHistory);
+        jest.setSystemTime(new Date("2026-11-05T12:04:00Z"));
+        expect(await f.send(timingJobCopy(clients[0]!))).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it("original predecessor wait preserves12:03 and allows actual final permit at12:06", async()=>{
+        const f=await timingFixture(true);await f.sync();const postpone=wireRetry(f);
+        const primary=timingJobCopy(f.jobs.find((row)=>row.ruleId==="child-primary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));expect(await postpone(primary)).toBe(true);
+        expect(primary.scheduledFor.toISOString()).toBe("2026-11-05T12:03:00.000Z");
+        expect(primary.nextAttemptAt?.toISOString()).toBe("2026-11-05T12:06:00.000Z");expect(primary.attempts).toBe(0);
+        const secondary=f.jobs.find((row)=>row.ruleId==="child-secondary")!;
+        secondary.status="sent";secondary.sentAt=new Date("2026-11-05T12:03:00Z");
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));expect(await postpone(primary)).toBe(false);
+        expect(await f.send(primary)).toBe(true);expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it.each([[true,true],[false,true],[false,false]])("actual scheduler retry-enabled=%s predecessor-wait=%s receives unattempted CARE",async(retryEnabled,wait)=>{
+        const f=await timingFixture(true);await f.sync();const postpone=wireRetry(f);
+        const primary=timingJobCopy(f.jobs.find((row)=>row.ruleId==="child-primary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));if(wait) expect(await postpone(primary)).toBe(true);
+        const secondary=f.jobs.find((row)=>row.ruleId==="child-secondary")!;
+        secondary.status="sent";secondary.sentAt=new Date("2026-11-05T12:03:00Z");
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));expect(await postpone(primary)).toBe(false);
+        const runtime=f.core as any;
+        // Exclude maintenance; exercise the actual tick's live-policy read and final consumer predicate.
+        runtime.reclaimStaleProcessingJobs=jest.fn(async()=>{});
+        runtime.recoverApprovedBranches=jest.fn(async()=>{});
+        runtime.processStaleRuleRebuilds=jest.fn(async()=>{});
+        runtime.messageLogRepository={findSentTriggerJobIdsSystemScope:jest.fn(async()=>new Set())};
+        runtime.messageSenderApprovalService.getApprovedBranchIds=jest.fn(async()=>new Set([branchId]));
+        (f.settings.getMessageSettingsPolicyEnabled as jest.Mock).mockImplementation(async(_branch:string,policy:string)=>policy!=="trigger-job-retry"||retryEnabled);
+        Object.assign(f.jobRepository,{
+            cancelOrphanedPending:jest.fn(async()=>{}),findDueDispatchBranchIds:jest.fn(async()=>[branchId]),
+            // Deliberately return the row even if SQL would exclude it: the actual consumer independently filters it.
+            consumeDispatchSlotsAndFindDueJobs:jest.fn(async()=>[primary]),
+        });
+        const reached=jest.fn(async()=>true);runtime.dispatchClaimedJob=reached;
+        await f.core.dispatchDueJobs();
+        expect((f.jobRepository as any).consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
+            {branchId,automaticEnabled:true,retryEnabled,intervalMinutes:1,pastExpiryHours:24}
+        ],new Date("2026-11-05T12:06:00Z"),100);
+        console.log("RETRY_OFF_OPERATIONAL_WAIT",JSON.stringify({retryEnabled,wait,attempts:primary.attempts,nextAttemptAt:primary.nextAttemptAt,status:primary.status,reached:reached.mock.calls.length}));
+        expect(reached).toHaveBeenCalledTimes(1);
+    });
+});
+
+
+describe("Independent phase R2 combined timing seam", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([false, true])("mixed CLIENT follows CARE with predecessor late=%s", async late => {
+        const f = await timingFixture(true, false, true);
+        Object.assign(f.delivery, { systemTemplateService: { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내", requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } });
+        await f.sync(); const postpone = wireRetry(f);
+        const secondary = f.jobs.find(row => row.ruleId === "child-secondary")!;
+        const client = timingJobCopy(f.jobs.find(row => row.ruleId === "child-client")!);
+        if (late) {
+            jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));
+            expect(await postpone(client)).toBe(true);
+            secondary.status = "sent"; secondary.sentAt = new Date("2026-11-05T12:03:00Z");
+            jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));
+        } else {
+            secondary.status = "sent"; secondary.sentAt = new Date("2026-11-05T12:00:00Z");
+            jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));
+        }
+        expect(await postpone(client)).toBe(false);
+        const sent = await f.send(client);
+        console.log("MIXED_CLIENT_WAIT", JSON.stringify({ late, sent, time: client.scheduledFor, key: client.dedupeKey, catchUp: client.payload.catchUp, provider: f.aligo.sendSms.mock.calls.length }));
+        expect(sent).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+});
+
+
+describe("Independent phase R2 CARE after delayed mixed CLIENT", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([false, true])("completes mixed CARE -> CLIENT -> CARE with CLIENT delayed=%s", async late => {
+        const f = await timingFixture(true, false, true);
+        Object.assign(f.delivery, { systemTemplateService: { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내", requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } });
+        await f.sync(); const postpone = wireRetry(f);
+        const secondary = f.jobs.find(row => row.ruleId === "child-secondary")!;
+        const client = timingJobCopy(f.jobs.find(row => row.ruleId === "child-client")!);
+        const primary = timingJobCopy(f.jobs.find(row => row.ruleId === "child-primary")!);
+        if(late) {
+            jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));
+            expect(await postpone(client)).toBe(true);
+        }
+        expect(await f.send(timingJobCopy(secondary))).toBe(true);
+        Object.assign(secondary, {status:"sent",sentAt:new Date()});
+        jest.setSystemTime(new Date(late ? "2026-11-05T12:06:00Z" : "2026-11-05T12:03:00Z"));
+        expect(await postpone(client)).toBe(false);
+        expect(await f.send(client)).toBe(true);
+        Object.assign(f.jobs.find(row=>row.id===client.id)!, {status:"sent", sentAt:new Date()});
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));
+        if(late) { expect(await postpone(primary)).toBe(true); jest.setSystemTime(new Date("2026-11-05T12:09:00Z")); }
+        expect(await postpone(primary)).toBe(false);
+        const chain = await (f.authority as any).hasCanonicalCatchUpPredecessorChain(f.db, primary, primary.payload.catchUp, f.rules, f.client, new Date("2026-11-05T12:00:00Z"), undefined, f.ruleOrder);
+        const sent = await f.send(primary);
+        console.log("MIXED_CARE_AFTER_CLIENT_WAIT", JSON.stringify({late, chain, sent, careTime: primary.scheduledFor, next: primary.nextAttemptAt, clientTime:client.scheduledFor, clientCatchUp:client.payload.catchUp, provider:f.aligo.sendSms.mock.calls.length}));
+        expect(sent).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(3);
+    });
+});
+
+});
+
+// Phase7 C6: direct mixed order, replay and current-permission controls.
+describe("Phase7 C6 persisted mixed CLIENT wait identity", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each(["CARE-CLIENT-CARE", "CLIENT-CLIENT-CARE", "CARE-CLIENT-CARE-CLIENT"])("delivers every canonical %s slot after delay with retry OFF", async order => {
+        const f = await c4TimingFixture(true);
+        Object.assign(f.db.message_trigger_job, { findFirst: jest.fn(async (query: unknown) => c6StoredCareLookup(f.jobs, query)) });
+        if (order !== "CARE-CLIENT-CARE") {
+            const secondClient = Object.assign(Object.create(MessageTriggerRuleEntity.prototype), structuredClone(f.clientRule), { id: "child-client-two", createdAt: new Date(f.clientRule.createdAt), updatedAt: new Date(f.clientRule.updatedAt) }) as MessageTriggerRuleEntity;
+            f.rules.push(secondClient);
+            if (order === "CLIENT-CLIENT-CARE") f.rules.splice(f.rules.findIndex(rule => rule.id === "child-secondary"), 1);
+            f.ruleOrder.splice(0, f.ruleOrder.length, ...(order === "CLIENT-CLIENT-CARE" ? ["child-client", "child-client-two", "child-primary"] : ["child-secondary", "child-client", "child-primary", "child-client-two"]));
+        }
+        await f.sync(); const jobs = f.jobs.slice().sort((a, b) => a.payload.catchUp!.sequence - b.payload.catchUp!.sequence);
+        const identities = structuredClone(jobs.map(job => ({ id: job.id, time: job.scheduledFor, key: job.dedupeKey, catchUp: job.payload.catchUp })));
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));
+        for (const [index, row] of jobs.entries()) {
+            const job = timingJobCopy(row);
+            if (index > 0) {
+                expect(await f.postpone(job)).toBe(true);
+                const due = new Date(Date.now() + 3 * 60_000);
+                expect(job.nextAttemptAt).toEqual(due); expect(job.scheduledFor).toEqual(identities[index]!.time); expect(job.attempts).toBe(0);
+                jest.setSystemTime(due); expect(await f.postpone(job)).toBe(false);
+                const reached = c5Scheduler(f, [job], false); await f.core.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(1);
+            }
+            expect(await f.send(job)).toBe(true); f.complete(row);
+        }
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(order === "CARE-CLIENT-CARE-CLIENT" ? 4 : 3);
+        expect(f.jobs.map(job => ({ id: job.id, time: job.scheduledFor, key: job.dedupeKey, catchUp: job.payload.catchUp })).sort((a,b) => a.catchUp!.sequence-b.catchUp!.sequence)).toEqual(identities);
+    });
+    it("keeps repeated mixed waits and same-batch replay on one original CLIENT row", async () => {
+        const f = await c4TimingFixture(true); Object.assign(f.db.message_trigger_job, { findFirst: jest.fn(async (query: unknown) => c6StoredCareLookup(f.jobs, query)) }); await f.sync();
+        const job = timingJobCopy(f.jobs.find(row => row.ruleId === "child-client")!);
+        const identity = { id: job.id, time: job.scheduledFor, key: job.dedupeKey, digest: agentAutomationConcreteJobDigest(job) };
+        const history = structuredClone(f.jobs.filter(row => row.recipientType !== MessageTriggerRecipientType.CLIENT));
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(job)).toBe(true);
+        jest.setSystemTime(new Date("2026-11-05T12:04:00Z")); expect(await f.postpone(job)).toBe(true);
+        expect(job.nextAttemptAt).toEqual(new Date("2026-11-05T12:07:00Z")); await f.sync();
+        const clients = f.jobs.filter(row => row.ruleId === "child-client"); expect(clients).toHaveLength(1);
+        expect(clients[0]).toMatchObject({ id: identity.id, scheduledFor: identity.time, dedupeKey: identity.key, nextAttemptAt: new Date("2026-11-05T12:07:00Z") });
+        expect({ id: job.id, time: job.scheduledFor, key: job.dedupeKey, digest: agentAutomationConcreteJobDigest(job) }).toEqual(identity);
+        expect(f.jobs.filter(row => row.recipientType !== MessageTriggerRecipientType.CLIENT)).toEqual(history);
+    });
+    it.each([false, true])("retains current sealed mixed CLIENT permission, sourceChanged=%s", async sourceChanged => {
+        const f = await c4TimingFixture(true, true); Object.assign(f.db.message_trigger_job, { findFirst: jest.fn(async (query: unknown) => c6StoredCareLookup(f.jobs, query)) }); await f.sync();
+        const job = timingJobCopy(f.jobs.find(row => row.ruleId === "child-client")!); const seal = structuredClone(job.payload.agentAutomationSeal);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(job)).toBe(true);
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z")); const reached = c5Scheduler(f, [job], false); await f.core.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(1);
+        if (sourceChanged) f.client.name = "changed current source";
+        expect(await f.send(job)).toBe(!sourceChanged); expect(f.aligo.sendSms).toHaveBeenCalledTimes(sourceChanged ? 0 : 1); expect(job.payload.agentAutomationSeal).toEqual(seal);
+    });
+});
+
+describe("Phase7 C6 mixed CLIENT wait and actual failure retry controls", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([[false, false], [true, false], [false, true], [true, true]])("consumer retry=%s actualFailure=%s preserves final permission", async (retryEnabled, actualFailure) => {
+        const f = await c4TimingFixture(true); Object.assign(f.db.message_trigger_job, { findFirst: jest.fn(async (query: unknown) => c6StoredCareLookup(f.jobs, query)) }); await f.sync();
+        const job = timingJobCopy(f.jobs.find(row => row.ruleId === "child-client")!); const identity = { time: job.scheduledFor, key: job.dedupeKey, digest: agentAutomationConcreteJobDigest(job) };
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(job)).toBe(true);
+        if (actualFailure) job.defer("transient", "synthetic provider rejection", 3 * 60_000);
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!); jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));
+        expect(await f.postpone(job)).toBe(false); const allow = retryEnabled || !actualFailure;
+        const reached = c5Scheduler(f, [job], retryEnabled); await f.core.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(allow ? 1 : 0);
+        expect({ time: job.scheduledFor, key: job.dedupeKey, digest: agentAutomationConcreteJobDigest(job) }).toEqual(identity);
+        if (allow) expect(await f.send(job)).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(allow ? 1 : 0); expect(job.attempts).toBe(actualFailure ? 1 : 0);
+        expect({ time: job.scheduledFor, key: job.dedupeKey }).toEqual({ time: identity.time, key: identity.key });
+    });
+});
