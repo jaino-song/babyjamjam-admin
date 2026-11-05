@@ -2848,7 +2848,10 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         const terminal = await seed(0, "orphan-terminal", { status: "sent" });
         const otherBranch = await seed(1, "orphan-other-branch");
         const orphans = await Promise.all((["pending", "processing", "needs_setup"] as const)
-            .map(status => seed(0, `orphan-${status}`, { status })));
+            .map(status => seed(0, `orphan-${status}`, {
+                status,
+                ...(status === "processing" ? { claimToken: "orphan-processing-owner" } : {}),
+            })));
 
         expect(await repository.cancelOrphanedPending("Related client or schedule deleted", branches[0])).toBe(3);
         for (const row of [manual, agent, terminal, otherBranch]) {
