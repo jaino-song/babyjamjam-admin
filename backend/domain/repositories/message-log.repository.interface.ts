@@ -73,7 +73,7 @@ export interface IMessageLogRepository {
     /** Full branch-scoped, read-only policy population; no UI page limit. */
     findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]>;
     countFutureProviderReservations(branchId: string, now: Date, transaction?: Prisma.TransactionClient): Promise<number>;
-    resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[]): Promise<MessagePolicyPreviewCandidate[]>;
+    resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[], transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]>;
 
     save(log: MessageLogEntity): Promise<MessageLogEntity>;
     update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;

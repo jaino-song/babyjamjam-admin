@@ -796,3 +796,148 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         expect(await handle.raw.message_log.findFirst({ where: { triggerJobId: f.job.id } })).toMatchObject({ status: "sent", providerAcceptanceState: "accepted" });
     });
 });
+
+const POOL_BRANCH = "93000000-0000-4000-8000-000000000001";
+const POOL_OUTSIDE = Date.parse("2026-11-03T12:59:00Z");
+const POOL_INSIDE = Date.parse("2026-11-03T13:00:00Z");
+function poolDeferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+}
+
+/** Only finite pool allocation, advisory scheduling and SQL results are simulated. */
+function quietPoolFixture(capacity = 5, simultaneousTransactions = 1) {
+    const policy = defaultMessageAutomationPolicy(); Object.assign(policy.quietHours, { enabled: true, action: "CANCEL" });
+    let leased = 0; let opened = 0; let holder: number | null = null;
+    let rootReads = 0; let policyTxReads = 0; let recipientTxReads = 0; let decisions = 0;
+    let failRecipient = false; let recipientReadHook: (() => void) | undefined;
+    const allLeased = poolDeferred(); const blockedRoot = poolDeferred();
+    const rootWaiters: Array<ReturnType<typeof poolDeferred<Array<{ phone: string; group_name: string }>>>> = [];
+    const lockWaiters: Array<ReturnType<typeof poolDeferred<void>>> = [];
+    const active = new Set<Prisma.TransactionClient>();
+    const identities = new Map<Prisma.TransactionClient, number>();
+    const recipientTransactions: Prisma.TransactionClient[] = [];
+    const recipientRows = [{ phone: "01000000011", group_name: "CLIENT" }];
+    const readRecipients = (sql: Prisma.Sql) => {
+        expect(sql.values).toContain("93000000-0000-4000-8000-000000000001");
+        expect(sql.sql).toContain("user_branch"); expect(sql.sql).not.toMatch(/LIMIT\s+500/i);
+        if (failRecipient) throw new Error("synthetic recipient SQL unavailable");
+        recipientReadHook?.(); return recipientRows;
+    };
+    const releaseConnection = () => { leased--; if (rootWaiters.length) rootWaiters.shift()!.resolve(recipientRows); };
+    const database = {
+        system_setting: { findUnique: async () => ({ key: `branch:${POOL_BRANCH}:message_automation:policy`, value: JSON.stringify(policy), updatedAt: new Date(POOL_OUTSIDE) }) },
+        $queryRaw: async (sql: Prisma.Sql) => {
+            rootReads++;
+            if (leased === capacity) { const waiter = poolDeferred<typeof recipientRows>(); rootWaiters.push(waiter); blockedRoot.resolve(); return waiter.promise; }
+            leased++; try { return readRecipients(sql); } finally { releaseConnection(); }
+        },
+        $transaction: async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => {
+            if (leased >= capacity) throw new Error("transaction acquisition exceeded pool");
+            leased++; const identity = ++opened; if (opened === simultaneousTransactions) allLeased.resolve(); await allLeased.promise;
+            const tx = {
+                system_setting: { findUnique: async () => { policyTxReads++; return database.system_setting.findUnique(); } },
+                $queryRaw: async (sql: Prisma.Sql) => {
+                    recipientTxReads++; recipientTransactions.push(tx as unknown as Prisma.TransactionClient);
+                    expect(holder).toBe(identity); expect(active.has(tx as unknown as Prisma.TransactionClient)).toBe(true);
+                    return readRecipients(sql);
+                },
+                $executeRaw: async () => {
+                    if (holder === identity) return 1;
+                    if (holder !== null) { const waiter = poolDeferred(); lockWaiters.push(waiter); await waiter.promise; }
+                    holder = identity; return 1;
+                },
+            };
+            const typed = tx as unknown as Prisma.TransactionClient; identities.set(typed, identity); active.add(typed);
+            try { return await work(typed); }
+            finally { active.delete(typed); holder = null; releaseConnection(); lockWaiters.shift()?.resolve(); }
+        },
+    };
+    const settingsRepository = new SbSystemSettingRepository(database as never);
+    const settings = new SystemSettingService(new GetSettingUsecase(settingsRepository), new UpdateSettingUsecase(settingsRepository));
+    const repository = new SbMessageLogRepository(database as never);
+    const service = new MessageQuietHoursService(settings, repository, new MessageAutomationBranchLockService(database as never));
+    const provider = jest.fn();
+    const work = async (decision: { action: string }, tx?: Prisma.TransactionClient) => {
+        expect(tx).toBeDefined(); expect(active.has(tx!)).toBe(true); expect(identities.get(tx!)).toBe(holder);
+        decisions++; return { action: decision.action, tx: tx! };
+    };
+    const send = async () => {
+        const result = await service.runAdmission(POOL_BRANCH, "01000000011", work);
+        expect(active.has(result.tx)).toBe(false);
+        if (result.action === "ALLOW") provider();
+        return result.action;
+    };
+    return { service, repository, policy, recipientRows, recipientTransactions, provider, send, work,
+        blockedRoot: blockedRoot.promise,
+        expireRootWait: () => rootWaiters.shift()!.reject(Object.assign(new Error("modeled pool wait expired"), { code: "P2024" })),
+        stats: () => ({ leased, opened, holder, rootReads, policyTxReads, recipientTxReads, decisions, lockWaiters: lockWaiters.length, rootWaiters: rootWaiters.length }),
+        failRecipient: () => { failRecipient = true; }, onRecipientRead: (hook: () => void) => { recipientReadHook = hook; } };
+}
+
+describe("C2 acquired transaction and finite-pool admission", () => {
+    beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(POOL_OUTSIDE));
+    afterEach(() => jest.restoreAllMocks());
+    it("allows five simultaneous ON/outside admissions on five leased connections without a root read", async () => {
+        const f = quietPoolFixture(5, 5);
+        const completion = Promise.allSettled(Array.from({ length: 5 }, () => f.send()));
+        const observed = await Promise.race([completion.then(results => ({ kind: "completed" as const, results })),
+            f.blockedRoot.then(() => ({ kind: "pool-cycle" as const, stats: f.stats() }))]);
+        if (observed.kind === "pool-cycle") {
+            // Deterministic RED diagnosis/cleanup only; no timer or unresolved pool wait.
+            const cycle = observed.stats; f.expireRootWait(); await completion;
+            expect(cycle).toMatchObject({ leased: 5, lockWaiters: 4, rootWaiters: 0, rootReads: 0 });
+        }
+        expect(observed.kind).toBe("completed");
+        expect(await completion).toEqual(Array.from({ length: 5 }, () => ({ status: "fulfilled", value: "ALLOW" })));
+        expect(f.stats()).toMatchObject({ leased: 0, opened: 5, rootReads: 0, policyTxReads: 5, recipientTxReads: 5, decisions: 5 });
+        expect(new Set(f.recipientTransactions).size).toBe(5); expect(f.provider).toHaveBeenCalledTimes(5);
+    });
+    it.each(["OFF", "inside-CANCEL"])("finishes the identical saturated %s batch with no root reads", async mode => {
+        const f = quietPoolFixture(5, 5);
+        if (mode === "OFF") f.policy.quietHours.enabled = false;
+        else jest.mocked(Date.now).mockReturnValue(POOL_INSIDE);
+        expect(await Promise.all(Array.from({ length: 5 }, () => f.send()))).toEqual(Array(5).fill(mode === "OFF" ? "ALLOW" : "CANCEL"));
+        expect(f.stats()).toMatchObject({ leased: 0, opened: 5, rootReads: 0, policyTxReads: 5, recipientTxReads: mode === "OFF" ? 0 : 5, decisions: 5 });
+        expect(f.provider).toHaveBeenCalledTimes(mode === "OFF" ? 5 : 0);
+    });
+    it("keeps the optional two-argument repository lookup on the root client", async () => {
+        const f = quietPoolFixture();
+        const candidates = [{ recipientPhone: "01000000011", recipientGroups: [], dueAt: new Date("2026-11-03T12:59:00Z") }];
+        expect(await f.repository.resolvePolicyRecipientGroups(POOL_BRANCH, candidates)).toEqual([
+            { recipientPhone: "01000000011", recipientGroups: ["CLIENT"], dueAt: new Date("2026-11-03T12:59:00Z") },
+        ]);
+        expect(f.stats()).toMatchObject({ leased: 0, opened: 0, rootReads: 1, recipientTxReads: 0 });
+    });
+    it("refuses recipient read failure within the leased transaction with provider0", async () => {
+        const f = quietPoolFixture(); f.failRecipient();
+        await expect(f.send()).rejects.toBeInstanceOf(MessageQuietHoursUnavailableError);
+        expect(f.stats()).toMatchObject({ leased: 0, rootReads: 0, recipientTxReads: 1, decisions: 0 });
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+    it("samples the actual clock after transaction-bound recipient SQL crosses22:00", async () => {
+        const f = quietPoolFixture(); f.onRecipientRead(() => jest.mocked(Date.now).mockReturnValue(POOL_INSIDE));
+        expect(await f.send()).toBe("CANCEL"); expect(f.provider).not.toHaveBeenCalled();
+        expect(f.stats()).toMatchObject({ leased: 0, rootReads: 0, recipientTxReads: 1 });
+    });
+    it("reentrant final evaluation uses the same leased transaction for both recipient reads", async () => {
+        const f = quietPoolFixture();
+        const result = await f.service.runAdmission(POOL_BRANCH, "01000000011", async (decision, tx) => {
+            expect(decision.action).toBe("ALLOW"); jest.mocked(Date.now).mockReturnValue(POOL_INSIDE);
+            return f.service.runAdmission(POOL_BRANCH, "01000000011", f.work, tx);
+        });
+        expect(result.action).toBe("CANCEL");
+        expect(f.stats()).toMatchObject({ leased: 0, opened: 1, rootReads: 0, policyTxReads: 2, recipientTxReads: 2, decisions: 1 });
+        expect(f.recipientTransactions[0]).toBe(result.tx); expect(f.recipientTransactions[1]).toBe(result.tx);
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+    it("retains exact-phone category union while querying through the current transaction", async () => {
+        const f = quietPoolFixture(); jest.mocked(Date.now).mockReturnValue(POOL_INSIDE); f.policy.quietHours.recipientGroups = ["STAFF"];
+        expect(await f.send()).toBe("ALLOW");
+        f.recipientRows.push({ phone: "+82 10-0000-0011", group_name: "STAFF" });
+        expect(await f.send()).toBe("CANCEL");
+        expect(f.provider).toHaveBeenCalledTimes(1); expect(f.stats().rootReads).toBe(0);
+    });
+});

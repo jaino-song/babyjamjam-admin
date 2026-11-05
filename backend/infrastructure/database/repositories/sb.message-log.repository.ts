@@ -117,14 +117,14 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
     }
 
-    async resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[]): Promise<MessagePolicyPreviewCandidate[]> {
+    async resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[], transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]> {
         const numbers = [...new Set(candidates.flatMap(candidate => koreanPhoneStoredDigitCandidates(
             normalizeKoreanPhoneLookupKey(candidate.recipientPhone),
         )))];
         if (!numbers.length) return candidates;
         // A single exact-number batch, branch fenced, with no arbitrary 500-user
         // scan. Union STAFF even when a customer/caregiver identity already exists.
-        const rows = await this.prisma.$queryRaw<Array<{ phone: string; group_name: MessagePolicyRecipientGroup }>>(Prisma.sql`
+        const rows = await (transaction ?? this.prisma).$queryRaw<Array<{ phone: string; group_name: MessagePolicyRecipientGroup }>>(Prisma.sql`
             SELECT u.phone, 'STAFF'::text AS group_name FROM "user" u
             JOIN user_branch ub ON ub.user_id = u.id
             WHERE ub.branch_id = ${branchId}::uuid AND ${storedPhoneMatchesSql(Prisma.sql`u.phone`, numbers)}

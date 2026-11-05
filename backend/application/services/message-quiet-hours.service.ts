@@ -44,7 +44,7 @@ export class MessageQuietHoursService {
                 const phones = [...new Set(receiver.split(",").map(phone => phone.trim()).filter(Boolean))];
                 if (!phones.length) throw new MessageQuietHoursUnavailableError();
                 const candidates = policy.quietHours.enabled
-                    ? await this.logs.resolvePolicyRecipientGroups(branchId, phones.map(recipientPhone => ({ recipientPhone, recipientGroups: [], dueAt: new Date(0) })))
+                    ? await this.logs.resolvePolicyRecipientGroups(branchId, phones.map(recipientPhone => ({ recipientPhone, recipientGroups: [], dueAt: new Date(0) })), tx)
                     : [];
                 if (policy.quietHours.enabled && (candidates.length !== phones.length
                     || candidates.some((candidate, index) => candidate.recipientPhone !== phones[index]))) {
