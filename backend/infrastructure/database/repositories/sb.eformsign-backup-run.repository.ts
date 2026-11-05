@@ -10,9 +10,10 @@ import {
 } from "domain/eformsign-backup/manual-backup-run";
 import type {
     EformsignBackupRunRepository, ManualBackupSource, ManualBackupSourceDocument, ManualBackupSourceFile,
-    ManualBackupRunPageInput, ManualBackupDocumentPageInput, ManualBackupPage,
+    ManualBackupRunPageInput, ManualBackupDocumentPageInput, ManualBackupPage, ManualBackupClaimedSource, ManualBackupClaimedSourceOptions,
 } from "domain/repositories/eformsign-backup-run.repository.interface";
-import type { ExportFileType } from "domain/eformsign-backup/export/constants";
+import { EXPORT_FILE_TYPES, EXPORT_ARTIFACT_MAX_BYTES, type ExportFileType } from "domain/eformsign-backup/export/constants";
+import { decideExportArtifact, verifyExportArtifactBytes } from "domain/eformsign-backup/export/artifact-decision";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
@@ -32,7 +33,7 @@ function page<T>(rows: readonly T[], limit: number): ManualBackupPage<T> { retur
 
 /** Unregistered adapter. Staff operations retain tenant ALS and explicit branch/company predicates.
  * Only machine control operations enter audited system scope, with company/run/principal/lease fences.
- * No source bytes, provider calls or business-table writes belong here.
+ * Source bytes are read only through a selected candidate and live lease; no provider calls or business writes.
  */
 @Injectable()
 export class SbEformsignBackupRunRepository implements EformsignBackupRunRepository {
@@ -140,14 +141,29 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
         const row = await this.prisma.eformsign_backup_run.findFirst({ where: { companyId, branchId, id } });
         return row ? runRecord(row) : null;
     }
+    async findByRequestKey(companyId: string, branchId: string, requestKey: string): Promise<ManualBackupRunRecord | null> {
+        branchIdentity(companyId, branchId); assertBackupText(requestKey, 128);
+        const row = await this.prisma.eformsign_backup_run.findFirst({ where: { companyId, branchId, requestKey } });
+        return row ? runRecord(row) : null;
+    }
     async listForBranch(input: ManualBackupRunPageInput): Promise<ManualBackupPage<ManualBackupRunRecord>> {
         requireBackupInput(input && typeof input === "object");
         branchIdentity(input.companyId, input.branchId); assertBackupPage(0, input.limit);
         if (input.cursor) { assertBackupDate(input.cursor.createdAt); assertBackupUuid(input.cursor.id); }
+        let anchor: { id: string } | undefined;
+        if (input.cursor) {
+            const owned = await this.prisma.eformsign_backup_run.findFirst({ where: {
+                companyId: input.companyId, branchId: input.branchId, id: input.cursor.id,
+            }, select: { id: true, createdAt: true } });
+            if (!owned) throw new ManualBackupRunError("NOT_FOUND");
+            requireBackupInput(input.cursor.createdAt.getTime() === owned.createdAt.getTime());
+            anchor = { id: owned.id };
+        }
+        // Prisma resolves the stored timestamp from the owned anchor, preserving TIMESTAMPTZ(6) precision.
         const rows = await this.prisma.eformsign_backup_run.findMany({ where: {
             companyId: input.companyId, branchId: input.branchId,
-            ...(input.cursor ? { OR: [{ createdAt: { lt: input.cursor.createdAt } }, { createdAt: input.cursor.createdAt, id: { lt: input.cursor.id } }] } : {}),
-        }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: input.limit + 1 });
+        }, ...(anchor ? { cursor: anchor, skip: 1 } : {}),
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: input.limit + 1 });
         return page(rows.map(runRecord), input.limit);
     }
     async listDocumentsForBranch(input: ManualBackupDocumentPageInput): Promise<ManualBackupPage<ManualBackupDocumentRecord>> {
@@ -211,6 +227,83 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
             const rows = await tx.eformsign_backup_run_document.findMany({ where: { runId: row.id, branchId: row.branchId, ordinal: { gt: afterOrdinal } }, orderBy: { ordinal: "asc" }, take: limit + 1 });
             return page(rows.map(documentRecord), limit);
         }, TX_OPTIONS));
+    }
+    readClaimedSource(rawIdentity: ManualBackupLeaseIdentity, documentId: string, rawOptions?: ManualBackupClaimedSourceOptions): Promise<ManualBackupClaimedSource | null> {
+        assertBackupLease(rawIdentity); assertBackupText(documentId, 4096);
+        let options: ManualBackupClaimedSourceOptions | undefined;
+        if (rawOptions !== undefined) {
+            requireBackupInput(rawOptions !== null && typeof rawOptions === "object" && !Array.isArray(rawOptions)
+                && (Object.getPrototypeOf(rawOptions) === Object.prototype || Object.getPrototypeOf(rawOptions) === null)
+                && Reflect.ownKeys(rawOptions).length === 2
+                && Reflect.ownKeys(rawOptions).every(key => key === "fileType" || key === "withContent"));
+            // Require own data properties: do not invoke caller getters or accept inherited flags.
+            const fileType: unknown = Object.getOwnPropertyDescriptor(rawOptions, "fileType")?.value;
+            const withContent: unknown = Object.getOwnPropertyDescriptor(rawOptions, "withContent")?.value;
+            requireBackupInput((fileType === "document" || fileType === "audit_trail") && typeof withContent === "boolean");
+            options = { fileType, withContent };
+        }
+        const identity = { ...rawIdentity };
+        return runSystemScope(async () => {
+            try {
+                return await this.prisma.$transaction(async tx => {
+                    const run = await this.lockLease(tx, identity); if (!run) return null;
+                    const item = await tx.eformsign_backup_run_document.findFirst({ where: { runId: run.id, branchId: run.branchId, documentId } });
+                    if (!item) return null;
+                    const result: ManualBackupClaimedSource = { run: runRecord(run), selected: documentRecord(item), source: null, files: [], download: null };
+                    // Hold the current branch/purge fence through the byte read. A changed RR row fails closed.
+                    const owned = await tx.$queryRaw<Array<{ id: number }>>`
+                        SELECT id FROM public.eformsign_doc WHERE document_id = ${documentId}
+                        AND branch_id = ${run.branchId}::uuid AND permanent_purge_requested_at IS NULL FOR SHARE`;
+                    const id = owned[0]?.id;
+                    if (id === undefined) return await this.liveSourceLease(tx, identity) ? result : null;
+                    const doc = await tx.eformsign_doc.findFirst({ where: { id, branchId: run.branchId, permanentPurgeRequestedAt: null }, select: {
+                        documentId: true, branchId: true, documentKind: true, serviceRecordCaseId: true, templateId: true,
+                        createdDate: true, updatedDate: true, statusType: true, stepType: true, stepIndex: true, voidedAt: true,
+                        permanentPurgeRequestedAt: true, syncStatus: true,
+                    } });
+                    if (!doc || doc.branchId !== run.branchId) return await this.liveSourceLease(tx, identity) ? result : null;
+                    const nullDetail = await tx.eformsign_doc.findFirst({ where: { id, branchId: run.branchId, detailPayload: { equals: Prisma.DbNull } }, select: { id: true } });
+                    const source = { ...doc, branchId: run.branchId, detailPayloadIsNull: nullDetail !== null };
+                    const metadata = await tx.eformsign_doc_file.findMany({ where: {
+                        eformsignDocId: id, fileType: options ? options.fileType : { in: [...EXPORT_FILE_TYPES] },
+                        eformsignDoc: { branchId: run.branchId, permanentPurgeRequestedAt: null },
+                    }, select: { fileType: true, sha256: true, byteSize: true, contentType: true } });
+                    const files = metadata.map(file => ({ documentId, fileType: file.fileType as ExportFileType, sha256: file.sha256, byteSize: file.byteSize }));
+                    let download: ManualBackupClaimedSource["download"] = null;
+                    const selected = documentRecord(item);
+                    const expected = options && selected.candidate.classification === "included"
+                        ? selected.candidate.artifacts.find(file => file.fileType === options.fileType) : undefined;
+                    const file = metadata[0];
+                    if (expected && file && Number.isSafeInteger(file.byteSize) && file.byteSize >= 0
+                        && file.byteSize === expected.byteSize && expected.byteSize <= EXPORT_ARTIFACT_MAX_BYTES
+                        && decideExportArtifact({ expected, doc: source, file }).kind === "serve") {
+                        download = { sha256: file.sha256, byteSize: file.byteSize, contentType: file.contentType };
+                        if (options?.withContent) {
+                            const body = await tx.eformsign_doc_file.findFirst({ where: {
+                                eformsignDocId: id, fileType: options.fileType, sha256: expected.sha256, byteSize: expected.byteSize,
+                                eformsignDoc: { branchId: run.branchId, permanentPurgeRequestedAt: null },
+                            }, select: { content: true } });
+                            download = body && verifyExportArtifactBytes(Buffer.from(body.content), expected)
+                                ? { ...download, content: Uint8Array.from(body.content) } : null;
+                        }
+                    }
+                    // Use the DB wall clock after all locks and content work; never return stale bytes.
+                    return await this.liveSourceLease(tx, identity) ? { ...result, source, files, download } : null;
+                }, { timeout: 15_000, maxWait: 15_000, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+            } catch (error) {
+                // A branch/purge or lease update while acquiring an RR lock invalidates this cut.
+                if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2034"
+                    || (error.code === "P2010" && error.meta?.["code"] === "40001"))) return null;
+                throw error;
+            }
+        });
+    }
+    private async liveSourceLease(tx: Tx, identity: ManualBackupLeaseIdentity): Promise<boolean> {
+        const rows = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM public.eformsign_backup_run WHERE id = ${identity.runId}::uuid
+            AND company_id = ${identity.companyId} AND lease_owner_principal_id = ${identity.principalId}
+            AND lease_token = ${identity.leaseToken}::uuid AND status = 'running' AND lease_expires_at > clock_timestamp()`;
+        return rows.length === 1;
     }
     async writeDocumentResults(rawIdentity: ManualBackupLeaseIdentity, results: readonly ManualBackupDocumentResult[]): Promise<boolean> {
         assertBackupLease(rawIdentity);
