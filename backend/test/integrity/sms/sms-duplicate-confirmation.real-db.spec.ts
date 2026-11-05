@@ -1,3 +1,5 @@
+import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
@@ -128,7 +130,13 @@ describeReal("SMS duplicate confirmation full-history SQL (real PostgreSQL)", ()
         await seed(1420000032, "controller");
         const sendSms = jest.fn().mockResolvedValue({ request: { receiver: "01000004201", senderPhone: "0200004201", msgType: "SMS", testModeYn: "N" }, response: { result_code: 1, message: "accepted", msg_id: 4201, success_cnt: 1, error_cnt: 0, msg_type: "SMS" } });
         const approval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
-        const controller = new MessageDeliveryController({ sendSms } as unknown as AligoService, approval as unknown as MessageSenderApprovalService, handle.service, service);
+        const quietSettingsRepository = new SbSystemSettingRepository(handle.service);
+        const quietHours = new MessageQuietHoursService(
+            new SystemSettingService(new GetSettingUsecase(quietSettingsRepository), new UpdateSettingUsecase(quietSettingsRepository)),
+            repository,
+            new MessageAutomationBranchLockService(handle.service),
+        );
+        const controller = new MessageDeliveryController({ sendSms } as unknown as AligoService, approval as unknown as MessageSenderApprovalService, handle.service, service, quietHours);
         const request = { receiver: "01000004201", message: "controller", clientId: 1420000041, idempotencyKey: "duplicate-sql-controller-4201" };
         const before = await handle.raw.message_log.count({ where: { branchId } });
         const check = await controller.checkSmsDuplicates({ branchId }, request);
