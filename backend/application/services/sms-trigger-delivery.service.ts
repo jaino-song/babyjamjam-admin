@@ -1,3 +1,5 @@
+import { agentAutomationConcreteJobDigest } from "./agent-automation-job-binding";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "./message-quiet-hours.service";
 import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
@@ -646,12 +648,6 @@ export class SmsTriggerDeliveryService {
             ? await this.acceptanceService.prepare(pendingAttempt)
             : await this.logRepository.save(pendingAttempt)) ?? pendingAttempt;
 
-        if (isQuietHoursCanceled(persistedAttempt)) {
-            job.cancel(QUIET_HOURS_CANCEL_REASON);
-            job.nextAttemptAt = null;
-            return false;
-        }
-
         // A duplicate dispatch converges on the existing durable row. Never
         // cross the provider boundary again once that row is started,
         // uncertain, or already has a result.
@@ -667,35 +663,107 @@ export class SmsTriggerDeliveryService {
             );
         }
 
-        const attempt = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
-            async (decision, transaction) => {
-                if (decision.action !== "ALLOW") {
-                    if (!transaction) throw new AgentAutomationDispatchUncertainError();
-                    const refused = await transaction.message_log.updateMany({
-                        where: { id: persistedAttempt.id, branchId: job.branchId, providerAcceptanceState: "prepared",
-                            providerAcceptanceKey: persistedAttempt.providerAcceptanceKey,
-                            providerAcceptanceFingerprint: persistedAttempt.providerAcceptanceFingerprint },
-                        data: { status: "failed", nextRetryAt: null,
-                            errorMessage: decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON,
-                            variables: { ...persistedAttempt.variables, quietHoursDisposition: decision.action } },
-                    });
-                    if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
-                    recordQuietHoursRefusal(persistedAttempt, decision);
-                    if (decision.action === "CANCEL") {
-                        job.cancel(QUIET_HOURS_CANCEL_REASON);
-                        job.nextAttemptAt = null;
-                    } else {
-                        // Interim refusal only: Task9 owns attempt-free pending/claim release.
-                        job.markFailed("message_quiet_hours:DEFER");
-                        job.nextAttemptAt = null;
-                    }
-                    return null;
+        const admission = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
+            async (decision, transaction): Promise<
+                | { kind: "ready"; attempt: MessageLogEntity }
+                | { kind: "refused"; decision: Parameters<typeof recordQuietHoursRefusal>[1]; canceledAt: Date | null; durableCancellation?: true }
+            > => {
+                if (!transaction) {
+                    // Only the explicit schema-valid OFF direct-builder compatibility path.
+                    if (isQuietHoursCanceled(persistedAttempt)) return { kind: "refused", decision: { action: "CANCEL", reevaluateAt: null }, canceledAt: null };
+                    return { kind: "ready", attempt: (this.acceptanceService
+                        ? await this.acceptanceService.beginProviderCall(persistedAttempt)
+                        : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
                 }
-                return (this.acceptanceService
-                    ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
-                    : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt;
+                if (!persistedAttempt.providerAcceptanceKey || !persistedAttempt.providerAcceptanceFingerprint) throw new AgentAutomationDispatchUncertainError();
+                const current = await transaction.message_log.findUnique({ where: {
+                    id: persistedAttempt.id, branchId: job.branchId,
+                    providerAcceptanceKey: persistedAttempt.providerAcceptanceKey,
+                    providerAcceptanceFingerprint: persistedAttempt.providerAcceptanceFingerprint,
+                } });
+                if (!current || current.id !== persistedAttempt.id || current.branchId !== job.branchId
+                    || current.provider !== "aligo_sms" || current.triggerJobId !== job.id
+                    || !persistedAttempt.providerAcceptanceKey || current.providerAcceptanceKey !== persistedAttempt.providerAcceptanceKey
+                    || !persistedAttempt.providerAcceptanceFingerprint || current.providerAcceptanceFingerprint !== persistedAttempt.providerAcceptanceFingerprint
+                    || current.providerAcceptanceState !== "prepared" || current.providerCallStartedAt !== null) {
+                    throw new AgentAutomationDispatchUncertainError();
+                }
+                const variables = current.variables && typeof current.variables === "object" && !Array.isArray(current.variables)
+                    ? current.variables : {};
+                const canceled = variables["quietHoursDisposition"] === "CANCEL";
+                if (canceled && (current.status !== "failed" || current.errorMessage !== QUIET_HOURS_CANCEL_REASON || current.nextRetryAt !== null)) {
+                    throw new AgentAutomationDispatchUncertainError();
+                }
+                const currentJob = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId } });
+                if (!currentJob || !this.matchesQuietCancellationJob(job, currentJob)
+                    || !(currentJob.status === "dispatching" && job.claimToken && currentJob.claimToken === job.claimToken
+                        && currentJob.processingDeadlineAt?.getTime() === job.processingDeadlineAt?.getTime())
+                    && !(canceled && currentJob.status === "canceled" && currentJob.cancelReason === QUIET_HOURS_CANCEL_REASON)) {
+                    throw new AgentAutomationDispatchUncertainError();
+                }
+                const finish = async (finalDecision: typeof decision) => {
+                    if (finalDecision.action === "CANCEL") {
+                        if (currentJob.status === "canceled") return { kind: "refused" as const, decision: finalDecision, canceledAt: currentJob.canceledAt, durableCancellation: true as const };
+                        const canceledAt = new Date(Date.now());
+                        const canceledJob = await transaction.message_trigger_job.updateMany({
+                            where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken,
+                                processingDeadlineAt: job.processingDeadlineAt, updatedAt: currentJob.updatedAt,
+                                ruleId: job.ruleId, clientId: job.clientId, employeeScheduleId: job.employeeScheduleId,
+                                recipientType: job.recipientType, recipientPhone: job.recipientPhone, templateKey: job.templateKey,
+                                dedupeKey: job.dedupeKey, scheduledFor: job.scheduledFor,
+                                payload: { equals: currentJob.payload as Prisma.InputJsonValue } },
+                            data: { status: "canceled", cancelReason: QUIET_HOURS_CANCEL_REASON, canceledAt,
+                                nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
+                        });
+                        if (canceledJob.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        const refused = await transaction.message_log.updateMany({
+                            where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared",
+                                providerAcceptanceKey: current.providerAcceptanceKey, providerAcceptanceFingerprint: current.providerAcceptanceFingerprint,
+                                updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue } },
+                            data: { status: "failed", nextRetryAt: null, errorMessage: QUIET_HOURS_CANCEL_REASON,
+                                variables: { ...variables, quietHoursDisposition: "CANCEL" } },
+                        });
+                        if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        return { kind: "refused" as const, decision: finalDecision, canceledAt, durableCancellation: true as const };
+                    }
+                    if (finalDecision.action === "DEFER") {
+                        const refused = await transaction.message_log.updateMany({
+                            where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared",
+                                providerAcceptanceKey: current.providerAcceptanceKey, providerAcceptanceFingerprint: current.providerAcceptanceFingerprint },
+                            data: { status: "failed", nextRetryAt: null, errorMessage: QUIET_HOURS_DEFER_REASON,
+                                variables: { ...variables, quietHoursDisposition: "DEFER" } },
+                        });
+                        if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        return { kind: "refused" as const, decision: finalDecision, canceledAt: null };
+                    }
+                    return { kind: "ready" as const, attempt: (this.acceptanceService
+                        ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
+                        : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
+                };
+                if (canceled) return finish({ action: "CANCEL", reevaluateAt: null });
+                // Fresh DB reads above may wait. Reuse the final gate in this SAME
+                // transaction so its actual clock is sampled immediately before CAS.
+                return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction);
             });
-        if (!attempt) return false;
+        if (admission.kind === "refused") {
+            // No in-memory terminal transition is visible until the transaction commits.
+            recordQuietHoursRefusal(persistedAttempt, admission.decision);
+            if (admission.decision.action === "CANCEL") {
+                job.cancel(QUIET_HOURS_CANCEL_REASON);
+                job.nextAttemptAt = null;
+                if (admission.durableCancellation) {
+                    job.claimToken = null;
+                    job.processingDeadlineAt = null;
+                }
+                if (admission.canceledAt) job.canceledAt = admission.canceledAt;
+            } else {
+                // Interim refusal only: Task9 owns attempt-free pending/claim release.
+                job.markFailed(QUIET_HOURS_DEFER_REASON);
+                job.nextAttemptAt = null;
+            }
+            return false;
+        }
+        const attempt = admission.attempt;
 
         try {
             const result = await this.aligoService.sendSms({
@@ -753,6 +821,16 @@ export class SmsTriggerDeliveryService {
             }
             throw error;
         }
+    }
+
+    private matchesQuietCancellationJob(job: MessageTriggerJobEntity,
+        current: Awaited<ReturnType<Prisma.TransactionClient["message_trigger_job"]["findFirstOrThrow"]>>): boolean {
+        try {
+            const payload = current.payload as unknown as MessageTriggerJobEntity["payload"];
+            return agentAutomationConcreteJobDigest(current) === agentAutomationConcreteJobDigest(job)
+                && agentBindingHash(payload.agentAutomationSeal) === agentBindingHash(job.payload.agentAutomationSeal)
+                && payload.templateVariables?.[SMS_DELIVERY_SNAPSHOT_VARIABLE] === job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE];
+        } catch { return false; }
     }
 
     private beginProviderCallWithoutBoundary(log: MessageLogEntity): MessageLogEntity {

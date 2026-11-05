@@ -76,8 +76,16 @@ function boundaryFixture() {
         message_trigger_job: {
             findUnique: jest.fn(async () => stored ? { ...structuredClone(stored), rule: { id: "rule-auto" } } : null),
             findFirst: jest.fn(async () => stored ? structuredClone(stored) : null),
+            updateMany: jest.fn(async ({ data }: { data: Partial<MessageTriggerJobEntity> }) => {
+                if (!stored) return { count: 0 };
+                Object.assign(stored, structuredClone(data)); return { count: 1 };
+            }),
         },
         message_log: {
+            findUnique: jest.fn(async ({ where }: { where: { id: number } }) => {
+                const log = logs.find(candidate => candidate.id === where.id);
+                return log ? structuredClone(log) : null;
+            }),
             create: jest.fn(async ({ data }: { data: object }) => ({ ...data, id: 42 })),
             update: jest.fn(async ({ data }: { data: object }) => ({ ...data, id: 42 })),
             updateMany: jest.fn(async () => { expect(active).toBe(true); events.push("cas"); return { count: 1 }; }),
@@ -287,10 +295,12 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
     Object.assign(job, { id: "55000000-0000-4000-8000-000000000001" });
     let stored = structuredClone(job);
     const rows: unknown[] = [];
+    let storedAttempt: MessageLogEntity | undefined;
     const db = Object.assign(f.database, {
         $executeRaw: jest.fn(async () => 1),
         $transaction: async <T>(work: (transaction: typeof db) => Promise<T>): Promise<T> => work(db),
-        message_log: { updateMany: jest.fn(async () => ({ count: 1 })) },
+        message_log: { updateMany: jest.fn(async () => ({ count: 1 })),
+            findUnique: jest.fn(async () => storedAttempt ? structuredClone(storedAttempt) : null) },
         message_trigger_job: {
             findMany: jest.fn(async () => rows),
             findFirst: jest.fn(async ({ where }: { where: { id?: string; status?: string; claimToken?: string } }) =>
@@ -314,6 +324,8 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
     const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
     const logs = { save: jest.fn(async (log: unknown) => log), update: jest.fn(async (log: unknown) => log),
         resolvePolicyRecipientGroups: async (_branch: string, candidates: Array<{ recipientGroups: string[] }>) => candidates.map(candidate => ({ ...candidate, recipientGroups: ["CAREGIVER"] })) };
+    const originalSave = logs.save.getMockImplementation()!;
+    logs.save.mockImplementation(async log => { storedAttempt = log as MessageLogEntity; return originalSave(log); });
     const quietPolicy = defaultMessageAutomationPolicy();
     Object.assign(quietPolicy.quietHours, { enabled: true, action: "CANCEL" });
     const settings = new SystemSettingService({ execute: async () => JSON.stringify(quietPolicy) } as never, {} as never);
@@ -460,5 +472,327 @@ describe("NIGHT-1 final-boundary failures and serialization", () => {
         await write; await expect(send).rejects.toBeInstanceOf(ServiceUnavailableException);
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
         expect(f.execute).toHaveBeenLastCalledWith("branch:branch-a:message_automation:policy", f.db);
+    });
+});
+
+import { MessageTriggerService } from "application/services/message-trigger.service";
+
+/** Real prepare/claim repository methods, with a transactional persistence boundary. */
+function cancellationPersistenceFixture() {
+    const f = boundaryFixture();
+    // SQL is the external boundary here; retain snapshots so rejected transactions roll back.
+    let row: Record<string, any> | undefined;
+    let failCommit = false;
+    const matches = (value: Record<string, any>, where: Record<string, any>) => Object.entries(where).every(([key, expected]) => {
+        if (expected && typeof expected === "object" && "equals" in expected) return JSON.stringify(value[key]) === JSON.stringify(expected.equals);
+        if (expected && typeof expected.getTime === "function") return typeof value[key]?.getTime === "function" && value[key].getTime() === expected.getTime();
+        return value[key] === expected;
+    });
+    Object.assign(f.db.message_log, { findUnique: jest.fn(async ({ where }: { where: Record<string, unknown> }) => row && matches(row, where) ? structuredClone(row) : null) });
+    f.db.message_log.create.mockImplementation(async ({ data }) => {
+        row = { providerCallStartedAt: null, ...structuredClone(data), id: 42, createdAt: new Date(NIGHT), updatedAt: new Date(NIGHT) };
+        return structuredClone(row) as never;
+    });
+    f.db.message_log.update.mockImplementation(async ({ data }) => { Object.assign(row!, structuredClone(data)); return structuredClone(row) as never; });
+    f.db.message_log.updateMany.mockImplementation(async (args?: any) => {
+        expect(f.active()).toBe(true);
+        if (!row || !matches(row, args.where)) return { count: 0 };
+        Object.assign(row, structuredClone(args.data)); return { count: 1 };
+    });
+    const updateJob = jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: object }) => {
+        const current = await f.db.message_trigger_job.findFirst();
+        if (!current || !matches(current, where)) return { count: 0 };
+        f.store(Object.assign(current, structuredClone(data))); return { count: 1 };
+    });
+    Object.assign(f.db.message_trigger_job, { updateMany: updateJob });
+    const transaction = f.db.$transaction.bind(f.db);
+    f.db.$transaction = async work => transaction(async tx => {
+        const beforeLog = structuredClone(row);
+        const beforeJob = await f.db.message_trigger_job.findFirst();
+        try {
+            const result = await work(tx);
+            if (failCommit) throw new Error("synthetic commit failure");
+            return result;
+        } catch (error) {
+            row = beforeLog;
+            if (beforeJob) f.store(beforeJob);
+            throw error;
+        }
+    });
+    Object.assign(f.repository, { prepareProviderAttempt: SbMessageLogRepository.prototype.prepareProviderAttempt,
+        claimProviderAttempt: SbMessageLogRepository.prototype.claimProviderAttempt, update: SbMessageLogRepository.prototype.update });
+    return { ...f, updateJob, log: () => structuredClone(row), failCommit: () => { failCommit = true; } };
+}
+
+describe("C1 terminal cancellation concurrency and crash recovery", () => {
+    beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(Date.parse(NIGHT)));
+    afterEach(() => jest.restoreAllMocks());
+
+    it("keeps both prepared duplicates canceled across the actual policy writer's OFF commit", async () => {
+        const f = cancellationPersistenceFixture();
+        let arrivals = 0; let releasePrepared!: () => void;
+        const bothPrepared = new Promise<void>(resolve => { releasePrepared = resolve; });
+        let releaseSecond!: () => void; const secondMayEnter = new Promise<void>(resolve => { releaseSecond = resolve; });
+        let entered!: () => void; const firstEntered = new Promise<void>(resolve => { entered = resolve; });
+        let releaseFirst!: () => void; const firstMayContinue = new Promise<void>(resolve => { releaseFirst = resolve; });
+        const admission = f.quiet.runAdmission.bind(f.quiet);
+        jest.spyOn(f.quiet, "runAdmission").mockImplementation((async (...args: any[]) => {
+            const ordinal = ++arrivals; if (ordinal === 2) releasePrepared(); await bothPrepared;
+            if (ordinal === 2) await secondMayEnter;
+            return (admission as any)(...args);
+        }) as never);
+        let locks = 0;
+        f.setBeforeLock(async () => { if (++locks === 1) { entered(); await firstMayContinue; } });
+        const executeIfVersion = jest.fn(async (key: string, value: string) => {
+            expect(f.log()?.["variables"].quietHoursDisposition).toBe("CANCEL");
+            expect(f.log()?.["providerAcceptanceState"]).toBe("prepared");
+            Object.assign(f.policy, JSON.parse(value)); return SystemSettingEntity.create(key, value);
+        });
+        const writer = new SystemSettingService({ execute: f.execute } as never, { executeIfVersion } as never,
+            undefined, undefined, undefined, undefined, undefined, f.lock);
+        const current = await writer.getMessageAutomationPolicyConfig("branch-a");
+        const off = structuredClone(current.configuration); off.quietHours.enabled = false;
+        const first = manualJob("agent"); const duplicate = manualJob("agent"); f.store(first);
+        const service = triggerService(f);
+        const firstSend = service.sendJob(first); const secondSend = service.sendJob(duplicate);
+        await firstEntered;
+        const policyWrite = writer.setMessageAutomationPolicyConfig("branch-a", current.version, off);
+        releaseSecond(); releaseFirst();
+        const [results] = await Promise.all([Promise.all([firstSend, secondSend]), policyWrite]);
+        expect(executeIfVersion).toHaveBeenCalledTimes(1);
+        expect(results).toEqual([false, false]);
+        expect(first.status).toBe("canceled"); expect(duplicate.status).toBe("canceled");
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
+        expect(f.log()).toMatchObject({ status: "failed", providerAcceptanceState: "prepared", variables: { quietHoursDisposition: "CANCEL" } });
+        expect(await f.db.message_trigger_job.findFirst()).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", nextAttemptAt: null });
+    });
+
+    it("commits the durable job and CANCEL log before a simulated stop and actual Core reclaim", async () => {
+        const f = cancellationPersistenceFixture(); const job = manualJob("agent"); f.store(job);
+        expect(await triggerService(f).sendJob(job)).toBe(false);
+        const stored = await f.db.message_trigger_job.findFirst();
+        expect(stored).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", nextAttemptAt: null, claimToken: null });
+        expect(f.log()).toMatchObject({ status: "failed", providerAcceptanceState: "prepared", variables: { quietHoursDisposition: "CANCEL" } });
+        jest.mocked(Date.now).mockReturnValue(stored!.updatedAt.getTime() + 2 * 60 * 60_000);
+        const reclaim = jest.fn();
+        const core = Object.assign(Object.create(MessageTriggerService.prototype), {
+            jobRepository: { findStaleProcessingSystemScope: jest.fn(async (cutoff: Date) => {
+                const current = await f.db.message_trigger_job.findFirst();
+                return current && ["processing", "dispatching"].includes(current.status) && current.updatedAt <= cutoff
+                    ? [Object.assign(Object.create(MessageTriggerJobEntity.prototype), current)] : [];
+            }), reclaimWithClaimFence: reclaim }, messageLogRepository: f.repository,
+        });
+        await core.reclaimStaleProcessingJobs();
+        expect(reclaim).not.toHaveBeenCalled();
+        expect(await f.db.message_trigger_job.findFirst()).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL" });
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
+    });
+});
+
+describe("C1 atomic refusal guards", () => {
+    beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(Date.parse(NIGHT)));
+    afterEach(() => jest.restoreAllMocks());
+    it.each(["job-CAS-lost", "log-CAS-lost", "late-log-error", "commit-error"])("rolls back both rows and retains entities on %s", async failure => {
+        const f = cancellationPersistenceFixture(); const job = manualJob("agent"); f.store(job);
+        const prepared = jest.spyOn(f.acceptance, "prepare");
+        if (failure === "job-CAS-lost") f.updateJob.mockResolvedValue({ count: 0 });
+        if (failure === "log-CAS-lost") f.db.message_log.updateMany.mockResolvedValue({ count: 0 });
+        if (failure === "late-log-error") f.db.message_log.updateMany.mockRejectedValue(new Error("synthetic late log failure"));
+        if (failure === "commit-error") f.setBeforeLock(async () => f.failCommit());
+        await expect(triggerService(f).sendJob(job)).rejects.toBeInstanceOf(Error);
+        expect(await f.db.message_trigger_job.findFirst()).toMatchObject({ status: "dispatching", claimToken: "claim-a", cancelReason: null });
+        expect(f.log()).toMatchObject({ status: "pending", providerAcceptanceState: "prepared", providerCallStartedAt: null });
+        expect(f.log()?.["variables"].quietHoursDisposition).toBeUndefined();
+        const entity = await prepared.mock.results[0]!.value as MessageLogEntity;
+        expect(entity.variables["quietHoursDisposition"]).toBeUndefined(); expect(entity.status).toBe("pending");
+        expect(job).toMatchObject({ status: "dispatching", claimToken: "claim-a", cancelReason: null });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["claim", "branch", "source", "snapshot"])("refuses a changed current-job %s without terminal overwrite", async changed => {
+        const f = cancellationPersistenceFixture(); const job = manualJob("agent"); f.store(job);
+        f.setBeforeLock(async () => {
+            const current = (await f.db.message_trigger_job.findFirst())!;
+            if (changed === "claim") current.claimToken = "claim-new-owner";
+            if (changed === "branch") current.branchId = "branch-b";
+            if (changed === "source") current.recipientPhone = "01000000012";
+            if (changed === "snapshot") current.payload.templateVariables["__smsDeliverySnapshot"] = "changed-persisted-snapshot";
+            f.store(current);
+        });
+        await expect(triggerService(f).sendJob(job)).rejects.toBeInstanceOf(Error);
+        expect(f.updateJob).not.toHaveBeenCalled(); expect(f.db.message_log.updateMany).not.toHaveBeenCalled();
+        expect(job.status).toBe("dispatching"); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["missing", "read-error", "branch", "key", "fingerprint", "started", "uncertain", "accepted", "marker-only"])("refuses fresh acceptance %s before provider-start", async changed => {
+        const f = cancellationPersistenceFixture(); const job = manualJob("agent"); f.store(job);
+        const model = f.db.message_log as typeof f.db.message_log & { findUnique: jest.Mock };
+        const read = model.findUnique.getMockImplementation()!;
+        model.findUnique.mockImplementation(async (args: { where: { id?: number } }) => {
+            const row = await (read as (args: unknown) => Promise<Record<string, any> | null>)(args);
+            if (!args.where.id || !row) return row;
+            if (changed === "missing") return null;
+            if (changed === "read-error") throw new Error("synthetic current acceptance read failure");
+            if (changed === "branch") row["branchId"] = "branch-b";
+            if (changed === "key") row["providerAcceptanceKey"] = "other-key";
+            if (changed === "fingerprint") row["providerAcceptanceFingerprint"] = "other-fingerprint";
+            if (changed === "marker-only") row["variables"].quietHoursDisposition = "CANCEL";
+            if (["started", "uncertain", "accepted"].includes(changed)) row["providerAcceptanceState"] = changed;
+            return row;
+        });
+        await expect(triggerService(f).sendJob(job)).rejects.toBeInstanceOf(Error);
+        expect(f.updateJob).not.toHaveBeenCalled(); expect(f.db.message_log.updateMany).not.toHaveBeenCalled();
+        expect(job.status).toBe("dispatching"); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["allowed", "OFF"])("permits the matching never-canceled %s job once through actual prepare/claim", async mode => {
+        const f = cancellationPersistenceFixture(); if (mode === "OFF") f.policy.quietHours.enabled = false;
+        else f.policy.quietHours.start = "23:00";
+        const job = manualJob("agent"); f.store(job);
+        expect(await triggerService(f).sendJob(job)).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.log()).toMatchObject({ status: "sent", providerAcceptanceState: "accepted" });
+        expect(f.active()).toBe(false);
+    });
+    it.each([["2026-11-03T12:59:00.000Z", true, 1], ["2026-11-03T13:00:00.000Z", false, 0]] as const)(
+        "samples final quiet clock after acceptance/job reads complete at %s", async (readFinishedAt, allowed, providerCalls) => {
+            const f = cancellationPersistenceFixture(); const job = manualJob("agent"); f.store(job);
+            jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T12:59:00.000Z"));
+            const originalRead = f.db.message_trigger_job.findFirst.getMockImplementation()!;
+            f.db.message_trigger_job.findFirst.mockImplementation(async (...args: unknown[]) => {
+                const row = await originalRead();
+                if (f.active() && (args[0] as { where?: { id?: string } } | undefined)?.where?.id) jest.mocked(Date.now).mockReturnValue(Date.parse(readFinishedAt));
+                return row;
+            });
+            expect(await triggerService(f).sendJob(job)).toBe(allowed);
+            expect(f.aligo.sendSms).toHaveBeenCalledTimes(providerCalls);
+            if (!allowed) expect(await f.db.message_trigger_job.findFirst()).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL" });
+            expect(f.active()).toBe(false);
+        },
+    );
+});
+
+import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../integrity/helpers/real-db";
+import { createBranch, createClient, createMessageTriggerJob, createMessageTriggerRule } from "../integrity/helpers/factories";
+import { RowTracker } from "../integrity/helpers/tracker";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+
+/** Main executes these through the existing guarded state-integrity runner. */
+describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
+    let handle: IntegrityPrisma;
+    let tracker: RowTracker;
+    const policyKeys: string[] = [];
+    const branchIds: string[] = [];
+    const ids = [
+        { branch: "87000000-0000-4000-8000-000000008101", job: "87000000-0000-4000-8000-000000008201", client: 1481000101 },
+        { branch: "87000000-0000-4000-8000-000000008102", job: "87000000-0000-4000-8000-000000008202", client: 1481000102 },
+        { branch: "87000000-0000-4000-8000-000000008103", job: "87000000-0000-4000-8000-000000008203", client: 1481000103 },
+        { branch: "87000000-0000-4000-8000-000000008104", job: "87000000-0000-4000-8000-000000008204", client: 1481000104 },
+    ];
+    beforeAll(async () => { assertThrowawayTarget(); handle = await createIntegrityPrisma(); tracker = new RowTracker(); });
+    beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(Date.parse(NIGHT)));
+    afterEach(async () => {
+        jest.restoreAllMocks();
+        if (handle) for (const branchId of branchIds) {
+            for (const row of await handle.raw.message_log.findMany({ where: { branchId }, select: { id: true } })) tracker.track("message_log", row.id);
+        }
+    });
+    afterAll(async () => {
+        if (handle) {
+            if (policyKeys.length) await handle.raw.system_setting.deleteMany({ where: { key: { in: policyKeys } } });
+            if (tracker) await tracker.cleanup(handle.raw);
+            await closeIntegrityPrisma(handle);
+        }
+    });
+    async function pgFixture(index: number, enabled = true) {
+        const id = ids[index]!;
+        expect(await handle.raw.branch.count({ where: { id: id.branch } })).toBe(0);
+        expect(await handle.raw.message_trigger_job.count({ where: { id: id.job } })).toBe(0);
+        await createBranch(handle.raw, tracker, { id: id.branch, slug: `throwaway-quiet-c1-${index}` }); branchIds.push(id.branch);
+        await createClient(handle.raw, tracker, { id: id.client, branchId: id.branch, name: "합성 심야 고객", phone: PHONE, phoneNormalized: PHONE });
+        const policy = defaultMessageAutomationPolicy(); Object.assign(policy.quietHours, { enabled, action: "CANCEL" });
+        const policyKey = `branch:${id.branch}:message_automation:policy`;
+        await handle.raw.system_setting.create({ data: { key: policyKey, value: JSON.stringify(policy) } }); policyKeys.push(policyKey);
+        const ruleId = `agent-sms:quiet-c1:${index}`;
+        await createMessageTriggerRule(handle.raw, tracker, { id: ruleId, branchId: id.branch, templateKey: "SERVICE_INFO" });
+        const job = manualJob("agent");
+        Object.assign(job, { id: id.job, branchId: id.branch, ruleId, clientId: id.client, claimToken: "claim-quiet-c1" });
+        job.payload = { ...job.payload, clientId: id.client };
+        await createMessageTriggerJob(handle.raw, tracker, { ruleId }, { id: job.id, branchId: id.branch, clientId: id.client,
+            status: "dispatching", claimToken: job.claimToken, processingDeadlineAt: null, scheduledFor: job.scheduledFor,
+            recipientType: job.recipientType, recipientPhone: PHONE, templateKey: job.templateKey, dedupeKey: job.dedupeKey,
+            payload: job.payload as unknown as Prisma.InputJsonValue });
+        const repository = new SbMessageLogRepository(handle.service);
+        const lock = new MessageAutomationBranchLockService(handle.service);
+        const settingsRepository = new SbSystemSettingRepository(handle.service);
+        const settings = new SystemSettingService(new GetSettingUsecase(settingsRepository), new UpdateSettingUsecase(settingsRepository),
+            undefined, undefined, undefined, undefined, repository, lock);
+        const quiet = new MessageQuietHoursService(settings, repository, lock);
+        const gate = new AgentAutomationDeliveryGateService(handle.service, lock, {} as never);
+        const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => {
+            // A new independent transaction must be available during fake transport.
+            expect(await handle.raw.message_log.count({ where: { triggerJobId: job.id, providerAcceptanceState: "started" } })).toBe(1);
+            return { request, response: { result_code: 1, message: "accepted", msg_id: 8811, success_cnt: 1, error_cnt: 0 } };
+        }) };
+        const service = new SmsTriggerDeliveryService(aligo as never, {} as never, repository, new SmsProviderAcceptanceService(repository), undefined, gate,
+            undefined, settings, undefined, quiet);
+        return { job, repository, lock, settings, quiet, aligo, service };
+    }
+    it("prepares both duplicates before CANCEL, commits job/log atomically, and refuses revival after actual OFF write", async () => {
+        const f = await pgFixture(0); const duplicate = Object.assign(Object.create(MessageTriggerJobEntity.prototype), structuredClone(f.job)) as MessageTriggerJobEntity;
+        let arrivals = 0; let releasePrepared!: () => void; const bothPrepared = new Promise<void>(resolve => { releasePrepared = resolve; });
+        let releaseSecond!: () => void; const secondMayEnter = new Promise<void>(resolve => { releaseSecond = resolve; });
+        const admission = f.quiet.runAdmission.bind(f.quiet);
+        jest.spyOn(f.quiet, "runAdmission").mockImplementation((async (...args: any[]) => {
+            const ordinal = ++arrivals; if (ordinal === 2) releasePrepared(); await bothPrepared;
+            if (ordinal === 2) await secondMayEnter; return (admission as any)(...args);
+        }) as never);
+        const current = await f.settings.getMessageAutomationPolicyConfig(f.job.branchId!);
+        const first = f.service.sendJob(f.job); const second = f.service.sendJob(duplicate);
+        expect(await first).toBe(false);
+        const stored = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: "87000000-0000-4000-8000-000000008201" } });
+        expect(stored).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", claimToken: null, nextAttemptAt: null });
+        expect(await handle.raw.message_log.count({ where: { triggerJobId: stored.id, status: "failed", providerAcceptanceState: "prepared", nextRetryAt: null,
+            variables: { path: ["quietHoursDisposition"], equals: "CANCEL" } } })).toBe(1);
+        const off = structuredClone(current.configuration); off.quietHours.enabled = false;
+        await f.settings.setMessageAutomationPolicyConfig(f.job.branchId!, current.version, off); releaseSecond();
+        expect(await second).toBe(false); expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
+        jest.mocked(Date.now).mockReturnValue(stored.updatedAt.getTime() + 2 * 60 * 60_000);
+        const jobs = new SbMessageTriggerJobRepository(handle.service);
+        const core = Object.assign(Object.create(MessageTriggerService.prototype), { jobRepository: jobs, messageLogRepository: f.repository });
+        await core.reclaimStaleProcessingJobs();
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: stored.id } })).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL" });
+    });
+    it("rolls back actual job/log writes on an explicit late transaction error before commit", async () => {
+        const f = await pgFixture(1); const transaction = handle.service.$transaction.bind(handle.service);
+        let observedBothWrites = false;
+        jest.spyOn(handle.service, "$transaction").mockImplementation((async (work: any, options: any) => (transaction as any)(async (tx: Prisma.TransactionClient) => {
+            const result = await work(tx);
+            const canceled = await tx.message_log.findFirst({ where: { triggerJobId: f.job.id, variables: { path: ["quietHoursDisposition"], equals: "CANCEL" } } });
+            if (canceled) {
+                expect(await tx.message_trigger_job.findUnique({ where: { id: f.job.id } })).toMatchObject({ status: "canceled", claimToken: null });
+                observedBothWrites = true; throw new Error("explicit late SQL transaction failure");
+            }
+            return result;
+        }, options)) as never);
+        await expect(f.service.sendJob(f.job)).rejects.toThrow("explicit late SQL transaction failure");
+        expect(observedBothWrites).toBe(true);
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: f.job.id } })).toMatchObject({ status: "dispatching", claimToken: "claim-quiet-c1", cancelReason: null });
+        expect(await handle.raw.message_log.findFirst({ where: { triggerJobId: f.job.id } })).toMatchObject({ status: "pending", providerAcceptanceState: "prepared", providerCallStartedAt: null });
+        expect(f.job).toMatchObject({ status: "dispatching", claimToken: "claim-quiet-c1", cancelReason: null }); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("refuses a competing current claim without modifying the job or prepared log", async () => {
+        const f = await pgFixture(2); const admission = f.quiet.runAdmission.bind(f.quiet);
+        jest.spyOn(f.quiet, "runAdmission").mockImplementation((async (...args: any[]) => {
+            await handle.raw.message_trigger_job.update({ where: { id: f.job.id }, data: { claimToken: "claim-competing-owner" } });
+            return (admission as any)(...args);
+        }) as never);
+        await expect(f.service.sendJob(f.job)).rejects.toBeInstanceOf(Error);
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: f.job.id } })).toMatchObject({ status: "dispatching", claimToken: "claim-competing-owner", cancelReason: null });
+        expect(await handle.raw.message_log.findFirst({ where: { triggerJobId: f.job.id } })).toMatchObject({ status: "pending", providerAcceptanceState: "prepared" });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("allows a matching never-canceled OFF job once through real prepare/start CAS", async () => {
+        const f = await pgFixture(3, false);
+        expect(await f.service.sendJob(f.job)).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(await handle.raw.message_log.findFirst({ where: { triggerJobId: f.job.id } })).toMatchObject({ status: "sent", providerAcceptanceState: "accepted" });
     });
 });
